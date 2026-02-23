@@ -72,10 +72,20 @@ def _ids_from_meta(meta: dict[str, Any]) -> dict[str, str]:
     return ids
 
 
+def _normalize_units(offset: int, duration: int) -> tuple[int, int]:
+    # Plex notifications sometimes mix seconds/milliseconds depending on the shape.
+    o = int(offset or 0)
+    d = int(duration or 0)
+    if d <= 0:
+        return o, d
+    if d < 10_000 and o > 10_000:
+        return o, d * 1000
+    if d > 10_000 and 0 < o < 10_000:
+        return o * 1000, d
+    return o, d
+
+
 def _progress(state: str, view_offset: int, duration: int) -> tuple[int, ScrobbleAction]:
-    d = max(1, _i(duration) or 0)
-    vo = max(0, min(_i(view_offset) or 0, d))
-    pct = max(0, min(100, int(round((vo / float(d)) * 100))))
     s = (state or "").lower()
     if s == "playing":
         act: ScrobbleAction = "start"
@@ -85,6 +95,13 @@ def _progress(state: str, view_offset: int, duration: int) -> tuple[int, Scrobbl
         act = "stop"
     else:
         act = "start"
+    d0 = _i(duration) or 0
+    o0 = _i(view_offset) or 0
+    if d0 <= 0:
+        return 0, act
+    o, d = _normalize_units(o0, d0)
+    vo = max(0, min(o, d))
+    pct = max(0, min(100, int(round((vo / float(d)) * 100))))
     return pct, act
 
 
@@ -148,17 +165,40 @@ def from_plex_webhook(payload: Any, defaults: dict[str, Any] | None = None) -> S
             return None
     except Exception:
         return None
-    if isinstance(obj.get("PlaySessionStateNotification"), list):
+    if isinstance(obj.get("PlaySessionStateNotification"), (list, dict)):
         return from_plex_pssn(obj, defaults)
     return None
 
 
 def from_plex_pssn(payload: dict[str, Any], defaults: dict[str, Any] | None = None) -> ScrobbleEvent | None:
     defaults = defaults or {}
-    arr = payload.get("PlaySessionStateNotification")
-    if not (isinstance(arr, list) and arr):
+    raw = payload.get("PlaySessionStateNotification")
+    if isinstance(raw, dict):
+        items = [raw]
+    elif isinstance(raw, list):
+        items = [x for x in raw if isinstance(x, dict)]
+    else:
         return None
-    n = dict(arr[0])
+    if not items:
+        return None
+
+    def score(d: dict[str, Any]) -> int:
+        s = 0
+        if d.get("sessionKey") is not None:
+            s += 5
+        if d.get("ratingKey") is not None:
+            s += 4
+        if d.get("guid"):
+            s += 3
+        if d.get("state"):
+            s += 2
+        if d.get("viewOffset") is not None or d.get("view_offset") is not None:
+            s += 2
+        if d.get("duration") is not None:
+            s += 1
+        return s
+
+    n = max(items, key=score)
     meta = {
         "guid": n.get("guid"),
         "grandparentGuid": n.get("grandparentGuid"),
@@ -168,11 +208,11 @@ def from_plex_pssn(payload: dict[str, Any], defaults: dict[str, Any] | None = No
         "index": _i(n.get("index")),
         "grandparentIndex": _i(n.get("grandparentIndex")),
         "duration": _i(n.get("duration") or 0) or 0,
-        "viewOffset": _i(n.get("viewOffset") or 0) or 0,
+        "viewOffset": _i(n.get("viewOffset") or n.get("view_offset") or 0) or 0,
         "type": n.get("type") or "",
         "state": n.get("state") or "",
         "sessionKey": n.get("sessionKey"),
-        "account": n.get("account") or n.get("accountID"),
+        "account": n.get("account") or n.get("accountID") or defaults.get("username"),
         "machineIdentifier": n.get("machineIdentifier") or defaults.get("server_uuid"),
     }
     return _event_from_meta(meta, payload)
@@ -184,24 +224,86 @@ def from_plex_flat_playing(payload: dict[str, Any], defaults: dict[str, Any] | N
         return None
     if (payload.get("_type") or payload.get("type") or "").lower() != "playing":
         return None
-    first = next((v for v in payload.values() if isinstance(v, dict) and "guid" in v), None)
-    if not first:
+
+    def _find_timeline(o: Any) -> dict[str, Any] | None:
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if isinstance(k, str) and k.lower() == "timelineentry":
+                    if isinstance(v, dict):
+                        return v
+                    if isinstance(v, list):
+                        return next((x for x in v if isinstance(x, dict)), None)
+                r = _find_timeline(v)
+                if r:
+                    return r
+        elif isinstance(o, list):
+            for v in o:
+                r = _find_timeline(v)
+                if r:
+                    return r
         return None
+
+    def _best_meta_dict(o: Any) -> dict[str, Any] | None:
+        best: tuple[int, dict[str, Any]] | None = None
+
+        def score(d: dict[str, Any]) -> int:
+            s = 0
+            if d.get("guid"):
+                s += 5
+            if d.get("ratingKey"):
+                s += 3
+            if d.get("title"):
+                s += 2
+            if d.get("grandparentTitle"):
+                s += 2
+            if d.get("type"):
+                s += 1
+            if d.get("duration") or d.get("viewOffset") or d.get("time"):
+                s += 1
+            return s
+
+        def walk(x: Any) -> None:
+            nonlocal best
+            if isinstance(x, dict):
+                if "guid" in x or "ratingKey" in x or "title" in x:
+                    sc = score(x)
+                    if sc > 0 and (best is None or sc > best[0]):
+                        best = (sc, x)
+                for v in x.values():
+                    walk(v)
+            elif isinstance(x, list):
+                for v in x:
+                    walk(v)
+
+        walk(o)
+        return best[1] if best else None
+
+    tl = _find_timeline(payload)
+    meta_src = _best_meta_dict(payload)
+    if not tl and not meta_src:
+        return None
+
+    first = dict(meta_src or tl or {})
+    prog_src = dict(tl or first)
+    vo = prog_src.get("viewOffset")
+    if vo is None:
+        vo = prog_src.get("time")
+    dur = prog_src.get("duration")
     meta = {
-        "guid": first.get("guid"),
-        "grandparentGuid": first.get("grandparentGuid"),
-        "title": first.get("title"),
-        "grandparentTitle": first.get("grandparentTitle"),
+        "guid": first.get("guid") or prog_src.get("guid"),
+        "grandparentGuid": first.get("grandparentGuid") or prog_src.get("grandparentGuid"),
+        "title": first.get("title") or prog_src.get("title"),
+        "grandparentTitle": first.get("grandparentTitle") or prog_src.get("grandparentTitle"),
         "year": _i(first.get("year")),
         "index": _i(first.get("index")),
         "grandparentIndex": _i(first.get("grandparentIndex")),
-        "duration": _i(first.get("duration") or 0) or 0,
-        "viewOffset": _i(first.get("viewOffset") or 0) or 0,
-        "type": first.get("type") or "",
-        "state": first.get("state") or "",
-        "sessionKey": first.get("sessionKey"),
-        "account": first.get("account"),
-        "machineIdentifier": first.get("machineIdentifier") or defaults.get("server_uuid"),
+        "duration": _i(dur or first.get("duration") or 0) or 0,
+        "viewOffset": _i(vo or first.get("viewOffset") or 0) or 0,
+        "type": first.get("type") or prog_src.get("type") or "",
+        "state": prog_src.get("state") or first.get("state") or "",
+        "sessionKey": first.get("sessionKey") or prog_src.get("sessionKey"),
+        "account": first.get("account") or prog_src.get("account") or defaults.get("username"),
+        "machineIdentifier": first.get("machineIdentifier") or prog_src.get("machineIdentifier") or defaults.get("server_uuid"),
     }
     return _event_from_meta(meta, payload)
 
