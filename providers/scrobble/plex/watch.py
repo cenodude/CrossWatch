@@ -368,6 +368,27 @@ class WatchService:
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
 
+    def _active_cfg(self) -> dict[str, Any]:
+        try:
+            cfg = self._cfg_provider() or {}
+            if isinstance(cfg, dict) and cfg:
+                return cfg
+        except Exception:
+            pass
+        try:
+            return _cfg() or {}
+        except Exception:
+            return {}
+
+    def _active_watch_filters(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+        base = cfg if isinstance(cfg, dict) else self._active_cfg()
+        filt = (((base.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
+        if isinstance(filt, dict) and filt:
+            return filt
+        g = _cfg() or {}
+        gf = (((g.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
+        return gf if isinstance(gf, dict) else {}
+
     def sinks_count(self) -> int:
         try:
             d = getattr(self, "_dispatch", None) or getattr(self, "_dispatcher", None)
@@ -686,18 +707,25 @@ class WatchService:
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         sk = str(ev.session_key) if ev.session_key is not None else None
-        if sk and sk in self._allowed_sessions:
-            return True
-        cfg = _cfg() or {}
-        filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
+        cache_key: str | None = None
+        if sk:
+            cache_key = f"{sk}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
+            if cache_key in self._allowed_sessions:
+                return True
+
+        cfg = self._active_cfg()
+        filt = self._active_watch_filters(cfg)
         wl = filt.get("username_whitelist")
         want = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
+        if not want:
+            g = _cfg() or {}
+            want = ((((g.get("scrobble") or {}).get("watch") or {}).get("filters") or {}).get("server_uuid") or (g.get("plex") or {}).get("server_uuid"))
         if want and ev.server_uuid and str(ev.server_uuid) != str(want):
             return False
 
         def _allow() -> bool:
-            if sk:
-                self._allowed_sessions.add(sk)
+            if cache_key:
+                self._allowed_sessions.add(cache_key)
             return True
 
         if wl:
@@ -951,7 +979,7 @@ class WatchService:
             return
         if t in ("timeline", "progress"):
             try:
-                cfg = _cfg()
+                cfg = self._active_cfg()
                 sc = (cfg.get("scrobble") or {})
                 if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
                     return
@@ -966,13 +994,13 @@ class WatchService:
                 server_uuid = self._plex.machineIdentifier if self._plex else None
             except Exception:
                 server_uuid = None
-            cfg = _cfg()
+            cfg = self._active_cfg()
             sc = (cfg.get("scrobble") or {})
             if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
                 return
 
             try:
-                self._ingest_progress_from_alert(alert)
+                self._ingest_progress_from_alert(alert, cfg)
             except Exception:
                 pass
 
