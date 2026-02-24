@@ -94,6 +94,37 @@ def _ops_or_raise(provider: str):
     return ops
 
 
+def _build_index_capture_mode(
+    *,
+    ops: Any,
+    cfg_view: Mapping[str, Any],
+    pid: str,
+    instance: str,
+    feat: Feature,
+    ts: datetime,
+) -> Any:
+    prev: dict[str, str | None] = {
+        "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
+        "CW_CAPTURE_PROVIDER": os.environ.get("CW_CAPTURE_PROVIDER"),
+        "CW_CAPTURE_INSTANCE": os.environ.get("CW_CAPTURE_INSTANCE"),
+        "CW_CAPTURE_FEATURE": os.environ.get("CW_CAPTURE_FEATURE"),
+        "CW_CAPTURE_ID": os.environ.get("CW_CAPTURE_ID"),
+    }
+    os.environ["CW_CAPTURE_MODE"] = "1"
+    os.environ["CW_CAPTURE_PROVIDER"] = str(pid or "").strip().upper()
+    os.environ["CW_CAPTURE_INSTANCE"] = normalize_instance_id(instance)
+    os.environ["CW_CAPTURE_FEATURE"] = str(feat or "").strip().lower()
+    os.environ["CW_CAPTURE_ID"] = ts.strftime("%Y%m%dT%H%M%SZ")
+    try:
+        return ops.build_index(cfg_view, feature=feat) or {}
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def _feature_enabled(ops: Any, feature: Feature) -> bool:
     try:
         feats = ops.features() or {}
@@ -331,7 +362,14 @@ def _create_single_snapshot(
     ts: datetime,
 ) -> dict[str, Any]:
     cfg_view = build_provider_config_view(cfg, pid, instance)
-    idx_raw = ops.build_index(cfg_view, feature=feat) or {}
+    idx_raw = _build_index_capture_mode(
+        ops=ops,
+        cfg_view=cfg_view,
+        pid=pid,
+        instance=instance,
+        feat=feat,
+        ts=ts,
+    )
     idx = _index_dict(idx_raw)
     idx = _canonicalize_index(pid, feat, idx)
     stats = _stats_for(feat, idx)
@@ -1049,6 +1087,7 @@ def diff_snapshots(
             "label": str(s.get("label") or ""),
             "created_at": str(s.get("created_at") or ""),
             "count": int(stats.get("count") or 0),
+            "by_type": dict(stats.get("by_type") or {}) if isinstance(stats.get("by_type"), Mapping) else {},
         }
 
     lim = max(1, min(int(limit or 200), 2000))
@@ -1225,6 +1264,7 @@ def diff_snapshots_extended(
             "label": str(s.get("label") or ""),
             "created_at": str(s.get("created_at") or ""),
             "count": int(stats.get("count") or 0),
+            "by_type": dict(stats.get("by_type") or {}) if isinstance(stats.get("by_type"), Mapping) else {},
         }
 
     # Filter helpers
