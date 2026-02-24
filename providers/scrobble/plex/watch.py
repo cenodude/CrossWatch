@@ -850,24 +850,46 @@ class WatchService:
         except Exception:
             return None
 
-    def _resolve_account_from_session(self, session_key: str | None) -> str | None:
+    def _resolve_account_from_session(self, session_key: str | None, owner_username: str | None = None) -> str | None:
         ident = self._resolve_session_identity(session_key)
         if not isinstance(ident, dict):
             return None
+
+        user_name = str(ident.get("user_name") or "").strip()
+        acc_name = str(ident.get("account_name") or "").strip()
         name = str(ident.get("name") or "").strip()
-        return name or None
+
+        # Prefer Account when User appears to be the server owner.
+        if user_name and acc_name and _norm_user(user_name) != _norm_user(acc_name):
+            if owner_username and _norm_user(user_name) == _norm_user(owner_username):
+                return acc_name
+            # Otherwise managed/home user and keep User.
+            return user_name
+
+        return name or user_name or acc_name or None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
         try:
             if not self._plex:
                 return ev
-            acc = self._resolve_account_from_session(ev.session_key)
+            owner_username = None
+            try:
+                cfg = self._active_cfg()
+                px = (cfg.get("plex") or {})
+                inst = {}
+                if self._instance_id and str(self._instance_id) != "default":
+                    inst = ((px.get("instances") or {}).get(str(self._instance_id)) or {})
+                owner_username = str((inst.get("username") or px.get("username") or "")).strip() or None
+            except Exception:
+                owner_username = None
+            acc = self._resolve_account_from_session(ev.session_key, owner_username=owner_username)
             if acc and _norm_user(acc) != _norm_user(ev.account or ""):
                 ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
             rk = self._find_rating_key(ev.raw or {})
             if not rk:
                 if not ev.account:
-                    acc = self._resolve_account_from_session(ev.session_key)
+                    # session identity resolution.
+                    acc = self._resolve_account_from_session(ev.session_key, owner_username=owner_username)
                     if acc:
                         return ScrobbleEvent(**{**ev.__dict__, "account": acc})
                 return ev
