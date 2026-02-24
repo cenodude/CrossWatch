@@ -252,6 +252,54 @@ function countsFor(records) {
   return out;
 }
 
+function countsFromSnapshotMeta(meta, fallback) {
+  const base = fallback && typeof fallback === "object"
+    ? { ...fallback }
+    : { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 };
+  if (!meta || typeof meta !== "object") return base;
+
+  const by = meta.by_type && typeof meta.by_type === "object" ? meta.by_type : null;
+  if (!by) return base;
+
+  const out = { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 };
+  const feat = String(meta.feature || "").toLowerCase();
+
+  for (const [rawKey, rawVal] of Object.entries(by)) {
+    const n = Number(rawVal || 0);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const k = String(rawKey || "").toLowerCase();
+    if (["movie", "movies", "film", "films"].includes(k)) {
+      out.movie += n;
+      continue;
+    }
+    if (["episode", "episodes"].includes(k)) {
+      out.episode += n;
+      continue;
+    }
+    if (["season", "seasons"].includes(k)) {
+      out.season += n;
+      continue;
+    }
+    if (["show", "shows", "series", "anime"].includes(k)) {
+      out.show += n;
+      continue;
+    }
+    if (k === "tv") {
+      // History snapshot stats often aggregate TV rows as `tv` while the diff UI shows episode/show pills.
+      if (feat === "history") out.episode += n;
+      else out.show += n;
+      continue;
+    }
+    out.unknown += n;
+  }
+
+  const total = Number(meta.count || 0);
+  out.total = Number.isFinite(total) && total > 0
+    ? total
+    : out.movie + out.show + out.season + out.episode + out.unknown;
+  return out;
+}
+
 function renderCountsPills(c) {
   return `
     <div class="cc-pills">
@@ -585,15 +633,18 @@ export default {
       if (as) as.textContent = `${(a.created_at || "").replace("T", " ").replace("Z", "")} • ${a.count ?? "?"} items`;
       if (bs) bs.textContent = `${(b.created_at || "").replace("T", " ").replace("Z", "")} • ${b.count ?? "?"} items`;
 
+      const displayCountsA = countsFromSnapshotMeta(a, state.countsA);
+      const displayCountsB = countsFromSnapshotMeta(b, state.countsB);
+
       const ap = Q("#cc-a-pills", root);
       const bp = Q("#cc-b-pills", root);
-      if (ap) ap.innerHTML = renderCountsPills(state.countsA);
-      if (bp) bp.innerHTML = renderCountsPills(state.countsB);
+      if (ap) ap.innerHTML = renderCountsPills(displayCountsA);
+      if (bp) bp.innerHTML = renderCountsPills(displayCountsB);
 
       const atot = Q("#cc-a-total", root);
       const btot = Q("#cc-b-total", root);
-      if (atot) atot.textContent = `Total: ${state.countsA.total}`;
-      if (btot) btot.textContent = `Total: ${state.countsB.total}`;
+      if (atot) atot.textContent = `Total: ${displayCountsA.total}`;
+      if (btot) btot.textContent = `Total: ${displayCountsB.total}`;
     };
 
     const sortRows = (rows) => {
