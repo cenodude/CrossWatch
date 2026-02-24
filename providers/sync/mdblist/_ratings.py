@@ -529,7 +529,7 @@ def build_index(
 
     sess = adapter.client.session
     out: dict[str, dict[str, Any]] = {}
-    page = 1
+    offset = 0
     pages = 0
     latest_seen: str | None = None
 
@@ -539,12 +539,12 @@ def build_index(
             sess,
             "GET",
             URL_LIST,
-            params={"apikey": apikey, "page": page, "limit": per_page, "since": since_req},
+            params={"apikey": apikey, "offset": offset, "limit": per_page, "since": since_req},
             timeout=timeout,
             max_retries=retries,
         )
         if r.status_code != 200:
-            _log(f"GET /sync/ratings page {page} -> {r.status_code}: {(r.text or '')[:160]}")
+            _log(f"GET /sync/ratings offset {offset} -> {r.status_code}: {(r.text or '')[:160]}")
             return dict(cached)
 
         data = r.json() if (r.text or "").strip() else {}
@@ -675,7 +675,7 @@ def build_index(
         pages += 1
         if not bool(has_more) or pages >= max_pages:
             break
-        page += 1
+        offset += per_page
     merged = dict(cached)
     if out:
         for k, v in out.items():
