@@ -72,6 +72,10 @@ def _ids_from_meta(meta: dict[str, Any]) -> dict[str, str]:
     return ids
 
 
+def _norm_user(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
 def _normalize_units(offset: int, duration: int) -> tuple[int, int]:
     # Plex notifications sometimes mix seconds/milliseconds depending on the shape.
     o = int(offset or 0)
@@ -339,24 +343,38 @@ class Dispatcher:
             sink.send(ev, cfg)
 
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
-        if ev.session_key and str(ev.session_key) in self._session_ok:
-            return True
+        cache_key: str | None = None
+        if ev.session_key:
+            cache_key = f"{ev.session_key}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
+            if cache_key in self._session_ok:
+                return True
+
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
+        if not isinstance(filt, dict):
+            filt = {}
+        if not filt:
+            cfg2 = _load_config() or {}
+            filt2 = (((cfg2.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
+            filt = filt2 if isinstance(filt2, dict) else {}
+
         wl = filt.get("username_whitelist")
         want_server = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
+        if not want_server:
+            cfg2 = _load_config() or {}
+            want_server = ((cfg2.get("scrobble") or {}).get("watch") or {}).get("filters", {}).get("server_uuid") or (cfg2.get("plex") or {}).get("server_uuid")
         if want_server and ev.server_uuid and str(ev.server_uuid) != str(want_server):
             return False
 
         def _allow() -> bool:
-            if ev.session_key:
-                self._session_ok.add(str(ev.session_key))
+            if cache_key:
+                self._session_ok.add(cache_key)
             return True
 
         if not wl:
             return _allow()
 
         def norm(s: str) -> str:
-            return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+            return _norm_user(s)
 
         wl_list = wl if isinstance(wl, list) else [wl]
 
