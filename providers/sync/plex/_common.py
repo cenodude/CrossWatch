@@ -33,6 +33,13 @@ def _pair_scope() -> str | None:
     return None
 
 
+
+
+def _is_capture_mode() -> bool:
+    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
     s = s.strip("_ ")
@@ -43,7 +50,7 @@ def _safe_scope(value: str) -> str:
 
 def scope_safe() -> str:
     scope = _pair_scope()
-    return _safe_scope(scope) if scope else ""
+    return _safe_scope(scope) if scope else "unscoped"
 
 
 def state_file(name: str) -> Path:
@@ -51,7 +58,7 @@ def state_file(name: str) -> Path:
     p = Path(name)
     scoped = STATE_DIR / (f"{p.stem}.{safe}{p.suffix}" if p.suffix else f"{name}.{safe}")
     legacy = STATE_DIR / (f"{p.stem}{p.suffix}" if p.suffix else name)
-    if not scoped.exists() and legacy.exists():
+    if (not _is_capture_mode()) and (not scoped.exists()) and legacy.exists():
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, scoped)
@@ -61,7 +68,7 @@ def state_file(name: str) -> Path:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         return json.loads(path.read_text("utf-8") or "{}")

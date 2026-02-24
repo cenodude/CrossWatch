@@ -17,6 +17,7 @@ from ._common import (
     update_watermarks_from_last_activities,
     state_file,
     _pair_scope,
+    _is_capture_mode,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal
@@ -40,7 +41,7 @@ def _last_limit_path() -> Path:
 
 
 def _record_limit_error(feature: str) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +97,7 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
@@ -164,7 +165,7 @@ def _tick(prog: Any, value: int, total: int | None = None, *, force: bool = Fals
 
 # Shadow cache
 def _shadow_load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {"etag": None, "ts": 0, "items": {}}
     p = _shadow_path()
     _migrate_legacy_json(p)
@@ -175,7 +176,7 @@ def _shadow_load() -> dict[str, Any]:
 
 
 def _shadow_save(etag: str | None, items: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         _shadow_path().parent.mkdir(parents=True, exist_ok=True)
@@ -195,7 +196,7 @@ def _now_iso() -> str:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     p = _unresolved_path()
     _migrate_legacy_json(p)
@@ -206,7 +207,7 @@ def _load_unresolved() -> dict[str, Any]:
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         _unresolved_path().parent.mkdir(parents=True, exist_ok=True)

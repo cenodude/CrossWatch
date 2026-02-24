@@ -17,6 +17,7 @@ from ._common import (
     normalize as emby_normalize,
     resolve_item_id,
     _pair_scope,
+    _is_capture_mode,
     _series_minimal_from_episode,
     prefetch_series_minimals,
 )
@@ -191,7 +192,7 @@ def _prefetch_played_ts(
             
 # unresolved tracking
 def _unres_load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_unresolved_path(), "r", encoding="utf-8") as f:
@@ -201,7 +202,7 @@ def _unres_load() -> dict[str, Any]:
 
 
 def _unres_save(obj: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _unresolved_path()
@@ -238,7 +239,7 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
 
 # shadow + blackbox
 def _shadow_load() -> dict[str, int]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_shadow_path(), "r", encoding="utf-8") as f:
@@ -249,7 +250,7 @@ def _shadow_load() -> dict[str, int]:
 
 
 def _shadow_save(d: Mapping[str, int]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _shadow_path()
@@ -278,7 +279,7 @@ def _bb_paths() -> list[str]:
 
 
 def _bb_load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     merged: dict[str, Any] = {}
     for p in _bb_paths():
@@ -293,7 +294,7 @@ def _bb_load() -> dict[str, Any]:
 
 
 def _bb_save(d: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     os.makedirs(os.path.dirname(_blackbox_path()), exist_ok=True)
     for p in _bb_paths():

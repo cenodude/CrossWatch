@@ -29,6 +29,13 @@ def _pair_scope() -> str | None:
     return None
 
 
+
+
+def _is_capture_mode() -> bool:
+    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
     s = s.strip("_ ")
@@ -58,7 +65,7 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
@@ -73,7 +80,7 @@ def _migrate_legacy_json(path: Path) -> None:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     _migrate_legacy_json(path)
     try:
@@ -99,7 +106,7 @@ def _watermark_path() -> Path:
 
 
 def load_watermarks() -> dict[str, str]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     raw = _read_json(_watermark_path())
     return {k: str(v) for k, v in (raw or {}).items() if isinstance(k, str) and isinstance(v, str) and v.strip()}

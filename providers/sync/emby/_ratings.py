@@ -10,7 +10,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from .._log import log as cw_log
-from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file, _pair_scope
+from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file, _pair_scope, _is_capture_mode
 
 def _unresolved_path() -> str:
     return state_file("emby_ratings.unresolved.json")
@@ -25,7 +25,7 @@ def _now_iso_z() -> str:
 
 
 def _meta_load() -> dict[str, dict[str, Any]]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_meta_path(), "r", encoding="utf-8") as f:
@@ -40,7 +40,7 @@ def _meta_load() -> dict[str, dict[str, Any]]:
 
 
 def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _meta_path()
@@ -71,7 +71,7 @@ def _error(msg: str, **fields: Any) -> None:
 
 
 def _load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_unresolved_path(), "r", encoding="utf-8") as f:
@@ -81,7 +81,7 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _unresolved_path()

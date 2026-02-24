@@ -18,6 +18,7 @@ from ._common import (
     jf_scope_ratings,
     normalize as jelly_normalize,
     _pair_scope,
+    _is_capture_mode,
 )
 
 def _unresolved_path() -> str:
@@ -36,7 +37,7 @@ def _now_iso_z() -> str:
 
 
 def _meta_load() -> dict[str, dict[str, Any]]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_meta_path(), "r", encoding="utf-8") as f:
@@ -51,7 +52,7 @@ def _meta_load() -> dict[str, dict[str, Any]]:
 
 
 def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _meta_path()
@@ -67,7 +68,7 @@ def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
 
 # shadow 
 def _shadow_load() -> dict[str, int]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_shadow_path(), "r", encoding="utf-8") as f:
@@ -78,7 +79,7 @@ def _shadow_load() -> dict[str, int]:
 
 
 def _shadow_save(d: Mapping[str, int]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _shadow_path()
@@ -117,7 +118,7 @@ def _dbg_enabled() -> bool:
 
 # unresolved store
 def _load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_unresolved_path(), "r", encoding="utf-8") as f:
@@ -127,7 +128,7 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _unresolved_path()

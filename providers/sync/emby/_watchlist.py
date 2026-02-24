@@ -7,6 +7,7 @@ import os
 from typing import Any, Iterable, Mapping
 
 from ._common import (
+    _is_capture_mode,
     state_file,
     normalize as emby_normalize,
     key_of as emby_key_of,
@@ -58,6 +59,8 @@ def _error(msg: str, **fields: Any) -> None:
 
 
 def _load() -> dict[str, Any]:
+    if _is_capture_mode():
+        return {}
     try:
         with open(_unresolved_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -66,6 +69,8 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
+    if _is_capture_mode():
+        return
     try:
         os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)
         tmp = _unresolved_path() + ".tmp"

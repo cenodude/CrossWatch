@@ -27,6 +27,13 @@ def _pair_scope() -> str | None:
     return None
 
 
+
+
+def _is_capture_mode() -> bool:
+    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
     s = s.strip("_ ")
@@ -107,7 +114,7 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
@@ -122,6 +129,8 @@ def _migrate_legacy_json(path: Path) -> None:
 
 
 def read_json(path: Path) -> dict[str, Any]:
+    if _is_capture_mode():
+        return {}
     _migrate_legacy_json(path)
     try:
         return json.loads(path.read_text("utf-8") or "{}")
@@ -130,6 +139,8 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int | None = 2, sort_keys: bool = True) -> None:
+    if _is_capture_mode():
+        return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")

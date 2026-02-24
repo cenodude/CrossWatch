@@ -24,6 +24,13 @@ def _pair_scope() -> str | None:
     return None
 
 
+
+
+def _is_capture_mode() -> bool:
+    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
     s = s.strip("_ ")
@@ -66,7 +73,7 @@ def _migrate_legacy_json(path: Path) -> None:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     _migrate_legacy_json(path)
     try:

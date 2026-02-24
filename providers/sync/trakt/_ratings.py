@@ -20,6 +20,7 @@ from ._common import (
     update_watermarks_from_last_activities,
     state_file,
     _pair_scope,
+    _is_capture_mode,
 )
 from cw_platform.id_map import minimal as id_minimal
 from .._log import log as cw_log
@@ -70,7 +71,7 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
@@ -114,7 +115,7 @@ def _chunk_iter(lst: list[dict[str, Any]], size: int) -> Iterable[list[dict[str,
 
 
 def _load_cache_doc() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         p = _cache_path()
@@ -127,7 +128,7 @@ def _load_cache_doc() -> dict[str, Any]:
 
 
 def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         p = _cache_path()

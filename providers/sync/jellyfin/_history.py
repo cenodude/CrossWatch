@@ -20,6 +20,7 @@ from ._common import (
     resolve_item_id,
     sleep_ms,
     _pair_scope,
+    _is_capture_mode,
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -53,7 +54,7 @@ def _warn(msg: str, **fields: Any) -> None:
 
 # unresolved
 def _unres_load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_unresolved_path(), "r", encoding="utf-8") as f:
@@ -63,7 +64,7 @@ def _unres_load() -> dict[str, Any]:
 
 
 def _unres_save(obj: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _unresolved_path()
@@ -100,7 +101,7 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
 
 # shadow
 def _shadow_load() -> dict[str, int]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_shadow_path(), "r", encoding="utf-8") as f:
@@ -111,7 +112,7 @@ def _shadow_load() -> dict[str, int]:
 
 
 def _shadow_save(d: Mapping[str, int]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _shadow_path()
@@ -126,7 +127,7 @@ def _shadow_save(d: Mapping[str, int]) -> None:
 
 # blackbox
 def _bb_load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_blackbox_path(), "r", encoding="utf-8") as f:
@@ -136,7 +137,7 @@ def _bb_load() -> dict[str, Any]:
 
 
 def _bb_save(d: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path = _blackbox_path()

@@ -19,6 +19,7 @@ from ._common import (
     extract_latest_ts,
     state_file,
     _pair_scope,
+    _is_capture_mode,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -45,7 +46,7 @@ def _cache_path() -> Path:
 
 
 def _bust_index_cache(reason: str) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         p = _cache_path()
@@ -72,7 +73,7 @@ def _not_found_count(nf: Any) -> int:
     return c
 
 def _record_limit_error(feature: str) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
@@ -119,7 +120,7 @@ def _legacy_path(path: Path) -> Path | None:
 def _migrate_legacy_json(path: Path) -> None:
     if path.exists():
         return
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     legacy = _legacy_path(path)
     if not legacy or not legacy.exists():
@@ -246,7 +247,7 @@ def _history_collection_types(adapter: Any) -> set[str]:
 
 
 def _load_unresolved() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     p = _unresolved_path()
     _migrate_legacy_json(p)
@@ -257,7 +258,7 @@ def _load_unresolved() -> dict[str, Any]:
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
@@ -269,7 +270,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
 
 
 def _load_cache_doc() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         p = _cache_path()
@@ -282,7 +283,7 @@ def _load_cache_doc() -> dict[str, Any]:
 
 
 def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         _cache_path().parent.mkdir(parents=True, exist_ok=True)

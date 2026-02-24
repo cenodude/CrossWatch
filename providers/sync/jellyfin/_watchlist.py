@@ -30,6 +30,7 @@ from ._common import (
     key_of as jelly_key_of,
     normalize as jelly_normalize,
     _pair_scope,
+    _is_capture_mode,
 )
 
 def _unresolved_path() -> str:
@@ -55,7 +56,7 @@ def _warn(msg: str, **fields: Any) -> None:
 
 
 def _load() -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_unresolved_path(), "r", encoding="utf-8") as f:
@@ -65,7 +66,7 @@ def _load() -> dict[str, Any]:
 
 
 def _save(obj: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         os.makedirs(os.path.dirname(_unresolved_path()), exist_ok=True)

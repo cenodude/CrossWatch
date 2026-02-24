@@ -20,6 +20,10 @@ def pair_scoped() -> bool:
     return _truthy_env("CW_CROSSWATCH_PAIR_SCOPED")
 
 
+def _capture_mode() -> bool:
+    return _truthy_env("CW_CAPTURE_MODE")
+
+
 def _pair_scope() -> str | None:
     if not pair_scoped():
         return "unscoped"

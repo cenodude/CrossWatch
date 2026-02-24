@@ -16,6 +16,7 @@ from .._log import log as cw_log
 from .._mod_common import request_with_retries
 from ._common import (
     _pair_scope,
+    _is_capture_mode,
     as_epoch,
     cfg_bool,
     cfg_int,
@@ -128,7 +129,7 @@ def _shadow_load() -> dict[str, Any]:
 
 
 def _shadow_save(items: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     p = _shadow_path()
     try:
@@ -182,7 +183,7 @@ def _load_unresolved() -> dict[str, Any]:
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     p = _unresolved_path()
     try:

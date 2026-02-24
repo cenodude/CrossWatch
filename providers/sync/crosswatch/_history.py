@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    _capture_mode,
     _pair_scope,
     latest_snapshot_file,
     latest_state_file,
@@ -180,7 +181,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
 
 
 def _atomic_write(path: Path, payload: Any) -> None:
-    if _pair_scope() is None:
+    if _capture_mode() or _pair_scope() is None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,7 +193,7 @@ def _atomic_write(path: Path, payload: Any) -> None:
 
 
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
-    if _pair_scope() is None:
+    if _capture_mode() or _pair_scope() is None:
         return
     payload = {"ts": int(time.time()), "items": dict(items or {})}
     _atomic_write(_history_path(adapter), payload)
@@ -213,7 +214,7 @@ def _list_snapshots(adapter: Any) -> list[Path]:
 
 
 def _apply_retention(adapter: Any) -> None:
-    if _pair_scope() is None:
+    if _capture_mode() or _pair_scope() is None:
         return
     cfg = getattr(adapter, "cfg", None)
     retention_days = int(getattr(cfg, "retention_days", 30) or 0)
@@ -251,7 +252,7 @@ def _apply_retention(adapter: Any) -> None:
 
 
 def _snapshot_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
-    if _pair_scope() is None:
+    if _capture_mode() or _pair_scope() is None:
         return
     cfg = getattr(adapter, "cfg", None)
     auto = getattr(cfg, "auto_snapshot", True)
@@ -290,7 +291,7 @@ def _snapshot_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> Non
 
 
 def _load_unresolved(adapter: Any) -> dict[str, Any]:
-    if _pair_scope() is None:
+    if _capture_mode() or _pair_scope() is None:
         return {}
     path = _unresolved_path(adapter)
     try:
@@ -300,7 +301,7 @@ def _load_unresolved(adapter: Any) -> dict[str, Any]:
 
 
 def _save_unresolved(adapter: Any, data: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _capture_mode() or _pair_scope() is None:
         return
     _atomic_write(_unresolved_path(adapter), dict(data or {}))
 
@@ -327,6 +328,8 @@ def _record_unresolved(adapter: Any, items: Iterable[Mapping[str, Any]]) -> list
 
 
 def _maybe_restore(adapter: Any) -> None:
+    if _capture_mode():
+        return
     cfg = getattr(adapter, "cfg", None)
     restore_id = getattr(cfg, "restore_history", None)
     if not restore_id:

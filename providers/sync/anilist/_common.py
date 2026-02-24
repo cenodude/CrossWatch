@@ -27,6 +27,13 @@ def _pair_scope() -> str | None:
     return None
 
 
+
+
+def _is_capture_mode() -> bool:
+    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
+
+
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))
     s = s.strip("_ ")
@@ -39,7 +46,9 @@ def state_file(name: str) -> Path:
     scope = _pair_scope()
     p = Path(name)
     if not scope:
-        return STATE_DIR / p.name
+        if p.suffix:
+            return STATE_DIR / f"{p.stem}.unscoped{p.suffix}"
+        return STATE_DIR / f"{name}.unscoped"
     safe = _safe_scope(scope)
     if p.suffix:
         return STATE_DIR / f"{p.stem}.{safe}{p.suffix}"
@@ -47,9 +56,7 @@ def state_file(name: str) -> Path:
 
 
 def read_json(path: Path) -> dict[str, Any]:
-    if ".unscoped." in path.name:
-        return {}
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         return json.loads(path.read_text("utf-8") or "{}")
@@ -58,8 +65,6 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_keys: bool = True) -> None:
-    if ".unscoped." in path.name:
-        return
     if _pair_scope() is None:
         return
     try:
