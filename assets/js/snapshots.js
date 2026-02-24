@@ -428,12 +428,8 @@ function _diffPickAB() {
   const p1 = String(picks[1] || "");
   const s0 = _findSnapByPath(p0);
   const s1 = _findSnapByPath(p1);
-  if (state.diffManualOrder) return { a: p0, b: p1, sa: s0, sb: s1 };
 
-  const t0 = _snapEpoch(s0);
-  const t1 = _snapEpoch(s1);
-  if (t0 && t1 && t0 > t1) return { a: p1, b: p0, sa: s1, sb: s0 };
-  if (t0 === t1 && p0 > p1) return { a: p1, b: p0, sa: s1, sb: s0 };
+  // Keep explicit UI selection order stable: first checked/dragged card is A, second is B.
   return { a: p0, b: p1, sa: s0, sb: s1 };
 }
 
