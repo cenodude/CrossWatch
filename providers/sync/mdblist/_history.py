@@ -501,12 +501,11 @@ def build_index(
 
     out: dict[str, dict[str, Any]] = {}
     latest_seen: str | None = None
-    page = 1
+    offset = 0
     pages = 0
     tick = 0
-
     while True:
-        params: dict[str, Any] = {"apikey": apikey, "page": page, "limit": per_page, "since": since_req}
+        params: dict[str, Any] = {"apikey": apikey, "offset": offset, "limit": per_page, "since": since_req}
         try:
             r = request_with_retries(
                 sess,
@@ -517,11 +516,11 @@ def build_index(
                 max_retries=retries,
             )
         except Exception as e:
-            _log(f"GET watched delta page {page} failed: {type(e).__name__}: {e}")
+            _log(f"GET watched delta offset {offset} failed: {type(e).__name__}: {e}")
             break
 
         if r.status_code != 200:
-            _log(f"GET watched delta page {page} -> {r.status_code}: {(r.text or '')[:160]}")
+            _log(f"GET watched delta offset {offset} -> {r.status_code}: {(r.text or '')[:160]}")
             break
 
         data = r.json() if (r.text or "").strip() else {}
@@ -566,12 +565,10 @@ def build_index(
         if isinstance(pag, Mapping) and pag.get("has_more") is False:
             break
 
-        rows_total = sum(len(v) for v in sync_buckets.values() if isinstance(v, list))
+        rows_total = sum(len(v) for v in buckets.values() if isinstance(v, list))
         if rows_total == 0:
             break
-
-        page += 1
-
+        offset += per_page
     merged = dict(cached)
     if out:
         for k, v in out.items():
