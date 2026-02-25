@@ -11,7 +11,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
-START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
+START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
 UA = os.getenv("CW_UA", "CrossWatch/3.2.1 (SIMKL)")
 
