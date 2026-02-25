@@ -286,9 +286,15 @@ def _canonical_item_key(provider: str, feature: Feature, orig_key: str, item: Ma
     raw_show_ids = item.get("show_ids")
     show_ids = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
 
+    # Prefer the provider's own native ID
     native: dict[str, list[str]] = {
         "TRAKT": ["trakt"],
         "SIMKL": ["simkl", "simkl_id"],
+        "TMDB": ["tmdb"],
+        "MDBLIST": ["mdblist"],
+        "PLEX": ["plex", "guid"],
+        "JELLYFIN": ["jellyfin"],
+        "EMBY": ["emby"],
         "ANILIST": ["anilist"],
     }
 
@@ -1389,4 +1395,3 @@ def diff_snapshots_extended(
         "total": len(rows_all),
         "items": page_rows,
     }
-
