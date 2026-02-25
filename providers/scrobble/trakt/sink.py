@@ -676,6 +676,11 @@ class TraktSink(ScrobbleSink):
         last_sess = p_sess
         action = ev.action
 
+        # Trakt rejects PAUSE at high progress and expects STOP instead.
+        if action == "pause" and p_send >= thr:
+            _log(f"Promote PAUSE→STOP at {p_send}% (thr={thr})", "DEBUG")
+            action = "stop"
+
         comp = _complete_at(cfg)
         suppress_at = _watch_suppress_start_at(cfg)
 
