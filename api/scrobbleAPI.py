@@ -525,6 +525,28 @@ def api_currently_watching() -> JSONResponse:
                     vv["_key"] = str(k)
                     items.append(vv)
             items.sort(key=lambda x: int(x.get("updated") or 0), reverse=True)
+
+            # Apply global watch filters
+            try:
+                cfg0 = load_config() or {}
+                scrobble = (cfg0.get("scrobble") or {}) or {}
+                watch_cfg = (scrobble.get("watch") or {}) or {}
+                flt = (watch_cfg.get("filters") or {}) or {}
+
+                def _norm(v: Any) -> str:
+                    return str(v or "").strip().lower()
+
+                wl = flt.get("username_whitelist") or []
+                wl_norm = {_norm(u) for u in wl if str(u or "").strip()}
+                if wl_norm:
+                    items = [it for it in items if _norm(it.get("account")) in wl_norm]
+
+                srv = str(flt.get("server_uuid") or "").strip()
+                if srv:
+                    items = [it for it in items if str(it.get("server_uuid") or "").strip() == srv]
+            except Exception:
+                pass
+
             streams = items
 
 
