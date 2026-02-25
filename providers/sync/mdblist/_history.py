@@ -65,7 +65,7 @@ def _type_norm(value: object) -> str:
 
 
 def _sync_visible(item: Mapping[str, Any]) -> bool:
-    return _type_norm(item.get("type")) in ("movie", "episode")
+    return _type_norm(item.get("type")) in ("movie", "show", "season", "episode")
 
 
 
@@ -488,13 +488,22 @@ def build_index(
         return cached
 
     cfg_since = str(cfg.get("history_since") or "").strip() or None
-    since_wm = START_OF_TIME_ISO if force_baseline else coalesce_since("history", cfg_since, env_any="MDBLIST_HISTORY_SINCE")
-    since_req = _pad_since_iso(since_wm)
+    if not wm and not force_baseline:
+        since_req: str | None = None
+    else:
+        since_wm = START_OF_TIME_ISO if force_baseline else coalesce_since("history", cfg_since, env_any="MDBLIST_HISTORY_SINCE")
+        since_req = _pad_since_iso(since_wm)
 
     if acts_watched_iso:
-        _log(f"history changed (watched_at={acts_watched_iso} watermark={wm or '-'}) - delta since={since_req}")
+        if since_req:
+            _log(f"history changed (watched_at={acts_watched_iso} watermark={wm or '-'}) - delta since={since_req}")
+        else:
+            _log(f"history changed (watched_at={acts_watched_iso} watermark={wm or '-'}) - baseline full fetch (no since)")
     else:
-        _log(f"history delta since={since_req}")
+        if since_req:
+            _log(f"history delta since={since_req}")
+        else:
+            _log("history baseline full fetch (no since)")
 
     prog_factory = getattr(adapter, "progress_factory", None)
     prog: Any = prog_factory("history") if callable(prog_factory) else None
@@ -505,7 +514,9 @@ def build_index(
     pages = 0
     tick = 0
     while True:
-        params: dict[str, Any] = {"apikey": apikey, "offset": offset, "limit": per_page, "since": since_req}
+        params: dict[str, Any] = {"apikey": apikey, "offset": offset, "limit": per_page}
+        if since_req:
+            params["since"] = since_req
         try:
             r = request_with_retries(
                 sess,
@@ -530,19 +541,26 @@ def build_index(
             "seasons": data.get("seasons") or [],
             "episodes": data.get("episodes") or [],
         }
-        sync_buckets = {
-            "movies": buckets["movies"],
-            "episodes": buckets["episodes"],
-        }
-
         added = 0
-        for row in sync_buckets["movies"]:
+        for row in buckets["movies"]:
             m = _row_movie(row) if isinstance(row, Mapping) else None
             if m:
                 _merge_event(out, m)
                 latest_seen = _max_iso(latest_seen, m.get("watched_at"))
                 added += 1
-        for row in sync_buckets["episodes"]:
+        for row in buckets["shows"]:
+            m = _row_show(row) if isinstance(row, Mapping) else None
+            if m:
+                _merge_event(out, m)
+                latest_seen = _max_iso(latest_seen, m.get("watched_at"))
+                added += 1
+        for row in buckets["seasons"]:
+            m = _row_season(row) if isinstance(row, Mapping) else None
+            if m:
+                _merge_event(out, m)
+                latest_seen = _max_iso(latest_seen, m.get("watched_at"))
+                added += 1
+        for row in buckets["episodes"]:
             m = _row_episode(row) if isinstance(row, Mapping) else None
             if m:
                 _merge_event(out, m)
