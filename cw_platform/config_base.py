@@ -114,7 +114,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "ratings_chunk_size": 25,                       # Batch size for POST/REMOVE
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes
         "ratings_max_backoff_ms": 8000,                 # Max backoff time for retries
-        "ratings_since": "1970-01-01T00:00:00Z",        # First-run baseline; watermark overrides after
+        "ratings_since": "1900-01-01T00:00:02Z",        # First-run baseline; watermark overrides after
 
         # History
         "history_per_page": 1000,                       # Items per page for /sync/watched delta
@@ -122,7 +122,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "history_chunk_size": 25,                       # Batch size for watched/unwatched writes
         "history_write_delay_ms": 600,                  # Optional pacing between writes
         "history_max_backoff_ms": 8000,                 # Max backoff time for retries
-        "history_since": "1970-01-01T00:00:00Z"         # First-run baseline; watermark overrides after
+        "history_since": "1900-01-01T00:00:02Z"         # First-run baseline; watermark overrides after
     },
     
      "tautulli": {
