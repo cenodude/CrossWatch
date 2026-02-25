@@ -339,6 +339,7 @@ class WatchService:
         self._last_seen: dict[str, float] = {}
         self._last_emit: dict[str, tuple[str, int]] = {}
         self._attempt = 0
+        self._no_sessions_access = False  # True when token cannot access /status/sessions (shared server)
         self._max_seen: dict[str, int] = {}
         self._first_seen: dict[str, float] = {}
         self._last_pause_ts: dict[str, float] = {}
@@ -860,7 +861,14 @@ class WatchService:
             if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
                 return stale_hit
             return None
-        except Exception:
+        except Exception as e:
+            # allow falling back to configured username later.
+            try:
+                msg = str(e).lower()
+                if any(k in msg for k in ("401", "403", "unauthorized", "forbidden")):
+                    self._no_sessions_access = True
+            except Exception:
+                pass
             if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
                 return stale_hit
             return None
@@ -1032,7 +1040,7 @@ class WatchService:
             fallback_username = ""
             try:
                 if str(self._instance_id) != "default":
-                    fallback_username = str(inst.get("username") or px.get("username") or "").strip()
+                    fallback_username = str(inst.get("username") or "").strip()
             except Exception:
                 fallback_username = ""
             defaults = {
@@ -1074,6 +1082,15 @@ class WatchService:
             acc = self._resolve_account_from_session(ev.session_key)
             if acc and _norm_user(acc) != _norm_user(ev.account or ""):
                 ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
+
+            # Fall back to configured username.
+            if not str(ev.account or "").strip() and getattr(self, "_no_sessions_access", False):
+                cfg_user = (str(inst.get("username") or "").strip() if str(self._instance_id) != "default" else str(px.get("username") or "").strip())
+                if cfg_user:
+                    self._dbg(
+                        f"no sessions access; assume token user '{cfg_user}' inst={self._instance_id} sess={ev.session_key}"
+                    )
+                    ev = ScrobbleEvent(**{**ev.__dict__, "account": cfg_user})
 
             # Drop unresolved/no-user alerts before filter logging
             if not str(ev.account or "").strip():
