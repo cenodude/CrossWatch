@@ -238,7 +238,9 @@ function clearStickyNote(id) {
       syncHiddenServerInputs();
     } catch {}
     try {
-      if (!STATE._pfMute && String(p || "").startsWith("scrobble.watch.filters.")) saveCurrentProviderFilters();
+      if (!STATE._pfMute && !isRoutesMode() && String(p || "").startsWith("scrobble.watch.filters.")) {
+        saveCurrentProviderFilters();
+      }
     } catch {}
   }
 
@@ -810,6 +812,11 @@ function pickNonDuplicateTemplate(routes, baseProv, baseSink) {
 
   function applyRouteView(route) {
     if (!route) return;
+    // Clear transient route-specific picker notes when switching routes
+    try {
+      setNote("sc-users-note", "");
+      setNote("sc-uuid-note", "");
+    } catch {}
     const prov = String(route.provider || "").trim().toLowerCase();
     const sink = String(route.sink || "").trim().toLowerCase();
     if (prov) deepSet(STATE.cfg, "scrobble.watch.provider", prov);
@@ -3218,13 +3225,13 @@ async function hydrateJellyfin() {
         refreshWatcher();
       } catch {}
       try {
-        saveCurrentProviderFilters(prev);
+        if (!isRoutesMode()) saveCurrentProviderFilters(prev);
       } catch {}
       STATE.ui.watchProvider = val;
       write("scrobble.watch.provider", val);
       persistConfigPaths([["scrobble.watch.provider", val]], "sc-pms-note");
       try {
-        applyProviderFilters(val);
+        if (!isRoutesMode()) applyProviderFilters(val);
       } catch {}
       try {
         closeUserPicker();
