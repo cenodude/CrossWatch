@@ -791,10 +791,18 @@ class WatchService:
             return None
         now = time.time()
         cache = getattr(self, "_sess_identity_cache", None)
+        stale_hit = None
+        stale_age = None
         if isinstance(cache, dict):
             hit = cache.get(sk)
-            if isinstance(hit, dict) and (now - float(hit.get("ts") or 0.0)) < 15.0:
-                return hit
+            if isinstance(hit, dict):
+                try:
+                    stale_age = now - float(hit.get("ts") or 0.0)
+                except Exception:
+                    stale_age = None
+                stale_hit = hit
+                if stale_age is not None and stale_age < 15.0:
+                    return hit
         try:
             el: Any = self._plex.query("/status/sessions")
             if el is None or not hasattr(el, "iter"):
@@ -846,50 +854,35 @@ class WatchService:
                     nm = str(ident.get("name") or "").strip()
                     if nm:
                         uc[sk] = (nm, now)
-            return ident
+            if ident:
+                return ident
+            
+            if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
+                return stale_hit
+            return None
         except Exception:
+            if isinstance(stale_hit, dict) and stale_age is not None and stale_age < 6 * 3600:
+                return stale_hit
             return None
 
-    def _resolve_account_from_session(self, session_key: str | None, owner_username: str | None = None) -> str | None:
+    def _resolve_account_from_session(self, session_key: str | None) -> str | None:
         ident = self._resolve_session_identity(session_key)
         if not isinstance(ident, dict):
             return None
-
-        user_name = str(ident.get("user_name") or "").strip()
-        acc_name = str(ident.get("account_name") or "").strip()
         name = str(ident.get("name") or "").strip()
-
-        # Prefer Account when User appears to be the server owner.
-        if user_name and acc_name and _norm_user(user_name) != _norm_user(acc_name):
-            if owner_username and _norm_user(user_name) == _norm_user(owner_username):
-                return acc_name
-            # Otherwise managed/home user and keep User.
-            return user_name
-
-        return name or user_name or acc_name or None
+        return name or None
 
     def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
         try:
             if not self._plex:
                 return ev
-            owner_username = None
-            try:
-                cfg = self._active_cfg()
-                px = (cfg.get("plex") or {})
-                inst = {}
-                if self._instance_id and str(self._instance_id) != "default":
-                    inst = ((px.get("instances") or {}).get(str(self._instance_id)) or {})
-                owner_username = str((inst.get("username") or px.get("username") or "")).strip() or None
-            except Exception:
-                owner_username = None
-            acc = self._resolve_account_from_session(ev.session_key, owner_username=owner_username)
+            acc = self._resolve_account_from_session(ev.session_key)
             if acc and _norm_user(acc) != _norm_user(ev.account or ""):
                 ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
             rk = self._find_rating_key(ev.raw or {})
             if not rk:
                 if not ev.account:
-                    # session identity resolution.
-                    acc = self._resolve_account_from_session(ev.session_key, owner_username=owner_username)
+                    acc = self._resolve_account_from_session(ev.session_key)
                     if acc:
                         return ScrobbleEvent(**{**ev.__dict__, "account": acc})
                 return ev
@@ -1034,7 +1027,7 @@ class WatchService:
                 except Exception:
                     inst = {}
             defaults = {
-                "username": str((inst.get("username") or px.get("username") or "")).strip(),
+                "username": "",
                 "server_uuid": str((server_uuid or inst.get("server_uuid") or px.get("server_uuid") or "")).strip(),
             }
 
@@ -1055,11 +1048,11 @@ class WatchService:
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
 
-            if not ev.account:
-                u = (defaults.get("username") or "").strip()
-                if u:
-                    ev = ScrobbleEvent(**{**ev.__dict__, "account": u})
-
+            if not ev.account and ev.session_key:
+                prev_ev = self._last_event.get(str(ev.session_key))
+                prev_acc = str(getattr(prev_ev, "account", "") or "").strip() if prev_ev else ""
+                if prev_acc:
+                    ev = ScrobbleEvent(**{**ev.__dict__, "account": prev_acc})
 
             acc = self._resolve_account_from_session(ev.session_key)
             if acc and _norm_user(acc) != _norm_user(ev.account or ""):
