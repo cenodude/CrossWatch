@@ -1048,6 +1048,10 @@ class WatchService:
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
 
+            # Ignore idle/incomplete Plex alerts with no user and no session.
+            if not str(ev.account or "").strip() and not str(ev.session_key or "").strip():
+                return
+
             if not ev.account and ev.session_key:
                 prev_ev = self._last_event.get(str(ev.session_key))
                 prev_acc = str(getattr(prev_ev, "account", "") or "").strip() if prev_ev else ""
@@ -1057,6 +1061,10 @@ class WatchService:
             acc = self._resolve_account_from_session(ev.session_key)
             if acc and _norm_user(acc) != _norm_user(ev.account or ""):
                 ev = ScrobbleEvent(**{**ev.__dict__, "account": acc})
+
+            # Drop unresolved/no-user alerts before filter logging
+            if not str(ev.account or "").strip():
+                return
 
             if not self._passes_filters(ev):
                 self._throttled_filtered_log(ev)
