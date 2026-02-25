@@ -1026,9 +1026,22 @@ class WatchService:
                     inst = ((px.get("instances") or {}).get(str(self._instance_id)) or {})
                 except Exception:
                     inst = {}
+            # For non-default Plex instances (e.g. Home users), Plex alert payloads may not
+            # include an account name. Use the configured instance username as a fallback so
+            # events are not dropped as unresolved user alerts.
+            fallback_username = ""
+            try:
+                if str(self._instance_id) != "default":
+                    fallback_username = str(inst.get("username") or px.get("username") or "").strip()
+            except Exception:
+                fallback_username = ""
             defaults = {
-                "username": "",
-                "server_uuid": str((server_uuid or inst.get("server_uuid") or px.get("server_uuid") or "")).strip(),
+                "username": fallback_username,
+                "server_uuid": str((
+                    server_uuid or
+                    inst.get("server_uuid") or inst.get("machine_id") or
+                    px.get("server_uuid") or px.get("machine_id") or ""
+                )).strip(),
             }
 
             ev: ScrobbleEvent | None = None
@@ -1064,6 +1077,7 @@ class WatchService:
 
             # Drop unresolved/no-user alerts before filter logging
             if not str(ev.account or "").strip():
+                self._dbg(f"drop alert without resolved user; inst={self._instance_id} sess={ev.session_key}")
                 return
 
             if not self._passes_filters(ev):
