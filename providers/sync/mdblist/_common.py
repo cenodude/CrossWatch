@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, TypeGuard
 
@@ -14,7 +14,7 @@ from .._log import log as cw_log
 
 STATE_DIR = Path("/config/.cw_state")
 WATERMARK_PATH = STATE_DIR / "mdblist.watermarks.json"
-START_OF_TIME_ISO = "1970-01-01T00:00:00Z"
+START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -188,7 +188,9 @@ def as_epoch(iso: str) -> int | None:
 
 
 def as_iso(ts: int) -> str:
-    return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    dt = epoch + timedelta(seconds=int(ts))
+    return dt.isoformat().replace("+00:00", "Z")
 
 
 def max_iso(a: str | None, b: str | None) -> str | None:
@@ -207,7 +209,7 @@ def pad_since_iso(iso_ts: str, *, seconds: int = 2) -> str:
     ts = as_epoch(iso_ts)
     if ts is None:
         return iso_ts
-    return as_iso(max(0, ts - max(0, int(seconds))))
+    return as_iso(ts - max(0, int(seconds)))
 
 
 def get_watermark(feature: str, *, path: Path = WATERMARK_PATH) -> str | None:
