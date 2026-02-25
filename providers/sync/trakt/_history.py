@@ -996,6 +996,43 @@ def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dic
                 out["shows"] = coll_shows
     return out
 
+def _unresolved_from_nf_shows(nf_shows: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(nf_shows, list):
+        return out
+
+    for sh in nf_shows:
+        if not isinstance(sh, dict):
+            continue
+        show_ids = (sh.get("ids") or {})
+        seasons = sh.get("seasons") or []
+        if not isinstance(seasons, list):
+            continue
+        for s in seasons:
+            if not isinstance(s, dict):
+                continue
+            sn = s.get("number")
+            eps = s.get("episodes") or []
+            if sn is None or not isinstance(eps, list):
+                continue
+            for ep in eps:
+                if not isinstance(ep, dict):
+                    continue
+                en = ep.get("number")
+                if en is None:
+                    continue
+                m = id_minimal(
+                    {
+                        "type": "episode",
+                        "show_ids": show_ids,
+                        "season": int(sn),
+                        "episode": int(en),
+                    }
+                )
+                out.append({"item": m, "hint": "not_found"})
+
+    return out
+
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -1041,6 +1078,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
                 unresolved.append({"item": m, "hint": "not_found"})
                 _freeze_item_if_enabled(adapter, m, action="add", reasons=["not-found"])
+
+        # Trakt can return not_found episodes nested under shows/seasons.
+        for u in _unresolved_from_nf_shows(nf.get("shows")):
+            unresolved.append(u)
+            _freeze_item_if_enabled(adapter, u["item"], action="add", reasons=["not-found"])
+
         if _not_found_count(nf) > 0 and ok == 0:
             _bust_index_cache("write:add:not_found")
         if ok > 0:
@@ -1067,6 +1110,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     except Exception as e:
                         _warn("collection_add_exception", error=str(e))
         elif not unresolved:
+            # Trakt sometimes returns a successful HTTP status but reports 0 changes without a usable
+            # not_found payload. Treat this as unresolved to avoid retrying the same batch forever.
+            for m in accepted_minimals:
+                unresolved.append({"item": m, "hint": "write_noop"})
+                _freeze_item_if_enabled(adapter, m, action="add", reasons=["write-noop"])
             _warn("write_noop", action="add")
     elif r.status_code == 420:
         _warn("write_limit", action="add", status=420)
@@ -1118,6 +1166,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 )
                 unresolved.append({"item": m, "hint": "not_found"})
                 _freeze_item_if_enabled(adapter, m, action="remove", reasons=["not-found"])
+
+        # Trakt can return not_found episodes nested under shows/seasons.
+        for u in _unresolved_from_nf_shows(nf.get("shows")):
+            unresolved.append(u)
+            _freeze_item_if_enabled(adapter, u["item"], action="remove", reasons=["not-found"])
+
         if ok > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
             _bust_index_cache("write:remove")
