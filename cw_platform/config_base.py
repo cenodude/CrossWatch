@@ -397,7 +397,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "trakt": {
             "progress_step": 25,                        # Send scrobble progress in % steps
             "stop_pause_threshold": 85,                 # <85% STOP-send as PAUSE (your “watched” bar)
-            "force_stop_at": 95,                        # ≥85% always STOP (bypass debounces)
+            "force_stop_at": 95,                        # ≥95% always STOP
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated
         }
     },
