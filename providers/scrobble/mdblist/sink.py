@@ -394,12 +394,18 @@ def _bodies(ev: Any, progress: float) -> list[dict[str, Any]]:
         number = int(getattr(ev, "number", 0) or 0)
         show: dict[str, Any] = {"ids": sh_ids} if sh_ids else {}
         if not sh_ids:
-            title = getattr(ev, "title", None)
-            year = getattr(ev, "year", None)
-            if title:
-                show["title"] = title
-            if year:
-                show["year"] = int(year)
+            series_title = (
+                getattr(ev, "series_title", None)
+                or getattr(ev, "show_title", None)
+                or getattr(ev, "series", None)
+                or getattr(ev, "show", None)
+                or getattr(ev, "title", None)
+            )
+            series_year = getattr(ev, "series_year", None) if getattr(ev, "series_year", None) is not None else getattr(ev, "year", None)
+            if series_title:
+                show["title"] = series_title
+            if series_year:
+                show["year"] = int(series_year)
         show["season"] = {"number": season, "episode": {"number": number}}
         return [{"show": show, "progress": progress}]
 
