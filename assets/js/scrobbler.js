@@ -235,6 +235,12 @@ function clearStickyNote(id) {
       deepSet(w._cfgCache, p, v);
     } catch {}
     try {
+      if (isRoutesMode() && String(p || "").startsWith("scrobble.watch.filters.")) {
+        // Persist filter edits into the active route 
+        syncActiveRouteFromView();
+      }
+    } catch {}
+    try {
       syncHiddenServerInputs();
     } catch {}
     try {
@@ -2937,6 +2943,7 @@ async function hydrateJellyfin() {
     on($("#sc-route-add", STATE.mount), "click", async (e) => {
       e.preventDefault();
       if (!isRoutesMode()) return;
+      try { syncActiveRouteFromView(); } catch {}
       const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
       const id = nextRouteId();
       const nr = normalizeRoute({ id, enabled: true, provider: "", provider_instance: "default", sink: "", sink_instance: "default", filters: {} }, id);
@@ -3325,7 +3332,7 @@ async function hydrateJellyfin() {
   const suWatch = String($("#sc-server-uuid", STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid", "")).trim();
   const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
 
-  const filtersWatch = {
+  let filtersWatch = {
     username_whitelist: wlWatch,
   };
 
@@ -3362,6 +3369,13 @@ if (dups.length) {
   setStickyNote("sc-note", msg, "err");
   throw new Error(msg);
 }
+
+      // Per-route filters are stored on watch.routes[].filters.
+      try {
+        const r1 = routesRaw.find(r => String(r?.id || "").toUpperCase() === "R1") || routesRaw[0];
+        if (r1 && r1.filters && typeof r1.filters === "object") filtersWatch = deepClone(r1.filters);
+      } catch {}
+
       setRoutes(routesRaw);
     }
 
