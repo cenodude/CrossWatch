@@ -340,7 +340,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "apply_chunk_pause_ms": 50,                     # Small pause between chunks
         "apply_chunk_size_by_provider": {               # SIMKL/TRAKT/MDBLIST/ANILIST/TMDB/TAUTULLI/TMDB/PLEX/JELLYFIN/EMBY overrides
             "SIMKL": 500,
-            "TRAKT": 500,
             "MDBLIST": 500
         },
         
