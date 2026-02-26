@@ -452,6 +452,8 @@ class TraktSink(ScrobbleSink):
         self._last_intent_prog: dict[str, int] = {}
         self._warn_no_token = False
         self._warn_no_client = False
+        self._terminal_sess: dict[tuple[str, str], float] = {}
+        self._terminal_fallback: dict[str, float] = {}
 
     def _mkey(self, ev: ScrobbleEvent) -> str:
         ids = ev.ids or {}
@@ -528,7 +530,6 @@ class TraktSink(ScrobbleSink):
         inst = self._instance_id
         backoff = 1.0
         tried_refresh = False
-        tried_checkin_clear = False
 
         for _ in range(6):
             try:
@@ -548,12 +549,6 @@ class TraktSink(ScrobbleSink):
 
             if s == 409:
                 txt = r.text or ""
-                if not tried_checkin_clear and ("expires_at" in txt or "watched_at" in txt):
-                    _log("409 Conflict (active check-in) — clearing /checkin and retrying", "WARN")
-                    tried_checkin_clear = True
-                    if _clear_active_checkin(cfg, inst):
-                        time.sleep(0.35)
-                        continue
                 return {"ok": False, "status": 409, "resp": txt[:400]}
 
             if s == 429:
@@ -600,6 +595,41 @@ class TraktSink(ScrobbleSink):
             self._last_intent_path[key] = path
             self._last_intent_prog[key] = int(prog)
         return ok
+
+    def _terminal_key(self, ev: ScrobbleEvent, mk: str) -> tuple[str, str] | None:
+        if not ev.session_key:
+            return None
+        return (str(ev.session_key), mk)
+
+    def _has_terminal_scrobble(self, ev: ScrobbleEvent, mk: str) -> bool:
+        now = time.time()
+        sess_key = self._terminal_key(ev, mk)
+        if sess_key is not None:
+            ts = self._terminal_sess.get(sess_key)
+            if ts and (now - ts) < 6 * 3600:
+                return True
+            if ts:
+                self._terminal_sess.pop(sess_key, None)
+        fallback_key = self._ckey(ev)
+        ts = self._terminal_fallback.get(fallback_key)
+        if ts and (now - ts) < 600:
+            return True
+        if ts:
+            self._terminal_fallback.pop(fallback_key, None)
+        return False
+
+    def _mark_terminal_scrobble(self, ev: ScrobbleEvent, mk: str) -> None:
+        now = time.time()
+        sess_key = self._terminal_key(ev, mk)
+        if sess_key is not None:
+            self._terminal_sess[sess_key] = now
+        self._terminal_fallback[self._ckey(ev)] = now
+
+    def _clear_terminal_scrobble(self, ev: ScrobbleEvent, mk: str) -> None:
+        sess_key = self._terminal_key(ev, mk)
+        if sess_key is not None:
+            self._terminal_sess.pop(sess_key, None)
+        self._terminal_fallback.pop(self._ckey(ev), None)
 
     def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
@@ -677,10 +707,12 @@ class TraktSink(ScrobbleSink):
         action = ev.action
 
         trakt_scrobble_cutoff = 80.0
-        # Trakt treats >80% as a scrobble; avoid 422 by promoting PAUSE to STOP at that point.
+        # Keep real pause events as /scrobble/pause, even above Trakt's scrobble cutoff.
         if action == "pause" and p_send >= min(thr, trakt_scrobble_cutoff):
-            _log(f"Promote PAUSE→STOP at {p_send}% (thr={thr}, trakt={trakt_scrobble_cutoff})", "DEBUG")
-            action = "stop"
+            _log(
+                f"Keep PAUSE as /scrobble/pause at {p_send}% (thr={thr}, trakt={trakt_scrobble_cutoff})",
+                "DEBUG",
+            )
 
         comp = _complete_at(cfg)
         suppress_at = _watch_suppress_start_at(cfg)
@@ -692,8 +724,9 @@ class TraktSink(ScrobbleSink):
             self._p_sess[(sk, mk)] = p_send
             return
 
-        if comp and p_send >= comp and action not in ("stop", "start"):
-            action = "stop"
+        if action == "start" and (force_seek or p_send <= 10):
+            self._clear_terminal_scrobble(ev, mk)
+
 
         if ev.action == "stop":
             if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
@@ -710,19 +743,27 @@ class TraktSink(ScrobbleSink):
             bucket = (int(float(p_send)) // step) * step
             if bucket < 1:
                 bucket = 1
-            if last_act == "start" and last_bucket >= 0 and bucket <= int(last_bucket):
+            if last_act == "start":
                 self._p_sess[(sk, mk)] = int(p_send)
                 if int(p_send) > (p_glob if p_glob >= 0 else -1):
                     self._p_glob[mk] = int(p_send)
                 return
-            if last_act == "start":
-                p_payload = bucket
+
+        if action == "start" and step <= 1 and last_act == "start" and not force_seek:
+            self._p_sess[(sk, mk)] = int(p_send)
+            if int(p_send) > (p_glob if p_glob >= 0 else -1):
+                self._p_glob[mk] = int(p_send)
+            return
 
         self._p_sess[(sk, mk)] = int(p_send)
         if int(p_send) > (p_glob if p_glob >= 0 else -1):
             self._p_glob[mk] = int(p_send)
 
         comp_thr = max(_force_stop_at(cfg), comp or 0)
+        if action == "stop" and p_send >= comp_thr and self._has_terminal_scrobble(ev, mk):
+            _log(f"suppress duplicate terminal stop at {p_send}% • {name}", "DEBUG")
+            return
+
         if not (action == "stop" and p_send >= comp_thr):
             if self._debounced(ev.session_key, action, _watch_pause_debounce(cfg)):
                 return
@@ -780,6 +821,7 @@ class TraktSink(ScrobbleSink):
                     "ts": time.time(),
                 }
                 if action == "stop" and p_send >= comp_thr:
+                    self._mark_terminal_scrobble(ev, mk)
                     _auto_remove_across(ev, cfg)
                 self._a_sess[(sk, mk)] = action
                 if action == "start" and step > 1 and bucket is not None:
@@ -794,7 +836,7 @@ class TraktSink(ScrobbleSink):
                 return
             last_err = res
             if res.get("status") == 404:
-                _log("404 with current representation → trying alternate", "WARN")
+                _log("404 with current representation, trying alternate", "WARN")
                 continue
             break
 
@@ -826,6 +868,7 @@ class TraktSink(ScrobbleSink):
                         "ts": time.time(),
                     }
                     if action == "stop" and p_send >= comp_thr:
+                        self._mark_terminal_scrobble(ev, mk)
                         _auto_remove_across(ev, cfg)
                     self._a_sess[(sk, mk)] = action
                     if action == "start" and step > 1 and bucket is not None:
@@ -845,6 +888,7 @@ class TraktSink(ScrobbleSink):
         ):
             _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
             if p_send >= comp_thr:
+                self._mark_terminal_scrobble(ev, mk)
                 _auto_remove_across(ev, cfg)
             return
 
