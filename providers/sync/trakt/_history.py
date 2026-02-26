@@ -412,6 +412,7 @@ def _fetch_history(
             break
         added = 0
         for row in rows:
+            hid = row.get("id")
             w = row.get("watched_at")
             if not w:
                 continue
@@ -422,6 +423,8 @@ def _fetch_history(
                     {"type": "movie", "ids": mv.get("ids") or {}, "title": mv.get("title"), "year": mv.get("year")}
                 )
                 m["watched_at"] = w
+                if hid is not None:
+                    m["_trakt_history_id"] = str(hid)
                 out.append(m)
                 added += 1
             elif typ == "episode" and isinstance(row.get("episode"), dict):
@@ -439,6 +442,8 @@ def _fetch_history(
                     }
                 )
                 m["watched_at"] = w
+                if hid is not None:
+                    m["_trakt_history_id"] = str(hid)
                 out.append(m)
                 added += 1
         if bump and added:
@@ -595,8 +600,45 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         else:
             base_key = canonical_key(id_minimal(m))
         ek = f"{base_key}@{ts}"
-        idx[ek] = m
-        base_keys_to_unfreeze.add(base_key)
+
+        # Collision guard:
+        if ek in idx:
+            ids = m.get("ids") if isinstance(m.get("ids"), Mapping) else {}
+            trakt_id = str(ids.get("trakt") or "").strip() if isinstance(ids, Mapping) else ""
+            tmdb_id = str(ids.get("tmdb") or "").strip() if isinstance(ids, Mapping) else ""
+            imdb_id = str(ids.get("imdb") or "").strip() if isinstance(ids, Mapping) else ""
+            hid = str(m.get("_trakt_history_id") or "").strip()
+
+            # Prefer provider-native ids for disambiguation.
+            if trakt_id:
+                alt_base = f"trakt:{trakt_id}".lower()
+            elif tmdb_id:
+                alt_base = f"tmdb:{tmdb_id}".lower()
+            else:
+                alt_base = str(base_key or "unknown:").lower()
+
+            suffix = f"~h{hid}" if hid else "~dup"
+            ek2 = f"{alt_base}@{ts}{suffix}"
+            # Ensure uniqueness even if the suffix collides.
+            n = 2
+            while ek2 in idx:
+                ek2 = f"{alt_base}@{ts}{suffix}{n}"
+                n += 1
+
+            _warn(
+                "history_key_collision",
+                key=ek,
+                key2=ek2,
+                imdb=imdb_id or None,
+                trakt=trakt_id or None,
+                tmdb=tmdb_id or None,
+                history_id=hid or None,
+            )
+            idx[ek2] = m
+            base_keys_to_unfreeze.add(alt_base)
+        else:
+            idx[ek] = m
+            base_keys_to_unfreeze.add(base_key)
     _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
     if prog:
         try:
