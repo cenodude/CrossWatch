@@ -35,6 +35,19 @@ SIMKL_API = "https://api.simkl.com"
 APP_AGENT = "CrossWatch/Watcher/1.0"
 _AR_TTL = 60
 
+_SIMKL_ID_KEYS = (
+    "imdb",
+    "tmdb",
+    "tvdb",
+    "simkl",
+    "trakt",
+    "mal",
+    "anilist",
+    "kitsu",
+    "anidb",
+)
+_SIMKL_ANIME_ID_KEYS = ("simkl", "tmdb", "tvdb", "mal", "anilist", "kitsu", "anidb", "imdb")
+
 
 def _cfg() -> dict[str, Any]:
     try:
@@ -108,7 +121,10 @@ def _post(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> requests.Resp
 def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
-        return int((s.get("trakt") or {}).get("stop_pause_threshold", 85))
+        src = (s.get("simkl") or {}).get("stop_pause_threshold")
+        if src is None:
+            src = (s.get("trakt") or {}).get("stop_pause_threshold", 85)
+        return int(src)
     except Exception:
         return 85
 
@@ -116,7 +132,10 @@ def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
 def _force_stop_at(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
-        return int((s.get("trakt") or {}).get("force_stop_at", 95))
+        src = (s.get("simkl") or {}).get("force_stop_at")
+        if src is None:
+            src = (s.get("trakt") or {}).get("force_stop_at", 95)
+        return int(src)
     except Exception:
         return 95
 
@@ -124,7 +143,10 @@ def _force_stop_at(cfg: dict[str, Any]) -> int:
 def _complete_at(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
-        return int((s.get("trakt") or {}).get("complete_at", 0))
+        src = (s.get("simkl") or {}).get("complete_at")
+        if src is None:
+            src = (s.get("trakt") or {}).get("complete_at", 0)
+        return int(src)
     except Exception:
         return 0
 
@@ -132,7 +154,10 @@ def _complete_at(cfg: dict[str, Any]) -> int:
 def _regress_tolerance_percent(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
-        return int((s.get("trakt") or {}).get("regress_tolerance_percent", 5))
+        src = (s.get("simkl") or {}).get("regress_tolerance_percent")
+        if src is None:
+            src = (s.get("trakt") or {}).get("regress_tolerance_percent", 5)
+        return int(src)
     except Exception:
         return 5
 
@@ -214,7 +239,7 @@ def _ar_seen(key: str) -> bool:
 
 
 def _ar_key(ids: dict[str, Any], media_type: str) -> str:
-    for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl"):
+    for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb"):
         v = ids.get(k)
         if v:
             return f"{media_type}:{k}:{v}"
@@ -250,15 +275,16 @@ def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
 
 def _ids(ev: Any) -> dict[str, Any]:
     ids = getattr(ev, "ids", {}) or {}
-    return {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "simkl") if ids.get(k)}
+    return {k: ids[k] for k in _SIMKL_ID_KEYS if ids.get(k)}
 
 
 def _show_ids(ev: Any) -> dict[str, Any]:
     ids = getattr(ev, "ids", {}) or {}
     m: dict[str, Any] = {}
-    for k in ("imdb_show", "tmdb_show", "tvdb_show", "simkl_show"):
-        if ids.get(k):
-            m[k.replace("_show", "")] = ids[k]
+    for key in _SIMKL_ID_KEYS:
+        show_key = f"{key}_show"
+        if ids.get(show_key):
+            m[key] = ids[show_key]
     return m
 
 
@@ -303,7 +329,7 @@ def _media_name(ev: Any) -> str:
 
 
 def _ids_desc_map(ids: dict[str, Any]) -> str:
-    for k in ("simkl", "imdb", "tmdb", "tvdb"):
+    for k in ("simkl", "imdb", "tmdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb"):
         v = ids.get(k)
         if v is not None:
             return f"{k}:{v}"
@@ -322,6 +348,7 @@ def _body_ids_desc(b: dict[str, Any]) -> str:
     ids = (
         (b.get("movie") or {}).get("ids")
         or (b.get("show") or {}).get("ids")
+        or (b.get("anime") or {}).get("ids")
         or (b.get("episode") or {}).get("ids")
         or {}
     )
@@ -346,9 +373,18 @@ def _bodies(ev: Any, p: float) -> list[dict[str, Any]]:
     parent = "anime" if (is_anime_type or has_anime_ids) else "show"
 
     if media_type == "movie":
+        if is_anime_type or has_anime_ids:
+            anime_ids = {k: ids[k] for k in _SIMKL_ANIME_ID_KEYS if ids.get(k)}
+            if anime_ids:
+                return [{"progress": p, "anime": {"ids": anime_ids}}]
+            payload: dict[str, Any] = {"title": getattr(ev, "title", None)}
+            year = getattr(ev, "year", None)
+            if year is not None:
+                payload["year"] = year
+            return [{"progress": p, "anime": payload}]
         if ids:
             return [{"progress": p, "movie": {"ids": ids}}]
-        payload: dict[str, Any] = {"title": getattr(ev, "title", None)}
+        payload = {"title": getattr(ev, "title", None)}
         year = getattr(ev, "year", None)
         if year is not None:
             payload["year"] = year
@@ -368,19 +404,19 @@ def _bodies(ev: Any, p: float) -> list[dict[str, Any]]:
             }
         )
     if has_sn and not show:
-        s_payload: dict[str, Any] = {"title": getattr(ev, "title", None)}
+        series_payload: dict[str, Any] = {"title": getattr(ev, "title", None)}
         year = getattr(ev, "year", None)
         if year is not None:
-            s_payload["year"] = year
+            series_payload["year"] = year
         bodies.append(
             {
                 "progress": p,
-                parent: s_payload,
+                parent: series_payload,
                 "episode": {"season": season, "number": number},
             }
         )
     if ids:
-        bodies.append({"progress": p, parent: {}, "episode": {"ids": ids}})
+        bodies.append({"progress": p, "episode": {"ids": ids}})
 
     if bodies:
         return bodies
@@ -413,13 +449,14 @@ class SimklSink(ScrobbleSink):
     def _mkey(self, ev: Any) -> str:
         ids = getattr(ev, "ids", {}) or {}
         parts: list[str] = []
-        for k in ("imdb", "tmdb", "tvdb", "simkl"):
+        for k in _SIMKL_ID_KEYS:
             if ids.get(k):
                 parts.append(f"{k}:{ids[k]}")
         if getattr(ev, "media_type", "") == "episode":
-            for k in ("imdb_show", "tmdb_show", "tvdb_show", "simkl_show"):
-                if ids.get(k):
-                    parts.append(f"{k}:{ids[k]}")
+            for k in _SIMKL_ID_KEYS:
+                show_key = f"{k}_show"
+                if ids.get(show_key):
+                    parts.append(f"{show_key}:{ids[show_key]}")
             parts.append(f"S{int(getattr(ev, 'season', 0) or 0):02d}E{int(getattr(ev, 'number', 0) or 0):02d}")
         if not parts:
             t = getattr(ev, "title", None) or ""
