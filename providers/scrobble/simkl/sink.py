@@ -36,8 +36,8 @@ APP_AGENT = "CrossWatch/Watcher/1.0"
 _AR_TTL = 60
 
 _SIMKL_ID_KEYS = (
-    "imdb",
     "tmdb",
+    "imdb",
     "tvdb",
     "simkl",
     "trakt",
