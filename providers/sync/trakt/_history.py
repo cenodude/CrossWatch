@@ -36,6 +36,7 @@ RESOLVE_ENABLE = False
 def _history_allow_rollups(adapter: Any) -> bool:
     return bool(_cfg_get(adapter, "history_allow_rollups", False))
 
+
 def _int_or_none(x: Any) -> int | None:
     if x is None:
         return None
@@ -187,7 +188,7 @@ def _iso8601(v: Any) -> str | None:
     if epoch is None:
         return None
 
-    # Trakt is moving watched_at to minute precision (seconds + milliseconds => 00.000Z).
+    # Trakt is moving watched_at to minute precision
     epoch = (epoch // 60) * 60
     return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(epoch))
 
@@ -1071,6 +1072,13 @@ def _batch_add(
             if show_scope_ok and show_ids and not strong_ids:
                 use_ids = False
 
+            # Avoid writing roll-up episodes
+            if not show_scope_ok and (season_no is None or episode_no is None) and not (ids and ("trakt" in ids)):
+                m = _history_item_minimal(kind, it, ids)
+                unresolved.append({"item": m, "hint": "missing season/episode"})
+                _freeze_item_if_enabled(adapter, m, action="add", reasons=["missing-season-episode"])
+                continue
+
             if use_ids:
                 obj: dict[str, Any] = {"ids": ids}
                 if when:
@@ -1427,58 +1435,79 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         timeout=timeout,
         max_retries=retries,
     )
-    ok = 0
+    ok_added = 0
+    ok_total = 0
+    added_total = 0
+    existing_total = 0
     if r.status_code in (200, 201):
         d = r.json() or {}
         added = d.get("added") or {}
         existing = d.get("existing") or {}
         added_total = int(added.get("movies") or 0) + int(added.get("episodes") or 0)
         existing_total = int(existing.get("movies") or 0) + int(existing.get("episodes") or 0)
-        ok = added_total + existing_total
+        ok_total = added_total + existing_total
+        ok_added = added_total
         nf = d.get("not_found") or {}
         nf_count = _not_found_count(nf)
-        idx: dict[tuple[str, str, str], dict[str, Any]] = {}
+        
+        idx: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
         try:
             for m in accepted_minimals or []:
                 if not isinstance(m, dict):
                     continue
                 m_type = str(m.get("type") or "")
-                m_ids = m.get("ids") or {}
-                if not isinstance(m_ids, dict):
-                    continue
-                for k in ("trakt", "tvdb", "tmdb", "imdb", "slug"):
-                    v = m_ids.get(k)
-                    if v:
-                        idx[(m_type, k, str(v))] = m
+                for id_field in ("ids", "show_ids"):
+                    m_ids = m.get(id_field) or {}
+                    if not isinstance(m_ids, dict):
+                        continue
+                    for k in ("trakt", "tvdb", "tmdb", "imdb", "slug"):
+                        v = m_ids.get(k)
+                        if v:
+                            idx.setdefault((m_type, k, str(v)), []).append(m)
         except Exception:
             idx = {}
 
-        for u in _unresolved_from_not_found(nf):
+        nf_unresolved = _unresolved_from_not_found(nf)
+        for u in nf_unresolved:
             try:
                 it = u.get("item") if isinstance(u, dict) else None
+                mapped: dict[str, Any] | None = None
                 if idx and isinstance(it, dict):
                     u_type = str(it.get("type") or "")
-                    u_ids = it.get("ids") or {}
-                    if isinstance(u_ids, dict):
+                    for id_field in ("ids", "show_ids"):
+                        u_ids = it.get(id_field) or {}
+                        if not isinstance(u_ids, dict):
+                            continue
                         for k, v in u_ids.items():
                             if v is None:
                                 continue
-                            cand = idx.get((u_type, str(k), str(v)))
-                            if cand:
-                                u["item"] = cand
+                            cands = idx.get((u_type, str(k), str(v)))
+                            if cands and len(cands) == 1:
+                                mapped = cands[0]
                                 break
+                        if mapped:
+                            break
+
+                if mapped is None and len(accepted_minimals or []) == 1:
+                    only = accepted_minimals[0]
+                    if isinstance(only, dict):
+                        mapped = only
+
+                if mapped is not None:
+                    u["item"] = mapped
             except Exception:
                 pass
+
             unresolved.append(u)
             try:
                 _freeze_item_if_enabled(adapter, u["item"], action="add", reasons=["not-found"])
             except Exception:
                 pass
 
-        if nf_count > 0 and ok == 0:
+        if nf_count > 0 and ok_total == 0:
             _bust_index_cache("write:add:not_found")
 
-        if ok > 0 or nf_count == 0:
+        if ok_total > 0 or nf_count == 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
             _bust_index_cache("write:add")
             if _history_collection_enabled(adapter):
@@ -1501,11 +1530,23 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             _warn("collection_add_failed", status=rc.status_code, body=((rc.text or "")[:200]))
                     except Exception as e:
                         _warn("collection_add_exception", error=str(e))
+
+        if existing_total > 0 and added_total == 0 and nf_count == 0:
+            try:
+                skipped_keys = list(dict.fromkeys(list(skipped_keys or []) + list(accepted_keys or [])))
+            except Exception:
+                pass
+
         elif not unresolved:
             _warn("write_noop", action="add")
     elif r.status_code == 409:
         _warn("write_duplicate", action="add", status=409, body=((r.text or "")[:200]))
-        ok = len(accepted_minimals)
+        ok_total = len(accepted_minimals)
+        ok_added = 0
+        try:
+            skipped_keys = list(dict.fromkeys(list(skipped_keys or []) + list(accepted_keys or [])))
+        except Exception:
+            pass
         _unfreeze_keys_if_present(adapter, accepted_keys)
         _bust_index_cache("write:add:duplicate")
     elif r.status_code == 420:
@@ -1519,7 +1560,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         for m in accepted_minimals:
             _freeze_item_if_enabled(adapter, m, action="add", reasons=[f"http:{r.status_code}"])
             unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
-    return ok, unresolved, skipped_keys
+    return ok_added, unresolved, skipped_keys
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -1546,7 +1587,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         timeout=timeout,
         max_retries=retries,
     )
-    ok = 0
+    ok_added = 0
+    ok_total = 0
+    added_total = 0
+    existing_total = 0
     if r.status_code in (200, 201):
         d = r.json() or {}
         deleted = d.get("deleted") or d.get("removed") or {}
