@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 from itertools import chain
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, cast
 
 from cw_platform.id_map import minimal as id_minimal
 
@@ -49,13 +49,13 @@ def _show_map_path() -> str:
     return str(state_file("simkl.show.map.json"))
 
 
-ID_KEYS = ("simkl", "tmdb", "imdb", "tvdb")
+ID_KEYS = ("simkl", "tmdb", "imdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb")
 
 _EP_LOOKUP_MEMO: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 
 _ANIME_TVDB_MAP_MEMO: dict[str, str] | None = None
 _ANIME_TVDB_MAP_TTL_SEC = 24 * 3600
-_ANIME_TVDB_MAP_DATE_FROM = "1970-01-01T00:00:00Z"
+_ANIME_TVDB_MAP_DATE_FROM = "1900-01-01T00:00:00Z"
 
 
 def _anime_tvdb_map_path() -> str:
@@ -385,6 +385,15 @@ def _episode_lookup(
 def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
     show_ids = _raw_show_ids(item)
     return {k: show_ids[k] for k in ID_KEYS if show_ids.get(k)}
+
+
+def _scope_ids_for_freeze(item: Mapping[str, Any]) -> dict[str, Any]:
+    typ = str(item.get("type") or "").lower()
+    if typ in ("season", "episode"):
+        scoped = _show_ids_of_episode(item)
+        if scoped:
+            return scoped
+    return _ids_of(item)
 
 
 def _legacy_path(path: Path) -> Path | None:
@@ -1035,19 +1044,10 @@ def _show_add_entry(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | N
     return entry
 
 
-def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str] | None:
-    show_ids_raw = _show_ids_of_episode(item)
-    if not show_ids_raw:
-        return None
-    show_ids = {k: str(show_ids_raw[k]) for k in ID_KEYS if show_ids_raw.get(k)}
+def _show_scope_entry(adapter: Any, item: Mapping[str, Any], raw_show_ids: Mapping[str, Any]) -> dict[str, Any] | None:
+    show_ids = {k: str(raw_show_ids[k]) for k in ID_KEYS if raw_show_ids.get(k)}
     show_ids = _maybe_map_tvdb(adapter, show_ids)
     if not show_ids:
-        return None
-
-    s_num = _safe_int(item.get("season") or item.get("season_number"))
-    e_num = _safe_int(item.get("episode") or item.get("episode_number"))
-    watched_at = item.get("watched_at") or item.get("watchedAt")
-    if not s_num or not e_num or not isinstance(watched_at, str) or not watched_at:
         return None
 
     show: dict[str, Any] = {"ids": show_ids}
@@ -1058,13 +1058,74 @@ def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str,
     if isinstance(show_title, str) and show_title.strip():
         show["title"] = show_title.strip()
 
-    series_year = item.get("series_year")
+    series_year = item.get("series_year") or item.get("year")
     if isinstance(series_year, int):
         show["year"] = series_year
     elif isinstance(series_year, str) and series_year.isdigit():
         show["year"] = int(series_year)
 
+    return show
+
+
+def _season_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, str] | None:
+    show_ids_raw = _raw_show_ids(item)
+    if not show_ids_raw:
+        return None
+    show = _show_scope_entry(adapter, item, show_ids_raw)
+    if not show:
+        return None
+
+    s_num = _safe_int(item.get("season") or item.get("season_number"))
+    watched_at = item.get("watched_at") or item.get("watchedAt")
+    if not s_num or not isinstance(watched_at, str) or not watched_at:
+        return None
+    return show, s_num, watched_at
+
+
+def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str] | None:
+    show_ids_raw = _show_ids_of_episode(item)
+    if not show_ids_raw:
+        return None
+    show = _show_scope_entry(adapter, item, show_ids_raw)
+    if not show:
+        return None
+
+    s_num = _safe_int(item.get("season") or item.get("season_number"))
+    e_num = _safe_int(item.get("episode") or item.get("episode_number"))
+    watched_at = item.get("watched_at") or item.get("watchedAt")
+    if not s_num or not e_num or not isinstance(watched_at, str) or not watched_at:
+        return None
+
     return show, s_num, e_num, watched_at
+
+
+def _merge_show_group(groups: dict[str, dict[str, Any]], show_entry: Mapping[str, Any]) -> dict[str, Any]:
+    ids_key = json.dumps(show_entry.get("ids") or {}, sort_keys=True)
+    group = groups.setdefault(ids_key, {"ids": dict(show_entry.get("ids") or {}), "seasons": []})
+    for key in ("title", "year", "use_tvdb_anime_seasons"):
+        value = show_entry.get(key)
+        if value not in (None, "", False):
+            group[key] = value
+    return group
+
+
+def _merge_show_season(group: dict[str, Any], season_number: int, *, watched_at: str | None = None) -> dict[str, Any]:
+    # Ensure seasons list exists and is well-typed for analyzers.
+    seasons_obj = group.setdefault("seasons", [])
+    if not isinstance(seasons_obj, list):
+        seasons_obj = []
+        group["seasons"] = seasons_obj
+    seasons = cast(list[dict[str, Any]], seasons_obj)
+    season: dict[str, Any] | None = next(
+        (s for s in seasons if isinstance(s, dict) and s.get("number") == season_number),
+        None,
+    )
+    if season is None:
+        season = {"number": season_number}
+        seasons.append(season)
+    if isinstance(watched_at, str) and watched_at and not season.get("watched_at"):
+        season["watched_at"] = watched_at
+    return season
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     session = adapter.client.session
@@ -1072,7 +1133,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     timeout = adapter.cfg.timeout
     movies: list[dict[str, Any]] = []
     shows_whole: list[dict[str, Any]] = []
-    shows_with_eps: dict[str, dict[str, Any]] = {}
+    shows_scoped: dict[str, dict[str, Any]] = {}
     unresolved: list[dict[str, Any]] = []
     thaw_keys: list[str] = []
     shadow_events: list[dict[str, Any]] = []
@@ -1128,6 +1189,24 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 unresolved.append({"item": id_minimal(item), "hint": "missing_ids_or_watched_at"})
             continue
 
+        if typ == "season":
+            packed = _season_add_entry(adapter, item)
+            if not packed:
+                unresolved.append(
+                    {"item": id_minimal(item), "hint": "missing_show_ids_or_season_or_watched_at"},
+                )
+                continue
+
+            show_entry, s_num, watched_at = packed
+            group = _merge_show_group(shows_scoped, show_entry)
+            _merge_show_season(group, s_num, watched_at=watched_at)
+
+            thaw_keys.append(_thaw_key(item))
+            ev = dict(id_minimal(item))
+            ev["watched_at"] = watched_at
+            shadow_events.append(ev)
+            continue
+
         if typ == "episode":
             packed = _episode_add_entry(adapter, item)
             if not packed:
@@ -1138,21 +1217,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
 
             show_entry, s_num, e_num, watched_at = packed
-            ids_key = json.dumps(show_entry["ids"], sort_keys=True)
-            group = shows_with_eps.setdefault(
-                ids_key,
-                {
-                    "ids": show_entry["ids"],
-                    "title": show_entry.get("title"),
-                    "year": show_entry.get("year"),
-                    "seasons": [],
-                },
-            )
-            season = next((s for s in group["seasons"] if s.get("number") == s_num), None)
-            if not season:
-                season = {"number": s_num, "episodes": []}
-                group["seasons"].append(season)
-            season["episodes"].append({"number": e_num, "watched_at": watched_at})
+            group = _merge_show_group(shows_scoped, show_entry)
+            season = _merge_show_season(group, s_num)
+            season.setdefault("episodes", []).append({"number": e_num, "watched_at": watched_at})
 
             thaw_keys.append(_thaw_key(item))
             ev = dict(item)
@@ -1169,7 +1236,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved.append({"item": id_minimal(item), "hint": "missing_ids"})
 
     _log(
-        f"prepared movies={len(movies)} shows_whole={len(shows_whole)} shows_with_eps={len(shows_with_eps)} "
+        f"prepared movies={len(movies)} shows_whole={len(shows_whole)} shows_scoped={len(shows_scoped)} "
         f"unresolved_eps_missing={unresolved_eps_missing}",
     )
 
@@ -1180,8 +1247,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     shows_payload: list[dict[str, Any]] = []
     if shows_whole:
         shows_payload.extend(shows_whole)
-    if shows_with_eps:
-        shows_payload.extend(list(shows_with_eps.values()))
+    if shows_scoped:
+        shows_payload.extend(list(shows_scoped.values()))
     if shows_payload:
         body["shows"] = shows_payload
 
@@ -1194,12 +1261,52 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _unfreeze(thaw_keys)
             eps_count = sum(
                 len(season.get("episodes", []))
-                for group in shows_with_eps.values()
+                for group in shows_scoped.values()
                 for season in group.get("seasons", [])
             )
-            ok = len(movies) + eps_count + len(shows_whole)
+            seasons_count = sum(
+                1
+                for group in shows_scoped.values()
+                for season in group.get("seasons", [])
+                if season.get("watched_at")
+            )
+
+            added_new = {"movies": 0, "shows": 0, "episodes": 0}
+            not_found = {"movies": [], "shows": [], "episodes": []}
+            try:
+                payload = resp.json() if (resp.text or '').strip() else {}
+                if isinstance(payload, dict):
+                    a = payload.get("added")
+                    if isinstance(a, dict):
+                        added_new["movies"] = int(a.get("movies") or 0)
+                        added_new["shows"] = int(a.get("shows") or 0)
+                        added_new["episodes"] = int(a.get("episodes") or 0)
+                    nf = payload.get("not_found")
+                    if isinstance(nf, dict):
+                        not_found["movies"] = list(nf.get("movies") or [])
+                        not_found["shows"] = list(nf.get("shows") or [])
+                        not_found["episodes"] = list(nf.get("episodes") or [])
+            except Exception as exc:
+                _log(f"add response parse skipped: {exc}")
+
+            nf_total = len(not_found["movies"]) + len(not_found["shows"]) + len(not_found["episodes"])
+            if nf_total:
+                _log(
+                    f"add not_found: movies={len(not_found['movies'])} shows={len(not_found['shows'])} episodes={len(not_found['episodes'])}",
+                )
+
+                for bucket_name in ("movies", "shows", "episodes"):
+                    for obj in not_found[bucket_name][:50]:
+                        if isinstance(obj, dict):
+                            unresolved.append({"item": obj, "hint": f"simkl_not_found:{bucket_name}"})
+                        else:
+                            unresolved.append({"item": {"raw": obj}, "hint": f"simkl_not_found:{bucket_name}"})
+
+            ok = max(0, len(thaw_keys) - nf_total)
             _log(
-                f"add done http:{resp.status_code} movies={len(movies)} shows={len(shows_payload)} episodes={eps_count}",
+                f"add done http:{resp.status_code} sent={len(thaw_keys)} added_new(m/s/e)="
+                f"{added_new['movies']}/{added_new['shows']}/{added_new['episodes']} "
+                f"movies={len(movies)} shows_payload={len(shows_payload)} seasons={seasons_count} episodes={eps_count} not_found={nf_total}",
             )
             try:
                 _shadow_put_all(shadow_events)
@@ -1212,7 +1319,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         _log(f"ADD error: {exc}")
 
     for item in items_list:
-        ids = _ids_of(item) or _show_ids_of_episode(item)
+        ids = _scope_ids_for_freeze(item)
         watched_at = item.get("watched_at") or item.get("watchedAt") or None
         watched_str = watched_at if isinstance(watched_at, str) else None
         if ids:
@@ -1231,7 +1338,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     timeout = adapter.cfg.timeout
     movies: list[dict[str, Any]] = []
     shows_whole: list[dict[str, Any]] = []
-    shows_with_eps: dict[str, dict[str, Any]] = {}
+    shows_scoped: dict[str, dict[str, Any]] = {}
     unresolved: list[dict[str, Any]] = []
     thaw_keys: list[str] = []
     items_list: list[Mapping[str, Any]] = list(items or [])
@@ -1254,6 +1361,19 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             movies.append({"ids": ids})
             thaw_keys.append(_thaw_key(item))
             continue
+        if typ == "season":
+            show_ids = _raw_show_ids(item)
+            show_entry = _show_scope_entry(adapter, item, show_ids) if show_ids else None
+            s_num = int(item.get("season") or item.get("season_number") or 0)
+            if not show_entry or not s_num:
+                unresolved.append(
+                    {"item": id_minimal(item), "hint": "missing_show_ids_or_season"},
+                )
+                continue
+            group = _merge_show_group(shows_scoped, show_entry)
+            _merge_show_season(group, s_num)
+            thaw_keys.append(_thaw_key(item))
+            continue
         if typ == "episode":
             show_ids = _show_ids_of_episode(item)
             s_num = int(item.get("season") or item.get("season_number") or 0)
@@ -1263,13 +1383,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     {"item": id_minimal(item), "hint": "missing_show_ids_or_s/e"},
                 )
                 continue
-            ids_key = json.dumps(show_ids, sort_keys=True)
-            group = shows_with_eps.setdefault(ids_key, {"ids": show_ids, "seasons": []})
-            season = next((s for s in group["seasons"] if s.get("number") == s_num), None)
-            if not season:
-                season = {"number": s_num, "episodes": []}
-                group["seasons"].append(season)
-            season["episodes"].append({"number": e_num})
+            show_entry = _show_scope_entry(adapter, item, show_ids)
+            if not show_entry:
+                unresolved.append(
+                    {"item": id_minimal(item), "hint": "missing_show_ids_or_s/e"},
+                )
+                continue
+            group = _merge_show_group(shows_scoped, show_entry)
+            season = _merge_show_season(group, s_num)
+            season.setdefault("episodes", []).append({"number": e_num})
             thaw_keys.append(_thaw_key(item))
             continue
         ids = _ids_of(item)
@@ -1284,8 +1406,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     shows_payload: list[dict[str, Any]] = []
     if shows_whole:
         shows_payload.extend(shows_whole)
-    if shows_with_eps:
-        shows_payload.extend(list(shows_with_eps.values()))
+    if shows_scoped:
+        shows_payload.extend(list(shows_scoped.values()))
     if shows_payload:
         body["shows"] = shows_payload
     if not body:
@@ -1294,16 +1416,16 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         resp = session.post(URL_REMOVE, headers=headers, json=body, timeout=timeout)
         if 200 <= resp.status_code < 300:
             _unfreeze(thaw_keys)
-            ok = len(movies) + len(shows_payload)
+            ok = len(thaw_keys)
             _log(
-                f"remove done http:{resp.status_code} movies={len(movies)} shows={len(shows_payload)}",
+                f"remove done http:{resp.status_code} sent={len(thaw_keys)} movies={len(movies)} shows_payload={len(shows_payload)}",
             )
             return ok, unresolved
         _log(f"REMOVE failed {resp.status_code}: {(resp.text or '')[:200]}")
     except Exception as exc:
         _log(f"REMOVE error: {exc}")
     for item in items_list:
-        ids = _ids_of(item) or _show_ids_of_episode(item)
+        ids = _scope_ids_for_freeze(item)
         if ids:
             _freeze(
                 item,
