@@ -34,20 +34,8 @@ URL_COLL_ADD = f"{BASE}/sync/collection"
 RESOLVE_ENABLE = False
 
 def _history_allow_rollups(adapter: Any) -> bool:
-    """Whether to write show/season roll-ups into Trakt history.
-
-    MDBList (and some other sources) include synthetic show/season roll-ups in the history index.
-    Writing those into Trakt is usually wrong (it can imply marking entire seasons/shows watched)
-    and also tends to create perpetual diffs because Trakt history snapshots are episode/movie
-    centric.
-
-    Default is **False** for safety.
-    """
     return bool(_cfg_get(adapter, "history_allow_rollups", False))
 
-
-# Pylance in strict mode is picky about int(Any|None).
-# Keep conversions explicit and safe.
 def _int_or_none(x: Any) -> int | None:
     if x is None:
         return None
@@ -633,7 +621,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
             imdb_id = str(ids.get("imdb") or "").strip() if isinstance(ids, Mapping) else ""
             hid = str(m.get("_trakt_history_id") or "").strip()
 
-            # Prefer provider-native ids for disambiguation.
             if trakt_id:
                 alt_base = f"trakt:{trakt_id}".lower()
             elif tmdb_id:
@@ -643,7 +630,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
 
             suffix = f"~h{hid}" if hid else "~dup"
             ek2 = f"{alt_base}@{ts}{suffix}"
-            # Ensure uniqueness even if the suffix collides.
             n = 2
             while ek2 in idx:
                 ek2 = f"{alt_base}@{ts}{suffix}{n}"
@@ -1080,8 +1066,10 @@ def _batch_add(
             continue
         if kind == "episodes":
             show_scope_ok = bool(show_ids and season_no is not None and episode_no is not None)
-            strong_ids = bool(ids and ("trakt" in ids or "tvdb" in ids))
+            strong_ids = bool(ids and ("trakt" in ids))
             use_ids = bool(ids) and (strong_ids or not show_scope_ok)
+            if show_scope_ok and show_ids and not strong_ids:
+                use_ids = False
 
             if use_ids:
                 obj: dict[str, Any] = {"ids": ids}
@@ -1271,8 +1259,8 @@ def _batch_remove(
     if raw_ids:
         body["ids"] = sorted(set(raw_ids))
     return body, unresolved, accepted_keys, accepted_minimals, raw_id_map
-def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dict[str, Any]:
 
+def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if "movies" in types:
         seen_movies: set[str] = set()
@@ -1444,21 +1432,52 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         d = r.json() or {}
         added = d.get("added") or {}
         existing = d.get("existing") or {}
-        ok = (
-            int(added.get("movies") or 0)
-            + int(added.get("episodes") or 0)
-            + int(existing.get("movies") or 0)
-            + int(existing.get("episodes") or 0)
-        )
+        added_total = int(added.get("movies") or 0) + int(added.get("episodes") or 0)
+        existing_total = int(existing.get("movies") or 0) + int(existing.get("episodes") or 0)
+        ok = added_total + existing_total
         nf = d.get("not_found") or {}
         nf_count = _not_found_count(nf)
+        idx: dict[tuple[str, str, str], dict[str, Any]] = {}
+        try:
+            for m in accepted_minimals or []:
+                if not isinstance(m, dict):
+                    continue
+                m_type = str(m.get("type") or "")
+                m_ids = m.get("ids") or {}
+                if not isinstance(m_ids, dict):
+                    continue
+                for k in ("trakt", "tvdb", "tmdb", "imdb", "slug"):
+                    v = m_ids.get(k)
+                    if v:
+                        idx[(m_type, k, str(v))] = m
+        except Exception:
+            idx = {}
+
         for u in _unresolved_from_not_found(nf):
+            try:
+                it = u.get("item") if isinstance(u, dict) else None
+                if idx and isinstance(it, dict):
+                    u_type = str(it.get("type") or "")
+                    u_ids = it.get("ids") or {}
+                    if isinstance(u_ids, dict):
+                        for k, v in u_ids.items():
+                            if v is None:
+                                continue
+                            cand = idx.get((u_type, str(k), str(v)))
+                            if cand:
+                                u["item"] = cand
+                                break
+            except Exception:
+                pass
             unresolved.append(u)
-            _freeze_item_if_enabled(adapter, u["item"], action="add", reasons=["not-found"])
+            try:
+                _freeze_item_if_enabled(adapter, u["item"], action="add", reasons=["not-found"])
+            except Exception:
+                pass
 
         if nf_count > 0 and ok == 0:
             _bust_index_cache("write:add:not_found")
-        # Treat "added == 0 and not_found == 0" as a valid no-op.
+
         if ok > 0 or nf_count == 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
             _bust_index_cache("write:add")
