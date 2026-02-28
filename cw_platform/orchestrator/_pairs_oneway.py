@@ -568,8 +568,32 @@ def run_one_way_feature(
             seen.add(k)
         key2item.setdefault(k, _minimal(it))
 
+    add_attempted_raw = len(adds)
+    add_attempted_unique = len(attempted_keys)
+    add_attempted_duplicate_keys = max(0, add_attempted_raw - add_attempted_unique)
+    if add_attempted_duplicate_keys:
+        dbg(
+            "apply:add:deduped",
+            dst=dst,
+            feature=feature,
+            attempted_raw=add_attempted_raw,
+            attempted_unique=add_attempted_unique,
+            duplicate_canonical_keys=add_attempted_duplicate_keys,
+        )
+
     added_effective = 0
-    res_add: dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+    added_provider_reported = 0
+    res_add: dict[str, Any] = {
+        "attempted": 0,
+        "confirmed": 0,
+        "skipped": 0,
+        "skipped_exact": 0,
+        "skipped_inferred": 0,
+        "skipped_reported": 0,
+        "skip_basis": "provider_keys",
+        "unresolved": 0,
+        "errors": 0,
+    }
     unresolved_new_total = 0
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
@@ -599,6 +623,10 @@ def run_one_way_feature(
                 "attempted": int((add_res or {}).get("attempted", 0)),
                 "confirmed": int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0),
                 "skipped": int((add_res or {}).get("skipped", 0)),
+                "skipped_exact": int((add_res or {}).get("skipped_exact", 0) or 0),
+                "skipped_inferred": int((add_res or {}).get("skipped_inferred", 0) or 0),
+                "skipped_reported": int((add_res or {}).get("skipped_reported", 0) or 0),
+                "skip_basis": str((add_res or {}).get("skip_basis") or "provider_keys"),
                 "unresolved": int((add_res or {}).get("unresolved", 0)),
                 "errors": int((add_res or {}).get("errors", 0)),
             }
@@ -634,6 +662,7 @@ def run_one_way_feature(
                     pass
             
             prov_confirmed = int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0)
+            added_provider_reported = prov_confirmed
             if have_exact_keys:
                 prov_confirmed = min(prov_confirmed or len(confirmed_keys), len(confirmed_keys))
             
@@ -660,6 +689,17 @@ def run_one_way_feature(
                 dbg("apply:add:corrected", dst=dst, feature=feature,
                     provider_count=prov_confirmed, effective=added_effective,
                     newly_unresolved=len(new_unresolved))
+
+            if int(res_add.get("skipped_inferred", 0) or 0):
+                dbg(
+                    "apply:add:skip_inference",
+                    dst=dst,
+                    feature=feature,
+                    skipped=int(res_add.get("skipped", 0) or 0),
+                    skipped_exact=int(res_add.get("skipped_exact", 0) or 0),
+                    skipped_inferred=int(res_add.get("skipped_inferred", 0) or 0),
+                    skip_basis=str(res_add.get("skip_basis") or "provider_keys"),
+                )
             
             success_keys = confirmed_keys if (verify_after_write or have_exact_keys) else confirmed_keys[:added_effective]
             failed_keys = [k for k in attempted_keys if k not in set(success_keys) and k not in skipped_keys_set]

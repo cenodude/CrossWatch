@@ -27,7 +27,8 @@ def _normalize(
     res = dict(res or {})
     attempted = len(items)
     ok = bool(res.get("ok", True))
-    ckeys = list(res.get("confirmed_keys") or [])
+    ckeys = [str(x) for x in (res.get("confirmed_keys") or []) if x]
+    skeys = [str(x) for x in (res.get("skipped_keys") or []) if x]
     confirmed = res.get("confirmed")
     if confirmed is None:
         if ckeys:
@@ -54,13 +55,28 @@ def _normalize(
 
     unresolved = len(unresolved_list) if isinstance(unresolved_list, list) else int(unresolved_list or 0)
     errors = int(res.get("errors") or 0)
-    skipped = max(0, attempted - int(confirmed) - unresolved - errors)
+    skipped_reported_raw = res.get("skipped")
+    skipped_exact = len(skeys)
+    inferred_remainder = max(0, attempted - int(confirmed) - unresolved - errors)
+    if skipped_reported_raw is not None:
+        skipped = max(0, int(skipped_reported_raw or 0))
+        skipped_inferred = 0
+        skip_basis = "provider_keys+count" if skeys else "provider_count"
+    else:
+        skipped = inferred_remainder
+        skipped_inferred = max(0, skipped - skipped_exact)
+        skip_basis = "provider_keys+inferred_remainder" if skeys else "inferred_remainder"
     out = {
         "ok": ok,
         "attempted": attempted,
         "confirmed": int(confirmed),
         "confirmed_keys": ckeys,
         "skipped": int(skipped),
+        "skipped_keys": skeys,
+        "skipped_exact": int(skipped_exact),
+        "skipped_inferred": int(skipped_inferred),
+        "skipped_reported": None if skipped_reported_raw is None else int(skipped_reported_raw or 0),
+        "skip_basis": skip_basis,
         "unresolved": int(unresolved),
         "errors": int(errors),
     }
@@ -88,7 +104,20 @@ def _apply_chunked(
         return _normalize(raw, items, tag, dst=dst, feature=feature, emit=emit)
 
     done = 0
-    agg: dict[str, Any] = {"ok": True, "attempted": 0, "confirmed": 0, "confirmed_keys": [], "skipped": 0, "unresolved": 0, "errors": 0}
+    agg: dict[str, Any] = {
+        "ok": True,
+        "attempted": 0,
+        "confirmed": 0,
+        "confirmed_keys": [],
+        "skipped": 0,
+        "skipped_keys": [],
+        "skipped_exact": 0,
+        "skipped_inferred": 0,
+        "skipped_reported": 0,
+        "skip_basis": "provider_keys",
+        "unresolved": 0,
+        "errors": 0,
+    }
     for i in range(0, total, csize):
         chunk = items[i : i + csize]
         raw = _retry(lambda: call(chunk))
@@ -97,10 +126,18 @@ def _apply_chunked(
         agg["attempted"] += res["attempted"]
         agg["confirmed"] += res["confirmed"]
         agg["skipped"] += res["skipped"]
+        agg["skipped_exact"] += int(res.get("skipped_exact", 0) or 0)
+        agg["skipped_inferred"] += int(res.get("skipped_inferred", 0) or 0)
+        agg["skipped_reported"] += int(res.get("skipped_reported", 0) or 0)
         agg["unresolved"] += res["unresolved"]
         agg["errors"] += res["errors"]
         if res.get("confirmed_keys"):
             agg["confirmed_keys"].extend(res["confirmed_keys"])
+        if res.get("skipped_keys"):
+            agg["skipped_keys"].extend(res["skipped_keys"])
+        basis = str(res.get("skip_basis") or "provider_keys")
+        if agg.get("skip_basis") != basis:
+            agg["skip_basis"] = "mixed"
         done += len(chunk)
         emit(f"{tag}:progress", dst=dst, feature=feature, done=done, total=total, ok=res["ok"])
         pause = int(chunk_pause_ms or 0)
@@ -146,6 +183,9 @@ def apply_add(
         attempted=int(res.get("attempted", 0)),
         added=_conf,
         skipped=int(res.get("skipped", 0)),
+        skipped_exact=int(res.get("skipped_exact", 0)),
+        skipped_inferred=int(res.get("skipped_inferred", 0)),
+        skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
         result=res,
@@ -186,6 +226,9 @@ def apply_remove(
         attempted=int(res.get("attempted", 0)),
         removed=_conf,
         skipped=int(res.get("skipped", 0)),
+        skipped_exact=int(res.get("skipped_exact", 0)),
+        skipped_inferred=int(res.get("skipped_inferred", 0)),
+        skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
         result=res,

@@ -161,6 +161,22 @@ def maybe_promote_to_blackbox(
 
     return {"promoted": False, "reason": None, "since": None}
 
+def _normalize_keys(keys: Iterable[str] | None) -> tuple[list[str], list[str]]:
+    ordered: list[str] = []
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in (keys or []):
+        try:
+            key = str(raw)
+        except Exception:
+            continue
+        ordered.append(key)
+        if key not in seen:
+            seen.add(key)
+            unique.append(key)
+    return ordered, unique
+
+
 def record_attempts(
     dst: str,
     feature: str,
@@ -174,21 +190,56 @@ def record_attempts(
 ) -> dict[str, Any]:
     bb = _load_bb_cfg(cfg)
     ts = int(time.time())
+    ordered_keys, unique_keys = _normalize_keys(keys)
+    flap_path = _flap_path(dst, feature)
+    flap_data = _read_json(flap_path)
+
+    promote_after = int(bb.get("promote_after", 3) or 3)
+    unresolved_days = int(bb.get("unresolved_days", 0) or 0)
+    pair_scoped = bool(bb.get("pair_scoped", True))
+    scoped_pair = pair if pair_scoped else None
+    bb_path = _bb_path(dst, feature, scoped_pair)
+    bb_data = _read_json(bb_path)
+
+    flap_changed = False
+    bb_changed = False
     promoted = 0
-    count = 0
-    for k in (keys or []):
-        try:
-            k = str(k)
-            count += 1
-            inc_flap(dst, feature, k, reason=reason, op=op, ts=ts)
-            res = maybe_promote_to_blackbox(
-                dst, feature, k, cfg=bb, ts=ts, pair=pair, unresolved_map=unresolved_map,
-            )
-            if res.get("promoted"):
-                promoted += 1
-        except Exception:
-            continue
-    return {"ok": True, "count": count, "promoted": promoted, "pair": pair or "global"}
+
+    for key in unique_keys:
+        row = flap_data.setdefault(key, {})
+        row["consecutive"] = int(row.get("consecutive") or 0) + 1
+        row["last_reason"] = str(reason or "")
+        row["last_op"] = str(op or "")
+        row["last_attempt_ts"] = ts
+        flap_changed = True
+
+        should_promote = False
+        promote_reason = ""
+        cons = int(row.get("consecutive") or 0)
+        if cons >= promote_after:
+            should_promote = True
+            promote_reason = f"flapper:consecutive>={promote_after}"
+        elif unresolved_days > 0 and unresolved_map:
+            meta = unresolved_map.get(key) or {}
+            uts = int(meta.get("ts") or 0)
+            if uts > 0:
+                age_days = (ts - uts) / 86400.0
+                if age_days >= unresolved_days:
+                    should_promote = True
+                    promote_reason = f"unresolved_age>={unresolved_days}d"
+
+        if should_promote and key not in bb_data:
+            bb_data[key] = {"reason": promote_reason or str(reason or "flapper"), "since": int(ts)}
+            bb_changed = True
+            promoted += 1
+
+    if flap_changed:
+        _write_json(flap_path, flap_data)
+    if bb_changed:
+        _write_json(bb_path, bb_data)
+
+    return {"ok": True, "count": len(ordered_keys), "promoted": promoted, "pair": scoped_pair or "global"}
+
 
 def record_success(
     dst: str,
@@ -199,15 +250,26 @@ def record_success(
     cfg: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     ts = int(time.time())
-    count = 0
-    for k in (keys or []):
-        try:
-            k = str(k)
-            count += 1
-            reset_flap(dst, feature, k, ts=ts)
-        except Exception:
-            continue
-    return {"ok": True, "count": count}
+    ordered_keys, unique_keys = _normalize_keys(keys)
+    if not unique_keys:
+        return {"ok": True, "count": 0}
+
+    flap_path = _flap_path(dst, feature)
+    flap_data = _read_json(flap_path)
+    changed = False
+
+    for key in unique_keys:
+        row = flap_data.setdefault(key, {})
+        row["consecutive"] = 0
+        row["last_reason"] = "ok"
+        row["last_op"] = str(row.get("last_op") or "")
+        row["last_success_ts"] = ts
+        changed = True
+
+    if changed:
+        _write_json(flap_path, flap_data)
+
+    return {"ok": True, "count": len(ordered_keys)}
 
 def prune_blackbox(*, cooldown_days: int = 30) -> tuple[int, int]:
     scanned = 0
