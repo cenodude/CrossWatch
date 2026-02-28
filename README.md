@@ -60,6 +60,8 @@ Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
 Supported: **Profiles** (Multi-users / Multi-servers per instance)
 
+<center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still many bugs.</B></center>
+
 <img
   align="right"
   src="https://github.com/user-attachments/assets/f219a392-839f-4ced-a263-1c745fbdf999"
