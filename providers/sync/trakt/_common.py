@@ -15,7 +15,7 @@ from cw_platform.id_map import minimal as id_minimal, canonical_key
 from .._mod_common import request_with_retries
 
 # headers
-UA = os.environ.get("CW_UA", "CrossWatch/3.0 (Trakt)")
+UA = os.environ.get("CW_UA", "CrossWatch/1.0 (Trakt)")
 
 STATE_DIR = Path("/config/.cw_state")
 _ACT_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
@@ -27,8 +27,6 @@ def _pair_scope() -> str | None:
         if v and str(v).strip():
             return str(v).strip()
     return None
-
-
 
 
 def _is_capture_mode() -> bool:
@@ -375,13 +373,13 @@ def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, Any]:
         return s or None
 
     t = str(item.get("type") or "").lower()
-    # Episodes and seasons sometimes carry show IDs in the "ids" field.
-    # Strip any ids that exactly match show_ids so callers can fall back to show-scoped
-    # season/episode numbers.
+    
     if t in ("episode", "season"):
         has_ep_scope = item.get("season") is not None and item.get("episode") is not None
         if t == "episode" and has_ep_scope and not item.get("show_ids"):
-            return {}
+            server_hint = any(ids.get(k) for k in ("plex", "jellyfin", "emby"))
+            if not server_hint:
+                return {}
 
         show_ids = dict(item.get("show_ids") or {})
         for key in list(ids.keys()):
