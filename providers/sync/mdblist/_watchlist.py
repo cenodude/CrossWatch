@@ -272,6 +272,16 @@ def _pick_kind_from_row(row: Mapping[str, Any]) -> str:
     t = str(row.get("mediatype") or row.get("type") or "").strip().lower()
     if t in ("show", "tv", "series", "shows"):
         return "show"
+    if row.get("tvdb_id") not in (None, ""):
+        return "show"
+    if row.get("first_air_date") or row.get("first_air_year"):
+        return "show"
+    if row.get("release_date") or row.get("release_year"):
+        return "movie"
+    ids = row.get("ids")
+    if isinstance(ids, Mapping):
+        if ids.get("tvdb") not in (None, ""):
+            return "show"
     return "movie"
 
 

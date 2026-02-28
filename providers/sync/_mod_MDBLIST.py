@@ -72,7 +72,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "4.0.0"
+__VERSION__ = "4.1.0"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -162,7 +162,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
-                "from_date": False,
+                "from_date": True,
             },
         },
     }
@@ -354,7 +354,7 @@ class MDBLISTModule:
         if enabled.get("ratings"):
             rt_ok, rt_code, rt_ra, rt_rate, rt_err = hit(
                 "/sync/ratings",
-                params={"apikey": self.cfg.api_key, "page": 1, "limit": 1},
+                params={"apikey": self.cfg.api_key, "offset": 0, "limit": 1},
             )
 
         hs_ok = False
@@ -370,7 +370,7 @@ class MDBLISTModule:
             if (not hs_ok) and hs_code in (404, 405):
                 hs_ok, hs_code, hs_ra, hs_rate, hs_err = hit(
                     "/sync/watched",
-                    params={"apikey": self.cfg.api_key, "page": 1, "limit": 1, "since": "1970-01-01T00:00:00Z"},
+                    params={"apikey": self.cfg.api_key, "offset": 0, "limit": 1, "since": "1900-01-01T00:00:00Z"},
                 )
 
         latency_ms = int((time.perf_counter() - start) * 1000)
@@ -531,7 +531,7 @@ class _MDBLISTOPS:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
-                "from_date": False,
+                "from_date": True,
             },
         }
 
@@ -581,7 +581,24 @@ class _MDBLISTOPS:
             acts = dict(raw)
             watch = acts.get("watchlisted_at") or acts.get("watchlist") or acts.get("updated_at")
             rated = acts.get("rated_at") or acts.get("ratings") or acts.get("updated_at")
-            hist = acts.get("watched_at") or acts.get("history") or acts.get("updated_at")
+            hist_candidates = [
+                acts.get("watched_at"),
+                acts.get("season_watched_at"),
+                acts.get("episode_watched_at"),
+                acts.get("history"),
+                acts.get("updated_at"),
+            ]
+            hist: Any = None
+            for candidate in hist_candidates:
+                if not candidate:
+                    continue
+                if not hist:
+                    hist = candidate
+                    continue
+                try:
+                    hist = candidate if str(candidate) > str(hist) else hist
+                except Exception:
+                    hist = hist or candidate
             updated = acts.get("updated_at") or hist or rated or watch
 
             out = {

@@ -188,23 +188,25 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             "imdb": item.get("imdb") or item.get("imdb_id"),
             "tmdb": item.get("tmdb") or item.get("tmdb_id"),
             "tvdb": item.get("tvdb") or item.get("tvdb_id"),
+            "trakt": item.get("trakt") or item.get("trakt_id"),
+            "kitsu": item.get("kitsu") or item.get("kitsu_id"),
+            "mdblist": item.get("mdblist") or item.get("mdblist_id"),
         }
     out: dict[str, Any] = {}
     imdb_val = _imdb_ok(ids_raw.get("imdb"))
     if imdb_val:
         out["imdb"] = imdb_val
-    tmdb_val = ids_raw.get("tmdb")
-    if tmdb_val is not None:
+    for key in ("tmdb", "tvdb", "trakt", "kitsu"):
+        value = ids_raw.get(key)
+        if value is None:
+            continue
         try:
-            out["tmdb"] = int(tmdb_val)
+            out[key] = int(value)
         except Exception:
-            pass
-    tvdb_val = ids_raw.get("tvdb")
-    if tvdb_val is not None:
-        try:
-            out["tvdb"] = int(tvdb_val)
-        except Exception:
-            pass
+            continue
+    mdblist_val = ids_raw.get("mdblist")
+    if mdblist_val not in (None, ""):
+        out["mdblist"] = str(mdblist_val)
     if out.get("imdb") and out.get("tmdb") and out.get("tvdb"):
         out.pop("tvdb", None)
     return out
@@ -254,6 +256,14 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             base = f"imdb:{imdb}"
 
     if not base:
+        trakt_val = ids.get("trakt") or ids.get("trakt_id")
+        if trakt_val is not None:
+            try:
+                base = f"trakt:{int(trakt_val)}"
+            except Exception:
+                base = ""
+
+    if not base:
         tvdb_val = ids.get("tvdb") or ids.get("tvdb_id")
         if tvdb_val is not None:
             try:
@@ -262,7 +272,15 @@ def _key_of(obj: Mapping[str, Any]) -> str:
                 base = ""
 
     if not base:
-        mdbl = ids.get("mdblist") or ids.get("id")
+        kitsu_val = ids.get("kitsu") or ids.get("kitsu_id")
+        if kitsu_val is not None:
+            try:
+                base = f"kitsu:{int(kitsu_val)}"
+            except Exception:
+                base = ""
+
+    if not base:
+        mdbl = ids.get("mdblist") or ids.get("mdblist_id") or ids.get("id")
         if mdbl:
             base = f"mdblist:{mdbl}"
 
@@ -566,15 +584,7 @@ def build_index(
             if isinstance(row, Mapping) and isinstance(row.get("seasons"), list):
                 sh = row.get("show") or {}
                 sh_ids_raw = sh.get("ids") or {}
-                ids_sh = {
-                    k: v
-                    for k, v in {
-                        "imdb": sh_ids_raw.get("imdb"),
-                        "tmdb": sh_ids_raw.get("tmdb"),
-                        "tvdb": sh_ids_raw.get("tvdb"),
-                    }.items()
-                    if v
-                }
+                ids_sh = _ids_for_mdblist(sh)
                 show_title = str(sh.get("title") or sh.get("name") or "").strip()
                 y = sh.get("year") or sh.get("first_air_year")
                 if not y:
@@ -588,9 +598,8 @@ def build_index(
 
                 for sv in row.get("seasons") or []:
                     sr = _valid_rating(sv.get("rating"))
-                    sids_raw = sv.get("ids") or {}
-                    sids = {k: sids_raw.get(k) for k in ("tmdb", "tvdb") if sids_raw.get(k)}
-                    ids_for_season = sids or {k: ids_sh.get(k) for k in ("tmdb", "tvdb") if ids_sh.get(k)}
+                    sids = _ids_for_mdblist(sv)
+                    ids_for_season = sids or ids_sh
                     if ids_for_season:
                         sm: dict[str, Any] = {
                             "type": "season",
@@ -614,8 +623,7 @@ def build_index(
 
                     for ev in sv.get("episodes") or []:
                         er = _valid_rating(ev.get("rating"))
-                        eids_raw = ev.get("ids") or {}
-                        eids = {k: eids_raw.get(k) for k in ("tmdb", "tvdb") if eids_raw.get(k)}
+                        eids = _ids_for_mdblist(ev)
                         ids_for_episode = eids or ids_sh
                         if not ids_for_episode:
                             continue
@@ -696,8 +704,14 @@ def _show_key(ids: Mapping[str, Any]) -> str:
         return f"tmdb:{ids['tmdb']}"
     if ids.get("imdb"):
         return f"imdb:{ids['imdb']}"
+    if ids.get("trakt"):
+        return f"trakt:{ids['trakt']}"
     if ids.get("tvdb"):
         return f"tvdb:{ids['tvdb']}"
+    if ids.get("mdblist"):
+        return f"mdblist:{ids['mdblist']}"
+    if ids.get("kitsu"):
+        return f"kitsu:{ids['kitsu']}"
     return json.dumps(ids, sort_keys=True)
 
 

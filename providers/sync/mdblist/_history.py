@@ -467,8 +467,19 @@ def build_index(
     retries = adapter.cfg.max_retries
 
     acts = _fetch_last_activities(adapter, timeout=timeout, retries=retries) or {}
-    acts_watched = acts.get("watched_at") if isinstance(acts, Mapping) else None
-    acts_watched_iso = _iso_z(acts_watched) if _iso_ok(acts_watched) else None
+    acts_candidates = []
+    if isinstance(acts, Mapping):
+        acts_candidates.extend([
+            acts.get("watched_at"),
+            acts.get("season_watched_at"),
+            acts.get("episode_watched_at"),
+            acts.get("history"),
+            acts.get("updated_at"),
+        ])
+    acts_watched_iso: str | None = None
+    for candidate in acts_candidates:
+        if _iso_ok(candidate):
+            acts_watched_iso = _max_iso(acts_watched_iso, _iso_z(candidate))
 
     wm = get_watermark("history")
     force_baseline = False
@@ -680,9 +691,6 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             continue
 
         if typ == "show":
-            if unwatch:
-                _log(f"skip unwatch: derived type=show item={id_minimal({'type': 'show', 'ids': ids})}")
-                continue
             if not ids:
                 continue
             key = _stable_show_key(ids)
@@ -720,9 +728,6 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             seasons_list.append(season_obj)
 
         if typ == "season":
-            if unwatch:
-                _log(f"skip unwatch: derived type=season item={id_minimal({'type': 'season', 'ids': ids or sh_ids, 'season': s})}")
-                continue
             if watched_iso:
                 season_obj["watched_at"] = watched_iso
             shows_nested[skey] = show_obj
@@ -776,7 +781,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
     skipped_meta = 0
     if not unwatch and shows_plain:
         for k, v in list(shows_plain.items()):
-            if not v.get("title") and not v.get("year"):
+            if (not v.get("title") and not v.get("year")) and not v.get("ids"):
                 shows_plain.pop(k, None)
                 skipped_meta += 1
 
