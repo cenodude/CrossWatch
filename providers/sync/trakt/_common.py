@@ -8,7 +8,7 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, TypeGuard
+from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
@@ -138,7 +138,7 @@ def update_watermark_if_new(feature: str, iso_ts: str | None) -> str | None:
     return new
 
 
-def _iso_ok(value: object) -> TypeGuard[str]:
+def _iso_ok(value: object) -> bool:
     if not isinstance(value, str) or not value.strip():
         return False
     try:
@@ -269,22 +269,82 @@ def _fix_imdb(ids: dict[str, Any]) -> None:
 
 def normalize_watchlist_row(row: Mapping[str, Any]) -> dict[str, Any]:
     t = str(row.get("type") or "movie").lower()
-    payload = (row.get("movie") if t == "movie" else row.get("show")) or {}
-    ids = dict(payload.get("ids") or {})
-    _fix_imdb(ids)
-    m: dict[str, Any] = {
-        "type": "movie" if t == "movie" else "show",
-        "title": payload.get("title"),
-        "year": payload.get("year"),
-        "ids": {k: str(v) for k, v in ids.items() if v},
-    }
-    return id_minimal(m)
+
+    if t == "movie":
+        payload = row.get("movie") or {}
+        ids = dict(payload.get("ids") or {})
+        _fix_imdb(ids)
+        return id_minimal(
+            {
+                "type": "movie",
+                "title": payload.get("title"),
+                "year": payload.get("year"),
+                "ids": {k: str(v) for k, v in ids.items() if v},
+            }
+        )
+
+    if t == "show":
+        payload = row.get("show") or {}
+        ids = dict(payload.get("ids") or {})
+        _fix_imdb(ids)
+        return id_minimal(
+            {
+                "type": "show",
+                "title": payload.get("title"),
+                "year": payload.get("year"),
+                "ids": {k: str(v) for k, v in ids.items() if v},
+            }
+        )
+
+    if t == "season":
+        season = row.get("season") or {}
+        show = row.get("show") or {}
+        ids = dict(season.get("ids") or {})
+        show_ids = dict(show.get("ids") or {})
+        _fix_imdb(ids)
+        _fix_imdb(show_ids)
+        number = season.get("number")
+        m = {
+            "type": "season",
+            "title": show.get("title"),
+            "series_title": show.get("title"),
+            "year": show.get("year"),
+            "season": number,
+            "ids": {k: str(v) for k, v in ids.items() if v},
+        }
+        if show_ids:
+            m["show_ids"] = {k: str(v) for k, v in show_ids.items() if v}
+        return id_minimal(m)
+
+    if t == "episode":
+        episode = row.get("episode") or {}
+        show = row.get("show") or {}
+        ids = dict(episode.get("ids") or {})
+        show_ids = dict(show.get("ids") or {})
+        _fix_imdb(ids)
+        _fix_imdb(show_ids)
+        season_no = episode.get("season")
+        episode_no = episode.get("number")
+        m = {
+            "type": "episode",
+            "title": episode.get("title") or show.get("title"),
+            "series_title": show.get("title"),
+            "year": show.get("year"),
+            "season": season_no,
+            "episode": episode_no,
+            "ids": {k: str(v) for k, v in ids.items() if v},
+        }
+        if show_ids:
+            m["show_ids"] = {k: str(v) for k, v in show_ids.items() if v}
+        return id_minimal(m)
+
+    return id_minimal(row)
 
 
 def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     if "ids" in obj and "type" in obj:
         return id_minimal(obj)
-    if "type" in obj and ("movie" in obj or "show" in obj):
+    if "type" in obj and any(k in obj for k in ("movie", "show", "season", "episode")):
         return normalize_watchlist_row(obj)
     return id_minimal(obj)
 
@@ -293,13 +353,34 @@ def key_of(item: Mapping[str, Any]) -> str:
     return canonical_key(item)
 
 
-def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, str]:
+def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, Any]:
     ids = dict(item.get("ids") or {})
     _fix_imdb(ids)
+
+    def _coerce(key: str, value: Any) -> Any:
+        if value is None:
+            return None
+        if key in ("trakt", "tvdb", "tmdb"):
+            # Trakt expects numeric IDs as integers in the sync endpoints.
+            try:
+                return int(value)
+            except Exception:
+                s = str(value).strip()
+                return int(s) if s.isdigit() else None
+        if key == "imdb":
+            s = str(value).strip()
+            return s or None
+        # slug or any other string-ish id
+        s = str(value).strip()
+        return s or None
+
     t = str(item.get("type") or "").lower()
-    if t == "episode":
-        has_scope = item.get("season") is not None and item.get("episode") is not None
-        if has_scope and not item.get("show_ids"):
+    # Episodes and seasons sometimes carry show IDs in the "ids" field.
+    # Strip any ids that exactly match show_ids so callers can fall back to show-scoped
+    # season/episode numbers.
+    if t in ("episode", "season"):
+        has_ep_scope = item.get("season") is not None and item.get("episode") is not None
+        if t == "episode" and has_ep_scope and not item.get("show_ids"):
             return {}
 
         show_ids = dict(item.get("show_ids") or {})
@@ -307,14 +388,19 @@ def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, str]:
             if key in show_ids and str(ids.get(key)) == str(show_ids.get(key)):
                 ids.pop(key, None)
 
-        out: dict[str, str] = {}
+        out: dict[str, Any] = {}
         for key in ("trakt", "tvdb", "tmdb", "imdb"):
-            v = ids.get(key)
-            if v:
-                out[key] = str(v)
+            v = _coerce(key, ids.get(key))
+            if v is not None:
+                out[key] = v
         return out
 
-    return {k: str(v) for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
+    out2: dict[str, Any] = {}
+    for k in _ALLOWED_ID_KEYS:
+        v = _coerce(k, ids.get(k))
+        if v is not None:
+            out2[k] = v
+    return out2
 
 
 def pick_trakt_kind(item: Mapping[str, Any]) -> str:
@@ -329,20 +415,89 @@ def pick_trakt_kind(item: Mapping[str, Any]) -> str:
 
 
 def build_watchlist_body(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    movies: list[dict[str, Any]] = []
-    shows: list[dict[str, Any]] = []
-    for it in items or []:
-        ids = ids_for_trakt(it)
-        if not ids:
-            continue
-        kind = pick_trakt_kind(it)
-        if kind == "shows":
-            shows.append({"ids": ids})
-        elif kind == "movies":
-            movies.append({"ids": ids})
     body: dict[str, Any] = {}
-    if movies:
-        body["movies"] = movies
-    if shows:
-        body["shows"] = shows
+    nested_shows: dict[str, dict[str, Any]] = {}
+
+    def push(bucket: str, obj: dict[str, Any]) -> None:
+        body.setdefault(bucket, []).append(obj)
+
+    def show_scope_ids(it: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            k: str(v)
+            for k, v in dict(it.get("show_ids") or {}).items()
+            if k in ("trakt", "slug", "tmdb", "imdb", "tvdb") and v
+        }
+
+    def show_key(ids: Mapping[str, Any]) -> str:
+        return json.dumps(
+            {k: ids.get(k) for k in ("trakt", "slug", "tmdb", "imdb", "tvdb") if ids.get(k)},
+            sort_keys=True,
+        )
+
+    for it in items or []:
+        kind = pick_trakt_kind(it)
+        ids = ids_for_trakt(it)
+        if kind == "movies":
+            if ids:
+                push("movies", {"ids": ids})
+            continue
+
+        if kind == "shows":
+            if ids:
+                skey = show_key(ids)
+                nested_shows.setdefault(skey, {"ids": ids, "seasons": {}})
+            continue
+
+        if kind == "seasons":
+            season_no = it.get("season")
+            if season_no is None:
+                season_no = it.get("number")
+            if ids:
+                push("seasons", {"ids": ids})
+                continue
+            show_ids = show_scope_ids(it)
+            if show_ids and season_no is not None:
+                skey = show_key(show_ids)
+                entry = nested_shows.setdefault(skey, {"ids": show_ids, "seasons": {}})
+                try:
+                    season_i = int(str(season_no))
+                except Exception:
+                    continue
+                entry["seasons"].setdefault(season_i, {"number": season_i})
+            continue
+
+        if kind == "episodes":
+            season_no = it.get("season")
+            if season_no is None:
+                season_no = it.get("season_number")
+            episode_no = it.get("episode")
+            if episode_no is None:
+                episode_no = it.get("episode_number")
+
+            show_ids = show_scope_ids(it)
+            show_scope_ok = bool(show_ids and season_no is not None and episode_no is not None)
+            strong_ids = bool(ids and ("trakt" in ids or "tvdb" in ids))
+            use_ids = bool(ids) and (strong_ids or not show_scope_ok)
+
+            # Prefer show-scoped season/episode when weak episode IDs.
+            if use_ids:
+                push("episodes", {"ids": ids})
+                continue
+
+            if show_scope_ok:
+                skey = show_key(show_ids)
+                entry = nested_shows.setdefault(skey, {"ids": show_ids, "seasons": {}})
+                try:
+                    season_i = int(str(season_no))
+                    episode_i = int(str(episode_no))
+                except Exception:
+                    continue
+                season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
+                season_entry.setdefault("episodes", []).append({"number": episode_i})
+    if nested_shows:
+        body.setdefault("shows", []).extend(
+            ({"ids": v["ids"], "seasons": list(v["seasons"].values())} if v.get("seasons") else {"ids": v["ids"]})
+            for v in nested_shows.values()
+            if v.get("ids")
+        )
     return body

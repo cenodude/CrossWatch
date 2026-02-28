@@ -356,19 +356,32 @@ def _batch_payload(
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for it in items or []:
-        if _is_frozen(it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
+        m = id_minimal(it)
+        if _is_frozen(m):
+            _dbg("skip_frozen", title=m.get("title"))
             continue
-        ids = ids_for_trakt(it)
-        if not ids:
-            rejected.append({"item": id_minimal(it), "hint": "missing ids"})
+
+        kind = pick_trakt_kind(m)
+        ids = ids_for_trakt(m)
+        show_ids = dict(m.get("show_ids") or {})
+        season_no = m.get("season")
+        if season_no is None:
+            season_no = m.get("number")
+        episode_no = m.get("episode")
+        if episode_no is None:
+            episode_no = m.get("episode_number")
+
+        if kind in ("movies", "shows") and ids:
+            accepted.append(m)
             continue
-        accepted.append(
-            {
-                "type": "show" if pick_trakt_kind(it) == "shows" else "movie",
-                "ids": ids,
-            }
-        )
+        if kind == "seasons" and (ids or (show_ids and season_no is not None)):
+            accepted.append(m)
+            continue
+        if kind == "episodes" and (ids or (show_ids and season_no is not None and episode_no is not None)):
+            accepted.append(m)
+            continue
+
+        rejected.append({"item": m, "hint": "missing ids" if not show_ids else "missing scope"})
     return accepted, rejected
 
 
@@ -379,17 +392,64 @@ def _freeze_not_found(
     unresolved: list[dict[str, Any]],
     add_details: bool,
 ) -> None:
-    for t in ("movies", "shows"):
+    def freeze_minimal(m: dict[str, Any], details: Mapping[str, Any] | None = None) -> None:
+        unresolved.append({"item": m, "hint": "not_found"})
+        _freeze_item(
+            m,
+            action=action,
+            reasons=[f"{action}:not-found"],
+            details=details if add_details else None,
+        )
+
+    for t in ("movies", "seasons", "episodes"):
         for obj in (not_found.get(t) or []):
+            if not isinstance(obj, Mapping):
+                continue
             ids = dict(obj.get("ids") or {})
-            m = id_minimal({"type": "movie" if t == "movies" else "show", "ids": ids})
-            unresolved.append({"item": m, "hint": "not_found"})
-            _freeze_item(
-                m,
-                action=action,
-                reasons=[f"{action}:not-found"],
-                details={"ids": ids} if add_details else None,
-            )
+            if t == "movies":
+                m = id_minimal({"type": "movie", "ids": ids})
+            elif t == "shows":
+                m = id_minimal({"type": "show", "ids": ids})
+            elif t == "seasons":
+                m = id_minimal({"type": "season", "ids": ids})
+            else:
+                m = id_minimal({"type": "episode", "ids": ids})
+            freeze_minimal(m, details={"ids": ids})
+
+    for sh in (not_found.get("shows") or []):
+        if not isinstance(sh, Mapping):
+            continue
+        show_ids = dict(sh.get("ids") or {})
+        seasons = sh.get("seasons") or []
+        if not seasons and show_ids:
+            freeze_minimal(id_minimal({"type": "show", "ids": show_ids}), details={"ids": show_ids})
+            continue
+        for s in seasons:
+            if not isinstance(s, Mapping):
+                continue
+            season_no = s.get("number")
+            episodes = s.get("episodes") or []
+            if season_no is None:
+                continue
+            if episodes:
+                for ep in episodes:
+                    if not isinstance(ep, Mapping):
+                        continue
+                    episode_no = ep.get("number")
+                    if episode_no is None:
+                        continue
+                    m = id_minimal(
+                        {
+                            "type": "episode",
+                            "show_ids": show_ids,
+                            "season": int(season_no),
+                            "episode": int(episode_no),
+                        }
+                    )
+                    freeze_minimal(m)
+            else:
+                m = id_minimal({"type": "season", "show_ids": show_ids, "season": int(season_no)})
+                freeze_minimal(m)
 
 
 def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
@@ -399,14 +459,7 @@ def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
 
 
 def _payload_from_accepted(accepted_slice: list[dict[str, Any]]) -> dict[str, Any]:
-    movies = [{"ids": x["ids"]} for x in accepted_slice if x["type"] == "movie"]
-    shows = [{"ids": x["ids"]} for x in accepted_slice if x["type"] == "show"]
-    payload: dict[str, Any] = {}
-    if movies:
-        payload["movies"] = movies
-    if shows:
-        payload["shows"] = shows
-    return payload
+    return build_watchlist_body(accepted_slice)
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -431,8 +484,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     if capacity is not None and capacity <= 0:
         for x in accepted:
-            m = id_minimal({"type": x["type"], "ids": x["ids"]})
-            unresolved.append({"item": m, "hint": "trakt_limit"})
+            unresolved.append({"item": x, "hint": "trakt_limit"})
         _warn("watchlist_limit_reached", limit=wl_limit, have=current_count)
         return 0, unresolved
 
@@ -440,8 +492,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         keep = accepted[:capacity]
         rest = accepted[capacity:]
         for x in rest:
-            m = id_minimal({"type": x["type"], "ids": x["ids"]})
-            unresolved.append({"item": m, "hint": "trakt_limit"})
+            unresolved.append({"item": x, "hint": "trakt_limit"})
         accepted = keep
         _warn("watchlist_capacity_partial", capacity=capacity, skipped=len(rest))
 
@@ -467,8 +518,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             d = r.json() if (r.text or "").strip() else {}
             added = d.get("added") or {}
             existing = d.get("existing") or {}
-            ok += int(added.get("movies") or 0) + int(added.get("shows") or 0)
-            ok += int(existing.get("movies") or 0) + int(existing.get("shows") or 0)
+            ok += sum(int(added.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
+            ok += sum(int(existing.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action="add", unresolved=unresolved, add_details=freeze_details)
             if ok == 0 and not unresolved:
@@ -478,10 +529,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _warn("write_limit", action="add", status=420, upgrade_url=upgrade_url)
             _record_limit_error("watchlist")
             for x in sl:
-                m = id_minimal({"type": x["type"], "ids": x["ids"]})
                 unresolved.append(
                     {
-                        "item": m,
+                        "item": x,
                         "hint": "trakt_limit",
                     }
                 )
@@ -489,10 +539,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         else:
             _warn("write_failed", action="add", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
-                m = id_minimal({"type": x["type"], "ids": x["ids"]})
-                unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
+                unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
                 _freeze_item(
-                    m,
+                    x,
                     action="add",
                     reasons=[f"http:{r.status_code}"],
                     details={"status": r.status_code} if freeze_details else None,
@@ -534,16 +583,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if r.status_code in (200, 201):
             d = r.json() if (r.text or "").strip() else {}
             deleted = d.get("deleted") or d.get("removed") or {}
-            ok += int(deleted.get("movies") or 0) + int(deleted.get("shows") or 0)
+            ok += sum(int(deleted.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action="remove", unresolved=unresolved, add_details=freeze_details)
         else:
             _warn("write_failed", action="remove", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
-                m = id_minimal({"type": x["type"], "ids": x["ids"]})
-                unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
+                unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
                 _freeze_item(
-                    m,
+                    x,
                     action="remove",
                     reasons=[f"http:{r.status_code}"],
                     details={"status": r.status_code} if freeze_details else None,

@@ -82,7 +82,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "4.3.0"
+__VERSION__ = "4.4.0"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 
@@ -148,7 +148,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
-                "from_date": False,
+                "from_date": True,
             },
         },
     }
@@ -522,9 +522,35 @@ class TRAKTModule:
             _dbg(feature, "feature_module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
-            cnt, unresolved = mod.add(self, lst)
+            skipped_keys: list[str] = []
+            res = mod.add(self, lst)
+
+            if isinstance(res, tuple):
+                if len(res) == 2:
+                    cnt, unresolved = res
+                elif len(res) == 3:
+                    cnt, unresolved, skipped_keys = res
+                else:
+                    cnt, unresolved = 0, []
+            elif isinstance(res, dict):
+                cnt = int(res.get("count", 0) or 0)
+                unresolved = res.get("unresolved") or []
+                raw_sk = res.get("skipped_keys") or []
+                if isinstance(raw_sk, list):
+                    skipped_keys = [str(x) for x in raw_sk if x]
+            else:
+                cnt, unresolved = 0, []
+
             confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            if skipped_keys:
+                sk = set(skipped_keys)
+                confirmed_keys = [k for k in confirmed_keys if k not in sk]
+
+            out: dict[str, Any] = {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            if skipped_keys:
+                out["skipped_keys"] = skipped_keys
+                out["skipped"] = len(skipped_keys)
+            return out
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -574,7 +600,7 @@ class _TraktOPS:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
-                "from_date": False,
+                "from_date": True,
             },
         }
 

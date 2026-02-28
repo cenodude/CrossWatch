@@ -151,7 +151,7 @@ def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = ("trakt", "tmdb", "tvdb", "imdb") if kind == "episodes" else ("trakt", "tmdb", "tvdb") if kind == "seasons" else ("trakt", "tmdb", "imdb", "tvdb")
+    allowed = ("trakt", "tmdb", "tvdb", "imdb", "slug") if kind in {"movies", "shows", "episodes"} else ("trakt", "tmdb", "tvdb") if kind == "seasons" else ("trakt", "tmdb", "imdb", "tvdb", "slug")
     out: dict[str, Any] = {}
     for k in allowed:
         v = ids.get(k)
@@ -160,7 +160,7 @@ def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> dict[str, Any]
         s = str(v).strip()
         if not s:
             continue
-        out[k] = s if k == "imdb" else (int(s) if s.isdigit() else None)
+        out[k] = s if k in {"imdb", "slug"} else (int(s) if s.isdigit() else None)
     return {k: v for k, v in out.items() if v is not None}
 
 
@@ -186,6 +186,11 @@ def _accepted_minimal_for_cache(
     rated_at: str | None = None,
 ) -> dict[str, Any]:
     m: dict[str, Any] = {"type": t, "ids": dict(ids)}
+    if not ids:
+        if src.get("title") is not None:
+            m["title"] = src.get("title")
+        if src.get("year") is not None:
+            m["year"] = src.get("year")
     if rating is not None:
         m["rating"] = rating
     if rated_at:
@@ -392,9 +397,32 @@ def _bucketize_for_upsert(
 ) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     body: dict[str, list[dict[str, Any]]] = {}
     accepted: list[dict[str, Any]] = []
+    nested_shows: dict[str, dict[str, Any]] = {}
 
     def push(bucket: str, obj: dict[str, Any]) -> None:
         body.setdefault(bucket, []).append(obj)
+
+    def show_scope_ids(it: Mapping[str, Any]) -> dict[str, Any]:
+        src = dict(it.get("show_ids") or {})
+        out: dict[str, Any] = {}
+        for k in ("trakt", "slug", "tmdb", "imdb", "tvdb"):
+            v = src.get(k)
+            if v is None:
+                continue
+            s = str(v).strip()
+            if not s:
+                continue
+            if k in ("imdb", "slug"):
+                out[k] = s
+            else:
+                out[k] = int(s) if s.isdigit() else None
+        return {k: v for k, v in out.items() if v is not None}
+
+    def show_key(ids: Mapping[str, Any]) -> str:
+        return json.dumps(
+            {k: ids.get(k) for k in ("trakt", "slug", "tmdb", "imdb", "tvdb") if ids.get(k)},
+            sort_keys=True,
+        )
 
     for it in items or []:
         rating = _valid_rating(it.get("rating"))
@@ -409,10 +437,18 @@ def _bucketize_for_upsert(
             continue
 
         ids = _sanitize_ids_for_trakt(kind, ids_for_trakt(it) or {})
-        if not ids:
+        obj: dict[str, Any]
+        if ids:
+            obj = {"ids": ids, "rating": rating}
+        elif kind == "episodes":
+            # Allow show-scoped episode ratings
+            obj = {"rating": rating}
+        elif kind in {"movies", "shows"} and it.get("title"):
+            obj = {"title": it.get("title"), "rating": rating}
+            if it.get("year") is not None:
+                obj["year"] = it.get("year")
+        else:
             continue
-
-        obj: dict[str, Any] = {"ids": ids, "rating": rating}
         ra = it.get("rated_at")
         if ra:
             obj["rated_at"] = ra
@@ -427,12 +463,54 @@ def _bucketize_for_upsert(
             push("seasons", obj)
             t = "season"
         elif kind == "episodes":
-            push("episodes", obj)
+            season_no = it.get("season")
+            if season_no is None:
+                season_no = it.get("season_number")
+            if season_no is None:
+                season_no = it.get("number")
+            episode_no = it.get("episode")
+            if episode_no is None:
+                episode_no = it.get("episode_number")
+
+            show_ids = show_scope_ids(it)
+            show_scope_ok = bool(show_ids and season_no is not None and episode_no is not None)
+            strong_ids = bool(ids and ("trakt" in ids or "tvdb" in ids))
+            use_ids = bool(ids) and (strong_ids or not show_scope_ok)
+
+            # Prefer show-scoped season/episode when only weak episode IDs
+            if use_ids:
+                push("episodes", obj)
+            elif show_scope_ok:
+                skey = show_key(show_ids)
+                entry = nested_shows.setdefault(skey, {"ids": show_ids, "seasons": {}})
+                try:
+                    season_i = int(str(season_no))
+                    episode_i = int(str(episode_no))
+                except Exception:
+                    continue
+                season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
+                ep_obj: dict[str, Any] = {"number": episode_i, "rating": rating}
+                if ra:
+                    ep_obj["rated_at"] = ra
+                season_entry.setdefault("episodes", []).append(ep_obj)
+            else:
+                continue
             t = "episode"
         else:
             continue
 
         accepted.append(_accepted_minimal_for_cache(t, ids, it, rating=rating, rated_at=str(ra) if ra else None))
+
+    if nested_shows:
+        body.setdefault("shows", []).extend(
+            (
+                {"ids": v["ids"], "seasons": list(v["seasons"].values())}
+                if v.get("seasons")
+                else {"ids": v["ids"]}
+            )
+            for v in nested_shows.values()
+            if v.get("ids")
+        )
 
     return body, accepted
 
@@ -492,18 +570,36 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             continue
 
         ids = _sanitize_ids_for_trakt(kind, ids_for_trakt(it) or {})
-        if not ids:
-            continue
         if kind == "movies":
-            push("movies", {"ids": ids})
+            if ids:
+                push("movies", {"ids": ids})
+            elif it.get("title"):
+                obj = {"title": it.get("title")}
+                if it.get("year") is not None:
+                    obj["year"] = it.get("year")
+                push("movies", obj)
+            else:
+                continue
             t = "movie"
         elif kind == "shows":
-            push("shows", {"ids": ids})
+            if ids:
+                push("shows", {"ids": ids})
+            elif it.get("title"):
+                obj = {"title": it.get("title")}
+                if it.get("year") is not None:
+                    obj["year"] = it.get("year")
+                push("shows", obj)
+            else:
+                continue
             t = "show"
         elif kind == "seasons":
+            if not ids:
+                continue
             push("seasons", {"ids": ids})
             t = "season"
         elif kind == "episodes":
+            if not ids:
+                continue
             push("episodes", {"ids": ids})
             t = "episode"
         else:
