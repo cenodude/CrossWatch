@@ -9,6 +9,12 @@ from typing import Any
 import json
 import time
 
+__all__ = [
+    "load_unresolved_keys",
+    "load_unresolved_map",
+    "record_unresolved",
+]
+
 STATE_DIR = Path("/config/.cw_state")
 
 from ._scope import scoped_file, scope_safe
@@ -81,14 +87,40 @@ def load_unresolved_keys(
 
     prefix = f"{dst_lower}_"
     suffix = ".unresolved.json"
+    pending_suffix = ".unresolved.pending.json"
     scoped1 = f".unresolved.{scope}.json"
     scoped2 = f".{scope}.unresolved.json"
+    scopedp1 = f".unresolved.pending.{scope}.json"
+    scopedp2 = f".{scope}.unresolved.pending.json"
     for p in STATE_DIR.iterdir():
         if p.is_file():
             name = p.name
-            if name.startswith(prefix) and (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix)):
-                rp = scoped_file(STATE_DIR, name) if name.endswith(suffix) and not (name.endswith(scoped1) or name.endswith(scoped2)) else p
-                keys |= set(_read_json(rp).keys())
+            if not name.startswith(prefix):
+                continue
+            is_blocking = (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix))
+            is_pending = (name.endswith(scopedp1) or name.endswith(scopedp2) or name.endswith(pending_suffix))
+            if not (is_blocking or is_pending):
+                continue
+
+            # Migrate legacy (unscoped) files to scoped when needed.
+            rp = p
+            if (name.endswith(suffix) or name.endswith(pending_suffix)) and not (
+                name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(scopedp1) or name.endswith(scopedp2)
+            ):
+                rp = scoped_file(STATE_DIR, name)
+
+            data = _read_json(rp)
+
+            if is_pending and isinstance(data, dict):
+                lst = data.get("keys")
+                if isinstance(lst, list):
+                    keys |= {str(x) for x in lst if x}
+                else:
+                    im = data.get("items")
+                    if isinstance(im, dict):
+                        keys |= {str(k) for k in im.keys()}
+            else:
+                keys |= {str(k) for k in (data or {}).keys()}
     return keys
 
 
@@ -118,13 +150,39 @@ def load_unresolved_map(
 
     prefix = f"{dst_lower}_"
     suffix = ".unresolved.json"
+    pending_suffix = ".unresolved.pending.json"
     scoped1 = f".unresolved.{scope}.json"
     scoped2 = f".{scope}.unresolved.json"
+    scopedp1 = f".unresolved.pending.{scope}.json"
+    scopedp2 = f".{scope}.unresolved.pending.json"
     for p in STATE_DIR.iterdir():
         if p.is_file():
             name = p.name
-            if name.startswith(prefix) and (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix)):
-                data = _read_json(p)
+            if not name.startswith(prefix):
+                continue
+            is_blocking = (name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(suffix))
+            is_pending = (name.endswith(scopedp1) or name.endswith(scopedp2) or name.endswith(pending_suffix))
+            if not (is_blocking or is_pending):
+                continue
+
+            rp = p
+            if (name.endswith(suffix) or name.endswith(pending_suffix)) and not (
+                name.endswith(scoped1) or name.endswith(scoped2) or name.endswith(scopedp1) or name.endswith(scopedp2)
+            ):
+                rp = scoped_file(STATE_DIR, name)
+
+            data = _read_json(rp)
+            if is_pending and isinstance(data, dict):
+                raw_hints = data.get("hints")
+                hints = raw_hints if isinstance(raw_hints, dict) else {}
+                raw_keys = data.get("keys")
+                keys = raw_keys if isinstance(raw_keys, list) else []
+                for k in keys:
+                    if not k:
+                        continue
+                    v = (hints or {}).get(k) or {}
+                    out[str(k)] = v if isinstance(v, dict) else {}
+            else:
                 for k, v in (data or {}).items():
                     out[str(k)] = v if isinstance(v, dict) else {}
     return out
@@ -150,7 +208,7 @@ def _to_ck_and_min(
 
     if not ck:
         ids = d.get("ids") or {}
-        for k in ("imdb", "tmdb", "tvdb", "trakt", "ani", "mal", "anilist", "kitsu", "anidb"):
+        for k in ("tmdb", "imdb", "tvdb", "trakt", "ani", "mal", "anilist", "kitsu", "anidb"):
             v = ids.get(k)
             if v:
                 ck = f"{k}:{str(v).lower()}"
