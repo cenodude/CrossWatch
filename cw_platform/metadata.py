@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover
 try:
     from id_map import merge_ids as _merge_ids, KEY_PRIORITY as _KEY_PRIORITY  # type: ignore
 except Exception:  # pragma: no cover
-    _KEY_PRIORITY: tuple[str, ...] = ("imdb", "tmdb", "tvdb", "trakt", "plex", "guid", "slug", "simkl")
+    _KEY_PRIORITY: tuple[str, ...] = ("tmdb", "imdb", "tvdb", "trakt", "plex", "guid", "slug", "simkl")
 
     def _merge_ids(old: dict[str, Any] | None, new: dict[str, Any] | None) -> dict[str, Any]:
         old = old or {}
@@ -278,10 +278,12 @@ class MetadataManager:
             try:
                 r: dict[str, Any] = {}
                 if ent == "movie":
-                    if ids.get("imdb"):
-                        r = self.resolve(entity="movie", ids={"imdb": ids["imdb"]}, need={"ids": True})
-                    elif ids.get("tmdb"):
+                    if ids.get("tmdb"):
                         r = self.resolve(entity="movie", ids={"tmdb": ids["tmdb"]}, need={"ids": True})
+                    elif ids.get("imdb"):
+                        r = self.resolve(entity="movie", ids={"imdb": ids["imdb"]}, need={"ids": True})
+                    elif ids.get("tvdb"):
+                        r = self.resolve(entity="movie", ids={"tvdb": ids["tvdb"]}, need={"ids": True})
                     elif title:
                         payload: dict[str, Any] = {"title": title}
                         if year:
@@ -292,6 +294,8 @@ class MetadataManager:
                         r = self.resolve(entity="show", ids={"tmdb": ids["tmdb"]}, need={"ids": True})
                     elif ids.get("imdb"):
                         r = self.resolve(entity="show", ids={"imdb": ids["imdb"]}, need={"ids": True})
+                    elif ids.get("tvdb"):
+                        r = self.resolve(entity="show", ids={"tvdb": ids["tvdb"]}, need={"ids": True})
                     elif title:
                         payload2: dict[str, Any] = {"title": title}
                         if year:
