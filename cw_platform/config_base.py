@@ -73,7 +73,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_query_limit": 25,                    # Max Discover search results per query (10–25). Lower = faster, 25 = safer.
         "watchlist_write_delay_ms": 0,                  # Optional pacing between Discover writes; set 50–150 if you hit 429/5xx.
         "watchlist_title_query": True,                  # Use title/slug tokens for Discover candidate fetching (Discover is text-only).
-        "watchlist_use_metadata_match": True,           # Try METADATA /library/metadata/matches with imdb-/tmdb-/tvdb- first; fallback to Discover.
+        "watchlist_use_metadata_match": True,           # Try METADATA /library/metadata/matches with tmdb-/imdb-/tvdb- first; fallback to Discover.
         "watchlist_guid_priority": [                    # GUID resolution order (first match wins).
             "tmdb", "imdb", "tvdb",
             "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
