@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import os
+import re
 
 from ..provider_instances import normalize_instance_id
 
@@ -54,6 +55,22 @@ _PROVIDER_KEY_MAP = {
     "EMBY": "emby",
     "ANILIST": "anilist",
 }
+
+
+def _index_semantics(ops, feature: str) -> str:
+    try:
+        caps = ops.capabilities() or {}
+    except Exception:
+        return "present"
+    if not isinstance(caps, Mapping):
+        return "present"
+    per = caps.get(feature)
+    if isinstance(per, Mapping):
+        sem = per.get("index_semantics")
+        if sem:
+            return str(sem).lower()
+    return str(caps.get("index_semantics", "present")).lower()
+
 
 def _effective_library_whitelist(
     cfg: Mapping[str, Any],
@@ -117,6 +134,31 @@ def _filter_index_by_libraries(idx: dict[str, Any], libs: list[str], *, allow_un
             out[ck] = v
 
     return out
+
+# History key helpers
+_HISTORY_KEY_RE = re.compile(r"^(?P<base>.+?)@(?P<ts>\d+)(?P<rest>.*)$")
+
+def _history_bucket_sec(a: str, b: str, feature: str) -> int:
+    if str(feature) != "history":
+        return 0
+    a_u = str(a or "").upper()
+    b_u = str(b or "").upper()
+    return 60 if (a_u == "TRAKT" or b_u == "TRAKT") else 0
+
+def _history_ts_from_key(key: str) -> int | None:
+    m = _HISTORY_KEY_RE.match(str(key))
+    if not m:
+        return None
+    try:
+        return int(m.group("ts"))
+    except Exception:
+        return None
+
+def _bucket_ts(ts: int, bucket_sec: int) -> int:
+    b = int(bucket_sec or 0)
+    if b <= 1:
+        return int(ts)
+    return (int(ts) // b) * b
 
 # Feature-specific filters
 def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
@@ -237,11 +279,11 @@ def run_one_way_feature(
 
     def _typed_tokens(it: Mapping[str, Any]) -> set[str]:
         typ = str(it.get("type") or "").strip().lower()
-        if typ in ("episode", "season"):
-            ids_raw = it.get("show_ids") or it.get("ids") or {}
-        else:
-            ids_raw = it.get("ids") or {}
-        ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+        show_ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else {}
+        ids_raw = it.get("ids") if isinstance(it.get("ids"), Mapping) else {}
+        show_ids = dict(show_ids_raw or {})
+        ids = dict(ids_raw or {})
+
         toks: set[str] = set()
 
         if typ == "episode":
@@ -250,12 +292,21 @@ def run_one_way_feature(
                 e = int(it.get("episode") or 0)
             except Exception:
                 s, e = 0, 0
-            if s > 0 and e > 0:
+            has_frag = bool(s > 0 and e > 0)
+            if has_frag:
                 frag = f"#s{s:02d}e{e:02d}"
+    
+                for src_ids in (show_ids, ids):
+                    for k, v in src_ids.items():
+                        if v is None or str(v) == "":
+                            continue
+                        toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
+
+            if not has_frag:
                 for k, v in ids.items():
                     if v is None or str(v) == "":
                         continue
-                    toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
+                    toks.add(f"{str(k).lower()}:{str(v).lower()}")
 
         elif typ == "season":
             try:
@@ -264,10 +315,11 @@ def run_one_way_feature(
                 s = 0
             if s > 0:
                 frag = f"#season:{s}"
-                for k, v in ids.items():
-                    if v is None or str(v) == "":
-                        continue
-                    toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
+                for src_ids in (show_ids, ids):
+                    for k, v in src_ids.items():
+                        if v is None or str(v) == "":
+                            continue
+                        toks.add(f"{str(k).lower()}:{str(v).lower()}{frag}")
 
         else:
             for k, v in ids.items():
@@ -405,14 +457,8 @@ def run_one_way_feature(
         dst_cur  = _filter_index_by_libraries(dst_cur,  libs_dst, allow_unknown=allow_unknown_dst)
         eff_dst  = _filter_index_by_libraries(eff_dst,  libs_dst, allow_unknown=allow_unknown_dst)
 
-    try:
-        dst_sem = str((dst_ops.capabilities() or {}).get("index_semantics", "present")).lower()
-    except Exception:
-        dst_sem = "present"
-    try:
-        src_sem = str((src_ops.capabilities() or {}).get("index_semantics", "present")).lower()
-    except Exception:
-        src_sem = "present"
+    dst_sem = _index_semantics(dst_ops, feature)
+    src_sem = _index_semantics(src_ops, feature)
 
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
@@ -428,16 +474,88 @@ def run_one_way_feature(
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
         adds, mirror_removes = diff_ratings(src_idx, dst_full)
+
     else:
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
-        adds, mirror_removes = diff(src_idx, dst_full)
+
+        bucket_sec = _history_bucket_sec(src, dst, feature)
+        if bucket_sec and int(bucket_sec) > 1:
+            b = int(bucket_sec)
+
+            def _tsb_from_key(k: str) -> int | None:
+                ts = _history_ts_from_key(k)
+                return None if ts is None else _bucket_ts(int(ts), b)
+
+            dst_tok_ts: set[tuple[str, int]] = set()
+            for dk, dv in (dst_full or {}).items():
+                if not isinstance(dv, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(dk))
+                if tsb is None:
+                    continue
+                for tok in _typed_tokens(dv):
+                    if tok:
+                        dst_tok_ts.add((tok, tsb))
+
+            src_tok_ts: set[tuple[str, int]] = set()
+            for sk, sv in (src_idx or {}).items():
+                if not isinstance(sv, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(sk))
+                if tsb is None:
+                    continue
+                for tok in _typed_tokens(sv):
+                    if tok:
+                        src_tok_ts.add((tok, tsb))
+
+            adds = []
+            for sk, sv in (src_idx or {}).items():
+                if not isinstance(sv, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(sk))
+                if tsb is None:
+
+                    if str(sk) not in (dst_full or {}):
+                        adds.append(_minimal(sv))
+                    continue
+
+                toks = _typed_tokens(sv)
+                if toks and any((tok, tsb) in dst_tok_ts for tok in toks):
+                    continue
+                adds.append(_minimal(sv))
+
+            mirror_removes = []
+            for dk, dv in (dst_full or {}).items():
+                if not isinstance(dv, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(dk))
+                if tsb is None:
+                    if str(dk) not in (src_idx or {}):
+                        mirror_removes.append(_minimal(dv))
+                    continue
+
+                toks = _typed_tokens(dv)
+                if toks and any((tok, tsb) in src_tok_ts for tok in toks):
+                    continue
+                mirror_removes.append(_minimal(dv))
+        else:
+            adds, mirror_removes = diff(src_idx, dst_full)
 
     src_alias = _alias_index(src_idx)
     dst_alias = _alias_index(dst_full)
 
-    if feature != "ratings" and adds:
-        adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
+    if adds:
+        if feature not in ("ratings", "history"):
+            adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
+        elif feature == "history":
+            pruned: list[dict[str, Any]] = []
+            for it in adds:
+                ck = _ck(it) or ""
+                if ck and _history_ts_from_key(ck) is None and _present(dst_full, dst_alias, it):
+                    continue
+                pruned.append(it)
+            adds = pruned
 
     removes: list[dict[str, Any]] = []
     if allow_removes:
@@ -630,9 +748,15 @@ def run_one_way_feature(
                 "unresolved": int((add_res or {}).get("unresolved", 0)),
                 "errors": int((add_res or {}).get("errors", 0)),
             }
-            new_unresolved = unresolved_after - unresolved_before
+            prov_unresolved_keys_raw = (add_res or {}).get("unresolved_keys")
+            prov_unresolved_keys: list[str] = (
+                [str(x) for x in prov_unresolved_keys_raw if x] if isinstance(prov_unresolved_keys_raw, list) else []
+            )
+            prov_unresolved_set: set[str] = set(prov_unresolved_keys)
+
+            new_unresolved = (unresolved_after - unresolved_before) | (prov_unresolved_set - unresolved_before)
             unresolved_new_total += len(new_unresolved)
-            still_unresolved = set(attempted_keys) & unresolved_after
+            still_unresolved = set(attempted_keys) & (unresolved_after | prov_unresolved_set)
             
             prov_confirmed_keys_raw = (add_res or {}).get("confirmed_keys")
             prov_skipped_keys_raw = (add_res or {}).get("skipped_keys")
