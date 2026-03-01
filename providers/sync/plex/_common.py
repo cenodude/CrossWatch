@@ -203,15 +203,146 @@ def make_logger(feature: str):
     return dbg, info, warn, error, log
 
 
+# Meta enrichment log control
+_META_LOG_LOCK: RLock = RLock()
+_META_ENRICH_COUNTS: dict[str, int] = {}
+_META_ENRICH_SHOWN: int = 0
+_META_ENRICH_SUPPRESSED: int = 0
+_META_ENRICH_LAST_FLUSH: float = time.monotonic()
+
+
+def _meta_enrich_log_mode() -> str:
+    v = str(os.getenv("CW_PLEX_META_ENRICH_LOG") or "").strip().lower()
+    return v or "summary"
+
+def _meta_enrich_detail_limit() -> int:
+    try:
+        return max(0, int(os.getenv("CW_PLEX_META_ENRICH_DETAIL_LIMIT") or "25"))
+    except Exception:
+        return 25
+
+def _meta_enrich_flush_interval() -> float:
+    try:
+        return max(0.0, float(os.getenv("CW_PLEX_META_ENRICH_FLUSH_S") or "30"))
+    except Exception:
+        return 30.0
+
+def _meta_enrich_record(action: str) -> None:
+    with _META_LOG_LOCK:
+        _META_ENRICH_COUNTS[action] = _META_ENRICH_COUNTS.get(action, 0) + 1
+
+def _meta_enrich_note_shown() -> None:
+    global _META_ENRICH_SHOWN
+    with _META_LOG_LOCK:
+        _META_ENRICH_SHOWN += 1
+
+def _meta_enrich_note_suppressed() -> None:
+    global _META_ENRICH_SUPPRESSED
+    with _META_LOG_LOCK:
+        _META_ENRICH_SUPPRESSED += 1
+
+def _meta_enrich_maybe_flush(*, level: str = "debug") -> dict[str, Any] | None:
+    global _META_ENRICH_LAST_FLUSH, _META_ENRICH_SHOWN, _META_ENRICH_SUPPRESSED
+    interval = _meta_enrich_flush_interval()
+    if interval <= 0:
+        return None
+    now = time.monotonic()
+    with _META_LOG_LOCK:
+        if not _META_ENRICH_COUNTS:
+            _META_ENRICH_LAST_FLUSH = now
+            return None
+        if (now - _META_ENRICH_LAST_FLUSH) < interval:
+            return None
+        counts = dict(_META_ENRICH_COUNTS)
+        suppressed = int(_META_ENRICH_SUPPRESSED)
+        shown = int(_META_ENRICH_SHOWN)
+        _META_ENRICH_COUNTS.clear()
+        _META_ENRICH_SHOWN = 0
+        _META_ENRICH_SUPPRESSED = 0
+        _META_ENRICH_LAST_FLUSH = now
+    return {
+        "feature": "common",
+        "event": "meta_enrich",
+        "action": "summary",
+        "level": level,
+        "counts": counts,
+        "shown": shown,
+        "suppressed": suppressed,
+    }
+
 def emit(evt: dict[str, Any], *, default_feature: str = "common") -> None:
     try:
         feat = str(evt.get("feature") or default_feature)
         event = str(evt.get("event") or "event")
         action = evt.get("action")
-        fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action"}}
+        fields = {k: v for k, v in evt.items() if k not in {"feature", "event", "action", "level"}}
         if action is not None:
             fields["action"] = action
-        cw_log("PLEX", feat, "info", event, **fields)
+
+        if event == "meta_enrich":
+            act = str(action or "event")
+            if act != "summary":
+                _meta_enrich_record(act)
+                mode = _meta_enrich_log_mode()
+
+                if mode == "off":
+                    _meta_enrich_note_suppressed()
+                    summ = _meta_enrich_maybe_flush()
+                    if summ:
+                        s_feat = str(summ.get("feature") or default_feature)
+                        s_event = str(summ.get("event") or "event")
+                        s_action = summ.get("action")
+                        s_fields = {k: v for k, v in summ.items() if k not in {"feature", "event", "action", "level"}}
+                        if s_action is not None:
+                            s_fields["action"] = s_action
+                        s_level = str(summ.get("level") or "debug")
+                        cw_log("PLEX", s_feat, s_level, s_event, **s_fields)
+                    return
+
+                if mode == "summary" and not act.endswith("_miss"):
+                    _meta_enrich_note_suppressed()
+                    summ = _meta_enrich_maybe_flush()
+                    if summ:
+                        s_feat = str(summ.get("feature") or default_feature)
+                        s_event = str(summ.get("event") or "event")
+                        s_action = summ.get("action")
+                        s_fields = {k: v for k, v in summ.items() if k not in {"feature", "event", "action", "level"}}
+                        if s_action is not None:
+                            s_fields["action"] = s_action
+                        s_level = str(summ.get("level") or "debug")
+                        cw_log("PLEX", s_feat, s_level, s_event, **s_fields)
+                    return
+
+                if mode == "detail":
+                    global _META_ENRICH_SHOWN, _META_ENRICH_SUPPRESSED
+                    limit = _meta_enrich_detail_limit()
+                    # Rate-limit detail lines per flush interval.
+                    with _META_LOG_LOCK:
+                        if _META_ENRICH_SHOWN >= limit:
+                            _META_ENRICH_SUPPRESSED += 1
+                            summ = _meta_enrich_maybe_flush()
+                            if summ:
+                                s_feat = str(summ.get("feature") or default_feature)
+                                s_event = str(summ.get("event") or "event")
+                                s_action = summ.get("action")
+                                s_fields = {k: v for k, v in summ.items() if k not in {"feature", "event", "action", "level"}}
+                                if s_action is not None:
+                                    s_fields["action"] = s_action
+                                s_level = str(summ.get("level") or "debug")
+                                cw_log("PLEX", s_feat, s_level, s_event, **s_fields)
+                            return
+                        _META_ENRICH_SHOWN += 1
+                else:
+                    _meta_enrich_note_shown()
+
+        level = str(evt.get("level") or "").strip().lower()
+        if level not in ("debug", "info", "warn", "error"):
+            if event == "meta_enrich" and str(action or "").endswith("_miss"):
+                level = "warn"
+            else:
+                level = "debug" if event in ("meta_enrich", "hydrate") else "info"
+
+        cw_log("PLEX", feat, level, event, **fields)
     except Exception:
         pass
 
@@ -438,8 +569,64 @@ def _fb_cache_save() -> None:
     except Exception:
         pass
 
-
 _SHOW_PMS_GUID_CACHE: dict[str, dict[str, str]] = {}
+_EP_SHOW_IDS_CACHE: dict[str, dict[str, str]] = {}
+
+def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None) -> dict[str, str]:
+    if not token or not episode_rk:
+        return {}
+    rk = str(episode_rk).strip()
+    if not rk:
+        return {}
+
+    if rk in _EP_SHOW_IDS_CACHE:
+        return dict(_EP_SHOW_IDS_CACHE[rk])
+
+    headers = plex_headers(token)
+    headers["Accept"] = "application/json, application/xml;q=0.9,*/*;q=0.5"
+    base = str(_PLEX_CTX.get("baseurl") or "").strip().rstrip("/")
+
+    def _parse(r: requests.Response) -> dict[str, str]:
+        ctype = (r.headers.get("content-type") or "").lower()
+        if "application/json" in ctype:
+            data = r.json() or {}
+            mc = data.get("MediaContainer") or data
+        else:
+            mc = (_xml_to_container(r.text or "") or {}).get("MediaContainer") or {}
+        md = mc.get("Metadata") or []
+        if not (isinstance(md, list) and md and isinstance(md[0], Mapping)):
+            return {}
+        md0 = md[0]
+        gp_guid = md0.get("grandparentGuid") or md0.get("grandparent_guid")
+        gp_rk = md0.get("grandparentRatingKey") or md0.get("grandparent_rating_key")
+        out: dict[str, str] = {}
+        if gp_guid:
+            out.update({k: v for k, v in ids_from_guid(str(gp_guid)).items() if v})
+        if gp_rk:
+            out["plex"] = str(gp_rk)
+            extra = hydrate_external_ids(token, str(gp_rk))
+            if extra:
+                out.update({k: v for k, v in extra.items() if v})
+        return {k: v for k, v in out.items() if v}
+
+    urls: list[str] = []
+    if base:
+        urls.append(f"{base}/library/metadata/{rk}")
+    urls.append(f"{METADATA}/library/metadata/{rk}")
+
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, params={"includeGuids": 1}, timeout=10)
+            if not r.ok:
+                continue
+            ids = _parse(r)
+            _EP_SHOW_IDS_CACHE[rk] = dict(ids)
+            return dict(ids)
+        except Exception:
+            continue
+
+    _EP_SHOW_IDS_CACHE[rk] = {}
+    return {}
 
 
 def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
@@ -1319,7 +1506,7 @@ def minimal_from_history_row(
             _emit(
                 {
                     "feature": "common",
-                    "event": "fallback_guid",
+                    "event": "meta_enrich",
                     "action": "enrich_by_rk_try",
                     "rk": str(rk),
                 }
@@ -1328,7 +1515,7 @@ def minimal_from_history_row(
             _emit(
                 {
                     "feature": "common",
-                    "event": "fallback_guid",
+                    "event": "meta_enrich",
                     "action": "enrich_by_rk_ok" if extra else "enrich_by_rk_miss",
                     "rk": str(rk),
                 }
@@ -1343,7 +1530,7 @@ def minimal_from_history_row(
             _emit(
                 {
                     "feature": "common",
-                    "event": "fallback_guid",
+                    "event": "meta_enrich",
                     "action": "enrich_show_by_rk_try",
                     "rk": str(gp_rk),
                 }
@@ -1352,7 +1539,7 @@ def minimal_from_history_row(
             _emit(
                 {
                     "feature": "common",
-                    "event": "fallback_guid",
+                    "event": "meta_enrich",
                     "action": "enrich_show_by_rk_ok" if extra2 else "enrich_show_by_rk_miss",
                     "rk": str(gp_rk),
                 }
@@ -1360,6 +1547,14 @@ def minimal_from_history_row(
             if extra2:
                 m.setdefault("show_ids", {}).update({k: v for k, v in extra2.items() if v})
                 
+        # Plex history rows lack grandparentRatingKey
+        if not _has_ext_ids(m.get("show_ids", {})):
+            ep_rk = str((m.get("ids") or {}).get("plex") or "").strip()
+            if tok and ep_rk:
+                extra3 = _hydrate_show_ids_from_episode_rk(tok, ep_rk)
+                if extra3:
+                    m.setdefault("show_ids", {}).update({k: v for k, v in extra3.items() if v})
+                    
     if not _has_ext_ids(m.get("ids", {})) and allow_discover:
         tok = token or _PLEX_CTX["token"]
         title = m.get("series_title") if kind == "episode" else m.get("title")
@@ -1638,4 +1833,3 @@ class UnresolvedStore:
 
 def unresolved_store(feature: str) -> UnresolvedStore:
     return UnresolvedStore(feature)
-
