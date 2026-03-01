@@ -6,6 +6,38 @@ from collections.abc import Mapping
 from typing import Any
 
 import os
+import re
+
+try:
+    from ._pairs_oneway import (
+        _history_bucket_sec as _hist_bucket_sec,
+        _history_ts_from_key as _hist_ts_from_key,
+        _bucket_ts as _hist_bucket_ts,
+    )
+except Exception:  # pragma: no cover
+    _HIST_RE = re.compile(r"^(?P<base>.+?)@(?P<ts>\d+)(?P<rest>.*)$")
+
+    def _hist_bucket_sec(a: str, b: str, feature: str) -> int:
+        if str(feature) != "history":
+            return 0
+        au = str(a or "").upper()
+        bu = str(b or "").upper()
+        return 60 if (au == "TRAKT" or bu == "TRAKT") else 0
+
+    def _hist_ts_from_key(key: str) -> int | None:
+        m = _HIST_RE.match(str(key))
+        if not m:
+            return None
+        try:
+            return int(m.group("ts"))
+        except Exception:
+            return None
+
+    def _hist_bucket_ts(ts: int, bucket_sec: int) -> int:
+        b2 = int(bucket_sec or 0)
+        if b2 <= 1:
+            return int(ts)
+        return (int(ts) // b2) * b2
 
 from ..provider_instances import normalize_instance_id
 
@@ -59,6 +91,20 @@ _PROVIDER_KEY_MAP = {
     "EMBY": "emby",
     "ANILIST": "anilist",
 }
+
+def _index_semantics(ops, feature: str) -> str:
+    try:
+        caps = ops.capabilities() or {}
+    except Exception:
+        return "present"
+    if not isinstance(caps, Mapping):
+        return "present"
+    per = caps.get(feature)
+    if isinstance(per, Mapping):
+        sem = per.get("index_semantics")
+        if sem:
+            return str(sem).lower()
+    return str(caps.get("index_semantics", "present")).lower()
 
 def _effective_library_whitelist(
     cfg: Mapping[str, Any],
@@ -316,14 +362,8 @@ def _two_way_sync(
         A_eff_guard, A_suspect = dict(A_cur), False
         B_eff_guard, B_suspect = dict(B_cur), False
 
-    try:
-        a_sem = str((aops.capabilities() or {}).get("index_semantics", "present")).lower()
-    except Exception:
-        a_sem = "present"
-    try:
-        b_sem = str((bops.capabilities() or {}).get("index_semantics", "present")).lower()
-    except Exception:
-        b_sem = "present"
+    a_sem = _index_semantics(aops, feature)
+    b_sem = _index_semantics(bops, feature)
 
     A_eff = (dict(prevA) | dict(A_cur)) if a_sem == "delta" else dict(A_eff_guard)
     B_eff = (dict(prevB) | dict(B_cur)) if b_sem == "delta" else dict(B_eff_guard)
@@ -597,22 +637,86 @@ def _two_way_sync(
         if allow_removals:
             rem_from_A.extend(remA)
             rem_from_B.extend(remB)
-    else:
-        for _k, v in A_eff.items():
-            if _present(B_eff, B_alias, v):
-                continue
-            if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
-                rem_from_A.append(_minimal(v))
-            else:
-                add_to_B.append(_minimal(v))
-        for _k, v in B_eff.items():
-            if _present(A_eff, A_alias, v):
-                continue
-            if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
-                rem_from_B.append(_minimal(v))
-            else:
-                add_to_A.append(_minimal(v))
 
+    else:
+        bucket_sec = _hist_bucket_sec(a, b, feature)
+        if bucket_sec and int(bucket_sec) > 1:
+            bsec = int(bucket_sec)
+
+            def _tsb_from_key(k: str) -> int | None:
+                ts = _hist_ts_from_key(k)
+                return None if ts is None else _hist_bucket_ts(int(ts), bsec)
+
+            A_tok_ts: set[tuple[str, int]] = set()
+            for ak, av in (A_eff or {}).items():
+                if not isinstance(av, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(ak))
+                if tsb is None:
+                    continue
+                for tok in _typed_tokens(av):
+                    if tok:
+                        A_tok_ts.add((tok, tsb))
+
+            B_tok_ts: set[tuple[str, int]] = set()
+            for bk, bv in (B_eff or {}).items():
+                if not isinstance(bv, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(bk))
+                if tsb is None:
+                    continue
+                for tok in _typed_tokens(bv):
+                    if tok:
+                        B_tok_ts.add((tok, tsb))
+
+            for ak, v in (A_eff or {}).items():
+                if not isinstance(v, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(ak))
+                if tsb is not None:
+                    toks = _typed_tokens(v)
+                    if toks and any((tok, tsb) in B_tok_ts for tok in toks):
+                        continue
+                else:
+                    if _present(B_eff, B_alias, v):
+                        continue
+
+                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                    rem_from_A.append(_minimal(v))
+                else:
+                    add_to_B.append(_minimal(v))
+
+            for bk, v in (B_eff or {}).items():
+                if not isinstance(v, Mapping):
+                    continue
+                tsb = _tsb_from_key(str(bk))
+                if tsb is not None:
+                    toks = _typed_tokens(v)
+                    if toks and any((tok, tsb) in A_tok_ts for tok in toks):
+                        continue
+                else:
+                    if _present(A_eff, A_alias, v):
+                        continue
+
+                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                    rem_from_B.append(_minimal(v))
+                else:
+                    add_to_A.append(_minimal(v))
+        else:
+            for _k, v in A_eff.items():
+                if _present(B_eff, B_alias, v):
+                    continue
+                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                    rem_from_A.append(_minimal(v))
+                else:
+                    add_to_B.append(_minimal(v))
+            for _k, v in B_eff.items():
+                if _present(A_eff, A_alias, v):
+                    continue
+                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                    rem_from_B.append(_minimal(v))
+                else:
+                    add_to_A.append(_minimal(v))
     if not allow_adds:
         add_to_A.clear()
         add_to_B.clear()
@@ -850,8 +954,15 @@ def _two_way_sync(
                 chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
             )
             unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
-            new_unresolved_A = unresolved_after_A - unresolved_before_A
+            prov_unresolved_keys_A_raw = (resA_add or {}).get("unresolved_keys")
+            prov_unresolved_keys_A: list[str] = (
+                [str(x) for x in prov_unresolved_keys_A_raw if x] if isinstance(prov_unresolved_keys_A_raw, list) else []
+            )
+            prov_unresolved_set_A: set[str] = set(prov_unresolved_keys_A)
+
+            new_unresolved_A = (unresolved_after_A - unresolved_before_A) | (prov_unresolved_set_A - unresolved_before_A)
             unresolved_new_A_total += len(new_unresolved_A)
+            still_unresolved_A = set(attempted_A) & (unresolved_after_A | prov_unresolved_set_A)
             
             prov_confirmed_keys_A_raw = (resA_add or {}).get("confirmed_keys")
             prov_skipped_keys_A_raw = (resA_add or {}).get("skipped_keys")
@@ -870,7 +981,7 @@ def _two_way_sync(
                 attempted_set_A = set(attempted_A)
                 confirmed_A = [k for k in prov_confirmed_keys_A if k in attempted_set_A]
             else:
-                confirmed_A = [k for k in attempted_A if k not in new_unresolved_A]
+                confirmed_A = [k for k in attempted_A if k not in still_unresolved_A]
 
         
             prov_count_A = _confirmed(resA_add)
@@ -887,7 +998,7 @@ def _two_way_sync(
                 eff_add_A = len(confirmed_A)
             else:
                 ambiguous_partial_A = (not have_exact_keys_A) and bool((resA_add or {}).get("skipped")) and prov_count_A and (prov_count_A < len(confirmed_A))
-                eff_add_A = 0 if new_unresolved_A or ambiguous_partial_A else min(prov_count_A, len(confirmed_A))
+                eff_add_A = 0 if still_unresolved_A or ambiguous_partial_A else min(prov_count_A, len(confirmed_A))
             
             if eff_add_A != prov_count_A and not have_exact_keys_A:
                 dbg("two:apply:add:corrected", dst=a, feature=feature,
@@ -952,8 +1063,15 @@ def _two_way_sync(
                 chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
             )
             unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
-            new_unresolved_B = unresolved_after_B - unresolved_before_B
+            prov_unresolved_keys_B_raw = (resB_add or {}).get("unresolved_keys")
+            prov_unresolved_keys_B: list[str] = (
+                [str(x) for x in prov_unresolved_keys_B_raw if x] if isinstance(prov_unresolved_keys_B_raw, list) else []
+            )
+            prov_unresolved_set_B: set[str] = set(prov_unresolved_keys_B)
+
+            new_unresolved_B = (unresolved_after_B - unresolved_before_B) | (prov_unresolved_set_B - unresolved_before_B)
             unresolved_new_B_total += len(new_unresolved_B)
+            still_unresolved_B = set(attempted_B) & (unresolved_after_B | prov_unresolved_set_B)
             
             prov_confirmed_keys_B_raw = (resB_add or {}).get("confirmed_keys")
             prov_skipped_keys_B_raw = (resB_add or {}).get("skipped_keys")
@@ -972,7 +1090,7 @@ def _two_way_sync(
                 attempted_set_B = set(attempted_B)
                 confirmed_B = [k for k in prov_confirmed_keys_B if k in attempted_set_B]
             else:
-                confirmed_B = [k for k in attempted_B if k not in new_unresolved_B]
+                confirmed_B = [k for k in attempted_B if k not in still_unresolved_B]
 
         
             prov_count_B = _confirmed(resB_add)
@@ -989,7 +1107,7 @@ def _two_way_sync(
                 eff_add_B = len(confirmed_B)
             else:
                 ambiguous_partial_B = (not have_exact_keys_B) and bool((resB_add or {}).get("skipped")) and prov_count_B and (prov_count_B < len(confirmed_B))
-                eff_add_B = 0 if new_unresolved_B or ambiguous_partial_B else min(prov_count_B, len(confirmed_B))
+                eff_add_B = 0 if still_unresolved_B or ambiguous_partial_B else min(prov_count_B, len(confirmed_B))
             
             if eff_add_B != prov_count_B and not have_exact_keys_B:
                 dbg("two:apply:add:corrected", dst=b, feature=feature,
