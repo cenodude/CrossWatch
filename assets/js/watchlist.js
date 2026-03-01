@@ -548,7 +548,7 @@
   const toLocale = () => navigator.language || "en-US";
   const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   const cmpDir = v => (sortDir === "asc" ? v : -v);
-  const normKey = it => it.key || it.guid || it.id || (it.ids?.imdb && `imdb:${it.ids.imdb}`) || (it.ids?.tmdb && `tmdb:${it.ids.tmdb}`) || (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
+  const normKey = it => it.key || it.guid || it.id || (it.ids?.tmdb && `tmdb:${it.ids.tmdb}`) || (it.ids?.imdb && `imdb:${it.ids.imdb}`) || (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
   const artUrl=(it,size)=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv")}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}`;
   const parseReleaseDate = s => { if (typeof s !== "string" || !(s = s.trim())) return null; let y, m, d; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) ([y, m, d] = s.split("-").map(Number)); else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const a = s.split("-").map(Number); d = a[0]; m = a[1]; y = a[2]; } else return null; const t = Date.UTC(y, (m || 1) - 1, d || 1), dt = new Date(t); return Number.isFinite(dt.getTime()) ? dt : null; };
   const fmtDateSmart = (raw, loc) => { const dt = parseReleaseDate(raw); if (!dt) return ""; try { return new Intl.DateTimeFormat(loc || toLocale(), { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"UTC" }).format(dt); } catch { return ""; } };

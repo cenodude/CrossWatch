@@ -932,7 +932,7 @@ function renderFeaturePanel(state){
     
     if (hasPlex(state)) {
       const plex = (state.cfgRaw?.plex) || {};
-      const defPri = ["imdb","tmdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
+      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Plex</div>
         <details id="cx-plx-wl">
