@@ -257,7 +257,7 @@ def _as_set_str(v: Any) -> set[str]:
 
 def _ids_desc(ids: dict[str, Any] | None) -> str:
     d = ids or {}
-    for k in ("trakt", "imdb", "tmdb", "tvdb"):
+    for k in ("trakt", "tmdb", "imdb", "tvdb"):
         if d.get(k):
             return f"{k}:{d[k]}"
     for k in ("trakt_show", "imdb_show", "tmdb_show", "tvdb_show"):
@@ -1553,7 +1553,7 @@ def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg:
     bucket = "movies" if media_type == "movie" else "shows"
     ids2 = _sanitize_ids(ids) or {}
     ids3: dict[str, Any] = {}
-    for k in ("imdb", "tmdb", "trakt", "tvdb", "kitsu"):
+    for k in ("tmdb", "imdb", "trakt", "tvdb", "kitsu"):
         if ids2.get(k):
             ids3[k] = ids2[k]
     if not ids3:

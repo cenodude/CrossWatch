@@ -293,9 +293,9 @@ def _show_ids(ev: Any) -> dict[str, Any]:
 def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, Any]:
     mt = _norm_type(media_type)
     if mt == "show":
-        order = ("imdb", "trakt", "tmdb", "tvdb", "mdblist")
+        order = ("tmdb", "trakt", "imdb", "tvdb", "mdblist")
     else:
-        order = ("imdb", "tmdb", "trakt", "mdblist")
+        order = ("tmdb", "imdb", "trakt", "mdblist")
 
     out: dict[str, Any] = {}
     for k in order:
@@ -318,7 +318,7 @@ def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, An
     return out
 def _ar_key(ids: dict[str, Any], media_type: str) -> str:
     parts = [media_type]
-    for k in ("imdb", "tmdb", "tvdb", "trakt", "kitsu", "mdblist"):
+    for k in ("tmdb", "imdb", "tvdb", "trakt", "kitsu", "mdblist"):
         if ids.get(k):
             parts.append(f"{k}:{ids[k]}")
     return "|".join(parts)
@@ -441,10 +441,10 @@ def _extract_skeleton_from_body(b: dict[str, Any]) -> dict[str, Any]:
 def _body_ids_desc(b: dict[str, Any]) -> str:
     if "show" in b:
         ids = ((b.get("show") or {}).get("ids") or {})
-        order = ("imdb", "trakt", "tmdb", "tvdb", "mdblist")
+        order = ("tmdb", "trakt", "imdb", "tvdb", "mdblist")
     elif "movie" in b:
         ids = ((b.get("movie") or {}).get("ids") or {})
-        order = ("imdb", "tmdb", "trakt", "mdblist")
+        order = ("tmdb", "imdb", "trakt", "mdblist")
     else:
         ids = (
             (b.get("movie") or {}).get("ids")
@@ -452,7 +452,7 @@ def _body_ids_desc(b: dict[str, Any]) -> str:
             or (b.get("episode") or {}).get("ids")
             or {}
         )
-        order = ("imdb", "tmdb", "trakt", "tvdb", "mdblist")
+        order = ("tmdb", "imdb", "trakt", "tvdb", "mdblist")
     return _ids_desc_map(ids if isinstance(ids, dict) else {}, order)
 
 
@@ -473,7 +473,7 @@ class MDBListSink(ScrobbleSink):
     def _mkey(self, ev: Any) -> str:
         ids = getattr(ev, "ids", {}) or {}
         parts: list[str] = []
-        for k in ("imdb", "tmdb", "trakt", "kitsu", "mdblist"):
+        for k in ("tmdb", "imdb", "trakt", "kitsu", "mdblist"):
             if ids.get(k):
                 parts.append(f"{k}:{ids[k]}")
         if getattr(ev, "media_type", "") == "episode":

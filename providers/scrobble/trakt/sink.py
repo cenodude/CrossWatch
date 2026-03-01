@@ -175,7 +175,7 @@ def _tok_refresh(instance_id: Any = None) -> bool:
 
 def _ids(ev: ScrobbleEvent) -> dict[str, Any]:
     ids = ev.ids or {}
-    return {k: ids[k] for k in ("imdb", "tmdb", "tvdb", "trakt") if ids.get(k)}
+    return {k: ids[k] for k in ("tmdb", "imdb", "tvdb", "trakt") if ids.get(k)}
 
 
 def _show_ids(ev: ScrobbleEvent) -> dict[str, Any]:
@@ -265,7 +265,7 @@ def _quantize_progress(prog: float | int, step: int, action: str) -> int:
 
 def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any], instance_id: Any = None) -> dict[str, Any] | None:
     ids = ev.ids or {}
-    for key in ("imdb", "tvdb", "tmdb"):
+    for key in ("tmdb", "tvdb", "imdb"):
         val = ids.get(key)
         if not val:
             continue
@@ -286,7 +286,7 @@ def _guid_search(ev: ScrobbleEvent, cfg: dict[str, Any], instance_id: Any = None
             arr = []
         for hit in arr:
             epi_ids = ((hit.get("episode") or {}).get("ids") or {}) or {}
-            out = {k: v for k, v in epi_ids.items() if k in ("trakt", "imdb", "tmdb", "tvdb") and v}
+            out = {k: v for k, v in epi_ids.items() if k in ("trakt", "tmdb", "imdb", "tvdb") and v}
             if out:
                 return out
     return None
@@ -327,7 +327,7 @@ def _ar_seen(key: str) -> bool:
 
 
 def _ar_key(ids: dict[str, Any], media_type: str) -> str:
-    for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl"):
+    for k in ("tmdb", "imdb", "tvdb", "trakt", "simkl"):
         v = ids.get(k)
         if v:
             return f"{media_type}:{k}:{v}"
@@ -401,7 +401,7 @@ def _clear_active_checkin(cfg: dict[str, Any], instance_id: Any = None) -> bool:
 
 
 def _ids_desc_map(ids: dict[str, Any]) -> str:
-    for k in ("trakt", "imdb", "tmdb", "tvdb"):
+    for k in ("trakt", "tmdb", "imdb", "tvdb"):
         v = ids.get(k)
         if v is not None:
             return f"{k}:{v}"
@@ -456,7 +456,7 @@ class TraktSink(ScrobbleSink):
     def _mkey(self, ev: ScrobbleEvent) -> str:
         ids = ev.ids or {}
         parts: list[str] = []
-        for k in ("imdb", "tmdb", "tvdb", "trakt"):
+        for k in ("tmdb", "imdb", "tvdb", "trakt"):
             if ids.get(k):
                 parts.append(f"{k}:{ids[k]}")
         if ev.media_type == "episode":

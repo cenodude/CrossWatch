@@ -239,7 +239,7 @@ def _ar_seen(key: str) -> bool:
 
 
 def _ar_key(ids: dict[str, Any], media_type: str) -> str:
-    for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb"):
+    for k in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb"):
         v = ids.get(k)
         if v:
             return f"{media_type}:{k}:{v}"
@@ -329,7 +329,7 @@ def _media_name(ev: Any) -> str:
 
 
 def _ids_desc_map(ids: dict[str, Any]) -> str:
-    for k in ("simkl", "imdb", "tmdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb"):
+    for k in ("simkl", "tmdb", "imdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb"):
         v = ids.get(k)
         if v is not None:
             return f"{k}:{v}"

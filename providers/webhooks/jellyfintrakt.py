@@ -543,7 +543,7 @@ def _resolve_trakt_movie_id(ids_all: dict[str, Any], cfg: dict[str, Any], logger
     c = _cache_get(key)
     if c is not None:
         return c
-    for k in ("imdb", "tmdb", "tvdb"):
+    for k in ("tmdb", "imdb", "tvdb"):
         val = ids_all.get(k)
         if not val:
             continue
@@ -574,7 +574,7 @@ def _resolve_trakt_show_id(ids_all: dict[str, Any], cfg: dict[str, Any], logger:
     c = _cache_get(key)
     if c is not None:
         return c
-    for k in ("imdb", "tmdb", "tvdb"):
+    for k in ("tmdb", "imdb", "tvdb"):
         val = ids_all.get(k)
         if not val:
             continue
@@ -627,7 +627,7 @@ def _trakt_show_ids_from_imdb_show(imdb_show: str, cfg: dict[str, Any], logger: 
             _cache_put(key, None)
             return {}
         ids = (((arr[0] or {}).get("show") or {}).get("ids") or {})
-        out = {k: ids[k] for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)}
+        out = {k: ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k)}
         _cache_put(key, out if out else None)
         if out:
             _emit(logger, f"trakt show ids from imdb_show {imdb_show}: {out}", "DEBUG")
@@ -680,7 +680,7 @@ def _resolve_trakt_episode_id(
 
 
 def _best_id_key_order(media_type: str) -> tuple[str, ...]:
-    return ("imdb", "tmdb", "tvdb") if media_type == "movie" else ("tmdb", "imdb", "tvdb")
+    return ("tmdb", "imdb", "tvdb") if media_type == "movie" else ("tmdb", "imdb", "tvdb")
 
 
 def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> dict[str, Any]:
@@ -777,7 +777,7 @@ def _cw_ids_for_payload(
     except Exception:
         show_ids = {}
 
-    for key in ("imdb", "tmdb", "tvdb"):
+    for key in ("tmdb", "imdb", "tvdb"):
         val = show_ids.get(key)
         if val is not None:
             cw_ids.setdefault(f"{key}_show", val)
@@ -788,14 +788,14 @@ def _cw_ids_for_payload(
         except Exception:
             hint = dict(ids_all or {})
         extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
-        for key in ("imdb", "tmdb", "tvdb"):
+        for key in ("tmdb", "imdb", "tvdb"):
             val = extra.get(key)
             if val is not None:
                 cw_ids.setdefault(f"{key}_show", val)
 
     if "tmdb_show" not in cw_ids and cw_ids.get("imdb_show"):
         extra2 = _trakt_show_ids_from_imdb_show(str(cw_ids["imdb_show"]), cfg, logger=logger)
-        for key in ("imdb", "tmdb", "tvdb"):
+        for key in ("tmdb", "imdb", "tvdb"):
             val = extra2.get(key)
             if val is not None:
                 cw_ids.setdefault(f"{key}_show", val)
@@ -1003,7 +1003,7 @@ def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any], root: 
     v = md.get("Id")
     if v:
         return str(v)
-    for k in ("imdb", "tmdb", "tvdb", "trakt"):
+    for k in ("tmdb", "imdb", "tvdb", "trakt"):
         vv = ids_all.get(k)
         if vv:
             return f"{k}:{vv}"

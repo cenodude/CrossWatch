@@ -494,7 +494,7 @@ def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any], root: 
     v = md.get("Id")
     if v:
         return str(v)
-    for k in ("imdb", "tmdb", "tvdb", "trakt"):
+    for k in ("tmdb", "imdb", "tvdb", "trakt"):
         vv = ids_all.get(k)
         if vv:
             return f"{k}:{vv}"
@@ -520,7 +520,7 @@ def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all:
 
 def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger: Any | None = None) -> dict[str, Any]:
     try:
-        q = {k: epi_hint.get(k) for k in ("imdb", "tmdb", "tvdb") if epi_hint.get(k)}
+        q = {k: epi_hint.get(k) for k in ("tmdb", "imdb", "tvdb") if epi_hint.get(k)}
         if not q:
             return {}
         r = requests.get(f"{TRAKT_API}/search/episode", params=q, headers=_headers(cfg), timeout=10)
@@ -730,7 +730,7 @@ def _cw_ids_for_payload(
             if logger:
                 logger(f"Emby show metadata fetch failed: {ex}", level="DEBUG", module="SCROBBLE")
 
-    for key in ("imdb", "tmdb", "tvdb"):
+    for key in ("tmdb", "imdb", "tvdb"):
         val = show_ids.get(key)
         if val is not None:
             cw_ids.setdefault(f"{key}_show", val)
@@ -742,7 +742,7 @@ def _cw_ids_for_payload(
             except Exception:
                 hint = dict(ids_all or {})
             extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
-            for key in ("imdb", "tmdb", "tvdb"):
+            for key in ("tmdb", "imdb", "tvdb"):
                 val = extra.get(key)
                 if val is not None:
                     cw_ids.setdefault(f"{key}_show", val)

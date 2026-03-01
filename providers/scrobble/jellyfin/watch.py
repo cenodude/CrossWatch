@@ -295,7 +295,7 @@ def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger=N
         t = _trakt_tokens(cfg)
         if not t.get("client_id"):
             return {}
-        q = {k: epi_hint.get(k) for k in ("imdb", "tmdb", "tvdb") if epi_hint.get(k)}
+        q = {k: epi_hint.get(k) for k in ("tmdb", "imdb", "tvdb") if epi_hint.get(k)}
         if not q:
             return {}
         r = _HTTP.get(
@@ -416,7 +416,7 @@ def _enrich_episode_ids(
                     if logger and _is_debug():
                         logger(f"Jellyfin series lookup failed: {e}", "DEBUG")
 
-    for key in ("imdb", "tmdb", "tvdb"):
+    for key in ("tmdb", "imdb", "tvdb"):
         val = show_ids.get(key)
         if val is not None and f"{key}_show" not in cw_ids:
             cw_ids[f"{key}_show"] = val
@@ -430,7 +430,7 @@ def _enrich_episode_ids(
                 pass
             try:
                 base_ids = ids_all or {}
-                for key in ("imdb", "tmdb", "tvdb"):
+                for key in ("tmdb", "imdb", "tvdb"):
                     val = base_ids.get(key)
                     if val is not None and key not in hint:
                         hint[key] = val
@@ -438,7 +438,7 @@ def _enrich_episode_ids(
                 pass
             if hint:
                 extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
-                for key in ("imdb", "tmdb", "tvdb"):
+                for key in ("tmdb", "imdb", "tvdb"):
                     val = extra.get(key)
                     if val is not None and f"{key}_show" not in cw_ids:
                         cw_ids[f"{key}_show"] = val
@@ -490,7 +490,7 @@ def _cfg_for_dispatch(server_id: str | None) -> dict[str, Any]:
 
 def _ids_desc(ids: dict[str, Any] | None) -> str:
     d = ids or {}
-    for k in ("trakt", "imdb", "tmdb", "tvdb"):
+    for k in ("trakt", "tmdb", "imdb", "tvdb"):
         if d.get(k):
             return f"{k}:{d[k]}"
     for k in ("trakt_show", "imdb_show", "tmdb_show", "tvdb_show"):
