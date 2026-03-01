@@ -41,7 +41,7 @@ def _pick_key(provider_key: str, computed_key: str) -> str:
         return ck
     return pk if _key_rank(pk) < _key_rank(ck) else ck
 
-_ID_COALESCE_KEYS = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
+_ID_COALESCE_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 def _coalesce_by_shared_ids(idx: SnapIndex, *, feature: str) -> SnapIndex:
     if str(feature or "").lower() != "watchlist" or not idx:
@@ -665,7 +665,11 @@ def coerce_suspect_snapshot(
     else:
         caps = {}
 
-    sem = caps.get("index_semantics", "present")
+    per = caps.get(feature)
+    if isinstance(per, Mapping) and per.get("index_semantics") is not None:
+        sem = per.get("index_semantics")
+    else:
+        sem = caps.get("index_semantics", "present")
 
     if str(sem).lower() != "present":
         return dict(cur_idx), False, "semantics:delta"
