@@ -85,14 +85,14 @@ def inject_ctx_into_provider(ops, ctx) -> None:
 
         try:
             base = modname.rsplit(".", 1)[0]
-            candidates = {
-                f"{base}._mod_common",
-                modname.replace("_mod_PLEX", "_mod_common")
-                      .replace("_mod_TRAKT", "_mod_common")
-                      .replace("_mod_SIMKL", "_mod_common")
-                      .replace("_mod_JELLYFIN", "_mod_common"),
-            }
+            common_guess = modname
+            if "_mod_" in modname:
+                common_guess = modname.rsplit("_mod_", 1)[0] + "_mod_common"
+
+            candidates = {f"{base}._mod_common", common_guess}
             for cname in candidates:
+                if not cname or cname == modname:
+                    continue
                 try:
                     cmod = importlib.import_module(cname)
                     setattr(cmod, "ctx", ctx)
