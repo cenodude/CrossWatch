@@ -412,6 +412,18 @@ def _ids_from_provider_ids(pids: Mapping[str, Any] | None) -> dict[str, str]:
         if m:
             out["tvdb"] = m.group(1)
 
+    v = low.get("mal") or low.get("myanimelist") or low.get("myanimelistid")
+    if v is not None:
+        m = _NUM_PAT.search(str(v).strip())
+        if m:
+            out["mal"] = m.group(1)
+
+    v = low.get("anilist") or low.get("anilistid")
+    if v is not None:
+        m = _NUM_PAT.search(str(v).strip())
+        if m:
+            out["anilist"] = m.group(1)
+
     jf = low.get("jellyfin")
     if jf:
         out["jellyfin"] = str(jf)
