@@ -67,7 +67,6 @@ __all__ = [
     "KEY_PRIORITY",
     "ids_from",
     "ids_from_guid",
-    "ids_from_jellyfin_providerids",
     "merge_ids",
     "coalesce_ids",
     "canonical_key",
@@ -162,38 +161,6 @@ def ids_from_guid(guid: str | None) -> dict[str, str]:
                 out[label] = norm
         elif label == "guid":
             out["guid"] = g
-    return out
-
-
-# Jellyfin ProviderIds to ids
-_JF_MAP: dict[str, str] = {
-    "Imdb": "imdb",
-    "Tmdb": "tmdb",
-    "Tvdb": "tvdb",
-    "Trakt": "trakt",
-    "Simkl": "simkl",
-    "Anidb": "anidb",
-    "AniDB": "anidb",
-    "Anilist": "anilist",
-    "AniList": "anilist",
-    "Kitsu": "kitsu",
-    "Mal": "mal",
-    "MAL": "mal",
-    "MyAnimeList": "mal",
-}
-
-
-def ids_from_jellyfin_providerids(pids: Mapping[str, Any] | None) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if not isinstance(pids, Mapping):
-        return out
-    for k, v in pids.items():
-        dst = _JF_MAP.get(str(k))
-        if not dst:
-            continue
-        n = _normalize_id(dst, v)
-        if n:
-            out[dst] = n
     return out
 
 
