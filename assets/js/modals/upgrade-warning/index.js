@@ -203,6 +203,41 @@ async function _saveConfigNoUi() {
   });
 }
 
+
+async function _pauseSchedulerOnce() {
+  // Stop scheduler once when migration is required (<0.9.11) to avoid running on mixed ID systems.
+  const notify = window.notify || ((m) => console.log("[notify]", m));
+  const KEY = "cw_stop_scheduler_pre_0911";
+
+  try {
+    if (window.__CW_STOP_SCHED_0911_DONE__) return;
+    if (window.__CW_STOP_SCHED_0911_INFLIGHT__) return;
+  } catch {}
+
+  try {
+    if (localStorage.getItem(KEY) === "1") {
+      try { window.__CW_STOP_SCHED_0911_DONE__ = true; } catch {}
+      return;
+    }
+  } catch {}
+
+  try { window.__CW_STOP_SCHED_0911_INFLIGHT__ = true; } catch {}
+
+  try {
+    await _postJson("/api/scheduling/stop");
+    notify("Scheduler stopped until you complete migration.");
+    try {
+      localStorage.setItem(KEY, "1");
+      window.__CW_STOP_SCHED_0911_DONE__ = true;
+    } catch {}
+  } catch (e) {
+    console.warn("[upgrade-warning] scheduler stop failed", e);
+  } finally {
+    try { window.__CW_STOP_SCHED_0911_INFLIGHT__ = false; } catch {}
+  }
+}
+
+
 async function saveNow(btn) {
   const notify = window.notify || ((m) => console.log("[notify]", m));
   try {
@@ -248,7 +283,7 @@ async function saveNow(btn) {
   }
 }
 
-async function migrateNow(btn) {
+async function migrateNow(btn, fullClean = false) {
   const notify = window.notify || ((m) => console.log("[notify]", m));
   try {
     if (btn) {
@@ -259,13 +294,44 @@ async function migrateNow(btn) {
   } catch {}
 
   try {
-    await _postJson("/api/maintenance/clear-state");
-    await _postJson("/api/maintenance/clear-cache");
-    await _postJson("/api/maintenance/clear-metadata-cache");
+    const ops = [
+      { url: "/api/maintenance/clear-state", opts: {} },
+      { url: "/api/maintenance/clear-cache", opts: {} },
+      { url: "/api/maintenance/clear-metadata-cache", opts: {} },
+    ];
+
+    if (fullClean) {
+      ops.push(
+        {
+          url: "/api/maintenance/crosswatch-tracker/clear",
+          opts: {
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              clear_state: true,
+              clear_snapshots: true,
+            }),
+          },
+        },
+        {
+          url: "/api/maintenance/reset-stats",
+          opts: {
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          },
+        },
+        { url: "/api/maintenance/reset-currently-watching", opts: {} },
+      );
+    }
+
+    for (const op of ops) {
+      await _postJson(op.url, op.opts);
+    }
 
     await _saveConfigNoUi();
 
-    notify("Migration completed. State/cache cleared and config saved.");
+    notify(fullClean
+      ? "Migration completed. Legacy state/cache cleared and config saved."
+      : "Migration completed. State/cache cleared and config saved.");
 
     try {
       if (btn) {
@@ -289,6 +355,8 @@ async function migrateNow(btn) {
   }
 }
 
+
+
 export default {
   async mount(hostEl, props = {}) {
     if (!hostEl) return;
@@ -301,6 +369,14 @@ export default {
 
     // Legacy if config has no version, or version < 0.7.0
     const legacy = !hasCfgVer || _cmp(cfg, "0.7.0") < 0;
+
+    // v0.9.11 introduced IMDb -> TMDb primary ID change. Anything before that needs a full cleanup.
+    const needs0911Cleanup = !hasCfgVer || _cmp(cfg, "0.9.11") < 0;
+
+    if (needs0911Cleanup) {
+      // Stop scheduler early for safety until migration is completed.
+      _pauseSchedulerOnce();
+    }
 
     hostEl.innerHTML = `
         <style>
@@ -385,8 +461,8 @@ export default {
       <div class="head">
         <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
         <div>
-          <div class="t">${legacy ? "Legacy config detected" : "Config version notice"}</div>
-          <div class="sub">${legacy ? "This release introduced config versioning (0.7.0+)." : "Migrate to new save format."}</div>
+          <div class="t">${needs0911Cleanup ? "Migration required" : (legacy ? "Legacy config detected" : "Config version notice")}</div>
+          <div class="sub">${needs0911Cleanup ? "Pre-v0.9.11 data cleanup" : (legacy ? "This release introduced config versioning (0.7.0+)." : "Migrate to new save format.")}</div>
         </div>
         <div class="pill">
           <span class="b">Engine v${cur}</span>
@@ -395,7 +471,43 @@ export default {
       </div>
 
       <div class="body">
+        ${needs0911Cleanup ? `
+        <div class="card warn">
+          <div class="h">IMPORTANT</div>
+          <div class="p">Starting with <b>v0.9.11</b>, we switched the primary ID from <b>IMDb</b> to <b>TMDb</b>. This change affects all existing states and caches created before <b>v0.9.11</b>. Click <b>MIGRATE</b> to remove the old IMDb-based state/cache data.</div>
+        </div>
         ${legacy ? `
+        <div class="card warn">
+          <div class="h">IMPORTANT</div>
+          <div class="p">CrossWatch now clearly separates <b>global orchestration state</b> from <b>pair-specific provider caches</b>.</div>
+          <ul>
+            <li>Multiple pairs can run without overwriting each other’s cached snapshots/watermarks.</li>
+            <li>Providers can safely reuse cached “present” indexes (when activities timestamps match) without risking cross-pair contamination.</li>
+          </ul>
+          <div class="p" style="margin-top:8px">For a smooth transition, the current caches need to be removed/migrated.</div>
+        </div>
+
+        <div class="card">
+          <div class="h">What to do</div>
+          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, then saves your config so it gets the new <code>version</code> field.</div>
+        </div>
+
+        <div class="card">
+          <div class="h">Tip</div>
+          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
+        </div>
+        ` : ``}
+
+        <div class="card">
+          <div class="h">What to do</div>
+          <div class="p">Click <b>MIGRATE</b> below. It runs <b>Clean Everything</b> (state, caches, tracker, stats, currently watching) and saves your config.</div>
+        </div>
+
+        <div class="card">
+          <div class="h">Tip</div>
+          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
+        </div>
+        ` : (legacy ? `
         <div class="card warn">
           <div class="h">IMPORTANT</div>
           <div class="p">CrossWatch now clearly separates <b>global orchestration state</b> from <b>pair-specific provider caches</b>.</div>
@@ -425,7 +537,7 @@ export default {
           <div class="h">Tip</div>
           <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
         </div>
-        `}
+        `)}
 
         <div class="card" id="upg-release-notes" style="display:none">
           <div class="h">Release notes</div>
@@ -436,7 +548,7 @@ export default {
 
       <div class="foot">
         <button class="btn ghost" type="button" data-x="close">Close</button>
-        ${legacy
+        ${needs0911Cleanup || legacy
           ? `<button class="btn danger" type="button" data-x="migrate">MIGRATE</button>`
           : `<button class="btn primary" type="button" data-x="save">MIGRATE</button>`
         }
@@ -459,8 +571,8 @@ export default {
       } catch {}
     });
 
-    if (legacy) {
-      hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget));
+    if (needs0911Cleanup || legacy) {
+      hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget, needs0911Cleanup));
     } else {
       hostEl.querySelector('[data-x="save"]')?.addEventListener("click", (e) => saveNow(e.currentTarget));
     }
