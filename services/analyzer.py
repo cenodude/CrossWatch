@@ -481,7 +481,7 @@ def _alias_keys(obj: dict[str, Any]) -> list[str]:
     if obj.get("_key"):
         out.append(obj["_key"])
 
-    for ns in ("imdb", "tmdb", "tvdb", "mal", "anilist", "trakt", "simkl", "plex", "emby", "guid", "mdblist"):
+    for ns in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "plex", "emby", "guid", "mdblist"):
         v = ids.get(ns)
         if v:
             vs = str(v)
@@ -965,7 +965,7 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
     def pick_sig(obj: Any) -> str | None:
         if not isinstance(obj, dict):
             return None
-        for idk in ("imdb", "tmdb", "tvdb", "slug"):
+        for idk in ("tmdb", "imdb", "tvdb", "slug"):
             v = obj.get(idk)
             if v:
                 return f"{idk}:{str(v).lower()}"
@@ -994,7 +994,7 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
         for s0 in sigs:
             ns = s0.split(":", 1)[0] if ":" in s0 else ""
             by_ns.setdefault(ns, set()).add(s0)
-        order = {"imdb": 0, "tmdb": 1, "tvdb": 2, "slug": 3}
+        order = {"tmdb": 0, "imdb": 1, "tvdb": 2, "slug": 3}
         best = None
         best_p = 999
         for s0 in sigs:
@@ -1008,7 +1008,7 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
     def sig_prio(sig: str | None) -> int:
         if not sig or ":" not in sig:
             return 999
-        order = {"imdb": 0, "tmdb": 1, "tvdb": 2, "slug": 3}
+        order = {"tmdb": 0, "imdb": 1, "tvdb": 2, "slug": 3}
         return order.get(sig.split(":", 1)[0], 999)
 
     def show_id_sig(rec: dict[str, Any]) -> str | None:
@@ -1196,7 +1196,7 @@ def _history_show_signature(rec: dict[str, Any]) -> str | None:
     show_ids = (rec.get("show_ids") or {}) or {}
 
     def pick(obj: dict[str, Any]) -> str | None:
-        for idk in ("imdb", "tmdb", "tvdb", "slug"):
+        for idk in ("tmdb", "imdb", "tvdb", "slug"):
             v = obj.get(idk)
             if v:
                 return f"{idk}:{str(v).lower()}"
@@ -1298,7 +1298,7 @@ def _missing_peer_show_hints(
 
 def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
-    core = ("imdb", "tmdb", "tvdb")
+    core = ("tmdb", "imdb", "tvdb")
 
     cfg = _cfg()
     pairs = _pair_map(cfg, s)
@@ -1538,7 +1538,7 @@ def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
     ns = parts[0]
     base = ids.get(ns) or ""
     if not base:
-        for cand in ("imdb", "tmdb", "tvdb"):
+        for cand in ("tmdb", "imdb", "tvdb"):
             if ids.get(cand):
                 ns = cand
                 base = ids[cand]

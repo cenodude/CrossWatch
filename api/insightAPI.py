@@ -345,7 +345,7 @@ def register_insights(app: FastAPI) -> None:
                             for ids in (show_ids, item_ids):
                                 if not isinstance(ids, dict):
                                     continue
-                                for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                                for idk in ("tmdb", "imdb", "tvdb", "simkl", "slug"):
                                     v = ids.get(idk)
                                     if v:
                                         id_map[f"{idk}:{str(v).lower()}"] = title
@@ -425,7 +425,7 @@ def register_insights(app: FastAPI) -> None:
                             raw_item_ids = it.get("ids")
                             item_ids = raw_item_ids if isinstance(raw_item_ids, dict) else {}
                             if isinstance(item_ids, dict):
-                                for idk in ("tmdb", "imdb", "simkl", "slug", "trakt", "tvdb", "plex", "guid"):
+                                for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "slug", "plex", "guid"):
                                     v = item_ids.get(idk)
                                     if v:
                                         id_map[f"{idk}:{str(v).strip().lower()}"] = (title, year)
@@ -549,7 +549,7 @@ def register_insights(app: FastAPI) -> None:
                             _put_id(f"plex:{pv}", tup, prio)
                             _put_id(f"plex:movie:{pv}", tup, prio)
 
-                        for idk in ("tmdb", "imdb", "simkl", "slug", "trakt", "tvdb", "guid"):
+                        for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "slug", "guid"):
                             v = ids.get(idk)
                             if not v:
                                 continue
@@ -601,7 +601,7 @@ def register_insights(app: FastAPI) -> None:
             raw_item_ids = out.get("ids")
             item_ids = raw_item_ids if isinstance(raw_item_ids, dict) else {}
             if isinstance(item_ids, dict):
-                for idk in ("tmdb", "imdb", "simkl", "slug", "trakt", "tvdb", "plex", "guid"):
+                for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "slug", "plex", "guid"):
                     v = item_ids.get(idk)
                     if not v:
                         continue
@@ -682,7 +682,7 @@ def register_insights(app: FastAPI) -> None:
                         for ids_any in (rec.get("show_ids"), rec.get("ids")):
                             if not isinstance(ids_any, dict):
                                 continue
-                            for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug", "plex", "guid"):
+                            for idk in ("tmdb", "imdb", "tvdb", "simkl", "slug", "plex", "guid"):
                                 v = ids_any.get(idk)
                                 if not v:
                                     continue
@@ -764,7 +764,7 @@ def register_insights(app: FastAPI) -> None:
             for ids in (show_ids, item_ids):
                 if not isinstance(ids, dict):
                     continue
-                for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                for idk in ("tmdb", "imdb", "tvdb", "simkl", "slug"):
                     v = ids.get(idk)
                     if not v:
                         continue
@@ -926,7 +926,7 @@ def register_insights(app: FastAPI) -> None:
                                 ep = int(rec.get("episode") or 0)
 
                                 ep_sig: str | None = None
-                                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
                                     v = ids.get(idk)
                                     if v:
                                         ep_sig = f"{idk}:{str(v).lower()}|s{s}e{ep}"
@@ -940,7 +940,7 @@ def register_insights(app: FastAPI) -> None:
 
                                 show_ids = show_ids_field or ids
                                 show_sig: str | None = None
-                                for idk in ("anilist", "mal", "imdb", "tmdb", "tvdb", "slug"):
+                                for idk in ("tmdb", "imdb", "tvdb", "anilist", "mal", "slug"):
                                     v = show_ids.get(idk)
                                     if v:
                                         show_sig = f"{idk}:{str(v).lower()}"
@@ -962,7 +962,7 @@ def register_insights(app: FastAPI) -> None:
                             if is_anime:
                                 sig: str | None = None
                                 ids_anime = show_ids_field if (show_ids_field.get("anilist") or show_ids_field.get("mal")) else ids
-                                for idk in ("anilist", "mal", "tvdb", "tmdb", "imdb", "slug"):
+                                for idk in ("anilist", "mal", "slug","tmdb", "imdb", "tvdb"):
                                     v = ids_anime.get(idk)
                                     if v:
                                         sig = f"{idk}:{str(v).lower()}"
@@ -977,7 +977,7 @@ def register_insights(app: FastAPI) -> None:
 
                             if typ == "movie" and not has_show_meta:
                                 sig: str | None = None
-                                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
                                     v = ids.get(idk)
                                     if v:
                                         sig = f"{idk}:{str(v).lower()}"
@@ -992,7 +992,7 @@ def register_insights(app: FastAPI) -> None:
                             if typ == "show" or (typ == "movie" and has_show_meta):
                                 ids_show = show_ids_field or ids
                                 show_sig: str | None = None
-                                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
                                     v = ids_show.get(idk)
                                     if v:
                                         show_sig = f"{idk}:{str(v).lower()}"
@@ -1014,7 +1014,7 @@ def register_insights(app: FastAPI) -> None:
                             if has_show_meta:
                                 ids_show = show_ids_field or ids
                                 show_sig: str | None = None
-                                for idk in ("imdb", "tmdb", "tvdb", "slug"):
+                                for idk in ("tmdb", "imdb", "tvdb", "slug"):
                                     v = ids_show.get(idk)
                                     if v:
                                         show_sig = f"{idk}:{str(v).lower()}"

@@ -1363,7 +1363,7 @@ def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], 
                 for ids in (show_ids, item_ids):
                     if not isinstance(ids, dict):
                         continue
-                    for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                    for idk in ("tmdb", "imdb", "tvdb", "simkl", "slug"):
                         v = ids.get(idk)
                         if v:
                             force = is_show and (idk != "slug")
@@ -1429,7 +1429,7 @@ def _episode_code_map_from_state(state: dict[str, Any]) -> dict[str, tuple[int, 
                 add_key(it.get("key"), s, e)
                 raw_ids = it.get("ids")
                 ids = raw_ids if isinstance(raw_ids, dict) else {}
-                for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+                for idk in ("tmdb", "imdb", "tvdb", "simkl", "slug"):
                     v = ids.get(idk)
                     if v:
                         add_key(f"{idk}:{str(v).lower()}", s, e)
@@ -1479,8 +1479,8 @@ def _key_lookup_candidates(raw_key: Any) -> list[str]:
             out.append(x)
 
     _ID_NS = {
-        "imdb",
         "tmdb",
+        "imdb",
         "tvdb",
         "trakt",
         "simkl",
@@ -1562,7 +1562,7 @@ def _ensure_series_title(
     for ids in (show_ids, item_ids):
         if not isinstance(ids, dict):
             continue
-        for idk in ("tmdb", "tvdb", "simkl", "imdb", "slug"):
+        for idk in ("tmdb", "imdb", "tvdb", "simkl", "slug"):
             v = ids.get(idk)
             if not v:
                 continue
@@ -1627,7 +1627,7 @@ def _finalize_spotlight_item(it: dict[str, Any]) -> None:
             raw_type = "episode"
             it["type"] = "episode"
 
-    # If the event doesn't carry season/episode, try to hydrate it from the persisted state.
+    # loopkup season/episode by key if missing and type is episode or unknown
     if key and (raw_type == "episode") and (season is None or episode is None):
         try:
             cm = _get_episode_code_map()

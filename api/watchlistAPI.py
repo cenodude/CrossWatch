@@ -92,7 +92,7 @@ def _item_label(state: dict[str, Any], key: str, prov: str) -> tuple[str, str]:
 
 def _candidate_keys_from_ids(ids: dict[str, Any]) -> list[str]:
     keys: list[str] = []
-    for k in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "anilist", "mal"):
+    for k in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal"):
         v = ids.get(k)
         if v is None:
             continue

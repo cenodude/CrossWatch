@@ -169,7 +169,7 @@ class Stats:
         out: dict[str, Any] = {}
         ids = d.get("ids") or d.get("external_ids") or {}
         if isinstance(ids, dict):
-            for k in ("imdb", "tmdb", "tvdb", "simkl", "slug"):
+            for k in ("tmdb", "imdb", "tvdb", "simkl", "slug"):
                 v = ids.get(k)
                 if v and k not in out:
                     out[k] = v
