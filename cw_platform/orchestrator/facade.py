@@ -100,10 +100,8 @@ class Orchestrator:
             self.cfg.get("telemetry")
             or (self.cfg.get("runtime", {}).get("telemetry") or {})
         )
-        self.warn_thresholds = (
-            telem_cfg.get("warn_rate_remaining")
-            or {"TRAKT": 100, "SIMKL": 50, "PLEX": 0, "JELLYFIN": 0}
-        )
+        wr = telem_cfg.get("warn_rate_remaining")
+        self.warn_thresholds = dict(wr) if isinstance(wr, Mapping) else {}
 
         self.snap_ttl_sec = int(rt.get("snapshot_ttl_sec") or 0)
         self.suspect_min_prev = int(rt.get("suspect_min_prev", 20))
