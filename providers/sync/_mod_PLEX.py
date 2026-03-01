@@ -332,6 +332,7 @@ def get_manifest() -> Mapping[str, Any]:
             "bidirectional": True,
             "provides_ids": True,
             "index_semantics": "present",
+            "history": {"index_semantics": "delta"},
             "watchlist": {"writes": "discover_first", "pms_fallback": True},
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
@@ -1161,6 +1162,7 @@ class _PlexOPS:
             "bidirectional": True,
             "provides_ids": True,
             "index_semantics": "present",
+            "history": {"index_semantics": "delta"},
             "watchlist": {"writes": "discover_first", "pms_fallback": True},
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
