@@ -6,7 +6,57 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..id_map import minimal
+from ..id_map import minimal, ids_from, coalesce_ids
+
+
+_STRONG_ID_KEYS: tuple[str, ...] = ("tmdb", "imdb", "tvdb", "trakt")
+
+
+def _strong_keys(item: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
+
+    def _tok(k: str, v: Any) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip().lower()
+        return f"{k}:{s}" if s else None
+
+    ids = ids_from(item)
+    for k in _STRONG_ID_KEYS:
+        t = _tok(k, ids.get(k))
+        if t:
+            out.add(t)
+
+    typ = str(item.get("type") or "").strip().lower()
+    if typ not in ("season", "episode"):
+        return out
+
+    s = item.get("season") if item.get("season") is not None else item.get("season_number")
+    e = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
+    try:
+        sn = int(s) if s is not None else None
+        en = int(e) if e is not None else None
+    except Exception:
+        return out
+
+    frag: str | None = None
+    if typ == "season" and sn is not None:
+        frag = f"#season:{sn}"
+    elif typ == "episode" and sn is not None and en is not None:
+        frag = f"#s{str(sn).zfill(2)}e{str(en).zfill(2)}"
+
+    if not frag:
+        return out
+
+    show_ids_raw = item.get("show_ids")
+    if isinstance(show_ids_raw, Mapping) and show_ids_raw:
+        sids = coalesce_ids(show_ids_raw)
+        for k in _STRONG_ID_KEYS:
+            t = _tok(k, sids.get(k))
+            if t:
+                out.add(f"{t}{frag}")
+
+    return out
 
 
 # Presence helpers
@@ -16,14 +66,29 @@ def diff(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     add: list[dict[str, Any]] = []
     rem: list[dict[str, Any]] = []
+    dst_alias: set[str] = set()
+    for dv in (dst_idx or {}).values():
+        if isinstance(dv, Mapping):
+            dst_alias |= _strong_keys(dv)
 
-    for k, v in src_idx.items():
-        if k not in dst_idx:
-            add.append(minimal(v))
+    src_alias: set[str] = set()
+    for sv in (src_idx or {}).values():
+        if isinstance(sv, Mapping):
+            src_alias |= _strong_keys(sv)
 
-    for k, v in dst_idx.items():
-        if k not in src_idx:
-            rem.append(minimal(v))
+    for k, v in (src_idx or {}).items():
+        if k in (dst_idx or {}):
+            continue
+        if isinstance(v, Mapping) and (_strong_keys(v) & dst_alias):
+            continue
+        add.append(minimal(v))
+
+    for k, v in (dst_idx or {}).items():
+        if k in (src_idx or {}):
+            continue
+        if isinstance(v, Mapping) and (_strong_keys(v) & src_alias):
+            continue
+        rem.append(minimal(v))
 
     return add, rem
 
