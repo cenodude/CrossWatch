@@ -188,7 +188,7 @@ def _iso8601(v: Any) -> str | None:
     if epoch is None:
         return None
 
-    # Trakt is moving watched_at to minute precision
+    # Trakt is moving watched_at to minute precision (seconds + milliseconds => 00.000Z).
     epoch = (epoch // 60) * 60
     return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(epoch))
 
@@ -1537,7 +1537,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             except Exception:
                 pass
 
-        elif not unresolved:
+        elif ok_total == 0 and nf_count == 0 and not unresolved:
             _warn("write_noop", action="add")
     elif r.status_code == 409:
         _warn("write_duplicate", action="add", status=409, body=((r.text or "")[:200]))
