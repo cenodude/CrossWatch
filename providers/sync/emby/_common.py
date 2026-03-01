@@ -253,25 +253,43 @@ def _ids_from_provider_ids(pids: Mapping[str, Any] | None) -> dict[str, str]:
     if not isinstance(pids, Mapping):
         return out
     low = {str(k).lower(): (v if v is not None else "") for k, v in pids.items()}
+
     v = low.get("imdb")
     if v:
         m = _IMDB_PAT.search(str(v).strip())
         if m:
             out["imdb"] = f"tt{m.group(1)}"
+
     v = low.get("tmdb")
     if v:
         m = _NUM_PAT.search(str(v).strip())
         if m:
             out["tmdb"] = m.group(1)
+
     v = low.get("tvdb")
     if v:
         m = _NUM_PAT.search(str(v).strip())
         if m:
             out["tvdb"] = m.group(1)
+
+    # Anime community IDs
+    v = low.get("mal") or low.get("myanimelist") or low.get("myanimelistid")
+    if v:
+        m = _NUM_PAT.search(str(v).strip())
+        if m:
+            out["mal"] = m.group(1)
+
+    v = low.get("anilist") or low.get("anilistid")
+    if v:
+        m = _NUM_PAT.search(str(v).strip())
+        if m:
+            out["anilist"] = m.group(1)
+
     em = low.get("emby")
     if em:
         out["emby"] = str(em)
     return out
+
 
 
 def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
@@ -347,15 +365,29 @@ def map_provider_key(k: str) -> str | None:
     if not k:
         return None
     kl = str(k).strip().lower()
+
+    # Built-ins / common agents
     if kl.startswith("agent:themoviedb"):
         return "tmdb"
     if kl.startswith("agent:imdb"):
         return "imdb"
     if kl.startswith("agent:tvdb"):
         return "tvdb"
+
+    # Anime community providers (plugins)
+    if kl.startswith("agent:myanimelist") or kl.startswith("agent:mal"):
+        return "mal"
+    if kl.startswith("agent:anilist"):
+        return "anilist"
+
     if kl in ("tmdb", "imdb", "tvdb"):
         return kl
+    if kl in ("mal", "myanimelist", "myanimelistid"):
+        return "mal"
+    if kl in ("anilist", "anilistid"):
+        return "anilist"
     return None
+
 
 
 def format_provider_pair(k: str, v: Any) -> str | None:
@@ -413,7 +445,8 @@ def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> list[st
         if p and p not in seen:
             out.append(p)
             seen.add(p)
-    for k in ("tmdb", "imdb", "tvdb"):
+
+    for k in ("tmdb", "imdb", "tvdb", "mal", "anilist"):
         v = (it_ids or {}).get(k)
         p = format_provider_pair(k, v) if v else None
         if p and p not in seen:
@@ -460,6 +493,16 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
                 m = _NUM_PAT.search(low["tvdb"])
                 if m:
                     out.setdefault(f"tvdb.{int(m.group(1))}", []).append(row)
+            v_mal = low.get("mal") or low.get("myanimelist") or low.get("myanimelistid")
+            if v_mal:
+                m = _NUM_PAT.search(v_mal)
+                if m:
+                    out.setdefault(f"mal.{int(m.group(1))}", []).append(row)
+            v_al = low.get("anilist") or low.get("anilistid")
+            if v_al:
+                m = _NUM_PAT.search(v_al)
+                if m:
+                    out.setdefault(f"anilist.{int(m.group(1))}", []).append(row)
         start += len(items)
         if not items or (total is not None and start >= total):
             break
