@@ -3,8 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from collections.abc import Sequence, Mapping
-from typing import Any, Callable
-from ._unresolved import record_unresolved
+from typing import Any, Callable, cast
+from . import _unresolved as _unresolved_mod
+record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5) -> Any:
     last = None
@@ -39,19 +40,72 @@ def _normalize(
             confirmed = 0
 
     unresolved_list = res.get("unresolved") or []
+    unresolved_keys: list[str] = []
+
     if isinstance(unresolved_list, list) and unresolved_list:
         emit("apply:unresolved", provider=dst, feature=feature, count=len(unresolved_list))
+
+        def _unwrap(x: Mapping[str, Any]) -> tuple[Mapping[str, Any], str | None]:
+            inner = x.get("item")
+            if isinstance(inner, Mapping):
+                hint = x.get("hint") or x.get("reason") or x.get("error")
+                return inner, (str(hint).strip() or None) if hint is not None else None
+            hint = x.get("hint") or x.get("reason") or x.get("error")
+            return x, (str(hint).strip() or None) if hint is not None else None
+
         def _has_ids(x: Mapping[str, Any] | None) -> bool:
             ids = (x or {}).get("ids") or {}
-            return any(ids.get(k) for k in ("imdb", "tmdb", "tvdb", "slug"))
+            return any(ids.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt", "slug"))
+
         try:
-            mapped = [it for it in unresolved_list if isinstance(it, Mapping)]
-            if mapped and any(_has_ids(it) for it in mapped):
-                record_unresolved(dst, feature, [dict(it) for it in mapped], hint=f"{tag}:provider_unresolved")
+            from ..id_map import canonical_key as _ckey  # type: ignore
+        except Exception:  # pragma: no cover
+            _ckey = None  # type: ignore
+
+        # Extract unresolved canonical keys for the orchestrator (used for blackbox/flap decisions).
+        try:
+            for raw in unresolved_list:
+                if not isinstance(raw, Mapping):
+                    continue
+                item_u, _ = _unwrap(raw)
+                if not isinstance(item_u, Mapping):
+                    continue
+                if _ckey:
+                    try:
+                        k = _ckey(item_u) or ""
+                    except Exception:
+                        k = ""
+                    if k:
+                        unresolved_keys.append(str(k))
+        except Exception:
+            pass
+
+        # Persist unresolved items so the operator can inspect them.
+        try:
+            to_store: list[dict[str, Any]] = []
+            for raw in unresolved_list:
+                if not isinstance(raw, Mapping):
+                    continue
+                item_u, hint_u = _unwrap(raw)
+                if not isinstance(item_u, Mapping):
+                    continue
+                if not _has_ids(item_u):
+                    continue
+                d = dict(item_u)
+                if hint_u:
+                    d["_cw_unresolved_hint"] = hint_u
+                to_store.append(d)
+
+            if to_store:
+                record_unresolved(dst, feature, to_store, hint=f"{tag}:provider_unresolved")
             elif int(confirmed or 0) == 0 and items:
                 record_unresolved(dst, feature, [dict(it) for it in items], hint=f"{tag}:fallback_unresolved")
         except Exception:
             pass
+
+    if unresolved_keys:
+        seen: set[str] = set()
+        unresolved_keys = [k for k in unresolved_keys if k and (k not in seen and not seen.add(k))]
 
     unresolved = len(unresolved_list) if isinstance(unresolved_list, list) else int(unresolved_list or 0)
     errors = int(res.get("errors") or 0)
@@ -77,6 +131,7 @@ def _normalize(
         "skipped_inferred": int(skipped_inferred),
         "skipped_reported": None if skipped_reported_raw is None else int(skipped_reported_raw or 0),
         "skip_basis": skip_basis,
+        "unresolved_keys": list(unresolved_keys),
         "unresolved": int(unresolved),
         "errors": int(errors),
     }
