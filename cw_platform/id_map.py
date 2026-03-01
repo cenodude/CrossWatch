@@ -11,8 +11,8 @@ from typing import Any
 
 # Policy
 ID_KEYS: tuple[str, ...] = (
-    "imdb",
     "tmdb",
+    "imdb",
     "tvdb",
     "trakt",
     "simkl",
@@ -28,8 +28,8 @@ ID_KEYS: tuple[str, ...] = (
     "slug",
 )
 KEY_PRIORITY: tuple[str, ...] = (
-    "imdb",
     "tmdb",
+    "imdb",
     "tvdb",
     "trakt",
     "mal",
@@ -155,7 +155,7 @@ def ids_from_guid(guid: str | None) -> dict[str, str]:
         m = rx.search(g)
         if not m:
             continue
-        if label in ("imdb", "tmdb", "tvdb"):
+        if label in ("tmdb", "imdb", "tvdb"):
             raw = m.groupdict().get(label)
             norm = _normalize_id(label, raw)
             if norm:
@@ -363,7 +363,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
 # Helpers
 def has_external_ids(obj: Mapping[str, Any]) -> bool:
     ids = ids_from(obj) if "ids" in obj or "guid" in obj else obj
-    return any(ids.get(k) for k in ("imdb", "tmdb", "tvdb"))
+    return any(ids.get(k) for k in ("tmdb", "imdb", "tvdb"))
 
 
 def preferred_id_key(obj: Mapping[str, Any]) -> str | None:
