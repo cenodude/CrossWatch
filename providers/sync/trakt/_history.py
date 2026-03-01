@@ -1460,7 +1460,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     m_ids = m.get(id_field) or {}
                     if not isinstance(m_ids, dict):
                         continue
-                    for k in ("trakt", "tvdb", "tmdb", "imdb", "slug"):
+                    for k in ("tmdb", "imdb", "tvdb", "trakt", "slug"):
                         v = m_ids.get(k)
                         if v:
                             idx.setdefault((m_type, k, str(v)), []).append(m)

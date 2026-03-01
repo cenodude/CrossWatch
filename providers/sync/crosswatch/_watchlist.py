@@ -103,7 +103,7 @@ def _ensure_tmdb_for_item(item: dict[str, Any]) -> bool:
         tmdb = ((res or {}).get("ids") or {}).get("tmdb")
         if not tmdb:
             return False
-        ids = merge_ids(ids, {"imdb": imdb, "tmdb": tmdb})
+        ids = merge_ids(ids, {"tmdb": tmdb, "imdb": imdb})
         item["ids"] = ids
         return True
     except Exception:

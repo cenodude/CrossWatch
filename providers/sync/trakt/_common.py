@@ -387,7 +387,7 @@ def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, Any]:
                 ids.pop(key, None)
 
         out: dict[str, Any] = {}
-        for key in ("trakt", "tvdb", "tmdb", "imdb"):
+        for key in ("tmdb", "imdb", "tvdb", "trakt"):
             v = _coerce(key, ids.get(key))
             if v is not None:
                 out[key] = v

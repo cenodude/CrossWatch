@@ -602,7 +602,7 @@ def _save_show_map(obj: Mapping[str, Any]) -> None:
 
 
 def _persist_show_map(key: str, ids: Mapping[str, Any]) -> None:
-    ok = {k: str(v) for k, v in ids.items() if k in ("tvdb", "tmdb", "imdb", "simkl") and v}
+    ok = {k: str(v) for k, v in ids.items() if k in ("tmdb", "imdb", "tvdb", "simkl") and v}
     if not ok:
         return
     data = _load_show_map()
@@ -657,7 +657,7 @@ def _slug_to_title(slug: str | None) -> str:
 
 def _best_ids(obj: Mapping[str, Any]) -> dict[str, str]:
     ids = dict(obj.get("ids") or obj or {})
-    return {k: str(ids[k]) for k in ("tvdb", "tmdb", "imdb", "simkl") if ids.get(k)}
+    return {k: str(ids[k]) for k in ("tmdb", "imdb", "tvdb", "simkl") if ids.get(k)}
 
 def _simkl_resolve_show_via_ids(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
     return {}
@@ -719,7 +719,7 @@ def _simkl_resolve_show_via_episode_id(adapter: Any, item: Mapping[str, Any]) ->
 
 
 def _resolve_show_ids(adapter: Any, item: Mapping[str, Any], raw_show_ids: Mapping[str, Any]) -> dict[str, str]:
-    have = {k: raw_show_ids[k] for k in ("tvdb", "tmdb", "imdb", "simkl") if raw_show_ids.get(k)}
+    have = {k: raw_show_ids[k] for k in ("tmdb", "imdb", "tvdb", "simkl") if raw_show_ids.get(k)}
     return {k: str(v) for k, v in have.items()} if have else {}
 
 def _fetch_kind(
@@ -749,9 +749,6 @@ def _fetch_kind(
         if isinstance(arr, list):
             return [x for x in arr if not _is_null_env(x)]
     return []
-
-
-
 
 
 def _apply_since_limit(

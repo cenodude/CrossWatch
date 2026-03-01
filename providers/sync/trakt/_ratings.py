@@ -151,7 +151,10 @@ def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _sanitize_ids_for_trakt(kind: str, ids: Mapping[str, Any]) -> dict[str, Any]:
-    allowed = ("trakt", "tmdb", "tvdb", "imdb", "slug") if kind in {"movies", "shows", "episodes"} else ("trakt", "tmdb", "tvdb") if kind == "seasons" else ("trakt", "tmdb", "imdb", "tvdb", "slug")
+    if kind == "seasons":
+        allowed = ("tmdb", "imdb", "tvdb", "trakt")
+    else:
+        allowed = ("tmdb", "imdb", "tvdb", "trakt", "slug")
     out: dict[str, Any] = {}
     for k in allowed:
         v = ids.get(k)

@@ -517,7 +517,7 @@ def _freeze_not_found(not_found: Any, *, action: str, unresolved: list[dict[str,
         if not isinstance(value, list):
             continue
         for obj in value:
-            ids = {k: v for k, v in dict(obj or {}).items() if k in ("imdb", "tmdb")}
+            ids = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb")}
             typ = "movie" if bucket == "movies" else "show"
             minimal = id_minimal({"type": typ, "ids": ids})
             unresolved.append({"item": minimal, "hint": "not_found"})
@@ -587,7 +587,7 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
                 if not isinstance(value, list):
                     continue
                 for obj in value:
-                    ids_nf = {k: v for k, v in dict(obj or {}).items() if k in ("imdb", "tmdb")}
+                    ids_nf = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb")}
                     if ids_nf:
                         not_found_keys.add(_key_of({"ids": ids_nf}))
 

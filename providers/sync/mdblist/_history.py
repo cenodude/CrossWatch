@@ -264,7 +264,7 @@ def _merge_event(dst: dict[str, Any], item: Mapping[str, Any]) -> str | None:
 def _ids_pick(obj: Mapping[str, Any]) -> dict[str, Any]:
     ids_raw: dict[str, Any] = dict(obj.get('ids') or {})
     out: dict[str, Any] = {}
-    for k in ('imdb', 'tmdb', 'tvdb', 'trakt', 'kitsu', 'mdblist'):
+    for k in ('tmdb', 'imdb', 'tvdb', 'trakt', 'kitsu', 'mdblist'):
         v = ids_raw.get(k) or obj.get(k) or obj.get(f'{k}_id')
         if v is None or v == '':
             continue
