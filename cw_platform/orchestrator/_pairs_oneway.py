@@ -20,7 +20,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove
 from ._chunking import effective_chunk_size
 from ._unresolved import load_unresolved_keys, record_unresolved
-from ._planner import diff, diff_ratings
+from ._planner import diff, diff_ratings, diff_progress
 from ._phantoms import PhantomGuard
 
 
@@ -475,6 +475,28 @@ def run_one_way_feature(
             src_idx = _merge_manual_adds(src_idx, manual_adds)
         adds, mirror_removes = diff_ratings(src_idx, dst_full)
 
+    elif feature == "progress":
+        if manual_adds:
+            src_idx = _merge_manual_adds(src_idx, manual_adds)
+        dst_for_src: dict[str, Any] = {}
+        try:
+            dst_alias_tmp = _alias_index(dst_full)
+            for sk, sv in (src_idx or {}).items():
+                if sk in (dst_full or {}):
+                    dv0 = (dst_full or {}).get(sk)
+                    if isinstance(dv0, Mapping):
+                        dst_for_src[sk] = dv0
+                    continue
+                if not isinstance(sv, Mapping):
+                    continue
+                dv = _find_in_idx(dst_full, dst_alias_tmp, sv)
+                if isinstance(dv, Mapping):
+                    dst_for_src[sk] = dv
+        except Exception:
+            dst_for_src = dict(dst_full or {})
+
+        adds, mirror_removes = diff_progress(src_idx, dst_for_src, fcfg=fcfg)
+
     else:
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
@@ -546,7 +568,8 @@ def run_one_way_feature(
     dst_alias = _alias_index(dst_full)
 
     if adds:
-        if feature not in ("ratings", "history"):
+        # Progress uses upsert semantics (update resume position)
+        if feature not in ("ratings", "history", "progress"):
             adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
         elif feature == "history":
             pruned: list[dict[str, Any]] = []

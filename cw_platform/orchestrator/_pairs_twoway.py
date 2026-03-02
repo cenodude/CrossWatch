@@ -40,8 +40,7 @@ except Exception:  # pragma: no cover
         return (int(ts) // b2) * b2
 
 from ..provider_instances import normalize_instance_id
-
-from ._planner import diff_ratings
+from ._planner import diff_ratings, diff_progress
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
 except Exception:
@@ -177,6 +176,23 @@ def _minimal_keep_rating(it: Mapping[str, Any]) -> dict[str, Any]:
         ra = ra.strip() if isinstance(ra, str) else ""
         if ra:
             out["rated_at"] = ra
+    except Exception:
+        pass
+    return out
+
+
+def _minimal_keep_progress(it: Mapping[str, Any]) -> dict[str, Any]:
+    out = _minimal(it)
+    try:
+        for k in ("progress_ms", "progressMs", "viewOffset", "progress"):
+            if k in it and it.get(k) is not None:
+                out["progress_ms"] = it.get(k)
+                break
+        if "duration_ms" in it and it.get("duration_ms") is not None:
+            out["duration_ms"] = it.get("duration_ms")
+        pa = it.get("progress_at") or it.get("progressAt") or it.get("last_played") or it.get("lastViewedAt")
+        if isinstance(pa, str) and pa.strip():
+            out["progress_at"] = pa.strip()
     except Exception:
         pass
     return out
@@ -509,6 +525,20 @@ def _two_way_sync(
                 return True
         return False
 
+    def _find_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> Mapping[str, Any] | None:
+        """Find a matching row in idx for it using canonical key or token overlap."""
+        ck = _ck(it)
+        if ck and ck in idx:
+            v = idx.get(ck)
+            return v if isinstance(v, Mapping) else None
+        for tok in _typed_tokens(it):
+            dk = alias.get(tok)
+            if not dk:
+                continue
+            v = idx.get(dk)
+            return v if isinstance(v, Mapping) else None
+        return None
+
     def _tokens(it: Mapping[str, Any]) -> set[str]:
         toks: set[str] = set()
         try:
@@ -631,6 +661,155 @@ def _two_way_sync(
                 remA.append(_minimal(unA[k]))
             elif allow_removals and k in unB:
                 remB.append(_minimal(unB[k]))
+
+        add_to_A = addA if allow_adds else []
+        add_to_B = addB if allow_adds else []
+        if allow_removals:
+            rem_from_A.extend(remA)
+            rem_from_B.extend(remB)
+
+    elif feature == "progress":
+        B_alias_tmp = _alias_index(B_eff)
+        A_alias_tmp = _alias_index(A_eff)
+
+        B_for_A: dict[str, Any] = {}
+        A_for_B: dict[str, Any] = {}
+        try:
+            for ak, av in (A_eff or {}).items():
+                if ak in (B_eff or {}):
+                    bv0 = (B_eff or {}).get(ak)
+                    if isinstance(bv0, Mapping):
+                        B_for_A[ak] = bv0
+                    continue
+                if not isinstance(av, Mapping):
+                    continue
+                bv = _find_in_idx(B_eff, B_alias_tmp, av)
+                if isinstance(bv, Mapping):
+                    B_for_A[ak] = bv
+
+            for bk, bv in (B_eff or {}).items():
+                if bk in (A_eff or {}):
+                    av0 = (A_eff or {}).get(bk)
+                    if isinstance(av0, Mapping):
+                        A_for_B[bk] = av0
+                    continue
+                if not isinstance(bv, Mapping):
+                    continue
+                av = _find_in_idx(A_eff, A_alias_tmp, bv)
+                if isinstance(av, Mapping):
+                    A_for_B[bk] = av
+        except Exception:
+            B_for_A = dict(B_eff or {})
+            A_for_B = dict(A_eff or {})
+
+        up_B, clr_B = diff_progress(A_eff, B_for_A, fcfg=fcfg, propagate_timestamp_updates=False)
+        up_A, clr_A = diff_progress(B_eff, A_for_B, fcfg=fcfg, propagate_timestamp_updates=False)
+
+        def _prog_ms(it: Mapping[str, Any]) -> int:
+            for kk in ("progress_ms", "progressMs", "viewOffset", "progress"):
+                v = it.get(kk)
+                try:
+                    if v is None:
+                        continue
+                    return int(float(v))
+                except Exception:
+                    continue
+            return 0
+
+        def _prog_epoch(it: Mapping[str, Any]) -> int | None:
+            v = it.get("progress_at") or it.get("progressAt") or it.get("last_played") or it.get("lastPlayed") or it.get("lastViewedAt")
+            if v is None:
+                return None
+            try:
+                if isinstance(v, (int, float)):
+                    return int(v)
+                s = str(v).strip()
+                if not s:
+                    return None
+                if s.isdigit():
+                    return int(s)
+                from datetime import datetime
+                return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+            except Exception:
+                return None
+
+        bi = sync_cfg.get("bidirectional") or {}
+        sot = (bi.get("source_of_truth") or bi.get("sourceOfTruth") or "").strip().upper()
+        prefer = sot if sot in (a, b) else a
+
+        upB = {k: it for it in up_B if (k := _ck(it))}
+        upA = {k: it for it in up_A if (k := _ck(it))}
+        clB = {k: it for it in clr_B if (k := _ck(it))}
+        clA = {k: it for it in clr_A if (k := _ck(it))}
+
+        addA: list[dict[str, Any]] = []
+        addB: list[dict[str, Any]] = []
+        remA: list[dict[str, Any]] = []
+        remB: list[dict[str, Any]] = []
+
+        for k in (set(upA) | set(upB) | set(clA) | set(clB)):
+            a_it = (A_eff.get(k) or upB.get(k) or clB.get(k) or {})
+            b_it = (B_eff.get(k) or upA.get(k) or clA.get(k) or {})
+
+            # Both want to set progress.
+            if k in upA and k in upB:
+                ta = _prog_epoch(a_it)
+                tb = _prog_epoch(b_it)
+                if ta is not None and tb is not None and ta != tb:
+                    win = a if ta > tb else b
+                else:
+                    msa = _prog_ms(a_it)
+                    msb = _prog_ms(b_it)
+                    if msa != msb:
+                        win = a if msa > msb else b
+                    else:
+                        win = prefer
+
+                if win == a:
+                    addB.append(_minimal_keep_progress(upB[k]))
+                else:
+                    addA.append(_minimal_keep_progress(upA[k]))
+                continue
+
+            # Clear vs set conflicts.
+            if (k in clB) and (k in upA):
+                # A explicitly cleared; B has progress. Decide by timestamp, then prefer.
+                ta = _prog_epoch(clB[k])
+                tb = _prog_epoch(b_it)
+                if ta is not None and tb is not None and ta != tb:
+                    win = a if ta > tb else b
+                else:
+                    win = prefer
+                if win == a:
+                    if allow_removals:
+                        remB.append(_minimal(clB[k]))
+                else:
+                    addA.append(_minimal_keep_progress(upA[k]))
+                continue
+
+            if (k in clA) and (k in upB):
+                tb = _prog_epoch(clA[k])
+                ta = _prog_epoch(a_it)
+                if ta is not None and tb is not None and ta != tb:
+                    win = a if ta > tb else b
+                else:
+                    win = prefer
+                if win == b:
+                    if allow_removals:
+                        remA.append(_minimal(clA[k]))
+                else:
+                    addB.append(_minimal_keep_progress(upB[k]))
+                continue
+
+            # Single-sided actions.
+            if k in upB:
+                addB.append(_minimal_keep_progress(upB[k]))
+            elif k in upA:
+                addA.append(_minimal_keep_progress(upA[k]))
+            elif allow_removals and k in clB:
+                remB.append(_minimal(clB[k]))
+            elif allow_removals and k in clA:
+                remA.append(_minimal(clA[k]))
 
         add_to_A = addA if allow_adds else []
         add_to_B = addB if allow_adds else []
@@ -787,8 +966,8 @@ def _two_way_sync(
     guardB = PhantomGuard(src=a, dst=b, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
 
     if use_phantoms and add_to_A:
-        # Ratings use upsert semantics (add == set/update). Do not phantom-block updates.
-        if feature == "ratings":
+        # Ratings and progress use upsert semantics
+        if feature in ("ratings", "progress"):
             upd = [it for it in add_to_A if _present(A_eff, A_alias, it)]
             fresh = [it for it in add_to_A if not _present(A_eff, A_alias, it)]
             if fresh:
@@ -797,8 +976,8 @@ def _two_way_sync(
         else:
             add_to_A, _ = guardA.filter_adds(add_to_A, _ck, _minimal, emit, ctx.state_store, pair_key)
     if use_phantoms and add_to_B:
-        # Ratings use upsert semantics
-        if feature == "ratings":
+        # Ratings and progress use upsert semantics
+        if feature in ("ratings", "progress"):
             upd = [it for it in add_to_B if _present(B_eff, B_alias, it)]
             fresh = [it for it in add_to_B if not _present(B_eff, B_alias, it)]
             if fresh:
