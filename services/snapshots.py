@@ -766,31 +766,63 @@ def clear_provider_features(
         raise ValueError(f"Provider not configured: {pid}#{inst}")
 
     done: dict[str, Any] = {"ok": True, "provider": pid, "instance": inst, "results": {}}
+    adapter: Any | None = None
+    try:
+        mk = getattr(ops, "_adapter", None)
+        if callable(mk):
+            adapter = mk(cfg_view)
+    except Exception:
+        adapter = None
+
     for f in features:
         feat = _norm_feature(f)
         if not _feature_enabled(ops, feat):
             done["results"][feat] = {"ok": True, "skipped": True, "reason": "feature_disabled"}
             continue
 
-        cur_raw = ops.build_index(cfg_view, feature=feat) or {}
+        cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
         cur: list[Mapping[str, Any]] = []
         if isinstance(cur_raw, Mapping):
             for v in cur_raw.values():
                 if isinstance(v, Mapping):
                     cur.append(dict(v))
 
+        # Capture mode
+        if feat == "history":
+            for it in cur:
+                if isinstance(it, dict):
+                    it.setdefault("_cw_tool_clear", True)
+
         removed = 0
+        unresolved: list[Any] = []
         errors: list[str] = []
-        for batch in _chunk(cur, chunk_size):
-            try:
-                res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
-                removed += int(res.get("count") or len(batch))
-            except Exception as e:
-                errors.append(str(e))
+
+        # Prefer a single remove call per feature. 
+        try:
+            res = (
+                adapter.remove(feat, cur, dry_run=False)
+                if adapter
+                else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
+            ) or {}
+            if isinstance(res, Mapping) and "count" in res:
+                removed = int(res.get("count") or 0)
+            else:
+                removed = len(cur)
+            if isinstance(res, Mapping) and isinstance(res.get("unresolved"), list):
+                unresolved = list(res.get("unresolved") or [])
+        except Exception as e:
+            errors.append(str(e))
 
         ok = len(errors) == 0
         done["ok"] = done["ok"] and ok
-        done["results"][feat] = {"ok": ok, "removed": removed, "errors": errors, "count": len(cur)}
+        done["results"][feat] = {
+            "ok": ok,
+            "removed": removed,
+            "count": len(cur),
+            "unresolved": unresolved,
+            "unresolved_count": len(unresolved),
+            "errors": errors,
+        }
 
     return done
 

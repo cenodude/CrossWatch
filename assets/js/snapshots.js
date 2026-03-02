@@ -1768,7 +1768,12 @@ function renderSelected() {
           const parts = Object.keys(res.results || {}).map((k) => {
             const x = res.results[k] || {};
             if (x.skipped) return `${k}: skipped (${x.reason || "n/a"})`;
-            return `${k}: removed ${x.removed || 0} (had ${x.count || 0})`;
+
+            const u = (x.unresolved_count != null) ? Number(x.unresolved_count || 0)
+              : (Array.isArray(x.unresolved) ? x.unresolved.length : 0);
+            return u > 0
+              ? `${k}: removed ${x.removed || 0} (had ${x.count || 0}, unresolved ${u})`
+              : `${k}: removed ${x.removed || 0} (had ${x.count || 0})`;
           });
           out.textContent = parts.join(" * ");
         } else {
