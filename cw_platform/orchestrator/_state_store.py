@@ -128,7 +128,7 @@ class StateStore:
                 for feature, f_node in manual.items():
                     _merge_feature(p_node, str(feature).lower(), f_node)
 
-            for feature in ("watchlist", "history", "ratings", "playlists"):
+            for feature in ("watchlist", "history", "ratings", "progress", "playlists"):
                 if feature in p_node and isinstance(p_node.get(feature), dict):
                     _merge_feature(p_node, feature, p_node.get(feature))
 
