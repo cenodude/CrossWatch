@@ -203,3 +203,172 @@ def diff_ratings(
                 unrates.append(minimal(dv))
 
     return upserts, unrates
+
+def diff_progress(
+    src_idx: dict[str, Any],
+    dst_idx: dict[str, Any],
+    *,
+    fcfg: Mapping[str, Any] | None = None,
+    propagate_timestamp_updates: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+
+    cfg = dict(fcfg or {})
+    min_seconds = int(cfg.get("min_seconds") or cfg.get("minSeconds") or 60)
+    delta_seconds = int(cfg.get("delta_seconds") or cfg.get("deltaSeconds") or 30)
+    max_percent = float(cfg.get("max_percent") or cfg.get("maxPercent") or 95)
+
+    def _as_int(v: Any) -> int | None:
+        try:
+            if v is None:
+                return None
+            if isinstance(v, bool):
+                return None
+            n = int(float(v))
+            return n
+        except Exception:
+            return None
+
+    def _progress_ms(it: Mapping[str, Any] | None) -> int | None:
+        if not it:
+            return None
+        for k in ("progress_ms", "progressMs", "viewOffset", "progress"):
+            v = _as_int(it.get(k))
+            if v is not None:
+                return v
+        return None
+
+    def _duration_ms(it: Mapping[str, Any] | None) -> int | None:
+        if not it:
+            return None
+        for k in ("duration_ms", "durationMs", "duration"):
+            v = _as_int(it.get(k))
+            if v is not None and v > 0:
+                return v
+        return None
+
+    def _epoch(v: Any) -> int | None:
+        if v is None:
+            return None
+        try:
+            if isinstance(v, (int, float)):
+                return int(v)
+            s = str(v).strip()
+            if not s:
+                return None
+            if s.isdigit():
+                return int(s)
+            from datetime import datetime
+            s = s.replace("Z", "+00:00")
+            return int(datetime.fromisoformat(s).timestamp())
+        except Exception:
+            return None
+
+    def _progress_epoch(it: Mapping[str, Any] | None) -> int | None:
+        if not it:
+            return None
+        for k in ("progress_at", "progressAt", "last_played", "lastPlayed", "lastViewedAt"):
+            v = it.get(k)
+            ep = _epoch(v)
+            if ep is not None:
+                return ep
+        return None
+
+    def _pct(ms: int, dur: int | None) -> float | None:
+        if dur is None or dur <= 0:
+            return None
+        try:
+            return (float(ms) / float(dur)) * 100.0
+        except Exception:
+            return None
+
+    def _pack_progress(it: Mapping[str, Any]) -> dict[str, Any]:
+        base = minimal(it)
+        pm = _progress_ms(it)
+        if pm is not None:
+            base["progress_ms"] = int(pm)
+        dm = _duration_ms(it)
+        if dm is not None:
+            base["duration_ms"] = int(dm)
+        pa = it.get("progress_at") or it.get("progressAt") or it.get("last_played")
+        if isinstance(pa, str) and pa.strip():
+            base["progress_at"] = pa.strip()
+        return base
+
+    upserts: list[dict[str, Any]] = []
+    clears: list[dict[str, Any]] = []
+
+    min_ms = max(0, min_seconds) * 1000
+    delta_ms = max(0, delta_seconds) * 1000
+
+    # Upserts
+    for k, s_it in (src_idx or {}).items():
+        if not isinstance(s_it, Mapping):
+            continue
+        s_ms = _progress_ms(s_it)
+        if s_ms is None or s_ms <= 0:
+            continue
+        if min_ms and s_ms < min_ms:
+            continue
+        s_dur = _duration_ms(s_it)
+        p = _pct(s_ms, s_dur)
+        if p is not None and p >= max_percent:
+            # Near completion: let history sync handle the played state.
+            continue
+
+        d_it = dst_idx.get(k)
+        d_ms = _progress_ms(d_it) if isinstance(d_it, Mapping) else None
+
+        # If destination has no progress, always upsert.
+        if d_ms is None:
+            upserts.append(_pack_progress(s_it))
+            continue
+
+        if abs(s_ms - d_ms) < delta_ms:
+            continue
+
+        s_ep = _progress_epoch(s_it)
+        d_ep = _progress_epoch(d_it) if isinstance(d_it, Mapping) else None
+
+        # If source is ahead by a meaningful margin, always upsert.
+        if s_ms > d_ms and (s_ms - d_ms) >= delta_ms:
+            upserts.append(_pack_progress(s_it))
+            continue
+
+        # Avoid regressing progress unless the source is clearly newer.
+        if s_ms < d_ms:
+            if s_ep is not None and d_ep is not None:
+                if s_ep < d_ep:
+                    continue
+
+                if (not propagate_timestamp_updates) and s_ep == d_ep:
+                    continue
+                upserts.append(_pack_progress(s_it))
+                continue
+            # No timestamps: do not regress.
+            continue
+
+        if s_ep is not None and d_ep is not None and s_ep < d_ep:
+            continue
+
+        upserts.append(_pack_progress(s_it))
+
+    # Clears
+    for k, s_it in (src_idx or {}).items():
+        if not isinstance(s_it, Mapping):
+            continue
+        s_ms = _progress_ms(s_it)
+        if s_ms is None or s_ms > 0:
+            continue
+
+        d_it = (dst_idx or {}).get(k)
+        if not isinstance(d_it, Mapping):
+            continue
+        d_ms = _progress_ms(d_it)
+        if d_ms is None or d_ms <= 0:
+            continue
+
+        base = minimal(s_it)
+        base["progress_ms"] = 0
+        clears.append(base)
+
+    return upserts, clears
