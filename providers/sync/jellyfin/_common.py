@@ -432,7 +432,11 @@ def _ids_from_provider_ids(pids: Mapping[str, Any] | None) -> dict[str, str]:
 
 def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(obj, Mapping) and "ids" in obj and "type" in obj:
-        return id_minimal(obj)
+        out = id_minimal(obj)
+        raw = obj.get("jellyfin_item_id") or obj.get("_jellyfin_item_id") or obj.get("Id")
+        if raw:
+            out["jellyfin_item_id"] = str(raw)
+        return out
     t = _norm_type(obj.get("Type") or obj.get("BaseItemKind") or obj.get("type"))
     title = (obj.get("Name") or obj.get("title") or "").strip() or None
     year = obj.get("ProductionYear") if isinstance(obj.get("ProductionYear"), int) else obj.get("year")
@@ -442,6 +446,9 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
     if jf_id:
         ids["jellyfin"] = str(jf_id)
     row: dict[str, Any] = {"type": t, "title": title, "year": year, "ids": ids}
+    
+    if jf_id:
+        row["jellyfin_item_id"] = str(jf_id)
     if t == "episode":
         series_title = (
             obj.get("SeriesName")
@@ -475,7 +482,10 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
                 row["episode"] = int(e)
         except Exception:
             pass
-    return id_minimal(row)
+    out = id_minimal(row)
+    if jf_id:
+        out["jellyfin_item_id"] = str(jf_id)
+    return out
 
 
 def key_of(item: Mapping[str, Any]) -> str:
@@ -931,6 +941,15 @@ def _pick_from_candidates(
 def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     http = adapter.client
     uid = adapter.cfg.user_id
+
+    # Prefer native Jellyfin item id when present.
+    raw_iid = it.get("jellyfin_item_id") or it.get("_jellyfin_item_id")
+    if raw_iid:
+        s = str(raw_iid).strip()
+        if s and not looks_like_bad_id(s):
+            _trc('resolve hit', kind='direct_field', item_id=s)
+            return s
+
     ids = dict(it.get("ids") or {})
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
 

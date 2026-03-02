@@ -100,18 +100,33 @@ def _thaw_if_present(keys: Iterable[str]) -> None:
 
 
 # shadow
-def _shadow_load() -> dict[str, int]:
+def _shadow_load() -> dict[str, dict[str, Any]]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         with open(_shadow_path(), "r", encoding="utf-8") as f:
             raw = json.load(f) or {}
-            return {str(k): int(v) for k, v in raw.items()}
+            out: dict[str, dict[str, Any]] = {}
+            if isinstance(raw, Mapping):
+                for k, v in raw.items():
+                    key = str(k)
+                    if isinstance(v, Mapping):
+                        cnt = int(v.get("count") or v.get("c") or v.get("n") or 0)
+                        iid = str(v.get("iid") or v.get("item_id") or "").strip() or None
+                        upd = str(v.get("updated") or v.get("ts") or "").strip() or None
+                        hint = v.get("hint") if isinstance(v.get("hint"), Mapping) else None
+                        out[key] = {"count": max(0, cnt), "iid": iid, "updated": upd, "hint": hint}
+                    else:
+                        try:
+                            out[key] = {"count": max(0, int(v))}
+                        except Exception:
+                            out[key] = {"count": 0}
+            return out
     except Exception:
         return {}
 
 
-def _shadow_save(d: Mapping[str, int]) -> None:
+def _shadow_save(d: Mapping[str, Mapping[str, Any]]) -> None:
     if _is_capture_mode() or _pair_scope() is None:
         return
     try:
@@ -119,7 +134,7 @@ def _shadow_save(d: Mapping[str, int]) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump(dict(d or {}), f, ensure_ascii=False, indent=2, sort_keys=True)
         os.replace(tmp, path)
     except Exception:
         pass
@@ -516,7 +531,13 @@ def build_index(
             if lib_id:
                 event["library_id"] = lib_id
 
-            ev_key = f"{canonical_key(m)}@{ts}"
+            base_key = canonical_key(m)
+            event.setdefault("_cw_key", base_key)
+            jf_iid = m.get("jellyfin_item_id")
+            if jf_iid:
+                event.setdefault("jellyfin_item_id", str(jf_iid))
+
+            ev_key = f"{base_key}@{ts}"
             out_ev = dict(event)
             if lib_id:
                 out_ev["library_id"] = lib_id
@@ -546,10 +567,22 @@ def build_index(
     shadow = _shadow_load()
     if shadow:
         added = 0
-        for k in list(shadow.keys()):
+        for k, meta in shadow.items():
             if k in event_bases or k in out:
                 continue
-            out.setdefault(k, {"watched": True})
+            rec = out.setdefault(k, {"watched": True})
+            if isinstance(rec, dict):
+                rec.setdefault("_cw_key", k)
+                rec.setdefault("_cw_presence", True)
+                if isinstance(meta, Mapping):
+                    iid = meta.get("iid")
+                    if iid:
+                        rec.setdefault("jellyfin_item_id", str(iid))
+                    hint = meta.get("hint")
+                    if isinstance(hint, Mapping):
+                        for hk in ("type", "title", "year", "season", "episode", "series_title", "ids", "show_ids"):
+                            if hk in hint and rec.get(hk) in (None, ""):
+                                rec[hk] = hint.get(hk)
             added += 1
         if added:
             _dbg("shadow merged", added=added)
@@ -565,7 +598,13 @@ def build_index(
             if isinstance(meta, dict) and str(meta.get("reason", "")).startswith("presence:"):
                 since_ep = _parse_iso_to_epoch(meta.get("since")) or 0
                 if since_ep and (now_ep - since_ep) <= ttl:
-                    out.setdefault(k, {"watched": True})
+                    rec = out.setdefault(k, {"watched": True})
+                    if isinstance(rec, dict):
+                        rec.setdefault("_cw_key", k)
+                        rec.setdefault("_cw_presence", True)
+                        iid = meta.get("iid")
+                        if iid:
+                            rec.setdefault("jellyfin_item_id", str(iid))
                     added += 1
         if added:
             _dbg("blackbox presence merged", added=added)
@@ -708,7 +747,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             played, dst_ts = states.get(iid, (False, 0))
 
             if played and dst_ts and src_ts and dst_ts >= src_ts:
-                bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z()}
+                bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z(), "iid": iid}
                 stats["skip_newer"] += 1
                 processed += 1
                 if (processed % 25) == 0:
@@ -716,8 +755,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 sleep_ms(delay)
                 continue
 
-            if played and not dst_ts and not src_ts:
-                bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z()}
+            if played and not dst_ts:
+                bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z(), "iid": iid}
                 stats["skip_played_untimed"] += 1
                 processed += 1
                 if (processed % 25) == 0:
@@ -727,8 +766,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             if _mark_played(http, uid, iid, date_played_iso=src_iso):
                 ok += 1
-                shadow[k] = int(shadow.get(k, 0)) + 1
-                bb[k] = {"reason": "presence:shadow", "since": _now_iso_z()}
+                ent = shadow.get(k) or {}
+                cur_cnt = int(ent.get("count") or 0) if isinstance(ent, Mapping) else 0
+                shadow[k] = {
+                    "count": max(0, cur_cnt) + 1,
+                    "iid": iid,
+                    "updated": _now_iso_z(),
+                    "hint": id_minimal(wants[k]),
+                }
+                bb[k] = {"reason": "presence:shadow", "since": _now_iso_z(), "iid": iid}
                 stats["wrote"] += 1
             else:
                 unresolved.append({"item": wants[k], "hint": "mark_played_failed"})
@@ -753,12 +799,17 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
-
+    force_clear = str(os.getenv("CW_TOOL_CLEAR") or "").strip().lower() in ("1", "true", "yes", "on")
+    shadow = _shadow_load()
     pre_unresolved: list[dict[str, Any]] = []
     wants: dict[str, dict[str, Any]] = {}
 
     for it in (items or []):
         base: dict[str, Any] = dict(it or {})
+        if base.get("_cw_tool_clear") or base.get("_cw_force_clear"):
+            force_clear = True
+        raw_key = str(base.get("_cw_key") or base.get("key") or "").strip() or None
+        raw_iid = str(base.get("jellyfin_item_id") or base.get("_jellyfin_item_id") or "").strip() or None
         base_ids_raw = base.get("ids")
         if isinstance(base_ids_raw, Mapping):
             base_ids: dict[str, Any] = dict(base_ids_raw)
@@ -768,6 +819,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
         nm = jelly_normalize(base)
         m: dict[str, Any] = dict(nm)
+
+        if raw_key:
+            m["_cw_key"] = raw_key
+        if raw_iid:
+            m["jellyfin_item_id"] = raw_iid
 
         if has_ids:
             for key in (
@@ -800,17 +856,23 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             else:
                 m["type"] = "show"
 
-        try:
-            k = canonical_key(m) or canonical_key(base)
-        except Exception:
-            k = None
+        key_opt: str | None
+        if raw_key:
+            key_opt = raw_key
+        else:
+            try:
+                key_opt = canonical_key(m) or canonical_key(base)
+            except Exception:
+                key_opt = None
 
-        if not k:
+        if not key_opt:
             pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
             _freeze(base, reason="missing_ids_for_key")
             continue
 
-        wants[k] = m
+        key: str = key_opt
+        wants[key] = m
+
 
     mids: list[tuple[str, str]] = []
     unresolved: list[dict[str, Any]] = []
@@ -818,34 +880,66 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         unresolved.extend(pre_unresolved)
 
     for k, m in wants.items():
-        try:
-            iid = resolve_item_id(adapter, m)
-        except Exception as e:
-            _warn("resolve exception", err=repr(e))
-            iid = None
+        ent = shadow.get(k) or {}
+        iid = (m.get("jellyfin_item_id") or (ent.get("iid") if isinstance(ent, Mapping) else None))
+
+        if not iid:
+            try:
+                iid = resolve_item_id(adapter, m)
+            except Exception as e:
+                _warn("resolve exception", err=repr(e))
+                iid = None
 
         if iid:
-            mids.append((k, iid))
+            mids.append((k, str(iid)))
         else:
             unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
             _freeze(m, reason="resolve_failed")
-
-    shadow = _shadow_load()
     ok = 0
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
-            cur = int(shadow.get(k, 0))
-            nxt = max(0, cur - 1)
-            shadow[k] = nxt
-            if nxt == 0:
-                if _unmark_played(http, uid, iid):
-                    ok += 1
-                else:
-                    unresolved.append({"item": id_minimal(wants[k]), "hint": "unmark_played_failed"})
-                    _freeze(wants[k], reason="write_failed")
+            ent = shadow.get(k) or {}
+            cur_cnt = int(ent.get("count") or 0) if isinstance(ent, Mapping) else 0
+            tracked = (k in shadow) and cur_cnt > 0
+
+            if tracked and cur_cnt > 1 and not force_clear:
+                shadow[k] = {
+                    **(dict(ent) if isinstance(ent, Mapping) else {}),
+                    "count": cur_cnt - 1,
+                    "iid": str(ent.get("iid") or iid),
+                    "updated": _now_iso_z(),
+                }
+                sleep_ms(delay)
+                continue
+
+            # Force mode (tools/clear) always attempts to unmark.
+            if _unmark_played(http, uid, iid):
+                ok += 1
+                if tracked:
+                    
+                    if force_clear or cur_cnt <= 1:
+                        shadow.pop(k, {})
+                    else:
+                        shadow[k] = {
+                            **(dict(ent) if isinstance(ent, Mapping) else {}),
+                            "count": cur_cnt - 1,
+                            "iid": str(ent.get("iid") or iid),
+                            "updated": _now_iso_z(),
+                        }
+            else:
+                unresolved.append({"item": id_minimal(wants[k]), "hint": "unmark_played_failed"})
+                _freeze(wants[k], reason="write_failed")
+
+                if tracked:
+                    shadow[k] = {
+                        **(dict(ent) if isinstance(ent, Mapping) else {}),
+                        "count": max(1, cur_cnt),
+                        "iid": str(ent.get("iid") or iid),
+                        "updated": _now_iso_z(),
+                    }
             sleep_ms(delay)
 
-    shadow = {k: v for k, v in shadow.items() if v > 0}
+    shadow = {k: v for k, v in shadow.items() if int((v or {}).get("count") or 0) > 0}
     _shadow_save(shadow)
     if ok:
         _thaw_if_present([k for k, _ in mids])
