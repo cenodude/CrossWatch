@@ -385,7 +385,10 @@ async def app_auth_gate(request: Request, call_next):
     try:
         cfg = load_config()
     except Exception:
-        return await call_next(request)
+        # Fail closed if config can't be loaded 
+        if (request.url.path or "").startswith("/api/"):
+            return JSONResponse({"ok": False, "error": "Service unavailable"}, status_code=503, headers={"Cache-Control": "no-store"})
+        return PlainTextResponse("Service unavailable", status_code=503, headers={"Cache-Control": "no-store"})
 
     if not app_auth_required(cfg):
         return await call_next(request)
@@ -774,14 +777,17 @@ def api_list_files(
 
     p = Path(raw)
     if not p.is_absolute():
-        p = (CONFIG_DIR / raw).resolve()
+        p = (CONFIG_DIR / raw)
+
+    # Resolve and enforce that listing stays under CONFIG_DIR
+    p = p.resolve()
     try:
-        try:
-            cfg_root = CONFIG_DIR.resolve()
-            if not str(p).startswith(str(cfg_root)):
-                return []
-        except Exception:
-            pass
+        cfg_root = CONFIG_DIR.resolve()
+        p.relative_to(cfg_root)
+    except Exception:
+        return []
+
+    try:
 
         if not p.exists() or not p.is_dir():
             return []
