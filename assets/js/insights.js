@@ -1,11 +1,11 @@
 /* assets/js/insights.js */
-/* CrossWatch - Insight Module for watchlist, ratings, history, playlists */
+/* CrossWatch - Insight Module for watchlist, ratings, history, progress, playlists */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
   // Helpers
-  const FEATS = ["watchlist","ratings","history","playlists"];
-  const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
+  const FEATS = ["watchlist","ratings","history","progress","playlists"];
+  const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
 
   const PREF_KEY = "insights.settings.v1";
 
@@ -25,7 +25,9 @@
       watchlist: f.watchlist !== false,
       ratings: f.ratings !== false,
       history: f.history !== false,
-      playlists: f.playlists !== false,
+      progress: f.progress !== false,
+      /* playlists are opt-in */
+      playlists: f.playlists === true,
     };
 
     const inst = out.instances && typeof out.instances === "object" ? out.instances : {};
@@ -188,7 +190,7 @@
     .ins-switch .seg::-webkit-scrollbar{display:none}
     .ins-switch .seg .seg-btn{flex:0 0 auto;white-space:nowrap}
 
-    .ins-switch .ins-gear{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.18);color:#fff;border-radius:999px;padding:6px 10px;cursor:pointer;font-size:13px;line-height:1;opacity:.9}
+    .ins-switch .ins-gear{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.18);color:#fff;border-radius:999px;padding:5px 9px;cursor:pointer;font-size:12px;line-height:1;opacity:.9}
     .ins-switch .ins-gear:hover{opacity:1;background:rgba(255,255,255,.06)}
     .ins-switch .ins-gear:active{transform:translateY(1px)}
     `;
@@ -1096,12 +1098,14 @@
   }
 
   #insights-switch{display:flex;align-items:center;gap:10px;justify-content:flex-start;flex-wrap:nowrap;}
-  #insights-switch .seg{flex:1;min-width:0;display:flex;gap:.4rem;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;scrollbar-width:none;}
+  /* Slightly smaller tabs to fit more buttons on one line */
+  #insights-switch .seg{flex:1;min-width:0;display:flex;gap:.32rem;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;scrollbar-width:none;}
   #insights-switch .seg::-webkit-scrollbar{display:none;}
   #insights-switch .seg-btn{flex:0 0 auto;white-space:nowrap;}
   #insights-switch .seg-btn{
-    appearance:none;border:0;cursor:pointer;font:inherit;font-weight:700;letter-spacing:.2px;
-    padding:.38rem .72rem;border-radius:.8rem;color:rgba(255,255,255,.85);
+    appearance:none;border:0;cursor:pointer;font:inherit;font-weight:700;letter-spacing:.15px;
+    font-size:.78rem; /* ~12.5px on 16px base */
+    padding:.28rem .58rem;border-radius:.72rem;color:rgba(255,255,255,.85);
     background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));
     border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);
     transition:transform .12s,box-shadow .12s,background .12s,border-color .12s;opacity:.95;
