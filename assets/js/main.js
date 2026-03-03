@@ -20,12 +20,15 @@
 
 // Main UI logic
 (() => {
-  const FEATS = [
+  const FEATS_ALL = [
     { key: "watchlist", icon: "movie", label: "Watchlist" },
     { key: "ratings",   icon: "star",  label: "Ratings" },
     { key: "history",   icon: "play_arrow", label: "History" },
+    { key: "progress",  icon: "timelapse", label: "Progress" },
     { key: "playlists", icon: "queue_music", label: "Playlists" }
   ];
+  const FEAT_BY_KEY = Object.fromEntries(FEATS_ALL.map((f) => [f.key, f]));
+
 
   const elProgress = document.getElementById("ux-progress");
   const elLanes    = document.getElementById("ux-lanes");
@@ -101,6 +104,20 @@
 
   let summary = null;
   let enabledFromPairs = null;
+  const getDisplayFeats = () =>
+    enabledFromPairs?.progress
+      ? [
+          FEAT_BY_KEY.watchlist,
+          FEAT_BY_KEY.ratings,
+          FEAT_BY_KEY.history,
+          FEAT_BY_KEY.progress
+        ]
+      : [
+          FEAT_BY_KEY.watchlist,
+          FEAT_BY_KEY.ratings,
+          FEAT_BY_KEY.history,
+          FEAT_BY_KEY.playlists
+        ];
   let lastPairsAt = 0;
   let _lastSummaryEventAt = 0;
   let _renderTO = null;
@@ -122,7 +139,7 @@
 
   const hydratedLanes = Object.create(null);
   const lastCounts = Object.create(null);
-  const lastLaneTs = { watchlist: 0, ratings: 0, history: 0, playlists: 0 };
+  const lastLaneTs = { watchlist: 0, ratings: 0, history: 0, progress: 0, playlists: 0 };
 
   const startRunVisualsSafe = (...a) => window.startRunVisuals?.(...a);
   const stopRunVisualsSafe = (...a) => window.stopRunVisuals?.(...a);
@@ -260,6 +277,16 @@
       ) {
         tag = "add";
       } else if (
+        key === "progress" &&
+        (
+          act.includes("progress") ||
+          act.includes("resume") ||
+          act.includes("position") ||
+          act.includes("offset")
+        )
+      ) {
+        tag = "upd";
+      } else if (
         key === "playlists" &&
         (act.includes("add") || act.includes("playlist"))
       ) {
@@ -288,6 +315,7 @@
     watchlist: true,
     ratings: true,
     history: true,
+    progress: false,
     playlists: true
   });
 
@@ -494,7 +522,7 @@
     wrap.className = "lanes";
     const running = sync.isRunning();
 
-    for (const f of FEATS) {
+    for (const f of getDisplayFeats()) {
       const isEnabled = !!getEnabledMap()[f.key];
       const { added, removed, updated, items, spotAdd, spotRem, spotUpd } =
         getLaneStats(summary || {}, f.key);
@@ -674,6 +702,7 @@
         watchlist: false,
         ratings: false,
         history: false,
+        progress: false,
         playlists: false
       };
       return;
@@ -683,12 +712,13 @@
       watchlist: false,
       ratings: false,
       history: false,
+      progress: false,
       playlists: false
     };
 
     for (const p of arr) {
       const feats = p?.features || {};
-      for (const f of FEATS) {
+      for (const f of FEATS_ALL) {
         const cfg = feats[f.key];
         if (cfg && (cfg.enable === true || cfg.enabled === true)) {
           enabled[f.key] = true;
@@ -737,6 +767,7 @@
       watchlist: mk(),
       ratings: mk(),
       history: mk(),
+      progress: mk(),
       playlists: mk()
     };
 
@@ -747,6 +778,15 @@
       const act = String(e.action || "").toLowerCase();
       if (act.includes("watch") || act.includes("scrobble")) return "history";
       if (act.includes("rate") || "rating" in (e || {})) return "ratings";
+      if (
+        act.includes("progress") ||
+        act.includes("resume") ||
+        act.includes("position") ||
+        act.includes("offset") ||
+        "progress_ms" in (e || {}) ||
+        "playback_position" in (e || {})
+      )
+        return "progress";
       if (act.includes("playlist")) return "playlists";
       return "watchlist";
     };
@@ -855,7 +895,7 @@
     const feats = s?.features;
     if (!feats) return false;
 
-    for (const f of FEATS) {
+    for (const f of getDisplayFeats()) {
       const lane = feats[f.key] || {};
       if (!_laneHasCounts(lane)) continue;
 
