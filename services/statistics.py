@@ -37,9 +37,11 @@ def _canon_feature(name: Any) -> str:
         return "ratings"
     if s.startswith("playlist"):
         return "playlists"
+    if s.startswith("progress") or s in ("resume", "playback", "position"):
+        return "progress"
     if s in ("wl", "watchlist"):
         return "watchlist"
-    return s if s in ("watchlist", "ratings", "history", "playlists") else "watchlist"
+    return s if s in ("watchlist", "ratings", "history", "progress", "playlists") else "watchlist"
 
 
 def _read_json(p: Path) -> dict[str, Any]:
