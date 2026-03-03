@@ -1,5 +1,5 @@
 # /api/editorAPI.py
-# CrossWatch - Tracker editor API for history / ratings / watchlist
+# CrossWatch - Tracker editor API for history / ratings / watchlist / progress
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -245,7 +245,7 @@ def _policy_from_state() -> dict[str, Any]:
         if not isinstance(manual, dict):
             return {}
         entry: dict[str, Any] = {}
-        for kind in ("watchlist", "history", "ratings"):
+        for kind in ("watchlist", "history", "ratings", "progress"):
             f = manual.get(kind)
             if not isinstance(f, dict):
                 continue
@@ -308,7 +308,7 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
         return out
 
     def _merge_feature_block(tgt: dict[str, Any], node: dict[str, Any]) -> None:
-        for kind in ("watchlist", "history", "ratings"):
+        for kind in ("watchlist", "history", "ratings", "progress"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
@@ -425,7 +425,7 @@ def _mirror_policy_into_state() -> None:
 
         manual = _ensure_dict(cur, "manual")
 
-        for kind in ("watchlist", "history", "ratings"):
+        for kind in ("watchlist", "history", "ratings", "progress"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
@@ -476,7 +476,7 @@ def _mirror_policy_into_state() -> None:
 
             inst_manual = _ensure_dict(inst_blk, "manual")
 
-            for kind in ("watchlist", "history", "ratings"):
+            for kind in ("watchlist", "history", "ratings", "progress"):
                 f = inst_node.get(kind)
                 if not isinstance(f, dict):
                     continue
@@ -519,7 +519,7 @@ def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
         if not isinstance(node, dict):
             continue
         pcount += 1
-        for kind in ("watchlist", "history", "ratings"):
+        for kind in ("watchlist", "history", "ratings", "progress"):
             f = node.get(kind)
             if not isinstance(f, dict):
                 continue
@@ -756,7 +756,7 @@ def _save_state_manual(
 
 def _normalize_kind(val: str | None) -> Kind:
     k = (val or "watchlist").strip().lower()
-    if k not in ("watchlist", "history", "ratings"):
+    if k not in ("watchlist", "history", "ratings", "progress"):
         raise HTTPException(status_code=400, detail=f"Unsupported kind: {k}")
     return k  # type: ignore[return-value]
 
@@ -1176,6 +1176,7 @@ def api_editor_state_import_providers() -> dict[str, Any]:
                     "watchlist": bool(feats.get("watchlist")),
                     "history": bool(feats.get("history")),
                     "ratings": bool(feats.get("ratings")),
+                    "progress": bool(feats.get("progress")),
                 },
             }
         )
@@ -1204,9 +1205,9 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
     if isinstance(feats_in, list):
         features = [str(x).strip().lower() for x in feats_in if str(x).strip()]
     else:
-        features = ["watchlist", "history", "ratings"]
+        features = ["watchlist", "history", "ratings", "progress"]
 
-    allowed = {"watchlist", "history", "ratings"}
+    allowed = {"watchlist", "history", "ratings", "progress"}
     features = [f for f in features if f in allowed]
     if not features:
         raise HTTPException(status_code=400, detail="No features selected")
