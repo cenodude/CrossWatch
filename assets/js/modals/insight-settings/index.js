@@ -2,8 +2,8 @@
 
 
 const PREF_KEY = "insights.settings.v1";
-const FEATS = ["watchlist","ratings","history","playlists"];
-const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", playlists:"Playlists" };
+const FEATS = ["watchlist","ratings","history","progress","playlists"];
+const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
 
 const fjson = async (url, opts = {}) => {
   const r = await fetch(url, { cache: "no-store", credentials: "same-origin", ...opts });
@@ -132,13 +132,12 @@ function injectCSS() {
   .cw-insight-set .opt-row:hover{background:rgba(255,255,255,.06)}
   .cw-insight-set .feat-name{font-weight:900;font-size:14px}
   .cw-insight-set .switch{flex:0 0 auto;align-self:center;}
-  .cw-insight-set .switch .slider{display:block;}
-  .cw-insight-set .switch{--w:58px;--h:32px;--dot:24px;--pad:4px;--bw:1px;position:relative;display:inline-block;width:var(--w);height:var(--h)}
+  .cw-insight-set .switch{--w:58px;--h:32px;--dot:24px;--pad:4px;--bw:1px;position:relative;display:inline-block;width:var(--w)!important;height:var(--h)!important}
   .cw-insight-set .switch input{width:0;height:0;position:absolute;opacity:0}
-  .cw-insight-set .switch .slider{position:absolute;inset:0;border-radius:999px;border:var(--bw) solid rgba(255,255,255,.16);background:rgba(0,0,0,.22);transition:.2s;box-sizing:border-box}
-  .cw-insight-set .switch .slider::before{content:'';position:absolute;left:var(--pad);top:50%;width:var(--dot);height:var(--dot);transform:translateY(-50%);border-radius:999px;background:rgba(255,255,255,.85);transition:.2s;box-shadow:0 2px 10px rgba(0,0,0,.55)}
+  .cw-insight-set .switch .slider{display:block;position:absolute;inset:0;border-radius:999px;border:var(--bw) solid rgba(255,255,255,.16);background:rgba(0,0,0,.22);transition:.2s;box-sizing:border-box}
+  .cw-insight-set .switch .slider::before{content:'';position:absolute;left:var(--pad)!important;top:50%!important;width:var(--dot)!important;height:var(--dot)!important;transform:translateY(-50%)!important;border-radius:999px;background:rgba(255,255,255,.85);transition:.2s;box-shadow:0 2px 10px rgba(0,0,0,.55)}
   .cw-insight-set .switch input:checked + .slider{background:rgba(35,213,255,.22);border-color:rgba(35,213,255,.55)}
-  .cw-insight-set .switch input:checked + .slider::before{left:calc(100% - var(--dot) - var(--pad))}
+  .cw-insight-set .switch input:checked + .slider::before{left:calc(100% - var(--dot) - var(--pad))!important;transform:translateY(-50%)!important}
   .cw-insight-set .muted{opacity:.72;font-size:12px}
   .cw-insight-set .prov{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media (max-width: 980px){.cw-insight-set .prov{grid-template-columns:1fr}}
@@ -166,7 +165,9 @@ function normalizePrefs(p, instancesByProvider = {}) {
     watchlist: f.watchlist !== false,
     ratings: f.ratings !== false,
     history: f.history !== false,
-    playlists: f.playlists !== false,
+    progress: f.progress !== false,
+    /* playlists are opt-in */
+    playlists: f.playlists === true,
   };
   out.instances = out.instances && typeof out.instances === "object" ? out.instances : {};
   out.known_instances = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
