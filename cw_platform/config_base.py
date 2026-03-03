@@ -453,27 +453,64 @@ DEFAULT_CFG: dict[str, Any] = {
 
 def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = copy.deepcopy(cfg or {})
+    MASK = "••••••••"
+
+    # Provider-specific secret fields
+    provider_secret_keys: dict[str, set[str]] = {
+        "plex": {"account_token", "pms_token", "home_pin"},
+        "simkl": {"access_token", "refresh_token", "client_secret"},
+        "anilist": {"access_token", "client_secret"},
+        "mdblist": {"api_key"},
+        "trakt": {"access_token", "refresh_token", "client_secret"},
+        "jellyfin": {"access_token", "api_key"},
+        "emby": {"access_token", "api_key"},
+        "tmdb": {"api_key"},
+        "tmdb_sync": {"api_key", "session_id", "_pending_request_token"},
+    }
+
+    def _mask_leaf(d: dict[str, Any], key: str) -> None:
+        v = d.get(key)
+        if v is None:
+            return
+        s = str(v).strip()
+        if not s or s == MASK:
+            return
+        d[key] = MASK
+
+    for provider, keys in provider_secret_keys.items():
+        blk = out.get(provider)
+        if not isinstance(blk, dict):
+            continue
+
+        for k in keys:
+            _mask_leaf(blk, k)
+
+        insts = blk.get("instances")
+        if isinstance(insts, dict):
+            for inst in insts.values():
+                if isinstance(inst, dict):
+                    for k in keys:
+                        _mask_leaf(inst, k)
+
+    # App UI auth secrets.
     a = out.get("app_auth")
-    if not isinstance(a, dict):
-        return out
+    if isinstance(a, dict):
+        pwd = a.get("password")
+        if isinstance(pwd, dict):
+            if pwd.get("hash"):
+                pwd["hash"] = MASK
+            if pwd.get("salt"):
+                pwd["salt"] = MASK
 
-    pwd = a.get("password")
-    if isinstance(pwd, dict):
-        if pwd.get("hash"):
-            pwd["hash"] = "••••••••"
-        if pwd.get("salt"):
-            pwd["salt"] = "••••••••"
+        sess = a.get("session")
+        if isinstance(sess, dict) and sess.get("token_hash"):
+            sess["token_hash"] = MASK
 
-    sess = a.get("session")
-    if isinstance(sess, dict):
-        if sess.get("token_hash"):
-            sess["token_hash"] = "••••••••"
-
-    sessions = a.get("sessions")
-    if isinstance(sessions, list):
-        for s in sessions:
-            if isinstance(s, dict) and s.get("token_hash"):
-                s["token_hash"] = "••••••••"
+        sessions = a.get("sessions")
+        if isinstance(sessions, list):
+            for s in sessions:
+                if isinstance(s, dict) and s.get("token_hash"):
+                    s["token_hash"] = MASK
 
     return out
 
