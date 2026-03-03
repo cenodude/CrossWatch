@@ -671,7 +671,7 @@
     importProvider: "",
     importProviderInstance: "default",
     importMode: "replace",
-    importFeatures: { watchlist: true, history: true, ratings: true },
+    importFeatures: { watchlist: true, history: true, ratings: true, progress: true },
     hasChanges: false,
     page: 0,
     blockedOnly: false,
@@ -692,7 +692,7 @@
 
       if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
 
-      const kinds = ["watchlist", "history", "ratings"];
+      const kinds = ["watchlist", "history", "ratings", "progress"];
       if (saved.kind && kinds.includes(saved.kind)) state.kind = saved.kind;
 
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
@@ -719,7 +719,7 @@
       <div class="cw-topline">
         <div>
           <div class="cw-title">Editor</div>
-          <div class="cw-sub">Edit tracker/state data (watchlist / ratings / history).</div>
+          <div class="cw-sub">Edit tracker/state data (watchlist / ratings / history / progress).</div>
         </div>
       </div>
 
@@ -790,6 +790,7 @@
                   <option value="watchlist">Watchlist</option>
                   <option value="history">History</option>
                   <option value="ratings">Ratings</option>
+                  <option value="progress">Progress</option>
                 </select>
 
 
@@ -859,6 +860,9 @@
                     </label>
                     <label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
                       <input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings
+                    </label>
+                    <label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
+                      <input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress
                     </label>
 
                     <span style="flex:1 1 auto"></span>
@@ -1043,11 +1047,13 @@
   const importWatchlistCb = $("cw-import-watchlist");
   const importHistoryCb = $("cw-import-history");
   const importRatingsCb = $("cw-import-ratings");
+  const importProgressCb = $("cw-import-progress-cb");
   const importModeSel = $("cw-import-mode");
   const importRunBtn = $("cw-import-run");
   const importWatchlistWrap = $("cw-import-watchlist-wrap");
   const importHistoryWrap = $("cw-import-history-wrap");
   const importRatingsWrap = $("cw-import-ratings-wrap");
+  const importProgressFeatWrap = $("cw-import-progress-wrap");
   const importProgressWrap = $("cw-import-progress");
   const importProgressText = $("cw-import-progress-text");
   const sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
@@ -1084,7 +1090,7 @@
 
   function syncKindUI() {
     if (!kindSel) return;
-    const allowed = ["watchlist", "history", "ratings"];
+    const allowed = ["watchlist", "history", "ratings", "progress"];
     if (!allowed.includes(state.kind)) state.kind = "watchlist";
     kindSel.value = state.kind;
   }
@@ -1159,6 +1165,7 @@
     if (importWatchlistCb) importWatchlistCb.disabled = disabled || importWatchlistCb.disabled;
     if (importHistoryCb) importHistoryCb.disabled = disabled || importHistoryCb.disabled;
     if (importRatingsCb) importRatingsCb.disabled = disabled || importRatingsCb.disabled;
+    if (importProgressCb) importProgressCb.disabled = disabled || importProgressCb.disabled;
   }
 
   
@@ -1265,6 +1272,7 @@
     setCb(importWatchlistWrap, importWatchlistCb, "watchlist");
     setCb(importHistoryWrap, importHistoryCb, "history");
     setCb(importRatingsWrap, importRatingsCb, "ratings");
+    setCb(importProgressFeatWrap, importProgressCb, "progress");
 
     if (importRunBtn) importRunBtn.disabled = !state.importProvider;
   }
@@ -1289,6 +1297,7 @@
     if (importWatchlistCb && importWatchlistCb.checked && !importWatchlistCb.disabled) feats.push("watchlist");
     if (importHistoryCb && importHistoryCb.checked && !importHistoryCb.disabled) feats.push("history");
     if (importRatingsCb && importRatingsCb.checked && !importRatingsCb.disabled) feats.push("ratings");
+    if (importProgressCb && importProgressCb.checked && !importProgressCb.disabled) feats.push("progress");
     return feats;
   }
 
@@ -1313,6 +1322,7 @@
       watchlist: features.includes("watchlist"),
       history: features.includes("history"),
       ratings: features.includes("ratings"),
+      progress: features.includes("progress"),
     };
 
     try {
@@ -1618,6 +1628,48 @@
   }
 
 
+
+  function formatMs(ms) {
+    const n = ms == null ? NaN : Number(ms);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    const total = Math.floor(n / 1000);
+    const pad = x => String(x).padStart(2, "0");
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+    return `${m}:${pad(s)}`;
+  }
+
+  function parseTimeToMs(v) {
+    const s = (v == null ? "" : String(v)).trim();
+    if (!s) return null;
+
+    const lower = s.toLowerCase();
+    if (lower.endsWith("ms")) {
+      const num = parseFloat(lower.slice(0, -2));
+      return Number.isFinite(num) ? Math.max(0, Math.floor(num)) : null;
+    }
+
+    if (s.includes(":")) {
+      const parts = s.split(":").map(p => p.trim()).filter(Boolean);
+      if (!parts.length) return null;
+      const nums = parts.map(x => parseInt(x, 10));
+      if (nums.some(n => !Number.isFinite(n))) return null;
+
+      let sec = 0;
+      if (nums.length === 3) sec = nums[0] * 3600 + nums[1] * 60 + nums[2];
+      else if (nums.length === 2) sec = nums[0] * 60 + nums[1];
+      else sec = nums[0];
+      return Math.max(0, sec * 1000);
+    }
+
+    const num = parseFloat(s);
+    if (!Number.isFinite(num)) return null;
+    // Heuristic: large numbers are probably milliseconds.
+    if (num >= 100000) return Math.max(0, Math.floor(num));
+    return Math.max(0, Math.floor(num * 1000));
+  }
   function updateExtraDisplay(row, el) {
     let label = "";
     let placeholder = "";
@@ -1632,6 +1684,18 @@
       const w = row.raw && row.raw.watched_at;
       if (!w) placeholder = "Set time";
       else label = formatHistoryLabel(w);
+    } else if (state.kind === "progress") {
+      icon = "play_circle";
+      const p = row.raw && row.raw.progress_ms;
+      const d = row.raw && row.raw.duration_ms;
+      const pm = p == null ? NaN : Number(p);
+      const dm = d == null ? NaN : Number(d);
+      if (!Number.isFinite(pm) || pm <= 0) placeholder = "Set progress";
+      else {
+        const left = formatMs(pm);
+        const right = Number.isFinite(dm) && dm > 0 ? formatMs(dm) : "";
+        label = right ? `${left} / ${right}` : left;
+      }
     } else {
       placeholder = "";
     }
@@ -1877,6 +1941,152 @@
       pop.appendChild(actions);
 
       dateInput.focus();
+    });
+  }
+
+
+  function openProgressEditor(row, anchor, displayEl) {
+    const locked = false;
+
+    openPopup(anchor, (pop, close) => {
+      const title = document.createElement("div");
+      title.className = "cw-pop-title";
+      title.textContent = "Progress";
+      pop.appendChild(title);
+
+      if (locked) {
+        const status = document.createElement("div");
+        status.className = "cw-search-status";
+        status.textContent = "Baseline rows are read-only. Block the row to exclude it.";
+        pop.appendChild(status);
+
+        const actions = document.createElement("div");
+        actions.className = "cw-pop-actions";
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "cw-pop-btn primary";
+        closeBtn.textContent = "Close";
+        closeBtn.onclick = close;
+        actions.appendChild(closeBtn);
+        pop.appendChild(actions);
+        return;
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "cw-datetime-grid";
+      grid.style.gridTemplateColumns = "minmax(0,1fr) minmax(0,1fr)";
+
+      const posInput = document.createElement("input");
+      posInput.type = "text";
+      posInput.placeholder = "Position (mm:ss)";
+      const curPos = row.raw && row.raw.progress_ms;
+      const curDur = row.raw && row.raw.duration_ms;
+      if (curPos != null) posInput.value = formatMs(curPos);
+
+      const durInput = document.createElement("input");
+      durInput.type = "text";
+      durInput.placeholder = "Duration (mm:ss)";
+      if (curDur != null) durInput.value = formatMs(curDur);
+
+      grid.appendChild(posInput);
+      grid.appendChild(durInput);
+      pop.appendChild(grid);
+
+      const whenTitle = document.createElement("div");
+      whenTitle.className = "cw-pop-title";
+      whenTitle.style.marginTop = "10px";
+      whenTitle.textContent = "Updated at";
+      pop.appendChild(whenTitle);
+
+      const whenGrid = document.createElement("div");
+      whenGrid.className = "cw-datetime-grid";
+
+      const dateInput = document.createElement("input");
+      dateInput.type = "date";
+
+      const timeInput = document.createElement("input");
+      timeInput.type = "time";
+      timeInput.step = 60;
+
+      const current = row.raw && row.raw.progress_at;
+      if (current) {
+        const d = new Date(current);
+        if (!Number.isNaN(d.getTime())) {
+          const pad = n => String(n).padStart(2, "0");
+          dateInput.value = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+          timeInput.value = pad(d.getHours()) + ":" + pad(d.getMinutes());
+        }
+      }
+
+      whenGrid.appendChild(dateInput);
+      whenGrid.appendChild(timeInput);
+      pop.appendChild(whenGrid);
+
+      const actions = document.createElement("div");
+      actions.className = "cw-pop-actions";
+
+      const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
+      clearBtn.className = "cw-pop-btn ghost";
+      clearBtn.textContent = "Clear";
+      clearBtn.onclick = () => {
+        row.raw.progress_ms = null;
+        row.raw.duration_ms = null;
+        row.raw.progress_at = null;
+        updateExtraDisplay(row, displayEl);
+        markChanged();
+        close();
+      };
+
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "cw-pop-btn primary";
+      saveBtn.textContent = "Save";
+      saveBtn.onclick = () => {
+        const posMs = parseTimeToMs(posInput.value);
+        const durMs = parseTimeToMs(durInput.value);
+
+        row.raw.progress_ms = posMs == null || posMs <= 0 ? null : posMs;
+        row.raw.duration_ms = durMs == null || durMs <= 0 ? null : durMs;
+
+        const dv = dateInput.value;
+        const tv = timeInput.value;
+
+        if (dv) {
+          const parts = dv.split("-");
+          const y = parseInt(parts[0], 10);
+          const m = parseInt(parts[1], 10);
+          const dDay = parseInt(parts[2], 10);
+
+          let hh = 0;
+          let mm = 0;
+          if (tv) {
+            const tparts = tv.split(":");
+            hh = parseInt(tparts[0], 10) || 0;
+            mm = parseInt(tparts[1], 10) || 0;
+          }
+
+          const dt = new Date(y, m - 1, dDay, hh, mm, 0);
+          let iso = dt.toISOString();
+          iso = iso.replace(/\.\d{3}Z$/, ".000Z");
+          row.raw.progress_at = iso;
+        } else if (row.raw.progress_ms != null && !row.raw.progress_at) {
+          const dt = new Date();
+          let iso = dt.toISOString();
+          iso = iso.replace(/\.\d{3}Z$/, ".000Z");
+          row.raw.progress_at = iso;
+        }
+
+        updateExtraDisplay(row, displayEl);
+        markChanged();
+        close();
+      };
+
+      actions.appendChild(clearBtn);
+      actions.appendChild(saveBtn);
+      pop.appendChild(actions);
+
+      posInput.focus();
     });
   }
 
@@ -2605,7 +2815,7 @@
       extraBtn.className = "cw-extra-display";
       updateExtraDisplay(row, extraBtn);
 
-      const extraEditable = !locked && (state.kind === "ratings" || state.kind === "history");
+      const extraEditable = !locked && (state.kind === "ratings" || state.kind === "history" || state.kind === "progress");
       if (!extraEditable) {
         extraBtn.disabled = true;
         extraBtn.style.opacity = "0.6";
@@ -2614,6 +2824,8 @@
         extraBtn.onclick = () => openRatingEditor(row, extraBtn, extraBtn);
       } else if (state.kind === "history") {
         extraBtn.onclick = () => openHistoryEditor(row, extraBtn, extraBtn);
+      } else if (state.kind === "progress") {
+        extraBtn.onclick = () => openProgressEditor(row, extraBtn, extraBtn);
       }
 
       tr.appendChild(cell(extraBtn));
