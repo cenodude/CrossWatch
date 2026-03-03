@@ -61,6 +61,7 @@
       .prov-caps .dot.wl.on{background:#00ffa3; box-shadow:0 0 6px #00ffa3,0 0 12px #00ffa3aa}
       .prov-caps .dot.rt.on{background:#ffc400; box-shadow:0 0 6px #ffc400,0 0 12px #ffc40099}
       .prov-caps .dot.hi.on{background:#2de2ff; box-shadow:0 0 6px #2de2ff,0 0 12px #2de2ffaa}
+      .prov-caps .dot.pr.on{background:#a78bfa; box-shadow:0 0 6px #a78bfa,0 0 12px #a78bfaaa}
       .prov-caps .dot.pl.on{background:#ff00e5; box-shadow:0 0 6px #ff00e5,0 0 12px #ff00e599}
 
       .btn.neon{
@@ -173,12 +174,14 @@
       const wl = cap(p, "watchlist"),
             rat = cap(p, "ratings"),
             hist = cap(p, "history"),
+            prog = cap(p, "progress"),
             pl = cap(p, "playlists");
 
       const caps = `<div class="prov-caps">
         <span class="dot wl ${wl ? "on" : "off"}"   title="Watchlist"></span>
         <span class="dot rt ${rat ? "on" : "off"}"  title="Ratings"></span>
         <span class="dot hi ${hist ? "on" : "off"}" title="History"></span>
+        <span class="dot pr ${prog ? "on" : "off"}" title="Progress"></span>
         <span class="dot pl ${pl ? "on" : "off"}"   title="Playlists"></span>
       </div>`;
 

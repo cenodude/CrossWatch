@@ -60,6 +60,7 @@
 #pairs_list .bead.wl.on{background:#00ffa3 !important; box-shadow:0 0 8px #00ffa3,0 0 18px #00ffa3aa}
 #pairs_list .bead.rt.on{background:#ffc400 !important; box-shadow:0 0 8px #ffc400,0 0 18px #ffc40099}
 #pairs_list .bead.hi.on{background:#2de2ff !important; box-shadow:0 0 8px #2de2ff,0 0 18px #2de2ffaa}
+#pairs_list .bead.pr.on{background:#a78bfa !important; box-shadow:0 0 8px #a78bfa,0 0 18px #a78bfaaa}
 #pairs_list .bead.pl.on{background:#ff00e5 !important; box-shadow:0 0 8px #ff00e5,0 0 18px #ff00e599}
 
 /* Icon buttons */
@@ -272,6 +273,7 @@
                 ${bead("wl","Watchlist", f.watchlist)}
                 ${bead("rt","Ratings",   f.ratings)}
                 ${bead("hi","History",   f.history)}
+                ${bead("pr","Progress",  f.progress)}
                 ${bead("pl","Playlists", f.playlists)}
               </div>
 
