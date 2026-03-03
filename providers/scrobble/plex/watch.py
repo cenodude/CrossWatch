@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import time, threading, re, base64, hmac, hashlib
+import time, threading, re
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 from typing import Any, Iterable, Mapping, Callable, cast
@@ -1337,19 +1337,6 @@ def _emit(logger: Callable[..., None] | None, msg: str, level: str = "INFO") -> 
             pass
 
 
-def _verify_signature(raw: bytes | None, headers: Mapping[str, str], secret: str) -> bool:
-    if not secret:
-        return True
-    raw2 = raw or b""
-    sig = (headers.get("X-Plex-Signature") or headers.get("x-plex-signature") or "").strip()
-    if not sig:
-        return False
-    digest = hmac.new(secret.encode("utf-8"), raw2, hashlib.sha1).digest()
-    expected = base64.b64encode(digest).decode("ascii")
-    try:
-        return hmac.compare_digest(sig.strip(), expected.strip())
-    except Exception:
-        return sig.strip() == expected.strip()
 
 
 def _norm_user(s: str) -> str:
@@ -1632,11 +1619,6 @@ def process_rating_webhook(
     enable_mdblist = bool(watch_cfg.get("plex_mdblist_ratings"))
     if not (enable_trakt or enable_simkl or enable_mdblist):
         return {"ok": True, "ignored": True}
-
-    secret = str(((cfg.get("plex") or {}).get("webhook_secret") or "")).strip()
-    if secret and not _verify_signature(raw, dict(headers), secret):
-        _emit(logger, "invalid X-Plex-Signature", "WARN")
-        return {"ok": True, "ignored": True, "invalid_signature": True}
 
     if not payload:
         return {"ok": True, "ignored": True}
