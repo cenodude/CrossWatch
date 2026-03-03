@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import secrets
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
@@ -512,6 +513,14 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(s, dict) and s.get("token_hash"):
                     s["token_hash"] = MASK
 
+    # Webhook URL tokens
+    sec = out.get("security")
+    if isinstance(sec, dict):
+        wh = sec.get("webhook_ids")
+        if isinstance(wh, dict):
+            for k in list(wh.keys()):
+                _mask_leaf(wh, k)
+
     return out
 
 
@@ -549,6 +558,7 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
             out[k] = _deep_merge(out[k], v)  # type: ignore[assignment]
         else:
             out[k] = v
+
     return out
 
 
@@ -806,6 +816,29 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
 
 
 # Public API
+def _new_webhook_id() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def _ensure_webhook_ids(cfg: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    sec = cfg.setdefault("security", {})
+    if not isinstance(sec, dict):
+        cfg["security"] = {}
+        sec = cfg["security"]
+    wh = sec.setdefault("webhook_ids", {})
+    if not isinstance(wh, dict):
+        sec["webhook_ids"] = {}
+        wh = sec["webhook_ids"]
+
+    changed = False
+    for k in ("plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher"):
+        v = wh.get(k)
+        if not isinstance(v, str) or len(v.strip()) < 16:
+            wh[k] = _new_webhook_id()
+            changed = True
+
+    return cfg, changed
+
 def load_config() -> dict[str, Any]:
     p = _cfg_file()
     user_cfg: dict[str, Any] = {}
@@ -825,6 +858,17 @@ def load_config() -> dict[str, Any]:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
     _normalize_ui(cfg)
+
+    # Ensure webhook URL tokens exist
+    try:
+        cfg, wh_changed = _ensure_webhook_ids(cfg)
+        if wh_changed:
+            try:
+                save_config(cfg)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
     # Scrobble watcher: migrate legacy provider/sink into route mode when routes is empty.
     try:
