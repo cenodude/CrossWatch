@@ -296,7 +296,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             }
         except Exception as e:
             _safe_log(log_fn, "PLEX", f"[PLEX:{inst}] ERROR: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     
     @app.get("/api/plex/inspect", tags=["media providers"])
@@ -991,7 +991,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True}
         except Exception as e:
             _safe_log(log_fn, "TMDB", f"[TMDB] ERROR save: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.post("/api/tmdb/disconnect", tags=["auth"])
     def api_tmdb_disconnect() -> dict[str, Any]:
@@ -1003,7 +1003,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True}
         except Exception as e:
             _safe_log(log_fn, "TMDB", f"[TMDB] ERROR disconnect: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     # TMDB Sync (v3 session)
     TMDB_API_BASE = "https://api.themoviedb.org/3"
@@ -1060,7 +1060,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             }
         except Exception as e:
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/start: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.post("/api/tmdb_sync/connect/finish", tags=["auth"])
     def api_tmdb_sync_connect_finish(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1099,7 +1099,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "session_id": sess, "account_id": tm.get("account_id") or "", "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/finish: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.post("/api/tmdb_sync/save", tags=["auth"])
     def api_tmdb_sync_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1120,7 +1120,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR save: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.get("/api/tmdb_sync/verify", tags=["auth"])
     def api_tmdb_sync_verify(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1207,7 +1207,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": normalize_instance_id(instance)}
         except Exception as e:
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR save: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.get("/api/mdblist/status", tags=["auth"])
     def api_mdblist_status(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1229,7 +1229,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": normalize_instance_id(instance)}
         except Exception as e:
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
 
     # TAUTULLI
@@ -1463,7 +1463,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             }
         except Exception as e:
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
         
     @app.post("/api/trakt/token/delete", tags=["auth"])
     def api_trakt_token_delete(instance: str = Query("default")) -> dict[str, Any]:
@@ -1486,7 +1486,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True}
         except Exception as e:
             _safe_log(log_fn, "TRAKT", f"[TRAKT] ERROR token delete: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     # ANILIST
     @app.post("/api/anilist/save", tags=["auth"])
@@ -1507,7 +1507,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "ANILIST", f"[ANILIST] ERROR save: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.get("/api/anilist/status", tags=["auth"])
     def api_anilist_status(instance: str = Query("default")) -> dict[str, Any]:
@@ -1546,7 +1546,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "authorize_url": url}
         except Exception as e:
             _safe_log(log_fn, "ANILIST", f"[ANILIST] ERROR: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.get("/callback/anilist", tags=["auth"])
     def oauth_anilist_callback(request: Request) -> Response:
@@ -1591,7 +1591,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return PlainTextResponse("AniList authorized. You can close this tab and return to the app.", 200)
         except Exception as e:
             _safe_log(log_fn, "ANILIST", f"[ANILIST] ERROR: {e}")
-            return PlainTextResponse(f"Error: {e}", 500)
+            return PlainTextResponse("Error", 500)
 
     @app.post("/api/anilist/token/delete", tags=["auth"])
     def api_anilist_token_delete(instance: str = Query("default")) -> dict[str, Any]:
@@ -1634,7 +1634,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "authorize_url": url, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "SIMKL", f"[SIMKL] ERROR: {e}")
-            return {"ok": False, "error": str(e)}
+            return {"ok": False, "error": "internal"}
 
     @app.get("/callback", tags=["auth"])
     def oauth_simkl_callback(request: Request) -> Response:
@@ -1678,7 +1678,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return PlainTextResponse("SIMKL authorized. You can close this tab and return to the app.", 200)
         except Exception as e:
             _safe_log(log_fn, "SIMKL", f"[SIMKL] ERROR: {e}")
-            return PlainTextResponse(f"Error: {e}", 500)
+            return PlainTextResponse("Error", 500)
 
     @app.post("/api/simkl/token/delete", tags=["auth"])
     def api_simkl_token_delete(instance: str = Query("default")) -> dict[str, Any]:
@@ -1692,9 +1692,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"ok": True, "instance": inst}
 
 
-
 # ANILIST
-# Instance-aware OAuth. We store callback state per instance to support parallel connects.
 ANILIST_STATE: dict[str, dict[str, Any]] = {}
 
 def _anilist_prune_state(max_age_s: int = 900) -> None:
