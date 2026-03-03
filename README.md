@@ -19,6 +19,7 @@
 <p align="center" style="font-size:14px;">
 <b>⭐ Star this repository to get updates</b><br>
 <b>Version 0.9.x provides <i>Profiles</i>(multi-users/servers - be your own sync hub)</b><br>
+<b>Upcoming release 0.9.12 will support progress syncs between plex/emby/jellyfin</b>  
 </p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
