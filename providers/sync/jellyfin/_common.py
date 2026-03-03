@@ -1138,6 +1138,153 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     return None
 
 
+def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
+    http = getattr(adapter, "client", None)
+    uid = getattr(getattr(adapter, "cfg", None), "user_id", None)
+    if not http or not uid:
+        return []
+
+    # Prefer native Jellyfin item id when present
+    raw_iid = it.get("jellyfin_item_id") or it.get("_jellyfin_item_id")
+    if raw_iid:
+        s = str(raw_iid).strip()
+        if s and not looks_like_bad_id(s):
+            return [s]
+
+    one = resolve_item_id(adapter, it)
+
+    ids = dict(it.get("ids") or {})
+    show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
+
+    t = _norm_type(it.get("type"))
+    title = (it.get("title") or "").strip()
+    year = it.get("year")
+    season = it.get("season")
+    episode = it.get("episode")
+    series_title = (it.get("series_title") or "").strip()
+
+    strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
+
+    prio = guid_priority_from_cfg(getattr(getattr(adapter, "cfg", None), "watchlist_guid_priority", None))
+    pairs = all_ext_pairs(ids, prio)
+    if show_ids:
+        spairs = all_ext_pairs(show_ids, prio)
+        for p in spairs:
+            if p not in pairs:
+                pairs.append(p)
+
+    idx = build_provider_index(adapter)
+
+    def _valid(iid: Any) -> str | None:
+        s = str(iid or "").strip()
+        return s if s and not looks_like_bad_id(s) else None
+
+    found: list[str] = []
+
+    # Movies
+    if t == "movie":
+        for pref in pairs:
+            rows = idx.get(pref) or []
+            cands = [row for row in rows if (row.get("Type") or "") == "Movie"]
+            if isinstance(year, int):
+                yr = int(year)
+                cands_yr = [
+                    r for r in cands
+                    if isinstance(r.get("ProductionYear"), int) and abs(int(r["ProductionYear"]) - yr) <= 1
+                ]
+                if cands_yr:
+                    cands = cands_yr
+            for row in cands:
+                iid = _valid(row.get("Id"))
+                if iid and iid not in found:
+                    found.append(iid)
+            if found:
+                return found
+
+        if title and not strict:
+            try:
+                q: dict[str, Any] = {
+                    "userId": uid,
+                    "recursive": True,
+                    "includeItemTypes": "Movie",
+                    "SearchTerm": title,
+                    "Fields": "ProviderIds,ProductionYear,Type",
+                    "Limit": 50,
+                }
+                q.update(jf_scope_any(adapter.cfg))
+                r = http.get("/Items", params=q)
+                t_l = title.lower()
+                for row in (r.json() or {}).get("Items") or []:
+                    if (row.get("Type") or "") != "Movie":
+                        continue
+                    nm = (row.get("Name") or "").strip().lower()
+                    yr = row.get("ProductionYear")
+                    if nm != t_l:
+                        continue
+                    if (year is not None) and not (isinstance(yr, int) and abs(int(yr) - int(year)) <= 1):
+                        continue
+                    iid = _valid(row.get("Id"))
+                    if iid and iid not in found:
+                        found.append(iid)
+            except Exception:
+                pass
+
+    # Episodes
+    if t == "episode":
+        for pref in pairs:
+            rows = idx.get(pref) or []
+            cands = [row for row in rows if (row.get("Type") or "") == "Episode"]
+            for row in cands:
+                try:
+                    s_ok = (season is None) or (int(row.get("ParentIndexNumber") or 0) == int(season))
+                    e_ok = (episode is None) or (int(row.get("IndexNumber") or 0) == int(episode))
+                except Exception:
+                    s_ok, e_ok = True, True
+                if not (s_ok and e_ok):
+                    continue
+                iid = _valid(row.get("Id"))
+                if iid and iid not in found:
+                    found.append(iid)
+            if found:
+                return found
+
+        if series_title and not strict:
+            try:
+                q: dict[str, Any] = {
+                    "userId": uid,
+                    "recursive": True,
+                    "includeItemTypes": "Episode",
+                    "SearchTerm": series_title,
+                    "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesName",
+                    "Limit": 200,
+                }
+                q.update(jf_scope_any(adapter.cfg))
+                r = http.get("/Items", params=q)
+                st_l = series_title.lower()
+                for row in (r.json() or {}).get("Items") or []:
+                    if (row.get("Type") or "") != "Episode":
+                        continue
+                    sn = (row.get("SeriesName") or "").strip().lower()
+                    if sn != st_l:
+                        continue
+                    try:
+                        s_ok = (season is None) or (int(row.get("ParentIndexNumber") or 0) == int(season))
+                        e_ok = (episode is None) or (int(row.get("IndexNumber") or 0) == int(episode))
+                    except Exception:
+                        s_ok, e_ok = True, True
+                    if not (s_ok and e_ok):
+                        continue
+                    iid = _valid(row.get("Id"))
+                    if iid and iid not in found:
+                        found.append(iid)
+            except Exception:
+                pass
+
+    if found:
+        return found
+    return [one] if one else []
+
+
 # utilities
 def chunked(it: Iterable[Any], n: int) -> Iterable[list[Any]]:
     n = max(1, int(n))
