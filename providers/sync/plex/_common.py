@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 
 from .._log import log as cw_log
 
@@ -371,7 +371,7 @@ def plex_headers(
     *,
     product: str = "CrossWatch",
     platform: str = "CrossWatch",
-    version: str = "5.0.0",
+    version: str = "5.2.0",
     client_id: str | None = None,
     accept: str = "application/json, application/xml;q=0.9, */*;q=0.5",
     user_agent: str | None = None,
@@ -470,23 +470,73 @@ def show_ids_hint(obj: Any) -> dict[str, str]:
 
 
 def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None:
+    # PlexAPI XML query path
+    try:
+        for g in [x for x in (guids or []) if x]:
+            try:
+                qg = quote(str(g), safe="")
+                root = srv.query(  # type: ignore[attr-defined]
+                    f"/library/all?guid={qg}&X-Plex-Container-Start=0&X-Plex-Container-Size=1"
+                )
+                el = None
+                try:
+                    el = root.find(".//*[@ratingKey]") if root is not None else None
+                except Exception:
+                    el = None
+                if el is not None:
+                    a = getattr(el, "attrib", {}) or {}
+                    rk = a.get("ratingKey") or a.get("ratingkey")
+                    if rk:
+                        return str(rk)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # Raw HTTP fallback
     base = _as_base_url(srv)
     tok = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
     ses = getattr(srv, "_session", None)
     if not (base and ses):
         return None
+
     hdrs = dict(getattr(ses, "headers", {}) or {})
-    hdrs.update(plex_headers(tok))
-    hdrs["Accept"] = "application/json"
+    hdrs.update(plex_headers(tok, accept="application/xml, application/json;q=0.9,*/*;q=0.5"))
+
     for g in [x for x in (guids or []) if x]:
         try:
-            r = ses.get(f"{base}/library/all", params={"guid": g}, headers=hdrs, timeout=8)
+            r = ses.get(
+                f"{base}/library/all",
+                params={"guid": g, "X-Plex-Container-Start": 0, "X-Plex-Container-Size": 1},
+                headers=hdrs,
+                timeout=8,
+            )
             if not r.ok:
                 continue
-            j = r.json() if r.headers.get("Content-Type", "").startswith("application/json") else {}
-            md = (j.get("MediaContainer", {}) or {}).get("Metadata") or []
-            if md and isinstance(md, list):
-                rk = md[0].get("ratingKey") or md[0].get("ratingkey")
+
+            ct = (r.headers.get("Content-Type", "") or "").lower()
+
+            # JSON path
+            if "json" in ct:
+                try:
+                    j = r.json()
+                except Exception:
+                    j = {}
+                md = (j.get("MediaContainer", {}) or {}).get("Metadata") or []
+                if md and isinstance(md, list):
+                    rk = md[0].get("ratingKey") or md[0].get("ratingkey")
+                    if rk:
+                        return str(rk)
+
+            # XML path
+            try:
+                root = ET.fromstring(r.text or "")
+            except Exception:
+                continue
+
+            el = root.find(".//*[@ratingKey]")
+            if el is not None:
+                rk = (el.attrib or {}).get("ratingKey") or (el.attrib or {}).get("ratingkey")
                 if rk:
                     return str(rk)
         except Exception:
