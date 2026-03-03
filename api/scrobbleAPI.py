@@ -7,6 +7,8 @@ import json
 import time
 import re
 import threading
+import secrets
+import hmac
 import urllib.parse
 import xml.etree.ElementTree as ET
 from typing import Any
@@ -15,7 +17,7 @@ from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import JSONResponse
 from urllib.parse import parse_qs
 
-from cw_platform.config_base import load_config
+from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.scrobble.currently_watching import state_file as _cw_state_file
 
@@ -51,6 +53,88 @@ except Exception:
     HAVE_PLEXAPI = False
 
 router = APIRouter(tags=["scrobbler"])
+
+# Webhook URL token helpers
+_WEBHOOK_KEYS = ("plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher")
+
+def _gen_webhook_id() -> str:
+    return secrets.token_urlsafe(24).rstrip("=")
+
+def _ensure_webhook_ids(cfg: dict[str, Any]) -> dict[str, str]:
+    sec = cfg.setdefault("security", {})
+    ids = sec.setdefault("webhook_ids", {})
+    changed = False
+    for k in _WEBHOOK_KEYS:
+        v = str(ids.get(k) or "").strip()
+        if not v:
+            ids[k] = _gen_webhook_id()
+            changed = True
+    if changed:
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
+    # Normalize to plain strings
+    return {k: str(ids.get(k) or "").strip() for k in _WEBHOOK_KEYS}
+
+
+def _extract_url_token(request: Request) -> str:
+    q = str(getattr(request.url, "query", "") or "").strip()
+    if not q:
+        return ""
+    
+    if "&" not in q and "=" not in q:
+        return q
+
+    try:
+        qs = urllib.parse.parse_qs(q, keep_blank_values=True)
+    except Exception:
+        return ""
+    for key in ("token", "id", "secret", "uid"):
+        v = (qs.get(key) or [""])[0]
+        if v:
+            return str(v).strip()
+
+    try:
+        if len(qs) == 1:
+            only_key = next(iter(qs.keys()))
+            only_val = (qs.get(only_key) or [""])[0]
+            if only_key and only_val == "":
+                return str(only_key).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _require_webhook_token(request: Request, which: str) -> None:
+    cfg = load_config() or {}
+    ids = _ensure_webhook_ids(cfg)
+    expected = str(ids.get(which) or "").strip()
+    got = _extract_url_token(request)
+    # Fail closed
+    if not expected or not got or not hmac.compare_digest(expected, got):
+        raise HTTPException(status_code=401, detail="invalid_webhook_token")
+
+
+@router.get("/api/webhooks/urls")
+async def api_webhook_urls() -> JSONResponse:
+    cfg = load_config() or {}
+    ids = _ensure_webhook_ids(cfg)
+    return JSONResponse({"ok": True, "ids": ids}, status_code=200)
+
+
+@router.post("/api/webhooks/regenerate")
+async def api_webhook_regenerate() -> JSONResponse:
+    cfg = load_config() or {}
+    sec = cfg.setdefault("security", {})
+    ids = sec.setdefault("webhook_ids", {})
+    for k in _WEBHOOK_KEYS:
+        ids[k] = _gen_webhook_id()
+    try:
+        save_config(cfg)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "save_failed"}, status_code=500)
+    return JSONResponse({"ok": True, "ids": {k: str(ids.get(k) or '').strip() for k in _WEBHOOK_KEYS}}, status_code=200)
 
 
 def _env_logs(request: Request | None = None) -> tuple[dict[str, list[str]], int]:
@@ -816,6 +900,8 @@ def debug_watch_stop(request: Request) -> dict[str, Any]:
 
 @router.post("/webhook/jellyfintrakt")
 async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
+    _require_webhook_token(request, "jellyfintrakt")
+
     from crosswatch import _UIHostLogger
 
     try:
@@ -965,6 +1051,8 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
 
 @router.post("/webhook/embytrakt")
 async def webhook_embytrakt(request: Request) -> JSONResponse:
+    _require_webhook_token(request, "embytrakt")
+
     from crosswatch import _UIHostLogger
 
     try:
@@ -1114,6 +1202,8 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
 
 @router.post("/webhook/plextrakt")
 async def webhook_trakt(request: Request) -> JSONResponse:
+    _require_webhook_token(request, "plextrakt")
+
     from crosswatch import _UIHostLogger
 
     try:
@@ -1234,6 +1324,8 @@ async def webhook_trakt(request: Request) -> JSONResponse:
 
 @router.post("/webhook/plexwatcher")
 async def webhook_plexwatcher(request: Request) -> JSONResponse:
+    _require_webhook_token(request, "plexwatcher")
+
     from crosswatch import _UIHostLogger
 
     logger = _UIHostLogger("PLEX-WATCHER", "SCROBBLE")
