@@ -43,9 +43,59 @@ def _rt():
     )
 
 
-FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists"]
+FEATURE_KEYS = ["watchlist", "ratings", "history", "playlists", "progress"]
 _ALLOWED_RATING_TYPES: tuple[str, ...] = ("movies", "shows", "seasons", "episodes")
 _ALLOWED_RATING_MODES: tuple[str, ...] = ("only_new", "from_date", "all")
+
+def _normalize_progress_block(v: dict | bool | None) -> dict:
+    if isinstance(v, bool):
+        return {
+            "enable": bool(v),
+            "add": bool(v),
+            "remove": False,
+            "min_seconds": 60,
+            "delta_seconds": 30,
+            "max_percent": 95,
+            "propagate_timestamp_updates": False,
+        }
+
+    d = dict(v or {})
+    d["enable"] = bool(d.get("enable", d.get("enabled", False)))
+    d["add"] = bool(d.get("add", True))
+    d["remove"] = bool(d.get("remove", False))
+
+    def _i(x: Any, default: int) -> int:
+        try:
+            if x is None:
+                return int(default)
+            return int(float(x))
+        except Exception:
+            return int(default)
+
+    def _f(x: Any, default: float) -> float:
+        try:
+            if x is None:
+                return float(default)
+            return float(x)
+        except Exception:
+            return float(default)
+
+    min_s = _i(d.get("min_seconds", d.get("minSeconds")), 60)
+    delta_s = _i(d.get("delta_seconds", d.get("deltaSeconds")), 30)
+    max_p = _f(d.get("max_percent", d.get("maxPercent")), 95)
+
+    d["min_seconds"] = max(0, min_s)
+    d["delta_seconds"] = max(0, delta_s)
+    d["max_percent"] = float(min(100.0, max(0.0, max_p)))
+    d["propagate_timestamp_updates"] = bool(
+        d.get("propagate_timestamp_updates", d.get("propagateTimestampUpdates", False))
+    )
+
+    # Strip legacy keys if present.
+    for kk in ("minSeconds", "deltaSeconds", "maxPercent", "enabled"):
+        d.pop(kk, None)
+
+    return d
 
 def _normalize_ratings_block(v: dict | bool | None) -> dict:
     if isinstance(v, bool):
@@ -98,6 +148,9 @@ def _normalize_features(f: dict | None) -> dict:
         v = f.get(k)
         if k == "ratings":
             f[k] = _normalize_ratings_block(v)
+        elif k == "progress":
+            if isinstance(v, (bool, dict)):
+                f[k] = _normalize_progress_block(v)
         elif isinstance(v, bool):
             f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
         elif isinstance(v, dict):
@@ -105,6 +158,22 @@ def _normalize_features(f: dict | None) -> dict:
             v.setdefault("add", True)
             v.setdefault("remove", False)
     return f
+
+_PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN"}
+
+def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
+    try:
+        src = str(pair.get("source") or "").strip().upper()
+        dst = str(pair.get("target") or "").strip().upper()
+        feats = pair.get("features")
+        if not isinstance(feats, dict) or not feats:
+            return
+
+        # Progress is only supported between Plex/Emby/Jellyfin.
+        if src not in _PROGRESS_ALLOWED or dst not in _PROGRESS_ALLOWED:
+            feats.pop("progress", None)
+    except Exception:
+        return
 
 def _normalize_pair_providers(p: Any) -> dict[str, Any]:
     if not isinstance(p, dict):
@@ -615,10 +684,10 @@ def _lanes_defaults() -> dict[str, dict[str, Any]]:
             "spotlight_update": [],
         }
 
-    return {"watchlist": lane(), "ratings": lane(), "history": lane(), "playlists": lane()}
+    return {"watchlist": lane(), "ratings": lane(), "history": lane(), "progress": lane(), "playlists": lane()}
 
 def _lanes_enabled_defaults() -> dict[str, bool]:
-    return {"watchlist": True, "ratings": True, "history": True, "playlists": True}
+    return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
 
 def _apply_live_stats_to_snap(snap: dict, stats_feats: dict, enabled: dict) -> dict:
     out = dict(snap or {})
@@ -910,7 +979,28 @@ def _compute_lanes_from_stats(since_epoch: int, until_epoch: int):
                     feats[lane]["spotlight_update"].append(slim)
             continue
 
-        # History lane
+        # Progress lane (resume position)
+        if feat == "progress" or ("progress" in feat) or ("resume" in action):
+            lane = "progress"
+            if anyin(action, ("remove", "clear", "reset", "apply_remove", "apply_remove_done")):
+                if sig not in seen[lane]["remove"]:
+                    seen[lane]["remove"].add(sig)
+                    feats[lane]["removed"] += 1
+                    feats[lane]["spotlight_remove"].append(slim)
+            elif anyin(action, ("update", "set", "apply_add", "apply_add_done", "apply_update", "apply_update_done")):
+                # Use resume updates as 'updated'
+                if sig not in seen[lane]["update"]:
+                    seen[lane]["update"].add(sig)
+                    feats[lane]["updated"] += 1
+                    feats[lane]["spotlight_update"].append(slim)
+            else:
+                if sig not in seen[lane]["add"]:
+                    seen[lane]["add"].add(sig)
+                    feats[lane]["added"] += 1
+                    feats[lane]["spotlight_add"].append(slim)
+            continue
+        
+# History lane
         is_history_feat = (feat in ("history", "watch", "watched")) or ("history" in action)
         if "watchlist" not in action:
             is_add_like = anyin(
@@ -1009,7 +1099,7 @@ def _parse_sync_line(line: str) -> None:
                 return
             
             feat = str(o.get("feature") or "").lower()
-            if feat in ("watchlist", "history", "ratings", "playlists"):
+            if feat in ("watchlist", "history", "ratings", "progress", "playlists"):
                 F = SUMMARY.setdefault("features", {})
                 if feat not in F:
                     F[feat] = {
@@ -1731,7 +1821,7 @@ def _is_sync_running() -> bool:
 def api_sync_providers() -> JSONResponse:
     HIDDEN = {"BASE"}
     PKG_CANDIDATES = ("providers.sync",)
-    FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists")
+    FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists", "progress")
 
     def _asdict_dc(obj):
         try:
@@ -1889,6 +1979,12 @@ def api_pairs_list() -> JSONResponse:
             if newf != (it.get("features") or {}):
                 it["features"] = newf
                 dirty = True
+
+            # Enforce provider-dependent constraints (e.g. Progress pair eligibility).
+            before_feats = dict(it.get("features") or {})
+            _enforce_pair_feature_constraints(it)
+            if before_feats != (it.get("features") or {}):
+                dirty = True
             si = _norm_instance_id(it.get("source_instance"))
             ti = _norm_instance_id(it.get("target_instance"))
             if it.get("source_instance") != si:
@@ -1925,6 +2021,7 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
         item["target_instance"] = _norm_instance_id(item.get("target_instance"))
         item["enabled"] = bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
+        _enforce_pair_feature_constraints(item)
         prov = _normalize_pair_providers(item.get("providers"))
         if prov:
             item["providers"] = prov
@@ -2005,6 +2102,8 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
                     upd["target_instance"] = _norm_instance_id(upd.get("target_instance"))
                 for k, v in upd.items():
                     it[k] = v
+
+                _enforce_pair_feature_constraints(it)
                 save_config(cfg)
                 return {"ok": True}
         return {"ok": False, "error": "not_found"}
