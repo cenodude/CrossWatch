@@ -19,6 +19,7 @@ from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_
 from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history as feat_history
 from .jellyfin import _ratings as feat_ratings
+from .jellyfin import _progress as feat_progress
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -115,6 +116,7 @@ _FEATURES: dict[str, Any] = {
     "watchlist": feat_watchlist,
     "history": feat_history,
     "ratings": feat_ratings,
+    "progress": feat_progress,
 }
 
 _HEALTH_SHADOW_NAME = "jellyfin.health.shadow.json"
@@ -167,6 +169,7 @@ def get_manifest() -> Mapping[str, Any]:
             "history": True,
             "ratings": False,
             "playlists": False,
+            "progress": True,
         },
         "requires": ["requests"],
         "capabilities": {
@@ -363,7 +366,7 @@ class JELLYFINModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False}
+        toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False, "progress": True}
         present = _present_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -383,7 +386,7 @@ class JELLYFINModule:
                 "server": {"product": None, "version": None},
                 "disabled": [k for k, v in enabled.items() if not v],
             }
-            features = {k: False for k in ("watchlist", "history", "ratings", "playlists")}
+            features = {k: False for k in ("watchlist", "history", "ratings", "playlists", "progress")}
             api = {
                 "ping": {"status": None},
                 "info": {"status": None},
@@ -430,6 +433,7 @@ class JELLYFINModule:
             "history": base_ready if enabled.get("history") else False,
             "ratings": base_ready if enabled.get("ratings") else False,
             "playlists": base_ready if enabled.get("playlists") else False,
+            "progress": base_ready if enabled.get("progress") else False,
         }
 
         checks: list[bool] = [features[k] for k, on in enabled.items() if on]

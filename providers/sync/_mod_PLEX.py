@@ -93,6 +93,13 @@ except Exception as e:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         _warn("feature_import_failed", feature="ratings", error=str(e))
 
+try:
+    from .plex import _progress as feat_progress
+except Exception as e:
+    feat_progress = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        _warn("feature_import_failed", feature="progress", error=str(e))
+
 feat_playlists = None
 
 
@@ -326,7 +333,7 @@ def get_manifest() -> Mapping[str, Any]:
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
-        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": False},
+        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": False, "progress": True},
         "requires": ["plexapi"],
         "capabilities": {
             "bidirectional": True,
@@ -800,6 +807,7 @@ _FEATURES: dict[str, Any] = {
     "history": feat_history,
     "ratings": feat_ratings,
     "playlists": feat_playlists,
+    "progress": feat_progress,
 }
 
 
@@ -808,6 +816,7 @@ def _features_flags() -> dict[str, bool]:
         "watchlist": "watchlist" in _FEATURES and _FEATURES["watchlist"] is not None,
         "history": "history" in _FEATURES and _FEATURES["history"] is not None,
         "ratings": "ratings" in _FEATURES and _FEATURES["ratings"] is not None,
+        "progress": "progress" in _FEATURES and _FEATURES["progress"] is not None,
         "playlists": "playlists" in _FEATURES and _FEATURES["playlists"] is not None,
     }
 
@@ -860,7 +869,7 @@ class PLEXModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": False}
+        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": False, "progress": True}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -969,6 +978,7 @@ class PLEXModule:
             "history": pms_ok if enabled.get("history") else False,
             "ratings": pms_ok if enabled.get("ratings") else False,
             "playlists": pms_ok if enabled.get("playlists") else False,
+            "progress": pms_ok if enabled.get("progress") else False,
         }
 
         checks: list[bool] = []
