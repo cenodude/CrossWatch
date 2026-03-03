@@ -496,6 +496,31 @@ def run_one_way_feature(
             dst_for_src = dict(dst_full or {})
 
         adds, mirror_removes = diff_progress(src_idx, dst_for_src, fcfg=fcfg)
+        
+        # Mirror-mode clears for progress:
+        if (
+            remove_mode == "mirror"
+            and (not src_suspect)
+            and (not dst_suspect)
+            and src_sem != "delta"
+            and dst_sem != "delta"
+        ):
+            try:
+                src_alias_tmp = _alias_index(src_idx)
+                extra: list[dict[str, Any]] = []
+                for _dk, dv in (dst_full or {}).items():
+                    if not isinstance(dv, Mapping):
+                        continue
+                    if _present(src_idx, src_alias_tmp, dv):
+                        continue
+                    base = _minimal(dv)
+                    base["progress_ms"] = 0
+                    extra.append(base)
+                if extra:
+                    mirror_removes = list(mirror_removes or []) + extra
+            except Exception:
+                pass
+
 
     else:
         if manual_adds:
