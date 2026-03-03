@@ -1,5 +1,5 @@
 # services/snapshots.py
-# CrossWatch - Provider captures (watchlist/ratings/history)
+# CrossWatch - Provider captures (watchlist/ratings/history/progress)
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -17,12 +17,14 @@ from cw_platform.config_base import CONFIG, load_config
 from cw_platform.modules_registry import MODULES as MR_MODULES, load_sync_ops
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
-Feature = Literal["watchlist", "ratings", "history"]
-CreateFeature = Literal["watchlist", "ratings", "history", "all"]
+Feature = Literal["watchlist", "ratings", "history", "progress"]
+CreateFeature = Literal["watchlist", "ratings", "history", "progress", "all"]
 RestoreMode = Literal["merge", "clear_restore"]
 
 SNAPSHOT_KIND = "snapshot"
 SNAPSHOT_BUNDLE_KIND = "snapshot_bundle"
+SNAPSHOT_FEATURES: tuple[Feature, ...] = ("watchlist", "ratings", "history", "progress")
+
 
 def _utc_now() -> datetime:
     return datetime.now(tz=timezone.utc)
@@ -67,7 +69,7 @@ def _write_json_atomic(path: Path, data: Mapping[str, Any]) -> None:
 
 def _norm_feature(x: str) -> Feature:
     v = str(x or "").strip().lower()
-    if v not in ("watchlist", "ratings", "history"):
+    if v not in ("watchlist", "ratings", "history", "progress"):
         raise ValueError(f"Unsupported feature: {x}")
     return v  # type: ignore[return-value]
 
@@ -181,9 +183,9 @@ def snapshot_manifest(cfg: Mapping[str, Any] | None = None) -> list[dict[str, An
         feats = {}
         try:
             raw = ops.features() or {}
-            feats = {k: bool(raw.get(k)) for k in ("watchlist", "ratings", "history")}
+            feats = {k: bool(raw.get(k)) for k in SNAPSHOT_FEATURES}
         except Exception:
-            feats = {"watchlist": False, "ratings": False, "history": False}
+            feats = {"watchlist": False, "ratings": False, "history": False, "progress": False}
 
         insts = list_instance_ids(cfg, pid)
         inst_meta: list[dict[str, Any]] = []
@@ -436,7 +438,7 @@ def create_snapshot(
         feats_total: dict[str, int] = {}
         total = 0
 
-        for f in ("watchlist", "ratings", "history"):
+        for f in SNAPSHOT_FEATURES:
             feat = _norm_feature(f)
             if not _feature_enabled(ops, feat):
                 continue
@@ -860,7 +862,7 @@ def _diff_any(a: Any, b: Any, *, path: str, out: list[dict[str, Any]], max_depth
 
     # Ignore second-level for watched timestamps - no second-level precision
     leaf = (str(path or "").rsplit(".", 1)[-1]).lower()
-    if leaf in ("watched_at", "watchedat"):
+    if leaf in ("watched_at", "watchedat", "progress_at", "progressat", "last_progress_at", "lastprogressat"):
         ma = _dt_minute_bucket(a)
         mb = _dt_minute_bucket(b)
         if ma is not None and mb is not None and ma == mb:
@@ -1050,9 +1052,9 @@ def diff_snapshots(
     feat_b = str(b.get("feature") or "").strip().lower()
 
     if kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all":
-        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history capture.")
+        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history/progress capture.")
     if kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all":
-        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history capture.")
+        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history/progress capture.")
 
     items_a_raw = a.get("items") or {}
     items_b_raw = b.get("items") or {}
@@ -1209,10 +1211,6 @@ def diff_snapshots_extended(
     max_depth: int = 6,
     max_changes: int = 250,
 ) -> dict[str, Any]:
-    """Extended diff for power-users.
-
-    Returns *all* records (including unchanged) with optional filtering/paging.
-    """
 
     a = read_snapshot(a_path)
     b = read_snapshot(b_path)
@@ -1223,9 +1221,9 @@ def diff_snapshots_extended(
     feat_b = str(b.get("feature") or "").strip().lower()
 
     if kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all":
-        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history capture.")
+        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history/progress capture.")
     if kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all":
-        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history capture.")
+        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history/progress capture.")
 
     items_a_raw = a.get("items") or {}
     items_b_raw = b.get("items") or {}
