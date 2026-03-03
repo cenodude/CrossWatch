@@ -126,8 +126,10 @@ def api_config() -> JSONResponse:
     cfg = dict(env["load"]() or {})
     try: env["prune"](cfg); env["ensure"](cfg)
     except Exception: pass
-    try: cfg = env["cfg_base"].redact_config(cfg)  # type: ignore[attr-defined]
-    except Exception: pass
+    base = env.get("cfg_base")
+    if base is None or not hasattr(base, "redact_config"):
+        return _nostore(JSONResponse({"ok": False, "error": "Config redaction unavailable"}, status_code=503))
+    cfg = base.redact_config(cfg)  # type: ignore[attr-defined]
     return _nostore(JSONResponse(cfg))
 
 @router.post("/config")
@@ -141,53 +143,80 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     except Exception:
         merged = {**current, **incoming}
 
+    MASK = "••••••••"
+
     def _blank(v: Any) -> bool:
         s = ("" if v is None else str(v)).strip()
-        return s in {"", "••••••••"}
+        return s in {"", MASK}
 
-    secrets = [
-        ("plex","account_token"),
-        ("simkl","access_token"), ("simkl","refresh_token"),
-        ("trakt","client_secret"), ("trakt","access_token"), ("trakt","refresh_token"),
-        ("tmdb","api_key"),
-        ("jellyfin","access_token"),
-        ("emby","api_key"), ("emby","access_token"),
-        ("mdblist","api_key"),
-        ("app_auth","password","hash"),
-        ("app_auth","password","salt"),
-        ("app_auth","session","token_hash"),
-    ]
-    def _preserve_blank_secret(path: tuple[str, ...]) -> None:
-        cur = current; inc = incoming; dst = merged
-        for k in path[:-1]:
-            cur = cur.get(k, {}) if isinstance(cur, dict) else {}
-            inc = inc.get(k, {}) if isinstance(inc, dict) else {}
-            dst = dst.setdefault(k, {}) if isinstance(dst, dict) else {}
-        leaf = path[-1]
-        if isinstance(inc, dict) and leaf in inc and _blank(inc[leaf]):
-            dst[leaf] = (cur or {}).get(leaf, "")
+    def _is_sensitive_key(key: Any) -> bool:
+        k = str(key or "").strip().lower()
+        if not k:
+            return False
 
-    providers_with_instances = {"plex","simkl","trakt","tmdb","mdblist","jellyfin","emby"}
+        exact = {
+            "api_key", "apikey",
+            "access_token", "refresh_token",
+            "client_secret",
+            "account_token", "pms_token", "home_pin",
+            "session_id",
+            "token_hash", "salt", "hash",
+            "device_code",
+            "_pending_request_token",
+            "request_token",
+            "token",
+        }
+        if k in exact:
+            return True
 
-    for path in secrets:
-        if len(path) == 2 and path[0] in providers_with_instances:
-            prov, leaf = path
-            _preserve_blank_secret((prov, leaf))
+        # Catch foo_token, but avoid common non-secret config like token_endpoint/url
+        if k.endswith("_token") and k not in {"token_endpoint", "token_url"}:
+            return True
 
-            cur_inst = ((current.get(prov) or {}).get("instances") or {})
-            inc_inst = ((incoming.get(prov) or {}).get("instances") or {})
-            inst_ids: set[str] = set()
-            if isinstance(cur_inst, dict):
-                inst_ids.update([str(k) for k in cur_inst.keys()])
-            if isinstance(inc_inst, dict):
-                inst_ids.update([str(k) for k in inc_inst.keys()])
+        subs = (
+            "access_token", "refresh_token", "client_secret",
+            "api_key", "apikey",
+            "token_hash", "session_id",
+            "account_token", "pms_token", "home_pin",
+            "device_code", "request_token",
+            "password", "secret",
+        )
+        return any(s in k for s in subs)
 
-            for inst_id in sorted(inst_ids):
-                if not str(inst_id).strip():
+    def _preserve_sensitive(cur: Any, inc: Any, dst: Any) -> None:
+        """Preserve sensitive leaves when UI sends blank/masked placeholders."""
+        if isinstance(inc, dict) and isinstance(dst, dict):
+            cur_d = cur if isinstance(cur, dict) else {}
+            for k, inc_v in inc.items():
+                if k not in dst:
                     continue
-                _preserve_blank_secret((prov, "instances", str(inst_id), leaf))
-        else:
-            _preserve_blank_secret(tuple(path))
+
+                cur_v = cur_d.get(k) if isinstance(cur_d, dict) else None
+                dst_v = dst.get(k)
+
+                if isinstance(inc_v, dict) and isinstance(dst_v, dict):
+                    _preserve_sensitive(cur_v, inc_v, dst_v)
+                    continue
+
+                if isinstance(inc_v, list) and isinstance(dst_v, list):
+                    if isinstance(cur_v, list):
+                        for i in range(min(len(inc_v), len(dst_v), len(cur_v))):
+                            _preserve_sensitive(cur_v[i], inc_v[i], dst_v[i])
+                    continue
+
+                if _is_sensitive_key(k) and _blank(inc_v):
+                    if isinstance(cur_d, dict) and k in cur_d:
+                        dst[k] = cur_v
+                    else:
+                        dst[k] = ""
+            return
+
+        if isinstance(inc, list) and isinstance(cur, list) and isinstance(dst, list):
+            for i in range(min(len(inc), len(cur), len(dst))):
+                _preserve_sensitive(cur[i], inc[i], dst[i])
+
+    _preserve_sensitive(current, incoming, merged)
+
     try:
         inc_a = incoming.get("app_auth")
         cur_a = current.get("app_auth")
@@ -199,6 +228,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         pass
 
     cfg: dict[str, Any] = dict(merged or {})
+
 
     # Scrobble watcher: ensure routes exist when legacy fields are used
     try:
