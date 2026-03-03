@@ -34,6 +34,13 @@ const HELP_TEXT = {
   "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
   "cx-tr-hs-col": "Trakt: Add collections\nAlso add items to Trakt collections when writing history (if enabled).",
 
+  "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between media servers.",
+  "cx-pr-add": "Progress: Add / Update\nWrite resume position to the target.",
+  "cx-pr-remove": "Progress: Remove\nClear resume position on the target (rare; Plex may not support).",
+  "cx-pr-min": "Progress: Minimum seconds\nIgnore tiny offsets (scrubbing).",
+  "cx-pr-delta": "Progress: Change threshold\nOnly write when the difference is large enough.",
+  "cx-pr-maxp": "Progress: Ignore near complete (%)\nWhen near completion, history sync should handle watched state.",
+
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
   "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
 
@@ -51,6 +58,8 @@ const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
 const isPlex = (v) => same(v, "plex");
 function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
+const isMedia = (v) => isPlex(v) || isEmby(v) || isJelly(v);
+function isProgressPair(state){ return isMedia(state?.src) && isMedia(state?.dst) }
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
@@ -169,7 +178,8 @@ function defaultState(){
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
       history:{enable:false,add:false,remove:false},
-      playlists:{enable:false,add:true,remove:false}
+      playlists:{enable:false,add:true,remove:false},
+      progress:{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:80,propagate_timestamp_updates:false}
     },
     pairProviders:{},
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -254,11 +264,11 @@ async function loadProviderInstances(state){
 async function loadProviders(state){
   const list=await getJSON("/api/sync/providers?cb="+Date.now());
   state.providers=Array.isArray(list)?list:[
-    {name:"PLEX",label:"Plex",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
-    {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:true,history:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
+    {name:"PLEX",label:"Plex",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
+    {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
+    {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
+    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
+    {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
   ]
 }
 
@@ -300,11 +310,25 @@ async function loadConfigBits(state){
 
 // UI utils
 const byName=(state,n)=>state.providers.find(p=>p.name===n);
-const commonFeatures=(state)=>!state.src||!state.dst?[]:["watchlist","ratings","history","playlists"].filter(k=>byName(state,state.src)?.features?.[k]&&byName(state,state.dst)?.features?.[k]);
-const defaultFor=(k)=>k==="watchlist"?{enable:false,add:false,remove:false}:k==="playlists"?{enable:false,add:true,remove:false}:{enable:false,add:false,remove:false};
+const commonFeatures=(state)=>{
+  if(!state.src||!state.dst) return [];
+  const a=byName(state,state.src)?.features||{};
+  const b=byName(state,state.dst)?.features||{};
+  const keys=["watchlist","ratings","history","progress","playlists"];
+  return keys.filter(k=>{
+    if(k==="progress") return isProgressPair(state) && !!a.progress && !!b.progress;
+    return !!a[k] && !!b[k];
+  });
+};
+const defaultFor=(k)=>
+  k==="watchlist"?{enable:false,add:false,remove:false}:
+  k==="playlists"?{enable:false,add:true,remove:false}:
+  k==="progress"?{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:80,propagate_timestamp_updates:false}:
+  {enable:false,add:false,remove:false};
 function getOpts(state,key){
   if(!state.visited.has(key)){
     if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},state.options.ratings||{});
+    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:80,propagate_timestamp_updates:false},state.options.progress||{});
     else state.options[key]=state.options[key]??defaultFor(key);
     state.visited.add(key);
   }
@@ -683,9 +707,10 @@ function applySubDisable(feature){
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
     history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-unres"],
-    playlists:["#cx-pl-add","#cx-pl-remove"]
+    playlists:["#cx-pl-add","#cx-pl-remove"],
+    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp"]
   };
-  const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":"cx-pl-enable")?.checked;
+  const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":"cx-pl-enable")?.checked;
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
 }
 
@@ -1225,13 +1250,44 @@ left.innerHTML = `
     applySubDisable("playlists");
     return;
   }
+
+  if (state.feature === "progress") {
+    const pr = getOpts(state, "progress") || {};
+    const minS = Number.isFinite(pr.min_seconds) ? pr.min_seconds : 60;
+    const deltaS = Number.isFinite(pr.delta_seconds) ? pr.delta_seconds : 30;
+    const maxP = Number.isFinite(pr.max_percent) ? pr.max_percent : 80;
+
+    left.innerHTML = `<div class="panel-title">Progress</div>
+      <div class="grid2">
+        <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">Enable</label>
+          <label class="switch"><input id="cx-pr-enable" type="checkbox" ${pr.enable ? "checked" : ""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-pr-add" data-tip-id="cx-pr-add">Add / Update</label>
+          <label class="switch"><input id="cx-pr-add" type="checkbox" ${pr.add ? "checked" : ""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-pr-remove" data-tip-id="cx-pr-remove">Remove</label>
+          <label class="switch"><input id="cx-pr-remove" type="checkbox" ${pr.remove ? "checked" : ""}><span class="slider"></span></label></div>
+      </div>`;
+
+    right.innerHTML = `<div class="panel-title">Advanced</div>
+      <div class="grid2 compact">
+        <div class="opt-row"><label for="cx-pr-min" data-tip-id="cx-pr-min">Minimum seconds</label>
+          <input id="cx-pr-min" class="input small" type="number" min="0" max="36000" value="${minS}"></div>
+        <div class="opt-row"><label for="cx-pr-delta" data-tip-id="cx-pr-delta">Change threshold (s)</label>
+          <input id="cx-pr-delta" class="input small" type="number" min="0" max="36000" value="${deltaS}"></div>
+        <div class="opt-row"><label for="cx-pr-maxp" data-tip-id="cx-pr-maxp">Ignore near complete (%)</label>
+          <input id="cx-pr-maxp" class="input small" type="number" min="0" max="100" step="1" value="${maxP}"></div>
+      </div>
+      <div class="muted" style="margin-top:10px">Tip: Progress does not infer clears from absence. It only syncs resume positions.</div>`;
+
+    applySubDisable("progress");
+    return;
+  }
 }
 
 // Tabs
 function refreshTabs(state){
   const tabs = ID('cx-feat-tabs'); if(!tabs) return;
-  const LABELS = {globals:'Globals',providers:'Providers',watchlist:'Watchlist',ratings:'Ratings',history:'History',playlists:'Playlists'};
-  const ORDER  = ['globals','providers','watchlist','ratings','history','playlists'];
+  const LABELS = {globals:'Globals',providers:'Providers',watchlist:'Watchlist',ratings:'Ratings',history:'History',progress:'Progress',playlists:'Playlists'};
+  const ORDER  = ['globals','providers','watchlist','ratings','history','progress','playlists'];
   const COMMON = new Set(commonFeatures(state));
   const isValid = k => k==='globals' || k==='providers' || (ORDER.includes(k) && COMMON.has(k));
   if(!isValid(state.feature)) state.feature = 'globals';
@@ -1368,7 +1424,8 @@ function bindChangeHandlers(state,root){
             "cx-wl-enable":"cx-wl-remove",
             "cx-rt-enable":"cx-rt-remove",
             "cx-hs-enable":"cx-hs-remove",
-            "cx-pl-enable":"cx-pl-remove"
+            "cx-pl-enable":"cx-pl-remove",
+            "cx-pr-enable":"cx-pr-remove"
           };
 
     if(map[id]){
@@ -1413,6 +1470,14 @@ function bindChangeHandlers(state,root){
 
     if (id === "cx-pl-enable") {
       applySubDisable("playlists");
+    }
+
+    if (id === "cx-pr-enable") {
+      if (!!ID("cx-pr-enable")?.checked) {
+        const add = ID("cx-pr-add");
+        if (add) add.checked = true;
+      }
+      applySubDisable("progress");
     }
 
     if(id.startsWith("cx-wl-")){
@@ -1481,6 +1546,22 @@ function bindChangeHandlers(state,root){
         remove:!!ID("cx-pl-remove")?.checked
       });
       state.visited.add("playlists");
+    }
+
+    if(id.startsWith("cx-pr-")){
+      const prev=state.options.progress||{};
+      const minS=parseInt(ID("cx-pr-min")?.value||"60",10);
+      const delS=parseInt(ID("cx-pr-delta")?.value||"30",10);
+      const maxP=parseFloat(ID("cx-pr-maxp")?.value||"95");
+      state.options.progress=Object.assign({},prev,{
+        enable:!!ID("cx-pr-enable")?.checked,
+        add:!!ID("cx-pr-add")?.checked,
+        remove:!!ID("cx-pr-remove")?.checked,
+        min_seconds: Number.isFinite(minS)?Math.max(0,minS):60,
+        delta_seconds: Number.isFinite(delS)?Math.max(0,delS):30,
+        max_percent: Number.isFinite(maxP)?Math.min(100,Math.max(0,maxP)):80
+      });
+      state.visited.add("progress");
     }
 
     if(id.startsWith("gl-")){
@@ -1784,12 +1865,13 @@ function buildPayload(state,wrap){
   const srcInst=state.src_instance||ID("cx-src-inst")?.value||"default";
   const dstInst=state.dst_instance||ID("cx-dst-inst")?.value||"default";
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
-  const get=k=>Object.assign({enable:false,add:false,remove:false},(state.options||{})[k]||{});
+  const get=k=>Object.assign(defaultFor(k), (state.options||{})[k]||{});
   const watchlist=get("watchlist");
   const ratings=get("ratings");
+  const progress=get("progress");
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
-  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),playlists:get("playlists")}};
+  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),progress,playlists:get("playlists")}};
   const prov={};
   const pp=state.pairProviders||{};
   const usePlex=(String(src).toUpperCase()==="PLEX"||String(dst).toUpperCase()==="PLEX");
@@ -1845,6 +1927,7 @@ export default{
       const f=pair.features||{}, safe=(v,d)=>Object.assign({},d,v||{});
       state.options.watchlist=safe(f.watchlist,state.options.watchlist);
       state.options.history=safe(f.history,state.options.history);
+      state.options.progress=safe(f.progress,state.options.progress);
       state.options.playlists=safe(f.playlists,state.options.playlists);
       const r0=state.options.ratings, rI=f.ratings||{};
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
