@@ -705,6 +705,134 @@ def _two_way_sync(
         up_B, clr_B = diff_progress(A_eff, B_for_A, fcfg=fcfg, propagate_timestamp_updates=False)
         up_A, clr_A = diff_progress(B_eff, A_for_B, fcfg=fcfg, propagate_timestamp_updates=False)
 
+        # progress clears from missing items
+        try:
+            cfgp = dict(fcfg or {})
+            min_seconds = int(cfgp.get("min_seconds") or cfgp.get("minSeconds") or 60)
+            max_percent = float(cfgp.get("max_percent") or cfgp.get("maxPercent") or 95)
+            clear_below_min = bool(cfgp.get("clear_below_min") or cfgp.get("clearBelowMin") or False)
+            min_ms = max(0, min_seconds) * 1000
+
+            def _as_int(v: Any) -> int | None:
+                try:
+                    if v is None or isinstance(v, bool):
+                        return None
+                    return int(float(v))
+                except Exception:
+                    return None
+
+            def _pm(it: Mapping[str, Any] | None) -> int:
+                if not it:
+                    return 0
+                for kk in ("progress_ms", "progressMs", "viewOffset", "progress"):
+                    v = _as_int(it.get(kk))
+                    if v is not None:
+                        return max(0, int(v))
+                return 0
+
+            def _dur(it: Mapping[str, Any] | None) -> int | None:
+                if not it:
+                    return None
+                for kk in ("duration_ms", "durationMs", "duration"):
+                    v = _as_int(it.get(kk))
+                    if v is not None and v > 0:
+                        return int(v)
+                return None
+
+            def _pct(ms: int, dur: int | None) -> float | None:
+                if dur is None or dur <= 0:
+                    return None
+                try:
+                    return (float(ms) / float(dur)) * 100.0
+                except Exception:
+                    return None
+
+            def _infer_clears(
+                missing: set[str],
+                prev_idx: dict[str, Any],
+                other_eff: dict[str, Any],
+                other_alias: dict[str, str],
+            ) -> list[dict[str, Any]]:
+                out: list[dict[str, Any]] = []
+                for ck0 in (missing or set()):
+                    pit = prev_idx.get(ck0)
+                    if not isinstance(pit, Mapping):
+                        continue
+
+                    pms = _pm(pit)
+                    if pms <= 0:
+                        continue
+                    if min_ms and pms < min_ms and not clear_below_min:
+                        # Not synced then don't propagate the clear either (unless clear_below_min)
+                        continue
+                    pp = _pct(pms, _dur(pit))
+                    if pp is not None and pp >= max_percent:
+                        # Near completion then let history sync handle played state
+                        continue
+
+                    # Prefer the target-side row so canonical_key and resolver data matches
+                    tgt = other_eff.get(ck0)
+                    if not isinstance(tgt, Mapping):
+                        tgt = _find_in_idx(other_eff, other_alias, pit)
+
+                    base = _minimal(tgt) if isinstance(tgt, Mapping) else _minimal(pit)
+                    base["progress_ms"] = 0
+                    # Use epoch seconds timestamp for conflict resolution
+                    base["progress_at"] = str(int(now))
+                    out.append(base)
+                return out
+
+            if allow_removals:
+                # A missing => clear on B, B missing => clear on A
+                clr_B = list(clr_B or [])
+                clr_A = list(clr_A or [])
+                clr_B += _infer_clears(obsA, prevA, B_eff, B_alias_tmp)
+                clr_A += _infer_clears(obsB, prevB, A_eff, A_alias_tmp)
+
+                # Tomb-based shit:
+                tck: set[str] = set()
+                for tok in (tomb or set()):
+                    if tok in (A_eff or {}) or tok in (B_eff or {}):
+                        tck.add(tok)
+                        continue
+                    ckA = A_alias_tmp.get(tok)
+                    ckB = B_alias_tmp.get(tok)
+                    if ckA:
+                        tck.add(ckA)
+                    if ckB:
+                        tck.add(ckB)
+
+                miss_on_B = {k for k in tck if k in (A_eff or {}) and k not in (B_eff or {})}
+                miss_on_A = {k for k in tck if k in (B_eff or {}) and k not in (A_eff or {})}
+
+                def _infer_from_present(present_keys: set[str], present_eff: dict[str, Any]) -> list[dict[str, Any]]:
+                    out: list[dict[str, Any]] = []
+                    for ck0 in (present_keys or set()):
+                        pit = present_eff.get(ck0)
+                        if not isinstance(pit, Mapping):
+                            continue
+                        pms = _pm(pit)
+                        if pms <= 0:
+                            continue
+                        if min_ms and pms < min_ms and not clear_below_min:
+                            continue
+                        pp = _pct(pms, _dur(pit))
+                        if pp is not None and pp >= max_percent:
+                            continue
+                        base = _minimal(pit)
+                        base["progress_ms"] = 0
+                        base["progress_at"] = str(int(now))
+                        out.append(base)
+                    return out
+
+                clr_A += _infer_from_present(miss_on_B, A_eff)
+                clr_B += _infer_from_present(miss_on_A, B_eff)
+
+                emit("debug", msg="progress.infer_clears", obsA=len(obsA), obsB=len(obsB), tomb=len(tomb or set()),
+                     tomb_missing_on_A=len(miss_on_A), tomb_missing_on_B=len(miss_on_B), clear_below_min=bool(clear_below_min))
+        except Exception:
+            pass
+
         def _prog_ms(it: Mapping[str, Any]) -> int:
             for kk in ("progress_ms", "progressMs", "viewOffset", "progress"):
                 v = it.get(kk)
