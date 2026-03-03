@@ -72,7 +72,7 @@ def register_insights(app: FastAPI) -> None:
 
     @app.post("/api/crosswatch/select-snapshot", tags=["insight"])
     def api_select_snapshot(
-        feature: str = Query(..., pattern="^(watchlist|history|ratings)$"),
+        feature: str = Query(..., pattern="^(watchlist|history|ratings|progress)$"),
         snapshot: str = Query(...),
     ) -> dict[str, Any]:
         _, load_config, save_config, _ = _env()
@@ -775,7 +775,7 @@ def register_insights(app: FastAPI) -> None:
 
             return out
 
-        base_feats: tuple[str, ...] = ("watchlist", "ratings", "history", "playlists")
+        base_feats: tuple[str, ...] = ("watchlist", "ratings", "history", "progress", "playlists")
 
         def _features_from(obj: Any) -> list[str]:
             keys: list[str] = []
@@ -1274,7 +1274,7 @@ def register_insights(app: FastAPI) -> None:
                 if snap_dir.is_dir():
                     files = list(snap_dir.glob("*.json"))
 
-                by_feat: dict[str, list[str]] = {"watchlist": [], "history": [], "ratings": []}
+                by_feat: dict[str, list[str]] = {"watchlist": [], "history": [], "ratings": [], "progress": [], "playlists": []}
                 for p in files:
                     name = p.name
                     for feat in by_feat.keys():
@@ -1580,56 +1580,20 @@ def register_insights(app: FastAPI) -> None:
                 for feat in feature_keys:
                     inst_mse: dict[str, dict[str, int]] = {}
                     for inst_id, node in _iter_provider_feature_nodes(pdata, feat):
-                        if feat in ("history", "ratings"):
-                            try:
-                                per_counts = _compute_history_breakdown(
-                                    {"providers": {prov_upper: {feat: node}}},
-                                    feat,
-                                ) or {}
-                            except Exception:
-                                per_counts = {}
-                            inst_mse[inst_id] = {
-                                "movies": int(per_counts.get("movies") or 0),
-                                "shows": int(per_counts.get("shows") or 0),
-                                "anime": int(per_counts.get("anime") or 0),
-                                "episodes": int(per_counts.get("episodes") or 0),
-                            }
-                            continue
+                        try:
+                            per_counts = _compute_history_breakdown(
+                                {"providers": {prov_upper: {feat: node}}},
+                                feat,
+                            ) or {}
+                        except Exception:
+                            per_counts = {}
 
-                        recs = _iter_feature_items(node)
-                        if not recs:
-                            inst_mse[inst_id] = {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}
-                            continue
-
-                        m = s = a = e = 0
-                        for rec in recs:
-                            if not isinstance(rec, dict):
-                                continue
-                            typ = str(rec.get("type") or "").strip().lower()
-                            has_show_meta = bool(
-                                (rec.get("show_ids") or {})
-                                or rec.get("series_title")
-                                or rec.get("show_title")
-                            )
-
-                            if typ == "episode":
-                                e += 1
-                                continue
-                            if typ == "anime":
-                                a += 1
-                                continue
-                            if typ == "show" or (typ == "movie" and has_show_meta):
-                                s += 1
-                                continue
-                            if typ == "movie":
-                                m += 1
-                                continue
-                            if has_show_meta:
-                                s += 1
-                            else:
-                                m += 1
-
-                        inst_mse[inst_id] = {"movies": m, "shows": s, "anime": a, "episodes": e}
+                        inst_mse[inst_id] = {
+                            "movies": int(per_counts.get("movies") or 0),
+                            "shows": int(per_counts.get("shows") or 0),
+                            "anime": int(per_counts.get("anime") or 0),
+                            "episodes": int(per_counts.get("episodes") or 0),
+                        }
 
                     if "default" not in inst_mse:
                         inst_mse["default"] = {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}
