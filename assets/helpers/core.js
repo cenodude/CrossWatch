@@ -1209,7 +1209,7 @@ function _cwFeatEnabled(v) {
 function _cwPairCanRun(p) {
   if (!p || p.enabled === false) return false;
   const f = p.features || {};
-  const keys = ["watchlist", "ratings", "history", "playlists"];
+  const keys = ["watchlist", "ratings", "history", "progress", "playlists"];
   if (!p.features) return true;
   for (const k of keys) {
     if (_cwFeatEnabled(f[k])) return true;
