@@ -60,7 +60,8 @@ Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
 Supported: **Profiles** (Multi-users / Multi-servers per instance)
 
-<center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still many bugs.</B></center>
+<center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still many bugs.</B></center><p></p>
+<center><b>DO NOT EXPOSE CROSSWATCH TO THE PUBLIC INTERNET</b></center>
 
 <img
   align="right"
