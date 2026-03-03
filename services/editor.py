@@ -15,7 +15,7 @@ import zipfile
 
 from cw_platform.config_base import CONFIG, load_config
 
-Kind = Literal["watchlist", "history", "ratings"]
+Kind = Literal["watchlist", "history", "ratings", "progress"]
 
 def _cw_cfg() -> dict[str, Any]:
     try:
@@ -135,7 +135,7 @@ def _enforce_snapshot_retention(kind: Kind) -> None:
 def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[str, Any]:
     if kind is None:
         kind_val: Kind = "watchlist"
-    elif kind in ("watchlist", "history", "ratings"):
+    elif kind in ("watchlist", "history", "ratings", "progress"):
         kind_val = kind
     else:
         raise ValueError(f"Unsupported kind: {kind!r}")
@@ -162,7 +162,7 @@ def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[st
 def save_state(kind: Kind | None, items: dict[str, Any]) -> dict[str, Any]:
     if kind is None:
         kind_val: Kind = "watchlist"
-    elif kind in ("watchlist", "history", "ratings"):
+    elif kind in ("watchlist", "history", "ratings", "progress"):
         kind_val = kind
     else:
         raise ValueError(f"Unsupported kind: {kind!r}")
@@ -284,13 +284,13 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     target: str
     kind: Kind | None = None
 
-    if lower in ("watchlist.json", "history.json", "ratings.json"):
+    if lower in ("watchlist.json", "history.json", "ratings.json", "progress.json"):
         base = lower.split(".")[0]  # "watchlist" / "history" / "ratings"
         kind = cast(Kind, base)
         dest = _state_path(kind)
         target = "state"
     else:
-        for candidate in ("watchlist", "history", "ratings"):
+        for candidate in ("watchlist", "history", "ratings", "progress"):
             if lower.endswith(f"-{candidate}.json"):
                 kind = cast(Kind, candidate)
                 break
@@ -351,7 +351,7 @@ def import_tracker_upload(
 
 _PAIR_SCOPE_RE = re.compile(r"^(?P<mode>[^_]+)_(?P<link>[^_]+)_pair_(?P<pid>.+)$")
 _PAIR_DATASET_RE = re.compile(
-    r"^(?P<prefix>.+)[._-](?P<kind>watchlist|history|ratings)\.(?P<variant>index|shadow)\.(?P<scope>.+)\.json$",
+    r"^(?P<prefix>.+)[._-](?P<kind>watchlist|history|ratings|progress)\.(?P<variant>index|shadow)\.(?P<scope>.+)\.json$",
     re.IGNORECASE,
 )
 
