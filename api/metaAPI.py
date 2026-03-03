@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 from cw_platform.config_base import load_config
 
 router = APIRouter(tags=["metadata"])
+LOG = logging.getLogger(__name__)
 
 try:
     from providers.metadata.registry import (
@@ -561,10 +563,8 @@ def api_tmdb_art(
             },
         )
     except Exception as e:
-        return PlainTextResponse(
-            f"Poster not available: {e}",
-            status_code=404,
-        )
+        LOG.exception("TMDb poster fetch failed")
+        return PlainTextResponse("Poster not available", status_code=404)
 
 
 class MetadataResolveIn(BaseModel):
@@ -611,11 +611,9 @@ def api_metadata_search(
         r = requests.get(url, params=params, timeout=8)
         r.raise_for_status()
         data = r.json() or {}
-    except Exception as e:
-        return JSONResponse(
-            {"ok": False, "error": f"search failed: {e}"},
-            status_code=200,
-        )
+    except Exception:
+        LOG.exception("TMDb search failed")
+        return JSONResponse({"ok": False, "error": "search failed"}, status_code=200)
 
     out: list[dict[str, Any]] = []
     for raw in (data.get("results") or [])[:limit]:
@@ -772,7 +770,8 @@ def api_metadata_bulk(
                 or {}
             )
         except Exception as e:
-            return key, {"ok": False, "error": f"resolver failed: {e}"}
+            LOG.exception("metadata resolver failed")
+            return key, {"ok": False, "error": "resolver failed"}
         if not meta:
             return key, {"ok": False, "error": "no metadata"}
         keep = {
@@ -824,7 +823,7 @@ def api_metadata_bulk(
                 except Exception as e:
                     k, v = "unknown:0", {
                         "ok": False,
-                        "error": f"worker error: {e}",
+                        "error": "worker error",
                     }
                 results[k] = v
                 if v.get("ok"):
