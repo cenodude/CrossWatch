@@ -215,7 +215,7 @@ function clearStickyNote(id) {
     trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 25 },
   };
 
-  const STATE = { mount: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false, _noSinkAutostartFixApplied: false };
+  const STATE = { mount: null, webhookIds: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], pms: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false, _noSinkAutostartFixApplied: false };
 
   const deepSet = (o, p, v) =>
     p.split(".").reduce(
@@ -2441,7 +2441,10 @@ function chip(text, onRemove, onClick) {
       }
     } catch {}
 
-    if (on) code.textContent = `${location.origin}/webhook/plexwatcher`;
+    if (on) {
+      const id = STATE.webhookIds && STATE.webhookIds.plexwatcher ? String(STATE.webhookIds.plexwatcher) : "";
+      code.textContent = `${location.origin}/webhook/plexwatcher${id ? "?" + id : ""}`;
+    }
     else setNote("sc-plexwatcher-note", "");
   }
 
@@ -2557,9 +2560,80 @@ function chip(text, onRemove, onClick) {
   const plexCode = $("#sc-webhook-url-plex", STATE.mount);
   const jfCode = $("#sc-webhook-url-jf", STATE.mount);
   const embyCode = $("#sc-webhook-url-emby", STATE.mount);
-  if (plexCode) plexCode.textContent = `${base}/webhook/plextrakt`;
-  if (jfCode) jfCode.textContent = `${base}/webhook/jellyfintrakt`;
-  if (embyCode) embyCode.textContent = `${base}/webhook/embytrakt`;
+  function _withWebhookId(path, id) {
+    return id ? `${path}?${id}` : path;
+  }
+
+  async function refreshWebhookIds() {
+    try {
+      const r = await j("/api/webhooks/urls");
+      if (r && r.ok && r.ids) STATE.webhookIds = r.ids || null;
+    } catch {
+      STATE.webhookIds = null;
+    }
+  }
+
+  function applyWebhookUrls() {
+    const base = location.origin;
+    const ids = STATE.webhookIds || {};
+    const plexCode = $("#sc-webhook-url-plex", STATE.mount);
+    const jfCode = $("#sc-webhook-url-jf", STATE.mount);
+    const embyCode = $("#sc-webhook-url-emby", STATE.mount);
+    if (plexCode) plexCode.textContent = _withWebhookId(`${base}/webhook/plextrakt`, ids.plextrakt);
+    if (jfCode) jfCode.textContent = _withWebhookId(`${base}/webhook/jellyfintrakt`, ids.jellyfintrakt);
+    if (embyCode) embyCode.textContent = _withWebhookId(`${base}/webhook/embytrakt`, ids.embytrakt);
+  }
+
+  async function regenWebhookIds() {
+    const btn = $("#sc-regen-webhooks", STATE.mount);
+    if (btn) btn.disabled = true;
+    try {
+      const r = await j("/api/webhooks/regenerate", { method: "POST" });
+      if (r && r.ok && r.ids) {
+        STATE.webhookIds = r.ids || null;
+        applyWebhookUrls();
+        try { updatePlexWatcherWebhookUrl(); } catch {}
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+  refreshWebhookIds()
+    .then(() => {
+      applyWebhookUrls();
+      try { updatePlexWatcherWebhookUrl(); } catch {}
+    })
+    .catch(() => {
+      applyWebhookUrls();
+      try { updatePlexWatcherWebhookUrl(); } catch {}
+    });
+
+  try {
+    let btn = $("#sc-regen-webhooks", STATE.mount);
+    const anchor =
+      $("#sc-copy-plexwatcher", STATE.mount) ||
+      $("#sc-copy-plex", STATE.mount) ||
+      $("#sc-copy-jf", STATE.mount) ||
+      $("#sc-copy-emby", STATE.mount);
+
+    const host = anchor && anchor.parentElement ? anchor.parentElement : null;
+    if (host) {
+      if (!btn) {
+        btn = el("button", { id: "sc-regen-webhooks", className: "btn small", textContent: "Regenerate IDs" });
+      }
+
+      if (btn && btn.parentElement !== host) host.appendChild(btn);
+    }
+
+    on(btn, "click", async () => {
+      if (!confirm("Regenerate webhook IDs? You must update all media server webhook URLs afterwards.")) return;
+      try {
+        await regenWebhookIds();
+      } catch (e) {
+        console.error(e);
+      }
+    });
+  } catch {}
 
   const autostart = !!read("scrobble.watch.autostart", false);
   const auto = $("#sc-autostart", STATE.mount);
