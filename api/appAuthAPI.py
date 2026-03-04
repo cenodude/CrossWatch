@@ -114,7 +114,16 @@ def _effective_client_ip(request: Request) -> str:
 
 
 def _effective_scheme_is_https(request: Request) -> bool:
-    return str(request.url.scheme).lower() == "https"
+    scheme = str(request.url.scheme).lower()
+    if scheme == "https":
+        return True
+
+    if _is_trusted_proxy_request(request):
+        xf = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+        if xf == "https":
+            return True
+
+    return False
 
 def _now() -> int:
     return int(time.time())
@@ -427,7 +436,7 @@ def api_status(request: Request) -> JSONResponse:
         {
             "enabled": enabled,
             "configured": configured,
-            "username": str(a.get("username") or "") if enabled else "",
+            "username": str(a.get("username") or "") if (enabled and s is not None) else "",
             "authenticated": (s is not None) if auth_required(cfg) else True,
             "session_expires_at": int((s or {}).get("expires_at") or 0),
         },
