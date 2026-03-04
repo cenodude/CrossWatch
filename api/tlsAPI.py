@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from cryptography import x509
 
 from cw_platform.config_base import CONFIG, load_config, save_config
 from cw_platform.tls import cert_info, ensure_self_signed_cert, resolve_tls_paths
@@ -123,6 +124,15 @@ def tls_download_cert() -> FileResponse:
     p = Path(cert_path)
     if not p.exists():
         raise HTTPException(status_code=404, detail="Certificate not found")
+
+    try:
+        data = p.read_bytes()
+        try:
+            x509.load_pem_x509_certificate(data)
+        except Exception:
+            x509.load_der_x509_certificate(data)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid certificate file")
 
     return FileResponse(
         str(p),
