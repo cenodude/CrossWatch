@@ -7,10 +7,11 @@ from typing import Any
 
 import os
 import re
+import datetime as _dt
 
 from ..provider_instances import normalize_instance_id
 
-from ..id_map import minimal as _minimal, canonical_key as _ck
+from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
 from ._snapshots import (
     build_snapshots_for_feature,
     coerce_suspect_snapshot,
@@ -70,6 +71,139 @@ def _index_semantics(ops, feature: str) -> str:
         if sem:
             return str(sem).lower()
     return str(caps.get("index_semantics", "present")).lower()
+
+# Enrichment and hydration of index payloads
+def _enrich_index_payload(cur: dict[str, Any], prev: dict[str, Any], feature: str) -> dict[str, Any]:
+    if not cur or not prev:
+        return dict(cur or {})
+
+    def _iso_to_epoch(v: Any) -> int | None:
+        if not v:
+            return None
+        try:
+            s = str(v).strip().replace("Z", "+00:00").replace(" ", "T")
+            dt = _dt.datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_dt.timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
+
+    def _pick_newest(a: Any, b: Any) -> Any:
+        ae = _iso_to_epoch(a)
+        be = _iso_to_epoch(b)
+        if be is None:
+            return a
+        if ae is None or be > ae:
+            return b
+        return a
+
+    out: dict[str, Any] = {}
+    for k, cv in (cur or {}).items():
+        pv = (prev or {}).get(k)
+        if not isinstance(cv, Mapping) or not isinstance(pv, Mapping):
+            out[str(k)] = cv
+            continue
+
+        merged: dict[str, Any] = dict(pv)
+
+        # Merge IDs
+        ids_prev = pv.get("ids") if isinstance(pv.get("ids"), Mapping) else None
+        ids_cur = cv.get("ids") if isinstance(cv.get("ids"), Mapping) else None
+        ids = _merge_ids(ids_prev, ids_cur)
+        if ids:
+            merged["ids"] = ids
+
+        sids_prev = pv.get("show_ids") if isinstance(pv.get("show_ids"), Mapping) else None
+        sids_cur = cv.get("show_ids") if isinstance(cv.get("show_ids"), Mapping) else None
+        sids = _merge_ids(sids_prev, sids_cur)
+        if sids:
+            merged["show_ids"] = sids
+
+        # Overlay fields from current.
+        for fk, fv in cv.items():
+            if fk in ("ids", "show_ids"):
+                continue
+            if fv is None:
+                continue
+            if isinstance(fv, str) and fv == "":
+                continue
+            merged[fk] = fv
+
+        if feature == "history":
+            if "watched_at" in pv or "watched_at" in cv:
+                merged["watched_at"] = _pick_newest(pv.get("watched_at"), cv.get("watched_at"))
+        elif feature == "ratings":
+            if "rated_at" in pv or "rated_at" in cv:
+                merged["rated_at"] = _pick_newest(pv.get("rated_at"), cv.get("rated_at"))
+
+        out[str(k)] = merged
+
+    return out
+
+
+def _hydrate_missing_fields(cur: dict[str, Any], donor: dict[str, Any], feature: str) -> dict[str, Any]:
+    if not cur or not donor:
+        return dict(cur or {})
+
+    def _iso_to_epoch(v: Any) -> int | None:
+        if not v:
+            return None
+        try:
+            s = str(v).strip().replace("Z", "+00:00").replace(" ", "T")
+            dt = _dt.datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_dt.timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
+
+    def _pick_newest(a: Any, b: Any) -> Any:
+        ae = _iso_to_epoch(a)
+        be = _iso_to_epoch(b)
+        if be is None:
+            return a
+        if ae is None or be > ae:
+            return b
+        return a
+
+    out: dict[str, Any] = {}
+    for k, cv in (cur or {}).items():
+        dv = (donor or {}).get(k)
+        if not isinstance(cv, Mapping) or not isinstance(dv, Mapping):
+            out[str(k)] = cv
+            continue
+
+        merged: dict[str, Any] = dict(cv)
+
+        for fk, fv in dv.items():
+            if fk in ("ids", "show_ids"):
+                continue
+            if merged.get(fk) in (None, "") and fv not in (None, ""):
+                merged[fk] = fv
+
+        ids_cur = cv.get("ids") if isinstance(cv.get("ids"), Mapping) else None
+        ids_don = dv.get("ids") if isinstance(dv.get("ids"), Mapping) else None
+        ids = _merge_ids(ids_cur, ids_don)
+        if ids:
+            merged["ids"] = ids
+
+        sids_cur = cv.get("show_ids") if isinstance(cv.get("show_ids"), Mapping) else None
+        sids_don = dv.get("show_ids") if isinstance(dv.get("show_ids"), Mapping) else None
+        sids = _merge_ids(sids_cur, sids_don)
+        if sids:
+            merged["show_ids"] = sids
+
+        if feature == "history":
+            if "watched_at" in cv or "watched_at" in dv:
+                merged["watched_at"] = _pick_newest(cv.get("watched_at"), dv.get("watched_at"))
+        elif feature == "ratings":
+            if "rated_at" in cv or "rated_at" in dv:
+                merged["rated_at"] = _pick_newest(cv.get("rated_at"), dv.get("rated_at"))
+
+        out[str(k)] = merged
+
+    return out
 
 
 def _effective_library_whitelist(
@@ -360,6 +494,58 @@ def run_one_way_feature(
             return v if isinstance(v, Mapping) else None
         return None
 
+    # normalize destination keys onto source keyspace
+    def _rekey_to_src_keyspace(dst_idx: dict[str, Any], src_idx0: dict[str, Any]) -> dict[str, Any]:
+        if not dst_idx or not src_idx0:
+            return dict(dst_idx or {})
+
+        src_alias = _alias_index(src_idx0)
+        src_tmdb = {t: k for t, k in src_alias.items() if str(t).startswith("tmdb:")}
+        src_imdb = {t: k for t, k in src_alias.items() if str(t).startswith("imdb:")}
+        src_tvdb = {t: k for t, k in src_alias.items() if str(t).startswith("tvdb:")}
+
+        out: dict[str, Any] = {}
+        for dk, dv in (dst_idx or {}).items():
+            if not isinstance(dv, Mapping):
+                out[str(dk)] = dv
+                continue
+
+            dk_s = str(dk)
+            if dk_s in src_idx0:
+                out[dk_s] = dv
+                continue
+
+            toks = _typed_tokens(dv)
+            mk: str | None = None
+
+            for tok in toks:
+                if tok.startswith("tmdb:") and tok in src_tmdb:
+                    mk = src_tmdb[tok]
+                    break
+            if not mk:
+                for tok in toks:
+                    if tok.startswith("imdb:") and tok in src_imdb:
+                        mk = src_imdb[tok]
+                        break
+            if not mk:
+                for tok in toks:
+                    if tok.startswith("tvdb:") and tok in src_tvdb:
+                        mk = src_tvdb[tok]
+                        break
+
+            if not mk:
+                out[dk_s] = dv
+                continue
+
+            existing = out.get(mk)
+            if isinstance(existing, Mapping):
+                merged = _hydrate_missing_fields({mk: dict(existing)}, {mk: dict(dv)}, feature).get(mk)
+                out[mk] = merged if isinstance(merged, Mapping) else dict(existing)
+            else:
+                out[mk] = dv
+
+        return out
+
     pair_providers = {src: src_ops, dst: dst_ops}
 
     snaps = build_snapshots_for_feature(
@@ -463,6 +649,15 @@ def run_one_way_feature(
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
 
+    # Keep metadata when the provider index is presence-only.
+    dst_full = _enrich_index_payload(dst_full, prev_dst, feature)
+    src_idx = _enrich_index_payload(src_idx, prev_src, feature)
+
+    # Repair sparse destination snapshots using the source index.
+    if feature in ("history", "ratings", "progress"):
+        dst_full = _hydrate_missing_fields(dst_full, src_idx, feature)
+        dst_full = _rekey_to_src_keyspace(dst_full, src_idx)
+
     remove_mode = str(fcfg.get("remove_mode") or (sync_cfg.get("one_way_remove_mode") or "source_deletes")).strip().lower()
     if remove_mode not in ("source_deletes", "mirror"):
         remove_mode = "source_deletes"
@@ -520,7 +715,6 @@ def run_one_way_feature(
                     mirror_removes = list(mirror_removes or []) + extra
             except Exception:
                 pass
-
 
     else:
         if manual_adds:
