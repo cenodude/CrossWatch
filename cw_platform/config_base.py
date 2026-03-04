@@ -462,6 +462,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "simkl": {"access_token", "refresh_token", "client_secret"},
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key"},
+        "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key"},
         "emby": {"access_token", "api_key"},
@@ -841,12 +842,13 @@ def _ensure_webhook_ids(cfg: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
 def load_config() -> dict[str, Any]:
     p = _cfg_file()
+    first_run = not p.exists()
     user_cfg: dict[str, Any] = {}
     if p.exists():
         try:
             user_cfg = _read_json(p)
-        except Exception:
-            user_cfg = {}
+        except Exception as e:
+            raise RuntimeError(f"Invalid config file: {p}") from e
 
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
     cfg.setdefault("version", _current_version_norm())
@@ -858,6 +860,15 @@ def load_config() -> dict[str, Any]:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
     _normalize_ui(cfg)
+
+    # First-run marker for welcome/setup
+    if first_run:
+        try:
+            ui = cfg.get("ui")
+            if isinstance(ui, dict):
+                ui.setdefault("_autogen", True)
+        except Exception:
+            pass
 
     # Ensure webhook URL tokens exist
     try:
