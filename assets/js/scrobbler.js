@@ -2979,24 +2979,37 @@ async function hydrateJellyfin() {
   function wire() {
     ensureHiddenServerInputs();
     setNote("sc-webhook-warning", "These legacy webhooks scrobble only to Trakt and will be removed in a future release; they’re no longer maintained or supported, please switch to Watcher ASAP.", "warn");
+    // Copy the displayed webhook URL
+    function getCodeText(id) {
+      const n = $(id, STATE.mount);
+      return n && n.textContent ? String(n.textContent).trim() : "";
+    }
+
+    async function copyWebhookFromCode(codeId, noteId, successMsg, fallbackUrl) {
+      // Ensure tokens are loaded before copying
+      if (!STATE.webhookIds) {
+        try { await refreshWebhookIds(); } catch {}
+        try { applyWebhookUrls(); } catch {}
+        try { updatePlexWatcherWebhookUrl(); } catch {}
+      }
+
+      const url = getCodeText(codeId) || fallbackUrl;
+      const ok = await copyText(url);
+      setNote(noteId, ok ? successMsg : "Copy failed", ok ? "" : "err");
+    }
 
     on($("#sc-copy-plex", STATE.mount), "click", async () => {
-      const ok = await copyText(`${location.origin}/webhook/plextrakt`);
-      setNote("sc-endpoint-note", ok ? "Plex endpoint copied" : "Copy failed", ok ? "" : "err");
+      await copyWebhookFromCode("#sc-webhook-url-plex", "sc-endpoint-note", "Plex endpoint copied", `${location.origin}/webhook/plextrakt`);
     });
     on($("#sc-copy-jf", STATE.mount), "click", async () => {
-      const ok = await copyText(`${location.origin}/webhook/jellyfintrakt`);
-      setNote("sc-endpoint-note", ok ? "Jellyfin endpoint copied" : "Copy failed", ok ? "" : "err");
+      await copyWebhookFromCode("#sc-webhook-url-jf", "sc-endpoint-note", "Jellyfin endpoint copied", `${location.origin}/webhook/jellyfintrakt`);
     });
     on($("#sc-copy-emby", STATE.mount), "click", async () => {
-      const ok = await copyText(`${location.origin}/webhook/embytrakt`);
-      setNote("sc-endpoint-note", ok ? "Emby endpoint copied" : "Copy failed", ok ? "" : "err");
+      await copyWebhookFromCode("#sc-webhook-url-emby", "sc-endpoint-note", "Emby endpoint copied", `${location.origin}/webhook/embytrakt`);
     });
 
     on($("#sc-copy-plexwatcher", STATE.mount), "click", async () => {
-      const url = `${location.origin}/webhook/plexwatcher`;
-      const ok = await copyText(url);
-      setNote("sc-plexwatcher-note", ok ? "Watcher endpoint copied" : "Copy failed", ok ? "" : "err");
+      await copyWebhookFromCode("#sc-plexwatcher-url", "sc-plexwatcher-note", "Watcher endpoint copied", `${location.origin}/webhook/plexwatcher`);
     });
 
     on($("#sc-add-user", STATE.mount), "click", onAddUserWatch);
