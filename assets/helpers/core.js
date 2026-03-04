@@ -2668,6 +2668,21 @@ function cwUiSettingsHubUpdate() {
     set("hub_sec_session", "Locked");
   }
 
+  // Trusted reverse proxies indicator
+  try {
+    const raw = (document.getElementById("trusted_proxies")?.value || "").toString().trim();
+    let on = false;
+    if (raw) {
+      on = raw.split(/[;\n,]+/).map(s => s.trim()).filter(Boolean).length > 0;
+    } else {
+      const tp = window._cfgCache?.security?.trusted_proxies;
+      on = Array.isArray(tp) && tp.length > 0;
+    }
+    set("hub_sec_proxy", `Proxy: ${on ? "On" : "Off"}`);
+  } catch {
+    set("hub_sec_proxy", "Proxy: —");
+  }
+
   const cwEnabled = (document.getElementById("cw_enabled")?.value || "").toString() !== "false";
   set("hub_cw_enabled", `Tracker: ${cwEnabled ? "On" : "Off"}`);
 
@@ -2684,6 +2699,14 @@ function cwUiSettingsHubUpdate() {
   if (trackerFields) trackerFields.classList.toggle("cw-disabled", !cwEnabled);
 }
 
+function _cwTrustedProxiesEl() {
+  return (
+    document.getElementById("trusted_proxies") ||
+    document.getElementById("trusted_reverse_proxies") ||
+    document.getElementById("security_trusted_proxies")
+  );
+}
+
 function cwUiSettingsHubInit() {
   if (window.__cwUiSettingsHubInit) return;
   window.__cwUiSettingsHubInit = true;
@@ -2697,6 +2720,7 @@ function cwUiSettingsHubInit() {
     "app_auth_username",
     "app_auth_password",
     "app_auth_password2",
+    "trusted_proxies",
     "cw_enabled",
     "cw_retention_days",
     "cw_auto_snapshot",
@@ -3454,6 +3478,14 @@ async function loadConfig() {
     const aaP2 = document.getElementById("app_auth_password2");
     if (aaP2) aaP2.value = "";
 
+    // Trusted reverse proxies (optional)
+    const tpEl = _cwTrustedProxiesEl();
+    if (tpEl) {
+      const tp = (cfg.security && Array.isArray(cfg.security.trusted_proxies)) ? cfg.security.trusted_proxies : [];
+      tpEl.value = tp.filter((x) => typeof x === "string" && x.trim()).join(";");
+    }
+
+
     
     const cwEnabledEl = document.getElementById("cw_enabled");
     if (cwEnabledEl) {
@@ -3856,6 +3888,33 @@ async function saveSettings() {
       // @ts-ignore
       if (e && e.__cwAbortSave) throw e;
     }
+
+  // Trusted reverse proxies (optional)
+  try {
+    const tpEl = _cwTrustedProxiesEl();
+    if (tpEl) {
+      const raw = String(tpEl.value || "");
+      const parts = raw.split(/[;\n,]+/g).map((s) => String(s || "").trim()).filter((s) => !!s);
+      const uniq = [];
+      const seen = new Set();
+      parts.forEach((s) => {
+        const k = s.toLowerCase();
+        if (seen.has(k)) return;
+        seen.add(k);
+        uniq.push(s);
+      });
+
+      const cur = (cfg.security && Array.isArray(cfg.security.trusted_proxies)) ? cfg.security.trusted_proxies : [];
+      const curNorm = cur.map((x) => String(x || "").trim()).filter((s) => !!s);
+      if (JSON.stringify(curNorm) !== JSON.stringify(uniq)) {
+        if (!cfg.security || typeof cfg.security !== "object") cfg.security = {};
+        cfg.security.trusted_proxies = uniq;
+        changed = true;
+      }
+    }
+  } catch (e) {
+    console.warn("saveSettings: trusted proxies merge failed", e);
+  }
 
     const plexSecretInst    = _cwSelectedInst("plex");
     const simklSecretInst   = _cwSelectedInst("simkl");
