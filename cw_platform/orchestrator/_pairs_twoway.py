@@ -7,6 +7,7 @@ from typing import Any
 
 import os
 import re
+import datetime as _dt
 
 try:
     from ._pairs_oneway import (
@@ -47,7 +48,7 @@ except Exception:
     def _rate_filter(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[str, Any]:
         return idx
 
-from ..id_map import minimal as _minimal, canonical_key as _ck
+from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
 from ._snapshots import (
     build_snapshots_for_feature,
     coerce_suspect_snapshot,
@@ -104,6 +105,72 @@ def _index_semantics(ops, feature: str) -> str:
         if sem:
             return str(sem).lower()
     return str(caps.get("index_semantics", "present")).lower()
+
+def _enrich_index_payload(cur: dict[str, Any], prev: dict[str, Any], feature: str) -> dict[str, Any]:
+    if not cur or not prev:
+        return dict(cur or {})
+
+    def _iso_to_epoch(v: Any) -> int | None:
+        if not v:
+            return None
+        try:
+            s = str(v).strip().replace("Z", "+00:00").replace(" ", "T")
+            dt = _dt.datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_dt.timezone.utc)
+            return int(dt.timestamp())
+        except Exception:
+            return None
+
+    def _pick_newest(a: Any, b: Any) -> Any:
+        ae = _iso_to_epoch(a)
+        be = _iso_to_epoch(b)
+        if be is None:
+            return a
+        if ae is None or be > ae:
+            return b
+        return a
+
+    out: dict[str, Any] = {}
+    for k, cv in (cur or {}).items():
+        pv = (prev or {}).get(k)
+        if not isinstance(cv, Mapping) or not isinstance(pv, Mapping):
+            out[str(k)] = cv
+            continue
+
+        merged: dict[str, Any] = dict(pv)
+
+        ids_prev = pv.get("ids") if isinstance(pv.get("ids"), Mapping) else None
+        ids_cur = cv.get("ids") if isinstance(cv.get("ids"), Mapping) else None
+        ids = _merge_ids(ids_prev, ids_cur)
+        if ids:
+            merged["ids"] = ids
+
+        sids_prev = pv.get("show_ids") if isinstance(pv.get("show_ids"), Mapping) else None
+        sids_cur = cv.get("show_ids") if isinstance(cv.get("show_ids"), Mapping) else None
+        sids = _merge_ids(sids_prev, sids_cur)
+        if sids:
+            merged["show_ids"] = sids
+
+        for fk, fv in cv.items():
+            if fk in ("ids", "show_ids"):
+                continue
+            if fv is None:
+                continue
+            if isinstance(fv, str) and fv == "":
+                continue
+            merged[fk] = fv
+
+        if feature == "history":
+            if "watched_at" in pv or "watched_at" in cv:
+                merged["watched_at"] = _pick_newest(pv.get("watched_at"), cv.get("watched_at"))
+        elif feature == "ratings":
+            if "rated_at" in pv or "rated_at" in cv:
+                merged["rated_at"] = _pick_newest(pv.get("rated_at"), cv.get("rated_at"))
+        out[str(k)] = merged
+
+    return out
+
 
 def _effective_library_whitelist(
     cfg: Mapping[str, Any],
@@ -399,6 +466,10 @@ def _two_way_sync(
         prevB = _filter_index_by_libraries(prevB, libs_B, allow_unknown=allow_unknown_B)
         B_cur = _filter_index_by_libraries(B_cur, libs_B, allow_unknown=allow_unknown_B)
         B_eff = _filter_index_by_libraries(B_eff, libs_B, allow_unknown=allow_unknown_B)
+
+    # Keep rich metadata when the provider index is presence-only.
+    A_eff = _enrich_index_payload(A_eff, prevA, feature)
+    B_eff = _enrich_index_payload(B_eff, prevB, feature)
 
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
@@ -1493,6 +1564,90 @@ def _two_way_sync(
             pf = _ensure_pf(pmap, prov, inst, feat)
             pf["checkpoint"] = chk
 
+        # Normalize key drift so state doesn't inflate.
+        if feature in ("history", "ratings", "progress"):
+            def _merge_payload(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
+                out = dict(base or {})
+                for k, v in (extra or {}).items():
+                    if k in ("ids", "show_ids"):
+                        continue
+                    if out.get(k) in (None, "") and v not in (None, ""):
+                        out[k] = v
+
+                for fld in ("ids", "show_ids"):
+                    b = out.get(fld) if isinstance(out.get(fld), Mapping) else {}
+                    e = extra.get(fld) if isinstance(extra.get(fld), Mapping) else {}
+                    if b or e:
+                        merged: dict[str, Any] = dict(b or {})
+                        for kk, vv in (e or {}).items():
+                            if merged.get(kk) in (None, "") and vv not in (None, ""):
+                                merged[kk] = vv
+                        if merged:
+                            out[fld] = merged
+
+                if feature == "history":
+                    a0 = out.get("watched_at")
+                    b0 = extra.get("watched_at")
+                    if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                        out["watched_at"] = b0
+                elif feature == "ratings":
+                    a0 = out.get("rated_at")
+                    b0 = extra.get("rated_at")
+                    if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                        out["rated_at"] = b0
+                return out
+
+            def _rekey_to_other(idx0: dict[str, Any], other0: dict[str, Any]) -> dict[str, Any]:
+                if not idx0 or not other0:
+                    return dict(idx0 or {})
+
+                other_alias = _alias_index(other0)
+                other_tmdb = {t: k for t, k in other_alias.items() if str(t).startswith("tmdb:")}
+                other_imdb = {t: k for t, k in other_alias.items() if str(t).startswith("imdb:")}
+                other_tvdb = {t: k for t, k in other_alias.items() if str(t).startswith("tvdb:")}
+
+                out: dict[str, Any] = {}
+                for ck, it in (idx0 or {}).items():
+                    if not isinstance(it, Mapping):
+                        out[str(ck)] = it
+                        continue
+
+                    ck_s = str(ck)
+                    if ck_s in other0:
+                        out[ck_s] = it
+                        continue
+
+                    toks = _typed_tokens(it)
+                    mk: str | None = None
+
+                    for tok in toks:
+                        if tok.startswith("tmdb:") and tok in other_tmdb:
+                            mk = other_tmdb[tok]
+                            break
+                    if not mk:
+                        for tok in toks:
+                            if tok.startswith("imdb:") and tok in other_imdb:
+                                mk = other_imdb[tok]
+                                break
+                    if not mk:
+                        for tok in toks:
+                            if tok.startswith("tvdb:") and tok in other_tvdb:
+                                mk = other_tvdb[tok]
+                                break
+
+                    if not mk:
+                        out[ck_s] = it
+                        continue
+
+                    existing = out.get(mk)
+                    if isinstance(existing, Mapping):
+                        out[mk] = _merge_payload(existing, it)
+                    else:
+                        out[mk] = dict(it)
+
+                return out
+
+            B_eff = _rekey_to_other(B_eff, A_eff)
         _commit_baseline(provs_block, a, src_inst, feature, A_eff)
         _commit_baseline(provs_block, b, dst_inst, feature, B_eff)
         _commit_checkpoint(provs_block, a, src_inst, feature, now_cp_A)
