@@ -7,6 +7,7 @@ from typing import Any
 
 import base64
 import hashlib
+import ipaddress
 import hmac
 import os
 import secrets
@@ -32,7 +33,88 @@ AUTH_TTL_SEC = 30 * 24 * 60 * 60
 MAX_SESSIONS = 10
 
 _LOGIN_FAILS: dict[str, dict[str, Any]] = {}
+_TRUSTED_PROXY_CACHE: dict[str, Any] = {"at": 0.0, "nets": []}
 
+def _trusted_proxy_nets() -> list[ipaddress._BaseNetwork]:
+    now = time.time()
+    try:
+        if (now - float(_TRUSTED_PROXY_CACHE.get("at") or 0.0)) < 5.0:
+            nets = _TRUSTED_PROXY_CACHE.get("nets") or []
+            if isinstance(nets, list):
+                return nets
+    except Exception:
+        pass
+
+    raw: Any = []
+    try:
+        cfg = load_config()
+        sec = cfg.get("security") if isinstance(cfg, dict) else {}
+        if not isinstance(sec, dict):
+            sec = {}
+        raw = sec.get("trusted_proxies") or []
+    except Exception:
+        raw = []
+
+    items = raw if isinstance(raw, (list, tuple, set)) else ([raw] if raw else [])
+    nets: list[ipaddress._BaseNetwork] = []
+    for it in items:
+        s = str(it or "").strip()
+        if not s:
+            continue
+        try:
+            if "/" in s:
+                nets.append(ipaddress.ip_network(s, strict=False))
+            else:
+                ip = ipaddress.ip_address(s)
+                bits = 32 if ip.version == 4 else 128
+                nets.append(ipaddress.ip_network(f"{ip}/{bits}", strict=False))
+        except Exception:
+            continue
+
+    try:
+        _TRUSTED_PROXY_CACHE["at"] = now
+        _TRUSTED_PROXY_CACHE["nets"] = nets
+    except Exception:
+        pass
+
+    return nets
+
+
+def _is_trusted_proxy_request(request: Request) -> bool:
+    host = getattr(getattr(request, "client", None), "host", "") or ""
+    if not host:
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except Exception:
+        return False
+    for net in _trusted_proxy_nets():
+        try:
+            if ip in net:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _effective_client_ip(request: Request) -> str:
+    peer = getattr(getattr(request, "client", None), "host", "") or "local"
+    if not _is_trusted_proxy_request(request):
+        return peer
+
+    xff = str(request.headers.get("x-forwarded-for") or "").strip()
+    if not xff:
+        return peer
+    cand = xff.split(",")[0].strip()
+    try:
+        ipaddress.ip_address(cand)
+        return cand
+    except Exception:
+        return peer
+
+
+def _effective_scheme_is_https(request: Request) -> bool:
+    return str(request.url.scheme).lower() == "https"
 
 def _now() -> int:
     return int(time.time())
@@ -183,7 +265,7 @@ def is_authenticated(cfg: dict[str, Any], token: str | None) -> bool:
 
 
 def _rate_limit_ok(request: Request) -> tuple[bool, int]:
-    ip = getattr(getattr(request, "client", None), "host", "") or "local"
+    ip = _effective_client_ip(request)
     rec = _LOGIN_FAILS.get(ip) or {"n": 0, "until": 0}
     until = int(rec.get("until") or 0)
     if until > _now():
@@ -192,7 +274,7 @@ def _rate_limit_ok(request: Request) -> tuple[bool, int]:
 
 
 def _rate_limit_fail(request: Request) -> None:
-    ip = getattr(getattr(request, "client", None), "host", "") or "local"
+    ip = _effective_client_ip(request)
     rec = _LOGIN_FAILS.get(ip) or {"n": 0, "until": 0}
     n = int(rec.get("n") or 0) + 1
     backoff = min(60, 2 ** min(5, n))
@@ -251,8 +333,8 @@ def _clear_sessions(cfg: dict[str, Any]) -> None:
 
 
 def _set_cookie(resp: Response, token: str, exp: int, request: Request) -> None:
-    xfp = str(request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-protocol") or "").lower()
-    secure = (str(request.url.scheme).lower() == "https") or (xfp == "https")
+    # Secure cookie only when CW itself is running on HTTPS.
+    secure = _effective_scheme_is_https(request)
     resp.set_cookie(
         COOKIE_NAME,
         token,
@@ -264,12 +346,9 @@ def _set_cookie(resp: Response, token: str, exp: int, request: Request) -> None:
         secure=secure,
     )
 
-
 def _del_cookie(resp: Response, request: Request) -> None:
-    xfp = str(request.headers.get("x-forwarded-proto") or request.headers.get("x-forwarded-protocol") or "").lower()
-    secure = (str(request.url.scheme).lower() == "https") or (xfp == "https")
+    secure = _effective_scheme_is_https(request)
     resp.delete_cookie(COOKIE_NAME, path="/", samesite="lax", secure=secure)
-
 
 def _login_html(username: str) -> str:
     u = (username or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
