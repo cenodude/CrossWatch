@@ -113,7 +113,7 @@ export default {
         </div>
         <div>
           <div class="title">Welcome to CrossWatch</div>
-          <div class="sub">First run setup (no config.json yet)</div>
+          <div class="sub">First run setup (not configured yet)</div>
         </div>
         <div class="v">v${ver}</div>
       </div>
