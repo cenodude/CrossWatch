@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import parse_qs, quote
+from urllib.parse import parse_qs, parse_qsl, urlencode, quote
 from importlib import import_module
 
 import sys
@@ -207,8 +207,59 @@ def _is_static_noise(path: str, status: int) -> bool:
             pass
         except Exception:
             pass
-
     return False
+
+_SENSITIVE_QUERY_KEYS = {
+    "token", "access_token", "refresh_token", "client_secret",
+    "api_key", "apikey", "code", "state", "password", "secret",
+    "session_id", "x-plex-token",
+}
+
+def _redact_query_string(query: str) -> str:
+    q = (query or "").strip()
+    if not q:
+        return ""
+    try:
+        pairs = parse_qsl(q, keep_blank_values=True)
+    except Exception:
+        return ""
+    redacted: list[tuple[str, str]] = []
+    for k, v in pairs:
+        if str(k).strip().lower() in _SENSITIVE_QUERY_KEYS:
+            redacted.append((k, "••••"))
+        else:
+            redacted.append((k, v))
+    try:
+        return urlencode(redacted, doseq=True)
+    except Exception:
+        return ""
+
+_SECRET_KV_RE = re.compile(
+    r"(?i)(\b(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token|password)\b\s*[=:]\s*)([^\s,;&]+)"
+)
+_URL_QS_RE = re.compile(
+    r"(?i)([?&](?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token)=)([^&\s]+)"
+)
+_AUTH_BEARER_RE = re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s,;]+)")
+_BEARER_RE = re.compile(r"(?i)\bBearer\s+([^\s,;]+)")
+_JSON_DQ_RE = re.compile(
+    r'(?i)("(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token|password|hash|salt)"\s*:\s*")([^"]*)(")'
+)
+_JSON_SQ_RE = re.compile(
+    r"(?i)('(?:api_key|apikey|access_token|refresh_token|client_secret|session_id|token|x-plex-token|password|hash|salt)'\s*:\s*')([^']*)(')"
+)
+
+def _redact_secrets_in_text(s: str) -> str:
+    if not s:
+        return s
+    out = s
+    out = _AUTH_BEARER_RE.sub(r"\1••••", out)
+    out = _BEARER_RE.sub("Bearer ••••", out)
+    out = _URL_QS_RE.sub(r"\1••••", out)
+    out = _SECRET_KV_RE.sub(r"\1••••", out)
+    out = _JSON_DQ_RE.sub(r"\1••••\3", out)
+    out = _JSON_SQ_RE.sub(r"\1••••\3", out)
+    return out
 
 def _is_mods_debug_enabled() -> bool:
     try:
@@ -371,7 +422,8 @@ async def conditional_access_logger(request: Request, call_next):
                 if should_log:
                     dt_ms = int((time.time() - t0) * 1000)
                     host = f"{client.host}:{client.port}" if client else "-"
-                    path_qs = path + (f"?{request.url.query}" if request.url.query else "")
+                    qs = _redact_query_string(request.url.query)
+                    path_qs = path + (f"?{qs}" if qs else "")
                     proto = f"HTTP/{request.scope.get('http_version','1.1')}"
                     print(f'{host} - "{request.method} {path_qs} {proto}" {status} ({dt_ms} ms)')
 
@@ -530,7 +582,8 @@ def ansi_to_html(line: str) -> str:
 
 def _append_log(tag: str, raw_line: str) -> None:
     t = _norm_log_tag(tag)
-    html = ansi_to_html(raw_line.rstrip("\n"))
+    safe_line = _redact_secrets_in_text(raw_line)
+    html = ansi_to_html(safe_line.rstrip("\n"))
     buf = _get_log_buf(t)
     buf.append(html)
     LOG_NEXT_SEQ[t] = int(LOG_NEXT_SEQ.get(t, 1)) + 1
