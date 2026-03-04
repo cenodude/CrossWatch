@@ -304,7 +304,9 @@ window.cwPwaDiag = function () {
           }
         }
 
-        if (!meta.exists) {
+        const firstRun = (!meta.exists) || !!meta.first_run || !!meta.autogen;
+
+        if (firstRun) {
           if (await ensureModals()) { try { await window.openSetupWizard?.(meta); } catch (e) { console.warn(e); } }
           return;
         }
