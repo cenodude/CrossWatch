@@ -512,10 +512,10 @@ def _get_index_html_static() -> str:
               <div class="cw-hub-title">User Interface</div>
               <div class="cw-hub-desc">Dashboard visuals</div>
               <div class="chips">
-                <span class="chip" id="hub_ui_watchlist">Watchlist: —</span>
-                <span class="chip" id="hub_ui_playing">Playing: —</span>
-                <span class="chip" id="hub_ui_askai">ASK AI: —</span>
-                <span class="chip" id="hub_ui_proto">Proto: —</span>
+                <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
+                <span class="chip" id="hub_ui_playing">Playing: -</span>
+                <span class="chip" id="hub_ui_askai">ASK AI: -</span>
+                <span class="chip" id="hub_ui_proto">Proto: -</span>
               </div>
             </button>
 
@@ -523,8 +523,9 @@ def _get_index_html_static() -> str:
               <div class="cw-hub-title">Security</div>
               <div class="cw-hub-desc">Protect CrossWatch</div>
               <div class="chips">
-                <span class="chip" id="hub_sec_auth">Auth: —</span>
-                <span class="chip" id="hub_sec_session">Session: —</span>
+                <span class="chip" id="hub_sec_auth">Auth: -</span>
+                <span class="chip" id="hub_sec_session">Session: -</span>
+                <span class="chip" id="hub_sec_proxy">Proxy: -</span>
               </div>
             </button>
 
@@ -532,8 +533,8 @@ def _get_index_html_static() -> str:
               <div class="cw-hub-title">CW Tracker</div>
               <div class="cw-hub-desc">Local snapshots</div>
               <div class="chips">
-                <span class="chip" id="hub_cw_enabled">Tracker: —</span>
-                <span class="chip" id="hub_cw_retention">Retention: —</span>
+                <span class="chip" id="hub_cw_enabled">Tracker: -</span>
+                <span class="chip" id="hub_cw_retention">Retention: -</span>
               </div>
             </button>
           </div>
@@ -633,8 +634,17 @@ def _get_index_html_static() -> str:
                 <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
                 <div class="sub" id="app_auth_state" style="margin:0">—</div>
               </div>
+              
+              <div style="margin-top:14px">
+                <label>Trusted reverse proxies (optional)</label>
+                <input id="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
+                <div class="sub" style="margin-top:0.25rem">
+                  Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
+                  Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                </div>
+              </div>
             </div>
-
+            
             <!-- Panel: CW Tracker -->
             <div class="cw-settings-panel" data-tab="tracker">
               <div class="cw-panel-head">
