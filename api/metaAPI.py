@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
@@ -172,6 +173,33 @@ def _tmdb_size_url(img: dict[str, Any], size_tag: str) -> str | None:
         return f"https://image.tmdb.org/t/p/{size_tag}{path}"
     url = img.get("url") or ""
     return url or None
+
+_TMBD_SIZE_RE = re.compile(r"^w\d{1,4}$", re.IGNORECASE)
+
+def _sanitize_tmdb_size(size: str | None, *, default: str = "w342") -> str:
+    s = (size or "").strip()
+    if not s:
+        return default
+    s = s.lower()
+    if s == "original":
+        return "original"
+    if _TMBD_SIZE_RE.fullmatch(s):
+        try:
+            n = int(s[1:])
+        except Exception:
+            raise ValueError("Invalid size")
+        if 1 <= n <= 2000:
+            return f"w{n}"
+    raise ValueError("Invalid size")
+
+def _ensure_under_root(root: Path, p: Path) -> Path:
+    root_r = root.resolve()
+    p_r = p.resolve()
+    try:
+        p_r.relative_to(root_r)
+    except Exception:
+        raise ValueError("Invalid path")
+    return p_r
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -469,7 +497,7 @@ def get_poster_file(
     if not best:
         return str(_placeholder_poster()), "image/svg+xml"
 
-    size_tag = size or "w342"
+    size_tag = _sanitize_tmdb_size(size)
     src_url = _tmdb_size_url(best, size_tag) or ""
     if not src_url:
         return str(_placeholder_poster()), "image/svg+xml"
@@ -480,6 +508,10 @@ def get_poster_file(
 
     ext = Path(src_url.split("?", 1)[0]).suffix or ".jpg"
     dest = base.with_suffix(ext)
+
+    # Enforce cache paths stay inside the cache root
+    _ensure_under_root(cache_root, meta_path)
+    _ensure_under_root(cache_root, dest)
 
     prev_url = _read_json(meta_path).get("url") if meta_path.exists() else None
     if (prev_url and prev_url != src_url) or (not meta_path.exists()):
@@ -554,7 +586,12 @@ def api_tmdb_art(
     try:
         _, base, _ = _env()
         eff_locale = locale or _cfg_ui_locale()
-        local_path, mime = get_poster_file(api_key, t, tmdb_id, size, base, locale=eff_locale)
+        try:
+            size_tag = _sanitize_tmdb_size(size)
+        except Exception:
+            return PlainTextResponse("Invalid size", status_code=400)
+
+        local_path, mime = get_poster_file(api_key, t, tmdb_id, size_tag, base, locale=eff_locale)
         return FileResponse(
             str(local_path),
             media_type=mime,
