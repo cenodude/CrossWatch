@@ -79,6 +79,16 @@ def api_config_meta() -> JSONResponse:
         except Exception:
             raw = {}
 
+    autogen = False
+    try:
+        ui = raw.get("ui") if isinstance(raw, dict) else None
+        if isinstance(ui, dict):
+            autogen = bool(ui.get("_autogen"))
+    except Exception:
+        autogen = False
+
+    first_run = (not exists) or autogen
+
     cfg_ver = _norm_ver(raw.get("version") if isinstance(raw, dict) else None) or None
     try:
         from api.versionAPI import CURRENT_VERSION as _V
@@ -109,6 +119,8 @@ def api_config_meta() -> JSONResponse:
         JSONResponse(
             {
                 "exists": exists,
+                "first_run": first_run,
+                "autogen": autogen,
                 "path": str(p) if p is not None else None,
                 "size": size,
                 "mtime": mtime,
@@ -169,7 +181,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         if k in exact:
             return True
 
-        # Catch foo_token, but avoid common non-secret config like token_endpoint/url
+        # Catch token
         if k.endswith("_token") and k not in {"token_endpoint", "token_url"}:
             return True
 
@@ -184,7 +196,6 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return any(s in k for s in subs)
 
     def _preserve_sensitive(cur: Any, inc: Any, dst: Any) -> None:
-        """Preserve sensitive leaves when UI sends blank/masked placeholders."""
         if isinstance(inc, dict) and isinstance(dst, dict):
             cur_d = cur if isinstance(cur, dict) else {}
             for k, inc_v in inc.items():
@@ -258,6 +269,14 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         for p in (cfg.get("pairs") or []):
             try: env["norm_pair"](p)
             except Exception: pass
+    except Exception:
+        pass
+
+    # Setup-wizard marker: saved config then clear any auto-generated flag.
+    try:
+        ui = cfg.get("ui")
+        if isinstance(ui, dict):
+            ui.pop("_autogen", None)
     except Exception:
         pass
 
