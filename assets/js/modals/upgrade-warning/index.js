@@ -24,12 +24,105 @@ function _escapeHtml(s) {
     .replaceAll("'", "&#39;");
 }
 
-function _sanitizeHtml(html) {
+function _guessGithubRepo(s) {
+  const m = String(s || "").match(/https?:\/\/github\.com\/([^\/\s]+\/[^\/\s]+)\//i);
+  return m ? m[1] : "";
+}
+
+function _splitUrlTail(u) {
+  let clean = String(u || "");
+  let tail = "";
+  while (clean && /[\]\)\}\.,;:!?]+$/.test(clean)) {
+    tail = clean.slice(-1) + tail;
+    clean = clean.slice(0, -1);
+  }
+  return { clean, tail };
+}
+
+function _sanitizeHtml(html, ctx = {}) {
   try {
     const tpl = document.createElement("template");
     tpl.innerHTML = String(html || "");
+    const githubRepo = String(ctx.githubRepo || "").trim();
     const blocked = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META"]);
     const kill = [];
+
+    try {
+      const isSkippableText = (node) => {
+        let p = node && node.parentNode;
+        while (p && p.nodeType === 1) {
+          const tag = String(p.tagName || "").toUpperCase();
+          if (tag === "A" || tag === "CODE" || tag === "PRE" || tag === "SCRIPT" || tag === "STYLE") return true;
+          p = p.parentNode;
+        }
+        return false;
+      };
+
+      const re = /(https?:\/\/[^\s<>"']+)|(^|[\s([{,;:])#(\d{1,7})\b/g;
+      const tw = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (tw.nextNode()) nodes.push(tw.currentNode);
+
+      for (const node of nodes) {
+        if (!node || !node.nodeValue) continue;
+        if (isSkippableText(node)) continue;
+
+        const s = node.nodeValue;
+        if (!/https?:\/\//i.test(s) && (githubRepo ? !/#\d+\b/.test(s) : true)) continue;
+
+        let m;
+        let idx = 0;
+        let changed = false;
+        const frag = document.createDocumentFragment();
+        re.lastIndex = 0;
+
+        while ((m = re.exec(s))) {
+          // URL match
+          if (m[1]) {
+            const start = m.index;
+            const rawUrl = m[1];
+            const { clean, tail } = _splitUrlTail(rawUrl);
+            if (!clean) continue;
+
+            frag.append(document.createTextNode(s.slice(idx, start)));
+
+            const a = document.createElement("a");
+            a.href = clean;
+
+            const gh = clean.match(/^https?:\/\/github\.com\/[^\/\s]+\/[^\/\s]+\/(issues|pull)\/(\d+)(?:\/|$)/i);
+            a.textContent = gh ? `#${gh[2]}` : clean;
+            frag.append(a);
+            if (tail) frag.append(document.createTextNode(tail));
+
+            idx = start + rawUrl.length;
+            changed = true;
+            continue;
+          }
+
+          // Issue ref match (#123)
+          const prefix = m[2] || "";
+          const num = m[3];
+          const issueStart = m.index + prefix.length;
+          frag.append(document.createTextNode(s.slice(idx, issueStart)));
+
+          if (githubRepo) {
+            const a = document.createElement("a");
+            a.href = `https://github.com/${githubRepo}/issues/${num}`;
+            a.textContent = `#${num}`;
+            frag.append(a);
+            changed = true;
+          } else {
+            frag.append(document.createTextNode(`#${num}`));
+          }
+
+          idx = m.index + m[0].length;
+        }
+
+        if (!changed) continue;
+        frag.append(document.createTextNode(s.slice(idx)));
+        node.parentNode?.replaceChild(frag, node);
+      }
+    } catch {}
 
     const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_ELEMENT);
     while (walker.nextNode()) {
@@ -585,7 +678,9 @@ export default {
       const pre = hostEl.querySelector("#upg-release-notes-body");
       if (!card || !pre) return;
 
-      pre.innerHTML = _sanitizeHtml(_mdToHtml(body));
+      // Enable linkification of plain URLs
+      const githubRepo = _guessGithubRepo(body) || _guessGithubRepo(j.html_url || j.url || "");
+      pre.innerHTML = _sanitizeHtml(_mdToHtml(body), { githubRepo });
       const lat = _norm(j.latest_version || j.latest || "");
       const pub = String(j.published_at || "").trim();
       const meta = hostEl.querySelector("#upg-release-notes-meta");
