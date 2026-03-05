@@ -76,7 +76,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.2.0"
+__VERSION__ = "3.3.0"
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
 _DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Emby)")
