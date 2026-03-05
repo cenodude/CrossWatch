@@ -3730,7 +3730,13 @@ async function saveSettings() {
     window.setTimeout(() => el.classList.add("hide"), 2000);
   };
 
-  const norm = (s) => (s ?? "").trim();
+  // Normalize values coming from config/UI. Must tolerate non-strings (e.g. numeric account_id).
+  const norm = (v) => {
+    if (v === null || v === undefined) return "";
+    if (typeof v === "string") return v.trim();
+    if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v).trim();
+    try { return String(v).trim(); } catch { return ""; }
+  };
   const readToggle = (id) => {
     const el = document.getElementById(id);
     if (!el) return false;
@@ -4477,13 +4483,17 @@ async function saveSettings() {
       let uiAid = null;
       if (uiAidS !== "") {
         const n = parseInt(uiAidS, 10);
-        uiAid = Number.isFinite(n) && n > 0 ? n : 1;
+        uiAid = Number.isFinite(n) && n > 0 ? n : null;
       }
 
       const prevUrl    = norm(prevPlex?.server_url);
       const prevUser   = norm(prevPlex?.username);
       const prevAidRaw = prevPlex?.account_id;
-      const prevAid    = Number.isFinite(prevAidRaw) && prevAidRaw > 0 ? prevAidRaw : 1;
+      const prevAidS   = norm(prevAidRaw);
+      const prevAidN   = (() => {
+        const n = parseInt(prevAidS, 10);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })();
 
       if (uiUrl && uiUrl !== prevUrl) {
         nextPlex.server_url = uiUrl;
@@ -4495,13 +4505,10 @@ async function saveSettings() {
       }
 
       if (uiAid !== null) {
-        if (uiAid !== prevAid) {
+        if (prevAidN === null || uiAid !== prevAidN) {
           nextPlex.account_id = uiAid;
           changed = true;
         }
-      } else if (!Number.isFinite(prevAidRaw) || prevAidRaw <= 0) {
-        nextPlex.account_id = 1;
-        changed = true;
       }
 
       const uiVerify = !!document.getElementById("plex_verify_ssl")?.checked;
@@ -4525,9 +4532,18 @@ async function saveSettings() {
             .map(x => parseInt(String(x), 10))
             .filter(Number.isFinite);
 
-        const hist = toNums(st.hist);
-        const rate = toNums(st.rate);
-        const scr  = toNums(st.scr);
+        const fromSelect = (id) => {
+          const el = document.getElementById(id);
+          if (!el || !el.selectedOptions) return null;
+          return Array.from(el.selectedOptions)
+            .map(o => parseInt(String(o.value), 10))
+            .filter(Number.isFinite);
+        };
+
+        // Prefer selects
+        const hist = fromSelect("plex_lib_history")  ?? toNums(st.hist);
+        const rate = fromSelect("plex_lib_ratings") ?? toNums(st.rate);
+        const scr  = fromSelect("plex_lib_scrobble")?? toNums(st.scr);
 
         const _same = (a, b) => {
           const A = (a || []).map(Number).sort((x,y)=>x-y);
