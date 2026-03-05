@@ -306,6 +306,8 @@ def jf_resolve_library_id(
     roots: Mapping[str, Mapping[str, Any]],
     scope_libs: list[str] | None = None,
     http: Any | None = None,
+    *,
+    allow_deep_lookup: bool = True,
 ) -> str | None:
     if scope_libs and len(scope_libs) == 1:
         return str(scope_libs[0])
@@ -329,11 +331,6 @@ def jf_resolve_library_id(
         if cid in roots:
             return cid
 
-    if http and row.get("Id"):
-        deep = _jf_lib_id_via_ancestors(http, str(row["Id"]), roots)
-        if deep:
-            return deep
-
     path = (row.get("Path") or "").strip()
     if path and roots:
         best: str | None = None
@@ -350,6 +347,12 @@ def jf_resolve_library_id(
                     best_len = len(rp)
         if best:
             return best
+
+    # Deep ancestor lookup is expensive
+    if allow_deep_lookup and http and row.get("Id"):
+        deep = _jf_lib_id_via_ancestors(http, str(row["Id"]), roots)
+        if deep:
+            return deep
 
     want: str | None = None
     ctype = (row.get("CollectionType") or "").strip().lower()
