@@ -7,6 +7,7 @@ from .._log import log as cw_log
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
@@ -176,6 +177,20 @@ def _history_limit(adapter: Any) -> int:
     except Exception:
         return 1000
 
+def _history_page_size(adapter: Any) -> int:
+    env = (os.environ.get("CW_JELLYFIN_HISTORY_PAGE_SIZE") or "").strip()
+    if env:
+        try:
+            v = int(env)
+            return max(50, min(2000, v))
+        except Exception:
+            pass
+
+    base = int(_history_limit(adapter) or 25)
+    if base < 100:
+        return 500
+    return max(50, min(2000, base))
+
 
 def _history_delay_ms(adapter: Any) -> int:
     cfg = getattr(adapter, "cfg", None)
@@ -331,23 +346,8 @@ def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
 
 
 def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
-    try:
-        r = http.get(f"/Users/{uid}/Items/{iid}", params={"Fields": "UserData"})
-        if getattr(r, "status_code", 0) != 200:
-            return False, 0
-        data = r.json() or {}
-        ud = data.get("UserData") or {}
-        played = bool(ud.get("Played") or ud.get("IsPlayed"))
-        ts = 0
-        for k in ("LastPlayedDate", "DateLastPlayed", "LastPlayed"):
-            v = ud.get(k) or data.get(k)
-            if v:
-                ts = _parse_iso_to_epoch(v) or 0
-                if ts:
-                    break
-        return played, ts
-    except Exception:
-        return False, 0
+    # Delegate to batch variant to keep parsing consistent
+    return _dst_user_states(http, uid, [str(iid)]).get(str(iid), (False, 0))
 
 
 
@@ -409,12 +409,11 @@ def build_index(
 ) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog = prog_mk("history") if callable(prog_mk) else None
-
     http = adapter.client
     uid = adapter.cfg.user_id
     _SERIES_META_CACHE.clear()
-    page_size = _history_limit(adapter)
-
+    page_size = _history_page_size(adapter)
+    allow_deep = (os.environ.get("CW_JELLYFIN_HISTORY_DEEP_LOOKUP") or "").strip().lower() == "true"
     since_epoch = 0
     if isinstance(since, (int, float)):
         since_epoch = int(since)
@@ -438,8 +437,10 @@ def build_index(
 
     start = 0
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    page = 0
 
     while True:
+        t0 = time.monotonic()
         params: dict[str, Any] = {
             "UserId": uid,
             "SortBy": "DatePlayed",
@@ -448,10 +449,11 @@ def build_index(
             "Recursive": "true",
             "Filters": "IsPlayed",
             "Fields": (
-                "ProviderIds,MediaSources,Path,Overview,"
-                "ParentId,LibraryId,AncestorIds,"
-                "SeriesName,SeriesId,IndexNumber,ParentIndexNumber,DateLastMediaAdded"
+                "ProviderIds,Path,ParentId,LibraryId,AncestorIds,"
+                "Name,SeriesName,SeriesId,IndexNumber,ParentIndexNumber,UserData"
             ),
+            "EnableImages": "false",
+            "EnableTotalRecordCount": "false",
             "StartIndex": start,
             "Limit": page_size,
         }
@@ -462,6 +464,16 @@ def build_index(
         r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         rows = body.get("Items") or []
+        page += 1
+        took_ms = int((time.monotonic() - t0) * 1000)
+        _dbg(
+            "index page",
+            page=page,
+            start=start,
+            got=len(rows),
+            limit=page_size,
+            latency_ms=took_ms,
+        )
         if not rows:
             break
 
@@ -485,7 +497,13 @@ def build_index(
                 break
 
             m = jelly_normalize(row)
-            lib_id = jf_resolve_library_id(row, roots, scope_libs, http)
+            lib_id = jf_resolve_library_id(
+                row,
+                roots,
+                scope_libs,
+                http,
+                allow_deep_lookup=allow_deep,
+            )
 
             m = dict(m)
             m["library_id"] = lib_id
@@ -541,7 +559,7 @@ def build_index(
             out_ev = dict(event)
             if lib_id:
                 out_ev["library_id"] = lib_id
-            events.append((ts, {"key": ev_key, "base": m}, out_ev))
+            events.append((ts, {"key": ev_key}, out_ev))
 
         start += len(body.get("Items") or [])
         if isinstance(limit, int) and limit > 0 and len(events) >= int(limit):
@@ -630,6 +648,89 @@ def build_index(
     _info("index done", count=len(out), mode="events+presence")
     return out
 
+# shared write helpers
+_COPY_OVER_KEYS: tuple[str, ...] = (
+    "type",
+    "title",
+    "year",
+    "watch_type",
+    "watched_at",
+    "library_id",
+    "season",
+    "episode",
+    "series_title",
+    "show_ids",
+    "series_year",
+)
+
+
+def _coerce_anime_type(m: dict[str, Any]) -> None:
+    t_raw = str(m.get("type") or "").strip().lower()
+    if t_raw != "anime":
+        return
+    if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
+        m["type"] = "episode"
+    else:
+        m["type"] = "show"
+
+
+def _try_resolve_iid(adapter: Any, m: Mapping[str, Any]) -> str | None:
+    try:
+        iid = resolve_item_id(adapter, m)
+        return str(iid) if iid else None
+    except Exception as e:
+        _warn("resolve exception", err=repr(e))
+        return None
+
+
+def _prepare_want(
+    base: Mapping[str, Any],
+    *,
+    raw_key: str | None = None,
+    raw_iid: str | None = None,
+) -> tuple[str | None, dict[str, Any] | None, dict[str, Any] | None]:
+    base_d: dict[str, Any] = dict(base or {})
+    base_ids_raw = base_d.get("ids")
+    base_ids = dict(base_ids_raw) if isinstance(base_ids_raw, Mapping) else {}
+    has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+    nm = jelly_normalize(base_d)
+    m: dict[str, Any] = dict(nm)
+
+    if raw_key:
+        m["_cw_key"] = raw_key
+    if raw_iid:
+        m["jellyfin_item_id"] = raw_iid
+
+    if has_ids:
+        for key in _COPY_OVER_KEYS:
+            if base_d.get(key) not in (None, ""):
+                m[key] = base_d[key]
+
+        ids = dict(nm.get("ids") or {})
+        for k_id, v_id in base_ids.items():
+            if v_id not in (None, "", 0):
+                ids[k_id] = v_id
+        if ids:
+            m["ids"] = ids
+
+    _coerce_anime_type(m)
+
+    key_opt: str | None
+    if raw_key:
+        key_opt = raw_key
+    else:
+        try:
+            key_opt = canonical_key(m) or canonical_key(base_d)
+        except Exception:
+            key_opt = None
+
+    if not key_opt:
+        _freeze(base_d, reason="missing_ids_for_key")
+        return None, None, {"item": id_minimal(base_d), "hint": "missing_ids_for_key"}
+
+    return str(key_opt), m, None
+
 
 # writes
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -642,59 +743,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     wants: dict[str, dict[str, Any]] = {}
 
     for it in (items or []):
-        base: dict[str, Any] = dict(it or {})
-        base_ids_raw = base.get("ids")
-        if isinstance(base_ids_raw, Mapping):
-            base_ids: dict[str, Any] = dict(base_ids_raw)
-        else:
-            base_ids = {}
-        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
-
-        nm = jelly_normalize(base)
-        m: dict[str, Any] = dict(nm)
-
-        if has_ids:
-            for key in (
-                "type",
-                "title",
-                "year",
-                "watch_type",
-                "watched_at",
-                "library_id",
-                "season",
-                "episode",
-                "series_title",
-                "show_ids",
-                "series_year",
-            ):
-                if base.get(key) not in (None, ""):
-                    m[key] = base[key]
-
-            ids = dict(nm.get("ids") or {})
-            for k_id, v_id in base_ids.items():
-                if v_id not in (None, "", 0):
-                    ids[k_id] = v_id
-            if ids:
-                m["ids"] = ids
-
-        t_raw = str(m.get("type") or "").strip().lower()
-        if t_raw == "anime":
-            if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
-                m["type"] = "episode"
-            else:
-                m["type"] = "show"
-
-        try:
-            k = canonical_key(m) or canonical_key(base)
-        except Exception:
-            k = None
-
-        if not k:
-            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
-            _freeze(base, reason="missing_ids_for_key")
+        key, m, err = _prepare_want(it or {})
+        if err:
+            pre_unresolved.append(err)
             continue
-
-        wants[k] = m
+        assert key and m
+        wants[key] = m
 
     mids: list[tuple[str, str]] = []
     unresolved: list[dict[str, Any]] = []
@@ -702,12 +756,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         unresolved.extend(pre_unresolved)
 
     for k, m in wants.items():
-        try:
-            iid = resolve_item_id(adapter, m)
-        except Exception as e:
-            _warn("resolve exception", err=repr(e))
-            iid = None
-
+        iid = _try_resolve_iid(adapter, m)
         if iid:
             mids.append((k, iid))
         else:
@@ -810,69 +859,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             force_clear = True
         raw_key = str(base.get("_cw_key") or base.get("key") or "").strip() or None
         raw_iid = str(base.get("jellyfin_item_id") or base.get("_jellyfin_item_id") or "").strip() or None
-        base_ids_raw = base.get("ids")
-        if isinstance(base_ids_raw, Mapping):
-            base_ids: dict[str, Any] = dict(base_ids_raw)
-        else:
-            base_ids = {}
-        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
-
-        nm = jelly_normalize(base)
-        m: dict[str, Any] = dict(nm)
-
-        if raw_key:
-            m["_cw_key"] = raw_key
-        if raw_iid:
-            m["jellyfin_item_id"] = raw_iid
-
-        if has_ids:
-            for key in (
-                "type",
-                "title",
-                "year",
-                "watch_type",
-                "watched_at",
-                "library_id",
-                "season",
-                "episode",
-                "series_title",
-                "show_ids",
-                "series_year",
-            ):
-                if base.get(key) not in (None, ""):
-                    m[key] = base[key]
-
-            ids = dict(nm.get("ids") or {})
-            for k_id, v_id in base_ids.items():
-                if v_id not in (None, "", 0):
-                    ids[k_id] = v_id
-            if ids:
-                m["ids"] = ids
-
-        t_raw = str(m.get("type") or "").strip().lower()
-        if t_raw == "anime":
-            if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
-                m["type"] = "episode"
-            else:
-                m["type"] = "show"
-
-        key_opt: str | None
-        if raw_key:
-            key_opt = raw_key
-        else:
-            try:
-                key_opt = canonical_key(m) or canonical_key(base)
-            except Exception:
-                key_opt = None
-
-        if not key_opt:
-            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
-            _freeze(base, reason="missing_ids_for_key")
+        key, m, err = _prepare_want(base, raw_key=raw_key, raw_iid=raw_iid)
+        if err:
+            pre_unresolved.append(err)
             continue
-
-        key: str = key_opt
+        assert key and m
         wants[key] = m
-
 
     mids: list[tuple[str, str]] = []
     unresolved: list[dict[str, Any]] = []
@@ -884,11 +876,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         iid = (m.get("jellyfin_item_id") or (ent.get("iid") if isinstance(ent, Mapping) else None))
 
         if not iid:
-            try:
-                iid = resolve_item_id(adapter, m)
-            except Exception as e:
-                _warn("resolve exception", err=repr(e))
-                iid = None
+            iid = _try_resolve_iid(adapter, m)
 
         if iid:
             mids.append((k, str(iid)))
