@@ -62,8 +62,8 @@ def sleep_ms(ms: int) -> None:
 def _parse_iso_to_epoch(s: str | None) -> int | None:
     if not s:
         return None
+    t = s.strip()
     try:
-        t = s.strip()
         if "T" in t and "." in t:
             head, frac = t.split(".", 1)
             tz_pos = next((i for i, c in enumerate(frac) if c in "Z+-"), None)
@@ -127,7 +127,7 @@ def _played_ts_backfill(http: Any, uid: str, row: Mapping[str, Any]) -> int:
     try:
         r = http.get(
             f"/Users/{uid}/Items/{iid}",
-            params={"Fields": "UserData", "EnableUserData": True},
+            params={"Fields": "UserData,UserDataLastPlayedDate", "EnableUserData": True},
         )
         if getattr(r, "status_code", 0) != 200:
             return 0
@@ -164,7 +164,7 @@ def _prefetch_played_ts(
                 f"/Users/{uid}/Items",
                 params={
                     "Ids": ','.join(batch),
-                    "Fields": "UserData",
+                    "Fields": "UserData,UserDataLastPlayedDate,UserDataPlayCount",
                     "EnableUserData": True,
                 },
             )
@@ -318,6 +318,20 @@ def _history_limit(adapter: Any) -> int:
     except Exception:
         return 1000
 
+def _history_page_size(adapter: Any) -> int:
+    env = (os.environ.get("CW_EMBY_HISTORY_PAGE_SIZE") or "").strip()
+    if env:
+        try:
+            v = int(env)
+            return max(50, min(2000, v))
+        except Exception:
+            pass
+
+    base = int(_history_limit(adapter) or 25)
+    if base < 100:
+        return 500
+    return max(50, min(2000, base))
+
 
 def _history_delay_ms(adapter: Any) -> int:
     cfg = getattr(adapter, "cfg", None)
@@ -411,6 +425,28 @@ def _resp_snip(r: Any) -> str:
             return (s[:180] + "…") if len(s) > 180 else s
         except Exception:
             return "<no-body>"
+
+def _minimal_from_ckey(key: str) -> dict[str, Any]:
+    k = str(key or "").strip().lower()
+    m = re.match(r"^(?P<idkey>[a-z0-9_]+):(?P<idval>[^#]+)(?:#s(?P<s>\d+)e(?P<e>\d+))?$", k)
+    if not m:
+        return {"watched": True}
+    idkey = m.group("idkey")
+    idval = (m.group("idval") or "").strip()
+    s = m.group("s")
+    e = m.group("e")
+    if s and e:
+        try:
+            return {
+                "type": "episode",
+                "show_ids": {idkey: idval},
+                "season": int(s),
+                "episode": int(e),
+                "watched": True,
+            }
+        except Exception:
+            return {"watched": True}
+    return {"type": "movie", "ids": {idkey: idval}, "watched": True}
 
 
 # library roots
@@ -572,8 +608,9 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
     _lib_anc_cache.clear()
     series_cache: dict[str, dict[str, Any] | None] = {}
     played_ts_cache: dict[str, int] = {}
-
-    page_size = _history_limit(adapter)
+    page_size = _history_page_size(adapter)
+    allow_deep_lookup = (os.environ.get("CW_EMBY_HISTORY_DEEP_LOOKUP") or "").strip().lower() == "true"
+    allow_backfill    = (os.environ.get("CW_EMBY_HISTORY_BACKFILL") or "").strip().lower() == "true"
     roots = _emby_library_roots(adapter)
     movie_roots: list[str] = []
     show_roots: list[str] = []
@@ -612,7 +649,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     scope_libs = [str(x) for x in anc if x]
 
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
-    presence_keys: set[str] = set()
+    presence_items: dict[str, dict[str, Any]] = {}
 
     def _is_movieish(row: Mapping[str, Any]) -> bool:
         typ = (row.get("Type") or "").strip()
@@ -642,15 +679,17 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
         added_events = 0
         added_presence = 0
         skipped_untimed = 0
+        page = 0
 
         while True:
+            t0 = time.monotonic()
             params: dict[str, Any] = {
                 "IncludeItemTypes": include_types,
                 "Recursive": True,
                 "EnableUserData": True,
                 "Fields": (
-                    "ProviderIds,ProductionYear,UserData,Type,MediaType,VideoType,IndexNumber,"
-                    "ParentIndexNumber,SeriesName,SeriesId,Name,ParentId,DatePlayed,Path,"
+                    "ProviderIds,ProductionYear,UserData,UserDataLastPlayedDate,UserDataPlayCount,Type,MediaType,VideoType,IndexNumber,"
+                    "ParentIndexNumber,Name,SeriesName,SeriesId,ParentId,DatePlayed,Path,"
                     "LibraryId,AncestorIds"
                 ),
                 "Filters": "IsPlayed",
@@ -658,15 +697,13 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 "SortOrder": "Descending",
                 "StartIndex": start,
                 "Limit": page_size,
-                "EnableTotalRecordCount": True,
+                "EnableTotalRecordCount": False,
                 "UserId": uid,
             }
 
-            scope: Mapping[str, Any] | None
-            try:
-                scope = emby_scope_history(adapter.cfg) or {}
-            except Exception:
-                scope = {}
+            scope: Mapping[str, Any] | None = (
+                scope_cfg if (allow_scope and isinstance(scope_cfg, Mapping)) else {}
+            )
 
             if allow_scope and isinstance(scope, Mapping):
                 for k, v in scope.items():
@@ -691,6 +728,18 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             except Exception as e:
                 _warn("json_parse_failed", error=str(e))
                 rows = []
+
+            page += 1
+            took_ms = int((time.monotonic() - t0) * 1000)
+            _dbg(
+                "index page",
+                scan=include_types,
+                page=page,
+                start=start,
+                got=len(rows),
+                limit=page_size,
+                latency_ms=took_ms,
+            )
 
             if not rows:
                 break
@@ -726,7 +775,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 if not ts:
                     iid = str(row.get('Id') or '').strip()
                     ts = int(played_ts_cache.get(iid) or 0) if iid else 0
-                if not ts:
+                if not ts and allow_backfill:
                     ts = _played_ts_backfill(http, uid, row)
                 if ts and since_epoch and ts <= since_epoch:
                     stop = True
@@ -736,7 +785,33 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     if ud.get("Played") or ud.get("IsPlayed") or (ud.get("PlayCount") or 0) > 0:
                         try:
                             m0 = emby_normalize(row)
-                            presence_keys.add(canonical_key(m0))
+                            mm = id_minimal(m0)
+                            mm["watched"] = True
+
+                            if str((row.get("Type") or "")).strip() == "Episode":
+                                sid = row.get("SeriesId") or row.get("ParentId")
+                                smeta = _series_minimal_from_episode(http, uid, row, series_cache)
+                                show_ids_raw = (smeta.get("ids") or {}) if isinstance(smeta, Mapping) else {}
+                                show_ids: dict[str, str] = {}
+                                for k in ("tmdb", "imdb", "tvdb"):
+                                    vv = str(show_ids_raw.get(k) or "").strip()
+                                    if not vv:
+                                        continue
+                                    if k == "imdb":
+                                        show_ids["imdb"] = vv if vv.startswith("tt") else f"tt{vv}"
+                                        continue
+                                    try:
+                                        show_ids[k] = str(int(vv))
+                                    except Exception:
+                                        pass
+                                if not show_ids and sid:
+                                    show_ids = _item_ids_for(http, str(sid))
+                                if show_ids:
+                                    mm["show_ids"] = dict(show_ids)
+
+                            pk = canonical_key(mm)
+                            if pk and pk not in presence_items:
+                                presence_items[pk] = mm
                             skipped_untimed += 1
                             added_presence += 1
                         except Exception:
@@ -859,7 +934,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                         if cid in root_keys:
                             lib_id = cid
                             break
-                    if not lib_id and row.get("Id"):
+                    if not lib_id and allow_deep_lookup and row.get("Id"):
                         lib_id = _lib_id_via_ancestors(http, uid, str(row["Id"]), roots)
                     if not lib_id:
                         etype = event.get("type")
@@ -870,7 +945,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 if lib_id:
                     event["library_id"] = str(lib_id)
                 ev_key = f"{canonical_key(m)}@{ts}"
-                events.append((ts, {"key": ev_key, "base": m}, event))
+                events.append((ts, {"key": ev_key}, event))
                 added_events += 1
 
             start += len(rows)
@@ -914,7 +989,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
         for k in list(shadow.keys()):
             if k in event_bases or k in out:
                 continue
-            out.setdefault(k, {"watched": True})
+            out.setdefault(k, _minimal_from_ckey(k))
             added += 1
         if added:
             _dbg("shadow_merged", added=added)
@@ -926,17 +1001,17 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             if k in event_bases or k in out:
                 continue
             if isinstance(meta, dict) and str(meta.get("reason", "")).startswith("presence:"):
-                out.setdefault(k, {"watched": True})
+                out.setdefault(k, _minimal_from_ckey(k))
                 added += 1
         if added:
             _dbg("blackbox_presence_merged", added=added)
 
-    if presence_keys:
+    if presence_items:
         added = 0
-        for k in presence_keys:
+        for k, payload in presence_items.items():
             if k in event_bases or k in out:
                 continue
-            out.setdefault(k, {"watched": True})
+            out.setdefault(k, dict(payload))
             added += 1
         if added:
             _dbg("presence_merged", added=added)
@@ -961,6 +1036,90 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
     return out
 
 
+def _coerce_anime_type(item: dict[str, Any]) -> None:
+    t_raw = str(item.get("type") or "").strip().lower()
+    if t_raw != "anime":
+        return
+    # Anime can map to show or episode
+    if item.get("season") not in (None, "", 0) and item.get("episode") not in (None, "", 0):
+        item["type"] = "episode"
+    else:
+        item["type"] = "show"
+
+
+def _normalize_for_write(base_item: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    base: dict[str, Any] = dict(base_item or {})
+    base_ids_raw = base.get("ids")
+    base_ids: dict[str, Any] = dict(base_ids_raw) if isinstance(base_ids_raw, Mapping) else {}
+    has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
+
+    if has_ids:
+        nm = emby_normalize(base)
+        m: dict[str, Any] = dict(nm)
+        # Preserve common fields from the caller input.
+        for key in (
+            "type",
+            "title",
+            "year",
+            "watch_type",
+            "watched_at",
+            "library_id",
+            "season",
+            "episode",
+        ):
+            if base.get(key) not in (None, ""):
+                m[key] = base[key]
+        ids = dict(nm.get("ids") or {})
+        for k_id, v_id in base_ids.items():
+            if v_id not in (None, "", 0):
+                ids[k_id] = v_id
+        if ids:
+            m["ids"] = ids
+    else:
+        m = dict(emby_normalize(base))
+
+    _coerce_anime_type(m)
+    return m, base
+
+
+def _prepare_mids(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[
+    dict[str, dict[str, Any]],
+    list[tuple[str, str]],
+    list[dict[str, Any]],
+]:
+    wants: dict[str, dict[str, Any]] = {}
+    unresolved: list[dict[str, Any]] = []
+
+    for it in (items or []):
+        m, base = _normalize_for_write(it)
+        try:
+            k = canonical_key(m) or canonical_key(base)
+        except Exception:
+            k = None
+
+        if not k:
+            unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
+            _freeze(base, reason="missing_ids_for_key")
+            continue
+
+        wants[k] = m
+
+    mids: list[tuple[str, str]] = []
+    for k, m in wants.items():
+        try:
+            iid = resolve_item_id(adapter, m)
+        except Exception as e:
+            _warn("resolve_exception", error=str(e))
+            iid = None
+
+        if iid:
+            mids.append((k, iid))
+        else:
+            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
+            _freeze(m, reason="resolve_failed")
+
+    return wants, mids, unresolved
+
 # apply history
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     http = adapter.client
@@ -980,72 +1139,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     except Exception:
         pass
 
-    pre_unresolved: list[dict[str, Any]] = []
-    wants: dict[str, dict[str, Any]] = {}
-    for it in (items or []):
-        base: dict[str, Any] = dict(it or {})
-        base_ids_raw = base.get("ids")
-        if isinstance(base_ids_raw, Mapping):
-            base_ids: dict[str, Any] = dict(base_ids_raw)
-        else:
-            base_ids = {}
-        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
-        if has_ids:
-            nm = emby_normalize(base)
-            m: dict[str, Any] = dict(nm)
-            for key in (
-                "type",
-                "title",
-                "year",
-                "watch_type",
-                "watched_at",
-                "library_id",
-                "season",
-                "episode",
-            ):
-                if base.get(key) not in (None, ""):
-                    m[key] = base[key]
-            ids = dict(nm.get("ids") or {})
-            for k_id, v_id in base_ids.items():
-                if v_id not in (None, "", 0):
-                    ids[k_id] = v_id
-            if ids:
-                m["ids"] = ids
-        else:
-            m = dict(emby_normalize(base))
-        t_raw = str(m.get("type") or "").strip().lower()
-        if t_raw == "anime":
-            if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
-                m["type"] = "episode"
-            else:
-                m["type"] = "show"
-
-        try:
-            k = canonical_key(m) or canonical_key(base)
-        except Exception:
-            k = None
-        if not k:
-            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
-            _freeze(base, reason="missing_ids_for_key")
-            continue
-        wants[k] = m
-
-    mids: list[tuple[str, str]] = []
-    unresolved: list[dict[str, Any]] = []
-    if pre_unresolved:
-        unresolved.extend(pre_unresolved)
-
-    for k, m in wants.items():
-        try:
-            iid = resolve_item_id(adapter, m)
-        except Exception as e:
-            _warn("resolve_exception", error=str(e))
-            iid = None
-        if iid:
-            mids.append((k, iid))
-        else:
-            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
-            _freeze(m, reason="resolve_failed")
+    wants, mids, unresolved = _prepare_mids(adapter, items)
 
     shadow = _shadow_load()
     bb = _bb_load()
@@ -1173,76 +1267,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
-
-    pre_unresolved: list[dict[str, Any]] = []
-    wants: dict[str, dict[str, Any]] = {}
-
-    for it in (items or []):
-        base: dict[str, Any] = dict(it or {})
-        base_ids_raw = base.get("ids")
-        if isinstance(base_ids_raw, Mapping):
-            base_ids: dict[str, Any] = dict(base_ids_raw)
-        else:
-            base_ids = {}
-        has_ids = bool(base_ids) and any(v not in (None, "", 0) for v in base_ids.values())
-
-        if has_ids:
-            nm = emby_normalize(base)
-            m: dict[str, Any] = dict(nm)
-            for key in (
-                "type",
-                "title",
-                "year",
-                "watch_type",
-                "watched_at",
-                "library_id",
-                "season",
-                "episode",
-            ):
-                if base.get(key) not in (None, ""):
-                    m[key] = base[key]
-            ids = dict(nm.get("ids") or {})
-            for k_id, v_id in base_ids.items():
-                if v_id not in (None, "", 0):
-                    ids[k_id] = v_id
-            if ids:
-                m["ids"] = ids
-        else:
-            m = dict(emby_normalize(base))
-        t_raw = str(m.get("type") or "").strip().lower()
-        if t_raw == "anime":
-            if m.get("season") not in (None, "", 0) and m.get("episode") not in (None, "", 0):
-                m["type"] = "episode"
-            else:
-                m["type"] = "show"
-
-        try:
-            k = canonical_key(m) or canonical_key(base)
-        except Exception:
-            k = None
-        if not k:
-            pre_unresolved.append({"item": id_minimal(base), "hint": "missing_ids_for_key"})
-            _freeze(base, reason="missing_ids_for_key")
-            continue
-        wants[k] = m
-
-    mids: list[tuple[str, str]] = []
-    unresolved: list[dict[str, Any]] = []
-    if pre_unresolved:
-        unresolved.extend(pre_unresolved)
-
-    for k, m in wants.items():
-        try:
-            iid = resolve_item_id(adapter, m)
-        except Exception as e:
-            _warn("resolve_exception", error=str(e))
-            iid = None
-        if iid:
-            mids.append((k, iid))
-        else:
-            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
-            _freeze(m, reason="resolve_failed")
-
+    wants, mids, unresolved = _prepare_mids(adapter, items)
     shadow = _shadow_load()
     ok = 0
 
