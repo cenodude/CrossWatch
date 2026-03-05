@@ -202,6 +202,17 @@ def _as_epoch(iso: str) -> int | None:
         return None
 
 
+def _max_iso(a: str | None, b: str | None) -> str | None:
+    if not a:
+        return b
+    if not b:
+        return a
+    ea = _as_epoch(_iso8601(a) or a) or 0
+    eb = _as_epoch(_iso8601(b) or b) or 0
+    return b if eb >= ea else a
+
+
+
 def _cfg(adapter: Any) -> Any:
     return getattr(adapter, "cfg", None) or getattr(adapter, "config", {})
 
@@ -308,6 +319,81 @@ def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None) -> None:
         _warn("cache_save_failed", error=str(e))
 
 
+def _cache_merge_from_source_items(adapter: Any, items: Iterable[Mapping[str, Any]]) -> None:
+    if _is_capture_mode() or _pair_scope() is None:
+        return
+    try:
+        doc = _load_cache_doc()
+        cache_items: dict[str, dict[str, Any]] = dict(doc.get("items") or {})
+        wm_prev = str((doc.get("wm") or {}).get("watched_at") or "").strip() or None
+
+        added = 0
+        wm = wm_prev
+        for it in items or []:
+            if not isinstance(it, Mapping):
+                continue
+            m = id_minimal(it)
+            if not isinstance(m, dict):
+                continue
+            w = _iso8601(m.get("watched_at") or it.get("watched_at"))
+            ts = _as_epoch(w) if w else None
+            if not ts:
+                continue
+
+            typ = str(m.get("type") or "").lower()
+            if typ == "episode" and isinstance(m.get("show_ids"), Mapping) and m.get("season") is not None and m.get("episode") is not None:
+                base_key = canonical_key(
+                    id_minimal(
+                        {
+                            "type": "episode",
+                            "show_ids": dict(m.get("show_ids") or {}),
+                            "season": m.get("season"),
+                            "episode": m.get("episode"),
+                        }
+                    )
+                )
+            else:
+                base_key = canonical_key(m)
+
+            if not base_key:
+                continue
+
+            ek = f"{base_key}@{int(ts)}"
+            if ek not in cache_items:
+                out = dict(m)
+                out["watched"] = True
+                out["watched_at"] = w
+                cache_items[ek] = out
+                added += 1
+
+            wm = _max_iso(wm, w)
+
+            # Presence keys (show and season)
+            if typ == "episode" and isinstance(m.get("show_ids"), Mapping) and m.get("show_ids"):
+                sh = id_minimal({"type": "show", "ids": dict(m.get("show_ids") or {})})
+                sh_key = canonical_key(sh)
+                if sh_key and sh_key not in cache_items:
+                    cache_items[sh_key] = sh
+                try:
+                    season_val = m.get("season")
+                    sn_i = int(season_val) if season_val is not None else None
+                except Exception:
+                    sn_i = None
+                if sn_i is not None:
+                    sea = id_minimal({"type": "season", "show_ids": dict(m.get("show_ids") or {}), "season": sn_i})
+                    sea_key = canonical_key(sea)
+                    if sea_key and sea_key not in cache_items:
+                        cache_items[sea_key] = sea
+
+        if added:
+            _info("index_cache_merge", added=added, cache_count=len(cache_items))
+
+        _save_cache_doc(cache_items, wm or wm_prev)
+    except Exception as e:
+        _warn("index_cache_merge_failed", error=str(e))
+
+
+
 def _freeze_item_if_enabled(adapter: Any, item: Mapping[str, Any], *, action: str, reasons: list[str]) -> None:
     if not _freeze_enabled(adapter):
         return
@@ -389,6 +475,14 @@ def _preflight_total(
         return None
 
 
+def _history_params(*, page: int, limit: int, start_at: str | None = None, end_at: str | None = None) -> dict[str, Any]:
+    params: dict[str, Any] = {"page": int(page), "limit": int(limit)}
+    if start_at:
+        params["start_at"] = str(start_at)
+    if end_at:
+        params["end_at"] = str(end_at)
+    return params
+
 def _fetch_history(
     sess: Any,
     headers: Mapping[str, Any],
@@ -398,6 +492,8 @@ def _fetch_history(
     max_pages: int,
     timeout: float,
     max_retries: int,
+    start_at: str | None = None,
+    end_at: str | None = None,
     bump: Callable[[int], None] | None = None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -409,7 +505,7 @@ def _fetch_history(
             "GET",
             url,
             headers=headers,
-            params={"page": page, "limit": per_page},
+            params=_history_params(page=page, limit=per_page, start_at=start_at, end_at=end_at),
             timeout=timeout,
             max_retries=max_retries,
         )
@@ -516,6 +612,119 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                 except Exception:
                     pass
             return cached_items
+
+        if a is not None and b is not None and a > b:
+            start_at = _iso8601(cached_wm) or cached_wm
+            end_at = _iso8601(remote_wm) or remote_wm
+            _info("index_cache_delta", start_at=start_at, end_at=end_at, cached=len(cached_items))
+            try:
+                idx: dict[str, dict[str, Any]] = dict(cached_items)
+                announced_total = None
+                if prog:
+                    try:
+                        prog.tick(0, total=len(idx), force=True)
+                    except Exception:
+                        pass
+
+                movies = _fetch_history(
+                    sess,
+                    headers,
+                    URL_HIST_MOV,
+                    per_page=cfg_per_page,
+                    max_pages=cfg_max_pages,
+                    timeout=timeout,
+                    max_retries=retries,
+                    start_at=start_at,
+                    end_at=end_at,
+                )
+                episodes = _fetch_history(
+                    sess,
+                    headers,
+                    URL_HIST_EPI,
+                    per_page=cfg_per_page,
+                    max_pages=cfg_max_pages,
+                    timeout=timeout,
+                    max_retries=retries,
+                    start_at=start_at,
+                    end_at=end_at,
+                )
+
+                base_keys_to_unfreeze: set[str] = set()
+                added = 0
+
+                for m in movies + episodes:
+                    w = _iso8601(m.get("watched_at"))
+                    ts = _as_epoch(w) if w else None
+                    if not ts:
+                        continue
+                    if (
+                        m.get("type") == "episode"
+                        and isinstance(m.get("show_ids"), dict)
+                        and m.get("season") is not None
+                        and m.get("episode") is not None
+                    ):
+                        base_key = canonical_key(
+                            id_minimal(
+                                {
+                                    "type": "episode",
+                                    "show_ids": m["show_ids"],
+                                    "season": m["season"],
+                                    "episode": m["episode"],
+                                }
+                            )
+                        )
+                    else:
+                        base_key = canonical_key(id_minimal(m))
+                    ek = f"{base_key}@{ts}"
+
+                    if ek in idx:
+                        # Already cached; keep existing.
+                        continue
+
+                    idx[ek] = m
+                    base_keys_to_unfreeze.add(base_key)
+                    added += 1
+
+                # show/season presence keys from episode history.
+                try:
+                    for ep in episodes:
+                        if not isinstance(ep, Mapping):
+                            continue
+                        show_ids = ep.get("show_ids")
+                        if not isinstance(show_ids, Mapping) or not show_ids:
+                            continue
+
+                        sh = id_minimal({"type": "show", "ids": dict(show_ids)})
+                        sh_key = canonical_key(sh)
+                        if sh_key and sh_key not in idx:
+                            idx[sh_key] = sh
+                            base_keys_to_unfreeze.add(sh_key)
+
+                        sn = ep.get("season")
+                        try:
+                            sn_i = int(sn) if sn is not None else None
+                        except Exception:
+                            sn_i = None
+                        if sn_i is not None:
+                            sea = id_minimal({"type": "season", "show_ids": dict(show_ids), "season": sn_i})
+                            sea_key = canonical_key(sea)
+                            if sea_key and sea_key not in idx:
+                                idx[sea_key] = sea
+                                base_keys_to_unfreeze.add(sea_key)
+                except Exception:
+                    pass
+
+                _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
+                if prog:
+                    try:
+                        prog.done(ok=True, total=len(idx))
+                    except Exception:
+                        pass
+                _info("index_cache_delta_done", added=added, count=len(idx))
+                _save_cache_doc(idx, end_at)
+                return idx
+            except Exception as e:
+                _warn("index_cache_delta_failed", error=str(e))
     elif cached_items and not remote_wm:
         _info("index_cache_hit", reason="activities_unavailable", count=len(cached_items))
         if prog:
@@ -1423,7 +1632,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     write_timeout = float(_cfg_num(adapter, "history_write_timeout", max(timeout, 60.0), float))
-    body, unresolved, accepted_keys, accepted_minimals, skipped_keys = _batch_add(adapter, items)
+    items_list = list(items)
+    body, unresolved, accepted_keys, accepted_minimals, skipped_keys = _batch_add(adapter, items_list)
     if not body:
         return 0, unresolved, skipped_keys
     r = request_with_retries(
@@ -1432,7 +1642,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         URL_ADD,
         headers=headers,
         json=body,
-        timeout=timeout,
+        timeout=write_timeout,
         max_retries=retries,
     )
     ok_added = 0
@@ -1509,7 +1719,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
         if ok_total > 0 or nf_count == 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
-            _bust_index_cache("write:add")
+            _cache_merge_from_source_items(adapter, items_list)
             if _history_collection_enabled(adapter):
                 coll_body = _history_body_to_collection(body, _history_collection_types(adapter))
                 if coll_body:
@@ -1520,7 +1730,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             URL_COLL_ADD,
                             headers=headers,
                             json=coll_body,
-                            timeout=timeout,
+                            timeout=write_timeout,
                             max_retries=retries,
                         )
                         if rc.status_code == 420:
