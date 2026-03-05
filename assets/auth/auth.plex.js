@@ -430,8 +430,7 @@ function ensurePlexInstanceUI() {
           if (urlEl && cfgUrl && urlEl.value.trim() !== cfgUrl)  urlEl.value = cfgUrl;
           if (userEl && cfgUser && userEl.value.trim() !== cfgUser) userEl.value = cfgUser;
           if (idEl) {
-            if (cfgId && cfgId !== "1" && idEl.value.trim() !== cfgId) idEl.value = cfgId;
-            if (cfgId === "1" && idEl.value.trim() === "1") idEl.value = "";
+            if (cfgId && idEl.value.trim() !== cfgId) idEl.value = cfgId;
           }
 
           if (!autoTried && typeof plexAuto === "function" && (!cfgUser || !cfgId || !cfgUrl)) {
@@ -511,7 +510,7 @@ async function plexDeleteToken() {
       set("plex_server_url", p.server_url || "");
       set("plex_username", p.username || "");
       const aid = (p.account_id != null ? String(p.account_id).trim() : "");
-      set("plex_account_id", (aid && aid !== "1") ? aid : "");
+      set("plex_account_id", aid || "");
       // If account_id is missing (or still the legacy placeholder), resolve via /api/plex/pickusers.
       await resolvePlexAccountIdFromUsers({ bustCache: true });
       try { const cb = $("plex_verify_ssl"); if (cb) cb.checked = !!p.verify_ssl; } catch {}
@@ -786,7 +785,7 @@ const tags = [
           if (dta.username) set("plex_username", dta.username);
           if (dta.account_id != null) {
             const v = String(dta.account_id).trim();
-            if (v && v !== "1") set("plex_account_id", v);
+            if (v) set("plex_account_id", v);
             else set("plex_account_id", "");
           }
         }
@@ -810,7 +809,7 @@ const tags = [
       const userEl = $("plex_username");
       const wantUser = String(opts.username ?? (userEl?.value || "")).trim().toLowerCase();
       const currId = String(idEl.value || "").trim();
-      const needsResolve = !currId || currId === "1";
+      const needsResolve = !currId;
       if (!(needsResolve || wantUser)) return;
 
       if (opts.bustCache) {
@@ -833,7 +832,7 @@ const tags = [
       const uid = pick ? (pick.id ?? pick.account_id) : null;
       if (uid != null) {
         const next = String(uid).trim();
-        idEl.value = (next && next !== "1") ? next : "";
+        idEl.value = next || "";
       }
 
       if (userEl && !userEl.value && pick) {
