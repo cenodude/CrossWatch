@@ -177,6 +177,9 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             "_pending_request_token",
             "request_token",
             "token",
+            # Webhook URL tokens (security.webhook_ids.*)
+            "webhook_ids", "webhook_id",
+            "plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher",
         }
         if k in exact:
             return True
