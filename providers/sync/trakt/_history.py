@@ -33,10 +33,6 @@ URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_COLL_ADD = f"{BASE}/sync/collection"
 RESOLVE_ENABLE = False
 
-def _history_allow_rollups(adapter: Any) -> bool:
-    return bool(_cfg_get(adapter, "history_allow_rollups", False))
-
-
 def _int_or_none(x: Any) -> int | None:
     if x is None:
         return None
@@ -368,23 +364,6 @@ def _cache_merge_from_source_items(adapter: Any, items: Iterable[Mapping[str, An
 
             wm = _max_iso(wm, w)
 
-            # Presence keys (show and season)
-            if typ == "episode" and isinstance(m.get("show_ids"), Mapping) and m.get("show_ids"):
-                sh = id_minimal({"type": "show", "ids": dict(m.get("show_ids") or {})})
-                sh_key = canonical_key(sh)
-                if sh_key and sh_key not in cache_items:
-                    cache_items[sh_key] = sh
-                try:
-                    season_val = m.get("season")
-                    sn_i = int(season_val) if season_val is not None else None
-                except Exception:
-                    sn_i = None
-                if sn_i is not None:
-                    sea = id_minimal({"type": "season", "show_ids": dict(m.get("show_ids") or {}), "season": sn_i})
-                    sea_key = canonical_key(sea)
-                    if sea_key and sea_key not in cache_items:
-                        cache_items[sea_key] = sea
-
         if added:
             _info("index_cache_merge", added=added, cache_count=len(cache_items))
 
@@ -685,35 +664,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     base_keys_to_unfreeze.add(base_key)
                     added += 1
 
-                # show/season presence keys from episode history.
-                try:
-                    for ep in episodes:
-                        if not isinstance(ep, Mapping):
-                            continue
-                        show_ids = ep.get("show_ids")
-                        if not isinstance(show_ids, Mapping) or not show_ids:
-                            continue
-
-                        sh = id_minimal({"type": "show", "ids": dict(show_ids)})
-                        sh_key = canonical_key(sh)
-                        if sh_key and sh_key not in idx:
-                            idx[sh_key] = sh
-                            base_keys_to_unfreeze.add(sh_key)
-
-                        sn = ep.get("season")
-                        try:
-                            sn_i = int(sn) if sn is not None else None
-                        except Exception:
-                            sn_i = None
-                        if sn_i is not None:
-                            sea = id_minimal({"type": "season", "show_ids": dict(show_ids), "season": sn_i})
-                            sea_key = canonical_key(sea)
-                            if sea_key and sea_key not in idx:
-                                idx[sea_key] = sea
-                                base_keys_to_unfreeze.add(sea_key)
-                except Exception:
-                    pass
-
                 _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
                 if prog:
                     try:
@@ -859,35 +809,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         else:
             idx[ek] = m
             base_keys_to_unfreeze.add(base_key)
-
-    # show/season presence keys from episode history.
-    try:
-        for ep in episodes:
-            if not isinstance(ep, Mapping):
-                continue
-            show_ids = ep.get("show_ids")
-            if not isinstance(show_ids, Mapping) or not show_ids:
-                continue
-
-            sh = id_minimal({"type": "show", "ids": dict(show_ids)})
-            sh_key = canonical_key(sh)
-            if sh_key and sh_key not in idx:
-                idx[sh_key] = sh
-                base_keys_to_unfreeze.add(sh_key)
-
-            sn = ep.get("season")
-            try:
-                sn_i = int(sn) if sn is not None else None
-            except Exception:
-                sn_i = None
-            if sn_i is not None:
-                sea = id_minimal({"type": "season", "show_ids": dict(show_ids), "season": sn_i})
-                sea_key = canonical_key(sea)
-                if sea_key and sea_key not in idx:
-                    idx[sea_key] = sea
-                    base_keys_to_unfreeze.add(sea_key)
-    except Exception:
-        pass
 
     _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
     if prog:
@@ -1200,16 +1121,6 @@ def _batch_add(
         episode_no = it.get("episode")
         if episode_no is None:
             episode_no = it.get("episode_number")
-
-        if kind in ("shows", "seasons") and not _history_allow_rollups(adapter):
-            try:
-                m_skip = _history_item_minimal(kind, it, ids)
-                k_skip = key_of(m_skip)
-                if k_skip:
-                    skipped_keys.append(k_skip)
-            except Exception:
-                pass
-            continue
 
         when, when_error = _history_when_for_add(it, kind)
         if when_error:
