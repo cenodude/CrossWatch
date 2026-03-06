@@ -57,7 +57,7 @@
 
 Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
-Supported: **Profiles** (Multi-users / Multi-servers per instance)
+Supported: **Profiles** (Multi-users / Multi-servers per instance)\
 Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
 
 <center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still bugs.</B></center><p></p>
@@ -99,7 +99,7 @@ Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
         <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL/MDBList)</li>
         <li>Sync ratings (one-/two-way)</li>
         <li>Sync history (one-/two-way)</li>
-        Mli>Sync progress (one-/to-way)</ul>li>
+        <li>Sync progress (one-/to-way)</li>
         <li>Keep snapshots with CW tracker</li>
         <li>Profiles configurations</li>
         <li>Auto-remove from watchlist after finish</li>
