@@ -27,6 +27,17 @@ def _env() -> dict[str, Any]:
             "probes_cache": None, "probes_status_cache": None, "scheduler": None,
         }
 
+    probes_cache = getattr(CW, "PROBES_CACHE", None)
+    probes_status_cache = getattr(CW, "PROBES_STATUS_CACHE", None)
+
+    if not isinstance(probes_cache, dict) or not isinstance(probes_status_cache, dict):
+        try:
+            from api.probesAPI import PROBE_CACHE, STATUS_CACHE
+            probes_cache = PROBE_CACHE
+            probes_status_cache = STATUS_CACHE
+        except Exception:
+            pass
+
     return {
         "CW": CW,
         "cfg_base": config_base,
@@ -35,8 +46,8 @@ def _env() -> dict[str, Any]:
         "prune": getattr(CW, "_prune_legacy_ratings", lambda *_: None),
         "ensure": getattr(CW, "_ensure_pair_ratings_defaults", lambda *_: None),
         "norm_pair": getattr(CW, "_normalize_pair_ratings", lambda *_: None),
-        "probes_cache": getattr(CW, "PROBES_CACHE", None),
-        "probes_status_cache": getattr(CW, "PROBES_STATUS_CACHE", None),
+        "probes_cache": probes_cache,
+        "probes_status_cache": probes_status_cache,
         "scheduler": getattr(CW, "scheduler", None),
     }
 
@@ -46,6 +57,30 @@ def _nostore(res: JSONResponse) -> JSONResponse:
 
 router = APIRouter(prefix="/api", tags=["config"])
 
+def _after_config_save(env: dict[str, Any], cfg: dict[str, Any]) -> None:
+    try:
+        pc = env["probes_cache"]; ps = env["probes_status_cache"]
+        if isinstance(pc, dict):
+            for k in list(pc.keys()):
+                pc[k] = (0.0, False)
+        if isinstance(ps, dict):
+            ps["ts"] = 0.0; ps["data"] = None
+    except Exception:
+        pass
+
+    try:
+        sched = env["scheduler"]
+        if hasattr(sched, "refresh_ratings_watermarks"):
+            sched.refresh_ratings_watermarks()
+        s = cfg.get("scheduling") or {}
+        if sched is not None:
+            if bool(s.get("enabled")):
+                getattr(sched, "start", lambda: None)()
+                getattr(sched, "refresh", lambda: None)()
+            else:
+                getattr(sched, "stop", lambda: None)()
+    except Exception:
+        pass
 
 def _norm_ver(v: str | None) -> str:
     raw = (v or "").strip()
@@ -285,28 +320,96 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
     env["save"](cfg)
 
-    try:
-        pc = env["probes_cache"]; ps = env["probes_status_cache"]
-        if isinstance(pc, dict):
-            for k in ("plex","simkl","trakt","jellyfin","emby"):
-                pc[k] = (0.0, False)
-        if isinstance(ps, dict):
-            ps["ts"] = 0.0; ps["data"] = None
-    except Exception:
-        pass
-
-    try:
-        sched = env["scheduler"]
-        if hasattr(sched, "refresh_ratings_watermarks"):
-            sched.refresh_ratings_watermarks()
-        s = cfg.get("scheduling") or {}
-        if sched is not None:
-            if bool(s.get("enabled")):
-                getattr(sched, "start", lambda: None)()
-                getattr(sched, "refresh", lambda: None)()
-            else:
-                getattr(sched, "stop", lambda: None)()
-    except Exception:
-        pass
+    _after_config_save(env, cfg)
 
     return {"ok": True}
+
+@router.post("/config/migrate")
+def api_config_migrate() -> dict[str, Any]:
+    env = _env()
+    base = env.get("cfg_base")
+    if base is None:
+        return {"ok": False, "error": "Configuration backend unavailable"}
+
+    current = dict(env["load"]() or {})
+    backup_path = None
+    forced_paths: list[str] = []
+
+    try:
+        backup = getattr(base, "backup_config_file", None)
+        if callable(backup):
+            backup_result = backup()
+            if backup_result is not None:
+                backup_path = str(backup_result)
+    except Exception as e:
+        return {"ok": False, "error": f"config_backup_failed: {e}"}
+
+    cfg: dict[str, Any] = dict(current or {})
+
+    try:
+        apply = getattr(base, "apply_migration_overrides", None)
+        if callable(apply):
+            result = apply(cfg)
+            if isinstance(result, tuple) and len(result) == 2:
+                next_cfg, next_paths = result
+                if isinstance(next_cfg, dict):
+                    cfg = next_cfg
+                if isinstance(next_paths, list):
+                    forced_paths = [str(path) for path in next_paths]
+    except Exception as e:
+        return {"ok": False, "error": f"migration_overrides_failed: {e}"}
+
+    # Scrobble watcher: ensure routes exist when legacy fields are used
+    try:
+        from providers.scrobble.routes import ensure_routes
+        cfg, _ = ensure_routes(cfg)
+    except Exception:
+        pass
+
+    sc = cfg.setdefault("scrobble", {})
+    sc_enabled = bool(sc.get("enabled", False))
+    mode = str(sc.get("mode") or "").strip().lower()
+    if mode not in {"webhook","watch"}:
+        legacy_webhook = bool((cfg.get("webhook") or {}).get("enabled"))
+        mode = "webhook" if legacy_webhook else ("watch" if sc_enabled else "")
+        if mode:
+            sc["mode"] = mode
+    if mode == "webhook":
+        sc.setdefault("watch", {}).setdefault("autostart", bool(sc.get("watch", {}).get("autostart", False)))
+    elif mode != "watch":
+        sc["enabled"] = False
+
+    features = cfg.setdefault("features", {})
+    watch_feat = features.setdefault("watch", {})
+    watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and sc.get("watch", {}).get("autostart", False))
+
+    try:
+        env["prune"](cfg)
+        env["ensure"](cfg)
+        for p in (cfg.get("pairs") or []):
+            try:
+                env["norm_pair"](p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        ui = cfg.get("ui")
+        if isinstance(ui, dict):
+            ui.pop("_autogen", None)
+    except Exception:
+        pass
+
+    try:
+        env["save"](cfg)
+    except Exception as e:
+        return {"ok": False, "error": f"config_save_failed: {e}"}
+
+    _after_config_save(env, cfg)
+
+    return {
+        "ok": True,
+        "backup": backup_path,
+        "forced_paths": forced_paths,
+    }
