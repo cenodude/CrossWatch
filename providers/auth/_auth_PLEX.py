@@ -464,14 +464,17 @@ def html() -> str:
       return v.toLowerCase() === "default" ? "default" : v;
     }
 
-    function getPlexBlk(cfg){
+    function getPlexBlk(cfg, opts){
       cfg = cfg || {};
-      const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
+      opts = opts || {};
+      const createBase = opts.createBase === true;
+      const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (createBase ? (cfg.plex = {}) : null);
+      if (!base) return null;
       const inst = getInst();
       if (inst === "default") return base;
-      if (!base.instances || typeof base.instances !== "object") base.instances = {};
-      if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
-      return base.instances[inst];
+      return (base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object")
+        ? base.instances[inst]
+        : null;
     }
 
     (async ()=>{
@@ -487,7 +490,8 @@ def html() -> str:
     document.addEventListener("settings-collect",(ev)=>{
       try{
         const cfg = ev?.detail?.cfg || (window.__cfg ||= {});
-        const blk = getPlexBlk(cfg);
+        const blk = getPlexBlk(cfg, { createBase: true });
+        if (!blk) return;
         blk.verify_ssl = !!$("plex_verify_ssl")?.checked;
       }catch{}
     }, true);
