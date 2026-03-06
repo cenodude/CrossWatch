@@ -289,13 +289,28 @@ async function _postJson(url, opts = {}) {
   return data;
 }
 
-async function _saveConfigNoUi() {
-  return _postJson("/api/config", {
-    headers: { "Content-Type": "application/json" },
-    body: "{}"
-  });
+async function _runConfigMigration() {
+  return _postJson("/api/config/migrate");
 }
 
+async function _restartAfterMigration() {
+  try {
+    window.cxCloseModal?.();
+  } catch (_) {}
+
+  setTimeout(() => {
+    try {
+      if (window.cwRestartCrossWatchWithOverlay) {
+        window.cwRestartCrossWatchWithOverlay();
+        return;
+      }
+    } catch (_) {}
+
+    fetch("/api/maintenance/restart", { method: "POST", cache: "no-store" }).finally(() => {
+      window.location.reload();
+    });
+  }, 150);
+}
 
 async function _pauseSchedulerOnce() {
   // Stop scheduler once when migration is required (<0.9.11) to avoid running on mixed ID systems.
@@ -345,8 +360,10 @@ async function saveNow(btn) {
   } catch {}
 
   try {
-    await _saveConfigNoUi();
-    notify("Migrated. After updates: hard refresh (Ctrl+F5) so the UI loads the new assets.");
+    const res = await _runConfigMigration();
+    notify(res && res.backup
+      ? `Migrated. Config backup created: ${res.backup}`
+      : "Migrated. Config updated and backup completed.");
 
     try {
       if (btn) {
@@ -357,9 +374,7 @@ async function saveNow(btn) {
       }
     } catch {}
 
-    try {
-      window.cxCloseModal?.();
-    } catch {}
+    await _restartAfterMigration();
   } catch (e) {
     console.warn("[upgrade-warning] save failed", e);
     notify("Save failed. Check logs.");
@@ -420,11 +435,15 @@ async function migrateNow(btn, fullClean = false) {
       await _postJson(op.url, op.opts);
     }
 
-    await _saveConfigNoUi();
+    const res = await _runConfigMigration();
 
     notify(fullClean
-      ? "Migration completed. Legacy state/cache cleared and config saved."
-      : "Migration completed. State/cache cleared and config saved.");
+      ? (res && res.backup
+          ? `Migration completed. Legacy state/cache cleared. Config backup created: ${res.backup}`
+          : "Migration completed. Legacy state/cache cleared. Config backup created.")
+      : (res && res.backup
+          ? `Migration completed. State/cache cleared. Config backup created: ${res.backup}`
+          : "Migration completed. State/cache cleared. Config backup created."));
 
     try {
       if (btn) {
@@ -434,6 +453,8 @@ async function migrateNow(btn, fullClean = false) {
         btn.dataset.done = "1";
       }
     } catch {}
+
+    await _restartAfterMigration();
   } catch (e) {
     console.warn("[upgrade-warning] migrate failed", e);
     notify("Migration failed. Check logs.");
@@ -582,7 +603,7 @@ export default {
 
         <div class="card">
           <div class="h">What to do</div>
-          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, then saves your config so it gets the new <code>version</code> field.</div>
+          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, creates a backup of <code>config.json</code>, force-applies the migration config updates, and restarts CrossWatch.</div>
         </div>
 
         <div class="card">
@@ -593,7 +614,7 @@ export default {
 
         <div class="card">
           <div class="h">What to do</div>
-          <div class="p">Click <b>MIGRATE</b> below. It runs <b>Clean Everything</b> (state, caches, tracker, stats, currently watching) and saves your config.</div>
+          <div class="p">Click <b>MIGRATE</b> below. It runs <b>Clean Everything</b> (state, caches, tracker, stats, currently watching), backs up <code>config.json</code>, applies the migration config updates, and restarts CrossWatch.</div>
         </div>
 
         <div class="card">
@@ -613,7 +634,7 @@ export default {
 
         <div class="card">
           <div class="h">What to do</div>
-          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, then saves your config so it gets the new <code>version</code> field.</div>
+          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, creates a backup of <code>config.json</code>, force-applies the migration config updates, and restarts CrossWatch.</div>
         </div>
 
         <div class="card">
@@ -623,7 +644,7 @@ export default {
         ` : `
         <div class="card">
           <div class="h">What this means</div>
-          <div class="p">Nothing is broken. Click <b>MIGRATE</b> once so CrossWatch can apply the updated config structure.</div>
+          <div class="p">Nothing is broken. Click <b>MIGRATE</b> once so CrossWatch backs up your current config, applies the updated config structure, and restarts.</div>
         </div>
 
         <div class="card">
