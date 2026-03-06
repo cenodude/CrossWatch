@@ -4469,12 +4469,10 @@ async function saveSettings() {
         : ((baseSrv.instances && typeof baseSrv.instances === "object" && baseSrv.instances[inst]) ? baseSrv.instances[inst] : {});
 
       const baseCfg = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
-      const nextPlex = (() => {
-        if (inst === "default") return baseCfg;
-        if (!baseCfg.instances || typeof baseCfg.instances !== "object") baseCfg.instances = {};
-        if (!baseCfg.instances[inst] || typeof baseCfg.instances[inst] !== "object") baseCfg.instances[inst] = {};
-        return baseCfg.instances[inst];
-      })();
+      const hasPlexInstance = !!(inst !== "default" && baseCfg.instances && typeof baseCfg.instances === "object" && baseCfg.instances[inst] && typeof baseCfg.instances[inst] === "object");
+      const nextPlex = inst === "default"
+        ? baseCfg
+        : (hasPlexInstance ? baseCfg.instances[inst] : null);
 
       const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");
       const uiUser = norm(document.getElementById("plex_username")?.value   || "");
@@ -4495,16 +4493,16 @@ async function saveSettings() {
         return Number.isFinite(n) && n > 0 ? n : null;
       })();
 
-      if (uiUrl && uiUrl !== prevUrl) {
+      if (nextPlex && uiUrl && uiUrl !== prevUrl) {
         nextPlex.server_url = uiUrl;
         changed = true;
       }
-      if (uiUser && uiUser !== prevUser) {
+      if (nextPlex && uiUser && uiUser !== prevUser) {
         nextPlex.username = uiUser;
         changed = true;
       }
 
-      if (uiAid !== null) {
+      if (nextPlex && uiAid !== null) {
         if (prevAidN === null || uiAid !== prevAidN) {
           nextPlex.account_id = uiAid;
           changed = true;
@@ -4513,7 +4511,7 @@ async function saveSettings() {
 
       const uiVerify = !!document.getElementById("plex_verify_ssl")?.checked;
       const prevVerify = !!(prevPlex?.verify_ssl);
-      if (uiVerify !== prevVerify) {
+      if (nextPlex && uiVerify !== prevVerify) {
         nextPlex.verify_ssl = uiVerify;
         changed = true;
       }
@@ -4557,15 +4555,15 @@ async function saveSettings() {
         const prevRate = (prevPlex?.ratings?.libraries || []).map(Number);
         const prevScr  = (prevPlex?.scrobble?.libraries || []).map(Number);
 
-        if (!_same(hist, prevHist)) {
+        if (nextPlex && !_same(hist, prevHist)) {
           nextPlex.history = Object.assign({}, nextPlex.history || {}, { libraries: hist });
           changed = true;
         }
-        if (!_same(rate, prevRate)) {
+        if (nextPlex && !_same(rate, prevRate)) {
           nextPlex.ratings = Object.assign({}, nextPlex.ratings || {}, { libraries: rate });
           changed = true;
         }
-        if (!_same(scr, prevScr)) {
+        if (nextPlex && !_same(scr, prevScr)) {
           nextPlex.scrobble = Object.assign({}, nextPlex.scrobble || {}, { libraries: scr });
           changed = true;
         }
