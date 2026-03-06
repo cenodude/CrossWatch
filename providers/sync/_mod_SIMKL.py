@@ -15,9 +15,11 @@ import requests
 from ._log import log as cw_log
 from ._mod_common import (
     build_session,
+    HitSession,
     label_simkl,
     make_snapshot_progress,
     parse_rate_limit,
+    SimpleRateLimiter,
     request_with_retries,
 )
 from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, normalize as simkl_normalize, key_of as simkl_key_of, state_file
@@ -187,6 +189,8 @@ class SIMKLConfig:
     date_from: str = ""
     timeout: float = 15.0
     max_retries: int = 3
+    rate_get_per_sec: float = 10.0
+    rate_post_per_sec: float = 1.0
 
 
 class SIMKLClient:
@@ -195,7 +199,23 @@ class SIMKLClient:
     def __init__(self, cfg: SIMKLConfig, raw_cfg: Mapping[str, Any]):
         self.cfg = cfg
         self.raw_cfg = raw_cfg
-        self.session: requests.Session = build_session("SIMKL", ctx, feature_label=label_simkl)
+        # build_session returns a HitSession
+        self.session: HitSession = build_session("SIMKL", ctx, feature_label=label_simkl)
+
+        try:
+            self.session._rate_limiter = SimpleRateLimiter(
+                rates_per_sec={
+                    "GET": float(cfg.rate_get_per_sec or 0.0),
+                    "POST": float(cfg.rate_post_per_sec or 0.0),
+                }
+            )
+            self.session._rate_limiter_meta = {
+                "get_per_sec": float(cfg.rate_get_per_sec or 0.0),
+                "post_per_sec": float(cfg.rate_post_per_sec or 0.0),
+            }
+        except Exception:
+            pass
+
         self.session.headers.update(
             build_headers({"simkl": {"api_key": cfg.api_key, "access_token": cfg.access_token}})
         )
@@ -237,6 +257,21 @@ class SIMKLModule:
         api_key = str(simkl_cfg.get("api_key") or simkl_cfg.get("client_id") or "").strip()
         access_token = str(simkl_cfg.get("access_token") or "").strip()
         date_from = str(simkl_cfg.get("date_from") or "").strip()
+        rl = simkl_cfg.get("rate_limit")
+        rl_map = dict(rl) if isinstance(rl, dict) else {}
+
+        def _rate(key: str, default: float) -> float:
+            v = rl_map.get(key, default)
+            try:
+                f = float(v)
+            except Exception:
+                f = default
+            if f < 0:
+                f = 0.0
+            return f
+
+        rate_get = _rate("get_per_sec", 10.0)
+        rate_post = _rate("post_per_sec", 1.0)
 
         self.cfg = SIMKLConfig(
             api_key=api_key,
@@ -244,6 +279,8 @@ class SIMKLModule:
             date_from=date_from,
             timeout=float(simkl_cfg.get("timeout", cfg.get("timeout", 15.0))),
             max_retries=int(simkl_cfg.get("max_retries", cfg.get("max_retries", 3))),
+            rate_get_per_sec=rate_get,
+            rate_post_per_sec=rate_post,
         )
         if not self.cfg.api_key or not self.cfg.access_token:
             raise SIMKLError("SIMKL requires both api_key (or client_id) and access_token")
