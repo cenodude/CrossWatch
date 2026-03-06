@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
@@ -13,7 +14,7 @@ import requests
 
 from ._log import log as cw_log
 
-__VERSION__ = "0.2.0"
+__VERSION__ = "0.2.1"
 __all__ = [
     "HitSession",
     "make_emitter",
@@ -28,10 +29,45 @@ __all__ = [
     "label_plex",
     "label_jellyfin",
     "label_emby",
+    "SimpleRateLimiter",
 ]
 
 EmitFn = Callable[[str, Mapping[str, Any]], None]
 FeatureLabelFn = Callable[[str, str, Mapping[str, Any]], str]
+
+class SimpleRateLimiter:
+
+    def __init__(self, *, rates_per_sec: Mapping[str, float] | None = None):
+        self._lock = threading.Lock()
+        self._min_interval: dict[str, float] = {}
+        self._last_ts: dict[str, float] = {}
+        for k, v in dict(rates_per_sec or {}).items():
+            try:
+                r = float(v)
+            except Exception:
+                continue
+            if r <= 0:
+                continue
+            self._min_interval[str(k).upper()] = 1.0 / r
+        for k in self._min_interval.keys():
+            self._last_ts[k] = 0.0
+
+    def wait(self, key: str) -> float:
+        k = str(key or "").upper()
+        interval = float(self._min_interval.get(k) or 0.0)
+        if interval <= 0:
+            return 0.0
+        slept = 0.0
+        with self._lock:
+            now = time.monotonic()
+            last = float(self._last_ts.get(k) or 0.0)
+            sleep_s = (last + interval) - now
+            if sleep_s > 0:
+                time.sleep(sleep_s)
+                slept = float(sleep_s)
+                now = time.monotonic()
+            self._last_ts[k] = now
+        return slept
 
 
 def _safe_url(url: str) -> str:
@@ -359,6 +395,9 @@ def label_jellyfin(method: str, url: str, kw: Mapping[str, Any]) -> str:
 
 
 class HitSession(requests.Session):
+    _rate_limiter: "SimpleRateLimiter | None"
+    _rate_limiter_meta: "dict[str, Any] | None"
+
     def __init__(
         self,
         provider: str,
@@ -371,8 +410,63 @@ class HitSession(requests.Session):
         self._emit = emit
         self._label = feature_label or (lambda m, u, kw: default_feature_label(provider, m, u, kw))
         self._emit_hits = bool(os.getenv("CW_API_HITS")) if emit_hits is None else bool(emit_hits)
+        self._rate_limiter = None
+        self._rate_limiter_meta = None
+        try:
+            self._rl_log_every_s = max(1.0, float(os.getenv("CW_RATE_LIMIT_LOG_EVERY_S", "60")))
+        except Exception:
+            self._rl_log_every_s = 60.0
+        try:
+            self._rl_log_min_sleep_s = max(0.0, float(os.getenv("CW_RATE_LIMIT_LOG_MIN_SLEEP_S", "0.5")))
+        except Exception:
+            self._rl_log_min_sleep_s = 0.5
+        self._rl_log_state: dict[str, dict[str, float | int]] = {}
+
+    def _log_rate_limit_summary(self, bucket: str, slept: float) -> None:
+        now = time.monotonic()
+        state = self._rl_log_state.setdefault(
+            bucket,
+            {"window_start": now, "count": 0, "total_sleep_s": 0.0},
+        )
+        state["count"] = int(state["count"]) + 1
+        state["total_sleep_s"] = float(state["total_sleep_s"]) + float(slept)
+
+        window_age = now - float(state["window_start"])
+        if slept < self._rl_log_min_sleep_s and window_age < self._rl_log_every_s:
+            return
+
+        try:
+            meta = self._rate_limiter_meta or {}
+            cw_log(
+                self._provider,
+                "ratelimit",
+                "debug",
+                "client throttle activity",
+                bucket=bucket,
+                events=int(state["count"]),
+                total_sleep_s=round(float(state["total_sleep_s"]), 3),
+                last_sleep_s=round(float(slept), 3),
+                configured_rps=meta.get("get_per_sec" if bucket == "GET" else "post_per_sec"),
+                window_s=round(window_age, 1),
+            )
+        except Exception:
+            pass
+
+        state["window_start"] = now
+        state["count"] = 0
+        state["total_sleep_s"] = 0.0
 
     def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:  # type: ignore[override]
+        try:
+            limiter = getattr(self, "_rate_limiter", None)
+            if limiter is not None and hasattr(limiter, "wait"):
+                m = str(method).upper()
+                bucket = "GET" if m == "GET" else "POST"
+                slept = float(limiter.wait(bucket) or 0.0)  # type: ignore[call-arg]
+                if slept > 0:
+                    self._log_rate_limit_summary(bucket, slept)
+        except Exception:
+            pass
         try:
             resp = super().request(method, url, **kwargs)
             return resp
