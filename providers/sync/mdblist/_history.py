@@ -154,9 +154,18 @@ def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
         if w_new >= w_old:
             out[ek] = item
             changed = True
-    if len(out) != len(items):
+    normalized, dropped = _normalize_rollups(out)
+    if dropped["shows"] or dropped["seasons"]:
         changed = True
-    return out, changed
+        _info(
+            "history_rollups_pruned",
+            shows=dropped["shows"],
+            seasons=dropped["seasons"],
+            scope="cache",
+        )
+    if len(normalized) != len(items):
+        changed = True
+    return normalized, changed
 
 
 def _load_cache() -> dict[str, Any]:
@@ -260,6 +269,65 @@ def _merge_event(dst: dict[str, Any], item: Mapping[str, Any]) -> str | None:
         dst[ek] = merged
     return ek
 
+def _show_rollup_key(item: Mapping[str, Any]) -> str | None:
+    ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else item.get("ids")
+    if not isinstance(ids, Mapping):
+        return None
+    picked = _ids_pick(ids)
+    for k in ("tmdb", "imdb", "trakt", "tvdb", "mdblist", "kitsu"):
+        v = picked.get(k)
+        if v is not None and v != "":
+            return f"{k}:{v}"
+    return None
+
+
+def _normalize_rollups(items: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, int]]:
+    src: dict[str, Any] = {
+        str(k): dict(v) for k, v in (items or {}).items() if isinstance(v, Mapping)
+    }
+    if not src:
+        return {}, {"shows": 0, "seasons": 0}
+
+    episode_children: set[tuple[str, int]] = set()
+    show_children: set[str] = set()
+
+    for item in src.values():
+        typ = _type_norm(item.get("type"))
+        if typ != "episode":
+            continue
+        show_key = _show_rollup_key(item)
+        if not show_key:
+            continue
+        show_children.add(show_key)
+        try:
+            season_no = int(item.get("season") or 0)
+        except Exception:
+            season_no = 0
+        if season_no > 0:
+            episode_children.add((show_key, season_no))
+
+    out: dict[str, Any] = {}
+    dropped = {"shows": 0, "seasons": 0}
+
+    for key, item in src.items():
+        typ = _type_norm(item.get("type"))
+        if typ == "season":
+            show_key = _show_rollup_key(item)
+            try:
+                season_no = int(item.get("season") or 0)
+            except Exception:
+                season_no = 0
+            if show_key and season_no > 0 and (show_key, season_no) in episode_children:
+                dropped["seasons"] += 1
+                continue
+        elif typ == "show":
+            show_key = _show_rollup_key(item)
+            if show_key and show_key in show_children:
+                dropped["shows"] += 1
+                continue
+        out[key] = item
+
+    return out, dropped
 
 def _ids_pick(obj: Mapping[str, Any]) -> dict[str, Any]:
     ids_raw: dict[str, Any] = dict(obj.get('ids') or {})
@@ -598,10 +666,31 @@ def build_index(
         if rows_total == 0:
             break
         offset += per_page
+        
+    normalized_out, dropped_out = _normalize_rollups(out)
+    if dropped_out["shows"] or dropped_out["seasons"]:
+        _info(
+            "history_rollups_pruned",
+            shows=dropped_out["shows"],
+            seasons=dropped_out["seasons"],
+            scope="delta",
+        )
+
     merged = dict(cached)
-    if out:
-        for k, v in out.items():
+    if normalized_out:
+        for k, v in normalized_out.items():
             merged[str(k)] = dict(v)
+
+    merged, dropped_merged = _normalize_rollups(merged)
+    if dropped_merged["shows"] or dropped_merged["seasons"]:
+        _info(
+            "history_rollups_pruned",
+            shows=dropped_merged["shows"],
+            seasons=dropped_merged["seasons"],
+            scope="merged",
+        )
+
+    if out or dropped_merged["shows"] or dropped_merged["seasons"]:
         _save_cache(merged)
 
     update_watermark_if_new("history", latest_seen or acts_watched_iso)
