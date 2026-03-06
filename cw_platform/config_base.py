@@ -88,6 +88,12 @@ DEFAULT_CFG: dict[str, Any] = {
         "client_id": "",                                # From your Simkl app
         "client_secret": "",                            # From your Simkl app
         "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
+
+        # Rate limits
+        "rate_limit": {
+            "post_per_sec": 1,
+            "get_per_sec": 10,
+        },
     },
     
     "anilist": {
@@ -101,6 +107,12 @@ DEFAULT_CFG: dict[str, Any] = {
         "api_key": "",                                  # Your MDBList API key
         "timeout": 10,                                  # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget
+
+        # Rate limits 
+        "rate_limit": {
+            "post_per_sec": 1,
+            "get_per_sec": 10,
+        },
 
         # Watchlist
         "watchlist_shadow_ttl_hours": 0,                # Shadow TTL (hours); 0 = disabled
@@ -150,6 +162,12 @@ DEFAULT_CFG: dict[str, Any] = {
 
         "timeout": 10,                                  # HTTP timeout (seconds)
         "max_retries": 5,                               # Retry budget for API calls (429/5xx backoff)
+
+        # Rate limits
+        "rate_limit": {
+            "get_per_sec": 3.33,
+            "post_per_sec": 1,
+        },
 
         # Watchlist
         "watchlist_use_etag": True,                     # Use ETag + local shadow to skip unchanged lists
@@ -677,6 +695,106 @@ def _normalize_tmdb_sync(cfg: dict[str, Any]) -> None:
         t["_pending_created_at"] = 0
 
 
+def _normalize_trakt(cfg: dict[str, Any]) -> None:
+    t0 = cfg.get("trakt")
+    if isinstance(t0, dict):
+        t = t0
+    else:
+        t = {}
+        cfg["trakt"] = t
+
+    rl0 = t.get("rate_limit")
+    if isinstance(rl0, dict):
+        rl = rl0
+    else:
+        rl = {}
+        t["rate_limit"] = rl
+
+    def _rate(name: str, default: float, *, max_v: float = 1000.0) -> float:
+        v = rl.get(name, default)
+        try:
+            f = float(v)
+        except Exception:
+            f = float(default)
+        if f < 0:
+            f = 0.0
+        if f > max_v:
+            f = max_v
+        return f
+
+    # Allow 0 to disable throttling.
+    post_rps = _rate("post_per_sec", 1.0)
+    get_rps = _rate("get_per_sec", 3.33)
+    rl["post_per_sec"] = int(post_rps) if float(post_rps).is_integer() else float(post_rps)
+    rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
+
+
+def _normalize_simkl(cfg: dict[str, Any]) -> None:
+    s0 = cfg.get("simkl")
+    if isinstance(s0, dict):
+        s = s0
+    else:
+        s = {}
+        cfg["simkl"] = s
+
+    rl0 = s.get("rate_limit")
+    if isinstance(rl0, dict):
+        rl = rl0
+    else:
+        rl = {}
+        s["rate_limit"] = rl
+
+    def _rate(name: str, default: float, *, max_v: float = 1000.0) -> float:
+        v = rl.get(name, default)
+        try:
+            f = float(v)
+        except Exception:
+            f = float(default)
+        if f < 0:
+            f = 0.0
+        if f > max_v:
+            f = max_v
+        return f
+
+    # Allow 0 to disable throttling.
+    post_rps = _rate("post_per_sec", 1.0)
+    get_rps = _rate("get_per_sec", 10.0)
+    rl["post_per_sec"] = int(post_rps) if float(post_rps).is_integer() else float(post_rps)
+    rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
+
+
+def _normalize_mdblist(cfg: dict[str, Any]) -> None:
+    m0 = cfg.get("mdblist")
+    if isinstance(m0, dict):
+        m = m0
+    else:
+        m = {}
+        cfg["mdblist"] = m
+
+    rl0 = m.get("rate_limit")
+    if isinstance(rl0, dict):
+        rl = rl0
+    else:
+        rl = {}
+        m["rate_limit"] = rl
+
+    def _rate(name: str, default: float, *, max_v: float = 1000.0) -> float:
+        v = rl.get(name, default)
+        try:
+            f = float(v)
+        except Exception:
+            f = float(default)
+        if f < 0:
+            f = 0.0
+        if f > max_v:
+            f = max_v
+        return f
+
+    # Allow 0 to disable throttling.
+    post_rps = _rate("post_per_sec", 1.0)
+    get_rps = _rate("get_per_sec", 10.0)
+    rl["post_per_sec"] = int(post_rps) if float(post_rps).is_integer() else float(post_rps)
+    rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
 
 def _is_hhmm(v: str) -> bool:
     s = (v or "").strip()
@@ -853,6 +971,9 @@ def load_config() -> dict[str, Any]:
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
     cfg.setdefault("version", _current_version_norm())
     _normalize_tmdb_sync(cfg)
+    _normalize_trakt(cfg)
+    _normalize_simkl(cfg)
+    _normalize_mdblist(cfg)
     _normalize_scheduling(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
@@ -951,6 +1072,9 @@ def save_config(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
     data["version"] = _current_version_norm()
     _normalize_tmdb_sync(data)
+    _normalize_trakt(data)
+    _normalize_simkl(data)
+    _normalize_mdblist(data)
     _normalize_scheduling(data)
     _normalize_ui(data)
     pairs = data.get("pairs")
