@@ -95,18 +95,51 @@ def ensure_provider_block(cfg: dict[str, Any], provider_name: str) -> dict[str, 
     return out
 
 
-def ensure_instance_block(cfg: dict[str, Any], provider_name: str, instance_id: Any = None) -> dict[str, Any]:
+def get_instance_block(
+    cfg: Mapping[str, Any] | dict[str, Any],
+    provider_name: str,
+    instance_id: Any = None,
+    *,
+    create: bool = False,
+) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
-    base = ensure_provider_block(cfg, provider_name)
+    key = provider_key(provider_name)
+
+    base = cfg.get(key) if isinstance(cfg, Mapping) else None
+    if not isinstance(base, dict):
+        if not create or not isinstance(cfg, dict):
+            return {}
+        base = {}
+        cfg[key] = base
+
     if inst == _DEFAULT_INSTANCE:
         return base
+
     insts = base.get(_INSTANCES_KEY)
     if not isinstance(insts, dict):
+        if not create:
+            return {}
         insts = {}
         base[_INSTANCES_KEY] = insts
+
     blk = insts.get(inst)
     if isinstance(blk, dict):
         return blk
+
+    if not create:
+        return {}
+
     out: dict[str, Any] = {}
     insts[inst] = out
     return out
+
+
+def instance_exists(cfg: Mapping[str, Any], provider_name: str, instance_id: Any = None) -> bool:
+    inst = normalize_instance_id(instance_id)
+    if inst == _DEFAULT_INSTANCE:
+        return True
+    return bool(get_instance_block(cfg, provider_name, inst, create=False))
+
+
+def ensure_instance_block(cfg: dict[str, Any], provider_name: str, instance_id: Any = None) -> dict[str, Any]:
+    return get_instance_block(cfg, provider_name, instance_id, create=True)
