@@ -11,6 +11,8 @@ from typing import Any, Callable, Iterable, Mapping
 from ._log import log as cw_log
 
 from ._mod_common import (
+    HitSession,
+    SimpleRateLimiter,
     build_session,
     request_with_retries,
     parse_rate_limit,
@@ -173,6 +175,8 @@ class MDBLISTConfig:
     api_key: str
     timeout: float = 15.0
     max_retries: int = 3
+    rate_get_per_sec: float = 10.0
+    rate_post_per_sec: float = 1.0
 
 
 class MDBLISTError(RuntimeError):
@@ -189,7 +193,21 @@ class MDBLISTClient:
     def __init__(self, cfg: MDBLISTConfig, raw_cfg: Mapping[str, Any]):
         self.cfg = cfg
         self.raw_cfg = raw_cfg
-        self.session = build_session("MDBLIST", ctx, feature_label=_label_mdblist)
+        self.session: HitSession = build_session("MDBLIST", ctx, feature_label=_label_mdblist)
+
+        try:
+            self.session._rate_limiter = SimpleRateLimiter(
+                rates_per_sec={
+                    "GET": float(cfg.rate_get_per_sec or 0.0),
+                    "POST": float(cfg.rate_post_per_sec or 0.0),
+                }
+            )
+            self.session._rate_limiter_meta = {
+                "get_per_sec": float(cfg.rate_get_per_sec or 0.0),
+                "post_per_sec": float(cfg.rate_post_per_sec or 0.0),
+            }
+        except Exception:
+            pass
 
     def connect(self) -> MDBLISTClient:
         if not self.cfg.api_key:
@@ -239,10 +257,24 @@ class MDBLISTClient:
 class MDBLISTModule:
     def __init__(self, cfg: Mapping[str, Any]):
         m = dict(cfg.get("mdblist") or {})
+        rl = m.get("rate_limit")
+        if not isinstance(rl, dict):
+            rl = {}
+        try:
+            get_rps = float(rl.get("get_per_sec", 10.0))
+        except Exception:
+            get_rps = 10.0
+        try:
+            post_rps = float(rl.get("post_per_sec", 1.0))
+        except Exception:
+            post_rps = 1.0
+
         self.cfg = MDBLISTConfig(
             api_key=str(m.get("api_key") or "").strip(),
             timeout=float(m.get("timeout", cfg.get("timeout", 15.0))),
             max_retries=int(m.get("max_retries", cfg.get("max_retries", 3))),
+            rate_get_per_sec=get_rps,
+            rate_post_per_sec=post_rps,
         )
         if not self.cfg.api_key:
             raise MDBLISTAuthError("Missing MDBList api_key")
@@ -552,7 +584,29 @@ class _MDBLISTOPS:
             if ent and (now - float(ent[0])) < 10.0:
                 return dict(ent[1])
 
-            sess = build_session("MDBLIST", ctx, feature_label=_label_mdblist)
+            sess: HitSession = build_session("MDBLIST", ctx, feature_label=_label_mdblist)
+            # Apply provider rate limits
+            rl = m.get("rate_limit")
+            if not isinstance(rl, dict):
+                rl = {}
+            try:
+                get_rps = float(rl.get("get_per_sec", 10.0))
+            except Exception:
+                get_rps = 10.0
+            try:
+                post_rps = float(rl.get("post_per_sec", 1.0))
+            except Exception:
+                post_rps = 1.0
+            try:
+                sess._rate_limiter = SimpleRateLimiter(
+                    rates_per_sec={
+                        "GET": float(get_rps or 0.0),
+                        "POST": float(post_rps or 0.0),
+                    }
+                )
+                sess._rate_limiter_meta = {"get_per_sec": float(get_rps or 0.0), "post_per_sec": float(post_rps or 0.0)}
+            except Exception:
+                pass
             try:
                 sess.trust_env = False
             except Exception:
