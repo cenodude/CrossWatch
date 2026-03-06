@@ -60,8 +60,7 @@ Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMD
 Supported: **Profiles** (Multi-users / Multi-servers per instance)\
 Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
 
-<center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still bugs.</B></center><p></p>
-<center><b>DO NOT EXPOSE CROSSWATCH TO THE PUBLIC INTERNET</b></center>
+<center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still bugs. </B></center><p>DO NOT EXPOSE CROSSWATCH TO THE PUBLIC INTERNET</p>
 
 <img
   align="right"
