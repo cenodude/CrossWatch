@@ -124,7 +124,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # Ratings
         "ratings_per_page": 200,                        # Items per page when indexing
         "ratings_max_pages": 50,                        # Max pages to fetch (safety cap)
-        "ratings_chunk_size": 25,                       # Batch size for POST/REMOVE
+        "ratings_chunk_size": 500,                      # Batch size for POST/REMOVE
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes
         "ratings_max_backoff_ms": 8000,                 # Max backoff time for retries
         "ratings_since": "1900-01-01T00:00:02Z",        # First-run baseline; watermark overrides after
@@ -132,7 +132,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # History
         "history_per_page": 1000,                       # Items per page for /sync/watched delta
         "history_max_pages": 250,                       # Max pages to fetch (safety cap)
-        "history_chunk_size": 25,                       # Batch size for watched/unwatched writes
+        "history_chunk_size": 500,                      # Batch size for watched/unwatched writes
         "history_write_delay_ms": 600,                  # Optional pacing between writes
         "history_max_backoff_ms": 8000,                 # Max backoff time for retries
         "history_since": "1900-01-01T00:00:02Z"         # First-run baseline; watermark overrides after
