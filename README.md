@@ -18,8 +18,6 @@
 
 <p align="center" style="font-size:14px;">
 <b>⭐ Star this repository to get updates</b><br>
-<b>Version 0.9.x provides <i>Profiles</i>(multi-users/servers - be your own sync hub)</b><br>
-<b>Upcoming release 0.9.12 will support progress syncs between plex/emby/jellyfin</b>  
 </p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
@@ -60,6 +58,7 @@
 Supported: **Movies** and **TV shows / episodes / Seasons**\
 Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
 Supported: **Profiles** (Multi-users / Multi-servers per instance)
+Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
 
 <center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still bugs.</B></center><p></p>
 <center><b>DO NOT EXPOSE CROSSWATCH TO THE PUBLIC INTERNET</b></center>
@@ -78,6 +77,7 @@ Supported: **Profiles** (Multi-users / Multi-servers per instance)
 * **Multi media-server** and **multi tracker** support, in just one tool.
 * **Mobile-friendly overview** that prioritizes only the essentials
 * **Flexible sync directions** Between media server and trackers.
+* **Progress** sync your progress status between Plex, Emby and Jellyfin.
 * **Simple and advanced scheduling** From standard to more detailed pair schedules
 * **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
 * **Unified Watchlist across providers** View all watchlist items in one place.
@@ -99,6 +99,7 @@ Supported: **Profiles** (Multi-users / Multi-servers per instance)
         <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL/MDBList)</li>
         <li>Sync ratings (one-/two-way)</li>
         <li>Sync history (one-/two-way)</li>
+        Mli>Sync progress (one-/to-way)</ul>li>
         <li>Keep snapshots with CW tracker</li>
         <li>Profiles configurations</li>
         <li>Auto-remove from watchlist after finish</li>
