@@ -1,5 +1,5 @@
 # /providers/sync/_mod_TRAKT.py
-# CrossWatch SIMKL module
+# CrossWatch TRAKT module
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -71,9 +71,11 @@ feat_playlists = None
 
 from ._mod_common import (
     build_session,
+    HitSession,
     request_with_retries,
     parse_rate_limit,
     label_trakt,
+    SimpleRateLimiter,
     make_snapshot_progress,
 )
 
@@ -160,6 +162,8 @@ class TRAKTConfig:
     access_token: str
     timeout: float = 15.0
     max_retries: int = 3
+    rate_get_per_sec: float = 3.33
+    rate_post_per_sec: float = 1.0
     history_number_fallback: bool = False
     history_collection: bool = False
     history_collection_types: list[str] | None = None
@@ -171,7 +175,22 @@ class TRAKTClient:
     def __init__(self, cfg: TRAKTConfig, raw_cfg: Mapping[str, Any]):
         self.cfg = cfg
         self.raw_cfg = raw_cfg
-        self.session = build_session("TRAKT", ctx, feature_label=label_trakt)
+        self.session: HitSession = build_session("TRAKT", ctx, feature_label=label_trakt)
+
+        try:
+            self.session._rate_limiter = SimpleRateLimiter(
+                rates_per_sec={
+                    "GET": float(cfg.rate_get_per_sec or 0.0),
+                    "POST": float(cfg.rate_post_per_sec or 0.0),
+                }
+            )
+            self.session._rate_limiter_meta = {
+                "get_per_sec": float(cfg.rate_get_per_sec or 0.0),
+                "post_per_sec": float(cfg.rate_post_per_sec or 0.0),
+            }
+        except Exception:
+            pass
+
         self._apply_headers(cfg.access_token)
 
     def _trakt_dict(self) -> dict[str, Any]:
@@ -300,11 +319,30 @@ class TRAKTModule:
         types = [x for x in types if x in allowed]
         if bool(t.get("history_collection")) and not types:
             types = ["movies"]
+
+        rl = t.get("rate_limit")
+        rl_map = dict(rl) if isinstance(rl, dict) else {}
+
+        def _rate(key: str, default: float) -> float:
+            v = rl_map.get(key, default)
+            try:
+                f = float(v)
+            except Exception:
+                f = default
+            if f < 0:
+                f = 0.0
+            return f
+
+        rate_get = _rate("get_per_sec", 3.33)
+        rate_post = _rate("post_per_sec", 1.0)
+
         self.cfg = TRAKTConfig(
             client_id=str(t.get("client_id") or "").strip(),
             access_token=str(t.get("access_token") or "").strip(),
             timeout=float(t.get("timeout", cfg.get("timeout", 15.0))),
             max_retries=int(t.get("max_retries", cfg.get("max_retries", 3))),
+            rate_get_per_sec=rate_get,
+            rate_post_per_sec=rate_post,
             history_number_fallback=bool(t.get("history_number_fallback")),
             history_collection=bool(t.get("history_collection")),
             history_collection_types=types or None,
