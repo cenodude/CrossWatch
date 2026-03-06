@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import secrets
+from datetime import datetime
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
@@ -552,6 +553,24 @@ def config_path() -> Path:
     return _cfg_file()
 
 
+def backup_config_file() -> Path | None:
+    src = _cfg_file()
+    if not src.exists():
+        return None
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S_%f")
+    dst = src.with_name(f"{src.name}.backup_{ts}")
+    i = 1
+    while dst.exists():
+        dst = src.with_name(f"{src.name}.backup_{ts}_{i}")
+        i += 1
+
+    import shutil
+
+    shutil.copy2(src, dst)
+    return dst
+
+
 def _read_json(p: Path) -> dict[str, Any]:
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -579,6 +598,71 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
             out[k] = v
 
     return out
+
+def _path_parts(path: str | Iterable[str]) -> list[str]:
+    if isinstance(path, str):
+        return [part.strip() for part in path.split(".") if str(part).strip()]
+    return [str(part).strip() for part in path if str(part).strip()]
+
+
+def _get_nested_value(src: dict[str, Any], path: str | Iterable[str]) -> tuple[bool, Any]:
+    parts = _path_parts(path)
+    if not parts:
+        return False, None
+
+    cur: Any = src
+    for part in parts:
+        if not isinstance(cur, dict) or part not in cur:
+            return False, None
+        cur = cur[part]
+    return True, cur
+
+
+def _set_nested_value(dst: dict[str, Any], path: str | Iterable[str], value: Any) -> None:
+    parts = _path_parts(path)
+    if not parts:
+        return
+
+    cur: dict[str, Any] = dst
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = cast(dict[str, Any], nxt)
+
+    cur[parts[-1]] = copy.deepcopy(value)
+
+
+def apply_default_overrides(
+    cfg: dict[str, Any],
+    override_keys: Iterable[str],
+) -> tuple[dict[str, Any], list[str]]:
+    data = copy.deepcopy(dict(cfg or {}))
+    applied: list[str] = []
+
+    for key in override_keys:
+        parts = _path_parts(key)
+        if not parts:
+            continue
+
+        found, value = _get_nested_value(DEFAULT_CFG, parts)
+        if not found:
+            continue
+
+        dotted = ".".join(parts)
+        _set_nested_value(data, parts, value)
+        applied.append(dotted)
+
+    return data, applied
+
+def apply_migration_overrides(cfg: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    try:
+        from .config_overrides import MIGRATION_OVERRIDE_KEYS
+    except Exception:
+        MIGRATION_OVERRIDE_KEYS = ()
+
+    return apply_default_overrides(cfg, MIGRATION_OVERRIDE_KEYS)
 
 
 # Feature normalization
