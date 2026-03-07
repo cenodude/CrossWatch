@@ -90,12 +90,10 @@ def replan_now() -> dict[str, Any]:
 
     try:
         if scheduler is not None:
-            if hasattr(scheduler, "stop"):
-                scheduler.stop()
-            if hasattr(scheduler, "start"):
-                scheduler.start()
             if hasattr(scheduler, "refresh"):
                 scheduler.refresh()
+            elif hasattr(scheduler, "start"):
+                scheduler.start()
     except Exception as e:
         try:
             log("SYNC", "SCHED")(f"replan_now worker refresh failed: {e}", level="ERROR")
