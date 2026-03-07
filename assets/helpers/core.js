@@ -2060,6 +2060,34 @@ function _pruneDetailsLog(el) {
   while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
 }
 
+async function _copyDetailsLog(btn) {
+  const el = _activeDetailsLogEl();
+  const text = (el?.innerText || el?.textContent || "").trim();
+  if (!text) return;
+
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+
+  if (!btn) return;
+  const prev = btn.textContent;
+  btn.textContent = "Copied";
+  clearTimeout(btn._copyFlashTO);
+  btn._copyFlashTO = setTimeout(() => {
+    btn.textContent = prev;
+  }, 1200);
+}
+
 function setDetailsTab(tab) {
   const t = (tab === "watcher") ? "watcher" : "sync";
   window._detailsTab = t;
@@ -2091,6 +2119,13 @@ function initDetailsTabs() {
 
   tabSync.addEventListener("click", () => setDetailsTab("sync"));
   tabWatch.addEventListener("click", () => setDetailsTab("watcher"));
+
+  const btnCopy = document.getElementById("det-copy");
+  if (btnCopy) {
+    btnCopy.addEventListener("click", () => {
+      _copyDetailsLog(btnCopy).catch(() => {});
+    });
+  }
 
   const btnClear = document.getElementById("det-clear");
   if (btnClear) {
