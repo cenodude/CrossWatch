@@ -19,7 +19,7 @@ __all__ = ["router"]
 
 router = APIRouter(prefix="/api", tags=["version"])
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.9.12")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.9.13")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 
 
