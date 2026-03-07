@@ -340,6 +340,7 @@ def _get_index_html_static() -> str:
                 role="tab" aria-selected="false" aria-controls="det-panel-watcher" data-tab="watcher">Watcher</button>
             </div>
             <div class="det-tools">
+              <button id="det-copy" class="ghost" type="button" title="Copy current output">Copy</button>
               <button id="det-clear" class="ghost" type="button" title="Clear current output">Clear</button>
               <button id="det-follow" class="ghost" type="button" title="Toggle auto-follow">Follow</button>
             </div>
