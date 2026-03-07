@@ -355,20 +355,26 @@ class SyncScheduler:
         return st
 
     def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._poke.clear()
-        self._thread = threading.Thread(target=self._loop, name="SyncScheduler", daemon=True)
-        self._thread.start()
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._poke.clear()
+            self._thread = threading.Thread(target=self._loop, name="SyncScheduler", daemon=True)
+            self._thread.start()
         self._log("scheduler thread started", level="INFO")
 
     def stop(self) -> None:
+        t = self._thread
+        if not t or not t.is_alive():
+            self._thread = None
+            return
+
         self._stop.set()
         self._poke.set()
-        t = self._thread
-        if t and t.is_alive():
-            t.join(timeout=3.0)
+        t.join(timeout=3.0)
+        if self._thread is t:
+            self._thread = None
         self._log("scheduler thread stopped", level="INFO")
 
     def refresh(self) -> None:
