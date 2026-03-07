@@ -758,9 +758,14 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
     try:
         global scheduler
         if scheduler is not None:
-            scheduler.start()  # idempotent
-            if hasattr(scheduler, "refresh"):
-                scheduler.refresh()
+            cfg_sched = (load_config() or {}).get("scheduling") or {}
+            effective_enabled = bool(
+                cfg_sched.get("enabled") or ((cfg_sched.get("advanced") or {}).get("enabled"))
+            )
+            if effective_enabled:
+                scheduler.start()
+                if hasattr(scheduler, "refresh"):
+                    scheduler.refresh()
     except Exception as e:
         try:
             _UIHostLogger("SYNC")(f"scheduler startup error: {e}", level="ERROR")
