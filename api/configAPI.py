@@ -73,8 +73,11 @@ def _after_config_save(env: dict[str, Any], cfg: dict[str, Any]) -> None:
         if hasattr(sched, "refresh_ratings_watermarks"):
             sched.refresh_ratings_watermarks()
         s = cfg.get("scheduling") or {}
+        effective_enabled = bool(
+            (s or {}).get("enabled") or ((s or {}).get("advanced") or {}).get("enabled")
+        )
         if sched is not None:
-            if bool(s.get("enabled")):
+            if effective_enabled:
                 getattr(sched, "start", lambda: None)()
                 getattr(sched, "refresh", lambda: None)()
             else:
