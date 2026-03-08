@@ -1,9 +1,11 @@
-// Sync bar UI component
+/* assets/js/syncbar.js */
+/* SyncBar UI component for showing sync progress in the header. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
   (document.getElementById("syncbar-css")||{}).remove?.();
   document.head.appendChild(Object.assign(document.createElement("style"), {
     id:"syncbar-css", textContent:`
-#ux-progress{margin-top:12px}
+#ux-progress{margin-top:12px;position:relative;z-index:1}
 .sb-rail{position:relative;height:10px;border-radius:999px;background:#1f1f26;overflow:visible}
 .sb-rail.error{background:linear-gradient(90deg,#311,#401818)}
 .sb-fill{position:absolute;inset:0 auto 0 0;width:0%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#7c4dff,#00d4ff);box-shadow:inset 0 0 14px rgba(124,77,255,.35);transition:width .28s ease;z-index:1}
