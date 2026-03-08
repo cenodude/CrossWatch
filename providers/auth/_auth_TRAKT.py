@@ -54,22 +54,14 @@ def _load_config() -> dict[str, Any]:
             return cfg
         return dict(cfg)
     except Exception:
-        try:
-            with open("config.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        return {}
 
 
 def _save_config(cfg: dict[str, Any]) -> None:
     try:
         save_config(cfg)
     except Exception:
-        try:
-            with open("config.json", "w", encoding="utf-8") as f:
-                json.dump(cfg, f, indent=2, ensure_ascii=False)
-        except Exception:
-            pass
+        pass
 
 
 def _blocks(cfg: dict[str, Any], instance_id: Any) -> tuple[str, dict[str, Any], dict[str, Any]]:
