@@ -154,25 +154,32 @@ function injectCSS() {
   }
 
   .cw-maint .actions {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
     margin-top: 2px;
+  }
+  @media (max-width: 980px) {
+    .cw-maint .actions {
+      grid-template-columns: 1fr;
+    }
   }
 
   .cw-maint .action-row {
     background: #0b0f19;
     border-radius: 14px;
     border: 1px solid rgba(255,255,255,.09);
-    padding: 9px 11px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 12px;
     box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset;
   }
   .cw-maint .action-main {
-    display: flex;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr);
+    align-items: start;
     gap: 10px;
     flex: 1;
     min-width: 0;
@@ -195,18 +202,20 @@ function injectCSS() {
   .cw-maint .action-copy {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
     min-width: 0;
   }
   .cw-maint .action-line {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 6px;
     min-width: 0;
   }
   .cw-maint .action-title {
     font-size: 13px;
     font-weight: 600;
+    line-height: 1.2;
   }
   .cw-maint .action-tag {
     padding: 1px 7px;
@@ -218,7 +227,8 @@ function injectCSS() {
     opacity: .9;
   }
   .cw-maint .action-desc {
-    font-size: 12px;
+    font-size: 11px;
+    line-height: 1.45;
     opacity: .82;
   }
   .cw-maint .action-desc code {
@@ -229,28 +239,42 @@ function injectCSS() {
   }
 
   .cw-maint .action-options {
-    margin-top: 6px;
+    width: 100%;
+    margin-top: 8px;
     font-size: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
+    align-items: start;
   }
   .cw-maint .action-options label {
-    display: inline-flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 6px;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    width: 100%;
     cursor: pointer;
   }
+  .cw-maint .action-options label span {
+    min-width: 0;
+    white-space: normal;
+    line-height: 1.25;
+  }
   .cw-maint .action-options input {
+    margin: 2px 0 0;
     accent-color: #ff627e;
+  }
+  @media (max-width: 720px) {
+    .cw-maint .action-options {
+      grid-template-columns: 1fr;
+    }
   }
 
   .cw-maint .run-btn {
+    align-self: start;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,.2);
-    padding: 6px 14px;
+    padding: 7px 16px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: .09em;
@@ -330,7 +354,8 @@ export default {
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
-      shell.style.setProperty("--cxModalMaxW", "850px");
+      shell.style.setProperty("--cxModalW", "1320px");
+      shell.style.setProperty("--cxModalMaxW", "1320px");
     }
 
     root.innerHTML = `
