@@ -159,9 +159,9 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
                   <div>
-                    <label>API Key</label>
+                    <label for="mdblist_key">API Key</label>
                     <div style="display:flex;gap:8px">
-                      <input id="mdblist_key" type="password" placeholder="••••••••" />
+                      <input id="mdblist_key" name="mdblist_key" type="password" placeholder="••••••••" />
                       <button id="mdblist_save" class="btn">Connect</button>
                     </div>
                     <div id="mdblist_hint" class="msg warn" style="margin-top:8px">
@@ -171,7 +171,7 @@ def html() -> str:
                   </div>
             
                   <div>
-                    <label>Status</label>
+                    <div class="field-label">Status</div>
                     <div class="inline">
                       <button id="mdblist_verify" class="btn">Verify</button>
                       <button id="mdblist_disconnect" class="btn danger">Disconnect</button>

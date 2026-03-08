@@ -177,9 +177,9 @@ def _tmdb_sync_html() -> str:
             
                 <div class="grid2">
                   <div>
-                    <label>API Key (v3)</label>
+                    <label for="tmdb_sync_api_key">API Key (v3)</label>
                     <div style="display:flex;gap:8px">
-                      <input id="tmdb_sync_api_key" type="password" autocomplete="off" placeholder="••••••••" />
+                      <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="off" placeholder="••••••••" />
                       <button id="tmdb_sync_connect" class="btn">Connect</button>
                     </div>
                     <div id="tmdb_sync_hint" class="msg warn" style="margin-top:8px">
@@ -190,14 +190,14 @@ def _tmdb_sync_html() -> str:
                   </div>
             
                   <div>
-                    <label>Session ID (v3)</label>
-                    <input id="tmdb_sync_session_id" type="password" autocomplete="off" placeholder="Auto-filled after approval" />
+                    <label for="tmdb_sync_session_id">Session ID (v3)</label>
+                    <input id="tmdb_sync_session_id" name="tmdb_sync_session_id" type="password" autocomplete="off" placeholder="Auto-filled after approval" />
                     <div class="muted">Required for account watchlists/ratings.</div>
                   </div>
                 </div>
             
                 <div style="margin-top:10px">
-                  <label>Status</label>
+                  <div class="field-label">Status</div>
                   <div class="inline">
                     <button id="tmdb_sync_verify" class="btn">Verify</button>
                     <button id="tmdb_sync_disconnect" class="btn danger">Disconnect</button>

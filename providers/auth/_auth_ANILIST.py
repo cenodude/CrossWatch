@@ -194,12 +194,12 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
                   <div>
-                    <label>Client ID</label>
-                    <input id="anilist_client_id" placeholder="Your AniList client_id" autocomplete="off" oninput="updateAniListButtonState()" />
+                    <label for="anilist_client_id">Client ID</label>
+                    <input id="anilist_client_id" name="anilist_client_id" placeholder="Your AniList client_id" autocomplete="off" oninput="updateAniListButtonState()" />
                   </div>
                   <div>
-                    <label>Client Secret</label>
-                    <input id="anilist_client_secret" placeholder="Your AniList client_secret" type="password" autocomplete="off" oninput="updateAniListButtonState()" />
+                    <label for="anilist_client_secret">Client Secret</label>
+                    <input id="anilist_client_secret" name="anilist_client_secret" placeholder="Your AniList client_secret" type="password" autocomplete="off" oninput="updateAniListButtonState()" />
                   </div>
                 </div>
             
@@ -218,8 +218,8 @@ def html() -> str:
                 </div>
             
                 <div style="margin-top:10px">
-                  <label>Access Token</label>
-                  <input id="anilist_access_token" placeholder="(auto-filled after auth)" autocomplete="off" />
+                  <label for="anilist_access_token">Access Token</label>
+                  <input id="anilist_access_token" name="anilist_access_token" placeholder="(auto-filled after auth)" autocomplete="off" />
                 </div>
           </div>
         </div>

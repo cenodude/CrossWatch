@@ -305,25 +305,25 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
               <div>
-                <label>Server URL</label>
+                <label for="jfy_server">Server URL</label>
                 <div class="inp-row">
-                  <input id="jfy_server" class="grow" placeholder="http://host:8096/">
+                  <input id="jfy_server" name="jfy_server" class="grow" placeholder="http://host:8096/">
                   <label class="verify"><input id="jfy_verify_ssl" type="checkbox"> Verify SSL</label>
                 </div>
               </div>
               <div>
-                <label>Username</label>
-                <input id="jfy_user" placeholder="username">
+                <label for="jfy_user">Username</label>
+                <input id="jfy_user" name="jfy_user" placeholder="username">
               </div>
             </div>
             <div class="grid2" style="margin-top:8px">
               <div>
-                <label>Password</label>
-                <input id="jfy_pass" type="password" placeholder="********">
+                <label for="jfy_pass">Password</label>
+                <input id="jfy_pass" name="jfy_pass" type="password" placeholder="********">
               </div>
               <div>
-                <label>Access Token</label>
-                <input id="jfy_tok" readonly placeholder="empty = not set">
+                <label for="jfy_tok">Access Token</label>
+                <input id="jfy_tok" name="jfy_tok" readonly placeholder="empty = not set">
               </div>
             </div>
             <div class="inline" style="margin-top:10px">
@@ -335,19 +335,19 @@ def html() -> str:
 
           <div class="cw-subpanel" data-sub="settings">
             <div style="max-width:820px">
-              <label>Server URL</label>
+              <label for="jfy_server_url">Server URL</label>
               <div class="inp-row">
-                <input id="jfy_server_url" class="grow" placeholder="http://host:8096/">
+                <input id="jfy_server_url" name="jfy_server_url" class="grow" placeholder="http://host:8096/">
                 <label class="verify"><input id="jfy_verify_ssl_dup" type="checkbox" onclick="(function(){var a=document.getElementById('jfy_verify_ssl'); if(a) a.checked = document.getElementById('jfy_verify_ssl_dup').checked;})();"> Verify SSL</label>
               </div>
               <div class="sub">Leave blank to discover.</div>
 
-              <label style="margin-top:10px">Username</label>
-              <input id="jfy_username" placeholder="Display name">
+              <label for="jfy_username" style="margin-top:10px">Username</label>
+              <input id="jfy_username" name="jfy_username" placeholder="Display name">
 
-              <label style="margin-top:10px">User_ID</label>
+              <label for="jfy_user_id" style="margin-top:10px">User_ID</label>
               <div class="inp-row">
-                <input id="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
+                <input id="jfy_user_id" name="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
                 <button id="jfy_pick_user" class="btn" type="button">Pick user</button>
               </div>
               <div class="sub">Uses your current token. Admin tokens show all users; otherwise you'll only see yourself.</div>
@@ -368,7 +368,7 @@ def html() -> str:
 
               <div class="lm-head">
                 <div class="title">Whitelist Libraries</div>
-                <input id="jfy_lib_filter" class="lm-filter" placeholder="Filter…">
+                <input id="jfy_lib_filter" name="jfy_lib_filter" class="lm-filter" placeholder="Filter…">
                 <div class="lm-col"><span class="sub">Select all:</span></div>
                 <div class="lm-col"><button id="jfy_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
                 <div class="lm-col"><button id="jfy_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>
@@ -376,9 +376,9 @@ def html() -> str:
               </div>
               <div id="jfy_lib_matrix" class="lm-rows"></div>
               <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
-              <select id="jfy_lib_history" class="lm-hidden" multiple></select>
-              <select id="jfy_lib_ratings" class="lm-hidden" multiple></select>
-              <select id="jfy_lib_scrobble" class="lm-hidden" multiple></select>
+              <select id="jfy_lib_history" name="jfy_lib_history" class="lm-hidden" multiple></select>
+              <select id="jfy_lib_ratings" name="jfy_lib_ratings" class="lm-hidden" multiple></select>
+              <select id="jfy_lib_scrobble" name="jfy_lib_scrobble" class="lm-hidden" multiple></select>
             </div>
           </div>
         </div>

@@ -303,12 +303,12 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
                   <div>
-                    <label>Client ID</label>
-                    <input id="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklButtonState()">
+                    <label for="simkl_client_id">Client ID</label>
+                    <input id="simkl_client_id" name="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklButtonState()">
                   </div>
                   <div>
-                    <label>Client Secret</label>
-                    <input id="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklButtonState()" type="password">
+                    <label for="simkl_client_secret">Client Secret</label>
+                    <input id="simkl_client_secret" name="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklButtonState()" type="password">
                   </div>
                 </div>
             
@@ -329,8 +329,8 @@ def html() -> str:
             
                 <div class="grid2" style="margin-top:8px">
                   <div>
-                    <label>Access token</label>
-                    <input id="simkl_access_token" readonly placeholder="empty = not set">
+                    <label for="simkl_access_token">Access token</label>
+                    <input id="simkl_access_token" name="simkl_access_token" readonly placeholder="empty = not set">
                   </div>
                 </div>
             

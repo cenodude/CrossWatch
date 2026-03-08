@@ -161,14 +161,14 @@ class _TraktProvider:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
               <div>
-                <label>Client ID</label>
-                <input id="trakt_client_id" placeholder="Enter your Trakt Client ID"
+                <label for="trakt_client_id">Client ID</label>
+                <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID"
                   oninput="updateTraktHint()"
                   onchange="try{saveSetting('trakt.client_id', this.value); updateTraktHint();}catch(_){}">
               </div>
               <div>
-                <label>Client Secret</label>
-                <input id="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret"
+                <label for="trakt_client_secret">Client Secret</label>
+                <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret"
                   oninput="updateTraktHint()"
                   onchange="try{saveSetting('trakt.client_secret', this.value); updateTraktHint();}catch(_){}">
               </div>
@@ -185,14 +185,14 @@ class _TraktProvider:
 
             <div class="grid2">
               <div>
-                <label>Current token</label>
+                <div class="field-label">Current token</div>
                 <div style="display:flex;gap:8px">
                   <input id="trakt_token" placeholder="empty = not set" readonly>
                   <button id="btn-copy-trakt-token" class="btn copy" onclick="copyInputValue('trakt_token', this)">Copy</button>
                 </div>
               </div>
               <div>
-                <label>Link code (PIN)</label>
+                <div class="field-label">Link code (PIN)</div>
                 <div style="display:flex;gap:8px">
                   <input id="trakt_pin" placeholder="" readonly>
                   <button id="btn-copy-trakt-pin" class="btn copy" onclick="copyInputValue('trakt_pin', this)">Copy</button>

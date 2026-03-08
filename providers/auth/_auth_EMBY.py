@@ -298,25 +298,25 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
               <div>
-                <label>Server URL</label>
+                <label for="emby_server">Server URL</label>
                 <div class="inp-row">
-                  <input id="emby_server" class="grow" placeholder="http://host:8096/">
+                  <input id="emby_server" name="emby_server" class="grow" placeholder="http://host:8096/">
                   <label class="verify"><input id="emby_verify_ssl" type="checkbox"> Verify SSL</label>
                 </div>
               </div>
               <div>
-                <label>Username</label>
-                <input id="emby_user" placeholder="username">
+                <label for="emby_user">Username</label>
+                <input id="emby_user" name="emby_user" placeholder="username">
               </div>
             </div>
             <div class="grid2" style="margin-top:8px">
               <div>
-                <label>Password</label>
-                <input id="emby_pass" type="password" placeholder="********">
+                <label for="emby_pass">Password</label>
+                <input id="emby_pass" name="emby_pass" type="password" placeholder="********">
               </div>
               <div>
-                <label>Access Token</label>
-                <input id="emby_tok" readonly placeholder="empty = not set">
+                <label for="emby_tok">Access Token</label>
+                <input id="emby_tok" name="emby_tok" readonly placeholder="empty = not set">
               </div>
             </div>
             <div class="inline" style="margin-top:10px">
@@ -328,19 +328,19 @@ def html() -> str:
 
           <div class="cw-subpanel" data-sub="settings">
             <div style="max-width:820px">
-              <label>Server URL</label>
+              <label for="emby_server_url">Server URL</label>
               <div class="inp-row">
-                <input id="emby_server_url" class="grow" placeholder="http://host:8096/">
+                <input id="emby_server_url" name="emby_server_url" class="grow" placeholder="http://host:8096/">
                 <label class="verify"><input id="emby_verify_ssl_dup" type="checkbox" onclick="(function(){var a=document.getElementById('emby_verify_ssl'); if(a) a.checked = document.getElementById('emby_verify_ssl_dup').checked;})();"> Verify SSL</label>
               </div>
               <div class="sub">Leave blank to discover.</div>
 
-              <label style="margin-top:10px">Username</label>
-              <input id="emby_username" placeholder="Display name">
+              <label for="emby_username" style="margin-top:10px">Username</label>
+              <input id="emby_username" name="emby_username" placeholder="Display name">
 
-              <label style="margin-top:10px">User_ID</label>
+              <label for="emby_user_id" style="margin-top:10px">User_ID</label>
               <div class="inp-row">
-                <input id="emby_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
+                <input id="emby_user_id" name="emby_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
                 <button id="emby_pick_user" class="btn" type="button" data-cw-emby="pick-user">Pick user</button>
               </div>
               <div class="sub">Uses your current token. Admin tokens show all users; otherwise you'll only see yourself.</div>

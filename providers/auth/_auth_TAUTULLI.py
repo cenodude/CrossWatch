@@ -150,15 +150,15 @@ def html() -> str:
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
                   <div>
-                    <label>Server URL</label>
-                    <input id="tautulli_server" type="text" placeholder="http://localhost:8181" />
-                    <label style="margin-top:10px">API Key</label>
+                    <label for="tautulli_server">Server URL</label>
+                    <input id="tautulli_server" name="tautulli_server" type="text" placeholder="http://localhost:8181" />
+                    <label for="tautulli_key" style="margin-top:10px">API Key</label>
                     <div style="display:flex;gap:8px">
-                      <input id="tautulli_key" type="password" placeholder="••••••••" />
+                      <input id="tautulli_key" name="tautulli_key" type="password" placeholder="••••••••" />
                       <button id="tautulli_save" class="btn">Connect</button>
                     </div>
-                    <label style="margin-top:10px">User ID (optional)</label>
-                    <input id="tautulli_user_id" type="text" placeholder="1" />
+                    <label for="tautulli_user_id" style="margin-top:10px">User ID (optional)</label>
+                    <input id="tautulli_user_id" name="tautulli_user_id" type="text" placeholder="1" />
             
                     <div id="tautulli_hint" class="msg warn" style="margin-top:8px">
                       API key: Tautulli → Settings → Web Interface → API.
@@ -166,7 +166,7 @@ def html() -> str:
                   </div>
             
                   <div>
-                    <label>Status</label>
+                    <div class="field-label">Status</div>
                     <div class="inline">
                       <button id="tautulli_verify" class="btn">Verify</button>
                       <button id="tautulli_disconnect" class="btn danger">Disconnect</button>

@@ -556,8 +556,8 @@ def html() -> str:
   <div class="body">
     <div class="grid2">
       <div style="grid-column:1 / -1">
-        <label>TMDb API key</label>
-        <input id="tmdb_api_key" placeholder="Your TMDb API key" oninput="this.dataset.dirty='1'; updateTmdbHint()">
+        <label for="tmdb_api_key">TMDb API key</label>
+        <input id="tmdb_api_key" name="tmdb_api_key" placeholder="Your TMDb API key" oninput="this.dataset.dirty='1'; updateTmdbHint()">
         <div id="tmdb_hint" class="msg warn hidden">
           TMDb is optional but recommended to enrich posters &amp; metadata in the preview.
           Get an API key at
@@ -572,14 +572,14 @@ def html() -> str:
         <div class="adv-wrap">
 
           <div>
-            <label>Default locale (metadata.locale)</label>
-            <input id="metadata_locale" placeholder="e.g. nl-NL or en-US" oninput="this.dataset.dirty='1'">
+            <label for="metadata_locale">Default locale (metadata.locale)</label>
+            <input id="metadata_locale" name="metadata_locale" placeholder="e.g. nl-NL or en-US" oninput="this.dataset.dirty='1'">
             <div class="sub">Used when a request doesn't pass ?locale=. Falls back to UI locale if empty.</div>
           </div>
 
           <div>
-            <label>TTL hours (metadata.ttl_hours)</label>
-            <input id="metadata_ttl_hours" type="number" min="1" step="1" placeholder="6" oninput="this.dataset.dirty='1'">
+            <label for="metadata_ttl_hours">TTL hours (metadata.ttl_hours)</label>
+            <input id="metadata_ttl_hours" name="metadata_ttl_hours" type="number" min="1" step="1" placeholder="6" oninput="this.dataset.dirty='1'">
             <div class="sub">Resolver cache freshness (coarse). Default 6h.</div>
           </div>
 
