@@ -1,4 +1,6 @@
-// assets/js/modals/maintenance/index.js
+/* assets/js/modals/maintenance/index.js */
+/* Modal for maintenance and troubleshooting operations like clearing state, cache, tracker data, and resetting stats. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 const fjson = async (url, opts = {}) => {
   const r = await fetch(url, { cache: "no-store", ...opts });
