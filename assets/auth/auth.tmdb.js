@@ -110,6 +110,7 @@
 
     var selEl = document.createElement('select');
     selEl.id = 'tmdb_sync_instance';
+selEl.name = 'tmdb_sync_instance';
     selEl.className = 'input';
     selEl.style.minWidth = '160px';
 

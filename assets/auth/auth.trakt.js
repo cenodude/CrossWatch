@@ -87,6 +87,7 @@
 
     var sel = document.createElement('select');
     sel.id = 'trakt_instance';
+sel.name = 'trakt_instance';
     sel.className = 'input';
     sel.style.minWidth = '140px';
     sel.style.width = 'auto';

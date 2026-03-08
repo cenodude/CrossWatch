@@ -73,6 +73,7 @@
 
     const sel = d.createElement('select');
     sel.id = 'simkl_instance';
+sel.name = 'simkl_instance';
     sel.className = 'input';
     sel.style.minWidth = '160px';
     // Match Trakt: keep it compact and let content drive the width.

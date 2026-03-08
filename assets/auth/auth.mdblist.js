@@ -95,6 +95,7 @@
 
     var sel = document.createElement('select');
     sel.id = 'mdblist_instance';
+sel.name = 'mdblist_instance';
     sel.className = 'input';
     sel.style.minWidth = '160px';
 

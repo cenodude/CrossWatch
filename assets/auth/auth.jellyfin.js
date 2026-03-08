@@ -93,6 +93,7 @@
 
     const sel = document.createElement("select");
     sel.id = "jellyfin_instance";
+sel.name = "jellyfin_instance";
     sel.className = "input";
     sel.style.minWidth = "160px";
 

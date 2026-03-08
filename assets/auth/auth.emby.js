@@ -94,6 +94,7 @@
 
     const sel = document.createElement("select");
     sel.id = "emby_instance";
+sel.name = "emby_instance";
     sel.className = "input";
     sel.style.minWidth = "160px";
 

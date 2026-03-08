@@ -120,6 +120,7 @@
 
     const sel = d.createElement("select");
     sel.id = "anilist_instance";
+sel.name = "anilist_instance";
     sel.className = "input";
     sel.style.minWidth = "160px";
 

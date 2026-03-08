@@ -98,6 +98,7 @@ function ensurePlexInstanceUI() {
 
   const sel = d.createElement("select");
   sel.id = "plex_instance";
+sel.name = "plex_instance";
   sel.className = "input";
   sel.style.minWidth = "160px";
 
