@@ -1,912 +1,438 @@
-/* assets/settings-insight.js */
-(function (w, d) {
-  "use strict";
+/* assets/js/settings-insight.js */
+/* Refactored and expanded settings insight panel */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+(function (w, d) {
+  'use strict';
   if (w.__CW_SETTINGS_INSIGHT_STARTED__) return;
   w.__CW_SETTINGS_INSIGHT_STARTED__ = 1;
 
-  // Helpers
-  const $  = (sel, root) => (root || d).querySelector(sel);
+  const API = () => (w.CW && w.CW.API) || null;
+  const Cache = () => (w.CW && w.CW.Cache) || null;
+  const $ = (sel, root) => (root || d).querySelector(sel);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  async function fetchJSON(url){ try{ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) return null; return await r.json(); }catch{ return null; } }
-  function toLocal(v){
-    if (v===undefined||v===null||v==="") return "—";
-    if (typeof v==="number"){ const ms = v<10_000_000_000 ? v*1000 : v; const dt=new Date(ms); return isNaN(+dt)?"—":dt.toLocaleString(undefined,{hour12:false}); }
-    const dt=new Date(v); return isNaN(+dt)?"—":dt.toLocaleString(undefined,{hour12:false});
-  }
-  const coalesceNextRun = o => o ? (o.next_run_at ?? o.next_run ?? o.next ?? null) : null;
+  const Meta = () => (w.CW && w.CW.ProviderMeta) || null;
+  const PROVIDERS = ['plex', 'emby', 'jellyfin', 'trakt', 'simkl', 'mdblist', 'anilist', 'tmdb', 'tautulli'];
 
-  function prettyWatchProvider(v){
-    const k = String(v || "").toLowerCase().trim();
-    if(!k) return "";
-    if(k === "plex") return "Plex";
-    if(k === "emby") return "Emby";
-    if(k === "jellyfin") return "Jellyfin";
-    return k.toUpperCase();
-  }
+  const css = `
+#cw-settings-insight{display:block;min-width:0}
+.si-card{border:1px solid rgba(255,255,255,.08);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015));box-shadow:0 18px 36px rgba(0,0,0,.18);overflow:hidden}
+.si-header{padding:16px 18px 14px;border-bottom:1px solid rgba(255,255,255,.08)}
+.si-header-kicker{display:block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:rgba(185,193,230,.72);line-height:1.2}
+#cw-si-scroll{overflow:auto;overscroll-behavior:contain}
+.si-body{padding:12px;display:grid;gap:10px}
+.si-row{display:grid;grid-template-columns:22px minmax(0,1fr);gap:12px;align-items:start;padding:14px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.025);cursor:pointer;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}
+.si-row:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.24);background:rgba(255,255,255,.04);box-shadow:0 10px 20px rgba(0,0,0,.18)}
+.si-ic{display:flex;align-items:center;justify-content:center;min-height:20px}.si-ic .material-symbols-rounded{font-size:20px;color:rgba(224,230,255,.92)}
+.si-col{min-width:0}
+.si-h{margin:0 0 6px;color:#F2F4FF;font-weight:800;font-size:14px;line-height:1.2}
+.si-one{color:rgba(185,193,230,.84);font-size:12px;line-height:1.5}
+.si-one b,.si-one strong{color:#F2F4FF}
+.si-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.si-sep{color:rgba(185,193,230,.45);font-weight:800}
+.si-status{color:#F2F4FF;font-weight:700}
+.si-text{display:inline-flex;align-items:center}
+.si-to{color:rgba(185,193,230,.72);font-weight:700}
+.si-pchips,.si-inline-logos{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.si-pchip{display:inline-flex;align-items:center;gap:8px;padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(120,128,160,.16);font-size:12px;font-weight:800;color:#E6EAFD}
+.si-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08);font-size:11px;line-height:1}
+.si-logo{height:18px;width:auto;display:block;opacity:.95;flex:0 0 auto}
+.si-logo.si-logo--small{height:16px}
+.si-inline-text{display:inline-flex;align-items:center}
+.si-empty{padding:20px 18px;color:#C8D0F3}.si-empty .h1{font-size:16px;font-weight:800;color:#E6EAFD;margin-bottom:8px}.si-empty .p{font-size:13px;line-height:1.55;margin:0 0 10px}
+`;
 
-
-  const _normInst = (v) => {
-    const s = String(v || "").trim();
-    return (!s || s.toLowerCase() === "default") ? "default" : s;
-  };
-  const _instLabel = (v) => {
-    const s = _normInst(v);
-    return (s === "default") ? "Default" : s;
-  };
-  const _has = (v) => (typeof v === "string") ? (v.trim().length > 0) : !!v;
-
-  function _profileConfigured(provider, blk, cfg) {
-    const p = String(provider || "").toLowerCase().trim();
-    const b = (blk && typeof blk === "object") ? blk : {};
-    if (p === "plex") return _has(b.account_token) || _has(b.token) || _has(b.access_token);
-    if (p === "emby") return _has(b.access_token) || _has(b.api_key) || _has(b.token);
-    if (p === "jellyfin") return _has(b.access_token) || _has(b.api_key) || _has(b.token);
-    if (p === "trakt") return _has(b.access_token) || _has(b.refresh_token);
-    if (p === "simkl") return _has(b.access_token) || _has(b.refresh_token);
-    if (p === "anilist") return _has(b.access_token) || _has(b.token);
-    if (p === "mdblist") return _has(b.api_key);
-    const t = (p === "tautulli") ? b : (cfg?.tautulli || cfg?.auth?.tautulli || {});
-    if (p === "tautulli") return _has(t.server_url || t.server);
-    if (p === "tmdb") {
-      const tm = b || {};
-      return _has(tm.api_key) && (_has(tm.session_id) || _has(tm.session));
+  function ensureGrid() {
+    const page = $('#page-settings');
+    if (!page) return null;
+    const host = $('#cw-settings-overview-grid', page) || $('#cw-settings-left', page) || page;
+    let aside = $('#cw-settings-insight', page);
+    if (!aside) {
+      aside = d.createElement('aside');
+      aside.id = 'cw-settings-insight';
+      host.appendChild(aside);
     }
-    return _has(b.access_token) || _has(b.account_token) || _has(b.api_key) || _has(b.token);
+    return { left: $('#cw-settings-left', page) || host, aside };
   }
 
-  function _providerBlock(cfg, provider, instanceId) {
-    const p = String(provider || "").toLowerCase().trim();
-    const base = (cfg && cfg[p] && typeof cfg[p] === "object") ? cfg[p] : {};
-    const inst = _normInst(instanceId);
-    if (inst === "default") return base;
-    const insts = base.instances;
-    if (insts && typeof insts === "object" && !Array.isArray(insts)) {
-      const blk = insts[inst];
-      if (blk && typeof blk === "object") return blk;
+  function ensureCard() {
+      const nodes = ensureGrid();
+      if (!nodes) return null;
+      if (!$('.si-card', nodes.aside)) {
+        nodes.aside.innerHTML = '<div class="si-card"><div class="si-header"><span class="si-header-kicker">Status overview</span></div><div id="cw-si-scroll"><div class="si-body" id="cw-si-body"></div></div></div>';
+      }
+      return nodes;
     }
-    return {};
+
+  function isVisible() {
+    const page = $('#page-settings');
+    return !!(page && !page.classList.contains('hidden') && page.offsetParent !== null);
   }
 
-  function _countConfiguredProfiles(cfg, provider) {
-    const p = String(provider || "").toLowerCase().trim();
-    const base = _providerBlock(cfg, p, "default");
-    let n = _profileConfigured(p, base, cfg) ? 1 : 0;
+  function toLocal(v) {
+    if (v === undefined || v === null || v === '') return '—';
+    const n = Number(v);
+    const dt = new Date(Number.isFinite(n) && n > 0 ? (n < 1e10 ? n * 1000 : n) : v);
+    return isNaN(+dt) ? '—' : dt.toLocaleString(undefined, { hour12: false });
+  }
 
-    const insts = (cfg?.[p] || {})?.instances;
-    if (insts && typeof insts === "object" && !Array.isArray(insts)) {
-      Object.keys(insts).forEach((id) => {
-        const blk = insts[id];
-        if (blk && typeof blk === "object" && _profileConfigured(p, blk, cfg)) n += 1;
-      });
+  function esc(v) {
+    return String(v ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+
+  function has(v) { return typeof v === 'string' ? v.trim().length > 0 : !!v; }
+  function normInst(v) { const s = String(v || '').trim(); return !s || s.toLowerCase() === 'default' ? 'default' : s; }
+
+  function profileConfigured(provider, blk, cfg) {
+    const p = String(provider || '').toLowerCase();
+    const b = (blk && typeof blk === 'object') ? blk : {};
+    if (p === 'plex') return has(b.account_token) || has(b.token) || has(b.access_token);
+    if (p === 'emby' || p === 'jellyfin') return has(b.access_token) || has(b.api_key) || has(b.token);
+    if (p === 'trakt' || p === 'simkl') return has(b.access_token) || has(b.refresh_token);
+    if (p === 'anilist') return has(b.access_token) || has(b.token);
+    if (p === 'mdblist') return has(b.api_key);
+    if (p === 'tautulli') {
+      const t = b || cfg?.tautulli || cfg?.auth?.tautulli || {};
+      return has(t.server_url || t.server);
+    }
+    if (p === 'tmdb') return has(b.api_key) && has(b.session_id || b.session);
+    return has(b.access_token) || has(b.api_key) || has(b.token);
+  }
+
+  function providerBlock(cfg, provider, instanceId) {
+    const base = (cfg && cfg[provider] && typeof cfg[provider] === 'object') ? cfg[provider] : {};
+    const inst = normInst(instanceId);
+    if (inst === 'default') return base;
+    const blk = base?.instances?.[inst];
+    return blk && typeof blk === 'object' ? blk : {};
+  }
+
+  function countProfiles(cfg, provider) {
+    let n = profileConfigured(provider, providerBlock(cfg, provider, 'default'), cfg) ? 1 : 0;
+    const insts = cfg?.[provider]?.instances;
+    if (insts && typeof insts === 'object') {
+      Object.keys(insts).forEach((id) => { if (profileConfigured(provider, insts[id], cfg)) n += 1; });
+    }
+    if (!n && provider === 'tmdb') {
+      const legacy = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync;
+      if (legacy && profileConfigured('tmdb', legacy, cfg)) n = 1;
     }
     return n;
   }
 
-  function _configuredKeysFromCfg(cfg) {
-    const out = new Set();
-    const map = [
-      ["plex","PLEX"], ["emby","EMBY"], ["jellyfin","JELLYFIN"],
-      ["trakt","TRAKT"], ["simkl","SIMKL"], ["anilist","ANILIST"],
-      ["mdblist","MDBLIST"], ["tmdb","TMDB"], ["tautulli","TAUTULLI"],
-    ];
-    map.forEach(([p, k]) => { if (_countConfiguredProfiles(cfg, p) > 0) out.add(k); });
-
-    // TMDB legacy location (tmdb_sync)
-    const tm = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || null;
-    if (!out.has("TMDB") && tm && typeof tm === "object" && _profileConfigured("tmdb", tm, cfg)) out.add("TMDB");
-
-    out.add("crosswatch");
-    return out;
+  function providerMeta(provider) {
+    const key = String(provider || '').trim();
+    const meta = Meta();
+    const upper = key.toUpperCase();
+    return {
+      key: upper,
+      label: meta?.label?.(upper) || meta?.label?.(key) || upper || '?',
+      logo: meta?.logo?.(upper) || meta?.logo?.(key) || '',
+    };
   }
 
-  function _authProfileEntries(cfg) {
-    const order = [
-      { key: "PLEX", prov: "plex", label: "Plex" },
-      { key: "EMBY", prov: "emby", label: "Emby" },
-      { key: "JELLYFIN", prov: "jellyfin", label: "Jellyfin" },
-      { key: "TRAKT", prov: "trakt", label: "Trakt" },
-      { key: "SIMKL", prov: "simkl", label: "SIMKL" },
-      { key: "MDBLIST", prov: "mdblist", label: "MDBList" },
-      { key: "ANILIST", prov: "anilist", label: "AniList" },
-      { key: "TMDB", prov: "tmdb", label: "TMDB" },
-      { key: "TAUTULLI", prov: "tautulli", label: "Tautulli" },
-    ];
-    const entries = [];
+  function providerLogo(provider) {
+    const meta = providerMeta(provider);
+    return meta.logo || `/assets/img/${meta.key}-log.svg`;
+  }
+
+  function providerIconHTML(provider, cls = '') {
+    const meta = providerMeta(provider);
+    const src = providerLogo(provider);
+    const className = ['si-logo', cls].filter(Boolean).join(' ');
+    if (src) return `<img loading="lazy" class="${className}" src="${esc(src)}" alt="${esc(meta.label)}" title="${esc(meta.label)}">`;
+    return `<span class="si-inline-text">${esc(meta.label)}</span>`;
+  }
+
+  function providerBadgeHTML(provider, count) {
+    return `<span class="si-pchip" title="${esc(providerMeta(provider).label)}: ${count}">${providerIconHTML(provider)}<span class="si-count">${count}</span></span>`;
+  }
+
+  function authSummary(cfg) {
     let total = 0;
-    order.forEach((it) => {
-      let c = 0;
-      if (it.prov === "tmdb") {
-        c = _countConfiguredProfiles(cfg, "tmdb");
-        if (c === 0) {
-          const tm = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || null;
-          if (tm && typeof tm === "object" && _profileConfigured("tmdb", tm, cfg)) c = 1;
-        }
-      } else if (it.prov === "tautulli") {
-        const t = cfg?.tautulli || cfg?.auth?.tautulli || null;
-        c = (t && typeof t === "object" && _profileConfigured("tautulli", t, cfg)) ? 1 : 0;
-      } else {
-        c = _countConfiguredProfiles(cfg, it.prov);
-      }
-      if (c > 0) {
-        total += c;
-        entries.push({ key: it.key, label: it.label, count: c });
-      }
-    });
-    return { entries, total };
+    const profiles = PROVIDERS.map((prov) => {
+      const count = countProfiles(cfg, prov);
+      if (!count) return null;
+      total += count;
+      return { ...providerMeta(prov), provider: prov, count };
+    }).filter(Boolean);
+    return { configured: profiles.length, profiles, total_profiles: total };
   }
 
   function authProfilesHTML(auth) {
-    const arr = Array.isArray(auth?.profiles) ? auth.profiles : [];
-    if (!arr.length) return "No profiles configured";
-    const chips = arr.map((p) => {
-      const key = String(p.key || "").toUpperCase();
-      const label = String(p.label || key);
-      const n = Number(p.count || 0) || 0;
-      const src = `/assets/img/${key}-log.svg`;
-      const title = `${label}: ${n} configured ${n === 1 ? "profile" : "profiles"}`;
-      return `<span class="si-pchip" title="${title}"><img loading="lazy" decoding="async" src="${src}" alt="${label}"><span class="n">${n}</span></span>`;
-    }).join("");
-    return `<div class="si-pchips">${chips}</div>`;
+    if (!auth?.profiles?.length) return 'No profiles configured';
+    return `<div class="si-pchips">${auth.profiles.map((p) => providerBadgeHTML(p.provider, p.count)).join('')}</div>`;
   }
 
-
-  // Styles
-  const css = `
-  #cw-settings-grid{
-    width:100%; margin-top:12px; display:grid;
-    grid-template-columns:minmax(560px,1fr) 380px;
-    gap:28px; align-items:start;
-  }
-  #cw-settings-grid > *{ margin-top:0 !important; }
-  @media (max-width:1280px){ #cw-settings-grid{ display:block; } }
-
-  #cw-settings-insight{ position:sticky; top:12px; }
-
-  .si-card{
-    position: relative;
-    border-radius:18px;
-    background: rgba(13,15,22,0.96);
-    border: 1px solid rgba(120,128,160,0.14);
-    box-shadow:
-      0 0 0 1px rgba(160,140,255,0.06),
-      0 0 22px rgba(160,140,255,0.10),
-      0 10px 24px rgba(0,0,0,0.45),
-      inset 0 1px 0 rgba(255,255,255,0.02);
-    overflow:hidden;
-    isolation:isolate;
-  }
-  .si-card::before {
-    content: "";
-    position: absolute;
-    inset: -2px;
-    background: url("/assets/img/background.svg") no-repeat 50% 96% / cover;
-    opacity: 0.14;
-    mix-blend-mode: screen;
-    pointer-events: none;
-    z-index: 0;
+  async function readConfig(force = false) {
+    const api = API();
+    if (!api) return {};
+    try { return await api.Config.load(force); } catch { return Cache()?.getCfg() || {}; }
   }
 
-  .si-header{
-    padding:14px 16px;
-    background: linear-gradient(180deg, rgba(16,18,26,0.98), rgba(13,15,22,0.96));
-    border-bottom: 1px solid rgba(120,128,160,0.14);
-    position: relative; z-index: 2;
-  }
-  .si-title{ font-size:16px; font-weight:800; letter-spacing:.2px; color:#E6EAFF; }
-
-  #cw-si-scroll{ overflow:auto; overscroll-behavior:contain; position: relative; z-index: 2; }
-  .si-body{ padding:6px 10px; }
-
-  .si-row{ display:flex; align-items:center; gap:12px; padding:10px 6px; }
-  .si-row + .si-row{ border-top:1px solid rgba(120,128,160,0.10); }
-
-  .si-ic {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 auto;
-    margin-right: 4px;
-    background:none!important;
-    border:none!important;
-  }
-  .si-ic .material-symbols-rounded {
-    font-size: 30px;
-    color: #d0d4e8;
-    opacity: 0.95;
-  }
-
-  .si-col { display: flex; flex-direction: column; }
-  .si-h { color: #E6EAFD; font-weight: 700; line-height: 1.2; }
-  .si-one { color: #C3CAE3; font-size: 13px; margin-top: 2px; }
-
-  /* Whitelisting block */
-  .si-wl { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
-  .si-wl-level { display:flex; flex-direction:column; gap:6px; }
-  .si-wl-level-title{
-    font-size:12px; font-weight:700; letter-spacing:.2px;
-    color:#D6DBF0; opacity:.9; margin-left:2px;
-  }
-  .si-wl-list{ display:flex; flex-direction:column; gap:4px; padding-left:2px; }
-  .si-wl-item{
-    display:flex; align-items:center; justify-content:space-between; gap:8px;
-    padding:2px 0;
-  }
-  .si-wl-name{
-    color:#E6EAFD; font-weight:600; font-size:13px; white-space:nowrap;
-  }
-  .si-wl-chips{ display:flex; flex-wrap:wrap; gap:6px; justify-content:flex-end; }
-  .si-chip{
-    display:inline-flex; align-items:center; gap:4px;
-    font-size:11px; font-weight:700; letter-spacing:.2px;
-    color:#C9CFF0;
-    padding:2px 6px;
-    border-radius:6px;
-    background: rgba(140,120,255,0.08);
-    border: 1px solid rgba(140,120,255,0.22);
-    line-height:1.2;
-  }
-
-  /* Auth profile chips */
-  .si-pchips{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:2px; }
-  .si-pchip{
-    display:inline-flex; align-items:center; gap:6px;
-    font-size:12px; font-weight:800; letter-spacing:.2px;
-    color:#E6EAFD;
-    padding:2px 6px;
-    border-radius:8px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(120,128,160,0.16);
-    line-height:1.2;
-  }
-  .si-pchip img{ height:14px; width:auto; opacity:.95; }
-  .si-pchip .n{ font-size:12px; font-weight:900; color:#E6EAFD; line-height:1; }
-
-  /* Wizard  */
-  .si-empty {
-    display: flex;
-    align-items: flex-start;
-    gap: 16px;
-    padding: 26px 22px 28px 22px;
-    text-align: left;
-  }
-  .si-empty .hero-ic { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-  .si-empty .hero-ic .material-symbols-rounded { font-size: 42px; color: #e6eaff; opacity: 0.95; }
-  .si-empty .hero-text { display: flex; flex-direction: column; gap: 6px; }
-  .si-empty .h1 { color:#E8ECFF; font-size:18px; font-weight:800; margin:0; }
-  .si-empty .p  { color:#C3CAE3; font-size:14px; line-height:1.45; margin:0; }
-  .si-empty .tip{
-    margin-top:10px; font-size:13px; color:#CFCFF5;
-    background: rgba(140,120,255,0.08);
-    border: 1px solid rgba(140,120,255,0.18);
-    border-radius: 8px; padding: 6px 10px;
-  }
-  `;
-
-  function ensureStyle(){ if($("#cw-settings-insight-style")) return; const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
-
-  function ensureGrid(){
-    const page=$("#page-settings"); if(!page) return null;
-    let left=page.querySelector("#cw-settings-left, .settings-wrap, .settings, .accordion, .content, .page-inner");
-    if(!left) left=page.firstElementChild||page;
-
-    let grid=page.querySelector("#cw-settings-grid");
-    if(!grid){
-      grid=d.createElement("div"); grid.id="cw-settings-grid";
-      left.parentNode.insertBefore(grid, left); grid.appendChild(left);
-      left.style.marginTop="0"; if(!left.style.paddingTop) left.style.paddingTop="0";
-      left.id=left.id||"cw-settings-left";
+  async function getPairsSummary(cfg, force = false) {
+    const api = API();
+    try {
+      const list = await api.Pairs.list(force);
+      return { count: Array.isArray(list) ? list.length : 0 };
+    } catch {
+      const list = Array.isArray(cfg?.pairs) ? cfg.pairs : (Array.isArray(cfg?.connections) ? cfg.connections : []);
+      return { count: list.length };
     }
-
-    let aside=$("#cw-settings-insight", grid);
-    if(!aside){ aside=d.createElement("aside"); aside.id="cw-settings-insight"; grid.appendChild(aside); }
-    return { grid, left, right:aside };
   }
 
-  function ensureCard(){
-    const nodes=ensureGrid(); if(!nodes) return null;
-    const { right }=nodes;
-    if(!$(".si-card", right)){
-      right.innerHTML=`
-        <div class="si-card">
-          <div class="si-header"><div class="si-title">Settings Insight</div></div>
-          <div id="cw-si-scroll"><div class="si-body" id="cw-si-body"></div></div>
-        </div>`;
-    }
-    return nodes;
-  }
-
-  // Data fetching
-  async function readConfig() {
-    const cfg = await fetchJSON("/api/config?t=" + Date.now());
-    return cfg || {};
-  }
-
-  function _providerKeyFromImg(img) {
-    if (!img) return "";
-    const src = String(img.getAttribute?.("src") || "");
-    const m = src.match(/\/([A-Za-z0-9]+)-log\.svg(?:\?|#|$)/i);
-    if (m && m[1]) return String(m[1]).toUpperCase();
-    return String(img.getAttribute?.("alt") || "").trim().toUpperCase();
-  }
-
-  function _findIconStrip(head) {
-    if (!head) return null;
-    const spans = Array.from(head.querySelectorAll(":scope > span") || []);
-    for (let i = spans.length - 1; i >= 0; i--) {
-      const sp = spans[i];
-      if (sp && sp.querySelector && sp.querySelector('img[src*="-log.svg"]')) return sp;
-    }
-    const any = head.querySelector('img[src*="-log.svg"]');
-    return any ? any.closest("span") : null;
-  }
-
-  function _ensureStripIcon(strip, key) {
-    if (!strip || !key) return null;
-    const k = String(key).toUpperCase();
-    const existing = strip.querySelector(`img[data-cw-key="${k}"], img[src*="/assets/img/${k}-log.svg"]`);
-    if (existing) return existing;
-
-    const img = d.createElement("img");
-    img.src = `/assets/img/${k}-log.svg`;
-    img.alt = k;
-    img.dataset.cwKey = k;
-    img.style.width = "auto";
-    img.style.opacity = ".9";
-    img.style.height = (k === "EMBY") ? "24px" : "18px";
-    strip.appendChild(img);
-    return img;
-  }
-
-  function _applyIconStrip(strip, keysOrdered) {
-    if (!strip) return;
-
-    const order = Array.isArray(keysOrdered) ? keysOrdered : [];
-    const want = new Set(order.map((k) => String(k).toUpperCase()));
-    const imgs = Array.from(strip.querySelectorAll('img[src*="-log.svg"]') || []);
-
-    const byKey = new Map();
-    imgs.forEach((img) => {
-      const k = (img.dataset.cwKey || _providerKeyFromImg(img) || "").toUpperCase();
-      if (!k) return;
-      img.dataset.cwKey = k;
-      byKey.set(k, img);
-    });
-
-    // Ensure icons exist for wanted keys (supports sinks like SIMKL not hard-coded in HTML).
-    order.forEach((k) => {
-      const key = String(k).toUpperCase();
-      if (!byKey.has(key)) {
-        const img = _ensureStripIcon(strip, key);
-        if (img) byKey.set(key, img);
-      }
-    });
-
-    // Show/hide
-    Array.from(byKey.entries()).forEach(([k, img]) => {
-      img.style.display = want.has(k) ? "" : "none";
-    });
-
-    // Re-order (wanted keys first, in order)
-    order.forEach((k) => {
-      const key = String(k).toUpperCase();
-      const img = byKey.get(key);
-      if (img) strip.appendChild(img);
-    });
-
-    if (!strip.dataset.cwDisp) strip.dataset.cwDisp = strip.style.display || "flex";
-    const anyVisible = Array.from(strip.querySelectorAll('img[src*="-log.svg"]') || []).some((i) => i.style.display !== "none");
-    strip.style.display = anyVisible ? strip.dataset.cwDisp : "none";
-  }
-
-  function _parseSinkNames(v) {
-    const raw = String(v || "").trim();
-    if (!raw) return [];
-    const parts = raw.split(/[,&+]/g).map((s) => s.trim().toLowerCase()).filter(Boolean);
-    return Array.from(new Set(parts));
-  }
-
-  
-  function _scrobblerHeaderKeys(cfg, configured) {
-    const keys = [];
-    const sc = (cfg?.scrobble || {}) || {};
-    if (!sc.enabled) return keys;
-
-    const mode = String(sc.mode || "webhook").toLowerCase();
-    const provMap = { plex: "PLEX", emby: "EMBY", jellyfin: "JELLYFIN" };
-    const sinkMap = { trakt: "TRAKT", simkl: "SIMKL", mdblist: "MDBLIST" };
-
-    if (mode === "watch") {
-      const w = (sc.watch || {}) || {};
-      const routes = Array.isArray(w.routes) ? w.routes : [];
-
-      const provs = [];
-      const sinks = [];
-      routes.forEach((r) => {
-        const p = String(r?.provider || "").trim().toLowerCase();
-        const s = String(r?.sink || "").trim().toLowerCase();
-        if (p && !provs.includes(p)) provs.push(p);
-        if (s && !sinks.includes(s)) sinks.push(s);
-      });
-
-      if (!provs.length) {
-        const prov = String(w?.provider || "plex").toLowerCase().trim();
-        if (prov) provs.push(prov);
-      }
-      if (!sinks.length) sinks.push(..._parseSinkNames(w?.sink || "trakt"));
-
-      provs.forEach((p) => {
-        const k = provMap[p] || p.toUpperCase();
-        if (configured.has(k)) keys.push(k);
-      });
-
-      ["trakt", "simkl", "mdblist"].forEach((name) => {
-        if (!sinks.includes(name)) return;
-        const skey = sinkMap[name];
-        if (skey && configured.has(skey)) keys.push(skey);
-      });
-
-      return keys;
-    }
-
-    ["PLEX", "JELLYFIN", "EMBY"].forEach((k) => { if (configured.has(k)) keys.push(k); });
-    if (configured.has("TRAKT")) keys.push("TRAKT");
-    return keys;
-  }
-
-
-  function _updateSettingsHeaderIcons(cfg) {
-    const page = d.getElementById("page-settings");
-    if (!page) return;
-
-    const configured = _configuredKeysFromCfg(cfg || {});
-
-    const authHead = page.querySelector("#sec-auth > .head");
-    const authStrip = _findIconStrip(authHead);
-    _applyIconStrip(authStrip, ["PLEX","JELLYFIN","SIMKL","TRAKT","MDBLIST","TMDB","TAUTULLI","ANILIST","EMBY"].filter((k) => configured.has(k)));
-
-    const scHead = page.querySelector("#sec-scrobbler > .head");
-    const scStrip = _findIconStrip(scHead);
-    _applyIconStrip(scStrip, _scrobblerHeaderKeys(cfg, configured));
-  }
-
-
-
-  
-  async function getAuthSummary(cfg) {
-    const { entries, total } = _authProfileEntries(cfg || {});
-    return { configured: entries.length, profiles: entries, total_profiles: total };
-  }
-
-  async function getPairsSummary(cfg) {
-    let list = await fetchJSON("/api/pairs?t=" + Date.now());
-    if (!Array.isArray(list)) {
-      const a = cfg?.pairs || cfg?.connections || [];
-      list = Array.isArray(a) ? a : [];
-    }
-    return { count: list.length };
-  }
-
-  async function getMetadataSummary(cfg) {
-    const mansRaw = await fetchJSON("/api/metadata/providers?t=" + Date.now());
-    const mans = Array.isArray(mansRaw) ? mansRaw : [];
-
-    let detected = mans.length;
-    const rawKey = String(cfg?.tmdb?.api_key ?? "").trim();
-    const isMasked   = rawKey.length > 0 && /^[•]+$/.test(rawKey);
-    const hasTmdbKey = rawKey.length > 0 || isMasked;
-
-    let configured = hasTmdbKey ? 1 : 0;
-
-    if (detected > 0) {
-      configured = 0;
+  async function getMetadataSummary(cfg, force = false) {
+    const api = API();
+    let list = [];
+    try { list = await api.Metadata.providers(force); } catch {}
+    list = Array.isArray(list) ? list : [];
+    const rawKey = String(cfg?.tmdb?.api_key ?? '').trim();
+    const hasTmdbKey = !!rawKey;
+    let configured = 0;
+    let detected = list.length;
+    if (detected) {
       let hasTmdbProvider = false;
-
-      for (const m of mans) {
-        const id     = String(m?.id || m?.name || "").toLowerCase();
-        const isTmdb = id.includes("tmdb");
+      for (const m of list) {
+        const id = String(m?.id || m?.name || '').toLowerCase();
+        const isTmdb = id.includes('tmdb');
         if (isTmdb) hasTmdbProvider = true;
-
         const enabled = isTmdb && hasTmdbKey ? true : (m?.enabled !== false);
-
-        let ready = (typeof m?.ready === "boolean") ? m.ready
-                : (typeof m?.ok    === "boolean") ? m.ok
-                : undefined;
-
-        if (isTmdb && hasTmdbKey) ready = true;
-
-        if (enabled && ready === true) configured++;
+        const ready = (typeof m?.ready === 'boolean') ? m.ready : (typeof m?.ok === 'boolean' ? m.ok : false);
+        if (enabled && (ready || (isTmdb && hasTmdbKey))) configured += 1;
       }
-
       if (hasTmdbKey && !hasTmdbProvider) configured += 1;
+    } else if (hasTmdbKey) {
+      detected = configured = 1;
     }
-
-    if (detected === 0 && hasTmdbKey) detected = 1;
-
     return { detected, configured };
   }
 
-  async function getSchedulingSummary(){
-    const cfg = await fetchJSON("/api/scheduling?t=" + Date.now());
-    const st  = await fetchJSON("/api/scheduling/status?t=" + Date.now());
-
-    const stdEnabled = !!(cfg && cfg.enabled);
-    const advEnabled = !!(cfg && cfg.advanced && cfg.advanced.enabled);
-    const enabled = stdEnabled || advEnabled;
-
-    let next = coalesceNextRun(st); if (next===null) next = coalesceNextRun(cfg);
-    return { enabled, advanced: advEnabled, nextRun: next };
+  function scheduleEnabled(s) {
+    const sc = s || {};
+    return !!(sc.enabled || sc?.advanced?.enabled);
   }
 
-  
-  async function getScrobblerSummary(cfg){
+  async function getSchedulingSummary(cfg, force = false) {
+    const api = API();
+    const fallback = cfg?.scheduling || {};
+    try {
+      const st = await api.Scheduling.status(force);
+      const sc = st?.config || fallback;
+      return {
+        enabled: scheduleEnabled(sc),
+        advanced: !!sc?.advanced?.enabled,
+        running: !!st?.running,
+        nextRun: st?.next_run_at ?? st?.next_run ?? sc?.next_run_at ?? sc?.next_run ?? null,
+      };
+    } catch {
+      return { enabled: scheduleEnabled(fallback), advanced: !!fallback?.advanced?.enabled, running: false, nextRun: fallback?.next_run_at ?? fallback?.next_run ?? null };
+    }
+  }
+
+  function logosHTML(list) {
+    const items = Array.isArray(list) ? list.filter(Boolean) : [];
+    if (!items.length) return '';
+    return `<span class="si-inline-logos">${items.map((provider) => providerIconHTML(provider)).join('')}</span>`;
+  }
+
+  function metadataSummaryHTML(meta) {
+    if (!meta?.configured) return `You're missing out on some great stuff.<br><strong>Configure a Metadata Provider</strong> ✨`;
+    return `<div class="si-line"><span class="si-status">Detected:</span><span class="si-text">${meta.detected}</span><span class="si-sep">•</span><span class="si-status">Configured:</span><span class="si-text">${meta.configured}</span></div>`;
+  }
+
+  function schedulingSummaryHTML(sched) {
+    if (!sched?.enabled) return 'Disabled';
+    return `<div class="si-line"><span class="si-status">${sched.advanced ? 'Enabled (Advanced)' : 'Enabled'}</span>${sched.running ? '<span class="si-sep">|</span><span class="si-text">Running</span>' : ''}${sched.nextRun ? `<span class="si-sep">|</span><span class="si-text">Next run: ${esc(toLocal(sched.nextRun))}</span>` : ''}</div>`;
+  }
+
+  function scrobblerSummaryHTML(scrob) {
+    if (!scrob?.enabled) return 'Disabled';
+
+    const modeLabel = scrob.mode === 'watch' ? 'Watcher' : 'Webhook';
+    const status = scrob.mode === 'watch'
+      ? (scrob.watcher.alive ? 'Running' : 'Stopped')
+      : 'Listening';
+    const providers = logosHTML(scrob.providers);
+    const sinks = logosHTML(scrob.sinks);
+
+    let route = '';
+    if (providers) route += providers;
+    if (sinks) route += `${route ? '<span class="si-to">to</span>' : ''}${sinks}`;
+    if (!route) route = '<span class="si-inline-text">No routes configured</span>';
+
+    return `<div class="si-line"><span class="si-text">${modeLabel}</span><span class="si-sep">|</span><span class="si-status">${status}:</span>${route}</div>`;
+  }
+
+  async function getScrobblerSummary(cfg, force = false) {
     const sc = cfg?.scrobble || {};
-    const mode = String(sc?.mode || "").toLowerCase();
     const enabled = !!sc?.enabled;
+    const mode = String(sc?.mode || 'webhook').toLowerCase();
+    const out = { enabled, mode: enabled ? mode : '', watcher: { alive: false }, providers: [], sinks: [] };
+    if (!enabled) return out;
 
-    let watcher = { alive:false, has_watch:false, stop_set:false };
-    let providers = [];
-    let sinks = [];
+    const routes = Array.isArray(sc?.watch?.routes) ? sc.watch.routes : [];
+    out.providers = routes.map((r) => String(r?.provider || '').trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    out.sinks = routes.map((r) => String(r?.sink || '').trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
 
-    if (enabled && mode === "watch") {
-      const s = await fetchJSON("/api/watch/status");
-      watcher = { alive:!!s?.alive, has_watch:!!s?.has_watch, stop_set:!!s?.stop_set };
-
-      const groups = Array.isArray(s?.groups) ? s.groups : [];
-      const fromGroups = [];
-      groups.forEach((g) => {
-        const p = prettyWatchProvider(g?.provider);
-        if (p && !fromGroups.includes(p)) fromGroups.push(p);
-      });
-
-      const routesCfg = Array.isArray(sc?.watch?.routes) ? sc.watch.routes : [];
-      const fromCfg = [];
-      routesCfg.forEach((r) => {
-        const p = prettyWatchProvider(r?.provider);
-        if (p && !fromCfg.includes(p)) fromCfg.push(p);
-      });
-
-      providers = (fromGroups.length ? fromGroups : fromCfg);
-
-      const stSinks = Array.isArray(s?.sinks) ? s.sinks : [];
-      if (stSinks.length) {
-        sinks = stSinks.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean);
-      } else {
-        const cfgSinks = [];
-        routesCfg.forEach((r) => {
-          const sk = String(r?.sink || "").trim().toLowerCase();
-          if (sk && !cfgSinks.includes(sk)) cfgSinks.push(sk);
-        });
-        sinks = cfgSinks;
-      }
-    }
-
-    return { mode: enabled ? (mode || "webhook") : "", enabled, watcher, providers, sinks };
+    if (mode !== 'watch') return out;
+    try {
+      const st = await API().Watch.status(force);
+      out.watcher.alive = !!st?.alive;
+      const groups = Array.isArray(st?.groups) ? st.groups : [];
+      if (groups.length) out.providers = groups.map((g) => String(g?.provider || '').trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+      const sinks = Array.isArray(st?.sinks) ? st.sinks : [];
+      if (sinks.length) out.sinks = sinks.map((x) => String(x || '').trim().toLowerCase()).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    } catch {}
+    return out;
   }
 
-
-  // Whitelisting summary
-  
-  function getWhitelistingSummary(cfg){
-    const providers = [
-      { key:"plex", label:"Plex", up:"PLEX" },
-      { key:"emby", label:"Emby", up:"EMBY" },
-      { key:"jellyfin", label:"Jellyfin", up:"JELLYFIN" }
-    ];
-    const cats = ["history","ratings","scrobble","watchlist","playlists"];
-
-    const serverActive = [];
-    for (const p of providers) {
-      const base = cfg?.[p.key] || {};
-      const insts = (base && typeof base === "object") ? (base.instances || {}) : {};
-      const ids = ["default"].concat(
-        (insts && typeof insts === "object" && !Array.isArray(insts))
-          ? Object.keys(insts).map((x) => String(x))
-          : []
-      );
-
-      for (const inst of ids) {
-        const blk = _providerBlock(cfg, p.key, inst);
-        if (!_profileConfigured(p.key, blk, cfg)) continue;
-
-        const byCat = {};
-        for (const c of cats) {
-          const libs = blk?.[c]?.libraries;
-          if (Array.isArray(libs) && libs.length > 0) byCat[c] = libs.length;
-        }
-        if (!Object.keys(byCat).length) continue;
-
-        serverActive.push({ label: `${p.label} (${_instLabel(inst)})`, byCat });
-      }
-    }
-
-    const pairsRaw = cfg?.pairs || cfg?.connections || [];
-    const pairs = Array.isArray(pairsRaw) ? pairsRaw : [];
-
-    const pairActive = [];
-    const seen = new Set();
-    const provKeys = ["PLEX","EMBY","JELLYFIN"];
-    const provLabel = { PLEX:"Plex", EMBY:"Emby", JELLYFIN:"Jellyfin" };
-
-    for (const pair of pairs) {
-      const feats = pair?.features || {};
-      const provSets = { PLEX:new Set(), EMBY:new Set(), JELLYFIN:new Set() };
-
-      for (const fk of Object.keys(feats)) {
-        const libsObj = feats?.[fk]?.libraries;
-        if (!libsObj || typeof libsObj !== "object") continue;
-
-        for (const pk of provKeys) {
-          const libs = libsObj?.[pk];
-          if (Array.isArray(libs) && libs.length > 0) libs.forEach(x => provSets[pk].add(String(x)));
-        }
-      }
-
-      const s = String(pair?.source || pair?.a || "").toUpperCase();
-      const t = String(pair?.target || pair?.b || "").toUpperCase();
-      const si = _normInst(pair?.source_instance || pair?.a_instance || "default");
-      const ti = _normInst(pair?.target_instance || pair?.b_instance || "default");
-
-      const byProv = {};
-      for (const pk of provKeys) {
-        if (provSets[pk].size <= 0) continue;
-        let name = provLabel[pk] || pk;
-        if (pk === s && si !== "default") name += ` (${_instLabel(si)})`;
-        if (pk === t && ti !== "default") name += ` (${_instLabel(ti)})`;
-        byProv[name] = provSets[pk].size;
-      }
-
-      if (Object.keys(byProv).length) {
-        const label = (s && t)
-          ? `${s}${si !== "default" ? `(${_instLabel(si)})` : ""}→${t}${ti !== "default" ? `(${_instLabel(ti)})` : ""}`
-          : String(pair?.id || "pair");
-        if (!seen.has(label)) {
-          seen.add(label);
-          pairActive.push({ label, byProv });
-        }
-      }
-    }
-
-    return { serverActive, pairActive };
+  function getWhitelistSummary(cfg) {
+    const txt = JSON.stringify(cfg || {});
+    const active = (txt.match(/"whitelist"\s*:/g) || []).length + (txt.match(/"whitelisting"\s*:/g) || []).length;
+    return active ? { active } : null;
   }
 
-
-  // UI Rendering
-  const I = (name, size) => `<span class="material-symbols-rounded" style="font-size:${size||30}px">${name}</span>`;
-
-  function row(iconName, title, oneLine){
-    const el=d.createElement("div"); el.className="si-row";
-    el.innerHTML=`
-      <div class="si-ic">${I(iconName, 30)}</div>
-      <div class="si-col">
-        <div class="si-h">${title}</div>
-        <div class="si-one">${oneLine}</div>
-      </div>`;
+  const I = (name) => `<span class="material-symbols-rounded">${name}</span>`;
+  function row(icon, title, body, pane) {
+    const el = d.createElement('div');
+    el.className = 'si-row';
+    if (pane) el.dataset.pane = pane;
+    el.innerHTML = `<div class="si-ic">${I(icon)}</div><div class="si-col"><div class="si-h">${title}</div><div class="si-one">${body}</div></div>`;
     return el;
   }
 
-  function whitelistHTML(wl){
-    if (!wl) return "";
-    const { serverActive, pairActive } = wl;
-    if (!serverActive.length && !pairActive.length) return "";
-
-    const catShort = { history:"H", ratings:"R", scrobble:"S", watchlist:"W", playlists:"P" };
-
-    const out = [];
-    out.push(`<div class="si-wl">`);
-
-    if (serverActive.length) {
-      out.push(`<div class="si-wl-level">`);
-      out.push(`<div class="si-wl-level-title">Server-level</div>`);
-      out.push(`<div class="si-wl-list">`);
-      for (const s of serverActive) {
-        const chips = Object.keys(s.byCat)
-          .map(c => `<span class="si-chip">${catShort[c] || c[0].toUpperCase()} ${s.byCat[c]}</span>`)
-          .join("");
-        out.push(`
-          <div class="si-wl-item">
-            <span class="si-wl-name">${s.label}</span>
-            <span class="si-wl-chips">${chips}</span>
-          </div>
-        `);
-      }
-      out.push(`</div></div>`);
-    }
-
-    if (pairActive.length) {
-      out.push(`<div class="si-wl-level">`);
-      out.push(`<div class="si-wl-level-title">Pair-level</div>`);
-      out.push(`<div class="si-wl-list">`);
-      for (const p of pairActive) {
-        const chips = Object.keys(p.byProv)
-          .map(k => `<span class="si-chip">${k} ${p.byProv[k]}</span>`)
-          .join("");
-        out.push(`
-          <div class="si-wl-item">
-            <span class="si-wl-name">${p.label}</span>
-            <span class="si-wl-chips">${chips}</span>
-          </div>
-        `);
-      }
-      out.push(`</div></div>`);
-    }
-
-    out.push(`</div>`);
-    return out.join("");
-  }
-
   function renderWizard() {
-    const body = $("#cw-si-body"); if (!body) return;
-    body.innerHTML = `
-      <div class="si-empty">
-        <div class="hero-ic">${I("lock", 42)}</div>
-        <div class="hero-text">
-          <div class="h1">No authentication providers configured</div>
-          <p class="p">Hey! You don’t have any authentication providers configured yet.<br>
-          To start syncing, you need at least two of them.</p>
-          <div class="tip">💡 Tip: configure at least one provider (e.g. Plex, Trakt, SIMKL or Jellyfin). The local CrossWatch tracker can work on top of that.</div>
-        </div>
-      </div>
-    `;
+    const body = $('#cw-si-body');
+    if (!body) return;
+    body.innerHTML = '<div class="si-empty"><div class="h1">No authentication providers</div><p class="p">Configure at least one authentication provider to get started. To sync, you need at least two sides in play.</p></div>';
   }
 
   function renderPairsWizard() {
-    const body = $("#cw-si-body"); if (!body) return;
-    body.innerHTML = `
-      <div class="si-empty">
-        <div class="hero-ic">${I("link", 42)}</div>
-        <div class="hero-text">
-          <div class="h1">No synchronization pairs/Scrobbler configured</div>
-          <p class="p">Authentication looks good. Next step: create at least one pair under <b>Synchronization providers</b><br>
-          <i>or/and</i> enable the <b>Scrobbler</b> (Webhook or Watcher) if you only want live progress tracking.</p>
-          <div class="tip">💡 Tip: pick a source and a target (e.g., <b>Plex → Trakt</b>), or/and toggle Webhook/Watcher under <b>Scrobbler</b>.</div>
-        </div>
-      </div>
-    `;
+    const body = $('#cw-si-body');
+    if (!body) return;
+    body.innerHTML = '<div class="si-empty"><div class="h1">No synchronization pairs or scrobbler</div><p class="p">Authentication looks good. Next step: add a sync pair or enable the scrobbler.</p></div>';
   }
 
-  // Rendering optimizations
-  let _siLastRenderKey = "";
+  let lastKey = '';
+  function render(data) {
+    const body = $('#cw-si-body');
+    if (!body) return;
+    const key = JSON.stringify(data || {});
+    if (key === lastKey) return;
+    lastKey = key;
 
-  function _siStableStringify(v) {
-    if (v === null || v === undefined) return String(v);
-    const t = typeof v;
-    if (t === "number" || t === "boolean") return String(v);
-    if (t === "string") return JSON.stringify(v);
-    if (Array.isArray(v)) return "[" + v.map(_siStableStringify).join(",") + "]";
-    if (t === "object") {
-      const keys = Object.keys(v).sort();
-      return "{" + keys.map((k) => JSON.stringify(k) + ":" + _siStableStringify(v[k])).join(",") + "}";
-    }
-    return JSON.stringify(String(v));
+    if (!data?.auth?.configured) return renderWizard();
+    if (!data?.pairs?.count && !data?.scrob?.enabled) return renderPairsWizard();
+
+    body.innerHTML = '';
+    body.appendChild(row('lock', 'Authentication Providers', authProfilesHTML(data.auth), 'providers'));
+    body.appendChild(row('link', 'Synchronization Pairs', `<div class="si-line"><span class="si-status">Pairs:</span><span class="si-text">${data.pairs.count}</span></div>`, 'providers'));
+    if (data.whitelist?.active) body.appendChild(row('filter_alt', 'Whitelisting', `<div class="si-line"><span class="si-status">Active blocks:</span><span class="si-text">${data.whitelist.active}</span></div>`, 'providers'));
+    body.appendChild(row('image', 'Metadata Providers', metadataSummaryHTML(data.meta), 'providers'));
+    body.appendChild(row('schedule', 'Scheduling', schedulingSummaryHTML(data.sched), 'scheduling'));
+    body.appendChild(row('sensors', 'Scrobbler', scrobblerSummaryHTML(data.scrob), 'scrobbler'));
   }
 
-  function _siComputeRenderKey(data) {
-    if (!data?.auth?.configured) return "wizard";
-    const scrobReady = !!(data?.scrob?.enabled);
-    if (data.auth.configured && data?.pairs?.count === 0 && !scrobReady) return "pairsWizard";
-    return "main:" + _siStableStringify(data);
+  function syncHeight() {
+    const scroll = $('#cw-si-scroll');
+    if (!scroll) return;
+    const maxViewport = Math.max(260, w.innerHeight - 220);
+    scroll.style.maxHeight = `${maxViewport}px`;
   }
 
+  const state = { cfg: null, staticData: null, liveData: null, liveTimer: null, busyStatic: false, busyLive: false, queuedStatic: false, queuedLive: false };
 
-
-  function render(data){
-    const body=$("#cw-si-body"); if(!body) return;
-
-    const key = _siComputeRenderKey(data);
-    if (key === _siLastRenderKey) return;
-    _siLastRenderKey = key;
-
-    if (key === "wizard") return renderWizard();
-    if (key === "pairsWizard") return renderPairsWizard();
-
-    body.innerHTML="";
-        body.appendChild(row("lock","Authentication Providers", authProfilesHTML(data.auth)));
-    body.appendChild(row("link","Synchronization Pairs",  `Pairs: ${data.pairs.count}`));
-
-    const wlBlock = whitelistHTML(data.whitelist);
-    if (wlBlock) body.appendChild(row("filter_alt","Whitelisting", wlBlock));
-
-    if (data.meta.configured === 0) {
-      body.appendChild(row(
-        "image",
-        "Metadata Providers",
-        `You're missing out on some great stuff.<br><b>Configure a Metadata Provider</b> ✨`
-      ));
-    } else {
-      body.appendChild(row(
-        "image",
-        "Metadata Providers",
-        `Detected providers: ${data.meta.detected}, Configured: ${data.meta.configured}`
-      ));
-    }
-    body.appendChild(row("schedule","Scheduling",
-      data.sched.enabled ? `${data.sched.advanced ? "Enabled (Advanced)" : "Enabled"} | Next run: ${toLocal(data.sched.nextRun)}` : "Disabled"));
-        const scMode = !data.scrob.enabled ? "Disabled" : (data.scrob.mode==="watch" ? "Watcher mode" : "Webhook mode");
-    const scStatus = !data.scrob.enabled ? "" : (data.scrob.mode==="watch" ? (data.scrob.watcher.alive ? "Running" : "Stopped") : "—");
-    const provs = Array.isArray(data.scrob.providers) ? data.scrob.providers.filter(Boolean) : [];
-    const parts = [scMode, scStatus].concat(provs);
-    body.appendChild(row("sensors","Scrobbler", parts.filter(Boolean).join(" | ")));
+  function applyRender() {
+    if (!state.staticData || !state.liveData) return;
+    render({ ...state.staticData, ...state.liveData });
+    syncHeight();
   }
 
-  // Layout sync
-  function syncHeight(){
-    const left=$("#cw-settings-left") || $("#page-settings .settings-wrap, #page-settings .settings, #page-settings .accordion, #page-settings .content, #page-settings .page-inner");
-    const scroll=$("#cw-si-scroll");
-    if(!left || !scroll) return;
-    const rect=left.getBoundingClientRect();
-    const top=12, maxViewport=Math.max(200,(w.innerHeight-top-16)), maxByLeft=Math.max(200,rect.height);
-    scroll.style.maxHeight = `${Math.min(maxByLeft, maxViewport)}px`;
+  function scheduleLive() {
+    clearTimeout(state.liveTimer);
+    state.liveTimer = null;
+    if (!isVisible()) return;
+    const cfg = state.cfg || {};
+    const schedOn = scheduleEnabled(cfg?.scheduling);
+    const scrobOn = !!cfg?.scrobble?.enabled;
+    if (!(schedOn || scrobOn)) return;
+    state.liveTimer = setTimeout(() => refreshLive(false), 30000);
   }
 
-  // Main loop
-  let _loopTimer = null;
-
-  let _tickBusy = false;
-
-  function _scheduleTick(ms) {
-    if (_loopTimer) clearTimeout(_loopTimer);
-    _loopTimer = setTimeout(tick, ms);
-  }
-
-  async function tick() {
-    if (_tickBusy) return;
-    _tickBusy = true;
+  async function refreshStatic(force = false) {
+    if (!isVisible() || state.busyStatic) { state.queuedStatic = true; return; }
+    state.busyStatic = true;
     try {
-      const nodes = ensureCard();
-      if (!nodes) { _scheduleTick(1200); return; }
-
-      const page = $("#page-settings");
-      const visible = !!(page && !page.classList.contains("hidden"));
-
-      if (visible) {
-        const cfg = await readConfig();
-        _updateSettingsHeaderIcons(cfg);
-        const [auth, pairs, meta, sched, scrob] = await Promise.all([
-          getAuthSummary(cfg),
-          getPairsSummary(cfg),
-          getMetadataSummary(cfg),
-          getSchedulingSummary(),
-          getScrobblerSummary(cfg),
-        ]);
-        const whitelist = getWhitelistingSummary(cfg);
-        render({ auth, pairs, meta, sched, scrob, whitelist });
-        syncHeight();
-        _scheduleTick(10000);
-      } else {
-        _scheduleTick(60000);
-      }
+      ensureCard();
+      const cfg = await readConfig(force);
+      state.cfg = cfg || {};
+      const [auth, pairs, meta] = await Promise.all([
+        Promise.resolve(authSummary(state.cfg)),
+        getPairsSummary(state.cfg, force),
+        getMetadataSummary(state.cfg, force),
+      ]);
+      state.staticData = { auth, pairs, meta, whitelist: getWhitelistSummary(state.cfg) };
+      applyRender();
+      scheduleLive();
     } finally {
-      _tickBusy = false;
+      state.busyStatic = false;
+      if (state.queuedStatic) { state.queuedStatic = false; setTimeout(() => refreshStatic(force), 0); }
     }
   }
 
-  // Bootstrapping
-  (async function boot(){
-    if(!$("#cw-settings-insight-style")){ const s=d.createElement("style"); s.id="cw-settings-insight-style"; s.textContent=css; d.head.appendChild(s); }
+  async function refreshLive(force = false) {
+    if (!isVisible() || state.busyLive) { state.queuedLive = true; return; }
+    state.busyLive = true;
+    try {
+      if (!state.cfg) state.cfg = await readConfig(force);
+      const [sched, scrob] = await Promise.all([
+        getSchedulingSummary(state.cfg, force),
+        getScrobblerSummary(state.cfg, force),
+      ]);
+      state.liveData = { sched, scrob };
+      applyRender();
+      scheduleLive();
+    } finally {
+      state.busyLive = false;
+      if (state.queuedLive) { state.queuedLive = false; setTimeout(() => refreshLive(force), 0); }
+    }
+  }
 
-    d.addEventListener("tab-changed",(e)=>{ if(e?.detail?.id==="settings") setTimeout(()=>{ tick(); syncHeight(); },150); });
+  async function refreshAll(force = false) {
+    await refreshStatic(force);
+    await refreshLive(force);
+  }
 
-    d.addEventListener("config-saved", (e) => {
-      const sec = e?.detail?.section;
-      if (!sec || sec === "scheduling" || sec === "auth" || sec === "sync" || sec === "pairs" || sec === "connections" || sec === "scrobble") {
-        tick();
-      }
+  function invalidateAll() { try { Cache()?.invalidate(); } catch {} state.cfg = null; state.staticData = null; state.liveData = null; }
+
+  (async function boot() {
+    if (!$('#cw-settings-insight-style')) {
+      const s = d.createElement('style');
+      s.id = 'cw-settings-insight-style';
+      s.textContent = css;
+      d.head.appendChild(s);
+    }
+
+    let tries = 0;
+    while (!$('#page-settings') && tries < 40) { tries += 1; await sleep(250); }
+    ensureCard();
+
+    d.addEventListener('tab-changed', (e) => { if (e?.detail?.id === 'settings') setTimeout(() => refreshAll(true), 120); });
+    d.addEventListener('config-saved', () => { invalidateAll(); refreshAll(true); });
+    w.addEventListener('auth-changed', () => { invalidateAll(); refreshAll(true); });
+    d.addEventListener('scheduling-status-refresh', () => refreshLive(true));
+    d.addEventListener('watcher-status-refresh', () => refreshLive(true));
+    d.addEventListener('visibilitychange', () => { if (!d.hidden && isVisible()) refreshLive(false); });
+    d.addEventListener('click', (e) => {
+      const row = e.target?.closest?.('.si-row[data-pane]');
+      const pane = row?.dataset?.pane;
+      if (pane) w.cwSettingsSelect?.(pane);
     });
+    w.addEventListener('focus', () => { if (isVisible()) refreshLive(false); });
+    w.addEventListener('resize', syncHeight);
+    w.addEventListener('scroll', syncHeight, { passive: true });
 
-    w.addEventListener("auth-changed", () => {
-      try { tick(); } catch {}
-    });
-
-    d.addEventListener("scheduling-status-refresh", () => tick());
-    d.addEventListener("visibilitychange", () => { if (!d.hidden) tick(); });
-    w.addEventListener("focus", () => tick());
-
-    let tries=0; while(!$("#page-settings") && tries<40){ tries++; await sleep(250); }
-    tick();
-    w.addEventListener("resize", syncHeight);
-    w.addEventListener("scroll", syncHeight, { passive:true });
-
-    w.refreshSettingsInsight = () => tick();
+    if (isVisible()) refreshAll(true);
+    w.refreshSettingsInsight = () => refreshAll(true);
   })();
 })(window, document);
