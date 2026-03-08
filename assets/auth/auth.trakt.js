@@ -8,6 +8,51 @@
   function _el(id) { return document.getElementById(id); }
   function _setVal(id, v) { var el = _el(id); if (el) el.value = v == null ? "" : String(v); }
   function _str(x) { return (typeof x === "string" ? x : "").trim(); }
+  function _isMaskedSecret(v) {
+    var value = _str(v);
+    if (!value) return false;
+    if (value === '••••••••' || value === '********' || value === '**********') return true;
+    return /^[•*]{3,}$/.test(value);
+  }
+  function _markSecretField(el, value) {
+    if (!el) return;
+    var text = _str(value);
+    el.value = text;
+    el.dataset.masked = _isMaskedSecret(text) ? '1' : '0';
+    el.dataset.loaded = '1';
+    if (!el.dataset.touched) el.dataset.touched = '';
+  }
+  function _wireSecretField(el, onChange) {
+    if (!el || el.__cwSecretWired) return;
+    var clearMask = function () {
+      if (el.dataset.masked === '1') {
+        el.value = '';
+        el.dataset.masked = '0';
+      }
+    };
+    el.addEventListener('beforeinput', function () {
+      clearMask();
+    });
+    el.addEventListener('paste', function () {
+      clearMask();
+      el.dataset.touched = '1';
+      if (typeof onChange === 'function') onChange();
+    });
+    el.addEventListener('input', function () {
+      if (_isMaskedSecret(el.value)) el.dataset.masked = '1';
+      else if (el.dataset.masked === '1') el.dataset.masked = '0';
+      el.dataset.touched = '1';
+      if (typeof onChange === 'function') onChange();
+    });
+    el.__cwSecretWired = true;
+  }
+  function _readSecretField(el) {
+    var raw = _str(el ? el.value : '');
+    var masked = !!(el && (el.dataset.masked === '1' || _isMaskedSecret(raw)));
+    if (!raw && !masked) return { hasValue: false, masked: false, value: '' };
+    if (masked) return { hasValue: true, masked: true, value: '' };
+    return { hasValue: true, masked: false, value: raw };
+  }
 
   const TRAKT_INSTANCE_KEY = "cw.ui.trakt.auth.instance.v1";
 
@@ -166,15 +211,15 @@ sel.name = 'trakt_instance';
 
   async function persistTraktClientFields() {
     try {
-      var cid = _str((_el('trakt_client_id') || {}).value);
-      var secr = _str((_el('trakt_client_secret') || {}).value);
+      var cidState = _readSecretField(_el('trakt_client_id'));
+      var secState = _readSecretField(_el('trakt_client_secret'));
       var cfg = await fetchConfig();
       if (!cfg) return;
       var t = getTraktCfgBlock(cfg);
-      if (cid) t.client_id = cid;
-      else try { delete t.client_id; } catch (_) {}
-      if (secr) t.client_secret = secr;
-      else try { delete t.client_secret; } catch (_) {}
+      if (cidState.value) t.client_id = cidState.value;
+      else if (!cidState.masked) try { delete t.client_id; } catch (_) {}
+      if (secState.value) t.client_secret = secState.value;
+      else if (!secState.masked) try { delete t.client_secret; } catch (_) {}
       await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
     } catch (_) {}
   }
@@ -232,8 +277,8 @@ sel.name = 'trakt_instance';
       var t = getTraktCfgBlock(cfg);
       var a = (cfg.auth && cfg.auth.trakt) || {};
             var isDefault = (getTraktInstance() === "default");
-      _setVal("trakt_client_id",     _str(t.client_id || (isDefault ? (cfg.trakt && cfg.trakt.client_id) : "")));
-      _setVal("trakt_client_secret", _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
+      _markSecretField(_el("trakt_client_id"),     _str(t.client_id || (isDefault ? (cfg.trakt && cfg.trakt.client_id) : "")));
+      _markSecretField(_el("trakt_client_secret"), _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
       _setVal("trakt_token",         _str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : '')));
       _setVal("trakt_pin",           _str((t._pending_device && t._pending_device.user_code) || ''));
       updateTraktHint();
@@ -252,11 +297,11 @@ sel.name = 'trakt_instance';
   // Hint
   function updateTraktHint() {
     try {
-      var cid  = _str((_el("trakt_client_id")    || {}).value);
-      var secr = _str((_el("trakt_client_secret")|| {}).value);
+      var cidState = _readSecretField(_el("trakt_client_id"));
+      var secState = _readSecretField(_el("trakt_client_secret"));
       var hint = _el("trakt_hint");
       if (!hint) return;
-      var show = !(cid && secr);
+      var show = !(cidState.hasValue && secState.hasValue);
       hint.classList.toggle("hidden", !show);
       hint.style.display = show ? "" : "none";
     } catch (_) {}
@@ -331,8 +376,8 @@ sel.name = 'trakt_instance';
       ensureTraktInstanceUI();
       var idEl  = _el("trakt_client_id");
       var secEl = _el("trakt_client_secret");
-      if (idEl)  idEl.addEventListener("input", function(){ updateTraktHint(); });
-      if (secEl) secEl.addEventListener("input", function(){ updateTraktHint(); });
+      _wireSecretField(idEl, updateTraktHint);
+      _wireSecretField(secEl, updateTraktHint);
       if (idEl)  idEl.addEventListener('change', function(){ void persistTraktClientFields(); });
       if (secEl) secEl.addEventListener('change', function(){ void persistTraktClientFields(); });
 
@@ -462,11 +507,15 @@ sel.name = 'trakt_instance';
 
     var cidEl = _el("trakt_client_id");
     var secEl = _el("trakt_client_secret");
-    var cid   = _str(cidEl ? cidEl.value : "");
-    var secr  = _str(secEl ? secEl.value : "");
+    var cidState = _readSecretField(cidEl);
+    var secState = _readSecretField(secEl);
 
-    if (!cid) { _notify('Enter your Trakt Client ID'); return; }
-    if (!secr) { _notify('Enter your Trakt Client Secret'); return; }
+    if (!cidState.hasValue) { _notify('Enter your Trakt Client ID'); return; }
+    if (!secState.hasValue) { _notify('Enter your Trakt Client Secret'); return; }
+
+    var payload = {};
+    if (cidState.value) payload.client_id = cidState.value;
+    if (secState.value) payload.client_secret = secState.value;
 
     var win = null;
     try { win = window.open("https://trakt.tv/activate", "_blank"); } catch (_) {}
@@ -476,7 +525,7 @@ sel.name = 'trakt_instance';
       resp = await fetch(traktApi("/api/trakt/pin/new"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: cid, client_secret: secr })
+        body: JSON.stringify(payload)
       });
     } catch (e) {
       console.warn("[trakt] pin fetch failed", e);

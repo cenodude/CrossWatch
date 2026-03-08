@@ -7,6 +7,21 @@
   const txt = (v) => (typeof v === "string" ? v : "").trim();
   const note = (m) => (typeof window.notify === "function" ? window.notify(m) : void 0);
 
+  function isMaskedSecret(v) {
+    const value = txt(v);
+    if (!value) return false;
+    if (value === "••••••••" || value === "********" || value === "**********") return true;
+    return /^[•*]{3,}$/.test(value);
+  }
+
+  function readSecretField(i) {
+    const raw = txt(i && i.value);
+    const masked = !!(i && (i.dataset.masked === "1" || isMaskedSecret(raw)));
+    if (!raw && !masked) return { hasValue: false, masked: false, value: "" };
+    if (masked) return { hasValue: true, masked: true, value: "" };
+    return { hasValue: true, masked: false, value: raw };
+  }
+
   const MDBLIST_INSTANCE_KEY = "cw.ui.mdblist.auth.instance.v1";
 
   function getMDBListInstance() {
@@ -228,13 +243,13 @@ sel.name = 'mdblist_instance';
 
   async function onSave() {
     const i = el("mdblist_key");
-    const key = txt(i && i.value);
-    if (!key) {
-      if (i && i.dataset.hasKey === "1") { await refresh(); note("Key unchanged"); return; }
+    const keyState = readSecretField(i);
+    if (!keyState.value) {
+      if (keyState.masked || (i && i.dataset.hasKey === "1")) { await refresh(); note("Key unchanged"); return; }
       note("Enter your MDBList API key"); return;
     }
     try {
-      await saveKeyNarrow(key);
+      await saveKeyNarrow(keyState.value);
       if (i) maskInput(i, true);
       el("mdblist_hint")?.classList.add("hidden");
       note("MDBList key saved");
@@ -265,6 +280,25 @@ sel.name = 'mdblist_instance';
     if (v && !v.__wired) { v.addEventListener("click", refresh); v.__wired = true; }
     const d = el("mdblist_disconnect");
     if (d && !d.__wired) { d.addEventListener("click", onDisc); d.__wired = true; }
+    const k = el("mdblist_key");
+    if (k && !k.__wiredSecret) {
+      const clearMask = () => {
+        if (k.dataset.masked === "1") {
+          k.value = "";
+          k.dataset.masked = "0";
+          k.dataset.touched = "1";
+          k.dataset.hasKey = "";
+        }
+      };
+      k.addEventListener("focus", clearMask);
+      k.addEventListener("beforeinput", clearMask);
+      k.addEventListener("input", () => {
+        k.dataset.masked = isMaskedSecret(k.value) ? "1" : "0";
+        k.dataset.touched = "1";
+        if (k.dataset.masked !== "1") k.dataset.hasKey = "";
+      });
+      k.__wiredSecret = true;
+    }
   }
 
   function watch() {
@@ -288,17 +322,20 @@ sel.name = 'mdblist_instance';
 
   document.addEventListener("settings-collect", (ev) => {
     const cfg = ev?.detail?.cfg;
-    const v = txt(el("mdblist_key")?.value || "");
-    if (!cfg || !v) return;
+    if (!cfg) return;
+
+    const keyState = readSecretField(el("mdblist_key"));
+    if (!keyState.value) return;
+
     const inst = getMDBListInstance();
     cfg.mdblist = cfg.mdblist || {};
     if (inst === "default") {
-      cfg.mdblist.api_key = v;
+      cfg.mdblist.api_key = keyState.value;
       return;
     }
     cfg.mdblist.instances = cfg.mdblist.instances || {};
     cfg.mdblist.instances[inst] = cfg.mdblist.instances[inst] || {};
-    cfg.mdblist.instances[inst].api_key = v;
+    cfg.mdblist.instances[inst].api_key = keyState.value;
   });
 
   window.initMDBListAuthUI = boot;

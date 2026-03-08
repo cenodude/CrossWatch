@@ -7,6 +7,53 @@
   const notify = w.notify || ((m) => console.log("[notify]", m));
   const bust = () => `?ts=${Date.now()}`;
 
+  function isMaskedSecret(v) {
+    const value = String(v || "").trim();
+    if (!value) return false;
+    if (value === "••••••••" || value === "********" || value === "**********") return true;
+    return /^[•*]{3,}$/.test(value);
+  }
+
+  function markSecretField(el, value) {
+    if (!el) return;
+    const text = String(value || "").trim();
+    el.value = text;
+    el.dataset.masked = isMaskedSecret(text) ? "1" : "0";
+    el.dataset.loaded = "1";
+    if (!el.dataset.touched) el.dataset.touched = "";
+  }
+
+  function wireSecretField(el, onChange) {
+    if (!el || el.__cwSecretWired) return;
+    const clearMask = () => {
+      if (el.dataset.masked === "1") {
+        el.value = "";
+        el.dataset.masked = "0";
+      }
+    };
+    el.addEventListener("beforeinput", clearMask);
+    el.addEventListener("paste", () => {
+      clearMask();
+      el.dataset.touched = "1";
+      if (typeof onChange === "function") onChange();
+    });
+    el.addEventListener("input", () => {
+      if (isMaskedSecret(el.value)) el.dataset.masked = "1";
+      else if (el.dataset.masked === "1") el.dataset.masked = "0";
+      el.dataset.touched = "1";
+      if (typeof onChange === "function") onChange();
+    });
+    el.__cwSecretWired = true;
+  }
+
+  function readSecretField(el) {
+    const raw = String(el?.value || "").trim();
+    const masked = !!(el && (el.dataset.masked === "1" || isMaskedSecret(raw)));
+    if (!raw && !masked) return { hasValue: false, masked: false, value: "" };
+    if (masked) return { hasValue: true, masked: true, value: "" };
+    return { hasValue: true, masked: false, value: raw };
+  }
+
   const INST_KEY = "cw.ui.anilist.auth.instance.v1";
   const SECTION = "#sec-anilist";
 
@@ -212,8 +259,8 @@ sel.name = "anilist_instance";
       const secEl = $("anilist_client_secret");
       const tokEl = $("anilist_access_token");
 
-      if (cidEl && (force || !cidEl.value)) cidEl.value = cid;
-      if (secEl && (force || !secEl.value)) secEl.value = sec;
+      if (cidEl && (force || !cidEl.value || cidEl.dataset.masked === "1")) markSecretField(cidEl, cid);
+      if (secEl && (force || !secEl.value || secEl.dataset.masked === "1")) markSecretField(secEl, sec);
       if (tokEl && (force || !tokEl.value)) tokEl.value = tok;
 
       if (tok) setAniListSuccess(true);
@@ -228,9 +275,9 @@ sel.name = "anilist_instance";
       ensureAniListInstanceUI();
       renderAniListHint();
 
-      const cid = ($("anilist_client_id")?.value || "").trim();
-      const sec = ($("anilist_client_secret")?.value || "").trim();
-      const ok = cid.length > 0 && sec.length > 0;
+      const cidState = readSecretField($("anilist_client_id"));
+      const secState = readSecretField($("anilist_client_secret"));
+      const ok = cidState.hasValue && secState.hasValue;
 
       const btn = $("btn-connect-anilist");
       const hint = $("anilist_hint");
@@ -255,11 +302,11 @@ sel.name = "anilist_instance";
     const sec = $("anilist_client_secret");
 
     if (cid && !cid.__cwBound) {
-      cid.addEventListener("input", updateAniListButtonState);
+      wireSecretField(cid, updateAniListButtonState);
       cid.__cwBound = true;
     }
     if (sec && !sec.__cwBound) {
-      sec.addEventListener("input", updateAniListButtonState);
+      wireSecretField(sec, updateAniListButtonState);
       sec.__cwBound = true;
     }
 
@@ -350,19 +397,25 @@ sel.name = "anilist_instance";
   async function startAniList() {
     try { setAniListSuccess(false, ""); } catch {}
 
-    const cid = ($("anilist_client_id")?.value || "").trim();
-    const sec = ($("anilist_client_secret")?.value || "").trim();
-    if (!cid || !sec) return;
+    const cidState = readSecretField($("anilist_client_id"));
+    const secState = readSecretField($("anilist_client_secret"));
+    if (!cidState.hasValue || !secState.hasValue) return;
 
-    // Save credentials to the selected instance before authorizing.
-    try {
-      await fetch(anilistApi("/api/anilist/save"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: cid, client_secret: sec }),
-        cache: "no-store",
-      });
-    } catch {}
+    const payload = {};
+    if (cidState.value) payload.client_id = cidState.value;
+    if (secState.value) payload.client_secret = secState.value;
+
+    // Save only explicit edits
+    if (Object.keys(payload).length) {
+      try {
+        await fetch(anilistApi("/api/anilist/save"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          cache: "no-store",
+        });
+      } catch {}
+    }
 
     const j = await fetch(anilistApi("/api/anilist/authorize"), {
       method: "POST",
