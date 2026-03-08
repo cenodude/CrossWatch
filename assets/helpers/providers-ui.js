@@ -177,27 +177,30 @@
           return [];
         }
 
-        const chip = (label, on) => `<span class="badge ${on ? "" : "feature-disabled"}" style="margin-left:6px">${label}</span>`;
-        div.innerHTML = arr.map((p) => {
-          const key = normProviderKey(p.key || p.name || p.label);
-          const caps = p.features || {};
-          return `
-            <div class="card prov-card" data-prov="${key}">
-              <div style="padding:12px;display:flex;justify-content:space-between;align-items:center">
-                <div class="title" style="font-weight:700">${p.label || p.name || key}</div>
-                <div>
-                  ${chip("Watchlist", !!caps.watchlist)}
-                  ${chip("Ratings", !!caps.ratings)}
-                  ${chip("History", !!caps.history)}
-                  ${chip("Playlists", !!caps.playlists)}
-                </div>
-              </div>
-            </div>`;
-        }).join("");
-
         window.cx = window.cx || {};
         window.cx.providers = arr;
-        try { window.renderConnections?.(); } catch (e) { console.warn("renderConnections failed", e); }
+
+        if (typeof window.renderConnections === "function") {
+          try { window.renderConnections(); } catch (e) { console.warn("renderConnections failed", e); }
+        } else {
+          const chip = (label, on) => `<span class="badge ${on ? "" : "feature-disabled"}" style="margin-left:6px">${label}</span>`;
+          div.innerHTML = arr.map((p) => {
+            const key = normProviderKey(p.key || p.name || p.label);
+            const caps = p.features || {};
+            return `
+              <div class="card prov-card" data-prov="${key}">
+                <div style="padding:12px;display:flex;justify-content:space-between;align-items:center">
+                  <div class="title" style="font-weight:700">${p.label || p.name || key}</div>
+                  <div>
+                    ${chip("Watchlist", !!caps.watchlist)}
+                    ${chip("Ratings", !!caps.ratings)}
+                    ${chip("History", !!caps.history)}
+                    ${chip("Playlists", !!caps.playlists)}
+                  </div>
+                </div>
+              </div>`;
+          }).join("");
+        }
         return arr;
       } catch (e) {
         div.innerHTML = '<div class="muted">Failed to load providers.</div>';
