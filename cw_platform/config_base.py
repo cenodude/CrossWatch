@@ -7,6 +7,8 @@ import copy
 import json
 import os
 import secrets
+import base64
+import hashlib
 from datetime import datetime
 from collections.abc import Iterable
 from pathlib import Path
@@ -35,6 +37,149 @@ def CONFIG_BASE() -> Path:
 
 CONFIG: Path = CONFIG_BASE()
 CONFIG.mkdir(parents=True, exist_ok=True)
+
+_ENC_PREFIX = "enc:v1:"
+
+def _config_key_file() -> Path:
+    return CONFIG / ".cw_master_key"
+
+def _normalize_fernet_key(raw: str | bytes) -> bytes:
+    data = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+    data = data.strip()
+    if not data:
+        raise ValueError("Empty config key")
+
+    try:
+        decoded = base64.urlsafe_b64decode(data)
+        if len(decoded) == 32:
+            return data
+    except Exception:
+        pass
+
+    return base64.urlsafe_b64encode(hashlib.sha256(data).digest())
+
+
+def _load_config_key(*, create: bool) -> bytes | None:
+    for env_key in ("CW_CONFIG_KEY", "CROSSWATCH_CONFIG_KEY"):
+        raw = (os.getenv(env_key) or "").strip()
+        if raw:
+            return _normalize_fernet_key(raw)
+
+    key_path = _config_key_file()
+    if key_path.exists():
+        return _normalize_fernet_key(key_path.read_text(encoding="utf-8"))
+
+    if not create:
+        return None
+
+    try:
+        from cryptography.fernet import Fernet
+    except Exception as e:
+        raise RuntimeError("Missing dependency: cryptography is required for encrypted config support") from e
+
+    key = Fernet.generate_key()
+    key_path.parent.mkdir(parents=True, exist_ok=True)
+    key_path.write_text(key.decode("ascii"), encoding="utf-8")
+    try:
+        os.chmod(key_path, 0o600)
+    except Exception:
+        pass
+    return key
+
+
+def _get_cipher(*, create: bool):
+    key = _load_config_key(create=create)
+    if not key:
+        return None
+    try:
+        from cryptography.fernet import Fernet
+    except Exception as e:
+        raise RuntimeError("Missing dependency: cryptography is required for encrypted config support") from e
+    return Fernet(key)
+
+
+def _encrypt_secret(value: str) -> str:
+    s = str(value or "")
+    if not s or s.startswith(_ENC_PREFIX):
+        return s
+
+    cipher = _get_cipher(create=True)
+    if cipher is None:
+        return s
+
+    token = cipher.encrypt(s.encode("utf-8")).decode("ascii")
+    return f"{_ENC_PREFIX}{token}"
+
+
+def _decrypt_secret(value: Any) -> Any:
+    if not isinstance(value, str) or not value.startswith(_ENC_PREFIX):
+        return value
+
+    cipher = _get_cipher(create=False)
+    if cipher is None:
+        raise RuntimeError(
+            f"Encrypted config detected but no key is available. Expected {_config_key_file()} "
+            "or env CW_CONFIG_KEY/CROSSWATCH_CONFIG_KEY"
+        )
+
+    token = value[len(_ENC_PREFIX):].strip()
+    try:
+        return cipher.decrypt(token.encode("ascii")).decode("utf-8")
+    except Exception as e:
+        raise RuntimeError("Encrypted config detected but decryption failed. Check the config key.") from e
+
+
+def _is_sensitive_path(path: tuple[str, ...]) -> bool:
+    if not path:
+        return False
+
+    clean: list[str] = [
+        str(part or "").strip().lower()
+        for part in path
+        if str(part or "").strip()
+    ]
+    if not clean:
+        return False
+
+    if len(clean) >= 2 and clean[0] == "security" and clean[1] == "webhook_ids":
+        return True
+
+    leaf = clean[-1]
+    exact = {
+        "api_key", "apikey",
+        "access_token", "refresh_token",
+        "client_secret",
+        "account_token", "pms_token", "home_pin",
+        "session_id",
+        "token_hash", "salt", "hash",
+        "device_code",
+        "_pending_request_token",
+        "request_token",
+        "token",
+        "password",
+        "secret",
+        "webhook_secret",
+    }
+    if leaf in exact:
+        return True
+
+    if leaf.endswith("_token") and leaf not in {"token_endpoint", "token_url"}:
+        return True
+
+    return False
+
+
+def _transform_secret_tree(obj: Any, *, decrypt: bool, path: tuple[str, ...] = ()) -> Any:
+    if isinstance(obj, dict):
+        return {k: _transform_secret_tree(v, decrypt=decrypt, path=path + (str(k),)) for k, v in obj.items()}
+
+    if isinstance(obj, list):
+        return [_transform_secret_tree(v, decrypt=decrypt, path=path + (str(i),)) for i, v in enumerate(obj)]
+
+    if isinstance(obj, str) and _is_sensitive_path(path):
+        return _decrypt_secret(obj) if decrypt else _encrypt_secret(obj)
+
+    return obj
 
 # Default config
 DEFAULT_CFG: dict[str, Any] = {
@@ -477,14 +622,14 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
 
     # Provider-specific secret fields
     provider_secret_keys: dict[str, set[str]] = {
-        "plex": {"account_token", "pms_token", "home_pin"},
+        "plex": {"account_token", "pms_token", "home_pin", "webhook_secret"},
         "simkl": {"access_token", "refresh_token", "client_secret"},
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
-        "jellyfin": {"access_token", "api_key"},
-        "emby": {"access_token", "api_key"},
+        "jellyfin": {"access_token", "api_key", "password"},
+        "emby": {"access_token", "api_key", "password"},
         "tmdb": {"api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token"},
     }
@@ -1048,7 +1193,7 @@ def load_config() -> dict[str, Any]:
     user_cfg: dict[str, Any] = {}
     if p.exists():
         try:
-            user_cfg = _read_json(p)
+            user_cfg = _transform_secret_tree(_read_json(p), decrypt=True)
         except Exception as e:
             raise RuntimeError(f"Invalid config file: {p}") from e
 
@@ -1167,4 +1312,4 @@ def save_config(cfg: dict[str, Any]) -> None:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
 
-    _write_json_atomic(_cfg_file(), data)
+    _write_json_atomic(_cfg_file(), cast(dict[str, Any], _transform_secret_tree(data, decrypt=False)))
