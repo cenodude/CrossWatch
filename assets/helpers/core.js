@@ -1,1324 +1,1127 @@
 /* assets/helpers/core.js */
-/* CrossWatch - Core JavaScript Helpers for Provider Status and Sync Management */
+/* CrossWatch - Core UI orchestration and shared helpers */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-/* Utilities */
-const isTV = v => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v||""));
+(function () {
+  const CW = (window.CW ||= {});
+  const API = CW.API || {};
+  const DOM = CW.DOM || {};
+  const META = CW.ProviderMeta || {};
 
-function _el(id) {
-  return document.getElementById(id);
-}
-function _val(id, d = "") {
-  const el = _el(id);
-  return el && "value" in el ? el.value ?? d : d;
-}
-function _boolSel(id) {
-  const v = _val(id, "false");
-  return String(v).toLowerCase() === "true";
-}
-function _text(id, d = "") {
-  const el = _el(id);
-  return el ? el.textContent ?? d : d;
-}
-
-function _setVal(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.value = val ?? "";
-}
-function _setText(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val ?? "";
-}
-function _setChecked(id, on) {
-  const el = document.getElementById(id);
-  if (el) el.checked = !!on;
-}
-
-function setValIfExists(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.value = val ?? "";
-}
-
-function stateAsBool(v) {
-  if (v == null) return false;
-  if (typeof v === "boolean") return v;
-  if (typeof v === "object") {
-    if ("connected"  in v) return !!v.connected;
-    if ("ok"         in v) return !!v.ok;
-    if ("authorized" in v) return !!v.authorized;
-    if ("auth"       in v) return !!v.auth;
-    if ("status"     in v) return /^(ok|connected|authorized|true|ready|valid)$/i.test(String(v.status));
-  }
-  return !!v;
-}
-
-// Shared provider instance helpers (routes UI, scrobbler, etc.)
-const __cwInstCache = {};
-async function cwGetProviderInstances(provider, opts = {}) {
-  const p = String(provider || "").trim().toLowerCase();
-  if (!p) return [{ id: "default", name: "default" }];
-  const ttlMs = Number.isFinite(opts.ttlMs) ? opts.ttlMs : 15_000;
-  const force = !!opts.force;
-
-  const now = Date.now();
-  const c = __cwInstCache[p];
-  if (!force && c && (now - (c.t || 0) < ttlMs) && Array.isArray(c.list)) return c.list;
-
-  try {
-    const r = await fetch(`/api/provider-instances/${encodeURIComponent(p)}`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    const list = [{ id: "default", name: "default" }].concat(
-      (data.instances || []).map(i => ({ id: i.id, name: i.name || i.id }))
-    );
-    __cwInstCache[p] = { t: now, list };
-    return list;
-  } catch {
-    const fallback = [{ id: "default", name: "default" }];
-    __cwInstCache[p] = { t: now, list: fallback };
-    return fallback;
-  }
-}
-
-async function cwGetProviderUsers(provider, instanceId = "default") {
-  const p = String(provider || "").trim().toLowerCase();
-  const inst = String(instanceId || "default");
-  if (!p) return [];
-  try {
-    const r = await fetch(`/api/${encodeURIComponent(p)}/users?instance=${encodeURIComponent(inst)}`, { cache: "no-store" });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
-  } catch {
-    return [];
-  }
-}
-
-function cwEnsureScrobbleRoutes(cfg) {
-  if (!cfg || typeof cfg !== "object") return cfg;
-  cfg.scrobble = cfg.scrobble || {};
-  cfg.scrobble.watch = cfg.scrobble.watch || {};
-
-  const w = cfg.scrobble.watch;
-  if (Array.isArray(w.routes) && w.routes.length) return cfg;
-
-  const prov = w.provider;
-  const sink = w.sink;
-  const filters = w.filters || {};
-  if (!prov || !sink) { w.routes = []; return cfg; }
-
-  const sinks = String(sink).split(",").map(s => s.trim()).filter(Boolean);
-  w.routes = sinks.map((s, i) => ({
-    id: `R${i + 1}`,
-    enabled: true,
-    provider: String(prov).trim(),
-    provider_instance: "default",
-    sink: s,
-    sink_instance: "default",
-    filters: JSON.parse(JSON.stringify(filters)),
-  }));
-  return cfg;
-}
-
-function cwNextRouteId(routes) {
-  const used = new Set((routes || []).map(r => r?.id).filter(Boolean));
-  let i = 1;
-  while (used.has(`R${i}`)) i++;
-  return `R${i}`;
-}
-
-try {
-  window.cwGetProviderInstances = window.cwGetProviderInstances || cwGetProviderInstances;
-  window.cwGetProviderUsers = window.cwGetProviderUsers || cwGetProviderUsers;
-  window.cwEnsureScrobbleRoutes = window.cwEnsureScrobbleRoutes || cwEnsureScrobbleRoutes;
-  window.cwNextRouteId = window.cwNextRouteId || cwNextRouteId;
-} catch {}
-
-
-function applyServerSecret(inputId, hasValue) {
-  const el = document.getElementById(inputId);
-  if (!el) return;
-  el.value = hasValue ? "••••••••" : "";
-  el.dataset.masked = hasValue ? "1" : "0";
-  el.dataset.loaded = "1";
-  el.dataset.touched = "";
-  el.dataset.clear = "";
-}
-function startSecretLoad(inputId) {
-  const el = document.getElementById(inputId);
-  if (!el) return;
-  el.dataset.loaded = "0";
-  el.dataset.touched = "";
-}
-function finishSecretLoad(inputId, hasValue) {
-  applyServerSecret(inputId, !!hasValue);
-  try {
-    if (String(inputId || "") === "tmdb_api_key" && typeof cwMetaSettingsHubUpdate === "function") cwMetaSettingsHubUpdate();
-  } catch {}
-}
-
-
-function getConfiguredProviders(cfg = window._cfgCache || {}) {
-  const S = new Set();
-  const has = (v) => (typeof v === "string" ? v.trim().length > 0 : !!v);
-
-  const hasInProvider = (obj, keys = []) => {
-    if (!obj || typeof obj !== "object") return false;
-    for (const k of keys) { if (has(obj[k])) return true; }
-    const inst = obj.instances;
-    if (inst && typeof inst === "object") {
-      for (const v of Object.values(inst)) {
-        if (!v || typeof v !== "object") continue;
-        for (const k of keys) { if (has(v[k])) return true; }
-      }
-    }
-    return false;
+  const isTV = (v) => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v || ""));
+  const byId = (id) => document.getElementById(id);
+  const readValue = (id, fallback = "") => {
+    const el = byId(id);
+    return el && "value" in el ? (el.value ?? fallback) : fallback;
   };
+  const readText = (id, fallback = "") => {
+    const el = byId(id);
+    return el ? (el.textContent ?? fallback) : fallback;
+  };
+  const setValue = (id, value) => {
+    const el = byId(id);
+    if (el) el.value = value ?? "";
+  };
+  const setText = (id, value) => {
+    const el = byId(id);
+    if (el) el.textContent = value ?? "";
+  };
+  const setChecked = (id, on) => {
+    const el = byId(id);
+    if (el) el.checked = !!on;
+  };
+  const boolSelect = (id) => String(readValue(id, "false")).toLowerCase() === "true";
+  const onReady = (fn) => {
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn, { once: true });
+    else fn();
+  };
+  const raf = (fn) => (window.requestAnimationFrame || ((cb) => setTimeout(cb, 0)))(fn);
 
-  if (hasInProvider(cfg?.plex, ["account_token"])) S.add("PLEX");
-  if (hasInProvider(cfg?.simkl, ["access_token"]) || has(cfg?.auth?.simkl?.access_token)) S.add("SIMKL");
-  if (hasInProvider(cfg?.trakt, ["access_token"]) || has(cfg?.auth?.trakt?.access_token)) S.add("TRAKT");
-  if (hasInProvider(cfg?.anilist, ["access_token"]) || has(cfg?.auth?.anilist?.access_token)) S.add("ANILIST");
-  if (hasInProvider(cfg?.jellyfin, ["access_token"]) || has(cfg?.auth?.jellyfin?.access_token)) S.add("JELLYFIN");
-  if (hasInProvider(cfg?.emby, ["access_token"]) || has(cfg?.auth?.emby?.access_token)) S.add("EMBY");
-  if (hasInProvider(cfg?.mdblist, ["api_key"])) S.add("MDBLIST");
+  const PROVIDER_ORDER = META.order || [
+    "CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"
+  ];
+  const PROVIDER_LABELS = META.labels || {
+    CROSSWATCH: "CrossWatch",
+    PLEX: "Plex",
+    SIMKL: "SIMKL",
+    TRAKT: "Trakt",
+    ANILIST: "AniList",
+    TMDB: "TMDB",
+    JELLYFIN: "Jellyfin",
+    EMBY: "Emby",
+    MDBLIST: "MDBList",
+    TAUTULLI: "Tautulli",
+  };
+  const STATUS_PROVIDERS = [
+    { key: "PLEX", badgeId: "badge-plex", legacy: ["plex_connected", "plex"], label: "Plex" },
+    { key: "SIMKL", badgeId: "badge-simkl", legacy: ["simkl_connected", "simkl"], label: "SIMKL" },
+    { key: "TRAKT", badgeId: "badge-trakt", legacy: ["trakt_connected", "trakt"], label: "Trakt" },
+    { key: "ANILIST", badgeId: "badge-anilist", legacy: ["anilist_connected", "anilist"], label: "AniList" },
+    { key: "TMDB", badgeId: "badge-tmdb", legacy: ["tmdb_connected", "tmdb"], label: "TMDB" },
+    { key: "JELLYFIN", badgeId: "badge-jellyfin", legacy: ["jellyfin_connected", "jellyfin"], label: "Jellyfin" },
+    { key: "EMBY", badgeId: "badge-emby", legacy: ["emby_connected", "emby"], label: "Emby" },
+    { key: "MDBLIST", badgeId: "badge-mdblist", legacy: ["mdblist_connected", "mdblist"], label: "MDBList" },
+    { key: "TAUTULLI", badgeId: "badge-tautulli", legacy: ["tautulli_connected", "tautulli"], label: "Tautulli" },
+  ];
+  const BADGE_IDS = Object.fromEntries([
+    ...STATUS_PROVIDERS.map((p) => [p.key, p.badgeId]),
+    ["CROSSWATCH", "badge-crosswatch"],
+  ]);
+  const PAIR_ACTIVE_KEYS = ["PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI", "CROSSWATCH"];
+  const PROVIDER_ALIASES = {
+    CROSSWATCH: ["CROSSWATCH"],
+    PLEX: ["PLEX"],
+    SIMKL: ["SIMKL"],
+    TRAKT: ["TRAKT"],
+    ANILIST: ["ANILIST", "ANI LIST", "ANI-LIST"],
+    TMDB: ["TMDB", "TMDBSYNC", "TMDB SYNC", "TMDB-SYNC"],
+    JELLYFIN: ["JELLYFIN"],
+    EMBY: ["EMBY"],
+    MDBLIST: ["MDBLIST", "MDB LIST", "MDB-LIST"],
+    TAUTULLI: ["TAUTULLI"],
+  };
+  const SIMPLE_PROVIDER_CHECKS = [
+    { key: "PLEX", paths: [["plex"]], keys: ["account_token", "token"] },
+    { key: "SIMKL", paths: [["simkl"], ["auth", "simkl"]], keys: ["access_token"] },
+    { key: "TRAKT", paths: [["trakt"], ["auth", "trakt"]], keys: ["access_token"] },
+    { key: "ANILIST", paths: [["anilist"], ["auth", "anilist"]], keys: ["access_token", "token"] },
+    { key: "JELLYFIN", paths: [["jellyfin"], ["auth", "jellyfin"]], keys: ["access_token"] },
+    { key: "EMBY", paths: [["emby"], ["auth", "emby"]], keys: ["access_token", "api_key", "token"] },
+    { key: "MDBLIST", paths: [["mdblist"], ["auth", "mdblist"]], keys: ["api_key"] },
+  ];
 
-  const ts = cfg?.tmdb_sync || cfg?.auth?.tmdb_sync || {};
-  const tmdbOk = (() => {
-    if (!ts || typeof ts !== "object") return false;
-    if ((has(ts.api_key) && has(ts.session_id)) || has(ts.account_id)) return true;
-    const inst = ts.instances;
-    if (inst && typeof inst === "object") {
-      for (const v of Object.values(inst)) {
-        if (!v || typeof v !== "object") continue;
-        if ((has(v.api_key) && has(v.session_id)) || has(v.account_id)) return true;
-      }
-    }
-    return false;
-  })();
-  if (tmdbOk) S.add("TMDB");
+  const UI = (window._ui ||= { status: null, summary: null, pairedProviders: null });
+  const state = {
+    appDebug: false,
+    busy: false,
+    currentSummary: null,
+    currentTab: "",
+    lastStatusMs: 0,
+    pairedFetchAt: 0,
+    softMainBusy: false,
+  };
+  const AUTO_STATUS = false;
+  const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000;
+  const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+  const PAIRS_CACHE_KEY = "cw.pairs.v1";
+  const PAIRS_TTL_MS = 15_000;
+  const STATUS_CACHE_KEY = "cw.status.v1";
+  const DETAILS_MAX_LINES = 2500;
 
-  const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
-  if (hasInProvider(t, ["api_key","server_url"])) S.add("TAUTULLI");
-
-  const cw = cfg?.crosswatch || cfg?.CrossWatch || {};
-  const cwEnabled =
-    typeof cw.enabled === "boolean"
-      ? cw.enabled
-      : true;
-
-  if (cwEnabled) S.add("CROSSWATCH");
-  return S;
-}
-
-
-function resolveProviderKeyFromNode(node) {
-  const attr = (node.getAttribute?.("data-sync-prov") || node.dataset?.syncProv || "").toUpperCase();
-  if (attr) return attr;
-
-  const img = node.querySelector?.('img[alt], .logo img[alt], [data-logo]');
-  const alt = (img?.getAttribute?.('alt') || img?.dataset?.logo || "").toUpperCase();
-  if (alt.includes("PLEX"))  return "PLEX";
-  if (alt.includes("SIMKL")) return "SIMKL";
-  if (alt.includes("TRAKT")) return "TRAKT";
-  if (alt.includes("TMDB") || alt.includes("TMDBSYNC") || alt.includes("TMDB-SYNC")) return "TMDB";
-  if (alt.includes("ANILIST")) return "ANILIST";
-  if (alt.includes("JELLYFIN")) return "JELLYFIN";
-  if (alt.includes("TAUTULLI")) return "TAUTULLI";
-  if (alt.includes("MDBLIST")) return "MDBLIST";
-  if (alt.includes("EMBY")) return "EMBY";
-  if (alt.includes("CROSSWATCH")) return "CROSSWATCH";
-
-  
-  const tnode = node.querySelector?.(".title,.name,header,strong,h3,h4");
-  const txt = (tnode?.textContent || node.textContent || "").toUpperCase();
-  if (/\bPLEX\b/.test(txt))  return "PLEX";
-  if (/\bSIMKL\b/.test(txt)) return "SIMKL";
-  if (/\bTRAKT\b/.test(txt)) return "TRAKT";
-  if (/\bTMDB\b/.test(txt) || /\bTMDB\s*SYNC\b/.test(txt) || /\bTMDB-SYNC\b/.test(txt)) return "TMDB";
-  if (/\bANILIST\b/.test(txt)) return "ANILIST";
-  if (/\bJELLYFIN\b/.test(txt)) return "JELLYFIN";
-  if (/\bEMBY\b/.test(txt)) return "EMBY";
-  if (/\bMDBLIST\b/.test(txt)) return "MDBLIST";
-  if (/\bTAUTULLI\b/.test(txt)) return "TAUTULLI";
-  if (/\bCROSSWATCH\b/.test(txt)) return "CROSSWATCH";
-
-  return ""; 
-}
-
-function applySyncVisibility() {
-  const allowed = getConfiguredProviders();
-  const host = document.getElementById("providers_list");
-  if (!host) return;
-
-  let cards = host.querySelectorAll(".prov-card");
-  if (!cards || cards.length === 0) {
-  
-    cards = host.querySelectorAll(":scope > .card, :scope > *");
+  function pickCase(obj, key) {
+    return obj?.[key] ?? obj?.[String(key).toLowerCase()] ?? obj?.[String(key).toUpperCase()];
   }
 
-  cards.forEach((card) => {
-    let key = (card.getAttribute?.("data-prov") || card.dataset?.prov || "").toUpperCase();
+  function pathGet(obj, path) {
+    return (path || []).reduce((acc, key) => (acc && typeof acc === "object" ? acc[key] : undefined), obj);
+  }
 
-  
-    if (!key) key = resolveProviderKeyFromNode(card);
+  function hasValue(v) {
+    return typeof v === "string" ? v.trim().length > 0 : !!v;
+  }
 
-    if (!key) return;
-    card.dataset.syncProv = key; 
-    card.style.display = allowed.has(key) ? "" : "none";
-  });
+  function hasAnyConfigValue(root, keys = []) {
+    if (!root || typeof root !== "object") return false;
+    if (keys.some((key) => hasValue(root[key]))) return true;
+    const instances = root.instances;
+    if (!instances || typeof instances !== "object") return false;
+    return Object.values(instances).some((inst) => inst && typeof inst === "object" && keys.some((key) => hasValue(inst[key])));
+  }
 
-  const LABEL = { PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", ANILIST: "AniList", TMDB: "TMDb", JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch" };
-  const PROVIDER_ORDER = ["CROSSWATCH","PLEX","SIMKL","TRAKT","ANILIST","TMDB","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
-  ["source-provider", "target-provider"].forEach((id) => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
+  function hasTmdbConfig(root) {
+    if (!root || typeof root !== "object") return false;
+    const match = (block) => {
+      if (!block || typeof block !== "object") return false;
+      return ((hasValue(block.api_key) && hasValue(block.session_id)) || hasValue(block.account_id));
+    };
+    if (match(root)) return true;
+    const instances = root.instances;
+    if (!instances || typeof instances !== "object") return false;
+    return Object.values(instances).some(match);
+  }
 
-    const hadPlaceholder = sel.options[0] && sel.options[0].value === "";
-    const prev = (sel.value || "").toUpperCase();
-
-    sel.innerHTML = "";
-    if (hadPlaceholder) {
-      const o0 = document.createElement("option");
-      o0.value = ""; o0.textContent = "— select —";
-      sel.appendChild(o0);
+  function stateAsBool(v) {
+    if (v == null) return false;
+    if (typeof v === "boolean") return v;
+    if (typeof v === "object") {
+      if ("connected" in v) return !!v.connected;
+      if ("ok" in v) return !!v.ok;
+      if ("authorized" in v) return !!v.authorized;
+      if ("auth" in v) return !!v.auth;
+      if ("status" in v) return /^(ok|connected|authorized|true|ready|valid)$/i.test(String(v.status));
     }
+    return !!v;
+  }
 
-    PROVIDER_ORDER.forEach((k) => {
-      if (!allowed.has(k)) return;
-      const o = document.createElement("option");
-      o.value = k; o.textContent = LABEL[k] || k;
-      sel.appendChild(o);
+  function requestWithTimeout(url, options = {}, ms = 15000) {
+    if (typeof API.f === "function") return API.f(url, options, ms);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort("timeout"), ms);
+    return fetch(url, { cache: "no-store", ...options, signal: ac.signal }).finally(() => clearTimeout(timer));
+  }
+
+  async function requestJSON(url, options = {}, ms = 15000) {
+    if (typeof API.j === "function") return API.j(url, options, ms);
+    const res = await requestWithTimeout(url, options, ms);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  function maybeCall(fn, ...args) {
+    if (typeof fn !== "function") return undefined;
+    return fn(...args);
+  }
+
+  function queueSafe(fn) {
+    queueMicrotask(() => {
+      try { fn(); } catch {}
+    });
+  }
+
+  const providerInstanceCache = new Map();
+  const providerUsersCache = new Map();
+
+  async function cwGetProviderInstances(provider, opts = {}) {
+    const key = String(provider || "").trim().toLowerCase();
+    if (!key) return [{ id: "default", name: "default" }];
+
+    const ttlMs = Number.isFinite(opts.ttlMs) ? opts.ttlMs : 15_000;
+    const force = !!opts.force;
+    const now = Date.now();
+    const slot = providerInstanceCache.get(key) || { ts: 0, list: null, pending: null };
+    providerInstanceCache.set(key, slot);
+
+    if (!force && Array.isArray(slot.list) && (now - slot.ts) < ttlMs) return slot.list;
+    if (slot.pending) return slot.pending;
+
+    slot.pending = (async () => {
+      try {
+        const data = await requestJSON(`/api/provider-instances/${encodeURIComponent(key)}`);
+        slot.list = [{ id: "default", name: "default" }].concat(
+          (data.instances || []).map((item) => ({ id: item.id, name: item.name || item.id }))
+        );
+      } catch {
+        slot.list = [{ id: "default", name: "default" }];
+      }
+      slot.ts = Date.now();
+      return slot.list;
+    })().finally(() => {
+      slot.pending = null;
     });
 
-    if (prev && allowed.has(prev)) sel.value = prev;
-    else if (hadPlaceholder) sel.value = "";
-  });
+    return slot.pending;
+  }
 
-}
+  async function cwGetProviderUsers(provider, instanceId = "default", opts = {}) {
+    const prov = String(provider || "").trim().toLowerCase();
+    const inst = String(instanceId || "default").trim() || "default";
+    if (!prov) return [];
 
-let __syncVisTick = 0;
-function scheduleApplySyncVisibility() {
-  if (__syncVisTick) return;
-  const run = () => {
-    __syncVisTick = 0;
-    if (typeof applySyncVisibility === "function") {
+    const ttlMs = Number.isFinite(opts.ttlMs) ? opts.ttlMs : 15_000;
+    const force = !!opts.force;
+    const cacheKey = `${prov}:${inst}`;
+    const now = Date.now();
+    const slot = providerUsersCache.get(cacheKey) || { ts: 0, value: null, pending: null };
+    providerUsersCache.set(cacheKey, slot);
+
+    if (!force && Array.isArray(slot.value) && (now - slot.ts) < ttlMs) return slot.value;
+    if (slot.pending) return slot.pending;
+
+    slot.pending = (async () => {
+      try {
+        slot.value = await requestJSON(`/api/${encodeURIComponent(prov)}/users?instance=${encodeURIComponent(inst)}`);
+      } catch {
+        slot.value = [];
+      }
+      slot.ts = Date.now();
+      return slot.value;
+    })().finally(() => {
+      slot.pending = null;
+    });
+
+    return slot.pending;
+  }
+
+  function cwEnsureScrobbleRoutes(cfg) {
+    if (!cfg || typeof cfg !== "object") return cfg;
+    cfg.scrobble ||= {};
+    cfg.scrobble.watch ||= {};
+    const watch = cfg.scrobble.watch;
+    if (Array.isArray(watch.routes) && watch.routes.length) return cfg;
+
+    const provider = String(watch.provider || "").trim();
+    const sink = String(watch.sink || "").trim();
+    if (!provider || !sink) {
+      watch.routes = [];
+      return cfg;
+    }
+
+    const filters = watch.filters || {};
+    watch.routes = sink.split(",").map((item) => item.trim()).filter(Boolean).map((target, index) => ({
+      id: `R${index + 1}`,
+      enabled: true,
+      provider,
+      provider_instance: "default",
+      sink: target,
+      sink_instance: "default",
+      filters: JSON.parse(JSON.stringify(filters)),
+    }));
+    return cfg;
+  }
+
+  function cwNextRouteId(routes) {
+    const used = new Set((routes || []).map((row) => row?.id).filter(Boolean));
+    let index = 1;
+    while (used.has(`R${index}`)) index += 1;
+    return `R${index}`;
+  }
+
+  function applyServerSecret(inputId, hasSecret) {
+    const el = byId(inputId);
+    if (!el) return;
+    el.value = hasSecret ? "••••••••" : "";
+    el.dataset.masked = hasSecret ? "1" : "0";
+    el.dataset.loaded = "1";
+    el.dataset.touched = "";
+    el.dataset.clear = "";
+  }
+
+  function startSecretLoad(inputId) {
+    const el = byId(inputId);
+    if (!el) return;
+    el.dataset.loaded = "0";
+    el.dataset.touched = "";
+  }
+
+  function finishSecretLoad(inputId, hasSecret) {
+    applyServerSecret(inputId, !!hasSecret);
+    if (String(inputId || "") === "tmdb_api_key") {
+      try { window.cwMetaSettingsHubUpdate?.(); } catch {}
+    }
+  }
+
+  function getConfiguredProviders(cfg = window._cfgCache || {}) {
+    const set = new Set();
+    for (const def of SIMPLE_PROVIDER_CHECKS) {
+      if (def.paths.some((path) => hasAnyConfigValue(pathGet(cfg, path), def.keys))) set.add(def.key);
+    }
+
+    if ([cfg?.tmdb_sync, cfg?.tmdb, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
+    if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
+
+    const crosswatch = cfg?.crosswatch || cfg?.CrossWatch || {};
+    if (crosswatch.enabled !== false) set.add("CROSSWATCH");
+    return set;
+  }
+
+  function textMatchesProvider(text, key) {
+    const haystack = String(text || "").toUpperCase();
+    return (PROVIDER_ALIASES[key] || [key]).some((alias) => haystack.includes(String(alias).toUpperCase()));
+  }
+
+  function resolveProviderKeyFromNode(node) {
+    const direct = String(node?.getAttribute?.("data-sync-prov") || node?.dataset?.syncProv || node?.getAttribute?.("data-prov") || node?.dataset?.prov || "").toUpperCase();
+    if (direct) return direct;
+
+    const img = node?.querySelector?.('img[alt], .logo img[alt], [data-logo]');
+    const logoText = `${img?.getAttribute?.("alt") || ""} ${img?.dataset?.logo || ""}`.trim();
+    for (const key of PROVIDER_ORDER) {
+      if (textMatchesProvider(logoText, key)) return key;
+    }
+
+    const titleNode = node?.querySelector?.('.title,.name,header,strong,h3,h4');
+    const text = titleNode?.textContent || node?.textContent || "";
+    for (const key of PROVIDER_ORDER) {
+      if (textMatchesProvider(text, key)) return key;
+    }
+
+    return "";
+  }
+
+  function buildProviderOption(key) {
+    const option = document.createElement("option");
+    option.value = key;
+    option.textContent = PROVIDER_LABELS[key] || key;
+    return option;
+  }
+
+  function applySyncVisibility() {
+    const allowed = getConfiguredProviders();
+    const host = byId("providers_list");
+    if (host) {
+      const cards = host.querySelectorAll(".prov-card").length
+        ? host.querySelectorAll(".prov-card")
+        : host.querySelectorAll(":scope > .card, :scope > *");
+
+      cards.forEach((card) => {
+        const key = String(card.dataset?.prov || "").toUpperCase() || resolveProviderKeyFromNode(card);
+        if (!key) return;
+        card.dataset.syncProv = key;
+        card.style.display = allowed.has(key) ? "" : "none";
+      });
+    }
+
+    ["source-provider", "target-provider"].forEach((id) => {
+      const select = byId(id);
+      if (!select) return;
+      const hadPlaceholder = !!select.options[0] && select.options[0].value === "";
+      const previous = String(select.value || "").toUpperCase();
+      select.innerHTML = "";
+      if (hadPlaceholder) {
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "— select —";
+        select.appendChild(placeholder);
+      }
+      PROVIDER_ORDER.filter((key) => allowed.has(key)).forEach((key) => select.appendChild(buildProviderOption(key)));
+      select.value = previous && allowed.has(previous) ? previous : (hadPlaceholder ? "" : select.value);
+    });
+  }
+
+  let syncVisTick = 0;
+  function scheduleApplySyncVisibility() {
+    if (syncVisTick) return;
+    syncVisTick = raf(() => {
+      syncVisTick = 0;
       try { applySyncVisibility(); } catch (e) { console.warn("[sync-vis] apply failed", e); }
-    }
-  };
-  const raf = window.requestAnimationFrame || ((f) => setTimeout(f, 0));
-  __syncVisTick = raf(run);
-}
-
-
-function bindSyncVisibilityObservers() {
-  const list = document.getElementById("providers_list");
-  if (list && !list.__syncObs) {
-    const obs = new MutationObserver(() => scheduleApplySyncVisibility());
-    obs.observe(list, { childList: true, subtree: true });
-    list.__syncObs = obs;
-  }
-  const footer = document.querySelector("#sec-sync .footer");
-  if (footer && !footer.__syncObs) {
-    const obs2 = new MutationObserver(() => scheduleApplySyncVisibility());
-    obs2.observe(footer, { childList: true, subtree: true });
-    footer.__syncObs = obs2;
-  }
-  if (!window.__syncVisEvt) {
-    window.addEventListener("settings-changed", (e) => {
-      if (e?.detail?.scope === "settings") scheduleApplySyncVisibility();
     });
-    window.__syncVisEvt = true;
   }
-  
-  scheduleApplySyncVisibility();
-}
 
+  function bindSyncVisibilityObservers() {
+    const wire = (el) => {
+      if (!el || el.__syncObs) return;
+      const obs = new MutationObserver(scheduleApplySyncVisibility);
+      obs.observe(el, { childList: true, subtree: true });
+      el.__syncObs = obs;
+    };
 
-const PAIRS_CACHE_KEY = "cw.pairs.v1";
-const PAIRS_TTL_MS    = 15_000;
+    wire(byId("providers_list"));
+    wire(document.querySelector("#sec-sync .footer"));
 
-function _invalidatePairsCache(){ try { localStorage.removeItem(PAIRS_CACHE_KEY); } catch {} }
+    if (!window.__syncVisEvt) {
+      window.addEventListener("settings-changed", (ev) => {
+        if (ev?.detail?.scope === "settings") scheduleApplySyncVisibility();
+      });
+      window.__syncVisEvt = true;
+    }
 
-function _savePairsCache(pairs) {
-  try { localStorage.setItem(PAIRS_CACHE_KEY, JSON.stringify({ pairs, t: Date.now() })); } catch {}
-}
-function _loadPairsCache() {
-  try { return JSON.parse(localStorage.getItem(PAIRS_CACHE_KEY) || "null"); } catch { return null; }
-}
+    scheduleApplySyncVisibility();
+  }
 
-async function _getPairsFresh() {
-  try {
-    const r = await fetch("/api/pairs", { cache: "no-store" });
-    if (!r.ok) return null;
-    const arr = await r.json();
-    _savePairsCache(arr);
-    return arr;
-  } catch { return null; }
-}
+  const pairsMemory = { ts: 0, list: null, pending: null };
 
-async function isWatchlistEnabledInPairs(){
-  const freshWithin = (o) => o && (Date.now() - (o.t || 0) < PAIRS_TTL_MS);
-  const anyWL = (arr) => Array.isArray(arr) && arr.some(p => !!(p?.features?.watchlist?.enable));
-  const cached = _loadPairsCache();
-  if (freshWithin(cached)) return anyWL(cached.pairs);
-  const live = await _getPairsFresh();
-  return anyWL(live);
-}
+  function _invalidatePairsCache() {
+    pairsMemory.ts = 0;
+    pairsMemory.list = null;
+    pairsMemory.pending = null;
+    try { localStorage.removeItem(PAIRS_CACHE_KEY); } catch {}
+    try { CW.Cache?.invalidate?.("pairs"); } catch {}
+  }
 
+  function _savePairsCache(pairs) {
+    const list = Array.isArray(pairs) ? pairs : [];
+    pairsMemory.ts = Date.now();
+    pairsMemory.list = list;
+    try { localStorage.setItem(PAIRS_CACHE_KEY, JSON.stringify({ pairs: list, t: pairsMemory.ts })); } catch {}
+  }
 
-const AUTO_STATUS = false; 
-let lastStatusMs = 0;
-const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000; 
+  function _loadPairsCache() {
+    if (Array.isArray(pairsMemory.list) && pairsMemory.ts) return { pairs: pairsMemory.list, t: pairsMemory.ts };
+    try {
+      return JSON.parse(localStorage.getItem(PAIRS_CACHE_KEY) || "null");
+    } catch {
+      return null;
+    }
+  }
 
-let busy = false,
-  esDet = null,
-  esSum = null,
-  plexPoll = null,
-  simklPoll = null,
-  appDebug = false,
-  currentSummary = null;
-let detStickBottom = true; 
-let wallLoaded = false,
-  _lastSyncEpoch = null,
-  _wasRunning = false;
-let wallReqSeq = 0;   
-window._ui = { status: null, summary: null };
+  async function _getPairsFresh(force = false) {
+    const now = Date.now();
+    if (!force && Array.isArray(pairsMemory.list) && (now - pairsMemory.ts) < PAIRS_TTL_MS) return pairsMemory.list;
+    if (pairsMemory.pending) return pairsMemory.pending;
 
-const STATUS_CACHE_KEY = "cw.status.v1";
+    pairsMemory.pending = (async () => {
+      try {
+        const list = typeof API.Pairs?.list === "function"
+          ? await API.Pairs.list(!!force)
+          : await requestJSON("/api/pairs");
+        _savePairsCache(list);
+        return Array.isArray(list) ? list : [];
+      } catch {
+        const cached = _loadPairsCache();
+        return Array.isArray(cached?.pairs) ? cached.pairs : [];
+      }
+    })().finally(() => {
+      pairsMemory.pending = null;
+    });
 
+    return pairsMemory.pending;
+  }
 
-function normalizeProviders(input) {
-  const pick = (o, k) => (o?.[k] ?? o?.[k.toLowerCase()] ?? o?.[k.toUpperCase()]);
-  const normOne = (v) => {
+  async function isWatchlistEnabledInPairs() {
+    const cached = _loadPairsCache();
+    if (cached && (Date.now() - (cached.t || 0)) < PAIRS_TTL_MS) {
+      return (cached.pairs || []).some((pair) => !!pair?.features?.watchlist?.enable);
+    }
+    const list = await _getPairsFresh();
+    return list.some((pair) => !!pair?.features?.watchlist?.enable);
+  }
+
+  function emptyActiveProviders() {
+    return Object.fromEntries(PAIR_ACTIVE_KEYS.map((key) => [key, false]));
+  }
+
+  function toggleProviderBadges(active) {
+    Object.entries(BADGE_IDS).forEach(([key, id]) => {
+      const el = byId(id);
+      if (el) el.classList.toggle("hidden", !active?.[key]);
+    });
+  }
+
+  async function refreshPairedProviders(throttleMs = 5000) {
+    const now = Date.now();
+    if ((now - state.pairedFetchAt) < throttleMs && UI.pairedProviders) {
+      toggleProviderBadges(UI.pairedProviders);
+      return UI.pairedProviders;
+    }
+
+    state.pairedFetchAt = now;
+    const pairs = await _getPairsFresh(false);
+    const active = emptyActiveProviders();
+    for (const pair of pairs) {
+      if (!pair || pair.enabled === false) continue;
+      const source = String(pair.source || "").toUpperCase();
+      const target = String(pair.target || "").toUpperCase();
+      if (source in active) active[source] = true;
+      if (target in active) active[target] = true;
+    }
+
+    UI.pairedProviders = active;
+    toggleProviderBadges(active);
+    return active;
+  }
+
+  function normalizeProviderState(v) {
     if (typeof v === "boolean") return { connected: v };
-    if (v && typeof v === "object") {
-      const c = v.connected ?? v.ok ?? v.online ?? v.status === "ok";
-      return { connected: !!c };
+    if (typeof v === "number") return { connected: v === 1 };
+    if (v && typeof v === "object") return { ...v, connected: stateAsBool(v) };
+    if (typeof v === "string") {
+      const stateText = v.toLowerCase().trim();
+      if (/^(ok|up|connected|ready|true|on|online|active)$/.test(stateText)) return { connected: true, status: v };
+      if (/^(no|down|disconnected|false|off|disabled)$/.test(stateText)) return { connected: false, status: v };
     }
     return { connected: false };
-  };
-  const p = input || {};
-  return {
-    PLEX:    normOne(pick(p, "PLEX")    ?? p.plex_connected),
-    SIMKL:   normOne(pick(p, "SIMKL")   ?? p.simkl_connected),
-    TRAKT:   normOne(pick(p, "TRAKT")   ?? p.trakt_connected),
-    ANILIST: normOne(pick(p, "ANILIST") ?? p.anilist_connected),
-    TMDB:    normOne(pick(p, "TMDB")    ?? p.tmdb_connected),
-    JELLYFIN:normOne(pick(p, "JELLYFIN")?? p.jellyfin_connected),
-    EMBY:    normOne(pick(p, "EMBY")    ?? p.emby_connected),
-    MDBLIST:  normOne(pick(p, "MDBLIST")  ?? p.mdblist_connected),
-    TAUTULLI:  normOne(pick(p, "TAUTULLI")  ?? p.tautulli_connected),
-    CROSSWATCH:normOne(pick(p, "CROSSWATCH")?? p.crosswatch_connected),
-  };
-}
-
-
-function saveStatusCache(providers) {
-  try {
-    const normalized = normalizeProviders(providers);
-    localStorage.setItem(
-      STATUS_CACHE_KEY,
-      JSON.stringify({ providers: normalized, updatedAt: Date.now(), v: 1 })
-    );
-  } catch {}
-}
-
-function loadStatusCache(maxAgeMs = 10 * 60 * 1000) {
-  try {
-    const obj = JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || "null");
-    if (!obj || !obj.providers) return null;
-    if (Date.now() - (obj.updatedAt || 0) > maxAgeMs) return null;
-    return { providers: normalizeProviders(obj.providers), updatedAt: obj.updatedAt };
-  } catch { return null; }
-}
-
-let _pairsFetchAt = 0;
-
-async function refreshPairedProviders(throttleMs = 5000) {
-  const now = Date.now();
-  if (now - _pairsFetchAt < throttleMs && window._ui?.pairedProviders) {
-    toggleProviderBadges(window._ui.pairedProviders);
-    return window._ui.pairedProviders;
   }
 
-  _pairsFetchAt = now;
-  let pairs = [];
-  try {
-    const res = await fetch("/api/pairs", { cache: "no-store" });
-    if (res.ok) pairs = await res.json();
-  } catch (_) {}
+  function normalizeProviders(input) {
+    const root = input || {};
+    return Object.fromEntries(STATUS_PROVIDERS.map((def) => {
+      const raw = pickCase(root, def.key) ?? def.legacy.map((field) => root?.[field]).find((v) => v !== undefined);
+      return [def.key, normalizeProviderState(raw)];
+    }));
+  }
 
-  const active = { PLEX: false, SIMKL: false, TRAKT: false, ANILIST: false, TMDB: false, JELLYFIN: false, EMBY: false, MDBLIST: false, TAUTULLI: false, CROSSWATCH: false };
-  for (const p of pairs || []) {
-    if (p && p.enabled !== false) {
-      const s = String(p.source || "").toUpperCase();
-      const t = String(p.target || "").toUpperCase();
-      if (s in active) active[s] = true;
-      if (t in active) active[t] = true;
+  function saveStatusCache(providers) {
+    try {
+      localStorage.setItem(STATUS_CACHE_KEY, JSON.stringify({ providers: normalizeProviders(providers), updatedAt: Date.now(), v: 1 }));
+    } catch {}
+  }
+
+  function loadStatusCache(maxAgeMs = 10 * 60 * 1000) {
+    try {
+      const cached = JSON.parse(localStorage.getItem(STATUS_CACHE_KEY) || "null");
+      if (!cached?.providers) return null;
+      if ((Date.now() - (cached.updatedAt || 0)) > maxAgeMs) return null;
+      return { providers: normalizeProviders(cached.providers), updatedAt: cached.updatedAt };
+    } catch {
+      return null;
     }
   }
 
-  
-  window._ui = window._ui || {};
-  window._ui.pairedProviders = active;
-
-  toggleProviderBadges(active);
-  return active;
-}
-
-
-function toggleProviderBadges(active){
-  const map = { PLEX:"badge-plex", SIMKL:"badge-simkl", TRAKT:"badge-trakt", ANILIST:"badge-anilist", TMDB:"badge-tmdb", JELLYFIN:"badge-jellyfin", EMBY:"badge-emby", MDBLIST:"badge-mdblist", TAUTULLI:"badge-tautulli", CROSSWATCH:"badge-crosswatch" };
-  for (const [prov,id] of Object.entries(map)){
-    const el = document.getElementById(id);
-    if (el) el.classList.toggle("hidden", !active?.[prov]);
-  }
-}
-
-
-function connState(v) {
-  if (v == null) return "unknown";
-
-  if (v === true)  return "ok";
-  if (v === false) return "no";
-
-  if (typeof v === "number") {
-    if (v === 1) return "ok";
-    if (v === 0) return "no";
-  }
-
-  if (typeof v === "string") {
-    const s = v.toLowerCase().trim();
-    if (/^(ok|up|connected|ready|true|on|online|active)$/.test(s))   return "ok";
-    if (/^(no|down|disconnected|false|off|disabled)$/.test(s))       return "no";
-    if (/^(unknown|stale|n\/a|-|pending)$/.test(s))                  return "unknown";
+  function connState(value) {
+    if (value == null) return "unknown";
+    if (value === true || value === 1) return "ok";
+    if (value === false || value === 0) return "no";
+    if (typeof value === "string") {
+      const stateText = value.toLowerCase().trim();
+      if (/^(ok|up|connected|ready|true|on|online|active)$/.test(stateText)) return "ok";
+      if (/^(no|down|disconnected|false|off|disabled)$/.test(stateText)) return "no";
+      return "unknown";
+    }
+    if (typeof value === "object") {
+      if (typeof value.connected === "boolean") return value.connected ? "ok" : "no";
+      if (typeof value.ok === "boolean") return value.ok ? "ok" : "no";
+      const stateText = String(value.status ?? value.state ?? "").toLowerCase().trim();
+      if (/^(ok|up|connected|ready|true|on|online|active)$/.test(stateText)) return "ok";
+      if (/^(no|down|disconnected|false|off|disabled)$/.test(stateText)) return "no";
+    }
     return "unknown";
   }
 
-  
-  if (typeof v === "object") {
-    if (typeof v.connected === "boolean") return v.connected ? "ok" : "no";
-    const b = v.ok ?? v.ready ?? v.active ?? v.online;
-    if (typeof b === "boolean") return b ? "ok" : "no";
+  function instancesTooltip(info) {
+    const inst = info?.instances;
+    const summary = info?.instances_summary;
+    if (!inst || typeof inst !== "object") return "";
 
-    const s = String(v.status ?? v.state ?? "").toLowerCase().trim();
-    if (/^(ok|up|connected|ready|true|on|online|active)$/.test(s))   return "ok";
-    if (/^(no|down|disconnected|false|off|disabled)$/.test(s))       return "no";
-    if (/^(unknown|stale|n\/a|-|pending)$/.test(s))                  return "unknown";
-  }
+    const parts = [];
+    const ok = Number(summary?.ok);
+    const total = Number(summary?.total);
+    const rep = String(summary?.rep || info?.rep_instance || "");
+    const used = Array.isArray(summary?.used) ? summary.used : (Array.isArray(info?.instances_used) ? info.instances_used : []);
 
-  return "unknown";
-}
+    if (Number.isFinite(ok) && Number.isFinite(total) && total > 1) parts.push(`Instances: ${ok}/${total}`);
+    if (used.length && (!Number.isFinite(total) || total > 1)) {
+      const labelList = used.slice(0, 4).map((id) => (id === "default" ? "Default" : String(id)));
+      parts.push(`Used: ${labelList.join(", ")}${used.length > 4 ? "…" : ""}`);
+    }
 
-
-function pickCase(obj, k) {
-  return obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()];
-}
-
-
-
-function instancesTooltip(info) {
-  const inst = info?.instances;
-  const sum = info?.instances_summary;
-
-  if (!inst || typeof inst !== "object") return "";
-
-  const ok = Number(sum?.ok);
-  const total = Number(sum?.total);
-  const rep = String(sum?.rep || info?.rep_instance || "");
-  const used = Array.isArray(sum?.used) ? sum.used : (Array.isArray(info?.instances_used) ? info.instances_used : []);
-
-  const parts = [];
-
-  if (Number.isFinite(ok) && Number.isFinite(total) && total > 1) {
-    parts.push(`Instances: ${ok}/${total}`);
-  }
-
-  if (used && used.length && (Number.isFinite(total) ? total > 1 : true)) {
-    const labs = used.slice(0, 4).map((id) => (id === "default" ? "Default" : String(id)));
-    parts.push(`Used: ${labs.join(", ")}${used.length > 4 ? "…" : ""}`);
-  }
-
-  const entries = Object.entries(inst)
-    .slice(0, 6)
-    .map(([id, v]) => {
+    const entries = Object.entries(inst).slice(0, 6).map(([id, value]) => {
       const label = id === "default" ? "Default" : String(id);
-      const c = !!(v && typeof v === "object" ? v.connected : v);
-      return `${label}=${c ? "OK" : "NO"}`;
+      const connected = !!(value && typeof value === "object" ? value.connected : value);
+      return `${label}=${connected ? "OK" : "NO"}`;
     });
+    if (entries.length && (!Number.isFinite(total) || total > 1 || entries.length > 1)) parts.push(entries.join(" · "));
+    if (rep && rep !== "default" && (!Number.isFinite(total) || total > 1)) parts.push(`Rep: ${rep}`);
 
-  if (entries.length && (Number.isFinite(total) ? total > 1 : entries.length > 1)) {
-    parts.push(entries.join(" · "));
+    return parts.filter(Boolean).join(" · ");
   }
 
-  if (rep && rep !== "default" && (Number.isFinite(total) ? total > 1 : true)) {
-    parts.push(`Rep: ${rep}`);
+  function svgCrown() {
+    return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 7l4 3 5-6 5 6 4-3v10H3zM5 15h14v2H5z"/></svg>';
   }
 
-  return parts.filter(Boolean).join(" · ");
-}
-
-function svgCrown() {
-  return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 7l4 3 5-6 5 6 4-3v10H3zM5 15h14v2H5z"/></svg>';
-}
-function svgCheck() {
-  return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.2L5.5 12.7l1.4-1.4 2.1 2.1 6-6 1.4 1.4z"/></svg>';
-}
-
-
-function setBadge(id, providerName, state, stale, provKey, info) {
-  const el = document.getElementById(id);
-  if (!el) return;
-
-  el.classList.remove("ok", "no", "unknown", "stale");
-  el.classList.add(state);
-  if (stale) el.classList.add("stale");
-  el.classList.add("conn");
-
-  
-  let tag = "";
-  if (provKey === "PLEX" && info && info.plexpass) {
-    const plan = String(info?.subscription?.plan || "").toLowerCase();
-    const label = plan === "lifetime" ? "Plex Pass • Lifetime" : "Plex Pass";
-    tag = `<span class="tag plexpass" title="${label}">${svgCrown()}${label}</span>`;
-  } else if (provKey === "TRAKT" && info && info.vip) {
-    const t = String(info.vip_type || "vip").toLowerCase();
-    const lbl = /plus|ep/.test(t) ? "VIP+" : "VIP";
-    tag = `<span class="tag vip" title="Trakt ${lbl}">${svgCheck()}${lbl}</span>`;
+  function svgCheck() {
+    return '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.2L5.5 12.7l1.4-1.4 2.1 2.1 6-6 1.4 1.4z"/></svg>';
   }
 
-  
-    const instTip = instancesTooltip(info);
+  function setBadge(id, providerName, rawState, stale, providerKey, info) {
+    const el = byId(id);
+    if (!el) return;
 
-if (provKey === "TRAKT" && info && typeof info === "object") {
-    const lim = info.limits || {};
-    const wl  = lim.watchlist  || {};
-    const col = lim.collection || {};
+    const stateText = connState(rawState);
+    el.classList.remove("ok", "no", "unknown", "stale");
+    el.classList.add("conn", stateText);
+    if (stale) el.classList.add("stale");
 
-    const bits = [];
-
-    bits.push(info.vip ? "VIP account" : "Free account");
-
-    const wlUsed = Number(wl.used);
-    const wlMax  = Number(wl.item_count);
-    if (Number.isFinite(wlUsed) && Number.isFinite(wlMax) && wlMax > 0) {
-      bits.push(`Watchlist: ${wlUsed}/${wlMax}`);
+    let tag = "";
+    if (providerKey === "PLEX" && info?.plexpass) {
+      const plan = String(info?.subscription?.plan || "").toLowerCase();
+      const label = plan === "lifetime" ? "Plex Pass • Lifetime" : "Plex Pass";
+      tag = `<span class="tag plexpass" title="${label}">${svgCrown()}${label}</span>`;
+    } else if (providerKey === "TRAKT" && info?.vip) {
+      const type = String(info.vip_type || "vip").toLowerCase();
+      const label = /plus|ep/.test(type) ? "VIP+" : "VIP";
+      tag = `<span class="tag vip" title="Trakt ${label}">${svgCheck()}${label}</span>`;
     }
 
-    const colUsed = Number(col.used);
-    const colMax  = Number(col.item_count);
-    if (Number.isFinite(colUsed) && Number.isFinite(colMax) && colMax > 0) {
-      bits.push(`Collection: ${colUsed}/${colMax}`);
+    const tips = [];
+    const instanceTip = instancesTooltip(info);
+    if (instanceTip) tips.push(instanceTip);
+    if (providerKey === "TRAKT" && info && typeof info === "object") {
+      const limits = info.limits || {};
+      const watchlist = limits.watchlist || {};
+      const collection = limits.collection || {};
+      tips.push(info.vip ? "VIP account" : "Free account");
+      if (Number.isFinite(+watchlist.used) && Number.isFinite(+watchlist.item_count) && +watchlist.item_count > 0) {
+        tips.push(`Watchlist: ${watchlist.used}/${watchlist.item_count}`);
+      }
+      if (Number.isFinite(+collection.used) && Number.isFinite(+collection.item_count) && +collection.item_count > 0) {
+        tips.push(`Collection: ${collection.used}/${collection.item_count}`);
+      }
+      if (info.last_limit_error?.feature && info.last_limit_error?.ts) {
+        tips.push(`Last limit: ${info.last_limit_error.feature} @ ${info.last_limit_error.ts}`);
+      }
     }
+    el.title = tips.filter(Boolean).join(" · ");
 
-    const last = info.last_limit_error;
-    if (last && last.feature && last.ts) {
-      bits.push(`Last limit: ${last.feature} @ ${last.ts}`);
-    }
-
-    if (instTip) bits.unshift(instTip);
-
-    if (bits.length) {
-      el.title = bits.join(" · ");
-    }
+    const labelState = stateText === "ok" ? "Connected" : (stateText === "no" ? "Not connected" : "Unknown");
+    el.innerHTML = `${tag}<span class="txt"><span class="dot ${stateText}"></span><span class="name">${providerName}</span><span class="state">· ${labelState}</span></span>`;
   }
 
-  if (provKey !== "TRAKT" && instTip) {
-    el.title = instTip;
+  function renderConnectorStatus(providers, { stale = false } = {}) {
+    const source = providers || {};
+    STATUS_PROVIDERS.forEach((def) => {
+      const info = pickCase(source, def.key);
+      setBadge(def.badgeId, def.label, info ?? false, stale, def.key, info);
+    });
   }
 
-  
-  const labelState = state === "ok" ? "Connected" : state === "no" ? "Not connected" : "Unknown";
-  el.innerHTML =
-
-    `${tag}<span class="txt">` +
-      `<span class="dot ${state}"></span>` +
-      `<span class="name">${providerName}</span>` +
-      `<span class="state">· ${labelState}</span>` +
-    `</span>`;
-}
-
-
-function renderConnectorStatus(providers, { stale = false } = {}) {
-  const p = providers || {};
-  const plex    = pickCase(p, "PLEX");
-  const simkl   = pickCase(p, "SIMKL");
-  const trakt   = pickCase(p, "TRAKT");
-  const anilist = pickCase(p, "ANILIST");
-  const jelly   = pickCase(p, "JELLYFIN");
-  const emby    = pickCase(p, "EMBY");
-  const mdbl  = pickCase(p, "MDBLIST");
-  const taut  = pickCase(p, "TAUTULLI");
-
-  setBadge("badge-plex",     "Plex",     connState(plex  ?? false), stale, "PLEX",     plex);
-  setBadge("badge-simkl",    "SIMKL",    connState(simkl ?? false), stale, "SIMKL",    simkl);
-  setBadge("badge-trakt",    "Trakt",    connState(trakt ?? false), stale, "TRAKT",    trakt);
-  setBadge("badge-anilist",  "AniList",   connState(anilist ?? false), stale, "ANILIST",  anilist);
-  setBadge("badge-jellyfin", "Jellyfin", connState(jelly ?? false), stale, "JELLYFIN", jelly);
-  setBadge("badge-emby",     "Emby",     connState(emby  ?? false), stale, "EMBY",     emby);
-  setBadge("badge-mdblist",  "MDBlist",  connState(mdbl ?? false), stale, "MDBLIST", mdbl);
-  setBadge("badge-tautulli", "Tautulli", connState(taut ?? false), stale, "TAUTULLI", taut);
-}
-
-function fetchWithTimeout(url, opts = {}, ms = 15000) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort("timeout"), ms);
-  return fetch(url, { cache: "no-store", ...opts, signal: ac.signal })
-    .finally(() => clearTimeout(t));
-}
-
-/*! Status */
-async function refreshStatus(force = false) {
-  const now = Date.now();
-  if (!force && typeof lastStatusMs !== "undefined" && typeof STATUS_MIN_INTERVAL !== "undefined" && (now - lastStatusMs < STATUS_MIN_INTERVAL)) return;
-  if (typeof lastStatusMs !== "undefined") lastStatusMs = now;
-
-  try {
-
-        await refreshPairedProviders(force ? 0 : 5000);
-    const res = await fetchWithTimeout("/api/status", {}, 15000);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const r = await res.json();
-
-    if (typeof appDebug !== "undefined") appDebug = !!r.debug;
-
-    const pick = (obj, k) => (obj?.[k] ?? obj?.[k.toLowerCase()] ?? obj?.[k.toUpperCase()]);
-    const norm = (v, fb = false) => (typeof v === "boolean" ? { connected: v } : (v && typeof v === "object") ? v : { connected: !!fb });
-
-    const pRaw = r.providers || {};
-    const providers = {
-      PLEX:     norm(pick(pRaw, "PLEX"),     (r.plex_connected    ?? r.plex)),
-      SIMKL:    norm(pick(pRaw, "SIMKL"),    (r.simkl_connected   ?? r.simkl)),
-      TRAKT:    norm(pick(pRaw, "TRAKT"),    (r.trakt_connected   ?? r.trakt)),
-      ANILIST:  norm(pick(pRaw, "ANILIST"),  (r.anilist_connected ?? r.anilist)),
-      JELLYFIN: norm(pick(pRaw, "JELLYFIN"), (r.jellyfin_connected?? r.jellyfin)),
-      EMBY:     norm(pick(pRaw, "EMBY"),     (r.emby_connected    ?? r.emby)),
-      MDBLIST:  norm(pick(pRaw, "MDBLIST"),  (r.mdblist_connected  ?? r.mdblist)),
-      TAUTULLI: norm(pick(pRaw, "TAUTULLI"), (r.tautulli_connected ?? r.tautulli)),
-    };
-
-    renderConnectorStatus(providers, { stale: false });
-    saveStatusCache?.(providers);
-
-    window._ui = window._ui || {};
-    window._ui.status = {
-      can_run:            !!r.can_run,
-      plex_connected:     !!(providers.PLEX?.connected     ?? providers.PLEX?.ok),
-      simkl_connected:    !!(providers.SIMKL?.connected    ?? providers.SIMKL?.ok),
-      trakt_connected:    !!(providers.TRAKT?.connected    ?? providers.TRAKT?.ok),
-      anilist_connected:  !!(providers.ANILIST?.connected  ?? providers.ANILIST?.ok),
-      jellyfin_connected: !!(providers.JELLYFIN?.connected ?? providers.JELLYFIN?.ok),
-      emby_connected:     !!(providers.EMBY?.connected     ?? providers.EMBY?.ok),
-      mdblist_connected:  !!(providers.MDBLIST?.connected  ?? providers.MDBLIST?.ok),
-      tautulli_connected: !!(providers.TAUTULLI?.connected ?? providers.TAUTULLI?.ok),
-    };
-
-    if (typeof recomputeRunDisabled === "function") recomputeRunDisabled?.();
-
-    const opsCard = document.getElementById("ops-card");
+  function applyStatusSideEffects() {
+    const opsCard = byId("ops-card");
     const onMain = opsCard ? !opsCard.classList.contains("hidden") : true;
-    const logPanel = document.getElementById("log-panel");
-    const layout = document.getElementById("layout");
-    const stats = document.getElementById("stats-card");
-    const hasStatsVisible = !!(stats && !stats.classList.contains("hidden"));
-    logPanel?.classList.toggle("hidden", !(appDebug && onMain));
-    layout?.classList.toggle("full", onMain && !appDebug && !hasStatsVisible);
-  } catch (e) {
-    console.warn("refreshStatus failed", e);
+    const logPanel = byId("log-panel");
+    const layout = byId("layout");
+    const statsCard = byId("stats-card");
+    const statsVisible = !!(statsCard && !statsCard.classList.contains("hidden"));
+    logPanel?.classList.toggle("hidden", !(state.appDebug && onMain));
+    layout?.classList.toggle("full", onMain && !state.appDebug && !statsVisible);
   }
-}
 
+  function buildStatusUIState(statusPayload, providers) {
+    return {
+      can_run: !!statusPayload?.can_run,
+      ...Object.fromEntries(STATUS_PROVIDERS.map((def) => [`${def.key.toLowerCase()}_connected`, !!providers?.[def.key]?.connected])),
+    };
+  }
 
-(function bootstrapStatusFromCache() {
-  try {
-    const cached = loadStatusCache();
-    if (cached?.providers) {
-      renderConnectorStatus(cached.providers, { stale: true });
-    }
-  } catch {}
-  try { refreshPairedProviders?.(0); } catch {}
-  try { refreshStatus(true); } catch {}
-})();
+  function extractProviderStatus(statusPayload) {
+    const rawProviders = statusPayload?.providers || {};
+    return Object.fromEntries(STATUS_PROVIDERS.map((def) => {
+      const direct = pickCase(rawProviders, def.key);
+      const legacy = def.legacy.map((field) => statusPayload?.[field]).find((value) => value !== undefined);
+      return [def.key, normalizeProviderState(direct ?? legacy)];
+    }));
+  }
 
-async function manualRefreshStatus() {
-  if (manualRefreshStatus._inFlight) return;
-  manualRefreshStatus._inFlight = true;
-
-  const btn = document.getElementById("btn-status-refresh");
-  btn?.classList.add("spin");
-  setRefreshBusy?.(true);
-
-  try {
-    await refreshPairedProviders(0);
-
-    const cached = loadStatusCache?.();
-    if (cached?.providers) {
-      renderConnectorStatus(cached.providers, { stale: true });
-    } else if (window._ui?.status) {
-      const s = window._ui.status;
-      renderConnectorStatus({
-        PLEX:     { connected: !!s.plex_connected },
-        SIMKL:    { connected: !!s.simkl_connected },
-        TRAKT:    { connected: !!s.trakt_connected },
-        ANILIST:  { connected: !!s.anilist_connected },
-        JELLYFIN: { connected: !!s.jellyfin_connected },
-        EMBY:     { connected: !!s.emby_connected },
-        MDBLIST:  { connected: !!s.mdblist_connected },
-        TAUTULLI: { connected: !!s.tautulli_connected },
-      }, { stale: true });
-    }
+  async function refreshStatus(force = false) {
+    const now = Date.now();
+    if (!force && state.lastStatusMs && (now - state.lastStatusMs) < STATUS_MIN_INTERVAL) return UI.status;
+    state.lastStatusMs = now;
 
     try {
-      await refreshStatus(true);
+      await refreshPairedProviders(force ? 0 : 5000);
+      const payload = typeof API.Status?.get === "function"
+        ? await API.Status.get(!!force)
+        : await requestJSON("/api/status", {}, 15000);
+      state.appDebug = !!payload?.debug;
+      const providers = extractProviderStatus(payload);
+      renderConnectorStatus(providers, { stale: false });
+      saveStatusCache(providers);
+      UI.status = buildStatusUIState(payload, providers);
+      recomputeRunDisabled();
+      applyStatusSideEffects();
+      return UI.status;
     } catch (e) {
-      console.warn("Manual status refresh timed out; showing cached", e);
-      const cached2 = loadStatusCache?.();
-      if (cached2?.providers) renderConnectorStatus(cached2.providers, { stale: true });
-      queueMicrotask(() => { try { refreshStatus(true); } catch {} });
+      console.warn("refreshStatus failed", e);
+      return UI.status;
     }
-    } catch (e) {
-    console.warn("Manual status refresh failed", e);
-  } finally {
-    setRefreshBusy?.(false);
-    btn?.classList.remove("spin");
-    manualRefreshStatus._inFlight = false;
-  }
-}
-
-function toLocal(iso) {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d)) return iso;
-  return d.toLocaleString(undefined, { hour12: false });
-}
-
-function computeRedirectURI() {
-  return location.origin + "/callback";
-}
-function flashCopy(btn, ok, msg) {
-  if (!btn) {
-    if (!ok) alert(msg || "Copy failed");
-    return;
-  }
-  const old = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = ok ? "Copied ✓" : msg || "Copy failed";
-  setTimeout(() => {
-    btn.textContent = old;
-    btn.disabled = false;
-  }, 1200);
-}
-
-
-function recomputeRunDisabled() {
-  const btn = document.getElementById("run");
-  const menuBtn = document.getElementById("run-menu");
-  if (!btn && !menuBtn) return;
-  const busyNow = !!window.busy;
-  const canRun = !window._ui?.status ? true : !!window._ui.status.can_run;
-  const running = !!(window._ui?.summary && window._ui.summary.running);
-  const disabled = busyNow || running || !canRun;
-  if (btn) btn.disabled = disabled;
-  if (menuBtn) menuBtn.disabled = disabled;
-}
-
-
-window.setTimeline = function setTimeline(tl){
-  if (window.UX?.updateTimeline) window.UX.updateTimeline(tl || {});
-  else window.dispatchEvent(new CustomEvent("ux:timeline", { detail: tl || {} }));
-};
-
-function setSyncHeader(status, msg) {
-  const icon = document.getElementById("sync-icon");
-  icon.classList.remove("sync-ok", "sync-warn", "sync-bad");
-  icon.classList.add(status);
-  document.getElementById("sync-status-text").textContent = msg;
-}
-
-function relTimeFromEpoch(epoch) {
-  if (!epoch) return "";
-  const secs = Math.max(1, Math.floor(Date.now() / 1000 - epoch));
-  const units = [
-    ["y", 31536000],
-    ["mo", 2592000],
-    ["d", 86400],
-    ["h", 3600],
-    ["m", 60],
-    ["s", 1],
-  ];
-  for (const [label, span] of units) {
-    if (secs >= span) return Math.floor(secs / span) + label + " ago";
   }
 
-  return "just now";
-}
+  async function manualRefreshStatus() {
+    if (manualRefreshStatus._inFlight) return;
+    manualRefreshStatus._inFlight = true;
 
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeAbout();
-});
-
-
-// Soft vs hard refresh helpers for Main
-let __currentTab = "main";
-let __softMainBusy = false;
-
-// Force 2-col Main every time
-function enforceMainLayout(){
-  const layout = document.getElementById("layout");
-  const stats  = document.getElementById("stats-card");
-  if (!layout) return;
-  layout.classList.remove("single","full");
-  stats?.classList.remove("hidden");
-}
-
-async function softRefreshMain() {
-  if (__softMainBusy) return;
-  __softMainBusy = true;
-  enforceMainLayout();
-  try {
-    const tasks = [
-      (async () => { try { await refreshStatus(); } catch {} })(),
-      (async () => { try { await refreshStats(); } catch {} })(),
-      (async () => { try { window.refreshInsights?.(); } catch {} })(),
-      (async () => { try { await updatePreviewVisibility?.(); } catch {} })(),
-    ];
-    await Promise.allSettled(tasks);
-  } finally {
-    __softMainBusy = false;
-  }
-}
-
-async function hardRefreshMain({ layout, statsCard }) {
-  enforceMainLayout();
-  try { if (typeof lastStatusMs !== "undefined") lastStatusMs = 0; } catch {}
-  await refreshStatus(true); 
-  await refreshStats(true);
-  window.refreshInsights?.(true);
-
-  // Use the stream managed by main.js
-  if (!window.esSum) window.openSummaryStream?.();
-  if (!window.esLogs) window.openLogStream?.();
-
-  window.wallLoaded = false;
-  try { await updatePreviewVisibility(); } catch {}
-
-  if (typeof window.refreshSchedulingBanner === "function") {
-    window.refreshSchedulingBanner();
-  } else {
-    window.addEventListener("sched-banner-ready", () => { try { window.refreshSchedulingBanner?.(); } catch {} }, { once: true });
-  }
-}
-
-// Tabs & Navigation
-async function showTab(n) {
-  document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: n } }));
-
-  const pageSettings  = document.getElementById("page-settings");
-  const pageWatchlist = document.getElementById("page-watchlist");
-  const pageSnapshots = document.getElementById("page-snapshots");
-  const logPanel      = document.getElementById("log-panel");
-  const layout        = document.getElementById("layout");
-  const statsCard     = document.getElementById("stats-card");
-  const ph            = document.getElementById("placeholder-card");
-
-  // Tab header state
-  document.getElementById("tab-main")?.classList.toggle("active", n === "main");
-  document.getElementById("tab-watchlist")?.classList.toggle("active", n === "watchlist");
-  document.getElementById("tab-snapshots")?.classList.toggle("active", n === "snapshots");
-  document.getElementById("tab-settings")?.classList.toggle("active", n === "settings");
-
-  // Cards visibility
-  document.getElementById("ops-card")?.classList.toggle("hidden", n !== "main");
-  statsCard?.classList.toggle("hidden", n !== "main");
-  if (ph && n !== "main") ph.classList.add("hidden");
-
-  // Pages
-  pageWatchlist?.classList.toggle("hidden", n !== "watchlist");
-  pageSnapshots?.classList.toggle("hidden", n !== "snapshots");
-  pageSettings?.classList.toggle("hidden", n !== "settings");
-
-  document.documentElement.dataset.tab = n;
-  if (document.body) document.body.dataset.tab = n;
-
-  // MAIN
-  if (n === "main") {
-    enforceMainLayout();
-    if (__currentTab === "main") await softRefreshMain();
-    else await hardRefreshMain({ layout, statsCard });
-    logPanel?.classList.remove("hidden");
-
-    queueMicrotask(() => {
-      const hasPanel = document.getElementById("det-log");
-      if (hasPanel && !window.esDet) { try { openDetailsLog(); } catch {} }
-    });
-    __currentTab = "main";
-    return;
-  }
-
-  // WATCHLIST
-  if (n === "watchlist") {
-    layout?.classList.add("single");
-    layout?.classList.remove("full");
-    logPanel?.classList.add("hidden");
+    const btn = byId("btn-status-refresh");
+    btn?.classList.add("spin");
+    setRefreshBusy(true);
 
     try {
-      const firstLoad = !window.__watchlistLoaded;
-      if (firstLoad) {
-        const base = new URL("/assets/js/watchlist.js", document.baseURI).href;
-        const wlUrl = window.APP_VERSION ? `${base}?v=${encodeURIComponent(window.APP_VERSION)}` : base;
-
-      const loadClassic = (src) => new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = src;
-        s.async = true;
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-
-      const loadViaBlobModule = async (src) => {
-        const res = await fetch(src, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status} loading ${src}`);
-        const text = await res.text();
-
-        const head = text.slice(0, 200).toLowerCase();
-        if (head.includes("<!doctype") || head.includes("<html")) {
-          const err = new Error("watchlist.js was served as HTML (reverse-proxy fallback?)");
-          err.code = "WL_HTML_FALLBACK";
-          throw err;
-        }
-
-        const blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
-        try {
-          await import(/* @vite-ignore */ blobUrl);
-        } finally {
-          URL.revokeObjectURL(blobUrl);
-        }
-      };
+      await refreshPairedProviders(0);
+      const cached = loadStatusCache();
+      if (cached?.providers) {
+        renderConnectorStatus(cached.providers, { stale: true });
+      } else if (UI.status) {
+        renderConnectorStatus(Object.fromEntries(STATUS_PROVIDERS.map((def) => [def.key, { connected: !!UI.status?.[`${def.key.toLowerCase()}_connected`] }])), { stale: true });
+      }
 
       try {
-        await import(/* @vite-ignore */ wlUrl);
-      } catch (e1) {
-        try {
-          await loadViaBlobModule(wlUrl);
-        } catch (e2) {
-          await loadClassic(wlUrl);
-        }
-      }
-        window.__watchlistLoaded = true;
-      } else {
-        if (window.Watchlist?.refresh) {
-          await window.Watchlist.refresh();
-        } else {
-          window.dispatchEvent(new CustomEvent("watchlist:refresh"));
-        }
+        await refreshStatus(true);
+      } catch (e) {
+        console.warn("Manual status refresh timed out; showing cached", e);
+        const fallback = loadStatusCache();
+        if (fallback?.providers) renderConnectorStatus(fallback.providers, { stale: true });
+        queueSafe(() => { refreshStatus(true); });
       }
     } catch (e) {
-      console.warn("Watchlist load/refresh failed:", e);
+      console.warn("Manual status refresh failed", e);
+    } finally {
+      setRefreshBusy(false);
+      btn?.classList.remove("spin");
+      manualRefreshStatus._inFlight = false;
     }
-
-    __currentTab = "watchlist";
-    return;
   }
 
-  // SNAPSHOTS
-  if (n === "snapshots") {
-    layout?.classList.add("single");
-    layout?.classList.remove("full");
-    logPanel?.classList.add("hidden");
-
+  function bootstrapStatusFromCache() {
     try {
-      const firstLoad = !window.__snapshotsLoaded;
-      const base = new URL("/assets/js/snapshots.js", document.baseURI).href;
-      const ssUrl = window.APP_VERSION ? `${base}?v=${encodeURIComponent(window.APP_VERSION)}` : base;
-
-      const loadClassic = (src) => new Promise((resolve, reject) => {
-        const s = document.createElement("script");
-        s.src = src;
-        s.async = true;
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-
-      const loadViaBlobModule = async (src) => {
-        const res = await fetch(src, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status} loading ${src}`);
-        const text = await res.text();
-
-        const head = text.slice(0, 200).toLowerCase();
-        if (head.includes("<!doctype") || head.includes("<html")) {
-          const err = new Error("snapshots.js was served as HTML (reverse-proxy fallback?)");
-          err.code = "SS_HTML_FALLBACK";
-          throw err;
-        }
-
-        const blobUrl = URL.createObjectURL(new Blob([text], { type: "application/javascript" }));
-        try {
-          await import(/* @vite-ignore */ blobUrl);
-        } finally {
-          URL.revokeObjectURL(blobUrl);
-        }
-      };
-
-      if (firstLoad) {
-        try {
-          await import(/* @vite-ignore */ ssUrl);
-        } catch (e1) {
-          try {
-            await loadViaBlobModule(ssUrl);
-          } catch (e2) {
-            await loadClassic(ssUrl);
-          }
-        }
-        window.__snapshotsLoaded = true;
-      } else {
-        try {
-          if (window.Snapshots?.refresh) await window.Snapshots.refresh(true);
-        } catch {}
-      }
-    } catch (e) {
-      console.warn("Snapshots load/refresh failed:", e);
-    }
-
-    __currentTab = "snapshots";
-    return;
+      const cached = loadStatusCache();
+      if (cached?.providers) renderConnectorStatus(cached.providers, { stale: true });
+    } catch {}
+    queueSafe(() => refreshPairedProviders(0));
   }
 
-  // SETTINGS
-  if (n === "settings") {
-    layout?.classList.add("single");
-    layout?.classList.remove("full");
-    logPanel?.classList.add("hidden");
+  function toLocal(iso) {
+    if (!iso) return "—";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    return date.toLocaleString(undefined, { hour12: false });
+  }
 
+  function computeRedirectURI() {
+    return `${location.origin}/callback`;
+  }
+
+  function flashCopy(btn, ok, msg) {
+    if (!btn) {
+      if (!ok) alert(msg || "Copy failed");
+      return;
+    }
+    const previous = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = ok ? "Copied ✓" : (msg || "Copy failed");
+    setTimeout(() => {
+      btn.textContent = previous;
+      btn.disabled = false;
+    }, 1200);
+  }
+
+  function recomputeRunDisabled() {
+    const disabled = !!state.busy || !!UI.summary?.running || !(UI.status ? !!UI.status.can_run : true);
+    [byId("run"), byId("run-menu")].forEach((btn) => {
+      if (btn) btn.disabled = disabled;
+    });
+  }
+
+  window.setTimeline = function setTimeline(timeline) {
+    if (window.UX?.updateTimeline) window.UX.updateTimeline(timeline || {});
+    else window.dispatchEvent(new CustomEvent("ux:timeline", { detail: timeline || {} }));
+  };
+
+  function setSyncHeader(status, msg) {
+    const icon = byId("sync-icon");
+    if (icon) {
+      icon.classList.remove("sync-ok", "sync-warn", "sync-bad");
+      icon.classList.add(status);
+    }
+    setText("sync-status-text", msg);
+  }
+
+  function relTimeFromEpoch(epoch) {
+    if (!epoch) return "";
+    const ageSec = Math.max(1, Math.floor((Date.now() / 1000) - epoch));
+    const units = [["y", 31536000], ["mo", 2592000], ["d", 86400], ["h", 3600], ["m", 60], ["s", 1]];
+    for (const [label, span] of units) {
+      if (ageSec >= span) return `${Math.floor(ageSec / span)}${label} ago`;
+    }
+    return "just now";
+  }
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      try { window.closeAbout?.(); } catch {}
+    }
+  });
+
+  function enforceMainLayout() {
+    const layout = byId("layout");
+    if (!layout) return;
+    layout.classList.remove("single", "full");
+    byId("stats-card")?.classList.remove("hidden");
+  }
+
+  async function softRefreshMain() {
+    if (state.softMainBusy) return;
+    state.softMainBusy = true;
+    enforceMainLayout();
+    try {
+      await Promise.allSettled([
+        refreshStatus(false),
+        refreshStats(false),
+        Promise.resolve(window.refreshInsights?.()),
+        Promise.resolve(window.updatePreviewVisibility?.()),
+      ]);
+    } finally {
+      state.softMainBusy = false;
+    }
+  }
+
+  async function hardRefreshMain() {
+    enforceMainLayout();
+    state.lastStatusMs = 0;
+    await refreshStatus(true);
+    await refreshStats(true);
+    await Promise.resolve(window.refreshInsights?.(true));
+
+    if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
+    if (!window.esLogs) queueSafe(() => window.openLogStream?.());
+    window.wallLoaded = false;
+    try { await window.updatePreviewVisibility?.(); } catch {}
+
+    if (typeof window.refreshSchedulingBanner === "function") {
+      window.refreshSchedulingBanner();
+    } else {
+      window.addEventListener("sched-banner-ready", () => {
+        try { window.refreshSchedulingBanner?.(); } catch {}
+      }, { once: true });
+    }
+  }
+
+  function setTabHeaderState(tab) {
+    ["main", "watchlist", "snapshots", "editor", "settings"].forEach((name) => {
+      byId(`tab-${name}`)?.classList.toggle("active", name === tab);
+    });
+  }
+
+  function setPageVisibility(tab) {
+    byId("ops-card")?.classList.toggle("hidden", tab !== "main");
+    byId("stats-card")?.classList.toggle("hidden", tab !== "main");
+    if (tab !== "main") byId("placeholder-card")?.classList.add("hidden");
+
+    byId("page-watchlist")?.classList.toggle("hidden", tab !== "watchlist");
+    byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
+    byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
+
+    document.documentElement.dataset.tab = tab;
+    if (document.body) document.body.dataset.tab = tab;
+  }
+
+  async function ensurePageModule(key, src, namespace, extra = {}) {
+    return CW.PageLoader?.ensure?.({ key, src, namespace, ...extra });
+  }
+
+  async function hydrateSettingsPage() {
     try { await window.mountAuthProviders?.(); } catch {}
+    try { await window.loadProviders?.(); } catch {}
+    try { await window.mountMetadataProviders?.(); } catch {}
     try { await window.loadConfig?.(); } catch {}
+
     try {
       if (typeof window.cwLoadAuth === "function") {
         await Promise.allSettled([window.cwLoadAuth("simkl"), window.cwLoadAuth("trakt")]);
       }
-      try { window.cwAuth?.simkl?.init?.(); } catch {}
-      try { window.cwAuth?.trakt?.init?.(); } catch {}
+      ["simkl", "trakt"].forEach((key) => {
+        try { window.cwAuth?.[key]?.init?.(); } catch {}
+      });
     } catch {}
 
-    try { window.updateTmdbHint?.(); } catch {}
-    try { window.updateSimklHint?.(); } catch {}
-    try { window.updateSimklButtonState?.(); } catch {}
-    try { window.updateTraktHint?.(); } catch {}
-    try { window.startTraktTokenPoll?.(); } catch {}
+    [
+      () => window.updateTmdbHint?.(),
+      () => window.updateSimklHint?.(),
+      () => window.updateSimklButtonState?.(),
+      () => window.updateTraktHint?.(),
+      () => window.startTraktTokenPoll?.(),
+    ].forEach((fn) => {
+      try { fn(); } catch {}
+    });
 
     if (typeof window.loadScheduling === "function") {
       await window.loadScheduling();
     } else {
-      window.addEventListener("sched-banner-ready", () => { try { window.loadScheduling?.(); } catch {} }, { once: true });
+      window.addEventListener("sched-banner-ready", () => {
+        try { window.loadScheduling?.(); } catch {}
+      }, { once: true });
     }
 
-    try { ensureScrobbler(); setTimeout(ensureScrobbler, 200); } catch {}
-    __currentTab = "settings";
-    return;
+    try {
+      ensureScrobbler();
+      setTimeout(ensureScrobbler, 200);
+    } catch {}
   }
 
-  __currentTab = n || "main";
-}
+  async function showTab(name) {
+    const tab = String(name || "main").toLowerCase();
+    document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab } }));
 
-document.addEventListener("tab-changed", (e) => {
-  const id = String(e?.detail?.id || "").toLowerCase();
-  if (id !== "main") return;
-  enforceMainLayout();
-  setTimeout(() => {
-    try { window.openSummaryStream?.(); } catch {}
-    try { window.openLogStream?.(); } catch {}
-    try { window.UX?.refresh?.(); } catch {}
-    try { recomputeRunDisabled?.(); } catch {}
-  }, 0);
-});
+    setTabHeaderState(tab);
+    setPageVisibility(tab);
 
+    const layout = byId("layout");
+    const logPanel = byId("log-panel");
 
-// Scrobbler loader
-let __scrobInit = false;
-function ensureScrobbler() {
-  if (__scrobInit) return;
-
-  const mount = document.getElementById("scrobble-mount") || document.getElementById("scrobbler");
-  if (!mount) return;
-
-  const prov = (typeof getConfiguredProviders === "function") ? getConfiguredProviders() : new Set();
-  const srcOk = prov.has("PLEX") || prov.has("EMBY") || prov.has("JELLYFIN");
-  const sinkOk = prov.has("TRAKT") || prov.has("SIMKL") || prov.has("MDBLIST");
-  if (!(srcOk && sinkOk)) return;
-
-  const start = () => {
-    if (__scrobInit) return;
-    if (window.Scrobbler?.init) {
-      window.Scrobbler.init({ mountId: mount.id });
-    } else if (window.Scrobbler?.mount) {
-      window.Scrobbler.mount(mount, window._cfgCache || {});
-    } else {
+    if (tab === "main") {
+      enforceMainLayout();
+      if (state.currentTab === "main") await softRefreshMain();
+      else await hardRefreshMain();
+      logPanel?.classList.remove("hidden");
+      queueSafe(() => {
+        if (byId("det-log") && !window.esDet) {
+          try { window.openDetailsLog?.(); } catch {}
+        }
+      });
+      state.currentTab = "main";
       return;
     }
-    __scrobInit = true;
-  };
 
-  if (window.Scrobbler) { start(); return; }
-  let s = document.getElementById("scrobbler-js");
-  if (!s) {
-    s = document.createElement("script");
-    s.id = "scrobbler-js";
-    s.src = "/assets/js/scrobbler.js";
-    s.defer = true;
-    s.onload = start;
-    s.onerror = () => console.warn("[scrobbler] script failed to load");
-    document.head.appendChild(s);
-  } else {
-    s.onload = start;
-  }
-}
+    layout?.classList.add("single");
+    layout?.classList.remove("full");
+    logPanel?.classList.add("hidden");
 
-// Run and headers
-function toggleSection(id) {
-  const el = document.getElementById(id);
-  if (el) el.classList.toggle("open");
-}
-function setBusy(v) {
-  busy = v;
-  window.busy = v;
-  recomputeRunDisabled();
-}
-
-function _cwSyncEscapeHtml(s) {
-  return String(s || "").replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
-  }[c] || c));
-}
-
-function _cwProvLabel(k) {
-  const map = {
-    PLEX: "Plex", SIMKL: "SIMKL", TRAKT: "Trakt", ANILIST: "AniList", TMDB: "TMDb",
-    JELLYFIN: "Jellyfin", EMBY: "Emby", MDBLIST: "MDBList", TAUTULLI: "Tautulli", CROSSWATCH: "CrossWatch"
-  };
-  const kk = String(k || "").trim().toUpperCase();
-  return map[kk] || (kk || "?");
-}
-
-function _cwFeatEnabled(v) {
-  if (v === true) return true;
-  if (!v || typeof v !== "object") return false;
-  return !!(v.enable ?? v.enabled);
-}
-
-function _cwPairCanRun(p) {
-  if (!p || p.enabled === false) return false;
-  const f = p.features || {};
-  const keys = ["watchlist", "ratings", "history", "progress", "playlists"];
-  if (!p.features) return true;
-  for (const k of keys) {
-    if (_cwFeatEnabled(f[k])) return true;
-  }
-  return false;
-}
-
-function _cwPairTitle(p) {
-  const src = _cwProvLabel(p.source);
-  const dst = _cwProvLabel(p.target);
-  const si = String(p.source_instance || "").trim();
-  const ti = String(p.target_instance || "").trim();
-  const src2 = si && si.toLowerCase() !== "default" ? `${src} · ${si}` : src;
-  const dst2 = ti && ti.toLowerCase() !== "default" ? `${dst} · ${ti}` : dst;
-  return `${src2} → ${dst2}`;
-}
-
-function cwClampMenuToViewport(menu, margin = 10) {
-  if (!menu || typeof menu.getBoundingClientRect !== "function") return;
-  try { menu.style.transform = ""; } catch {}
-  const r = menu.getBoundingClientRect();
-  let dx = 0;
-  if (r.right > window.innerWidth - margin) dx -= (r.right - (window.innerWidth - margin));
-  if (r.left < margin) dx += (margin - r.left);
-  if (dx) {
-    try { menu.style.transform = `translateX(${Math.round(dx)}px)`; } catch {}
-  }
-}
-
-function cwPortalMenuToBody(menu) {
-  if (!menu) return;
-  try {
-    if (!window.__cwSyncMenuHome) {
-      window.__cwSyncMenuHome = { parent: menu.parentNode, next: menu.nextSibling };
+    if (tab === "watchlist") {
+      try {
+        await ensurePageModule("watchlist", "/assets/js/watchlist.js", "Watchlist", {
+          refreshEvent: "watchlist:refresh",
+        });
+      } catch (e) {
+        console.warn("Watchlist load/refresh failed:", e);
+      }
+      state.currentTab = "watchlist";
+      return;
     }
-    if (menu.parentNode !== document.body) {
-      document.body.appendChild(menu);
-    }
-  } catch {}
-}
 
-function cwRestoreMenuHome(menu) {
-  const home = window.__cwSyncMenuHome;
-  if (!menu || !home || !home.parent) return;
-  try {
-    if (menu.parentNode === home.parent) return;
+    if (tab === "snapshots") {
+      try {
+        await ensurePageModule("snapshots", "/assets/js/snapshots.js", "Snapshots", {
+          refreshArgs: [true],
+        });
+      } catch (e) {
+        console.warn("Snapshots load/refresh failed:", e);
+      }
+      state.currentTab = "snapshots";
+      return;
+    }
+
+    if (tab === "settings") {
+      await hydrateSettingsPage();
+      state.currentTab = "settings";
+      return;
+    }
+
+    state.currentTab = tab;
+  }
+
+  document.addEventListener("tab-changed", (ev) => {
+    if (String(ev?.detail?.id || "").toLowerCase() !== "main") return;
+    enforceMainLayout();
+    setTimeout(() => {
+      try { window.openSummaryStream?.(); } catch {}
+      try { window.openLogStream?.(); } catch {}
+      try { window.UX?.refresh?.(); } catch {}
+      try { recomputeRunDisabled(); } catch {}
+    }, 0);
+  });
+
+  let scrobblerInit = false;
+  function ensureScrobbler() {
+    if (scrobblerInit) return;
+    const mount = byId("scrobble-mount") || byId("scrobbler");
+    if (!mount) return;
+
+    const configured = getConfiguredProviders();
+    const sourceOk = configured.has("PLEX") || configured.has("EMBY") || configured.has("JELLYFIN");
+    const sinkOk = configured.has("TRAKT") || configured.has("SIMKL") || configured.has("MDBLIST");
+    if (!(sourceOk && sinkOk)) return;
+
+    const start = () => {
+      if (scrobblerInit) return;
+      if (window.Scrobbler?.init) window.Scrobbler.init({ mountId: mount.id });
+      else if (window.Scrobbler?.mount) window.Scrobbler.mount(mount, window._cfgCache || {});
+      else return;
+      scrobblerInit = true;
+    };
+
+    if (window.Scrobbler) {
+      start();
+      return;
+    }
+
+    let script = byId("scrobbler-js");
+    if (!script) {
+      script = document.createElement("script");
+      script.id = "scrobbler-js";
+      script.src = "/assets/js/scrobbler.js";
+      script.defer = true;
+      script.onload = start;
+      script.onerror = () => console.warn("[scrobbler] script failed to load");
+      document.head.appendChild(script);
+    } else {
+      script.onload = start;
+    }
+  }
+
+  function toggleSection(id) {
+    byId(id)?.classList.toggle("open");
+  }
+
+  function setBusy(on) {
+    state.busy = !!on;
+    window.busy = !!on;
+    recomputeRunDisabled();
+  }
+
+  function escapeHtml(value) {
+    return String(value || "").replace(/[&<>"']/g, (ch) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    }[ch] || ch));
+  }
+
+  function providerLabel(key) {
+    try {
+      return CW.ProviderMeta?.label?.(key) || String(key || "").trim().toUpperCase() || "?";
+    } catch {
+      return String(key || "").trim().toUpperCase() || "?";
+    }
+  }
+
+  function featureEnabled(value) {
+    if (value === true) return true;
+    if (!value || typeof value !== "object") return false;
+    return !!(value.enable ?? value.enabled);
+  }
+
+  function pairCanRun(pair) {
+    if (!pair || pair.enabled === false) return false;
+    const features = pair.features || {};
+    const keys = ["watchlist", "ratings", "history", "progress", "playlists"];
+    if (!pair.features) return true;
+    return keys.some((key) => featureEnabled(features[key]));
+  }
+
+  function pairTitle(pair) {
+    const source = providerLabel(pair.source);
+    const target = providerLabel(pair.target);
+    const sourceInst = String(pair.source_instance || "").trim();
+    const targetInst = String(pair.target_instance || "").trim();
+    const sourceLabel = sourceInst && sourceInst.toLowerCase() !== "default" ? `${source} · ${sourceInst}` : source;
+    const targetLabel = targetInst && targetInst.toLowerCase() !== "default" ? `${target} · ${targetInst}` : target;
+    return `${sourceLabel} → ${targetLabel}`;
+  }
+
+  function clampMenuToViewport(menu, margin = 10) {
+    if (!menu?.getBoundingClientRect) return;
+    menu.style.transform = "";
+    const rect = menu.getBoundingClientRect();
+    let dx = 0;
+    if (rect.right > window.innerWidth - margin) dx -= rect.right - (window.innerWidth - margin);
+    if (rect.left < margin) dx += margin - rect.left;
+    if (dx) menu.style.transform = `translateX(${Math.round(dx)}px)`;
+  }
+
+  function portalMenuToBody(menu) {
+    if (!menu) return;
+    if (!window.__cwSyncMenuHome) window.__cwSyncMenuHome = { parent: menu.parentNode, next: menu.nextSibling };
+    if (menu.parentNode !== document.body) document.body.appendChild(menu);
+  }
+
+  function restoreMenuHome(menu) {
+    const home = window.__cwSyncMenuHome;
+    if (!menu || !home?.parent || menu.parentNode === home.parent) return;
     if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(menu, home.next);
     else home.parent.appendChild(menu);
-  } catch {}
-}
-
-function cwPositionSyncMenu(anchor, menu) {
-  if (!anchor || !menu || typeof anchor.getBoundingClientRect !== "function") return;
-  const r = anchor.getBoundingClientRect();
-  const gap = 10;
-  const margin = 10;
-  try {
-    menu.style.position = "fixed";
-    menu.style.left = "0px";
-    menu.style.top = "0px";
-    menu.style.right = "auto";
-    menu.style.bottom = "auto";
-    menu.style.transform = "";
-    menu.style.zIndex = "99999";
-  } catch {}
-
-  const mw = Math.max(240, menu.offsetWidth || 0);
-  const mh = Math.max(120, menu.offsetHeight || 0);
-
-  let left = r.right - mw;
-  let top = r.bottom + gap;
-
-  if (left < margin) left = margin;
-  if (left + mw > window.innerWidth - margin) left = window.innerWidth - margin - mw;
-
-  // If it doesn't fit below, try above.
-  if (top + mh > window.innerHeight - margin) {
-    const top2 = r.top - gap - mh;
-    if (top2 >= margin) top = top2;
-    else top = Math.max(margin, window.innerHeight - margin - mh);
   }
 
-  try {
+  function positionSyncMenu(anchor, menu) {
+    if (!anchor?.getBoundingClientRect || !menu) return;
+    const rect = anchor.getBoundingClientRect();
+    const gap = 10;
+    const margin = 10;
+    Object.assign(menu.style, {
+      position: "fixed",
+      left: "0px",
+      top: "0px",
+      right: "auto",
+      bottom: "auto",
+      transform: "",
+      zIndex: "99999",
+    });
+
+    const width = Math.max(240, menu.offsetWidth || 0);
+    const height = Math.max(120, menu.offsetHeight || 0);
+    let left = rect.right - width;
+    let top = rect.bottom + gap;
+    if (left < margin) left = margin;
+    if (left + width > window.innerWidth - margin) left = window.innerWidth - margin - width;
+    if (top + height > window.innerHeight - margin) {
+      const above = rect.top - gap - height;
+      top = above >= margin ? above : Math.max(margin, window.innerHeight - margin - height);
+    }
     menu.style.left = `${Math.round(left)}px`;
     menu.style.top = `${Math.round(top)}px`;
-  } catch {}
-}
+    clampMenuToViewport(menu, margin);
+  }
 
-
-function cwCloseSyncMenu() {
-  const btn = document.getElementById("run-menu");
-  const menu = document.getElementById("cw-sync-menu");
-  if (!menu) return;
-  menu.classList.add("hidden");
-  try { menu.style.transform = ""; } catch {}
-  try { menu.style.visibility = ""; } catch {}
-  try {
-    menu.style.left = "";
-    menu.style.top = "";
-    menu.style.right = "";
-    menu.style.bottom = "";
-    menu.style.position = "";
-    menu.style.zIndex = "";
-  } catch {}
-  if (btn) btn.setAttribute("aria-expanded", "false");
-
-  try { cwRestoreMenuHome(menu); } catch {}
-
-  try {
+  function removeSyncMenuListeners() {
     if (window.__cwSyncMenuOutside) {
       document.removeEventListener("mousedown", window.__cwSyncMenuOutside, true);
       window.__cwSyncMenuOutside = null;
@@ -1332,4415 +1135,642 @@ function cwCloseSyncMenu() {
       window.removeEventListener("scroll", window.__cwSyncMenuPos, true);
       window.__cwSyncMenuPos = null;
     }
-  } catch {}
-}
-
-async function cwBuildSyncMenu() {
-  const menu = document.getElementById("cw-sync-menu");
-  if (!menu) return;
-
-  menu.innerHTML = "";
-
-  const mkBtn = (label, onClick, extraClass = "") => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "cw-menu-item" + (extraClass ? ` ${extraClass}` : "");
-    b.setAttribute("role", "menuitem");
-    b.textContent = label;
-    b.addEventListener("click", onClick);
-    return b;
-  };
-
-  menu.appendChild(mkBtn("Sync all", () => { cwCloseSyncMenu(); runSync(); }));
-
-  let pairs = [];
-  try {
-    if (Array.isArray(window.cx?.pairs) && window.cx.pairs.length) pairs = window.cx.pairs;
-    else if (typeof window.loadPairs === "function") pairs = await window.loadPairs();
-    else pairs = await fetch("/api/pairs", { cache: "no-store" }).then(r => r.json());
-  } catch {}
-
-  const runnable = (Array.isArray(pairs) ? pairs : []).filter(_cwPairCanRun);
-  if (!runnable.length) {
-    const div = document.createElement("div");
-    div.className = "cw-sync-menu-empty";
-    div.textContent = "No enabled pairs";
-    menu.appendChild(div);
-    return;
   }
 
-  for (const p of runnable) {
-    const title = _cwPairTitle(p);
-    const mode = String(p.mode || "").toLowerCase();
-    const modeLabel = mode === "two-way" ? "two-way" : (mode === "one-way" ? "one-way" : "");
+  function cwCloseSyncMenu() {
+    const btn = byId("run-menu");
+    const menu = byId("cw-sync-menu");
+    if (!menu) return;
+    menu.classList.add("hidden");
+    Object.assign(menu.style, { transform: "", visibility: "", left: "", top: "", right: "", bottom: "", position: "", zIndex: "" });
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    restoreMenuHome(menu);
+    removeSyncMenuListeners();
+  }
 
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "cw-menu-item";
-    b.setAttribute("role", "menuitem");
-    b.innerHTML = `<span class="cw-sync-menu-title">${_cwSyncEscapeHtml(title)}</span>${modeLabel ? `<span class=\"cw-sync-menu-meta\">${_cwSyncEscapeHtml(modeLabel)}</span>` : ""}`;
-    b.addEventListener("click", () => {
+  function buildSyncMenuButton(label, onClick, extraClass = "") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `cw-menu-item${extraClass ? ` ${extraClass}` : ""}`;
+    button.setAttribute("role", "menuitem");
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  async function cwBuildSyncMenu() {
+    const menu = byId("cw-sync-menu");
+    if (!menu) return;
+    menu.innerHTML = "";
+    menu.appendChild(buildSyncMenuButton("Sync all", () => {
       cwCloseSyncMenu();
-      runSync({ pair_id: String(p.id || "").trim() });
+      runSync();
+    }));
+
+    let pairs = Array.isArray(window.cx?.pairs) && window.cx.pairs.length ? window.cx.pairs : await _getPairsFresh(false);
+    const runnable = (Array.isArray(pairs) ? pairs : []).filter(pairCanRun);
+    if (!runnable.length) {
+      const empty = document.createElement("div");
+      empty.className = "cw-sync-menu-empty";
+      empty.textContent = "No enabled pairs";
+      menu.appendChild(empty);
+      return;
+    }
+
+    runnable.forEach((pair) => {
+      const button = document.createElement("button");
+      const mode = String(pair.mode || "").toLowerCase();
+      const modeLabel = mode === "two-way" ? "two-way" : (mode === "one-way" ? "one-way" : "");
+      button.type = "button";
+      button.className = "cw-menu-item";
+      button.setAttribute("role", "menuitem");
+      button.innerHTML = `<span class="cw-sync-menu-title">${escapeHtml(pairTitle(pair))}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
+      button.addEventListener("click", () => {
+        cwCloseSyncMenu();
+        runSync({ pair_id: String(pair.id || "").trim() });
+      });
+      menu.appendChild(button);
     });
-    menu.appendChild(b);
   }
-}
 
-async function cwToggleSyncMenu(ev) {
-  try { ev?.preventDefault?.(); ev?.stopPropagation?.(); } catch {}
-  const btn = document.getElementById("run-menu");
-  const menu = document.getElementById("cw-sync-menu");
-  if (!btn || !menu) return;
-  if (!menu.classList.contains("hidden")) { cwCloseSyncMenu(); return; }
+  async function cwToggleSyncMenu(ev) {
+    try { ev?.preventDefault?.(); ev?.stopPropagation?.(); } catch {}
+    const btn = byId("run-menu");
+    const menu = byId("cw-sync-menu");
+    if (!btn || !menu) return;
+    if (!menu.classList.contains("hidden")) {
+      cwCloseSyncMenu();
+      return;
+    }
 
-  await cwBuildSyncMenu();
-  cwPortalMenuToBody(menu);
-  try { menu.style.visibility = "hidden"; } catch {}
-  menu.classList.remove("hidden");
-  try {
-    requestAnimationFrame(() => {
-      cwPositionSyncMenu(btn, menu);
-      try { menu.style.visibility = ""; } catch {}
+    await cwBuildSyncMenu();
+    portalMenuToBody(menu);
+    menu.style.visibility = "hidden";
+    menu.classList.remove("hidden");
+    raf(() => {
+      positionSyncMenu(btn, menu);
+      menu.style.visibility = "";
     });
-  } catch {}
-  btn.setAttribute("aria-expanded", "true");
+    btn.setAttribute("aria-expanded", "true");
 
-  window.__cwSyncMenuPos = () => {
-    const m = document.getElementById("cw-sync-menu");
-    const b = document.getElementById("run-menu");
-    if (!m || !b || m.classList.contains("hidden")) return;
-    cwPositionSyncMenu(b, m);
-  };
-  window.addEventListener("resize", window.__cwSyncMenuPos, true);
-  window.addEventListener("scroll", window.__cwSyncMenuPos, true);
+    window.__cwSyncMenuPos = () => {
+      const liveMenu = byId("cw-sync-menu");
+      const liveBtn = byId("run-menu");
+      if (!liveMenu || !liveBtn || liveMenu.classList.contains("hidden")) return;
+      positionSyncMenu(liveBtn, liveMenu);
+    };
+    window.__cwSyncMenuOutside = (event) => {
+      const target = event?.target;
+      if (!target || target === btn || menu.contains(target)) return;
+      cwCloseSyncMenu();
+    };
+    window.__cwSyncMenuEsc = (event) => {
+      if (event?.key === "Escape") cwCloseSyncMenu();
+    };
 
-  window.__cwSyncMenuOutside = (e) => {
-    const t = e?.target;
-    if (!t) return;
-    if (t === btn) return;
-    if (menu.contains(t)) return;
-    cwCloseSyncMenu();
-  };
-  window.__cwSyncMenuEsc = (e) => {
-    if (e?.key === "Escape") cwCloseSyncMenu();
-  };
-  document.addEventListener("mousedown", window.__cwSyncMenuOutside, true);
-  document.addEventListener("keydown", window.__cwSyncMenuEsc, true);
-}
+    window.addEventListener("resize", window.__cwSyncMenuPos, true);
+    window.addEventListener("scroll", window.__cwSyncMenuPos, true);
+    document.addEventListener("mousedown", window.__cwSyncMenuOutside, true);
+    document.addEventListener("keydown", window.__cwSyncMenuEsc, true);
+  }
 
-// Run Sync
-async function runSync(opts) {
-  if (busy) return;
-  try { cwCloseSyncMenu?.(); } catch {}
-
-  let pairId = "";
-  try {
-    if (typeof opts === "string") pairId = opts;
-    else if (opts && typeof opts === "object") pairId = String(opts.pair_id || opts.pairId || opts.id || "");
-  } catch {}
-  pairId = String(pairId || "").trim();
-
-  setBusy?.(true);
-
-  const undoOptimisticSyncUI = () => {
+  function resetSyncButtons(pairId) {
+    [byId("run"), byId("run-menu")].forEach((button) => {
+      if (!button) return;
+      button.removeAttribute("disabled");
+      button.setAttribute("aria-busy", "false");
+      button.classList.remove("glass");
+      button.title = button.id === "run"
+        ? (pairId ? "Run synchronization (single pair)" : "Run synchronization")
+        : "Sync options";
+    });
     try { window.SyncBar?.reset?.(); } catch {}
-    try {
-      const btn = document.getElementById("run");
-      const menuBtn = document.getElementById("run-menu");
-      for (const b of [btn, menuBtn]) {
-        if (!b) continue;
-        b.removeAttribute("disabled");
-        b.setAttribute("aria-busy", "false");
-        b.classList.remove("glass");
-      }
-      if (btn) btn.title = pairId ? "Run synchronization (single pair)" : "Run synchronization";
-      if (menuBtn) menuBtn.title = "Sync options";
-    } catch {}
-  };
+  }
 
-  try {
-    window.UX?.updateTimeline({ start: true, pre: false, post: false, done: false });
-    window.UX?.updateProgress({ pct: 0 });
-  } catch {}
-
-  try {
-    const detLog = document.getElementById("det-log");
-    if (detLog) detLog.textContent = "";
+  function clearDetailsLogBeforeRun() {
+    const detailLog = byId("det-log");
+    if (detailLog) detailLog.textContent = "";
     try { window.esDet?.close(); } catch {}
     window.esDet = null;
-  } catch {}
-
-  try { typeof openDetailsLog === "function" && openDetailsLog(); } catch {}
-
-  try {
-    const init = { method: "POST" };
-    if (pairId) {
-      init.headers = { "Content-Type": "application/json" };
-      init.body = JSON.stringify({ pair_id: pairId });
-    }
-
-    const resp = await fetch("/api/run", init);
-    let j = null;
-    try { j = await resp.json(); } catch {}
-
-    if (!resp.ok || !j || j.ok !== true) {
-      typeof setSyncHeader === "function" && setSyncHeader("sync-bad", `Failed to start${j?.error ? ` – ${j.error}` : ""}`);
-      undoOptimisticSyncUI();
-      try { window.UX?.updateTimeline({ start: false, pre: false, post: false, done: false }); } catch {}
-      return;
-    }
-
-    if (j?.skipped) {
-      const msg = (j.skipped === "no_pairs_configured")
-        ? "No pairs configured — skipping sync"
-        : `Sync skipped — ${j.skipped}`;
-      typeof setSyncHeader === "function" && setSyncHeader("sync-warn", msg);
-      undoOptimisticSyncUI();
-      try { window.UX?.updateTimeline({ start: false, pre: false, post: false, done: false }); } catch {}
-      return;
-    }
-  } catch (_) {
-    typeof setSyncHeader === "function" && setSyncHeader("sync-bad", "Failed to reach server");
-    undoOptimisticSyncUI();
-    try { window.UX?.updateTimeline({ start: false, pre: false, post: false, done: false }); } catch {}
-  } finally {
-    setBusy?.(false);
-    typeof recomputeRunDisabled === "function" && recomputeRunDisabled();
-    if (AUTO_STATUS) try { refreshStatus(false); } catch {}
+    try { window.openDetailsLog?.(); } catch {}
   }
-}
 
-const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
-let _updInfo = null;
+  async function runSync(opts) {
+    if (state.busy) return;
+    try { cwCloseSyncMenu(); } catch {}
 
+    let pairId = "";
+    if (typeof opts === "string") pairId = opts;
+    else if (opts && typeof opts === "object") pairId = String(opts.pair_id || opts.pairId || opts.id || "");
+    pairId = pairId.trim();
 
-function setStatsExpanded(expanded) {
-  const sc = document.getElementById("stats-card");
-  if (!sc) return;
-  sc.classList.toggle("collapsed", !expanded);
-  sc.classList.toggle("expanded", !!expanded);
-  if (expanded) {
+    setBusy(true);
     try {
-      refreshInsights();
-    } catch (e) {}
-  }
-}
+      window.UX?.updateTimeline?.({ start: true, pre: false, post: false, done: false });
+      window.UX?.updateProgress?.({ pct: 0 });
+    } catch {}
 
-function isElementOpen(el) {
-  if (!el) return false;
-  const c = el.classList || {};
-  if (c.contains?.("open") || c.contains?.("expanded") || c.contains?.("show"))
-    return true;
-  const style = window.getComputedStyle(el);
-  return !(
-    style.display === "none" ||
-    style.visibility === "hidden" ||
-    el.offsetHeight === 0
-  );
-}
+    clearDetailsLogBeforeRun();
 
-function findDetailsButton() {
-  
-  return (
-    document.getElementById("btn-details") ||
-    document.querySelector('[data-action="details"], .btn-details') ||
-    Array.from(document.querySelectorAll("button")).find(
-      (b) => (b.textContent || "").trim().toLowerCase() === "view details"
-    )
-  );
-}
-
-function findDetailsPanel() {
-  
-  return (
-    document.getElementById("sync-output") ||
-    document.getElementById("details") ||
-    document.querySelector('#sync-log, .sync-output, [data-pane="details"]')
-  );
-}
-
-function wireDetailsToStats() {
-  const btn = findDetailsButton();
-  const panel = findDetailsPanel();
-
-  
-  setStatsExpanded(isElementOpen(panel));
-  if (btn) {
-    btn.addEventListener("click", () => {
-      
-      setTimeout(() => setStatsExpanded(isElementOpen(panel)), 50);
-    });
-  }
-
-  
-  const syncBtn =
-    document.getElementById("btn-sync") ||
-    document.querySelector('[data-action="sync"], .btn-sync');
-  if (syncBtn) {
-    syncBtn.addEventListener("click", () => setStatsExpanded(false));
-  }
-}
-
-document.addEventListener("DOMContentLoaded", wireDetailsToStats);
-document.addEventListener("DOMContentLoaded", () => {
-  try {
-    scheduleInsights();
-  } catch (_) {}
-});
-
-async function fetchJSON(){ if (window.Insights && window.Insights.fetchJSON) return window.Insights.fetchJSON.apply(this, arguments); return null; }
-
-function scheduleInsights(){ if (window.Insights && window.Insights.scheduleInsights) return window.Insights.scheduleInsights.apply(this, arguments); }
-
-// Insights refresh
-async function refreshInsights(){ if (window.Insights && window.Insights.refreshInsights) return window.Insights.refreshInsights.apply(this, arguments); }
-
-function renderSparkline(){ if (window.Insights && window.Insights.renderSparkline) return window.Insights.renderSparkline.apply(this, arguments); }
-document.addEventListener("DOMContentLoaded", refreshInsights);
-
-// Update check logic
-(() => {
-  const INTERVAL =
-    typeof UPDATE_CHECK_INTERVAL_MS === "number"
-      ? UPDATE_CHECK_INTERVAL_MS
-      : 60 * 60 * 1000;
-
-  // Prevent duplicate init if script loads twice
-  if (window.__cwUpdateInitDone) return;
-  window.__cwUpdateInitDone = true;
-
-  const run = () => { try { checkForUpdate(); } catch (e) { console.debug("checkForUpdate failed:", e); } };
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", run, { once: true });
-  } else {
-    run();
-  }
-
-  // Periodic checks
-  setInterval(run, INTERVAL);
-})();
-
-// Ensure main update slot exists
-function ensureMainUpdateSlot() {
-  let slot = document.getElementById('st-main-update');
-  if (slot) return slot;
-
-  const syncBtn = [...document.querySelectorAll('button')].find(b => /synchroni[sz]e/i.test(b.textContent || ''));
-  const actionsRow = syncBtn
-    ? (syncBtn.closest('.sync-actions, .cx-sync-actions, .actions, .row, .toolbar') || syncBtn.parentElement)
-    : (document.querySelector('.sync-actions, .cx-sync-actions, .actions, .row, .toolbar'));
-
-  if (actionsRow && actionsRow.parentElement) {
-    slot = document.createElement('div');
-    slot.id = 'st-main-update';
-    slot.className = 'hidden';
-    actionsRow.insertAdjacentElement('afterend', slot);
-    return slot;
-  }
-
-  // Fallbacks: 
-  const previewHeader = [...document.querySelectorAll('h2, .section-title')].find(h => /watchlist\s*preview/i.test(h.textContent || ''));
-  if (previewHeader && previewHeader.parentElement) {
-    slot = document.createElement('div');
-    slot.id = 'st-main-update';
-    slot.className = 'hidden';
-    previewHeader.insertAdjacentElement('beforebegin', slot);
-    return slot;
-  }
-
-  const main = document.querySelector('#tab-main, [data-tab="main"], .page-main, main') || document.body;
-  slot = document.createElement('div');
-  slot.id = 'st-main-update';
-  slot.className = 'hidden';
-  main.insertBefore(slot, main.firstChild);
-  return slot;
-}
-
-// Render pill content
-function renderMainUpdatePill(hasUpdate, latest, url) {
-  const host = ensureMainUpdateSlot();
-  if (!host) return;
-
-  if (hasUpdate && latest) {
-    host.innerHTML = `
-      <div class="pill">
-        <span class="dot" aria-hidden="true"></span>
-        <span>Update <strong>${latest}</strong> available · <a href="${url}" target="_blank" rel="noopener">Release notes</a></span>
-      </div>`;
-    host.classList.remove('hidden');
-  } else {
-    host.classList.add('hidden');
-    host.textContent = '';
-  }
-}
-
-// Hook into existing version check
-async function checkForUpdate() {
-  try {
-    const r = await fetch('/api/version', { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const j = await r.json();
-
-    const cur = String(j.current ?? '0.0.0').trim();
-    const latest = j.latest ? String(j.latest).trim() : null;
-    const url = j.html_url || 'https://github.com/cenodude/CrossWatch/releases';
-    const hasUpdate = !!j.update_available;
-
-    // Header badge
-    const vEl = document.getElementById('app-version');
-    if (vEl) vEl.textContent = `Version ${cur}`;
-    const updEl = document.getElementById('st-update');
-    if (updEl) {
-      if (hasUpdate && latest) {
-        const changed = latest !== (updEl.dataset.lastLatest || '');
-        updEl.classList.add('badge', 'upd');
-        updEl.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="Open release page">Update ${latest} available</a>`;
-        updEl.classList.remove('hidden');
-        if (changed) {
-          updEl.dataset.lastLatest = latest;
-          updEl.classList.remove('reveal');
-          void updEl.offsetWidth;
-          updEl.classList.add('reveal');
-        }
-      } else {
-        updEl.classList.add('hidden');
-        updEl.classList.remove('reveal');
-        updEl.textContent = '';
-        updEl.removeAttribute('aria-label');
-        delete updEl.dataset.lastLatest;
+    try {
+      const init = { method: "POST" };
+      if (pairId) {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify({ pair_id: pairId });
       }
-    }
 
-    // Main pill
-    renderMainUpdatePill(hasUpdate, latest, url);
-  } catch (err) {
-    console.debug('Version check failed:', err);
-  }
-}
+      const response = await fetch("/api/run", init);
+      let payload = null;
+      try { payload = await response.json(); } catch {}
 
-function renderSummary(sum) {
-  currentSummary = sum;
-  window._ui = window._ui || {};
-  window._ui.summary = sum;
-
-  const pp = sum.plex_post ?? sum.plex_pre;
-  const sp = sum.simkl_post ?? sum.simkl_pre;
-
-  // chips
-  document.getElementById("chip-plex").textContent = pp ?? "–";
-  document.getElementById("chip-simkl").textContent = sp ?? "–";
-  document.getElementById("chip-dur").textContent =
-    sum.duration_sec != null ? sum.duration_sec + "s" : "–";
-  document.getElementById("chip-exit").textContent =
-    sum.exit_code != null ? String(sum.exit_code) : "–";
-
-  // headline
-  if (sum.running) {
-    setSyncHeader("sync-warn", "Running…");
-  } else if (sum.exit_code === 0) {
-    setSyncHeader(
-      "sync-ok",
-      (sum.result || "").toUpperCase() === "EQUAL" ? "In sync " : "Synced "
-    );
-  } else if (sum.exit_code != null) {
-    setSyncHeader("sync-bad", "Attention needed ⚠️");
-  } else {
-    setSyncHeader("sync-warn", "Idle — run a sync to see results");
-  }
-
-  // details
-  document.getElementById("det-cmd").textContent = sum.cmd || "–";
-  document.getElementById("det-ver").textContent = sum.version || "–";
-  document.getElementById("det-start").textContent  = toLocal(sum.started_at);
-  document.getElementById("det-finish").textContent = toLocal(sum.finished_at);
-
-}
-
-(() => {
-  const prev = window.renderSummary;
-  window.renderSummary = function (sum) {
-    try { prev?.(sum); } catch {}
-    try { refreshStats(false); } catch {}
-  };
-})();
-
-let _lastStatsFetch = 0;
-
-function _ease(t) {
-  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-}
-
-function animateNumber(el, to) {
-  const from = parseInt(el.dataset.v || "0", 10) || 0;
-  if (from === to) {
-    el.textContent = String(to);
-    el.dataset.v = String(to);
-    return;
-  }
-  const dur = 600, t0 = performance.now();
-  function step(now) {
-    const p = Math.min(1, (now - t0) / dur);
-    const v = Math.round(from + (to - from) * _ease(p));
-    el.textContent = String(v);
-    if (p < 1) requestAnimationFrame(step);
-    else el.dataset.v = String(to);
-  }
-  requestAnimationFrame(step);
-}
-
-function animateChart(now, week, month) {
-  const bars = {
-    now: document.querySelector(".bar.now"),
-    week: document.querySelector(".bar.week"),
-    month: document.querySelector(".bar.month"),
-  };
-  const max = Math.max(1, now, week, month);
-  const h = (v) => Math.max(0.04, v / max);
-  if (bars.week)  bars.week.style.transform  = `scaleY(${h(week)})`;
-  if (bars.month) bars.month.style.transform = `scaleY(${h(month)})`;
-  if (bars.now)   bars.now.style.transform   = `scaleY(${h(now)})`;
-}
-
-
-// Statistics dashboard refresh
-async function refreshStats(force = false) {
-  const nowT = Date.now();
-
-  if (!force && nowT - _lastStatsFetch < 900) return;
-  _lastStatsFetch = nowT;
-
-  try {
-    const j = await fetch("/api/stats", { cache: "no-store" }).then((r) =>
-      r.json()
-    );
-
-    if (!j?.ok) return;
-    const elNow = document.getElementById("stat-now");
-    const elW = document.getElementById("stat-week");
-    const elM = document.getElementById("stat-month");
-
-    if (!elNow || !elW || !elM) return;
-    const n = j.now | 0,
-      w = j.week | 0,
-      m = j.month | 0;
-
-    animateNumber(elNow, n);
-    animateNumber(elW, w);
-    animateNumber(elM, m);
-
-    
-    const max = Math.max(1, n, w, m);
-    const fill = document.getElementById("stat-fill");
-
-    if (fill) fill.style.width = Math.round((n / max) * 100) + "%";
-
-    
-    const bumpOne = (delta, label) => {
-      const t = document.getElementById("trend-week");
-      if (!t) return;
-
-      const cls = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
-      t.className = "chip trend " + cls;
-      t.textContent =
-        delta === 0
-          ? "no change"
-          : `${delta > 0 ? "+" : ""}${delta} vs ${label}`;
-
-      if (cls === "up") {
-        const c = document.getElementById("stats-card");
-        c?.classList.remove("celebrate");
-        void c?.offsetWidth;
-        c?.classList.add("celebrate");
-      }
-    };
-
-    bumpOne(n - w, "last week"); 
-
-    
-    const by = j.by_source || {};
-    const totalAdd = Number.isFinite(j.added) ? j.added : null; 
-    const totalRem = Number.isFinite(j.removed) ? j.removed : null;
-    const lastAdd = Number.isFinite(j.new) ? j.new : null; 
-    const lastRem = Number.isFinite(j.del) ? j.del : null;
-
-    
-    const setTxt = (id, val) => {
-      const el = document.getElementById(id);
-
-      if (el) el.textContent = String(val ?? 0);
-    };
-
-    setTxt("stat-added", totalAdd);
-    setTxt("stat-removed", totalRem);
-
-    
-    const setTile = (tileId, numId, val) => {
-      const t = document.getElementById(tileId),
-        nEl = document.getElementById(numId);
-
-      if (!t || !nEl) return;
-      if (val == null) {
-        t.hidden = true;
+      if (!response.ok || !payload || payload.ok !== true) {
+        setSyncHeader("sync-bad", `Failed to start${payload?.error ? ` – ${payload.error}` : ""}`);
+        resetSyncButtons(pairId);
+        window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
         return;
       }
 
-      nEl.textContent = String(val);
-      t.hidden = false;
-    };
-
-    setTile("tile-new", "stat-new", lastAdd);
-    setTile("tile-del", "stat-del", lastRem);
-
-    const plexVal = Number.isFinite(by.plex_total)
-      ? by.plex_total
-      : (by.plex ?? 0) + (by.both ?? 0);
-
-    const simklVal = Number.isFinite(by.simkl_total)
-      ? by.simkl_total
-      : (by.simkl ?? 0) + (by.both ?? 0);
-
-    const traktVal = Number.isFinite(by.trakt_total)
-      ? by.trakt_total
-      : (by.trakt ?? 0) + (by.both ?? 0);
-
-    const elP = document.getElementById("stat-plex");
-    const elS = document.getElementById("stat-simkl");
-    const elT = document.getElementById("stat-trakt");
-
-    const curP = Number(elP?.textContent || 0);
-    const curS = Number(elS?.textContent || 0);
-    const curT = Number(elT?.textContent || 0);
-
-    const pop = (el) => {
-      if (!el) return;
-      el.classList.remove("bump");
-      void el.offsetWidth;
-      el.classList.add("bump");
-    };
-
-    if (elP) {
-      if (plexVal !== curP) {
-        animateNumber(elP, plexVal);
-        pop(elP);
-      } else {
-        elP.textContent = String(plexVal);
-      }
-    }
-
-    if (elS) {
-      if (simklVal !== curS) {
-        animateNumber(elS, simklVal);
-        pop(elS);
-      } else {
-        elS.textContent = String(simklVal);
-      }
-    }
-
-    if (elT) {
-      if (traktVal !== curT) {
-        animateNumber(elT, traktVal);
-        pop(elT);
-      } else {
-        elT.textContent = String(traktVal);
-      }
-    }
-
-    
-    document.getElementById("tile-plex")?.removeAttribute("hidden");
-    document.getElementById("tile-simkl")?.removeAttribute("hidden");
-    document.getElementById("tile-trakt")?.removeAttribute("hidden");
-  } catch (_) {}
-}
-
-function _setBarValues(n, w, m) {
-  const bw = document.querySelector(".bar.week");
-  const bm = document.querySelector(".bar.month");
-  const bn = document.querySelector(".bar.now");
-
-  if (bw) bw.dataset.v = String(w);
-  if (bm) bm.dataset.v = String(m);
-  if (bn) bn.dataset.v = String(n);
-}
-
-function _initStatsTooltip() {
-  const chart = document.getElementById("stats-chart");
-  const tip = document.getElementById("stats-tip");
-
-  if (!chart || !tip) return;
-
-  const map = [
-    { el: document.querySelector(".bar.week"), label: "Last Week" },
-    { el: document.querySelector(".bar.month"), label: "Last Month" },
-    { el: document.querySelector(".bar.now"), label: "Now" },
-  ];
-
-  function show(e, label, value) {
-    tip.textContent = `${label}: ${value} items`;
-    tip.style.left = e.offsetX + "px";
-    tip.style.top = e.offsetY + "px";
-    tip.classList.add("show");
-    tip.hidden = false;
-  }
-
-  function hide() {
-    tip.classList.remove("show");
-    tip.hidden = true;
-  }
-
-  map.forEach(({ el, label }) => {
-    if (!el) return;
-
-    el.addEventListener("mousemove", (ev) => {
-      const rect = chart.getBoundingClientRect();
-
-      const x = ev.clientX - rect.left,
-        y = ev.clientY - rect.top;
-
-      show({ offsetX: x, offsetY: y }, label, el.dataset.v || "0");
-    });
-
-    el.addEventListener("mouseleave", hide);
-
-    el.addEventListener(
-      "touchstart",
-      (ev) => {
-        const t = ev.touches[0];
-        const rect = chart.getBoundingClientRect();
-
-        show(
-          { offsetX: t.clientX - rect.left, offsetY: t.clientY - rect.top },
-          label,
-          el.dataset.v || "0"
-        );
-      },
-      { passive: true }
-    );
-
-    el.addEventListener(
-      "touchend",
-      () => {
-        tip.classList.remove("show");
-      },
-      { passive: true }
-    );
-  });
-}
-
-document.addEventListener("DOMContentLoaded", _initStatsTooltip);
-
-
-// Details Log (live stream)
-if (typeof window.esDet === "undefined") window.esDet = null;
-if (typeof window.esDetSummary === "undefined") window.esDetSummary = null;
-if (typeof window._detStaleIV === "undefined") window._detStaleIV = null;
-if (typeof window._detRetryTO === "undefined") window._detRetryTO = null;
-if (typeof window._detVisibilityHandler === "undefined") window._detVisibilityHandler = null;
-if (typeof window.detStickBottom === "undefined") window.detStickBottom = true;
-if (typeof window.esWatch === "undefined") window.esWatch = null;
-if (typeof window._watchRetryTO === "undefined") window._watchRetryTO = null;
-if (typeof window._watchStaleIV === "undefined") window._watchStaleIV = null;
-if (typeof window._watchVisibilityHandler === "undefined") window._watchVisibilityHandler = null;
-if (typeof window._watchFlushIV === "undefined") window._watchFlushIV = null;
-if (typeof window.watchStickBottom === "undefined") window.watchStickBottom = true;
-if (typeof window.watchBuf === "undefined") window.watchBuf = [];
-if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
-if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
-if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 2500;
-
-function _activeDetailsLogEl() {
-  return window._detailsTab === "watcher"
-    ? document.getElementById("det-watch-log")
-    : document.getElementById("det-log");
-}
-
-function _pruneDetailsLog(el) {
-  const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
-  while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
-}
-
-async function _copyDetailsLog(btn) {
-  const el = _activeDetailsLogEl();
-  const text = (el?.innerText || el?.textContent || "").trim();
-  if (!text) return;
-
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch (_) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-  }
-
-  if (!btn) return;
-  const prev = btn.textContent;
-  btn.textContent = "Copied";
-  clearTimeout(btn._copyFlashTO);
-  btn._copyFlashTO = setTimeout(() => {
-    btn.textContent = prev;
-  }, 1200);
-}
-
-function setDetailsTab(tab) {
-  const t = (tab === "watcher") ? "watcher" : "sync";
-  window._detailsTab = t;
-
-  const syncPanel  = document.getElementById("det-panel-sync");
-  const watchPanel = document.getElementById("det-panel-watcher");
-  const tabSync    = document.getElementById("det-tab-sync");
-  const tabWatch   = document.getElementById("det-tab-watcher");
-  if (!syncPanel || !watchPanel || !tabSync || !tabWatch) return;
-
-  const isWatch = t === "watcher";
-  syncPanel.classList.toggle("hidden", isWatch);
-  watchPanel.classList.toggle("hidden", !isWatch);
-
-  tabSync.classList.toggle("active", !isWatch);
-  tabSync.setAttribute("aria-selected", String(!isWatch));
-  tabWatch.classList.toggle("active", isWatch);
-  tabWatch.setAttribute("aria-selected", String(isWatch));
-
-  if (isWatch) { try { openWatcherLog(); } catch {} }
-}
-
-function initDetailsTabs() {
-  if (window._detailsTabsWired) return;
-  const tabSync  = document.getElementById("det-tab-sync");
-  const tabWatch = document.getElementById("det-tab-watcher");
-  if (!tabSync || !tabWatch) return;
-  window._detailsTabsWired = true;
-
-  tabSync.addEventListener("click", () => setDetailsTab("sync"));
-  tabWatch.addEventListener("click", () => setDetailsTab("watcher"));
-
-  const btnCopy = document.getElementById("det-copy");
-  if (btnCopy) {
-    btnCopy.addEventListener("click", () => {
-      _copyDetailsLog(btnCopy).catch(() => {});
-    });
-  }
-
-  const btnClear = document.getElementById("det-clear");
-  if (btnClear) {
-    btnClear.addEventListener("click", () => {
-      const el = _activeDetailsLogEl();
-      if (el) el.innerHTML = "";
-      if (window._detailsTab === "watcher") window.watchBuf.length = 0;
-    });
-  }
-
-  const btnFollow = document.getElementById("det-follow");
-  if (btnFollow) {
-    btnFollow.addEventListener("click", () => {
-      if (window._detailsTab === "watcher") {
-        window.watchStickBottom = !window.watchStickBottom;
-        const el = document.getElementById("det-watch-log");
-        if (window.watchStickBottom && el) el.scrollTop = el.scrollHeight;
-      } else {
-        window.detStickBottom = !window.detStickBottom;
-        const el = document.getElementById("det-log");
-        if (window.detStickBottom && el) el.scrollTop = el.scrollHeight;
-      }
-    });
-  }
-}
-
-function closeWatcherLog() {
-  try { window.esWatch?.close?.(); } catch {}
-  window.esWatch = null;
-  if (window._watchRetryTO) { clearTimeout(window._watchRetryTO); window._watchRetryTO = null; }
-  if (window._watchStaleIV) { clearInterval(window._watchStaleIV); window._watchStaleIV = null; }
-  if (window._watchFlushIV) { clearInterval(window._watchFlushIV); window._watchFlushIV = null; }
-  if (window._watchVisibilityHandler) {
-    document.removeEventListener("visibilitychange", window._watchVisibilityHandler);
-    window._watchVisibilityHandler = null;
-  }
-  const tabWatch = document.getElementById("det-tab-watcher");
-  tabWatch?.classList.remove("connected", "stale");
-}
-
-async function openWatcherLog() {
-  const el = document.getElementById("det-watch-log");
-  const details = document.getElementById("details");
-  const tabWatch = document.getElementById("det-tab-watcher");
-  if (!el || !details || details.classList.contains("hidden")) return;
-  if (window.esWatch || window._watchOpening) return;
-  window._watchOpening = true;
-
-  try {
-    let cfg = window._cfgCache;
-    if (!cfg) {
-      try {
-        cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
-        window._cfgCache = cfg;
-      } catch {}
-    }
-
-    const sc = (cfg && typeof cfg === "object") ? (cfg.scrobble || {}) : {};
-    let watchCfg = (sc && typeof sc === "object" && sc.watch && typeof sc.watch === "object") ? sc.watch : null;
-    if (!watchCfg && cfg && typeof cfg.watch === "object") watchCfg = cfg.watch;
-    watchCfg = watchCfg || {};
-
-    const norm = (t) => {
-      const s = String(t || "").trim().toUpperCase();
-      if (!s) return "";
-      if (s === "JFIN" || s === "JELLY") return "JELLYFIN";
-      return s;
-    };
-
-    const provider = norm(watchCfg.provider || "plex");
-    const sinksRaw = String(watchCfg.sink || "trakt");
-    const sinks = sinksRaw.split(/[,&+]/g).map(norm).filter(Boolean);
-    const tags = [provider, ...sinks].filter(Boolean);
-    const uniq = [];
-    for (const t of tags) if (!uniq.includes(t)) uniq.push(t);
-
-    const url = new URL("/api/logs/watcher", document.baseURI);
-    url.searchParams.set("tail", "200");
-    if (uniq.length) url.searchParams.set("tags", uniq.join(","));
-
-    if (!el.__cwScrollWired) {
-      el.addEventListener("scroll", () => {
-        const pad = 12;
-        window.watchStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
-      }, { passive: true });
-      el.__cwScrollWired = true;
-    }
-
-    window.watchBuf.length = 0;
-    el.innerHTML = "";
-    window.watchStickBottom = true;
-
-    const MAX_LINES = Number(window.DETAILS_MAX_LINES || 0) || 2500;
-    let lastMsgAt = Date.now();
-
-    const enqueue = (tag, html) => {
-      if (!html) return;
-      window.watchBuf.push({ tag, html });
-      lastMsgAt = Date.now();
-    };
-
-    const flush = () => {
-      if (!window.watchBuf.length) return;
-      const frag = document.createDocumentFragment();
-      const items = window.watchBuf.splice(0, window.watchBuf.length);
-      for (const it of items) {
-        const row = document.createElement("div");
-        row.className = "wlog-line";
-
-        const badge = document.createElement("span");
-        badge.className = "wlog-tag";
-        badge.textContent = it.tag;
-
-        const msg = document.createElement("span");
-        msg.className = "wlog-msg";
-        msg.innerHTML = it.html;
-
-        row.appendChild(badge);
-        row.appendChild(msg);
-        frag.appendChild(row);
-      }
-      el.appendChild(frag);
-
-      while (el.childNodes.length > MAX_LINES) el.removeChild(el.firstChild);
-      if (window.watchStickBottom) el.scrollTop = el.scrollHeight;
-    };
-
-    if (window._watchFlushIV) clearInterval(window._watchFlushIV);
-    window._watchFlushIV = setInterval(flush, 120);
-
-    const es = new EventSource(url.toString());
-    window.esWatch = es;
-    tabWatch?.classList.add("connected");
-    tabWatch?.classList.remove("stale");
-
-    for (const t of (uniq.length ? uniq : ["PLEX","JELLYFIN","EMBY","TRAKT","SIMKL","TMDB","MDBLIST","TRBL"])) {
-      es.addEventListener(t, (ev) => enqueue(t, ev?.data));
-    }
-
-    es.addEventListener("ping", () => { lastMsgAt = Date.now(); });
-
-    es.onerror = () => {
-      tabWatch?.classList.remove("connected");
-      try { window.esWatch?.close?.(); } catch {}
-      window.esWatch = null;
-
-      if (window._watchRetryTO) clearTimeout(window._watchRetryTO);
-      window._watchRetryTO = setTimeout(() => {
-        if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
-      }, 1200);
-    };
-
-    if (window._watchStaleIV) clearInterval(window._watchStaleIV);
-    window._watchStaleIV = setInterval(() => {
-      const stale = (Date.now() - lastMsgAt) > 20000;
-      tabWatch?.classList.toggle("stale", stale);
-    }, 1000);
-
-    if (window._watchVisibilityHandler) {
-      document.removeEventListener("visibilitychange", window._watchVisibilityHandler);
-    }
-    window._watchVisibilityHandler = () => {
-      if (document.visibilityState !== "visible") return;
-      if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
-    };
-    document.addEventListener("visibilitychange", window._watchVisibilityHandler);
-  } finally {
-    window._watchOpening = false;
-  }
-}
-
-async function openDetailsLog() {
-  const el = document.getElementById("det-log");
-  const slider = document.getElementById("det-scrub");
-  if (!el) return;
-  const tabSync = document.getElementById("det-tab-sync");
-  try { initDetailsTabs(); } catch {}
-
-  try {
-    if (typeof window.appDebug === "undefined") {
-      const cfg = window._cfgCache || await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
-      window._cfgCache = cfg;
-      window.appDebug = !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
-    }
-  } catch (_) {}
-
-  el.innerHTML = "";
-  el.classList?.add("cf-log");
-  window.detStickBottom = true;
-
-  try { window.esDet?.close(); } catch {}
-  try { window.esDetSummary?.close(); } catch {}
-  window.esDet = null;
-  window.esDetSummary = null;
-  if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
-  if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
-  if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
-
-  const updateSlider = () => {
-    if (!slider) return;
-    const max = el.scrollHeight - el.clientHeight;
-    slider.value = max <= 0 ? 100 : Math.round((el.scrollTop / max) * 100);
-  };
-
-  const updateStick = () => {
-    const pad = 6;
-    window.detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
-  };
-
-  el.addEventListener("scroll", () => { updateSlider(); updateStick(); }, { passive: true });
-
-  if (slider) {
-    slider.addEventListener("input", () => {
-      const max = el.scrollHeight - el.clientHeight;
-      el.scrollTop = Math.round((slider.value / 100) * max);
-      window.detStickBottom = slider.value >= 99;
-    });
-  }
-
-  const CF = window.ClientFormatter;
-  const useFormatter = !window.appDebug && CF && CF.processChunk && CF.renderInto;
-
-  const appendRaw = (s) => {
-    const lines = String(s).replace(/\r\n/g, "\n").split("\n");
-    for (const line of lines) {
-      if (!line) continue;
-      const div = document.createElement("div");
-      div.className = "cf-line";
-      div.textContent = line;
-      el.appendChild(div);
-    }
-  };
-
-  let detBuf = "";
-  let lastMsgAt = Date.now();
-  let retryMs = 1000;
-  const STALE_MS = 20000;
-
-  const connect = () => {
-    try { window.esDet?.close(); } catch (_) {}
-    window.esDet = new EventSource("/api/logs/stream?tag=SYNC");
-    window.esDet.onopen = () => { tabSync?.classList.add("connected"); tabSync?.classList.remove("stale"); };
-
-    window.esDet.onmessage = (ev) => {
-      lastMsgAt = Date.now();
-      tabSync?.classList.add("connected");
-      tabSync?.classList.remove("stale");
-      if (!ev?.data) return;
-
-      if (ev.data === "::CLEAR::") {
-        el.textContent = "";
-        detBuf = "";
-        updateSlider();
+      if (payload.skipped) {
+        const message = payload.skipped === "no_pairs_configured"
+          ? "No pairs configured — skipping sync"
+          : `Sync skipped — ${payload.skipped}`;
+        setSyncHeader("sync-warn", message);
+        resetSyncButtons(pairId);
+        window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
         return;
       }
-
-      if (!useFormatter) {
-        appendRaw(ev.data);
-      } else {
-        const { tokens, buf } = CF.processChunk(detBuf, ev.data);
-        detBuf = buf;
-        for (const tok of tokens) CF.renderInto(el, tok, false);
-      }
-      _pruneDetailsLog(el);
-      if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-      updateSlider();
-      retryMs = 1000;
-    };
-
-    window.esDet.onerror = () => {
-        tabSync?.classList.remove("connected");
-        tabSync?.classList.add("stale");
-      try { window.esDet?.close(); } catch (_) {}
-      window.esDet = null;
-
-      if (useFormatter && detBuf && detBuf.trim()) {
-        const { tokens } = CF.processChunk("", detBuf);
-        detBuf = "";
-        for (const tok of tokens) CF.renderInto(el, tok, false);
-        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-        updateSlider();
-      }
-
-      if (!window._detRetryTO) {
-        window._detRetryTO = setTimeout(() => {
-          window._detRetryTO = null;
-          connect();
-        }, retryMs);
-        retryMs = Math.min(retryMs * 2, 15000);
-      }
-    };
-  };
-
-  connect();
-
-  window._detStaleIV = setInterval(() => {
-    tabSync?.classList.toggle("stale", (Date.now() - lastMsgAt) > STALE_MS);
-    if (!window.esDet) return;
-    if (document.visibilityState !== "visible") return;
-    if (Date.now() - lastMsgAt > STALE_MS) {
-      try { window.esDet.close(); } catch (_) {}
-      window.esDet = null;
-      connect();
-    }
-  }, STALE_MS);
-
-  window._detVisibilityHandler = () => {
-    if (document.visibilityState !== "visible") return;
-    if (!window.esDet || (Date.now() - lastMsgAt > STALE_MS)) connect();
-  };
-  document.addEventListener("visibilitychange", window._detVisibilityHandler);
-
-  if (!window.appDebug) {
-    try { window.esDetSummary?.close(); } catch (_) {}
-    window.esDetSummary = new EventSource("/api/run/summary/stream");
-    window.esDetSummary.onmessage = (ev) => {
-      try {
-        if (!ev?.data) return;
-        const obj = JSON.parse(ev.data);
-        if (!obj || obj.event === "debug") return;
-        const line = JSON.stringify(obj) + "\n";
-        if (useFormatter) {
-          const { tokens } = CF.processChunk("", line);
-          for (const tok of tokens) CF.renderInto(el, tok, false);
-        } else {
-          appendRaw(line);
-        }
-        _pruneDetailsLog(el);
-        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-        updateSlider();
-      } catch (_) {}
-    };
-    window.esDetSummary.onerror = () => {
-      try { window.esDetSummary?.close(); } catch (_) {}
-      window.esDetSummary = null;
-    };
-  }
-
-  requestAnimationFrame(() => {
-    el.scrollTop = el.scrollHeight;
-    updateSlider();
-  });
-}
-
-function closeDetailsLog() {
-  try { window.esDet?.close(); } catch (_) {}
-  try { window.esDetSummary?.close(); } catch (_) {}
-  window.esDet = null;
-  window.esDetSummary = null;
-  if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
-  if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
-  if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
-  const tabSync = document.getElementById("det-tab-sync");
-  tabSync?.classList.remove("connected", "stale");
-  const tabWatch = document.getElementById("det-tab-watcher");
-  tabWatch?.classList.remove("connected", "stale");
-  try { closeWatcherLog(); } catch {}
-}
-
-function toggleDetails() {
-  const d = document.getElementById("details");
-  d.classList.toggle("hidden");
-  if (!d.classList.contains("hidden")) {
-    try { initDetailsTabs(); } catch {}
-    try { setDetailsTab(window._detailsTab || "sync"); } catch {}
-    openDetailsLog();
-    if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
-  } else {
-    closeDetailsLog();
-    closeWatcherLog();
-  }
-}
-
-window.addEventListener("beforeunload", () => {
-  try { closeDetailsLog(); } catch {}
-  try { closeWatcherLog(); } catch {}
-});
-
-function downloadSummary() {
-  window.open("/api/run/summary/file", "_blank");
-}
-
-function setRefreshBusy(busy) {
-  const btn = document.getElementById("btn-status-refresh");
-
-  if (!btn) return;
-  btn.disabled = !!busy;
-  btn.classList.toggle("loading", !!busy);
-}
-
-
-
-window.openAbout = () => window.ModalRegistry.open('about');
-window.cxEnsureCfgModal = window.cxEnsureCfgModal || function(){};
-window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
-  const el = document.getElementById(id);
-  if (!el || el.__wiredTouch) return;
-  el.addEventListener("input", () => {
-    el.dataset.touched = "1";
-    el.dataset.masked = "0";
-  });
-  el.__wiredTouch = true;
-};
-
-
-window.maskSecret = function maskSecret(elOrId ) {
-  const el = typeof elOrId === "string" ? document.getElementById(elOrId) : elOrId;
-  if (!el) return;
-  el.dataset.masked  = "0";
-  el.dataset.loaded  = "1";
-  el.dataset.touched = "";
-  el.dataset.clear   = "";
-};
-
-function formatCwSnapshotLabel(name) {
-  if (!name || typeof name !== "string") return name || "";
-  const stem = name.replace(/\.json$/,"").split("-", 1)[0];
-  if (!/^\d{8}T\d{6}Z$/.test(stem)) return name;
-
-  const year  = stem.slice(0, 4);
-  const month = stem.slice(4, 6);
-  const day   = stem.slice(6, 8);
-  const hour  = stem.slice(9, 11);
-  const min   = stem.slice(11, 13);
-
-  return `${year}-${month}-${day} - ${hour}:${min}`;
-}
-
-async function loadCrossWatchSnapshots(cfg) {
-  const cw = (cfg && cfg.crosswatch) || {};
-  const desired = {
-    watchlist: (cw.restore_watchlist || "latest").trim() || "latest",
-    history:   (cw.restore_history   || "latest").trim() || "latest",
-    ratings:   (cw.restore_ratings   || "latest").trim() || "latest",
-  };
-
-  try {
-    const res = await fetch("/api/files?path=/config/.cw_provider/snapshots");
-    if (!res.ok) {
-      console.warn("CrossWatch snapshot list HTTP", res.status);
-      return;
-    }
-
-    const files = await res.json();
-    const list = (Array.isArray(files) ? files : []).filter(
-      (f) => f && typeof f.name === "string" && f.name.endsWith(".json")
-    );
-
-    
-    const groups = {
-      watchlist: [],
-      history:   [],
-      ratings:   [],
-    };
-
-    for (const f of list) {
-      const name = f.name;
-      if (name.endsWith("-watchlist.json")) groups.watchlist.push(name);
-      else if (name.endsWith("-history.json")) groups.history.push(name);
-      else if (name.endsWith("-ratings.json")) groups.ratings.push(name);
-    }
-    Object.keys(groups).forEach((k) => groups[k].sort());
-
-    const idMap = {
-      watchlist: "cw_restore_watchlist",
-      history:   "cw_restore_history",
-      ratings:   "cw_restore_ratings",
-    };
-
-    for (const key of ["watchlist", "history", "ratings"]) {
-      const sel = document.getElementById(idMap[key]);
-      if (!sel) continue;
-
-      const names = groups[key];
-      sel.innerHTML = "";
-
-      
-      const baseOpt = document.createElement("option");
-      baseOpt.value = "latest";
-      baseOpt.textContent = "Latest (default)";
-      sel.appendChild(baseOpt);
-
-      for (const name of names) {
-        const o = document.createElement("option");
-        o.value = name;
-        o.textContent = formatCwSnapshotLabel(name);
-        sel.appendChild(o);
-      }
-
-      const wanted = desired[key] || "latest";
-      const hasWanted = names.includes(wanted);
-      sel.value = hasWanted ? wanted : "latest";
-    }
-  } catch (e) {
-    console.warn("CrossWatch snapshot list failed", e);
-  }
-}
-
-/*! Settings */
-
-
-/* Settings Hub: UI / Security / CW Tracker */
-
-const UI_SETTINGS_TAB_KEY = "cw.ui.settings.tab.v1";
-
-function _uiDaysLeftFromEpochSeconds(epochSeconds) {
-  if (!epochSeconds || !Number.isFinite(epochSeconds)) return null;
-  const ms = epochSeconds * 1000;
-  const diffMs = ms - Date.now();
-  if (diffMs <= 0) return 0;
-  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-}
-
-function cwUiSettingsSelect(tab, opts = {}) {
-  const t = String(tab || "ui").toLowerCase();
-  const persist = opts.persist !== false;
-
-  const hub = document.getElementById("ui_settings_hub");
-  const panels = document.getElementById("ui_settings_panels");
-  if (!hub || !panels) return;
-
-  const tiles = hub.querySelectorAll(".cw-hub-tile");
-  tiles.forEach((btn) => {
-    const k = String(btn.dataset.tab || "").toLowerCase();
-    btn.classList.toggle("active", k === t);
-    btn.setAttribute("aria-selected", k === t ? "true" : "false");
-  });
-
-  const ps = panels.querySelectorAll(".cw-settings-panel");
-  ps.forEach((p) => {
-    const k = String(p.dataset.tab || "").toLowerCase();
-    p.classList.toggle("active", k === t);
-  });
-
-  if (persist) {
-    try { localStorage.setItem(UI_SETTINGS_TAB_KEY, t); } catch {}
-  }
-
-  try { cwUiSettingsHubUpdate(); } catch {}
-}
-
-function cwUiSettingsHubUpdate() {
-  const set = (id, text) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-  };
-
-  const wl = document.getElementById("ui_show_watchlist_preview");
-  if (wl) set("hub_ui_watchlist", `Watchlist: ${wl.value === "false" ? "Hide" : "Show"}`);
-
-  const pc = document.getElementById("ui_show_playingcard");
-  if (pc) set("hub_ui_playing", `Playing: ${pc.value === "false" ? "Hide" : "Show"}`);
-
-  const ai = document.getElementById("ui_show_AI");
-  if (ai) set("hub_ui_askai", `ASK AI: ${ai.value === "false" ? "Hide" : "Show"}`);
-
-  const proto = document.getElementById("ui_protocol");
-  if (proto) set("hub_ui_proto", `Proto: ${String(proto.value || "http").toUpperCase()}`);
-
-  const aaEnabled = (document.getElementById("app_auth_enabled")?.value || "").toString() === "true";
-  const st = window._appAuthStatus || null;
-
-  if (!aaEnabled) {
-    set("hub_sec_auth", "Auth: Off");
-    set("hub_sec_session", "Session: —");
-  } else if (st && st.enabled && st.configured && st.authenticated) {
-    set("hub_sec_auth", "Auth: On");
-    const days = _uiDaysLeftFromEpochSeconds(st.session_expires_at);
-    set("hub_sec_session", days == null ? "Session: active" : `Session: ${days}d`);
-  } else if (st && st.enabled && !st.configured) {
-    set("hub_sec_auth", "Auth: On");
-    set("hub_sec_session", "Set password");
-  } else {
-    set("hub_sec_auth", "Auth: On");
-    set("hub_sec_session", "Locked");
-  }
-
-  // Trusted reverse proxies indicator
-  try {
-    const raw = (document.getElementById("trusted_proxies")?.value || "").toString().trim();
-    let on = false;
-    if (raw) {
-      on = raw.split(/[;\n,]+/).map(s => s.trim()).filter(Boolean).length > 0;
-    } else {
-      const tp = window._cfgCache?.security?.trusted_proxies;
-      on = Array.isArray(tp) && tp.length > 0;
-    }
-    set("hub_sec_proxy", `Proxy: ${on ? "On" : "Off"}`);
-  } catch {
-    set("hub_sec_proxy", "Proxy: —");
-  }
-
-  const cwEnabled = (document.getElementById("cw_enabled")?.value || "").toString() !== "false";
-  set("hub_cw_enabled", `Tracker: ${cwEnabled ? "On" : "Off"}`);
-
-  const retRaw = (document.getElementById("cw_retention_days")?.value || "").toString().trim();
-  const ret = retRaw === "" ? null : parseInt(retRaw, 10);
-  if (ret == null || Number.isNaN(ret)) set("hub_cw_retention", "Retention: —");
-  else if (ret === 0) set("hub_cw_retention", "Retention: ∞");
-  else set("hub_cw_retention", `Retention: ${ret}d`);
-
-  const authFields = document.getElementById("app_auth_fields");
-  if (authFields) authFields.classList.toggle("cw-disabled", !aaEnabled);
-
-  const trackerFields = document.getElementById("cw_restore_fields");
-  if (trackerFields) trackerFields.classList.toggle("cw-disabled", !cwEnabled);
-}
-
-function _cwTrustedProxiesEl() {
-  return (
-    document.getElementById("trusted_proxies") ||
-    document.getElementById("trusted_reverse_proxies") ||
-    document.getElementById("security_trusted_proxies")
-  );
-}
-
-function cwUiSettingsHubInit() {
-  if (window.__cwUiSettingsHubInit) return;
-  window.__cwUiSettingsHubInit = true;
-
-  const ids = [
-    "ui_show_watchlist_preview",
-    "ui_show_playingcard",
-    "ui_show_AI",
-    "ui_protocol",
-    "app_auth_enabled",
-    "app_auth_username",
-    "app_auth_password",
-    "app_auth_password2",
-    "trusted_proxies",
-    "cw_enabled",
-    "cw_retention_days",
-    "cw_auto_snapshot",
-    "cw_max_snapshots",
-    "cw_restore_watchlist",
-    "cw_restore_history",
-    "cw_restore_ratings"
-  ];
-
-  ids.forEach((id) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    if (el.__hubWired) return;
-    el.addEventListener("change", () => { try { cwUiSettingsHubUpdate(); } catch {} });
-    el.addEventListener("input",  () => { try { cwUiSettingsHubUpdate(); } catch {} });
-    el.__hubWired = true;
-  });
-
-  let tab = "ui";
-  try {
-    const saved = (localStorage.getItem(UI_SETTINGS_TAB_KEY) || "").toLowerCase();
-    if (["ui","security","tracker"].includes(saved)) tab = saved;
-  } catch {}
-
-  cwUiSettingsSelect(tab, { persist: false });
-  try { cwUiSettingsHubUpdate(); } catch {}
-}
-
-try {
-  window.cwUiSettingsSelect = cwUiSettingsSelect;
-  window.cwUiSettingsHubInit = cwUiSettingsHubInit;
-  window.cwUiSettingsHubUpdate = cwUiSettingsHubUpdate;
-} catch {}
-
-/* Settings Hub: Scheduling */
-const SCHED_SETTINGS_TAB_KEY = "cw.ui.scheduling.tab.v1";
-const SCHED_PROVIDER_OPEN_KEY = "cw.ui.scheduling.open.v1";
-
-let __cwSchedOpen = false;
-
-function cwSchedProviderSelect(open, opts = {}) {
-  const tilesHost = document.getElementById("sched_provider_tiles");
-  const panelHost = document.getElementById("sched-provider-panel");
-  if (!panelHost) return;
-
-  const wantOpen = (open == null) ? !__cwSchedOpen : !!open;
-  __cwSchedOpen = wantOpen;
-
-  if (tilesHost) {
-    const tile = tilesHost.querySelector('[data-provider="scheduler"]');
-    if (tile) {
-      tile.classList.toggle("active", wantOpen);
-      tile.setAttribute("aria-selected", wantOpen ? "true" : "false");
-    }
-  }
-
-  panelHost.classList.toggle("hidden", !wantOpen);
-
-  if (opts.persist !== false) {
-    try { localStorage.setItem(SCHED_PROVIDER_OPEN_KEY, wantOpen ? "1" : "0"); } catch {}
-  }
-}
-
-function cwSchedSettingsSelect(tab, opts = {}) {
-  const panelHost = document.getElementById("sched-provider-panel");
-  const panel = panelHost?.querySelector('.cw-meta-provider-panel[data-provider="scheduler"]');
-  if (!panelHost || !panel) return;
-
-  const t = (tab || "basic").toLowerCase();
-  const want = ["basic", "advanced"].includes(t) ? t : "basic";
-
-  panel.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
-    btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
-  });
-  panel.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
-    sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === want);
-  });
-
-  if (opts.persist !== false) {
-    try { localStorage.setItem(SCHED_SETTINGS_TAB_KEY, want); } catch {}
-  }
-  try { cwSchedSettingsHubUpdate(); } catch {}
-}
-
-function cwBuildSchedulerPanel() {
-  const panelHost = document.getElementById("sched-provider-panel");
-  if (!panelHost) return;
-  if (panelHost.querySelector('.cw-meta-provider-panel[data-provider="scheduler"]')) return;
-
-  const wrap = document.createElement("div");
-  wrap.className = "cw-meta-provider-panel active";
-  wrap.dataset.provider = "scheduler";
-
-  const head = document.createElement("div");
-  head.className = "cw-panel-head";
-  head.innerHTML = `
-    <div>
-      <div class="cw-panel-title">Scheduler</div>
-      <div class="muted">Run sync automatically on a timer.</div>
-    </div>
-  `;
-
-  const subTiles = document.createElement("div");
-  subTiles.className = "cw-subtiles";
-  subTiles.innerHTML = `
-    <button type="button" class="cw-subtile active" data-sub="basic">Standard</button>
-    <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
-  `;
-
-  const subPanels = document.createElement("div");
-  subPanels.className = "cw-subpanels";
-
-  const pBasic = document.createElement("div");
-  pBasic.className = "cw-subpanel active";
-  pBasic.dataset.sub = "basic";
-
-  const pAdv = document.createElement("div");
-  pAdv.className = "cw-subpanel";
-  pAdv.dataset.sub = "advanced";
-
-  const detach = (id) => {
-    const el = document.getElementById(id);
-    if (!el) return null;
-    try { el.parentNode?.removeChild(el); } catch {}
-    return el;
-  };
-
-  const mkField = (labelText, ctrl, noteText) => {
-    if (!ctrl) return null;
-    const f = document.createElement("div");
-    f.className = "field";
-    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">${labelText}</div>`;
-    f.appendChild(ctrl);
-    if (noteText) {
-      const n = document.createElement("div");
-      n.className = "auth-card-notes";
-      n.textContent = noteText;
-      f.appendChild(n);
-    }
-    return f;
-  };
-
-  const enabledEl = detach("schEnabled");
-  const modeEl = detach("schMode");
-  const nEl = detach("schN");
-  const timeEl = detach("schTime");
-
-  const basicCard = document.createElement("div");
-  basicCard.className = "auth-card";
-  const basicFields = document.createElement("div");
-  basicFields.className = "auth-card-fields";
-
-  const f1 = mkField("Enable", enabledEl);
-  const f2 = mkField("Frequency", modeEl, "Choose the timer mode.");
-  const f3 = mkField("Every N hours", nEl, "Only used when Frequency = Every N hours.");
-  const f4 = mkField("Time", timeEl, "Only used when Frequency = Daily at…");
-
-  [f1, f2, f3, f4].forEach((x) => x && basicFields.appendChild(x));
-  if (basicFields.childNodes.length) basicCard.appendChild(basicFields);
-  pBasic.appendChild(basicCard);
-
-  const advMount = detach("sched_advanced_mount") || (() => {
-    const d = document.createElement("div");
-    d.id = "sched_advanced_mount";
-    return d;
-  })();
-
-  pAdv.appendChild(advMount);
-
-  subPanels.appendChild(pBasic);
-  subPanels.appendChild(pAdv);
-
-  wrap.appendChild(head);
-  wrap.appendChild(subTiles);
-  wrap.appendChild(subPanels);
-
-  panelHost.appendChild(wrap);
-
-  try {
-    const raw = document.getElementById("sched-provider-raw");
-    if (raw) raw.classList.add("hidden");
-  } catch {}
-
-  subTiles.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
-    btn.addEventListener("click", () => cwSchedSettingsSelect(btn.dataset.sub));
-  });
-
-  let lastSub = "basic";
-  try { lastSub = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "basic").toLowerCase(); } catch {}
-  cwSchedSettingsSelect((lastSub === "advanced") ? "advanced" : "basic", { persist: false });
-}
-
-function cwSchedProviderEnsure() {
-  const tilesHost = document.getElementById("sched_provider_tiles");
-  const panelHost = document.getElementById("sched-provider-panel");
-  if (!panelHost) return;
-
-  if (!panelHost.dataset.__cwSchedBuilt) {
-    try { cwBuildSchedulerPanel(); } catch {}
-    panelHost.dataset.__cwSchedBuilt = "1";
-  }
-
-  if (tilesHost) {
-    tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
-      if (btn.__cwSchedWired) return;
-      btn.addEventListener("click", () => {
-        const isOpen = !document.getElementById("sched-provider-panel")?.classList.contains("hidden");
-        cwSchedProviderSelect(!isOpen);
-      });
-      btn.__cwSchedWired = true;
-    });
-
-    let open = "0";
-    try { open = localStorage.getItem(SCHED_PROVIDER_OPEN_KEY) || "0"; } catch {}
-    cwSchedProviderSelect(open === "1", { persist: false });
-  } else {
-    cwSchedProviderSelect(true, { persist: false });
-  }
-
-  try { cwSchedSettingsHubUpdate(); } catch {}
-}
-
-function cwSchedSettingsHubUpdate() {
-  const set = (id, text) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-  };
-
-  let patch = null;
-  try {
-    patch = (typeof window.getSchedulingPatch === "function") ? window.getSchedulingPatch() : null;
-  } catch {}
-
-  if (!patch) {
-    const enabled = (document.getElementById("schEnabled")?.value || "").toString().trim() === "true";
-    const mode = document.getElementById("schMode")?.value || "hourly";
-    const every_n_hours = parseInt(document.getElementById("schN")?.value || "2", 10);
-    const daily_time = document.getElementById("schTime")?.value || "03:30";
-    const advOn = !!document.getElementById("schAdvEnabled")?.checked;
-    patch = { enabled, mode, every_n_hours, daily_time, advanced: { enabled: advOn, jobs: [] } };
-  }
-
-  set("hub_sch_enabled", `Status: ${patch.enabled ? "Enabled" : "Disabled"}`);
-
-  let modeText = patch.mode || "hourly";
-  if (patch.mode === "hourly") modeText = "Every hour";
-  else if (patch.mode === "every_n_hours") modeText = `Every ${patch.every_n_hours || 2}h`;
-  else if (patch.mode === "daily_time") modeText = `Daily ${patch.daily_time || "—"}`;
-  set("hub_sch_mode", `Mode: ${modeText}`);
-
-  const adv = patch.advanced || {};
-  const jobs = Array.isArray(adv.jobs) ? adv.jobs : [];
-  const active = jobs.filter(j => j && j.active !== false).length;
-  const total = jobs.length;
-
-  set("hub_sch_adv", `Plan: ${adv.enabled ? "On" : "Off"}`);
-  set("hub_sch_steps", total ? `Steps: ${active}/${total}` : "Steps: —");
-}
-
-function cwSchedSettingsHubInit() {
-  const first = !window.__cwSchedSettingsHubInit;
-  if (first) window.__cwSchedSettingsHubInit = true;
-
-  try { cwSchedProviderEnsure(); } catch {}
-
-  const wire = (id) => {
-    const el = document.getElementById(id);
-    if (!el || el.__hubWired) return;
-    el.addEventListener("change", () => { try { cwSchedSettingsHubUpdate(); } catch {} });
-    el.addEventListener("input",  () => { try { cwSchedSettingsHubUpdate(); } catch {} });
-    el.__hubWired = true;
-  };
-
-  ["schEnabled", "schMode", "schN", "schTime", "schAdvEnabled"].forEach(wire);
-
-  const adv = document.getElementById("schAdv");
-  if (adv && !adv.__hubWired) {
-    adv.addEventListener("change", () => { try { cwSchedSettingsHubUpdate(); } catch {} }, true);
-    adv.addEventListener("input",  () => { try { cwSchedSettingsHubUpdate(); } catch {} }, true);
-    adv.__hubWired = true;
-  }
-
-  if (first) {
-    let tab = "basic";
-    try {
-      const saved = (localStorage.getItem(SCHED_SETTINGS_TAB_KEY) || "").toLowerCase();
-      if (["basic", "advanced"].includes(saved)) tab = saved;
-    } catch {}
-    cwSchedSettingsSelect(tab, { persist: false });
-  }
-
-  try { cwSchedSettingsHubUpdate(); } catch {}
-}
-
-try {
-  window.cwSchedProviderSelect = cwSchedProviderSelect;
-  window.cwSchedProviderEnsure = cwSchedProviderEnsure;
-  window.cwSchedSettingsSelect = cwSchedSettingsSelect;
-  window.cwSchedSettingsHubInit = cwSchedSettingsHubInit;
-  window.cwSchedSettingsHubUpdate = cwSchedSettingsHubUpdate;
-} catch {}
-
-
-/* Settings Hub: Metadata Providers */
-const META_SETTINGS_TAB_KEY = "cw.ui.metadata.tab.v1";
-const META_PROVIDER_STATE_KEY = "cw.ui.meta.provider.v1";
-const TMDB_META_SUBTAB_KEY = "cw.ui.meta.tmdb.sub.v1";
-
-let activeMetaProvider = null;
-
-function cwMetaProviderUpdateChips() {
-  try { cwMetaSettingsHubUpdate?.(); } catch {}
-}
-
-function cwMetaProviderSelect(provider, opts = {}) {
-  const want = provider ? String(provider).toLowerCase() : null;
-
-  const tilesHost = document.getElementById("meta_provider_tiles");
-  const panelHost = document.getElementById("meta-provider-panel");
-  if (!tilesHost || !panelHost) return;
-
-  const tiles = tilesHost.querySelectorAll("[data-provider]");
-  tiles.forEach((btn) => {
-    const k = String(btn.dataset.provider || "").toLowerCase();
-    const on = !!(want && k === want);
-    btn.classList.toggle("active", on);
-    btn.setAttribute("aria-selected", on ? "true" : "false");
-  });
-
-  activeMetaProvider = want;
-  panelHost.classList.toggle("hidden", !want);
-
-  const panels = panelHost.querySelectorAll(".cw-meta-provider-panel");
-  panels.forEach((p) => {
-    const k = String(p.dataset.provider || "").toLowerCase();
-    p.classList.toggle("active", !!(want && k === want));
-  });
-
-  if (opts.persist !== false) {
-    try { localStorage.setItem(META_PROVIDER_STATE_KEY, want || ""); } catch {}
-  }
-
-  try { cwMetaProviderUpdateChips(); } catch {}
-}
-
-function cwMetaProviderSubSelect(provider, sub, opts = {}) {
-  const p = (provider || "").toLowerCase();
-  const s = (sub || "").toLowerCase();
-  if (!p || !s) return;
-
-  const panelHost = document.getElementById("meta-provider-panel");
-  const panel = panelHost?.querySelector(`.cw-meta-provider-panel[data-provider="${p}"]`);
-  if (!panel) return;
-
-  const tiles = panel.querySelectorAll(".cw-subtile[data-sub]");
-  tiles.forEach((b) => b.classList.toggle("active", (b.dataset.sub || "").toLowerCase() === s));
-
-  const subs = panel.querySelectorAll(".cw-subpanel[data-sub]");
-  subs.forEach((sp) => sp.classList.toggle("active", (sp.dataset.sub || "").toLowerCase() === s));
-
-  if (opts.persist !== false) {
-    try { localStorage.setItem(TMDB_META_SUBTAB_KEY, s); } catch {}
-  }
-}
-
-function cwMetaProviderInit() {
-  cwMetaProviderSelect(null, { persist: false });
-}
-
-function cwMetaProviderEnsure() {
-  const tilesHost = document.getElementById("meta_provider_tiles");
-  const panelHost = document.getElementById("meta-provider-panel");
-  if (!tilesHost || !panelHost) return;
-
-  tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
-    if (btn.__cwMetaWired) return;
-    btn.addEventListener("click", () => {
-      const want = String(btn.dataset.provider || "").toLowerCase();
-      if (want && activeMetaProvider === want) cwMetaProviderSelect(null);
-      else cwMetaProviderSelect(btn.dataset.provider || null);
-    });
-    btn.__cwMetaWired = true;
-  });
-
-  if (!panelHost.dataset.__cwMetaBuilt) {
-    try { cwBuildTmdbPanel(); } catch {}
-    panelHost.dataset.__cwMetaBuilt = "1";
-  }
-
-  try {
-    const keyEl = document.getElementById("tmdb_api_key");
-    if (keyEl && !keyEl.__tmdbChipWired) {
-      keyEl.addEventListener("input", () => { try { cwMetaProviderUpdateChips(); } catch {} });
-      keyEl.__tmdbChipWired = true;
-    }
-  } catch {}
-
-  try { cwMetaProviderInit(); } catch {}
-  try { cwMetaProviderUpdateChips(); } catch {}
-}
-
-function cwBuildTmdbPanel() {
-  const panelHost = document.getElementById("meta-provider-panel");
-  if (!panelHost) return;
-
-  if (panelHost.querySelector('.cw-meta-provider-panel[data-provider="tmdb"]')) return;
-
-  const wrap = document.createElement("div");
-  wrap.className = "cw-meta-provider-panel";
-  wrap.dataset.provider = "tmdb";
-
-  const head = document.createElement("div");
-  head.className = "cw-panel-head";
-  head.innerHTML = `
-    <div>
-      <div class="cw-panel-title">TMDb (The Movie Database)</div>
-      <div class="muted">Metadata and images fetched from TMDb.</div>
-    </div>
-  `;
-
-  const subTiles = document.createElement("div");
-  subTiles.className = "cw-subtiles";
-  subTiles.innerHTML = `
-    <button type="button" class="cw-subtile active" data-sub="api">API key</button>
-    <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
-  `;
-
-  const subPanels = document.createElement("div");
-  subPanels.className = "cw-subpanels";
-
-  const pApi = document.createElement("div");
-  pApi.className = "cw-subpanel active";
-  pApi.dataset.sub = "api";
-
-  const pAdv = document.createElement("div");
-  pAdv.className = "cw-subpanel";
-  pAdv.dataset.sub = "advanced";
-
-  const detach = (id) => {
-    const el = document.getElementById(id);
-    if (!el) return null;
-    try { el.parentNode?.removeChild(el); } catch {}
-    return el;
-  };
-
-  const keyInput = detach("tmdb_api_key") || (() => {
-    const i = document.createElement("input");
-    i.id = "tmdb_api_key";
-    i.type = "text";
-    i.placeholder = "TMDb API key";
-    return i;
-  })();
-
-  const hint = detach("tmdb_hint") || (() => {
-    const d = document.createElement("div");
-    d.id = "tmdb_hint";
-    d.className = "auth-card-notes";
-    d.textContent = "Add a TMDb API key to enable metadata lookups.";
-    return d;
-  })();
-
-  if (!hint.classList.contains("auth-card-notes")) hint.classList.add("auth-card-notes");
-
-  const apiCard = document.createElement("div");
-  apiCard.className = "auth-card";
-
-  const apiFields = document.createElement("div");
-  apiFields.className = "auth-card-fields";
-
-  const apiField = document.createElement("div");
-  apiField.className = "field";
-  apiField.innerHTML = `<div class="muted" style="margin-bottom:6px;">API key</div>`;
-  apiField.appendChild(keyInput);
-
-  apiFields.appendChild(apiField);
-  apiCard.appendChild(hint);
-  apiCard.appendChild(apiFields);
-
-  pApi.appendChild(apiCard);
-
-  const localeEl = detach("metadata_locale");
-  const ttlEl = detach("metadata_ttl_hours");
-
-  const advCard = document.createElement("div");
-  advCard.className = "auth-card";
-
-  const advFields = document.createElement("div");
-  advFields.className = "auth-card-fields";
-
-  if (localeEl) {
-    const f = document.createElement("div");
-    f.className = "field";
-    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">Language / locale</div>`;
-    advFields.appendChild(f);
-    f.appendChild(localeEl);
-    const note = document.createElement("div");
-    note.className = "auth-card-notes";
-    note.textContent = "Optional. Example: en-US, nl-NL.";
-    advFields.appendChild(note);
-  }
-
-  if (ttlEl) {
-    const f = document.createElement("div");
-    f.className = "field";
-    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">Cache TTL (hours)</div>`;
-    f.appendChild(ttlEl);
-    advFields.appendChild(f);
-    const note = document.createElement("div");
-    note.className = "auth-card-notes";
-    note.textContent = "How long metadata stays cached before re-fetching.";
-    advFields.appendChild(note);
-  }
-
-  if (!localeEl && !ttlEl) {
-    const note = document.createElement("div");
-    note.className = "auth-card-notes";
-    note.textContent = "No advanced options available yet.";
-    advCard.appendChild(note);
-  }
-
-  if (advFields.childNodes.length) advCard.appendChild(advFields);
-  pAdv.appendChild(advCard);
-
-  subPanels.appendChild(pApi);
-  subPanels.appendChild(pAdv);
-
-  wrap.appendChild(head);
-  wrap.appendChild(subTiles);
-  wrap.appendChild(subPanels);
-
-  panelHost.appendChild(wrap);
-
-  subTiles.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
-    btn.addEventListener("click", () => cwMetaProviderSubSelect("tmdb", btn.dataset.sub));
-  });
-
-  let lastSub = "api";
-  try { lastSub = (localStorage.getItem(TMDB_META_SUBTAB_KEY) || "api").toLowerCase(); } catch {}
-  cwMetaProviderSubSelect("tmdb", (lastSub === "advanced") ? "advanced" : "api", { persist: false });
-}
-
-try {
-  window.cwMetaProviderSelect = cwMetaProviderSelect;
-  window.cwMetaProviderEnsure = cwMetaProviderEnsure;
-  window.cwMetaProviderSubSelect = cwMetaProviderSubSelect;
-} catch {}
-
-
-function cwMetaSettingsSelect(tab, opts = {}) {
-  const hub = document.getElementById("meta_settings_hub");
-  const panels = document.getElementById("meta_settings_panels");
-  if (!hub || !panels) return;
-
-  const t = (tab || "tmdb").toLowerCase();
-  const want = ["tmdb"].includes(t) ? t : "tmdb";
-
-  hub.querySelectorAll(".cw-hub-tile").forEach((btn) => {
-    btn.classList.toggle("active", (btn.dataset.tab || "") === want);
-  });
-  panels.querySelectorAll(".cw-settings-panel").forEach((p) => {
-    p.classList.toggle("active", (p.dataset.tab || "") === want);
-  });
-
-  if (opts.persist !== false) {
-    try { localStorage.setItem(META_SETTINGS_TAB_KEY, want); } catch {}
-  }
-  try { cwMetaSettingsHubUpdate(); } catch {}
-}
-
-function cwMetaSettingsHubUpdate() {
-  const chip = document.getElementById("hub_tmdb_key");
-  if (!chip) return;
-
-  const cfg = window._cfgCache || {};
-  const cfgKey = String(cfg?.tmdb?.api_key || "").trim();
-  const cfgMasked = cfgKey === "*****" || /^[•]+$/.test(cfgKey);
-  const cfgHasKey = cfgKey.length > 0 || cfgMasked;
-
-  const keyEl = document.getElementById("tmdb_api_key");
-  let uiHasKey = false;
-  let uiTouched = false;
-
-  if (keyEl) {
-    const v = String(keyEl.value || "").trim();
-    uiTouched = keyEl.dataset?.touched === "1";
-    const vMasked = v === "*****" || /^[•]+$/.test(v);
-    const dsMasked = keyEl.dataset?.masked === "1";
-    uiHasKey = v.length > 0 || vMasked || dsMasked;
-    if (uiTouched) uiHasKey = v.length > 0 || vMasked;
-  }
-
-  const hasKeyNow = uiHasKey || (!uiTouched && cfgHasKey);
-  chip.textContent = `API key: ${hasKeyNow ? "set" : "missing"}`;
-}
-
-function cwMetaSettingsHubInit() {
-  let last = null;
-  try { last = localStorage.getItem(META_SETTINGS_TAB_KEY); } catch {}
-  cwMetaSettingsSelect(last || "tmdb", { persist: false });
-  try { cwMetaSettingsHubUpdate(); } catch {}
-}
-
-function cwMetaSettingsHubEnsure() {
-  const host = document.getElementById("metadata-providers");
-  if (!host || host.dataset.metaHubified === "1") return;
-
-  // New provider presents
-  if (document.getElementById("meta_provider_tiles") || document.getElementById("meta-provider-panel")) {
-    host.dataset.metaHubified = "1";
-    return;
-  }
-
-  if (host.querySelector("#meta_settings_hub")) {
-    host.dataset.metaHubified = "1";
-    return;
-  }
-
-  const hub = document.createElement("div");
-  hub.className = "cw-settings-hub cw-settings-hub--single";
-  hub.id = "meta_settings_hub";
-
-  const tile = document.createElement("button");
-  tile.type = "button";
-  tile.className = "cw-hub-tile tmdb active";
-  tile.dataset.tab = "tmdb";
-  tile.innerHTML = `
-    <div class="cw-hub-dots" aria-hidden="true">
-      <span class="cw-hub-dot dot-a"></span>
-      <span class="cw-hub-dot dot-b"></span>
-      <span class="cw-hub-dot dot-c"></span>
-    </div>
-    <div class="cw-hub-title-row">
-      <img class="cw-hub-logo" src="/assets/img/TMDB.svg" alt="" loading="lazy">
-      <div>
-        <div class="cw-hub-title">TMDb</div>
-        <div class="cw-hub-desc">The Movie Database</div>
-      </div>
-    </div>
-    <div class="chips">
-      <span class="chip" id="hub_tmdb_key">API key: —</span>
-    </div>
-  `;
-  tile.addEventListener("click", () => cwMetaSettingsSelect("tmdb"));
-
-  hub.appendChild(tile);
-
-  const panels = document.createElement("div");
-  panels.className = "cw-settings-panels";
-  panels.id = "meta_settings_panels";
-
-  const panel = document.createElement("div");
-  panel.className = "cw-settings-panel active";
-  panel.dataset.tab = "tmdb";
-
-  while (host.firstChild) panel.appendChild(host.firstChild);
-
-  panels.appendChild(panel);
-
-  host.appendChild(hub);
-  host.appendChild(panels);
-
-  host.dataset.metaHubified = "1";
-
-  const keyEl = document.getElementById("tmdb_api_key");
-  if (keyEl && !keyEl.__tmdbChipWired) {
-    keyEl.addEventListener("input", () => {
-      try { cwMetaSettingsHubUpdate(); } catch {}
-    });
-    keyEl.__tmdbChipWired = true;
-  }
-
-  setTimeout(() => {
-    try { cwMetaSettingsHubInit(); } catch {}
-  }, 0);
-}
-
-try {
-  window.cwMetaSettingsSelect = cwMetaSettingsSelect;
-  window.cwMetaSettingsHubInit = cwMetaSettingsHubInit;
-  window.cwMetaSettingsHubUpdate = cwMetaSettingsHubUpdate;
-  window.cwMetaSettingsHubEnsure = cwMetaSettingsHubEnsure;
-} catch {}
-
-async function loadConfig() {
-  const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
-  if (r.status === 401) {
-    location.href = "/login";
-    return;
-  }
-  if (!r.ok) throw new Error(`GET /api/config ${r.status}`);
-  const cfg = await r.json();
-  window._cfgCache = cfg;
-
-  try { bindSyncVisibilityObservers?.(); } catch {}
-  try {
-    if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
-    else applySyncVisibility?.();
-  } catch {}
-
-  _setVal("mode",   cfg.sync?.bidirectional?.mode || "two-way");
-  _setVal("source", cfg.sync?.bidirectional?.source_of_truth || "plex");
-  (function(){
-    const rt = cfg.runtime || {};
-    let mode = 'off';
-    if (rt.debug) mode = (rt.debug_mods && rt.debug_http) ? 'full' : (rt.debug_mods ? 'mods' : 'on');
-    _setVal("debug", mode);
-  })();
-  _setVal("metadata_locale", cfg.metadata?.locale || "");
-  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
-
-  
-  (function () {
-    const ui = cfg.ui || cfg.user_interface || {};
-    const cw = cfg.crosswatch || {};
-    const aa = cfg.app_auth || {};
-
-    
-    const sel = document.getElementById("ui_show_watchlist_preview");
-    if (sel) {
-      const on = (typeof ui.show_watchlist_preview === "boolean")
-        ? !!ui.show_watchlist_preview
-        : true;
-      sel.value = on ? "true" : "false";
-    }
-
-    
-    const playSel = document.getElementById("ui_show_playingcard");
-    if (playSel) {
-      const on = (typeof ui.show_playingcard === "boolean")
-        ? !!ui.show_playingcard
-        : true;
-      playSel.value = on ? "true" : "false";
-    }
-
-    const aiSel = document.getElementById("ui_show_AI");
-    if (aiSel) {
-      const on = (typeof ui.show_AI === "boolean")
-        ? !!ui.show_AI
-        : true;
-      aiSel.value = on ? "true" : "false";
-    }
-
-    const protoSel = document.getElementById("ui_protocol");
-    if (protoSel) {
-      const p = String(ui.protocol || "http").trim().toLowerCase();
-      protoSel.value = (p === "https") ? "https" : "http";
-    }
-
-    const aaEnabledEl = document.getElementById("app_auth_enabled");
-    if (aaEnabledEl) aaEnabledEl.value = (aa.enabled === true) ? "true" : "false";
-    const aaUserEl = document.getElementById("app_auth_username");
-    if (aaUserEl) aaUserEl.value = (typeof aa.username === "string") ? aa.username : "";
-    const aaP1 = document.getElementById("app_auth_password");
-    if (aaP1) aaP1.value = "";
-    const aaP2 = document.getElementById("app_auth_password2");
-    if (aaP2) aaP2.value = "";
-
-    // Trusted reverse proxies (optional)
-    const tpEl = _cwTrustedProxiesEl();
-    if (tpEl) {
-      const tp = (cfg.security && Array.isArray(cfg.security.trusted_proxies)) ? cfg.security.trusted_proxies : [];
-      tpEl.value = tp.filter((x) => typeof x === "string" && x.trim()).join(";");
-    }
-
-
-    
-    const cwEnabledEl = document.getElementById("cw_enabled");
-    if (cwEnabledEl) {
-      const enabled = (cw.enabled === false) ? "false" : "true";
-      cwEnabledEl.value = enabled;
-    }
-    const cwRetEl = document.getElementById("cw_retention_days");
-    if (cwRetEl) {
-      const v = Number.isFinite(cw.retention_days) ? cw.retention_days : 30;
-      cwRetEl.value = String(v);
-    }
-    const cwAutoEl = document.getElementById("cw_auto_snapshot");
-    if (cwAutoEl) {
-      const on = (cw.auto_snapshot === false) ? "false" : "true";
-      cwAutoEl.value = on;
-    }
-    const cwMaxEl = document.getElementById("cw_max_snapshots");
-    if (cwMaxEl) {
-      const v = Number.isFinite(cw.max_snapshots) ? cw.max_snapshots : 64;
-      cwMaxEl.value = String(v);
-    }
-    const setVal = (id, val) => {
-      const el = document.getElementById(id);
-      if (el) el.value = val || "latest";
-    };
-    setVal("cw_restore_watchlist", cw.restore_watchlist || "latest");
-    setVal("cw_restore_history", cw.restore_history || "latest");
-    setVal("cw_restore_ratings", cw.restore_ratings || "latest");
-  })();
-
-  try { cwUiSettingsHubInit?.(); } catch {}
-
-  await loadCrossWatchSnapshots(cfg);
-  window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
-
-
-(function hydrateSecretsRaw(cfg){
-  const val = (x) => (typeof x === "string" ? x.trim() : "");
-  const setRaw = (id, v) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.value = v || "";
-    el.dataset.masked  = "0";
-    el.dataset.loaded  = "1";
-    el.dataset.touched = "";
-    el.dataset.clear   = "";
-    try { wireSecretTouch(id); } catch {}
-  };
-
-  
-  setRaw("plex_token",    val(cfg.plex?.account_token));
-  setRaw("plex_home_pin", val(cfg.plex?.home_pin));
-
-  
-  setRaw("simkl_client_id",     val(cfg.simkl?.client_id));
-  setRaw("simkl_client_secret", val(cfg.simkl?.client_secret));
-  setRaw("simkl_access_token",  val(cfg.simkl?.access_token) || val(cfg.auth?.simkl?.access_token));
-
-  
-  setRaw("anilist_client_id",     val(cfg.anilist?.client_id));
-  setRaw("anilist_client_secret", val(cfg.anilist?.client_secret));
-  setRaw("anilist_access_token",  val(cfg.anilist?.access_token) || val(cfg.auth?.anilist?.access_token));
-
-  
-  setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key));
-
-  
-  setRaw("mdblist_key",         val(cfg.mdblist?.api_key));
-
-  
-  setRaw("trakt_client_id",     val(cfg.trakt?.client_id));
-  setRaw("trakt_client_secret", val(cfg.trakt?.client_secret));
-  setRaw("trakt_token",         val(cfg.trakt?.access_token) || val(cfg.auth?.trakt?.access_token));
-})(cfg);
-
-  try { cwMetaSettingsHubUpdate(); } catch {}
-
-  const s = cfg.scheduling || {};
-  _setVal("schEnabled", String(!!s.enabled));
-  _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
-  _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "2");
-  _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
-  if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
-
-  try {
-    const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
-    const st = r.ok ? await r.json() : null;
-    window._appAuthStatus = st;
-
-    try {
-      const aaEnabledEl = document.getElementById("app_auth_enabled");
-      if (aaEnabledEl && st && typeof st.enabled === "boolean") aaEnabledEl.value = st.enabled ? "true" : "false";
-      const aaUserEl = document.getElementById("app_auth_username");
-      if (aaUserEl && st && st.enabled) aaUserEl.value = (st.username || "").toString();
-    } catch {}
-
-    const el = document.getElementById("app_auth_state");
-    if (el) {
-      if (!st) el.textContent = "—";
-      else if (!st.enabled) el.textContent = "Auth: disabled";
-      else if (!st.configured) el.textContent = "Auth: enabled (set password)";
-      else if (st.authenticated) {
-        const exp = (st.session_expires_at && st.session_expires_at > 0) ? new Date(st.session_expires_at * 1000) : null;
-        el.textContent = exp ? `Auth: signed in (until ${exp.toISOString().replace('T',' ').slice(0,16)}Z)` : "Auth: signed in";
-      } else el.textContent = "Auth: locked";
-    }
-    const btn = document.getElementById("btn-auth-logout");
-    if (btn) btn.disabled = !(st && st.enabled && st.authenticated);
-  } catch {}
-
-  try { cwUiSettingsHubUpdate?.(); } catch {}
-
-  try { window.updateSimklButtonState?.(); } catch {}
-  try { window.updateSimklHint?.();      } catch {}
-  try { window.updateTmdbHint?.();       } catch {}
-  try {
-    if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
-    else applySyncVisibility?.();
-  } catch {}
-}
-
-window.cwAppLogout = async function cwAppLogout() {
-  try {
-    await fetch("/api/app-auth/logout", { method: "POST", cache: "no-store", credentials: "same-origin" });
-  } catch {}
-  location.href = "/login";
-};
-
-function _getVal(id) {
-  const el = document.getElementById(id);
-  return (el && typeof el.value === "string" ? el.value : "").trim();
-}
-
-async function saveSettings() {
-  let schedChanged = false;
-  const fromFab = (() => {
-    const ae = document.activeElement;
-    return !!(ae && typeof ae.closest === "function" && ae.closest("#save-fab"));
-  })();
-
-  const _cwEnsureSaveToast = () => {
-    let el = document.querySelector(".save-toast");
-    if (!el) {
-      const inline = document.getElementById("save_msg");
-      if (inline && !inline.closest("#save-fab")) el = inline;
-    }
-
-    if (el) return el;
-    try {
-      el = document.createElement("div");
-      el.className = "save-toast hide";
-      el.setAttribute("aria-live", "polite");
-      document.body.appendChild(el);
-      if (!document.getElementById("cw-save-toast-style")) {
-        const style = document.createElement("style");
-        style.id = "cw-save-toast-style";
-        style.textContent = `
-          .save-toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;max-width:calc(100vw - 24px);
-            padding:10px 14px;border-radius:999px;backdrop-filter:blur(10px);background:rgba(20,20,30,.82);
-            border:1px solid rgba(255,255,255,.14);color:#fff;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-          .save-toast.ok{border-color:rgba(80,220,140,.35)}
-          .save-toast.error{border-color:rgba(255,120,120,.35)}
-          .save-toast.hide{display:none}
-        `;
-        document.head.appendChild(style);
-      }
-    } catch {}
-    return el;
-  };
-
-  const _cwEnsureInlineErrorStyle = () => {
-    if (document.getElementById("cw-inline-error-style")) return;
-    try {
-      const style = document.createElement("style");
-      style.id = "cw-inline-error-style";
-      style.textContent = `
-        .cw-inline-error{margin-top:10px;padding:8px 10px;border-radius:12px;background:rgba(255,80,80,.08);
-          border:1px solid rgba(255,80,80,.18);color:rgba(255,220,220,.95);font-size:12px}
-        .cw-inline-error.hidden{display:none}
-        .cw-invalid{border-color:rgba(255,100,100,.55)!important;box-shadow:0 0 0 2px rgba(255,80,80,.12)!important}
-      `;
-      document.head.appendChild(style);
-    } catch {}
-  };
-
-  const _cwEnsureAuthInlineError = () => {
-    const host = document.getElementById("app_auth_fields");
-    if (!host) return null;
-    let el = document.getElementById("app_auth_error");
-    if (el) return el;
-    try {
-      _cwEnsureInlineErrorStyle();
-      el = document.createElement("div");
-      el.id = "app_auth_error";
-      el.className = "cw-inline-error hidden";
-      el.setAttribute("role", "alert");
-      host.appendChild(el);
-      return el;
     } catch {
-      return null;
+      setSyncHeader("sync-bad", "Failed to reach server");
+      resetSyncButtons(pairId);
+      window.UX?.updateTimeline?.({ start: false, pre: false, post: false, done: false });
+    } finally {
+      setBusy(false);
+      recomputeRunDisabled();
+      if (AUTO_STATUS) queueSafe(() => refreshStatus(false));
     }
-  };
+  }
 
-  const setAuthError = (msg) => {
-    const p1 = document.getElementById("app_auth_password");
-    const p2 = document.getElementById("app_auth_password2");
-    const has = !!(msg && String(msg).trim());
-    try {
-      if (p1) { p1.classList.toggle("cw-invalid", has); has ? p1.setAttribute("aria-invalid", "true") : p1.removeAttribute("aria-invalid"); }
-      if (p2) { p2.classList.toggle("cw-invalid", has); has ? p2.setAttribute("aria-invalid", "true") : p2.removeAttribute("aria-invalid"); }
-    } catch {}
-    const el = _cwEnsureAuthInlineError();
-    if (!el) return;
-    if (!has) {
-      el.textContent = "";
-      el.classList.add("hidden");
-      return;
+  function setStatsExpanded(expanded) {
+    const card = byId("stats-card");
+    if (!card) return;
+    card.classList.toggle("collapsed", !expanded);
+    card.classList.toggle("expanded", !!expanded);
+    if (expanded) {
+      try { refreshInsights(); } catch {}
     }
-    el.textContent = String(msg);
-    el.classList.remove("hidden");
-  };
+  }
 
-  const abortSave = (msg) => {
-    const e = new Error(String(msg || "Save aborted"));
-    // @ts-ignore
-    e.__cwAbortSave = true;
-    throw e;
-  };
-
-  const showToast = (text, ok = true) => {
-    _cwEnsureSaveToast();
-    try {
-      const fn = window.CW?.DOM?.showToast || window.showToast;
-      if (typeof fn === "function") return fn(String(text || ""), ok);
-    } catch {}
-    const el = _cwEnsureSaveToast();
-    if (!el) return console.log(text);
-    el.textContent = String(text || "");
-    el.classList.remove("hide", "error", "ok");
-    el.classList.add(ok ? "ok" : "error");
-    el.classList.remove("hide");
-    window.setTimeout(() => el.classList.add("hide"), 2000);
-  };
-
-  // Normalize values coming from config/UI. Must tolerate non-strings (e.g. numeric account_id).
-  const norm = (v) => {
-    if (v === null || v === undefined) return "";
-    if (typeof v === "string") return v.trim();
-    if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v).trim();
-    try { return String(v).trim(); } catch { return ""; }
-  };
-  const readToggle = (id) => {
-    const el = document.getElementById(id);
+  function isElementOpen(el) {
     if (!el) return false;
-    const raw = norm(el.value || "");
-    const s = raw.toLowerCase();
-    return ["true","1","yes","on","enabled","enable"].includes(s);
-  };
-
-  ([
-    "plex_token",
-    "plex_home_pin",
-    "simkl_client_id",
-    "simkl_client_secret",
-    "trakt_client_id",
-    "trakt_client_secret",
-    "anilist_client_id",
-    "anilist_client_secret",
-    "tmdb_api_key",
-    "mdblist_key"
-  ]).forEach(id => {
-    const el = document.getElementById(id);
-    if (el && !el.__touchedWired) {
-      el.addEventListener("input", () => { el.dataset.touched = "1"; });
-      el.__touchedWired = true;
-    }
-  });
-
-  function readSecretSafe(id, previousValue) {
-    const el = document.getElementById(id);
-    if (!el) return { changed: false };
-
-    const raw = norm(el.value);
-    const masked = el.dataset?.masked === "1" || raw.startsWith("•");
-    const touched = el.dataset?.touched === "1";
-    const explicitClear = el.dataset?.clear === "1";
-    const loadedFlag = el.dataset?.loaded;
-
-    if (explicitClear) return { changed: true, clear: true };
-    if (loadedFlag === "0") return { changed: false };
-    if (!touched || masked) return { changed: false };
-
-    if (raw === "") {
-      return previousValue ? { changed: true, clear: true } : { changed: false };
-    }
-    if (raw !== previousValue) return { changed: true, set: raw };
-    return { changed: false };
+    if (el.classList?.contains("open") || el.classList?.contains("expanded") || el.classList?.contains("show")) return true;
+    const style = window.getComputedStyle(el);
+    return !(style.display === "none" || style.visibility === "hidden" || el.offsetHeight === 0);
   }
 
-  try {
-    const serverResp = await fetch("/api/config", { cache: "no-store" });
-    if (!serverResp.ok) throw new Error(`GET /api/config ${serverResp.status}`);
-    const serverCfg = await serverResp.json();
-    const cfg = JSON.parse(JSON.stringify(serverCfg || {}));
-    let changed = false;
-
-    const _cwNormInst = (v) => {
-      const s = String(v || "").trim();
-      return (s && s.toLowerCase() !== "default") ? s : "default";
-    };
-
-    const _cwSelectedInst = (provider, storageKey = "") => {
-      try {
-        const el = document.getElementById(`${provider}_instance`);
-        const raw = String((el && el.value) || (storageKey ? localStorage.getItem(storageKey) : "") || "default").trim();
-        return _cwNormInst(raw);
-      } catch {
-        return "default";
-      }
-    };
-
-    const _cwInstBlock = (root, inst) => {
-      const base = (root && typeof root === "object") ? root : {};
-      if (inst === "default") return base;
-      return (base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object")
-        ? base.instances[inst]
-        : {};
-    };
-
-    try { delete cfg.app_auth; } catch {}
-
-    try {
-      const wantEnabled = (document.getElementById("app_auth_enabled")?.value || "").toString() === "true";
-      const wantUser = norm(document.getElementById("app_auth_username")?.value || "");
-      const pass1 = (document.getElementById("app_auth_password")?.value || "").toString();
-      const pass2 = (document.getElementById("app_auth_password2")?.value || "").toString();
-
-      const prevEnabled = !!serverCfg?.app_auth?.enabled;
-      const prevUser = norm(serverCfg?.app_auth?.username);
-
-      let st = null;
-      try {
-        const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
-        st = r.ok ? await r.json() : null;
-      } catch {}
-
-      const configured = !!(st && st.configured);
-      const wantsPwd = norm(pass1) !== "" || norm(pass2) !== "";
-      const needsCall = (wantEnabled !== prevEnabled) || (wantUser !== prevUser) || wantsPwd;
-
-      try {
-        const p1El = document.getElementById("app_auth_password");
-        const p2El = document.getElementById("app_auth_password2");
-        if (p1El && p2El && !p1El.__cwAuthPwWired) {
-          const onInput = () => {
-            const a = (p1El.value || "").toString();
-            const b = (p2El.value || "").toString();
-            if (!norm(a) && !norm(b)) { setAuthError(""); return; }
-            if (a === b) setAuthError("");
-          };
-          p1El.addEventListener("input", onInput);
-          p2El.addEventListener("input", onInput);
-          p1El.__cwAuthPwWired = true;
-        }
-      } catch {}
-
-      setAuthError("");
-      try { document.getElementById("app_auth_username")?.classList.remove("cw-invalid"); } catch {}
-
-      if (wantsPwd && pass1 !== pass2) {
-        setAuthError("Passwords do not match");
-        showToast("Password mismatch", false);
-        try { document.getElementById("app_auth_password2")?.focus?.(); } catch {}
-        abortSave("Password mismatch");
-      }
-      if (wantEnabled && !wantUser) {
-        showToast("Auth username required", false);
-        try { document.getElementById("app_auth_username")?.classList.add("cw-invalid"); } catch {}
-        abortSave("Auth username required");
-      }
-      if (wantEnabled && !configured && !norm(pass1)) {
-        setAuthError("Password required to enable auth");
-        showToast("Set a password to enable auth", false);
-        abortSave("Password required");
-      }
-
-      if (needsCall) {
-        const resp = await fetch("/api/app-auth/credentials", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "same-origin",
-          cache: "no-store",
-          body: JSON.stringify({ enabled: wantEnabled, username: wantUser, password: pass1 || "" }),
-        });
-        const j = await resp.json().catch(() => null);
-        if (!resp.ok || !j || !j.ok) {
-          showToast((j && j.error) ? j.error : `Auth save failed (${resp.status})`, false);
-          return;
-        }
-        try { document.getElementById("app_auth_password").value = ""; } catch {}
-        try { document.getElementById("app_auth_password2").value = ""; } catch {}
-        try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
-      }
-    } catch (e) {
-      console.warn("saveSettings: app_auth merge failed", e);
-      // @ts-ignore
-      if (e && e.__cwAbortSave) throw e;
-    }
-
-  // Trusted reverse proxies (optional)
-  try {
-    const tpEl = _cwTrustedProxiesEl();
-    if (tpEl) {
-      const raw = String(tpEl.value || "");
-      const parts = raw.split(/[;\n,]+/g).map((s) => String(s || "").trim()).filter((s) => !!s);
-      const uniq = [];
-      const seen = new Set();
-      parts.forEach((s) => {
-        const k = s.toLowerCase();
-        if (seen.has(k)) return;
-        seen.add(k);
-        uniq.push(s);
-      });
-
-      const cur = (cfg.security && Array.isArray(cfg.security.trusted_proxies)) ? cfg.security.trusted_proxies : [];
-      const curNorm = cur.map((x) => String(x || "").trim()).filter((s) => !!s);
-      if (JSON.stringify(curNorm) !== JSON.stringify(uniq)) {
-        if (!cfg.security || typeof cfg.security !== "object") cfg.security = {};
-        cfg.security.trusted_proxies = uniq;
-        changed = true;
-      }
-    }
-  } catch (e) {
-    console.warn("saveSettings: trusted proxies merge failed", e);
+  function findDetailsButton() {
+    return byId("btn-details")
+      || document.querySelector('[data-action="details"], .btn-details')
+      || Array.from(document.querySelectorAll("button")).find((btn) => String(btn.textContent || "").trim().toLowerCase() === "view details");
   }
 
-    const plexSecretInst    = _cwSelectedInst("plex");
-    const simklSecretInst   = _cwSelectedInst("simkl");
-    const traktSecretInst   = _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1");
-    const anilistSecretInst = _cwSelectedInst("anilist");
-    const mdblistSecretInst = _cwSelectedInst("mdblist");
-
-    const prevMode     = serverCfg?.sync?.bidirectional?.mode || "two-way";
-    const prevSource   = serverCfg?.sync?.bidirectional?.source_of_truth || "plex";
-    const prevDebug     = !!serverCfg?.runtime?.debug;
-    const prevDebugMods = !!serverCfg?.runtime?.debug_mods;
-    const prevDebugHttp = !!serverCfg?.runtime?.debug_http;
-    const prevPlexBlkSecrets   = _cwInstBlock(serverCfg?.plex, plexSecretInst);
-    const prevSimklBlkSecrets  = _cwInstBlock(serverCfg?.simkl, simklSecretInst);
-    const prevTraktBlkSecrets  = _cwInstBlock(serverCfg?.trakt, traktSecretInst);
-    const prevAnilistBlkSecrets = _cwInstBlock(serverCfg?.anilist, anilistSecretInst);
-    const prevMdblistBlkSecrets = _cwInstBlock(serverCfg?.mdblist, mdblistSecretInst);
-    const prevPlex     = norm(prevPlexBlkSecrets?.account_token);
-    const prevHomePin  = norm(prevPlexBlkSecrets?.home_pin);
-    const prevAniCid = norm(prevAnilistBlkSecrets?.client_id);
-    const prevAniSec = norm(prevAnilistBlkSecrets?.client_secret);
-    const prevCid      = norm(prevSimklBlkSecrets?.client_id);
-    const prevSec      = norm(prevSimklBlkSecrets?.client_secret);
-    const prevTmdb     = norm(serverCfg?.tmdb?.api_key);
-    const prevTraktCid = norm(prevTraktBlkSecrets?.client_id);
-    const prevTraktSec = norm(prevTraktBlkSecrets?.client_secret);
-    const prevMdbl     = norm(prevMdblistBlkSecrets?.api_key);
-    const prevMetaLocale = (serverCfg?.metadata?.locale ?? "").trim();
-    const prevMetaTTL    = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
-    const prevUiShow     = (typeof serverCfg?.ui?.show_watchlist_preview === "boolean") ? !!serverCfg.ui.show_watchlist_preview : true;
-    const prevUiPlaying  = (typeof serverCfg?.ui?.show_playingcard === "boolean") ? !!serverCfg.ui.show_playingcard : true;
-    const prevUiAskAi    = (typeof serverCfg?.ui?.show_AI === "boolean") ? !!serverCfg.ui.show_AI : true;
-    const prevUiProtocol = String(serverCfg?.ui?.protocol || "http").trim().toLowerCase() === "https" ? "https" : "http";
-
-    const prevCw = serverCfg?.crosswatch || {};
-
-    const prevCwEnabled  = (prevCw.enabled === false) ? false : true;
-    const prevCwRet      = Number.isFinite(prevCw.retention_days) ? Number(prevCw.retention_days) : 30;
-    const prevCwAuto     = (prevCw.auto_snapshot === false) ? false : true;
-    const prevCwMax      = Number.isFinite(prevCw.max_snapshots) ? Number(prevCw.max_snapshots) : 64;
-    const prevCwRestoreWatch  = (prevCw.restore_watchlist || "latest").trim();
-    const prevCwRestoreHist   = (prevCw.restore_history || "latest").trim();
-    const prevCwRestoreRates  = (prevCw.restore_ratings || "latest").trim();
-
-    const uiMode   = _getVal("mode");
-    const uiSource = _getVal("source");
-    const uiDebugMode = _getVal("debug"); 
-    let wantDebug=false, wantMods=false, wantHttp=false;
-    if (uiDebugMode==='on'){wantDebug=true;}
-    else if (uiDebugMode==='mods'){wantDebug=true; wantMods=true;}
-    else if (uiDebugMode==='full'){wantDebug=true; wantMods=true; wantHttp=true;}
-
-    if (uiMode !== prevMode) {
-      cfg.sync = cfg.sync || {};
-      cfg.sync.bidirectional = cfg.sync.bidirectional || {};
-      cfg.sync.bidirectional.mode = uiMode;
-      changed = true;
-    }
-    if (uiSource !== prevSource) {
-      cfg.sync = cfg.sync || {};
-      cfg.sync.bidirectional = cfg.sync.bidirectional || {};
-      cfg.sync.bidirectional.source_of_truth = uiSource;
-      changed = true;
-    }
-    if (wantDebug!==prevDebug || wantMods!==prevDebugMods || wantHttp!==prevDebugHttp) {
-      cfg.runtime = cfg.runtime || {};
-      cfg.runtime.debug = wantDebug;
-      cfg.runtime.debug_mods = wantMods;
-      cfg.runtime.debug_http = wantHttp;
-      changed = true;
-    }
-
-    
-    const uiMetaLocale = (document.getElementById("metadata_locale")?.value || "").trim();
-    const uiMetaTTLraw = (document.getElementById("metadata_ttl_hours")?.value || "").trim();
-    const uiMetaTTL    = uiMetaTTLraw === "" ? null : parseInt(uiMetaTTLraw, 10);
-
-    if (uiMetaLocale !== prevMetaLocale) {
-      cfg.metadata = cfg.metadata || {};
-      if (uiMetaLocale) cfg.metadata.locale = uiMetaLocale;
-      else delete cfg.metadata.locale; 
-      changed = true;
-    }
-    if (uiMetaTTL !== null && !Number.isNaN(uiMetaTTL) && uiMetaTTL !== prevMetaTTL) {
-      cfg.metadata = cfg.metadata || {};
-      cfg.metadata.ttl_hours = Math.max(1, uiMetaTTL);
-      changed = true;
-    }
-
-    
-    (function () {
-      const norm = (s) => (s ?? "").trim();
-      const truthy = (v) => ["true","1","yes","on","enabled","enable"].includes(String(v).toLowerCase());
-      const intOr = (el, prev) => {
-        if (!el) return prev;
-        const n = parseInt(norm(el.value || ""), 10);
-        return Number.isNaN(n) ? prev : Math.max(0, n);
-      };
-
-      
-      const uiSel = document.getElementById("ui_show_watchlist_preview");
-      if (uiSel) {
-        const uiShow = !truthy(uiSel.value) ? (uiSel.value === "false" ? false : true) : truthy(uiSel.value);
-        const finalUiShow = uiSel.value === "false" ? false : true;
-        if (finalUiShow !== prevUiShow) {
-          cfg.ui = cfg.ui || {};
-          cfg.ui.show_watchlist_preview = finalUiShow;
-          changed = true;
-        }
-      }
-
-      
-      const uiPlaySel = document.getElementById("ui_show_playingcard");
-      if (uiPlaySel) {
-        const finalUiPlay = uiPlaySel.value === "false" ? false : true;
-        if (finalUiPlay !== prevUiPlaying) {
-          cfg.ui = cfg.ui || {};
-          cfg.ui.show_playingcard = finalUiPlay;
-          changed = true;
-        }
-      }
-
-      const uiAiSel = document.getElementById("ui_show_AI");
-      if (uiAiSel) {
-        const finalUiAi = uiAiSel.value === "false" ? false : true;
-        if (finalUiAi !== prevUiAskAi) {
-          cfg.ui = cfg.ui || {};
-          cfg.ui.show_AI = finalUiAi;
-          changed = true;
-          try { window.__cwAskAiChanged = { from: prevUiAskAi, to: finalUiAi }; } catch {}
-        }
-      }
-
-      const protoSel = document.getElementById("ui_protocol");
-      if (protoSel) {
-        const want = String(protoSel.value || "http").trim().toLowerCase() === "https" ? "https" : "http";
-        if (want !== prevUiProtocol) {
-          cfg.ui = cfg.ui || {};
-          cfg.ui.protocol = want;
-          changed = true;
-          try { window.__cwProtoChanged = want; } catch {}
-        }
-      }
-
-      const cw = cfg.crosswatch || {};
-      let cwChanged = false;
-
-
-      
-      const enabledEl = document.getElementById("cw_enabled");
-      const newEnabled = enabledEl ? truthy(enabledEl.value) : prevCwEnabled;
-      if (newEnabled !== prevCwEnabled) {
-        cw.enabled = newEnabled;
-        cwChanged = true;
-      }
-
-      
-      const newRet = intOr(document.getElementById("cw_retention_days"), prevCwRet);
-      if (newRet !== prevCwRet) {
-        cw.retention_days = newRet;
-        cwChanged = true;
-      }
-
-      
-      const autoEl = document.getElementById("cw_auto_snapshot");
-      const newAuto = autoEl ? truthy(autoEl.value) : prevCwAuto;
-      if (newAuto !== prevCwAuto) {
-        cw.auto_snapshot = newAuto;
-        cwChanged = true;
-      }
-
-      
-      const newMax = intOr(document.getElementById("cw_max_snapshots"), prevCwMax);
-      if (newMax !== prevCwMax) {
-        cw.max_snapshots = newMax;
-        cwChanged = true;
-      }
-
-      
-      const prevMap = {
-        watchlist: prevCwRestoreWatch,
-        history:   prevCwRestoreHist,
-        ratings:   prevCwRestoreRates,
-      };
-      for (const key of ["watchlist", "history", "ratings"]) {
-        const el = document.getElementById(`cw_restore_${key}`);
-        if (!el) continue;
-        const val = norm(el.value || "") || "latest";
-        if (val !== prevMap[key]) {
-          cw[`restore_${key}`] = val;
-          cwChanged = true;
-        }
-      }
-
-      if (cwChanged) {
-        cfg.crosswatch = cw;
-        changed = true;
-      }
-    })();
-
-    
-    const sPlex     = readSecretSafe("plex_token", prevPlex);
-    const sHomePin  = readSecretSafe("plex_home_pin", prevHomePin);
-    const sCid      = readSecretSafe("simkl_client_id", prevCid);
-    const sSec      = readSecretSafe("simkl_client_secret", prevSec);
-    const sTmdb     = readSecretSafe("tmdb_api_key", prevTmdb);
-    const sTrkCid   = readSecretSafe("trakt_client_id", prevTraktCid);
-    const sTrkSec   = readSecretSafe("trakt_client_secret", prevTraktSec);
-    const sMdbl     = readSecretSafe("mdblist_key", prevMdbl);
-    const sAniCid   = readSecretSafe("anilist_client_id", prevAniCid);
-    const sAniSec   = readSecretSafe("anilist_client_secret", prevAniSec);
-
-    if (sMdbl.changed) {
-      cfg.mdblist = cfg.mdblist || {};
-      if (mdblistSecretInst === "default") {
-        if (sMdbl.clear) delete cfg.mdblist.api_key; else cfg.mdblist.api_key = sMdbl.set;
-      } else {
-        cfg.mdblist.instances = cfg.mdblist.instances || {};
-        cfg.mdblist.instances[mdblistSecretInst] = cfg.mdblist.instances[mdblistSecretInst] || {};
-        const mdblInstCfg = cfg.mdblist.instances[mdblistSecretInst];
-        if (sMdbl.clear) delete mdblInstCfg.api_key; else mdblInstCfg.api_key = sMdbl.set;
-      }
-      changed = true;
-    }
-
-    if (sPlex.changed || sHomePin.changed) {
-      cfg.plex = cfg.plex || {};
-      let plexSecretCfg = cfg.plex;
-      if (plexSecretInst !== "default") {
-        cfg.plex.instances = cfg.plex.instances || {};
-        cfg.plex.instances[plexSecretInst] = cfg.plex.instances[plexSecretInst] || {};
-        plexSecretCfg = cfg.plex.instances[plexSecretInst];
-      }
-      if (sPlex.changed) {
-        if (sPlex.clear) delete plexSecretCfg.account_token; else plexSecretCfg.account_token = sPlex.set;
-      }
-      if (sHomePin.changed) {
-        if (sHomePin.clear) plexSecretCfg.home_pin = ""; else plexSecretCfg.home_pin = sHomePin.set;
-      }
-      changed = true;
-    }
-    if (sCid.changed || sSec.changed) {
-      cfg.simkl = cfg.simkl || {};
-      let simklSecretCfg = cfg.simkl;
-      if (simklSecretInst !== "default") {
-        cfg.simkl.instances = cfg.simkl.instances || {};
-        cfg.simkl.instances[simklSecretInst] = cfg.simkl.instances[simklSecretInst] || {};
-        simklSecretCfg = cfg.simkl.instances[simklSecretInst];
-      }
-      if (sCid.changed) {
-        if (sCid.clear) delete simklSecretCfg.client_id; else simklSecretCfg.client_id = sCid.set;
-      }
-      if (sSec.changed) {
-        if (sSec.clear) delete simklSecretCfg.client_secret; else simklSecretCfg.client_secret = sSec.set;
-      }
-      changed = true;
-    }
-    if (sTrkCid.changed || sTrkSec.changed) {
-      cfg.trakt = cfg.trakt || {};
-
-      if (traktSecretInst === "default") {
-        if (sTrkCid.changed) {
-          if (sTrkCid.clear) delete cfg.trakt.client_id; else cfg.trakt.client_id = sTrkCid.set;
-        }
-        if (sTrkSec.changed) {
-          if (sTrkSec.clear) delete cfg.trakt.client_secret; else cfg.trakt.client_secret = sTrkSec.set;
-        }
-      } else {
-        cfg.trakt.instances = cfg.trakt.instances || {};
-        cfg.trakt.instances[traktSecretInst] = cfg.trakt.instances[traktSecretInst] || {};
-        const trkInstCfg = cfg.trakt.instances[traktSecretInst];
-
-        if (sTrkCid.changed) {
-          if (sTrkCid.clear) delete trkInstCfg.client_id; else trkInstCfg.client_id = sTrkCid.set;
-        }
-        if (sTrkSec.changed) {
-          if (sTrkSec.clear) delete trkInstCfg.client_secret; else trkInstCfg.client_secret = sTrkSec.set;
-        }
-      }
-
-      changed = true;
-    }
-    if (sTmdb.changed) {
-      cfg.tmdb = cfg.tmdb || {};
-      if (sTmdb.clear) delete cfg.tmdb.api_key; else cfg.tmdb.api_key = sTmdb.set;
-      changed = true;
-    }
-    if (sAniCid.changed || sAniSec.changed) {
-      cfg.anilist = cfg.anilist || {};
-      let aniSecretCfg = cfg.anilist;
-      if (anilistSecretInst !== "default") {
-        cfg.anilist.instances = cfg.anilist.instances || {};
-        cfg.anilist.instances[anilistSecretInst] = cfg.anilist.instances[anilistSecretInst] || {};
-        aniSecretCfg = cfg.anilist.instances[anilistSecretInst];
-      }
-      if (sAniCid.changed) {
-        if (sAniCid.clear) delete aniSecretCfg.client_id; else aniSecretCfg.client_id = sAniCid.set;
-      }
-      if (sAniSec.changed) {
-        if (sAniSec.clear) delete aniSecretCfg.client_secret; else aniSecretCfg.client_secret = sAniSec.set;
-      }
-      changed = true;
-    }
-
-
-    try {
-      const norm = (s) => (s ?? "").trim();
-      const first = (...ids) => {
-        for (const id of ids) {
-          const el = document.getElementById(id);
-          const v = el && String(el.value || "").trim();
-          if (v) return v;
-        }
-        return "";
-      };
-
-      const jfyInstRaw = norm(document.getElementById("jellyfin_instance")?.value || "");
-      const jfyInst = (jfyInstRaw && jfyInstRaw.toLowerCase() !== "default") ? jfyInstRaw : "default";
-
-      const jfyBaseSrv = (serverCfg?.jellyfin && typeof serverCfg.jellyfin === "object") ? serverCfg.jellyfin : {};
-      const prevJfy = jfyInst === "default"
-        ? jfyBaseSrv
-        : ((jfyBaseSrv.instances && typeof jfyBaseSrv.instances === "object" && jfyBaseSrv.instances[jfyInst]) ? jfyBaseSrv.instances[jfyInst] : {});
-
-      const jfyBaseCfg = (cfg.jellyfin && typeof cfg.jellyfin === "object") ? cfg.jellyfin : (cfg.jellyfin = {});
-      const nextJfy = (() => {
-        if (jfyInst === "default") return jfyBaseCfg;
-        if (!jfyBaseCfg.instances || typeof jfyBaseCfg.instances !== "object") jfyBaseCfg.instances = {};
-        if (!jfyBaseCfg.instances[jfyInst] || typeof jfyBaseCfg.instances[jfyInst] !== "object") jfyBaseCfg.instances[jfyInst] = {};
-        return jfyBaseCfg.instances[jfyInst];
-      })();
-
-      
-      const uiSrv    = first("jfy_server_url","jfy_server");
-      const uiUser   = first("jfy_username","jfy_user");
-      const uiUid    = first("jfy_user_id");
-      const uiVerify = !!(document.getElementById("jfy_verify_ssl")?.checked ||
-                          document.getElementById("jfy_verify_ssl_dup")?.checked);
-
-      const prevSrv    = norm(prevJfy?.server);
-      const prevUser   = norm(prevJfy?.username || prevJfy?.user);
-      const prevUid    = norm(prevJfy?.user_id);
-      const prevVerify = !!prevJfy?.verify_ssl;
-
-      if (uiSrv && uiSrv !== prevSrv) { nextJfy.server = uiSrv; changed = true; }
-      if (uiUser && uiUser !== prevUser) {
-        nextJfy.username = uiUser;
-        nextJfy.user = uiUser;
-        changed = true;
-      }
-      if (uiUid && uiUid !== prevUid) { nextJfy.user_id = uiUid; changed = true; }
-      if (uiVerify !== prevVerify)   { nextJfy.verify_ssl = uiVerify; changed = true; }
-
-      const jfyHydrated =
-        window.__jellyfinHydrated === true ||
-        window.__jfyHydrated === true ||
-        document.getElementById("sec-jellyfin")?.dataset?.hydrated === "1" ||
-        document.querySelectorAll("#jfy_lib_matrix .lm-row").length > 0 ||
-        document.querySelectorAll("#jfy_lib_whitelist .whrow").length > 0 ||
-        !!document.querySelector("#jfy_lib_history option, #jfy_lib_ratings option, #jfy_lib_scrobble option");
-
-      const readFromMatrix = () => {
-        const rows = document.querySelectorAll("#jfy_lib_matrix .lm-row");
-        if (!rows.length) return null;
-        const H = [], R = [], S = [];
-        rows.forEach(r => {
-          const id = String(r.dataset.id || "").trim(); 
-          if (!id) return;
-          if (r.querySelector(".lm-dot.hist.on")) H.push(id);
-          if (r.querySelector(".lm-dot.rate.on")) R.push(id);
-          if (r.querySelector(".lm-dot.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromWhitelist = () => {
-        const rows = document.querySelectorAll("#jfy_lib_whitelist .whrow");
-        if (!rows.length) return null;  
-        const H = [], R = [], S = [];
-        rows.forEach(r => {
-          const id = String(r.dataset.id || "").trim(); 
-          if (!id) return;
-          if (r.querySelector(".whtog.hist.on")) H.push(id);
-          if (r.querySelector(".whtog.rate.on")) R.push(id);
-          if (r.querySelector(".whtog.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromSelects = () => {
-        const toStrs = (selector) => {
-          const el = document.querySelector(selector);
-          if (!el) return null;
-          const opts = el.selectedOptions
-            ? Array.from(el.selectedOptions)
-            : Array.from(el.querySelectorAll("option:checked"));
-          return opts
-            .map(o => String(o.value || o.dataset.value || o.textContent).trim())
-            .filter(Boolean);
-        };
-        return { H: toStrs("#jfy_lib_history"), R: toStrs("#jfy_lib_ratings"), S: toStrs("#jfy_lib_scrobble") };
-      };
-
-      const src = jfyHydrated ? (readFromMatrix() || readFromWhitelist() || readFromSelects()) : null;
-
-      const same = (a, b) => {
-        const A = (a || []).map(String).filter(Boolean).sort();
-        const B = (b || []).map(String).filter(Boolean).sort();
-        if (A.length !== B.length) return false;
-        for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
-        return true;
-      };
-
-      if (src) {
-        const prevH = (prevJfy?.history?.libraries || []).map(String);
-        const prevR = (prevJfy?.ratings?.libraries || []).map(String);
-        const prevS = (prevJfy?.scrobble?.libraries || []).map(String);
-        if (!same(src.H, prevH)) {
-          nextJfy.history = Object.assign({}, nextJfy.history || {}, { libraries: src.H || [] });
-          changed = true;
-        }
-        if (!same(src.R, prevR)) {
-          nextJfy.ratings = Object.assign({}, nextJfy.ratings || {}, { libraries: src.R || [] });
-          changed = true;
-        }
-        if (!same(src.S, prevS)) {
-          nextJfy.scrobble = Object.assign({}, nextJfy.scrobble || {}, { libraries: src.S || [] });
-          changed = true;
-        }
-      }
-    } catch (e) {
-      console.warn("saveSettings: jellyfin merge failed", e);
-    }
-
-      
-    try {
-      const norm = (s) => (s ?? "").trim();
-
-      const embyInstRaw = norm(document.getElementById("emby_instance")?.value || "");
-      const embyInst = (embyInstRaw && embyInstRaw.toLowerCase() !== "default") ? embyInstRaw : "default";
-
-      const embyBaseSrv = (serverCfg?.emby && typeof serverCfg.emby === "object") ? serverCfg.emby : {};
-      const prevEmby = embyInst === "default"
-        ? embyBaseSrv
-        : ((embyBaseSrv.instances && typeof embyBaseSrv.instances === "object" && embyBaseSrv.instances[embyInst]) ? embyBaseSrv.instances[embyInst] : {});
-
-      const embyBaseCfg = (cfg.emby && typeof cfg.emby === "object") ? cfg.emby : (cfg.emby = {});
-      const nextEmby = (() => {
-        if (embyInst === "default") return embyBaseCfg;
-        if (!embyBaseCfg.instances || typeof embyBaseCfg.instances !== "object") embyBaseCfg.instances = {};
-        if (!embyBaseCfg.instances[embyInst] || typeof embyBaseCfg.instances[embyInst] !== "object") embyBaseCfg.instances[embyInst] = {};
-        return embyBaseCfg.instances[embyInst];
-      })();
-
-      const readFromMatrix = () => {
-        const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
-        if (!rows.length) return null;
-        const H = [], R = [], S = [];
-        rows.forEach((r) => {
-          const id = String(r.dataset.id || "").trim(); 
-          if (!id) return;
-          if (r.querySelector(".lm-dot.hist.on")) H.push(id);
-          if (r.querySelector(".lm-dot.rate.on")) R.push(id);
-          if (r.querySelector(".lm-dot.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromWhitelist = () => {
-        const rows = document.querySelectorAll("#emby_lib_whitelist .whrow");
-        if (!rows.length) return null;
-        const H = [], R = [], S = [];
-        rows.forEach((r) => {
-          const id = String(r.dataset.id || "").trim();
-          if (!id) return;
-          if (r.querySelector(".whtog.hist.on")) H.push(id);
-          if (r.querySelector(".whtog.rate.on")) R.push(id);
-          if (r.querySelector(".whtog.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromSelects = () => {
-        const toStrs = (selector) => {
-          const el = document.querySelector(selector);
-          if (!el) return null;
-          const opts = el.selectedOptions
-            ? Array.from(el.selectedOptions)
-            : Array.from(el.querySelectorAll("option:checked"));
-          return opts
-            .map((o) => String(o.value || o.dataset.value || o.textContent).trim())
-            .filter(Boolean);
-        };
-        return {
-          H: toStrs("#emby_lib_history"),
-          R: toStrs("#emby_lib_ratings"),
-          S: toStrs("#emby_lib_scrobble"),
-        };
-      };
-
-      const embyHydrated =
-        window.__embyHydrated === true ||
-        document.getElementById("sec-emby")?.dataset?.hydrated === "1" ||
-        document.querySelectorAll("#emby_lib_matrix .lm-row").length > 0 ||
-        document.querySelectorAll("#emby_lib_whitelist .whrow").length > 0 ||
-        !!document.querySelector("#emby_lib_history option, #emby_lib_ratings option, #emby_lib_scrobble option");
-
-      const src = embyHydrated ? (readFromMatrix() || readFromWhitelist() || readFromSelects()) : null;
-
-      const same = (a, b) => {
-        const A = (a || []).map(String).filter(Boolean).sort();
-        const B = (b || []).map(String).filter(Boolean).sort();
-        if (A.length !== B.length) return false;
-        for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
-        return true;
-      };
-
-      if (src) {
-        const prevH = (prevEmby?.history?.libraries || []).map(String);
-        const prevR = (prevEmby?.ratings?.libraries || []).map(String);
-        const prevS = (prevEmby?.scrobble?.libraries || []).map(String);
-
-        if (!same(src.H, prevH)) {
-          nextEmby.history = Object.assign({}, nextEmby.history || {}, { libraries: src.H || [] });
-          changed = true;
-        }
-        if (!same(src.R, prevR)) {
-          nextEmby.ratings = Object.assign({}, nextEmby.ratings || {}, { libraries: src.R || [] });
-          changed = true;
-        }
-        if (!same(src.S, prevS)) {
-          nextEmby.scrobble = Object.assign({}, nextEmby.scrobble || {}, { libraries: src.S || [] });
-          changed = true;
-        }
-      }
-    } catch (e) {
-      console.warn("saveSettings: emby merge failed", e);
-    }
-    try {
-      const instRaw = norm(document.getElementById("plex_instance")?.value || "");
-      const inst = (instRaw && instRaw.toLowerCase() !== "default") ? instRaw : "default";
-
-      const baseSrv = (serverCfg?.plex && typeof serverCfg.plex === "object") ? serverCfg.plex : {};
-      const prevPlex = inst === "default"
-        ? baseSrv
-        : ((baseSrv.instances && typeof baseSrv.instances === "object" && baseSrv.instances[inst]) ? baseSrv.instances[inst] : {});
-
-      const baseCfg = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
-      const hasPlexInstance = !!(inst !== "default" && baseCfg.instances && typeof baseCfg.instances === "object" && baseCfg.instances[inst] && typeof baseCfg.instances[inst] === "object");
-      const nextPlex = inst === "default"
-        ? baseCfg
-        : (hasPlexInstance ? baseCfg.instances[inst] : null);
-
-      const uiUrl  = norm(document.getElementById("plex_server_url")?.value || "");
-      const uiUser = norm(document.getElementById("plex_username")?.value   || "");
-      const uiAidS = norm(document.getElementById("plex_account_id")?.value || "");
-
-      let uiAid = null;
-      if (uiAidS !== "") {
-        const n = parseInt(uiAidS, 10);
-        uiAid = Number.isFinite(n) && n > 0 ? n : null;
-      }
-
-      const prevUrl    = norm(prevPlex?.server_url);
-      const prevUser   = norm(prevPlex?.username);
-      const prevAidRaw = prevPlex?.account_id;
-      const prevAidS   = norm(prevAidRaw);
-      const prevAidN   = (() => {
-        const n = parseInt(prevAidS, 10);
-        return Number.isFinite(n) && n > 0 ? n : null;
-      })();
-
-      if (nextPlex && uiUrl && uiUrl !== prevUrl) {
-        nextPlex.server_url = uiUrl;
-        changed = true;
-      }
-      if (nextPlex && uiUser && uiUser !== prevUser) {
-        nextPlex.username = uiUser;
-        changed = true;
-      }
-
-      if (nextPlex && uiAid !== null) {
-        if (prevAidN === null || uiAid !== prevAidN) {
-          nextPlex.account_id = uiAid;
-          changed = true;
-        }
-      }
-
-      const uiVerify = !!document.getElementById("plex_verify_ssl")?.checked;
-      const prevVerify = !!(prevPlex?.verify_ssl);
-      if (nextPlex && uiVerify !== prevVerify) {
-        nextPlex.verify_ssl = uiVerify;
-        changed = true;
-      }
-
-      const plexHydrated =
-        window.__plexHydrated === true ||
-        document.getElementById("sec-plex")?.dataset?.hydrated === "1" ||
-        document.querySelectorAll("#plex_lib_matrix .lm-row").length > 0 ||
-        document.querySelectorAll("#plex_lib_whitelist .whrow").length > 0 ||
-        !!document.querySelector("#plex_lib_history option, #plex_lib_ratings option, #plex_lib_scrobble option");
-
-      if (plexHydrated) {
-        const st = (window.__plexState || { hist: new Set(), rate: new Set(), scr: new Set() });
-        const toNums = (xs) =>
-          (Array.isArray(xs) ? xs : xs instanceof Set ? Array.from(xs) : [])
-            .map(x => parseInt(String(x), 10))
-            .filter(Number.isFinite);
-
-        const fromSelect = (id) => {
-          const el = document.getElementById(id);
-          if (!el || !el.selectedOptions) return null;
-          return Array.from(el.selectedOptions)
-            .map(o => parseInt(String(o.value), 10))
-            .filter(Number.isFinite);
-        };
-
-        // Prefer selects
-        const hist = fromSelect("plex_lib_history")  ?? toNums(st.hist);
-        const rate = fromSelect("plex_lib_ratings") ?? toNums(st.rate);
-        const scr  = fromSelect("plex_lib_scrobble")?? toNums(st.scr);
-
-        const _same = (a, b) => {
-          const A = (a || []).map(Number).sort((x,y)=>x-y);
-          const B = (b || []).map(Number).sort((x,y)=>x-y);
-          if (A.length !== B.length) return false;
-          for (let i=0;i<A.length;i++) if (A[i] !== B[i]) return false;
-          return true;
-        };
-
-        const prevHist = (prevPlex?.history?.libraries || []).map(Number);
-        const prevRate = (prevPlex?.ratings?.libraries || []).map(Number);
-        const prevScr  = (prevPlex?.scrobble?.libraries || []).map(Number);
-
-        if (nextPlex && !_same(hist, prevHist)) {
-          nextPlex.history = Object.assign({}, nextPlex.history || {}, { libraries: hist });
-          changed = true;
-        }
-        if (nextPlex && !_same(rate, prevRate)) {
-          nextPlex.ratings = Object.assign({}, nextPlex.ratings || {}, { libraries: rate });
-          changed = true;
-        }
-        if (nextPlex && !_same(scr, prevScr)) {
-          nextPlex.scrobble = Object.assign({}, nextPlex.scrobble || {}, { libraries: scr });
-          changed = true;
-        }
-      }
-    } catch (e) {
-      console.warn("saveSettings: plex merge failed", e);
-    }
-    
-    try {
-      if (typeof window.getScrobbleConfig === "function") {
-        const prev = serverCfg?.scrobble || {};
-        const next = window.getScrobbleConfig(prev) || {};
-        if (JSON.stringify(next) !== JSON.stringify(prev)) {
-          cfg.scrobble = next;
-          changed = true;
-        }
-      }
-    } catch (e) {
-      console.warn("saveSettings: scrobbler merge failed", e);
-    }
-
-    
-    try {
-      let sched = {};
-      if (typeof window.getSchedulingPatch === "function") {
-        sched = window.getSchedulingPatch() || {};
-      } else {
-        sched = {
-          enabled: readToggle("schEnabled"),
-          mode: _getVal("schMode"),
-          every_n_hours: parseInt((_getVal("schN") || "2"), 10),
-          daily_time: _getVal("schTime") || "03:30",
-          advanced: { enabled: false, jobs: [] }
-        };
-      }
-      const prevSched = serverCfg?.scheduling || {};
-      if (JSON.stringify(sched) !== JSON.stringify(prevSched)) {
-        cfg.scheduling = sched;
-        changed = true;
-        schedChanged = true;
-      }
-    } catch (e) {
-      console.warn("saveSettings: scheduling merge failed", e);
-    }
-
-    if (changed) {
-      const postCfg = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-      if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
-
-      try { if (typeof loadConfig === "function") await loadConfig(); } catch {}
-      try { if (typeof _invalidatePairsCache === "function") _invalidatePairsCache(); } catch {}
-
-      if (schedChanged) {
-        try {
-          await fetch("/api/scheduling", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(cfg.scheduling),
-            cache: "no-store"
-          });
-        } catch (e) {
-          console.warn("POST /api/scheduling failed", e);
-        }
-      } else {
-        try { await fetch("/api/scheduling/replan_now", { method: "POST", cache: "no-store" }); } catch {}
-      }
-    }
-
-    
-    try {
-      if (typeof refreshPairedProviders === "function") await refreshPairedProviders(0);
-      const cached = (typeof loadStatusCache === "function") ? loadStatusCache() : null;
-      if (cached?.providers && typeof renderConnectorStatus === "function") {
-        renderConnectorStatus(cached.providers, { stale: true });
-      }
-      if (typeof refreshStatus === "function") await refreshStatus(true);
-    } catch {}
-
-    try { if (typeof updateTmdbHint === "function") updateTmdbHint(); } catch {}
-    try { if (typeof updateSimklState === "function") updateSimklState(); } catch {}
-    try { if (typeof updateJellyfinState === "function") updateJellyfinState(); } catch {}
-
-    try {
-      if (typeof window.loadScheduling === "function") {
-        await window.loadScheduling();
-      } else {
-        document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } }));
-        document.dispatchEvent(new Event("scheduling-status-refresh"));
-      }
-    } catch (e) {
-      console.warn("loadScheduling failed:", e);
-    }
-
-    try { if (typeof updateTraktHint === "function") updateTraktHint(); } catch {}
-    try { if (typeof updatePreviewVisibility === "function") updatePreviewVisibility(); } catch {}
-
-    try {
-      window.dispatchEvent(new CustomEvent("settings-changed", {
-        detail: { scope: "settings", reason: "save" }
-      }));
-    } catch {}
-
-    try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
-
-    try { document.dispatchEvent(new CustomEvent("config-saved", { detail: { section: "scheduling" } })); } catch {}
-    try { document.dispatchEvent(new Event("scheduling-status-refresh")); } catch {}
-
-    try { if (typeof window.refreshSchedulingBanner === "function") await window.refreshSchedulingBanner(); } catch {}
-    try { if (typeof window.refreshSettingsInsight === "function") window.refreshSettingsInsight(); } catch {}
-
-    if (!fromFab) showToast("Settings saved", true);
-
-    (function () {
-      const reasons = [];
-      let kind = "";
-      let applyText = "Restart NOW";
-
-      if (window.__cwProtoChanged) {
-        const wantProto = String(window.__cwProtoChanged || "").trim().toLowerCase();
-        try { delete window.__cwProtoChanged; } catch {}
-        const url = cwBuildProtoUrl(wantProto);
-        try { cwQueueProtocolApply(wantProto, url); } catch {}
-        reasons.push("Protocol changed");
-        kind = "protocol";
-        applyText = "Apply NOW";
-      }
-
-      let askAiInfo = null;
-      if (window.__cwAskAiChanged) {
-        askAiInfo = window.__cwAskAiChanged;
-        try { delete window.__cwAskAiChanged; } catch {}
-        try {
-          const to = !!(askAiInfo && askAiInfo.to);
-          reasons.push(`ASK AI ${to ? "shown" : "hidden"}`);
-        } catch {
-          reasons.push("ASK AI changed");
-        }
-        if (!kind) kind = "restart";
-      }
-
-      if (!reasons.length) return;
-
-      const msg = `${reasons.join(" + ")}: restart required`;
-      try { cwShowRestartBanner(msg, { showApply: true, applyText, kind }); } catch {}
-      showToast(msg, true);
-    })();
-  } catch (err) {
-    console.error("saveSettings failed", err);
-    showToast("Save failed — see console", false);
-    throw err;
-  }
-}
-
-
-async function clearState() {
-  const btnText = "Clear State";
-  try {
-    const r = await fetch("/api/maintenance/reset-state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "clear_both" }) 
-    });
-    const j = await r.json();
-    const m = document.getElementById("tb_msg");
-    m.classList.remove("hidden");
-    m.textContent = j.ok ? btnText + " – started ✓" : btnText + " – failed";
-    setTimeout(() => m.classList.add("hidden"), 1600);
-    console.log("Reset:", j);
-  } catch (_) {}
-}
-
-async function clearCache() {
-  const btnText = "Clear Cache";
-  try {
-    const r = await fetch("/api/maintenance/clear-cache", { method: "POST" });
-    const j = await r.json();
-    const m = document.getElementById("tb_msg");
-
-    m.classList.remove("hidden");
-    m.textContent = j.ok ? btnText + " – done ✓" : btnText + " – failed";
-
-    setTimeout(() => m.classList.add("hidden"), 1600);
-  } catch (_) {}
-}
-
-async function resetStats() {
-  const btnText = "Reset Statistics";
-
-  try {
-    const r = await fetch("/api/maintenance/reset-stats", { method: "POST" });
-    const j = await r.json();
-    const m = document.getElementById("tb_msg");
-
-    m.classList.remove("hidden");
-    m.textContent = j.ok
-      ? btnText + " – done ✓"
-      : btnText + " – failed" + (j.error ? ` (${j.error})` : "");
-
-    setTimeout(() => m.classList.add("hidden"), 2200);
-
-    if (j.ok && typeof refreshStats === "function") refreshStats(true);
-  } catch (e) {
-    const m = document.getElementById("tb_msg");
-
-    m.classList.remove("hidden");
-    m.textContent = btnText + " – failed (network)";
-
-    setTimeout(() => m.classList.add("hidden"), 2200);
-  }
-}
-
-async function resetCurrentlyPlaying() {
-  const btnText = "Reset Currently Playing";
-  try {
-    const r = await fetch("/api/maintenance/reset-currently-watching", {
-      method: "POST"
-    });
-    const j = await r.json();
-    const m = document.getElementById("tb_msg");
-    if (!m) return;
-
-    m.classList.remove("hidden");
-    m.textContent = j.ok
-      ? btnText + " – done ✓"
-      : btnText + " – failed" + (j.error ? ` (${j.error})` : "");
-    setTimeout(() => m.classList.add("hidden"), 2200);
-  } catch (_) {
-    const m = document.getElementById("tb_msg");
-    if (!m) return;
-    m.classList.remove("hidden");
-    m.textContent = btnText + " – failed (network)";
-    setTimeout(() => m.classList.add("hidden"), 2200);
-  }
-}
-
-async function restartCrossWatch() {
-  if (typeof cwRestartCrossWatchWithOverlay === "function") return cwRestartCrossWatchWithOverlay();
-  try { await fetch("/api/maintenance/restart", { method: "POST", cache: "no-store" }); } catch {}
-  try { window.location.reload(); } catch {}
-}
-
-
-async function updateTmdbHint() {
-  const hint = document.getElementById("tmdb_hint");
-  const input = document.getElementById("tmdb_api_key");
-
-  if (!hint || !input) return;
-
-  const settingsVisible = !document
-    .getElementById("page-settings")
-    ?.classList.contains("hidden");
-
-  if (!settingsVisible) return;
-
-  const v = (input.value || "").trim();
-
-  if (document.activeElement === input) input.dataset.dirty = "1";
-
-  if (input.dataset.dirty === "1") {
-    hint.classList.toggle("hidden", !!v);
-    return;
+  function findDetailsPanel() {
+    return byId("sync-output") || byId("details") || document.querySelector('#sync-log, .sync-output, [data-pane="details"]');
   }
 
-  if (v) {
-    hint.classList.add("hidden");
-    return;
+  function wireDetailsToStats() {
+    const panel = findDetailsPanel();
+    const btn = findDetailsButton();
+    setStatsExpanded(isElementOpen(panel));
+    btn?.addEventListener("click", () => setTimeout(() => setStatsExpanded(isElementOpen(panel)), 50));
+    (byId("btn-sync") || document.querySelector('[data-action="sync"], .btn-sync'))?.addEventListener("click", () => setStatsExpanded(false));
   }
 
-  try {
-    const cfg = await fetch("/api/config", { cache: "no-store" }).then((r) =>
-      r.json()
-    );
-
-    const has = !!(cfg.tmdb?.api_key || "").trim();
-
-    hint.classList.toggle("hidden", has);
-  } catch {
-    hint.classList.remove("hidden");
-  }
-}
-
-function setTraktSuccess(show) {
-  const el = document.getElementById("trakt_msg");
-  if (el) el.classList.toggle("hidden", !show);
-}
-
-function isPlaceholder(v, ph) {
-  return (v || "").trim().toUpperCase() === ph.toUpperCase();
-}
-
-function isSettingsVisible() {
-  const el = document.getElementById("page-settings");
-  return !!(el && !el.classList.contains("hidden"));
-}
-function setBtnBusy(id, busy) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.disabled = !!busy;
-  el.classList.toggle("opacity-50", !!busy);
-}
-
-function flashBtnOK(btnEl) {
-  if (!btnEl) return;
-  btnEl.disabled = true;
-  btnEl.classList.add("copied"); 
-  setTimeout(() => {
-    btnEl.classList.remove("copied");
-    btnEl.disabled = false;
-  }, 700);
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  
-  document
-    .getElementById("btn-copy-plex-pin")
-    ?.addEventListener("click", (e) =>
-      copyInputValue("plex_pin", e.currentTarget)
-    );
-
-  document
-    .getElementById("btn-copy-plex-token")
-    ?.addEventListener("click", (e) =>
-      copyInputValue("plex_token", e.currentTarget)
-    );
-
-  
-  document
-    .getElementById("btn-copy-trakt-pin")
-    ?.addEventListener("click", (e) =>
-      copyInputValue("trakt_pin", e.currentTarget)
-    );
-
-  document
-    .getElementById("btn-copy-trakt-token")
-    ?.addEventListener("click", (e) =>
-      copyInputValue("trakt_token", e.currentTarget)
-    );
-});
-
-function updateEdges() {
-  const row = document.getElementById("poster-row");
-
-  const L = document.getElementById("edgeL"),
-    R = document.getElementById("edgeR");
-
-  const max = row.scrollWidth - row.clientWidth - 1;
-
-  L.classList.toggle("hide", row.scrollLeft <= 0);
-
-  R.classList.toggle("hide", row.scrollLeft >= max);
-}
-
-function scrollWall(dir) {
-  const row = document.getElementById("poster-row");
-
-  const step = row.clientWidth;
-
-  row.scrollBy({ left: dir * step, behavior: "smooth" });
-
-  setTimeout(updateEdges, 350);
-}
-
-function initWallInteractions() {
-  const row = document.getElementById("poster-row");
-
-  row.addEventListener("scroll", updateEdges);
-
-  row.addEventListener(
-    "wheel",
-    (e) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
-        e.preventDefault();
-        row.scrollBy({ left: e.deltaY, behavior: "auto" });
-      }
-    },
-    { passive: false }
-  );
-
-  updateEdges();
-}
-
-function cxBrandInfo(name) {
-  const key = String(name || "").toUpperCase();
-  
-  const map = {
-    PLEX: { cls: "brand-plex", icon: "/assets/img/PLEX.svg" },
-    SIMKL: { cls: "brand-simkl", icon: "/assets/img/SIMKL.svg" },
-    TRAKT: { cls: "brand-trakt", icon: "/assets/img/TRAKT.svg" },
-    ANILIST: { cls: "brand-anilist", icon: "/assets/img/ANILIST.svg" },
-  };
-  return map[key] || { cls: "", icon: "" };
-}
-
-function cxBrandLogo(providerName) {
-  const key = (providerName || "").toUpperCase();
-  const ICONS = {
-    PLEX:  "/assets/img/PLEX.svg",
-    SIMKL: "/assets/img/SIMKL.svg",
-    TRAKT: "/assets/img/TRAKT.svg",
-    ANILIST:"/assets/img/ANILIST.svg",
-    TMDB:  "/assets/img/TMDB.svg",
-    JELLYFIN: "/assets/img/JELLYFIN.svg",
-    EMBY: "/assets/img/EMBY.svg",
-  };
-  const src = ICONS[key];
-  return src
-    ? `<img class="token-logo" src="${src}" alt="${key} logo" width="28" height="28" loading="lazy">`
-    : `<span class="token-text">${providerName || ""}</span>`;
-}
-
-function updateFlowRailLogos() {
-  const keyOf = id => (document.getElementById(id)?.value || '')
-                      .trim()
-                      .toUpperCase();
-
-  const srcKey = keyOf('cx-src');
-  const dstKey = keyOf('cx-dst');
-
-  const rail = document.querySelector('.flow-rail.pretty');
-  if (!rail) return;
-
-  const tokens = rail.querySelectorAll('.token');
-  if (!tokens.length) return;
-
-  const setToken = (el, key) => {
-    el.innerHTML = key
-      ? `<img class="token-logo" src="/assets/img/${key}.svg" alt="${key}">`
-      : '';
-  };
-
-  setToken(tokens[0], srcKey);
-  if (tokens[1]) setToken(tokens[1], dstKey);
-}
-
-document.addEventListener('DOMContentLoaded', updateFlowRailLogos);
-['cx-src', 'cx-dst'].forEach(id =>
-  document.getElementById(id)?.addEventListener('change', updateFlowRailLogos)
-);
-
-function artUrl(item, size) {
-  const typ = isTV(item.type || item.entity || item.media_type) ? "tv" : "movie";
-  const tmdb = item.tmdb;
-  if (!tmdb) return null;
-  const cb = window._lastSyncEpoch || 0;
-  return `/art/tmdb/${typ}/${tmdb}?size=${encodeURIComponent(
-    size || "w342"
-  )}&cb=${cb}`;
-}
-
-/*! Watchlist preview */
-async function loadWall() {
-  try {
-    const card = document.getElementById("placeholder-card");
-    const [wlEnabled, hasKey, uiAllowed] = await Promise.all([
-      typeof isWatchlistEnabledInPairs === "function" ? isWatchlistEnabledInPairs() : true,
-      typeof hasTmdbKey === "function" ? hasTmdbKey() : true,
-      typeof isWatchlistPreviewAllowed === "function" ? isWatchlistPreviewAllowed() : true
-    ]);
-    if (!wlEnabled || !hasKey || !uiAllowed) {
-      if (card) card.classList.add("hidden");
-      return;
-    }
-    if (card) card.classList.remove("hidden");
-  } catch (_) {}
-
-  const myReq = ++wallReqSeq;
-  const card = document.getElementById("placeholder-card");
-  const msg  = document.getElementById("wall-msg");
-  const row  = document.getElementById("poster-row");
-
-  msg.textContent = "Loading…";
-  row.innerHTML = "";
-  row.classList.add("hidden");
-  card.classList.remove("hidden");
-
-  const hiddenMap = new Map(
-    (JSON.parse(localStorage.getItem("wl_hidden") || "[]") || []).map(k => [k, true])
-  );
-  const isLocallyHidden = (k) => hiddenMap.has(k);
-
-  const isDeleted = (item) => {
-    if (isLocallyHidden(item.key) && item.status === "deleted") return true;
-    if (isLocallyHidden(item.key) && item.status !== "deleted") {
-      hiddenMap.delete(item.key);
-      localStorage.setItem("wl_hidden", JSON.stringify([...hiddenMap.keys()]));
-    }
-    return (window._deletedKeys && window._deletedKeys.has(item.key)) || false;
-  };
-
-  
-  function pillFor(status) {
-    switch (String(status || "").toLowerCase()) {
-      case "deleted":    return { text: "DELETED", cls: "p-del" };
-      case "both":       return { text: "SYNCED",  cls: "p-syn" };
-      case "plex_only":  return { text: "PLEX",    cls: "p-px" };
-      case "simkl_only": return { text: "SIMKL",   cls: "p-sk" };
-      case "trakt_only": return { text: "TRAKT",   cls: "p-tr" };
-      case "anilist_only": return { text: "ANILIST", cls: "p-al" };
-      case "jellyfin_only": return { text: "JELLYFIN", cls: "p-sk" };
-      case "crosswatch_only": return { text: "CW", cls: "p-sk" };
-      case "cw_only":         return { text: "CW", cls: "p-sk" };
-      default:           return { text: "—",       cls: "p-sk" };
-    }
-  }
-
-  try {
-    const data = await fetch("/api/state/wall?both_only=0&active_only=1", { cache: "no-store" }).then(r => r.json());
-    if (myReq !== wallReqSeq) return;
-
-    if (data.missing_tmdb_key) { card.classList.add("hidden"); return; }
-    if (!data.ok) { msg.textContent = data.error || "No state data found."; return; }
-
-    let items = data.items || [];
-    if (!items.length && Array.isArray(data.items)) {
-      items = (data.items || []).filter(it => String(it.status || "").toLowerCase() === "both");
-    }
-
-    _lastSyncEpoch = data.last_sync_epoch || null;
-
-    if (items.length === 0) { msg.textContent = "No items to show yet."; return; }
-
-    msg.classList.add("hidden");
-    row.classList.remove("hidden");
-
-    
-    const firstSeen = (() => {
-      try { return JSON.parse(localStorage.getItem("wl_first_seen") || "{}"); }
-      catch { return {}; }
-    })();
-    const getTs = (it) => {
-      const s = it.added_epoch ?? it.added_ts ?? it.created_ts ?? it.created ?? it.epoch ?? null;
-      return Number(s || firstSeen[it.key] || 0);
-    };
-    const now = Date.now();
-    for (const it of items) if (!firstSeen[it.key]) firstSeen[it.key] = now;
-    localStorage.setItem("wl_first_seen", JSON.stringify(firstSeen));
-
-    
-    items = items.slice().sort((a, b) => getTs(b) - getTs(a));
-
-    
-    const MAX = Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20;
-    items = items.slice(0, MAX);
-
-    for (const it of items) {
-      if (!it.tmdb) continue;
-
-      const a = document.createElement("a");
-      a.className = "poster";
-      a.href = a.href = `https://www.themoviedb.org/${isTV(it.type) ? "tv" : "movie"}/${it.tmdb}`;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.dataset.type = it.type;
-      a.dataset.tmdb = String(it.tmdb);
-      a.dataset.key  = it.key || "";
-
-      const uiStatus = isDeleted(it) ? "deleted" : (it.status || "");
-      a.dataset.source = uiStatus;
-
-      const img = document.createElement("img");
-      img.loading = "lazy";
-      img.alt = `${it.title || ""} (${it.year || ""})`;
-      img.src = artUrl(it, "w342");
-
-      
-      img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
-
-      a.appendChild(img);
-
-      const ovr = document.createElement("div");
-      ovr.className = "ovr";
-      const pill = document.createElement("div");
-      const p = pillFor(uiStatus);
-      pill.className = "pill " + p.cls;
-      pill.textContent = p.text;
-      ovr.appendChild(pill);
-      a.appendChild(ovr);
-
-      const cap = document.createElement("div");
-      cap.className = "cap";
-      cap.textContent = `${it.title || ""} ${it.year ? "· " + it.year : ""}`;
-      a.appendChild(cap);
-
-      const hover = document.createElement("div");
-      hover.className = "hover";
-      hover.innerHTML = `
-        <div class="titleline">${it.title || ""}</div>
-        <div class="meta">
-          <div class="chip time" id="time-${it.type}-${it.tmdb}">${_lastSyncEpoch ? "updated " + relTimeFromEpoch(_lastSyncEpoch) : ""}</div>
-        </div>`;
-      a.appendChild(hover);
-
-      a.addEventListener("mouseenter", async () => {
-        const descEl = document.getElementById(`desc-${it.type}-${it.tmdb}`);
-        if (!descEl || descEl.dataset.loaded) return;
-        try {
-          const entity = isTV(it.type) ? "tv" : "movie";
-          const res = await fetch("/api/metadata/resolve", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ entity, ids: { tmdb: String(it.tmdb) }, need: { overview: true } })
-          });
-          const j = await res.json();
-          const meta = j?.ok ? j.result : null;
-          descEl.textContent = meta?.overview || "—";
-          descEl.dataset.loaded = "1";
-        } catch {
-          descEl.textContent = "—";
-          descEl.dataset.loaded = "1";
-        }
-      }, { passive: true });
-
-      row.appendChild(a);
-    }
-
-    initWallInteractions();
-
-  } catch {
-    msg.textContent = "Failed to load preview.";
-  }
-}
-
-async function updateWatchlistPreview() {
-  try {
-    const [hasKey, wlEnabled, uiAllowed] = await Promise.all([
-      hasTmdbKey?.(),
-      isWatchlistEnabledInPairs?.(),
-      isWatchlistPreviewAllowed?.()
-    ]);
-    const card = document.getElementById("placeholder-card");
-    if (!hasKey || !wlEnabled || !uiAllowed) {
-      if (card) card.classList.add("hidden");
-      window.wallLoaded = false;
-      return;
-    }
-    await loadWall();
-    window.wallLoaded = true;
-  } catch (e) {
-    console.error("Failed to update watchlist preview:", e);
-  }
-}
-
-async function hasTmdbKey(){
-  const pick = (cfg) => {
-    const fromBlock = (blk) => {
-      if (!blk || typeof blk !== "object") return "";
-      const k = String(blk.api_key || "").trim();
-      if (k) return k;
-      const insts = blk.instances;
-      if (insts && typeof insts === "object") {
-        for (const id of Object.keys(insts)) {
-          const v = insts[id];
-          const kk = v && typeof v === "object" ? String(v.api_key || "").trim() : "";
-          if (kk) return kk;
-        }
-      }
-      return "";
-    };
-    return fromBlock(cfg?.tmdb) || fromBlock(cfg?.tmdb_sync);
-  };
-  try{
-    if(window._cfgCache) return !!pick(window._cfgCache);
-    const cfg=await fetch("/api/config", { cache: "no-store" }).then(r=>r.json());
-    window._cfgCache=cfg;
-    return !!pick(cfg);
-  }catch{ return false; }
-}
-
-function isOnMain(){
-  var t = (document.documentElement.dataset.tab || "").toLowerCase();
-  if (t) return t === "main";
-  var th = document.getElementById("tab-main");
-  return !!(th && th.classList.contains("active"));
-}
-
-async function isWatchlistPreviewAllowed(){
-  try {
-    if (window._cfgCache) {
-      const ui = window._cfgCache.ui || window._cfgCache.user_interface || {};
-      if (typeof ui.show_watchlist_preview === "boolean") return !!ui.show_watchlist_preview;
-    }
-    const cfg = await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
-    window._cfgCache = cfg;
-    const ui = cfg.ui || cfg.user_interface || {};
-    if (typeof ui.show_watchlist_preview === "boolean") return !!ui.show_watchlist_preview;
-  } catch (e) {
-    console.warn("isWatchlistPreviewAllowed failed, falling back to true", e);
-  }
-  return true;
-}
-
-
-let __uPVBusy = false;
-window.__wallLoading = window.__wallLoading || false;
-
-async function updatePreviewVisibility() {
-  if (__uPVBusy) return false;
-  __uPVBusy = true;
-  try {
-    const card = document.getElementById("placeholder-card");
-    const row  = document.getElementById("poster-row");
-    const msg  = document.getElementById("wall-msg");
-    if (!card) return false;
-
-    const hideAll = () => {
-      if (!card.classList.contains("hidden")) card.classList.add("hidden");
-      if (row) { row.innerHTML = ""; if (!row.classList.contains("hidden")) row.classList.add("hidden"); }
-      if (msg) msg.textContent = "";
-      window.wallLoaded = false;
-    };
-
-    if (!isOnMain?.()) { hideAll(); return false; }
-
-    let hasKey = false, wlEnabled = false, uiAllowed = true;
-    try { hasKey = await hasTmdbKey?.(); } catch {}
-    try { wlEnabled = await isWatchlistEnabledInPairs?.(); } catch {}
-    try { uiAllowed = await isWatchlistPreviewAllowed?.(); } catch {}
-
-    if (!hasKey || !wlEnabled || !uiAllowed) { hideAll(); return false; }
-    if (card.classList.contains("hidden")) card.classList.remove("hidden");
-
-    if (!window.wallLoaded && !window.__wallLoading) {
-      window.__wallLoading = true;
-      try { await loadWall?.(); window.wallLoaded = true; } catch {}
-      finally { window.__wallLoading = false; }
-    }
-    return true;
-  } finally {
-    __uPVBusy = false;
-  }
-}
-
-try { window.updatePreviewVisibility = updatePreviewVisibility; } catch (e) {}
-
-
-showTab("main");
-
-let _bootPreviewTriggered = false;
-window.wallLoaded = false;
-
-window.addEventListener("storage", (event) => {
-  if (event.key === "wl_hidden") {
-    updatePreviewVisibility();
-    window.dispatchEvent(new CustomEvent("watchlist-hidden-changed"));
-  }
-});
-
-async function resolvePosterUrl(entity, id, size = "w342") {
-  
-  if (!id) return null;
-  if (window._cfgCache && !String(window._cfgCache?.tmdb?.api_key||"").trim()) return null;
-
-  const typ = isTV(entity) ? "tv" : "movie";
-  const cb = window._lastSyncEpoch || 0;
-
-  try {
-    const res = await fetch("/api/metadata/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        entity: typ,
-        ids: { tmdb: String(id) },
-        need: { poster: true }
-      })
-    });
-    if (!res.ok) return null;
-
-    const j = await res.json();
-    const meta = j && j.ok ? j.result : null;
-    if (!meta?.images?.poster?.length) return null;
-
-    
-    return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
-  } catch {
+  async function fetchJSON() {
+    if (window.Insights?.fetchJSON) return window.Insights.fetchJSON.apply(this, arguments);
     return null;
   }
-}
 
-async function mountAuthProviders() {
-  try {
-    const res = await fetch("/api/auth/providers/html", { cache: "no-store" });
-    if (!res.ok) return;
-
-    const html = await res.text();
-    const slot = document.getElementById("auth-providers");
-    if (slot) slot.innerHTML = html;
-
-    window.initMDBListAuthUI?.();
-    window.initTautulliAuthUI?.();
-    window.initAniListAuthUI?.();
-
-    try {
-      const root = document.getElementById("auth-providers");
-      if (root) {
-        const want = ["media servers", "trackers", "others"];
-        root.querySelectorAll(".section").forEach((sec) => {
-          const t = (
-            sec.querySelector(":scope > .head strong")?.textContent ||
-            sec.querySelector(":scope > .head")?.textContent ||
-            ""
-          ).trim().toLowerCase();
-          if (want.some((w) => t.startsWith(w))) {
-            sec.classList.remove("open");
-            const chev = sec.querySelector(":scope > .head .chev");
-            if (chev) chev.textContent = "▶";
-          }
-        });
-        root.querySelectorAll("details").forEach((det) => {
-          const t = (det.querySelector(":scope > summary")?.textContent || "").trim().toLowerCase();
-          if (want.some((w) => t.startsWith(w))) det.open = false;
-        });
-      }
-    } catch (_) {}
-
-
-    document.getElementById("btn-copy-plex-pin")
-      ?.addEventListener("click", (e) => copyInputValue?.("plex_pin", e.currentTarget));
-    document.getElementById("btn-copy-plex-token")
-      ?.addEventListener("click", (e) => copyInputValue?.("plex_token", e.currentTarget));
-    document.getElementById("btn-copy-trakt-pin")
-      ?.addEventListener("click", (e) => copyInputValue?.("trakt_pin", e.currentTarget));
-    document.getElementById("btn-copy-trakt-token")
-      ?.addEventListener("click", (e) => copyInputValue?.("trakt_token", e.currentTarget));
-
-    document.getElementById("trakt_client_id")
-      ?.addEventListener("input", () => window.updateTraktHint?.());
-    document.getElementById("trakt_client_secret")
-      ?.addEventListener("input", () => window.updateTraktHint?.());
-
-    await window.hydrateAuthFromConfig?.();
-    window.updateTraktHint?.();
-    window.startTraktTokenPoll?.();
-
-    setTimeout(() => window.updateTraktHint?.(), 0);
-    requestAnimationFrame(() => window.updateTraktHint?.());
-  } catch (e) {
-    console.warn("mountAuthProviders failed", e);
+  function scheduleInsights() {
+    return window.Insights?.scheduleInsights?.apply(this, arguments);
   }
-}
 
-async function mountMetadataProviders() {
-  try {
-    const res = await fetch("/api/metadata/providers/html");
-    if (!res.ok) return;
-    const html = await res.text();
+  async function refreshInsights() {
+    return window.Insights?.refreshInsights?.apply(this, arguments);
+  }
 
-    const raw = document.getElementById("meta-provider-raw");
-    if (raw) raw.innerHTML = html;
-    else {
-      const slot = document.getElementById("metadata-providers");
-      if (slot) slot.innerHTML = html;
+  function renderSparkline() {
+    return window.Insights?.renderSparkline?.apply(this, arguments);
+  }
+
+  function animateNumber() {
+    return window.Insights?.animateNumber?.apply(this, arguments);
+  }
+
+  function animateChart() {
+    return window.Insights?.animateChart?.apply(this, arguments);
+  }
+
+  async function refreshStats(force = false) {
+    if (window.Insights?.refreshStats) return window.Insights.refreshStats(force);
+    return null;
+  }
+
+  function _setBarValues(now, week, month) {
+    [
+      [".bar.week", week],
+      [".bar.month", month],
+      [".bar.now", now],
+    ].forEach(([selector, value]) => {
+      const el = document.querySelector(selector);
+      if (el) el.dataset.v = String(value);
+    });
+  }
+
+  function _initStatsTooltip() {
+    const chart = byId("stats-chart");
+    const tip = byId("stats-tip");
+    if (!chart || !tip) return;
+
+    [
+      [document.querySelector(".bar.week"), "Last Week"],
+      [document.querySelector(".bar.month"), "Last Month"],
+      [document.querySelector(".bar.now"), "Now"],
+    ].forEach(([el, label]) => {
+      if (!el) return;
+      const show = (x, y) => {
+        tip.textContent = `${label}: ${el.dataset.v || "0"} items`;
+        tip.style.left = `${x}px`;
+        tip.style.top = `${y}px`;
+        tip.hidden = false;
+        tip.classList.add("show");
+      };
+      el.addEventListener("mousemove", (ev) => {
+        const rect = chart.getBoundingClientRect();
+        show(ev.clientX - rect.left, ev.clientY - rect.top);
+      });
+      el.addEventListener("mouseleave", () => {
+        tip.hidden = true;
+        tip.classList.remove("show");
+      });
+      el.addEventListener("touchstart", (ev) => {
+        const touch = ev.touches?.[0];
+        if (!touch) return;
+        const rect = chart.getBoundingClientRect();
+        show(touch.clientX - rect.left, touch.clientY - rect.top);
+      }, { passive: true });
+      el.addEventListener("touchend", () => {
+        tip.hidden = true;
+        tip.classList.remove("show");
+      }, { passive: true });
+    });
+  }
+
+  function ensureMainUpdateSlot() {
+    let slot = byId("st-main-update");
+    if (slot) return slot;
+
+    const syncButton = Array.from(document.querySelectorAll("button")).find((btn) => /synchroni[sz]e/i.test(btn.textContent || ""));
+    const actionsRow = syncButton
+      ? (syncButton.closest(".sync-actions, .cx-sync-actions, .actions, .row, .toolbar") || syncButton.parentElement)
+      : document.querySelector(".sync-actions, .cx-sync-actions, .actions, .row, .toolbar");
+
+    slot = document.createElement("div");
+    slot.id = "st-main-update";
+    slot.className = "hidden";
+    if (actionsRow?.parentElement) {
+      actionsRow.insertAdjacentElement("afterend", slot);
+      return slot;
     }
 
-    try { cwMetaProviderEnsure?.(); } catch (_) {}
+    const previewHeader = Array.from(document.querySelectorAll("h2, .section-title")).find((node) => /watchlist\s*preview/i.test(node.textContent || ""));
+    if (previewHeader?.parentElement) {
+      previewHeader.insertAdjacentElement("beforebegin", slot);
+      return slot;
+    }
 
-    try { updateTmdbHint?.(); } catch (_) {}
-    try { cwMetaProviderUpdateChips?.(); } catch (_) {}
-  } catch (e) {}
-}
-
-
-document.addEventListener("DOMContentLoaded", () => {
-  try { mountMetadataProviders(); } catch (e) {}
-});
-
-try {
-  const exportsObj = { showTab, renderConnections };
-  if (typeof window.requestPlexPin === "function") {
-    exportsObj.requestPlexPin = window.requestPlexPin;
+    const main = document.querySelector('#tab-main, [data-tab="main"], .page-main, main') || document.body;
+    main.insertBefore(slot, main.firstChild || null);
+    return slot;
   }
-  Object.assign(window, exportsObj);
-} catch (e) {
-  console.warn("Global export failed", e);
-}
 
-if (typeof window.requestPlexPin !== "function") {
-  window.requestPlexPin = function () {
-    console.warn("requestPlexPin is not available yet — ensure auth.plex-simkl.js is loaded before crosswatch.js or call it later.");
-  };
-}
-
-
-if (typeof updateSimklHint !== "function") {
-  function updateSimklHint() {}
-}
-
-
-
-async function loadProviders() {
-  const div = document.getElementById("providers_list");
-  if (!div) return;
-
-  let arr = [];
-  try {
-    arr = await fetch("/api/sync/providers", { cache: "no-store" })
-      .then((r) => r.json())
-      .catch(() => []);
-
-    if (!Array.isArray(arr) || !arr.length) {
-      div.innerHTML = '<div class="muted">No providers discovered.</div>';
+  function renderMainUpdatePill(hasUpdate, latest, url) {
+    const host = ensureMainUpdateSlot();
+    if (!host) return;
+    if (hasUpdate && latest) {
+      host.innerHTML = `<div class="pill"><span class="dot" aria-hidden="true"></span><span>Update <strong>${latest}</strong> available · <a href="${url}" target="_blank" rel="noopener">Release notes</a></span></div>`;
+      host.classList.remove("hidden");
       return;
     }
+    host.classList.add("hidden");
+    host.textContent = "";
+  }
 
-    
-    const normKey = (s = "") => {
-      s = String(s).toUpperCase();
-      if (/\bPLEX\b/.test(s)) return "PLEX";
-      if (/\bSIMKL\b/.test(s)) return "SIMKL";
-      if (/\bTRAKT\b/.test(s)) return "TRAKT";
-      if (/\bANILIST\b/.test(s)) return "ANILIST";
-      if (/\bJELLYFIN\b/.test(s)) return "JELLYFIN";
-      if (/\bEMBY\b/.test(s)) return "EMBY";
-      return s;
-    };
-
-    const html = arr
-      .map((p) => {
-        const key = normKey(p.key || p.name || p.label);
-        const caps = p.features || {};
-        const chip = (t, on) =>
-          `<span class="badge ${on ? "" : "feature-disabled"}" style="margin-left:6px">${t}</span>`;
-        return `
-          <div class="card prov-card" data-prov="${key}">
-            <div style="padding:12px;display:flex;justify-content:space-between;align-items:center">
-              <div class="title" style="font-weight:700">${p.label || p.name || key}</div>
-              <div>
-                ${chip("Watchlist", !!caps.watchlist)}
-                ${chip("Ratings",   !!caps.ratings)}
-                ${chip("History",   !!caps.history)}
-                ${chip("Playlists", !!caps.playlists)}
-              </div>
-            </div>
-          </div>`;
-      })
-      .join("");
-
-    div.innerHTML = html;
-    window.cx = window.cx || {};
-    window.cx.providers = Array.isArray(arr) ? arr : [];
-
+  async function checkForUpdate() {
     try {
-      if (typeof renderConnections === "function") renderConnections();
-    } catch (e) {
-      console.warn("renderConnections failed", e);
+      const payload = await requestJSON("/api/version", {}, 15000);
+      const current = String(payload.current ?? "0.0.0").trim();
+      const latest = payload.latest ? String(payload.latest).trim() : null;
+      const url = payload.html_url || "https://github.com/cenodude/CrossWatch/releases";
+      const hasUpdate = !!payload.update_available;
+
+      const versionEl = byId("app-version");
+      if (versionEl) versionEl.textContent = `Version ${current}`;
+
+      const badge = byId("st-update");
+      if (badge) {
+        if (hasUpdate && latest) {
+          const changed = latest !== (badge.dataset.lastLatest || "");
+          badge.classList.add("badge", "upd");
+          badge.innerHTML = `<a href="${url}" target="_blank" rel="noopener" title="Open release page">Update ${latest} available</a>`;
+          badge.classList.remove("hidden");
+          if (changed) {
+            badge.dataset.lastLatest = latest;
+            badge.classList.remove("reveal");
+            void badge.offsetWidth;
+            badge.classList.add("reveal");
+          }
+        } else {
+          badge.classList.add("hidden");
+          badge.classList.remove("reveal");
+          badge.textContent = "";
+          badge.removeAttribute("aria-label");
+          delete badge.dataset.lastLatest;
+        }
+      }
+
+      renderMainUpdatePill(hasUpdate, latest, url);
+    } catch (err) {
+      console.debug("Version check failed:", err);
     }
-  } catch (e) {
-    div.innerHTML = '<div class="muted">Failed to load providers.</div>';
-    console.warn("loadProviders error", e);
-  } finally {
+  }
+
+  (function initUpdateChecks() {
+    if (window.__cwUpdateInitDone) return;
+    window.__cwUpdateInitDone = true;
+    const run = () => {
+      try { checkForUpdate(); } catch (e) { console.debug("checkForUpdate failed:", e); }
+    };
+    onReady(run);
+    setInterval(run, UPDATE_CHECK_INTERVAL_MS);
+  })();
+
+  function renderSummaryCore(summary) {
+    state.currentSummary = summary;
+    UI.summary = summary;
+
+    const chips = {
+      "chip-plex": summary.plex_post ?? summary.plex_pre,
+      "chip-simkl": summary.simkl_post ?? summary.simkl_pre,
+      "chip-dur": summary.duration_sec != null ? `${summary.duration_sec}s` : "–",
+      "chip-exit": summary.exit_code != null ? String(summary.exit_code) : "–",
+    };
+    Object.entries(chips).forEach(([id, value]) => setText(id, value ?? "–"));
+
+    if (summary.running) setSyncHeader("sync-warn", "Running…");
+    else if (summary.exit_code === 0) setSyncHeader("sync-ok", String(summary.result || "").toUpperCase() === "EQUAL" ? "In sync " : "Synced ");
+    else if (summary.exit_code != null) setSyncHeader("sync-bad", "Attention needed ⚠️");
+    else setSyncHeader("sync-warn", "Idle — run a sync to see results");
+
+    setText("det-cmd", summary.cmd || "–");
+    setText("det-ver", summary.version || "–");
+    setText("det-start", toLocal(summary.started_at));
+    setText("det-finish", toLocal(summary.finished_at));
+  }
+
+  const previousRenderSummary = window.renderSummary;
+  function renderSummary(summary) {
+    try { previousRenderSummary?.(summary); } catch {}
+    try { renderSummaryCore(summary); } catch {}
+    try { refreshStats(false); } catch {}
+  }
+  window.renderSummary = renderSummary;
+
+  async function copySummary(btn) {
+    const summary = state.currentSummary || UI.summary;
+    if (!summary) {
+      flashCopy(btn, false, "No summary yet");
+      return false;
+    }
+
+    const lines = [
+      `Status: ${readText("sync-status-text", "—")}`,
+      `Command: ${summary.cmd || "—"}`,
+      `Version: ${summary.version || "—"}`,
+      `Started: ${toLocal(summary.started_at)}`,
+      `Finished: ${toLocal(summary.finished_at)}`,
+      `Duration: ${summary.duration_sec != null ? `${summary.duration_sec}s` : "—"}`,
+      `Exit: ${summary.exit_code != null ? summary.exit_code : "—"}`,
+    ];
 
     try {
-      if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
-      else if (typeof applySyncVisibility === "function") applySyncVisibility();
-    } catch {}
+      await navigator.clipboard.writeText(lines.join("\n"));
+      flashCopy(btn, true);
+      return true;
+    } catch {
+      flashCopy(btn, false);
+      return false;
+    }
   }
-}
 
-(function () {
-  try { window.addPair = addPair; } catch (e) {}
-  try { window.savePairs = savePairs; } catch (e) {}
-  try { window.deletePair = deletePair; } catch (e) {}
-  try { window.loadPairs = loadPairs; } catch (e) {}
-
-  try { window.addBatch = addBatch; } catch (e) {}
-  try { window.saveBatches = saveBatches; } catch (e) {}
-  try { window.loadBatches = loadBatches; } catch (e) {}
-  try { window.runAllBatches = runAllBatches; } catch (e) {}
-
-  try { window.loadProviders = loadProviders; } catch (e) {}
-})();
-
-try { window.showTab = showTab; } catch (e) {}
-try { window.runSync = runSync; } catch (e) {}
-
-window.cx = window.cx || {
-  providers: [],
-  pairs: [],
-  connect: { source: null, target: null },
-};
-
-function _cap(obj, key) {
-  try {
-    return !!(obj && obj.features && obj.features[key]);
-  } catch (_) {
-    return false;
+  function downloadSummary() {
+    window.open("/api/run/summary/file", "_blank");
   }
-}
-function _byName(list, name) {
-  name = String(name || "").toUpperCase();
-  return (list || []).find((p) => String(p.name || "").toUpperCase() === name);
-}
-function _normWatchlistFeature(val) {
-  if (val && typeof val === "object")
-    return { add: !!val.add, remove: !!val.remove };
-  return { add: !!val, remove: false };
-}
-function _pairFeatureObj(pair) {
-  const f = (pair && pair.features) || {};
-  return { watchlist: _normWatchlistFeature(f.watchlist) };
-}
 
-function renderConnections() {
-  try { document.dispatchEvent(new Event("cx-state-change")); } catch(_) {}
-}
-
-
-
-/*! Connections (pairs API) */
-async function loadPairs() {
-  try {
-    const res = await fetch("/api/pairs", { cache: "no-store" });
-    const arr = await res.json().catch(() => []);
-    window.cx = window.cx || {};
-    window.cx.pairs = Array.isArray(arr) ? arr : [];
-    try { renderConnections(); } catch (_) {}
-    return window.cx.pairs;
-  } catch (e) {
-    console.warn("[cx] loadPairs failed", e);
-    return [];
+  function setRefreshBusy(busy) {
+    const btn = byId("btn-status-refresh");
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.classList.toggle("loading", !!busy);
   }
-}
 
-async function deletePair(id) {
-  if (!id) return false;
-  try {
-    const res = await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    await loadPairs();
-    return true;
-  } catch (e) {
-    console.warn("[cx] deletePair failed", e);
-    return false;
+  window.openAbout = () => window.ModalRegistry.open("about");
+  window.cxEnsureCfgModal = window.cxEnsureCfgModal || function () {};
+  window.wireSecretTouch = window.wireSecretTouch || function wireSecretTouch(id) {
+    const el = byId(id);
+    if (!el || el.__wiredTouch) return;
+    el.addEventListener("input", () => {
+      el.dataset.touched = "1";
+      el.dataset.masked = "0";
+    });
+    el.__wiredTouch = true;
+  };
+
+  window.maskSecret = function maskSecret(elOrId) {
+    const el = typeof elOrId === "string" ? byId(elOrId) : elOrId;
+    if (!el) return;
+    el.dataset.masked = "0";
+    el.dataset.loaded = "1";
+    el.dataset.touched = "";
+    el.dataset.clear = "";
+  };
+
+
+  function isPlaceholder(value, placeholder) {
+    return String(value || "").trim().toUpperCase() === String(placeholder || "").trim().toUpperCase();
   }
-}
 
-async function cxSavePair(data, editingId = "") {
-  try {
+  function isSettingsVisible() {
+    const page = byId("page-settings");
+    return !!(page && !page.classList.contains("hidden"));
+  }
+
+  function setBtnBusy(id, busy) {
+    const el = byId(id);
+    if (!el) return;
+    el.disabled = !!busy;
+    el.classList.toggle("opacity-50", !!busy);
+  }
+
+  function flashBtnOK(btnEl) {
+    if (!btnEl) return;
+    btnEl.disabled = true;
+    btnEl.classList.add("copied");
+    setTimeout(() => {
+      btnEl.classList.remove("copied");
+      btnEl.disabled = false;
+    }, 700);
+  }
+
+  function normalizePairPayload(data, editingId = "") {
     const src = String(data?.source || "").trim();
     const dst = String(data?.target || "").trim();
     const mode = String(data?.mode || "one-way").toLowerCase() === "two-way" ? "two-way" : "one-way";
     const enabled = data?.enabled !== false;
+    const features = data?.features || {};
+    const basic = (value) => ({ enable: !!value?.enable, add: !!value?.add, remove: !!value?.remove });
 
-    const normBasic = (v) => ({ enable: !!v?.enable, add: !!v?.add, remove: !!v?.remove });
-    const featuresIn = data?.features || {};
-    const payload = {
+    return {
+      id: String(editingId || data?.id || "").trim() || undefined,
       source: src,
       target: dst,
       enabled,
       mode,
       features: {
-        watchlist: normBasic(featuresIn.watchlist),
-        ratings:   { ...normBasic(featuresIn.ratings), types: Array.isArray(featuresIn.ratings?.types) ? featuresIn.ratings.types : undefined, mode: featuresIn.ratings?.mode, from_date: featuresIn.ratings?.from_date },
-        history:   normBasic(featuresIn.history),
-        playlists: normBasic(featuresIn.playlists),
+        watchlist: basic(features.watchlist),
+        ratings: {
+          ...basic(features.ratings),
+          types: Array.isArray(features.ratings?.types) ? features.ratings.types : undefined,
+          mode: features.ratings?.mode,
+          from_date: features.ratings?.from_date,
+        },
+        history: basic(features.history),
+        playlists: basic(features.playlists),
       },
     };
-
-    const id = String(editingId || data?.id || "").trim();
-    const url = id ? `/api/pairs/${encodeURIComponent(id)}` : "/api/pairs";
-    const method = id ? "PUT" : "POST";
-
-    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-
-    await loadPairs();
-    return { ok: true };
-  } catch (e) {
-    console.warn("[cx] cxSavePair failed", e);
-    return { ok: false, error: String(e?.message || e) };
   }
-}
 
-window.addEventListener('cx:open-modal', function(ev){
-  try{
-    var detail = ev.detail || {};
-    if (typeof window.cxOpenModalFor === 'function') {
-      window.cxOpenModalFor(detail);
+  function renderConnectionsSafe() {
+    try { window.renderConnections?.(); } catch {}
+  }
+
+  async function loadPairs(force = false) {
+    try {
+      const list = await _getPairsFresh(!!force);
+      window.cx = window.cx || {};
+      window.cx.pairs = Array.isArray(list) ? list : [];
+      renderConnectionsSafe();
+      return window.cx.pairs;
+    } catch (e) {
+      console.warn("[cx] loadPairs failed", e);
+      return [];
     }
-  }catch(e){ console.warn('cx modal bridge failed', e); }
+  }
+
+  async function deletePair(id) {
+    if (!id) return false;
+    try {
+      if (typeof API.Pairs?.delete === "function") await API.Pairs.delete(id);
+      else {
+        const res = await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      }
+      _invalidatePairsCache();
+      await loadPairs(true);
+      return true;
+    } catch (e) {
+      console.warn("[cx] deletePair failed", e);
+      return false;
+    }
+  }
+
+  async function cxSavePair(data, editingId = "") {
+    try {
+      const payload = normalizePairPayload(data, editingId);
+      if (typeof API.Pairs?.save === "function") await API.Pairs.save(payload);
+      else {
+        const id = payload.id;
+        const url = id ? `/api/pairs/${encodeURIComponent(id)}` : "/api/pairs";
+        const method = id ? "PUT" : "POST";
+        const res = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      }
+      _invalidatePairsCache();
+      await loadPairs(true);
+      return { ok: true };
+    } catch (e) {
+      console.warn("[cx] cxSavePair failed", e);
+      return { ok: false, error: String(e?.message || e) };
+    }
+  }
+
+  window.addEventListener("cx:open-modal", (ev) => {
+    try {
+      if (typeof window.cxOpenModalFor === "function") window.cxOpenModalFor(ev.detail || {});
+    } catch (e) {
+      console.warn("cx modal bridge failed", e);
+    }
+  });
+
+  function fixFormLabels(root = document) {
+    if (typeof DOM.fixFormLabels === "function") return DOM.fixFormLabels(root);
+    let uid = 0;
+    root.querySelectorAll("label").forEach((label) => {
+      if (label.hasAttribute("for")) return;
+      if (label.querySelector("input,select,textarea")) return;
+      let control = label.nextElementSibling;
+      while (control && !control.matches?.("input,select,textarea")) control = control.nextElementSibling;
+      if (!control) control = label.parentElement?.querySelector?.("input,select,textarea");
+      if (!control) return;
+      if (!control.id) control.id = `auto_lbl_${++uid}`;
+      label.setAttribute("for", control.id);
+    });
+  }
+
+Object.assign(window, {
+  _el: byId, _val: readValue, _boolSel: boolSelect, _text: readText,
+  _setVal: setValue, _setText: setText, _setChecked: setChecked, setValIfExists: setValue,
+  isTV, stateAsBool, cwGetProviderInstances, cwGetProviderUsers, cwEnsureScrobbleRoutes, cwNextRouteId,
+  applyServerSecret, startSecretLoad, finishSecretLoad, getConfiguredProviders, resolveProviderKeyFromNode,
+  applySyncVisibility, scheduleApplySyncVisibility, bindSyncVisibilityObservers,
+  _invalidatePairsCache, _savePairsCache, _loadPairsCache, _getPairsFresh, isWatchlistEnabledInPairs,
+  normalizeProviders, saveStatusCache, loadStatusCache, refreshPairedProviders, toggleProviderBadges,
+  connState, pickCase, instancesTooltip, setBadge, renderConnectorStatus, refreshStatus, manualRefreshStatus,
+  toLocal, computeRedirectURI, flashCopy, recomputeRunDisabled, setSyncHeader, relTimeFromEpoch,
+  enforceMainLayout, softRefreshMain, hardRefreshMain, showTab, ensureScrobbler, toggleSection, setBusy,
+  runSync, setStatsExpanded, isElementOpen, findDetailsButton, findDetailsPanel, wireDetailsToStats,
+  fetchJSON, scheduleInsights, refreshInsights, renderSparkline, animateNumber, animateChart, refreshStats,
+  _setBarValues, _initStatsTooltip, ensureMainUpdateSlot, renderMainUpdatePill, checkForUpdate,
+  renderSummary, copySummary, downloadSummary, setRefreshBusy, isPlaceholder,
+  isSettingsVisible, setBtnBusy, flashBtnOK, loadPairs, deletePair, cxSavePair, fixFormLabels,
+  cwToggleSyncMenu, cwCloseSyncMenu, DETAILS_MAX_LINES,
 });
 
-
-
-/*! Accessibility */
-function fixFormLabels(root = document) {
-  const ctrls = new Set(["INPUT","SELECT","TEXTAREA"]);
-  let uid = 0;
-  root.querySelectorAll("label").forEach(lab => {
-    if (lab.hasAttribute("for")) return;
-    const owned = lab.querySelector("input,select,textarea");
-    if (owned) return; 
-    
-    let ctrl = lab.nextElementSibling;
-    while (ctrl && !ctrl.matches?.("input,select,textarea")) {
-      ctrl = ctrl.nextElementSibling;
-    }
-    if (!ctrl) ctrl = lab.parentElement?.querySelector?.("input,select,textarea");
-    if (!ctrl) return;
-    if (!ctrl.id) ctrl.id = "auto_lbl_" + (++uid);
-    lab.setAttribute("for", ctrl.id);
+  onReady(() => {
+    try { fixFormLabels(); } catch {}
+    try { wireDetailsToStats(); } catch {}
+    try { scheduleInsights(); } catch {}
+    try { refreshInsights(); } catch {}
+    try { _initStatsTooltip(); } catch {}
+    try { showTab("main"); } catch {}
+    try { loadPairs(false); } catch {}
+    try { window.mountMetadataProviders?.(); } catch {}
+    try { window.cwSchedProviderEnsure?.(); } catch {}
+    try { bindSyncVisibilityObservers(); } catch {}
+    try { window.cwInitPendingProtoBanner?.(); } catch {}
+    bootstrapStatusFromCache();
   });
-}
-document.addEventListener("DOMContentLoaded", () => { try { fixFormLabels(); } catch(_){} });
-
-
-/*! Boot */
-try {
-  Object.assign(window, {
-    showTab,
-    runSync,
-    toggleSection,
-    toggleDetails,
-    downloadSummary,
-    copySummary,
-    refreshStatus,
-    refreshStats,
-    refreshInsights,
-    scrollWall,
-    updatePreviewVisibility,
-    loadProviders,
-    loadPairs,
-    deletePair,
-    cxSavePair,
-    renderConnections,
-    fixFormLabels,
-    cwToggleSyncMenu,
-    cwCloseSyncMenu,
-  });
-} catch (_) {}
-
-document.addEventListener("DOMContentLoaded", () => {
-  try { loadProviders(); } catch (_) {}
-  try { loadPairs(); } catch (_) {}
-  try { mountAuthProviders(); } catch (_) {}
-  try { cwSchedProviderEnsure?.(); } catch (_) {}
-  try {
-    if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
-    else if (typeof applySyncVisibility === "function") applySyncVisibility();
-  } catch (_) {}
-  try { cwInitPendingProtoBanner(); } catch (_) {}
-});
+})();
