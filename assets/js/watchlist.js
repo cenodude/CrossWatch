@@ -318,17 +318,17 @@
 
           </div>
           <div class="ins-row"><div class="ins-kv" style="width:100%">
-            <label>View</label>
-            <select id="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select>
+            <label for="wl-view">View</label>
+            <select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select>
 
-            <label>Search</label>
-            <input id="wl-q" class="wl-input" placeholder="Search title...">
+            <label for="wl-q">Search</label>
+            <input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title...">
 
-            <label>Type</label>
-            <select id="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select>
+            <label for="wl-type">Type</label>
+            <select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select>
 
-            <label>Provider</label>
-            <select id="wl-provider" class="wl-input">
+            <label for="wl-provider">Provider</label>
+            <select id="wl-provider" name="wl-provider" class="wl-input">
               <option value="">All</option>
               <option value="PLEX">PLEX</option>
               <option value="SIMKL">SIMKL</option>
@@ -341,27 +341,27 @@
               <option value="CROSSWATCH">CROSSWATCH</option>
             </select>
 
-            <label id="wl-size-label">Size</label>
-            <input id="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0">
+            <label id="wl-size-label" for="wl-size">Size</label>
+            <input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0">
           </div></div>
 
           <div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv" style="width:100%">
-            <label>Released</label>
-            <select id="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Yes</option><option value="unreleased">No</option></select>
+            <label for="wl-released">Released</label>
+            <select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Yes</option><option value="unreleased">No</option></select>
 
-            <label id="wl-overlays-label">Show overlays</label>
-            <select id="wl-overlays" class="wl-input"><option value="yes">Yes</option><option value="no">No</option></select>
+            <label id="wl-overlays-label" for="wl-overlays">Show overlays</label>
+            <select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">Yes</option><option value="no">No</option></select>
 
-            <label>Genre</label>
-            <select id="wl-genre" class="wl-input"><option value="">All</option></select>
+            <label for="wl-genre">Genre</label>
+            <select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select>
 
-            <label id="wl-cols-label">Columns</label>
+            <div id="wl-cols-label" class="field-label">Columns</div>
             <div id="wl-cols" class="wl-cols">
-              <label class="wl-colchip"><input type="checkbox" data-col="poster">Poster</label>
-              <label class="wl-colchip"><input type="checkbox" data-col="rel">Release</label>
-              <label class="wl-colchip"><input type="checkbox" data-col="genre">Genre</label>
-              <label class="wl-colchip"><input type="checkbox" data-col="type">Type</label>
-              <label class="wl-colchip"><input type="checkbox" data-col="sync">Sync</label>
+              <label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label>
+              <label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label>
+              <label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label>
+              <label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label>
+              <label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label>
             </div>
           </div></div>
 
@@ -374,9 +374,9 @@
         <div class="ins-card">
           <div class="ins-row"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div>
           <div class="ins-row"><div class="ins-kv" style="width:100%">
-            <label>Delete</label>
+            <div class="field-label">Delete</div>
             <div class="wl-actions" style="display:flex;gap:10px">
-              <select id="wl-delete-provider" class="wl-input" style="flex:1">
+              <select id="wl-delete-provider" name="wl-delete-provider" class="wl-input" style="flex:1">
                 <option value="ALL">ALL (default)</option>
                 <option value="CROSSWATCH">CROSSWATCH</option>
                 <option value="PLEX">PLEX</option>
@@ -391,7 +391,7 @@
               <button id="wl-delete" class="wl-btn danger" disabled>Delete</button>
             </div>
 
-            <label>Visibility</label>
+            <div class="field-label">Visibility</div>
             <div class="wl-actions" style="display:flex;gap:10px"><button id="wl-hide" class="wl-btn" disabled>Hide (local)</button><button id="wl-unhide" class="wl-btn">Unhide all</button></div>
           </div></div>
         </div>
@@ -1160,7 +1160,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       const d = getDerived(it);
 
       tr.innerHTML = `
-        <td style="text-align:center"><input type="checkbox" data-k="${key}" ${selected.has(key) ? "checked" : ""}></td>
+        <td style="text-align:center"><input type="checkbox" name="wl-select" data-k="${key}" ${selected.has(key) ? "checked" : ""}></td>
         <td class="wl-poster-cell" data-col="poster" style="text-align:center"><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>
         <td class="title" data-col="title"><div>${esc(it.title || "")}</div></td>
         <td class="rel" data-col="rel">${esc(d.relFmt)}</td>
