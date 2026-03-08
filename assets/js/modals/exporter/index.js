@@ -209,29 +209,29 @@ export default {
       <div class="ex-body">
         <div class="row">
           <div class="field">
-            <label>Provider</label>
-            <select id="ex-prov" class="input"></select>
+            <label for="ex-prov">Provider</label>
+            <select id="ex-prov" name="ex-prov" class="input"></select>
           </div>
           <div class="field">
-            <label>Instance</label>
-            <select id="ex-inst" class="input"></select>
+            <label for="ex-inst">Instance</label>
+            <select id="ex-inst" name="ex-inst" class="input"></select>
           </div>
           <div class="field">
-            <label>Feature</label>
-            <select id="ex-feat" class="input">
+            <label for="ex-feat">Feature</label>
+            <select id="ex-feat" name="ex-feat" class="input">
               <option value="watchlist">Watchlist</option>
               <option value="history">History</option>
               <option value="ratings">Ratings</option>
             </select>
           </div>
           <div class="field">
-            <label>Format</label>
-            <select id="ex-fmt" class="input"></select>
+            <label for="ex-fmt">Format</label>
+            <select id="ex-fmt" name="ex-fmt" class="input"></select>
           </div>
 
           <div class="field search">
-            <label>Search (title/id/year)</label>
-            <input id="ex-q" class="input" type="text" placeholder="e.g. imdb:tt0468569, 2025, Twisted Metal">
+            <label for="ex-q">Search (title/id/year)</label>
+            <input id="ex-q" name="ex-q" class="input" type="text" placeholder="e.g. imdb:tt0468569, 2025, Twisted Metal">
           </div>
 
           <div class="row-right">
@@ -355,7 +355,7 @@ export default {
       const extra = (it.rating || "") || (it.watched_at || "");
       const isChecked = (mode === "all") ? true : selected.has(it.key);
       return `<tr data-key="${it.key}">
-        <td><input type="checkbox" class="glow-check row-check" ${isChecked ? "checked" : ""}></td>
+        <td><input type="checkbox" name="ex-row" class="glow-check row-check" ${isChecked ? "checked" : ""}></td>
         <td class="td-wrap">${it.title || ""}</td>
         <td>${it.year || ""}</td>
         <td>${it.type || ""}</td>

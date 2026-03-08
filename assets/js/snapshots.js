@@ -1409,7 +1409,7 @@ const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [
       const showPick = !isBundle && (inScope || ixPick !== -1);
       const pickHtml = showPick
         ? `${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}">${abTag}</span>` : ""}` +
-          `<input class="ss-chk" type="checkbox" title="Select for compare" data-act="diffpick" ${ixPick !== -1 ? "checked" : ""} />`
+          `<input class="ss-chk" type="checkbox" name="ss-diffpick" title="Select for compare" data-act="diffpick" ${ixPick !== -1 ? "checked" : ""} />`
         : "";
 
       item.innerHTML = `
