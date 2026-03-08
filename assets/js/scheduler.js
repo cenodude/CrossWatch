@@ -9,6 +9,8 @@
   const $ = (s, r = document) => r.querySelector(s);
   const el = (t, c) => Object.assign(document.createElement(t), c ? { className: c } : {});
 
+  const fieldKey = (value, fallback = "field") => String(value || fallback).replace(/[^a-z0-9_-]+/gi, "_");
+
   // stable id (UUID when possible)
   const genId = (() => {
     const withCrypto = () => {
@@ -173,9 +175,12 @@ const ensureStdEnabledToggle = () => {
   // row builder
   const jobRow = j => {
     const tr = el("tr"); if (j.active !== false && j.pair_id && !isEnabled(j.pair_id)) tr.classList.add("row-disabled");
+    const rowKey = fieldKey(j?.id, `job_${_jobs.indexOf(j) + 1}`);
 
     // pair
     const tdPair = el("td"), sel = el("select");
+    sel.id = `sched_pair_${rowKey}`;
+    sel.name = sel.id;
     sel.appendChild(Object.assign(el("option"), { value: "", textContent: "— select pair —" }));
     _pairs.forEach(p => {
       const o = Object.assign(el("option"), { value: p.id, textContent: p.label + (p.enabled ? "" : " (disabled)"), disabled: !p.enabled, selected: String(j.pair_id||"") === p.id });
@@ -185,12 +190,16 @@ const ensureStdEnabledToggle = () => {
 
     // time
     const tdTime = el("td"), t = Object.assign(el("input"), { type: "time", value: j.at || "" });
+    t.id = `sched_time_${rowKey}`;
+    t.name = t.id;
     t.onchange = () => j.at = (t.value || "").trim() || null; tdTime.appendChild(t);
 
     // days
     const tdDays = el("td"), wrap = el("div","chipdays"), cur = new Set(Array.isArray(j.days) ? j.days : []);
     DAY.forEach((d,i) => {
       const lab = el("label"), chk = Object.assign(el("input"), { type: "checkbox", checked: cur.has(i+1) });
+      chk.id = `sched_days_${rowKey}_${i+1}`;
+      chk.name = `sched_days_${rowKey}[]`;
       chk.onchange = () => { const S = new Set(Array.isArray(j.days) ? j.days : []); chk.checked ? S.add(i+1) : S.delete(i+1); j.days = [...S].sort((a,b)=>a-b); };
       lab.append(chk, document.createTextNode(d)); wrap.appendChild(lab);
     if(i===2){ wrap.appendChild(el("span","chipspacer")); }
@@ -199,12 +208,16 @@ const ensureStdEnabledToggle = () => {
 
     // after
     const tdAfter = el("td"), sa = el("select");
+    sa.id = `sched_after_${rowKey}`;
+    sa.name = sa.id;
     sa.appendChild(Object.assign(el("option"), { value: "", textContent: "— none —" }));
     _jobs.filter(x => x !== j).forEach((x,i) => sa.appendChild(Object.assign(el("option"), { value: String(x.id), textContent: `Step ${i+1}`, selected: String(j.after||"") === String(x.id) })));
     sa.onchange = () => { j.after = sa.value || null; renderJobs(); }; tdAfter.appendChild(sa);
 
     // active
     const tdOn = el("td"), c = Object.assign(el("input"), { type: "checkbox", checked: j.active !== false });
+    c.id = `sched_active_${rowKey}`;
+    c.name = c.id;
     c.onchange = () => { j.active = !!c.checked; renderJobs(); }; tdOn.appendChild(c);
 
     // delete
@@ -357,5 +370,11 @@ const ensureStdEnabledToggle = () => {
   document.addEventListener("DOMContentLoaded", () => {
     loadScheduling().catch(e => console.warn("scheduler load failed", e));
     try { window.dispatchEvent(new Event("sched-banner-ready")); } catch {}
+  });
+
+  document.addEventListener("config-saved", (e) => {
+    const section = e?.detail?.section;
+    if (section && section !== "scheduling") return;
+    loadScheduling().catch(err => console.warn("scheduler reload failed", err));
   });
 })();
