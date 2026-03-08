@@ -55,27 +55,26 @@
   .lane-ico{font-size:18px;line-height:1}
   .lane-title{font-weight:600;font-size:13px;opacity:.95}
   .lane-badges{margin-left:auto;display:flex;gap:6px;align-items:center}
-  .chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);opacity:.9}
-  .chip.ok{border-color:rgba(0,220,130,.45);color:#4be3a6}
-  .chip.run{border-color:rgba(0,180,255,.45);color:#4dd6ff}
-  .chip.skip{border-color:rgba(255,255,255,.18);color:rgba(255,255,255,.7)}
-  .chip.err{border-color:rgba(255,80,80,.5);color:#ff7b7b}
+  #ux-lanes .chip,#ux-spotlight .chip,.ux-spots-modal .chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);opacity:.9}
+  #ux-lanes .chip.ok,#ux-spotlight .chip.ok,.ux-spots-modal .chip.ok{border-color:rgba(0,220,130,.45);color:#4be3a6}
+  #ux-lanes .chip.run,#ux-spotlight .chip.run,.ux-spots-modal .chip.run{border-color:rgba(0,180,255,.45);color:#4dd6ff}
+  #ux-lanes .chip.skip,#ux-spotlight .chip.skip,.ux-spots-modal .chip.skip{border-color:rgba(255,255,255,.18);color:rgba(255,255,255,.7)}
+  #ux-lanes .chip.err,#ux-spotlight .chip.err,.ux-spots-modal .chip.err{border-color:rgba(255,80,80,.5);color:#ff7b7b}
   .delta{font-size:11px;display:inline-flex;gap:6px;align-items:center;opacity:.9}
   .delta b{font-weight:600}
   .lane-body{margin-top:8px;display:grid;grid-template-columns:1fr;gap:6px}
   .spot{font-size:12px;opacity:.95;display:flex;gap:8px;align-items:baseline}
-  .tag{font-size:10px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);opacity:.85;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px}
+  #ux-lanes .tag,#ux-spotlight .tag,.ux-spots-modal .tag{font-size:10px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);opacity:.85;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px}
   .t-add{color:#7cffc4;border-color:rgba(124,255,196,.25)}
   .t-rem{color:#ff9aa2;border-color:rgba(255,154,162,.25)}
   .t-upd{color:#9ecbff;border-color:rgba(158,203,255,.25)}
-  .muted{opacity:.7}
-  .small{font-size:11px}
+  #ux-lanes .muted,#ux-spotlight .muted,.ux-spots-modal .muted{opacity:.7}
+  #ux-lanes .small,#ux-spotlight .small,.ux-spots-modal .small{font-size:11px}
   #run[disabled]{pointer-events:none;opacity:.6;filter:saturate(.7);cursor:not-allowed}
   #run.glass{position:relative}
   #run.glass::after{content:"";position:absolute;inset:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .chip.more{cursor:pointer;border-color:rgba(255,255,255,.22);font-size:10px;padding:1px 6px;line-height:1.2;width:auto}
-  .chip.more:hover{background:rgba(255,255,255,.06)}
+  #ux-lanes .chip.more,#ux-spotlight .chip.more,.ux-spots-modal .chip.more{cursor:pointer;border-color:rgba(255,255,255,.22);font-size:10px;padding:1px 6px;line-height:1.2;width:auto}
+  #ux-lanes .chip.more:hover,#ux-spotlight .chip.more:hover,.ux-spots-modal .chip.more:hover{background:rgba(255,255,255,.06)}
   .ux-spots-modal{position:fixed;inset:0;z-index:9999}
   .ux-spots-modal.hidden{display:none}
   .ux-spots-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(2px)}
@@ -742,7 +741,7 @@
   }
 
   window.addEventListener("cx:pairs:changed", () => queuePairsRefresh("cx:pairs:changed"));
-  window.addEventListener("config-saved", () => queuePairsRefresh("config-saved"));
+  document.addEventListener("config-saved", () => queuePairsRefresh("config-saved"));
   window.addEventListener("sync-complete", () => queuePairsRefresh("sync-complete"));
 
   async function hydrateFromInsights(startTsEpoch) {
