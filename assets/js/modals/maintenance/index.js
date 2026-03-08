@@ -105,10 +105,10 @@ function injectCSS() {
   .cw-maint .cx-body {
     flex: 1;
     min-height: 0;
-    padding: 12px 16px 14px;
+    padding: 10px 14px 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
   }
 
   .cw-maint .summary-card {
@@ -116,10 +116,10 @@ function injectCSS() {
                 linear-gradient(135deg, #0b0f19, #0e1624);
     border-radius: 14px;
     border: 1px solid rgba(255,255,255,.12);
-    padding: 8px 10px;
+    padding: 7px 10px;
     display: grid;
     grid-template-columns: minmax(0,1.3fr) minmax(0,1fr);
-    grid-gap: 8px;
+    grid-gap: 6px;
     font-size: 12px;
   }
   @media (max-width: 900px) {
@@ -156,8 +156,8 @@ function injectCSS() {
   .cw-maint .actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    margin-top: 2px;
+    gap: 8px;
+    margin-top: 0;
   }
   @media (max-width: 980px) {
     .cw-maint .actions {
@@ -169,11 +169,11 @@ function injectCSS() {
     background: #0b0f19;
     border-radius: 14px;
     border: 1px solid rgba(255,255,255,.09);
-    padding: 12px 14px;
+    padding: 10px 12px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 12px;
+    align-items: center;
+    gap: 10px;
     box-shadow: 0 0 0 1px rgba(0,0,0,.4) inset;
   }
   .cw-maint .action-main {
@@ -202,7 +202,7 @@ function injectCSS() {
   .cw-maint .action-copy {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
     min-width: 0;
   }
   .cw-maint .action-line {
@@ -228,7 +228,7 @@ function injectCSS() {
   }
   .cw-maint .action-desc {
     font-size: 11px;
-    line-height: 1.45;
+    line-height: 1.35;
     opacity: .82;
   }
   .cw-maint .action-desc code {
@@ -240,11 +240,11 @@ function injectCSS() {
 
   .cw-maint .action-options {
     width: 100%;
-    margin-top: 8px;
+    margin-top: 6px;
     font-size: 12px;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px 12px;
+    gap: 4px 16px;
     align-items: start;
   }
   .cw-maint .action-options label {
@@ -258,7 +258,7 @@ function injectCSS() {
   .cw-maint .action-options label span {
     min-width: 0;
     white-space: normal;
-    line-height: 1.25;
+    line-height: 1.15;
   }
   .cw-maint .action-options input {
     margin: 2px 0 0;
@@ -274,7 +274,7 @@ function injectCSS() {
     align-self: start;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,.2);
-    padding: 7px 16px;
+    padding: 6px 14px;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: .09em;
@@ -315,8 +315,8 @@ function injectCSS() {
   }
 
   .cw-maint .status {
-    font-size: 12px;
-    margin-top: 4px;
+    font-size: 11px;
+    margin-top: 2px;
     opacity: .85;
   }
   .cw-maint .status.ok {
@@ -354,8 +354,9 @@ export default {
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
-      shell.style.setProperty("--cxModalW", "1320px");
-      shell.style.setProperty("--cxModalMaxW", "1320px");
+      shell.style.setProperty("--cxModalW", "1180px");
+      shell.style.setProperty("--cxModalMaxW", "1180px");
+      shell.style.setProperty("--cxModalMaxH", "80vh");
     }
 
     root.innerHTML = `
