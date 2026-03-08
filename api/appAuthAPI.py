@@ -382,8 +382,8 @@ def _login_html(username: str) -> str:
     <h1>CrossWatch Authentication</h1>
     <p class=\"sub\">Sign-in</p>
     <div class=\"grid\">
-      <div><label>Username</label><input id=\"u\" autocomplete=\"username\" value=\"{u}\"></div>
-      <div><label>Password</label><input id=\"p\" type=\"password\" autocomplete=\"current-password\"></div>
+      <div><label for=\"u\">Username</label><input id=\"u\" name=\"username\" autocomplete=\"username\" value=\"{u}\"></div>
+      <div><label for=\"p\">Password</label><input id=\"p\" name=\"password\" type=\"password\" autocomplete=\"current-password\"></div>
       <div class=\"row\">
         <button class=\"btn acc\" id=\"go\">Sign in</button>
         <span id=\"msg\" class=\"msg warn err\"></span>

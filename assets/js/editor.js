@@ -811,7 +811,7 @@
 
             <div class="ins-row">
               <div class="ins-kv" style="width:100%">
-                <label>Types</label>
+                <div class="field-label">Types</div>
                 <div id="cw-type-filter" class="cw-type-filter">
                   <button type="button" data-type="movie" class="cw-type-chip active">Movies</button>
                   <button type="button" data-type="show" class="cw-type-chip active">Shows</button>
@@ -2168,17 +2168,23 @@
 
       const qInput = document.createElement("input");
       qInput.type = "text";
+      qInput.id = "cw_meta_search_title";
+      qInput.name = qInput.id;
       qInput.placeholder = "Title…";
       qInput.value = row.title || "";
       bar.appendChild(qInput);
 
       const yearInput = document.createElement("input");
       yearInput.type = "number";
+      yearInput.id = "cw_meta_search_year";
+      yearInput.name = yearInput.id;
       yearInput.placeholder = "Year";
       if (row.year) yearInput.value = row.year;
       bar.appendChild(yearInput);
 
       const typeSelect = document.createElement("select");
+      typeSelect.id = "cw_meta_search_type";
+      typeSelect.name = typeSelect.id;
       [["movie", "Movie"], ["show", "Show"], ["anime", "Anime"]].forEach(([val, label]) => {
         const opt = document.createElement("option");
         opt.value = val;

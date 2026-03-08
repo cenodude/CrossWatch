@@ -75,6 +75,7 @@ def replan_now() -> dict[str, Any]:
     load_config, _, scheduler, hint, compute_next, log = _env()
     cfg = load_config() or {}
     scfg = (cfg.get("scheduling") or {}) or {}
+    effective_enabled = bool((scfg or {}).get("enabled") or ((scfg or {}).get("advanced") or {}).get("enabled"))
 
     try:
         nxt = int(compute_next(scfg) or 0)
@@ -90,10 +91,13 @@ def replan_now() -> dict[str, Any]:
 
     try:
         if scheduler is not None:
-            if hasattr(scheduler, "refresh"):
-                scheduler.refresh()
-            elif hasattr(scheduler, "start"):
-                scheduler.start()
+            if effective_enabled:
+                if hasattr(scheduler, "refresh"):
+                    scheduler.refresh()
+                elif hasattr(scheduler, "start"):
+                    scheduler.start()
+            elif hasattr(scheduler, "stop"):
+                scheduler.stop()
     except Exception as e:
         try:
             log("SYNC", "SCHED")(f"replan_now worker refresh failed: {e}", level="ERROR")
