@@ -32,11 +32,7 @@ def _load_config() -> dict[str, Any]:
         from cw_platform.config_base import load_config as _load_cfg
         return _load_cfg()
     except Exception:
-        p = Path("/config/config.json")
-        try:
-            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
-        except Exception:
-            return {}
+        return {}
 
 
 def _i(x: Any) -> int | None:
