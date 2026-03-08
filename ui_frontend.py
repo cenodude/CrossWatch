@@ -1,6 +1,6 @@
 # ui_frontend.py
 # CrossWatch - UI Frontend Registration
-# Copyright (c) 2025-2026 CrossWatch / Cenodude
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from pathlib import Path
@@ -149,6 +149,7 @@ def _get_index_html_static() -> str:
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <script>
 (() => {
   try {
@@ -162,95 +163,6 @@ def _get_index_html_static() -> str:
 </script>
 
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
-<style>
-  .material-symbol{font-family:'Material Symbols Rounded';font-weight:normal;font-style:normal;font-size:1em;line-height:1;display:inline-block;vertical-align:middle;-webkit-font-feature-settings:'liga';-webkit-font-smoothing:antialiased}
-  .pair-selectors,button[onclick="addPair()"],#batches_list,button[onclick="addBatch()"],button[onclick="runAllBatches()"]{display:none!important}
-  #providers_list.grid2{display:block!important}#providers_list .pairs-board{display:flex;flex-direction:column;align-items:flex-start;text-align:left}
-  #save-frost{position:fixed;left:0;right:0;bottom:0;height:84px;background:linear-gradient(0deg,rgba(10,10,14,.85) 0%,rgba(10,10,14,.60) 35%,rgba(10,10,14,0) 100%);border-top:1px solid var(--border);backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%);pointer-events:none;z-index:9998}
-  #save-fab{position:fixed;left:0;right:0;bottom:max(12px,env(safe-area-inset-bottom));z-index:10000;display:flex;justify-content:center;align-items:center;pointer-events:none;background:transparent}
-  #save-fab .btn{pointer-events:auto;position:relative;z-index:10001;padding:14px 22px;border-radius:14px;font-weight:800;text-transform:uppercase;letter-spacing:.02em;background:linear-gradient(135deg,#ff4d4f,#ff7a7a);border:1px solid #ff9a9a55;box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 14px #ff4d4f55}
-  #save-fab.hidden,#save-frost.hidden{display:none}
-  
-  #conn-badges.vip-badges{display:grid;grid-template-columns:repeat(4,auto);gap:8px;justify-content:flex-end;}
-  #conn-badges.vip-badges .conn-item{margin:0;}
-  
-  .ops-header{display:flex;align-items:center;gap:12px}
-  .ops-header-flex { display:flex; align-items:center; gap:.75rem; }
-  #btn-status-refresh.sync-ctrl{
-    width:32px; height:32px; border-radius:999px;
-    display:inline-flex; align-items:center; justify-content:center;
-    border:1px solid var(--border-color, rgba(255,255,255,.10));
-    background:rgba(255,255,255,.04);
-    cursor:pointer; transition:transform .15s ease, opacity .15s ease;
-  }
-  #btn-status-refresh.sync-ctrl:hover{ transform:scale(1.04); opacity:.95; }
-  #btn-status-refresh.sync-ctrl.spinning{ animation:spin 1s linear infinite; }
-  #btn-status-refresh.spinning { animation: spin 1s linear infinite; }
-  #btn-status-refresh.spinning .icon { animation: spin 1s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  
-  /* Auth provider configured dots */
-  .auth-dot{
-    width:14px;height:14px;border-radius:999px;
-    display:inline-block;flex:0 0 auto;
-    background:rgba(255,255,255,.22);
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
-    margin-left:auto;
-    margin-right:16px;
-  }
-.auth-dot{
-    width:14px;height:14px;border-radius:999px;
-    display:inline-block;flex:0 0 auto;
-    background:rgba(255,255,255,.22);
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.12);
-    margin-left:auto;
-    margin-right:16px;
-  }
-  .auth-dot.on{
-    background:#30ff8a;
-    box-shadow:
-      0 0 6px rgba(48,255,138,.95),
-      0 0 14px rgba(48,255,138,.75),
-      0 0 26px rgba(48,255,138,.55);
-    animation:cw-auth-pulse 4s ease-in-out infinite;
-  }
-
-  @keyframes cw-auth-pulse{
-    0%,100%{
-      transform:scale(1);
-      opacity:.95;
-      box-shadow:
-        0 0 6px rgba(48,255,138,.95),
-        0 0 14px rgba(48,255,138,.75),
-        0 0 26px rgba(48,255,138,.55);
-    }
-    50%{
-      transform:scale(1.22);
-      opacity:1;
-      box-shadow:
-        0 0 9px rgba(48,255,138,1),
-        0 0 20px rgba(48,255,138,.9),
-        0 0 34px rgba(48,255,138,.7);
-    }
-  }
-
-
-  /* About dropdown */
-  .cw-tabmenu{position:relative;display:inline-flex}
-  .cw-menu{position:absolute;top:calc(100% + 8px);right:0;display:flex;gap:8px;padding:8px;border-radius:999px;border:1px solid var(--border,rgba(255,255,255,.12));background:rgba(11,11,15,.92);backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);box-shadow:0 18px 40px rgba(0,0,0,.45);z-index:2000}
-  .cw-menu-item{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;padding:8px 12px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.06);color:var(--fg,#fff);cursor:pointer;font-weight:800;line-height:1;transition:transform .12s ease,background .12s ease,opacity .12s ease}
-  .cw-menu-item:hover{background:rgba(255,255,255,.10);transform:translateY(-1px);opacity:.98}
-  .cw-menu-item:active{transform:translateY(0)}
-  .cw-menu.hidden{display:none!important}
-
-  /* Help modal (GitBook in iframe, lazy loaded) */
-  #cw-help-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(6px) saturate(120%);-webkit-backdrop-filter:blur(6px) saturate(120%);z-index:3000}
-  #cw-help-card{width:min(1100px,94vw);height:min(720px,86vh);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:18px;background:rgba(11,11,15,.92);box-shadow:0 18px 40px rgba(0,0,0,.5);overflow:hidden;position:relative}
-  #cw-help-close{position:absolute;top:10px;right:10px;z-index:1}
-  #cw-help-frame{width:100%;height:100%;border:0}
-  #cw-help-overlay.hidden{display:none!important}
-
-</style>
 </head><body>
 
 <header>
@@ -268,26 +180,25 @@ def _get_index_html_static() -> str:
     </span>
   </div>
 
-  <div class="tabs">
-    <div id="tab-main" class="tab active" onclick="showTab('main')">Main</div>
-    <div id="tab-watchlist" class="tab" onclick="showTab('watchlist')">Watchlist</div>
-    <div id="tab-snapshots" class="tab" onclick="showTab('snapshots')">Captures</div>
-    <div id="tab-editor" class="tab" onclick="showTab('editor')">Editor</div>
-    <div id="tab-settings" class="tab" onclick="showTab('settings')">Settings</div>
+  <nav class="tabs" aria-label="Primary navigation">
+    <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">Main</button>
+    <button id="tab-watchlist" class="tab" type="button" onclick="showTab('watchlist')">Watchlist</button>
+    <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
+    <button id="tab-editor" class="tab" type="button" onclick="showTab('editor')">Editor</button>
+    <button id="tab-settings" class="tab" type="button" onclick="showTab('settings')">Settings</button>
     <div class="cw-tabmenu" id="tab-about-menu">
-      <div id="tab-about" class="tab"
-           role="button" tabindex="0"
-           aria-haspopup="menu" aria-expanded="false"
-           onclick="window.cwToggleAboutMenu(event)"
-           onkeypress="if(event.key==='Enter'||event.key===' ')window.cwToggleAboutMenu(event)">
-        About ▾
-      </div>
+      <button id="tab-about" class="tab" type="button"
+              aria-haspopup="menu" aria-expanded="false"
+              onclick="window.cwToggleAboutMenu(event)">
+        <span>About</span>
+        <span class="tab-caret" aria-hidden="true">▾</span>
+      </button>
       <div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')">About</button>
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')">Help</button>
       </div>
     </div>
-  </div>
+  </nav>
 
   <div class="cw-ui-toggle" aria-label="UI mode">
     <button class="cw-ui-btn btn-full" type="button" onclick="cwSetUiMode('full')">Full UI</button>
@@ -409,52 +320,160 @@ def _get_index_html_static() -> str:
   <section id="page-snapshots" class="card hidden"></section>
 
   <section id="page-editor" class="card hidden"></section>
+
   <section id="page-settings" class="card hidden">
     <div class="title">Settings</div>
-    <div id="cw-settings-grid">
+    <div id="cw-settings-shell">
+      <aside id="cw-settings-nav" aria-label="Settings navigation">
+        <div class="cw-settings-nav-card">
+          <div class="cw-settings-overview-kicker">Workspace</div>
+          <div class="cw-settings-nav-title">Settings</div>
+        </div>
+
+        <div class="cw-settings-nav-list" role="tablist" aria-label="Settings sections">
+          <button type="button" class="cw-settings-nav-btn active" data-pane="overview" onclick="cwSettingsSelect?.('overview')">
+            <span class="material-symbols-rounded">dashboard</span>
+            <span><strong>Overview</strong><small>Health, status, quick actions</small></span>
+          </button>
+          <button type="button" class="cw-settings-nav-btn" data-pane="providers" onclick="cwSettingsSelect?.('providers')">
+            <span class="material-symbols-rounded">hub</span>
+            <span><strong>Providers</strong><small>Auth, sync and metadata</small></span>
+          </button>
+          <button type="button" class="cw-settings-nav-btn" data-pane="scheduling" onclick="cwSettingsSelect?.('scheduling')">
+            <span class="material-symbols-rounded">schedule</span>
+            <span><strong>Scheduling</strong><small>Standard and advanced jobs</small></span>
+          </button>
+          <button type="button" class="cw-settings-nav-btn" data-pane="scrobbler" onclick="cwSettingsSelect?.('scrobbler')">
+            <span class="material-symbols-rounded">sensors</span>
+            <span><strong>Scrobbler</strong><small>Webhook and watcher routes</small></span>
+          </button>
+          <button type="button" class="cw-settings-nav-btn" data-pane="app" onclick="cwSettingsSelect?.('app')">
+            <span class="material-symbols-rounded">tune</span>
+            <span><strong>UI settings</strong><small>UI, security and tracker</small></span>
+          </button>
+          <button type="button" class="cw-settings-nav-btn" data-pane="maintenance" onclick="cwSettingsSelect?.('maintenance')">
+            <span class="material-symbols-rounded">build</span>
+            <span><strong>Maintenance</strong><small>Debug and recovery tools</small></span>
+          </button>
+        </div>
+
+      </aside>
+
       <div id="cw-settings-left">
-      
-        <div class="section" id="sec-auth">
-          <div class="head" onclick="toggleSection('sec-auth')" style="display:flex;align-items:center">
-            <span class="chev">▶</span><strong>Authentication Providers</strong>
-            <span id="auth-providers-icons" style="margin-left:auto;display:flex;gap:6px;align-items:center">
-              <img data-prov="PLEX" src="/assets/img/PLEX-log.svg" alt="Plex" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="JELLYFIN" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="SIMKL" src="/assets/img/SIMKL-log.svg" alt="SIMKL" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="TRAKT" src="/assets/img/TRAKT-log.svg" alt="Trakt" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="MDBLIST" src="/assets/img/MDBLIST-log.svg" alt="MDBList" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="TMDB" src="/assets/img/TMDB-log.svg" alt="TMDb" style="display:none;height:14px;width:auto;opacity:.9">
-              <img data-prov="TAUTULLI" src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="ANILIST" src="/assets/img/ANILIST-log.svg" alt="AniList" style="display:none;height:18px;width:auto;opacity:.9">
-              <img data-prov="EMBY" src="/assets/img/EMBY-log.svg" alt="Emby" style="display:none;height:24px;width:auto;opacity:.9">
-            </span>
-              
-            </span>
-          </div>
-          <div class="body"><div id="auth-providers"></div></div>
-        </div>
+        <section id="cw-settings-overview" class="cw-settings-pane active" data-pane="overview">
+          <div id="cw-settings-overview-grid">
+            <div class="cw-settings-overview-main">
+              <section class="cw-settings-overview-card cw-settings-overview-actions">
+                <div class="cw-settings-overview-head">
+                  <div>
+                    <div class="cw-settings-overview-kicker">Quick actions</div>
+                    <h4>Jump straight to the settings</h4>
+                  </div>
+                </div>
+                <div class="cw-settings-action-grid">
+                  <button type="button" class="cw-settings-action" onclick="cwSettingsSelect?.('providers')">
+                    <span class="material-symbols-rounded">hub</span>
+                    <strong>Open providers</strong>
+                    <small>Auth, sync pairs and metadata</small>
+                  </button>
+                  <button type="button" class="cw-settings-action" onclick="cwSettingsSelect?.('scheduling')">
+                    <span class="material-symbols-rounded">schedule</span>
+                    <strong>Open scheduling</strong>
+                    <small>Standard and advanced scheduling jobs</small>
+                  </button>
+                  <button type="button" class="cw-settings-action" onclick="cwSettingsSelect?.('scrobbler')">
+                    <span class="material-symbols-rounded">sensors</span>
+                    <strong>Open scrobbler</strong>
+                    <small>Watcher routes, webhook and filters</small>
+                  </button>
+                  <button type="button" class="cw-settings-action" onclick="cwSettingsSelect?.('app')">
+                    <span class="material-symbols-rounded">tune</span>
+                    <strong>Open UI settings</strong>
+                    <small>UI, security and CW Tracker</small>
+                  </button>
+                </div>
+              </section>
 
-        <div class="section" id="sec-sync">
-          <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization Providers</strong></div>
-          <div class="body">
-            <div class="sub">Providers</div><div id="providers_list" class="grid2"></div>
-            <div class="sep"></div><div class="sub">Pairs</div><div id="pairs_list"></div>
-            <div class="footer"><div class="pair-selectors" style="margin-top:1em;">
-              <label style="margin-right:1em;">Source:<select id="source-provider" style="margin-left:.5em;"></select></label>
-              <label>Target:<select id="target-provider" style="margin-left:.5em;"></select></label>
-            </div></div>
-          </div>
-        </div>
+              <div class="cw-settings-overview-duo">
+                <section class="cw-settings-overview-card">
+                  <div class="cw-settings-overview-kicker">Recommended flow</div>
+                  <h4>Configure in this order</h4>
+                  <ol class="cw-settings-flow-list">
+                    <li><strong>Connect providers first</strong><span>Configure auth providers, optional profiles and metadata keys in place.</span></li>
+                    <li><strong>Build sync pairs</strong><span>Create optional source/target pairs and confirm the direction before enabling automation.</span></li>
+                    <li><strong>Then enable automation</strong><span>Scheduling and scrobbler if you're ready.</span></li>
+                  </ol>
+                </section>
 
-        <div class="section" id="sec-meta"><div class="head" onclick="toggleSection('sec-meta')"><span class="chev">▶</span><strong>Metadata Providers</strong></div><div class="body">
+                <section class="cw-settings-overview-card">
+                  <div class="cw-settings-overview-kicker">Sanity checks</div>
+                  <h4>Some good defaults</h4>
+                  <ul class="cw-settings-check-list">
+                    <li>Metadata works best when TMDb is configured.</li>
+                    <li>Leave scheduling off until sync pairs are correct.</li>
+                    <li>Use the floating save button after changes.</li>
+                    <li>Sync pairs are optional. You can also rely solely on webhooks/watchers.</li>
+                  </ul>
+                </section>
+              </div>
+            </div>
+            <aside id="cw-settings-insight" aria-label="Settings Insight"></aside>
+          </div>
+        </section>
+
+        <section class="cw-settings-pane" data-pane="providers">
+          <div class="cw-settings-pane-head">
+            <div>
+              <div class="cw-settings-pane-kicker">Providers</div>
+              <h3>Authentication, synchronization and metadata</h3>
+              <p>Start with authentication, then synchronization (if needed), and finally metadata.</p>
+            </div>
+            <div class="cw-settings-jumpbar" aria-label="Provider sections">
+              <button type="button" class="cw-settings-jump" data-target="sec-auth" onclick="cwProvidersJump?.('sec-auth')">Authentication</button>
+              <button type="button" class="cw-settings-jump" data-target="sec-sync" onclick="cwProvidersJump?.('sec-sync')">Synchronization</button>
+              <button type="button" class="cw-settings-jump" data-target="sec-meta" onclick="cwProvidersJump?.('sec-meta')">Metadata</button>
+            </div>
+          </div>
+          <div class="cw-settings-pane-stack cw-settings-providers-stack">
+            <div class="section cw-settings-section cw-settings-provider-section" id="sec-auth">
+              <div class="head" onclick="toggleSection('sec-auth')">
+                <span class="chev">▶</span><strong>Authentication Providers</strong>
+                <span id="auth-providers-icons" class="cw-provider-head-icons">
+                  <img data-prov="PLEX" src="/assets/img/PLEX-log.svg" alt="Plex" class="cw-provider-head-icon">
+                  <img data-prov="JELLYFIN" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" class="cw-provider-head-icon">
+                  <img data-prov="SIMKL" src="/assets/img/SIMKL-log.svg" alt="SIMKL" class="cw-provider-head-icon">
+                  <img data-prov="TRAKT" src="/assets/img/TRAKT-log.svg" alt="Trakt" class="cw-provider-head-icon">
+                  <img data-prov="MDBLIST" src="/assets/img/MDBLIST-log.svg" alt="MDBList" class="cw-provider-head-icon">
+                  <img data-prov="TMDB" src="/assets/img/TMDB-log.svg" alt="TMDb" class="cw-provider-head-icon cw-provider-head-icon--tmdb">
+                  <img data-prov="TAUTULLI" src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" class="cw-provider-head-icon">
+                  <img data-prov="ANILIST" src="/assets/img/ANILIST-log.svg" alt="AniList" class="cw-provider-head-icon">
+                  <img data-prov="EMBY" src="/assets/img/EMBY-log.svg" alt="Emby" class="cw-provider-head-icon cw-provider-head-icon--emby">
+                </span>
+              </div>
+              <div class="body"><div id="auth-providers"></div></div>
+            </div>
+
+            <div class="section cw-settings-section cw-settings-provider-section" id="sec-sync">
+              <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization Providers</strong></div>
+              <div class="body">
+                <div class="sub">Providers</div><div id="providers_list" class="grid2"></div>
+                <div class="sep"></div><div class="sub">Pairs</div><div id="pairs_list"></div>
+                <div class="footer"><div class="pair-selectors" style="margin-top:1em;">
+                  <label for="source-provider" style="margin-right:1em;">Source:</label><select id="source-provider" name="source_provider" style="margin-left:.5em;"></select>
+                  <label for="target-provider">Target:</label><select id="target-provider" name="target_provider" style="margin-left:.5em;"></select>
+                </div></div>
+              </div>
+            </div>
+
+            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" onclick="toggleSection('sec-meta')"><span class="chev">▶</span><strong>Metadata Providers</strong></div><div class="body">
 <div id="metadata-providers">
   <div class="cw-settings-hub" id="meta_provider_tiles">
     <button type="button" class="cw-hub-tile tmdb" data-provider="tmdb" aria-selected="false">
-      <div class="cw-hub-title">TMDb</div>
-      <div class="cw-hub-desc">The Movie Database</div>
-      <div class="chips">
-        <span class="chip" id="hub_tmdb_key">API key: —</span>
+      <div class="cw-meta-provider-row">
+        <div class="cw-hub-title">TMDb</div>
+        <span class="auth-dot" id="meta-tmdb-dot" aria-hidden="true"></span>
       </div>
+      <span class="hidden" id="hub_tmdb_key" aria-hidden="true">API key: —</span>
     </button>
   </div>
 
@@ -462,289 +481,314 @@ def _get_index_html_static() -> str:
   <div id="meta-provider-raw" class="hidden"></div>
 </div>
 </div></div>
-
-        <div class="section" id="sec-scheduling">
-          <div class="head" onclick="toggleSection('sec-scheduling')"><span class="chev">▶</span><strong>Scheduling</strong></div>
-          <div class="body">
-
-            <div id="sched-provider-panel" class="cw-panel hidden"></div>
-
-            <div id="sched-provider-raw" class="hidden">
-              <div class="grid2">
-                <div><label>Enable</label><select id="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
-                <div><label>Frequency</label><select id="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option></select></div>
-                <div><label>Every N hours</label><input id="schN" type="number" min="1" max="24" value="2"></div>
-                <div><label>Time</label><input id="schTime" type="time" value="03:30"></div>
-              </div>
-              <div id="sched_advanced_mount"></div>
-            </div>
-	          </div>
-	        </div>
-	
-	      <div class="section" id="sec-scrobbler">
-        <div class="head" onclick="toggleSection('sec-scrobbler')" style="display:flex;align-items:center">
-          <span class="chev">▶</span><strong>Scrobbler</strong>
-        </div>
-        <div class="body" id="scrobble-mount">
-          <div class="section" id="sc-sec-webhook">
-            <div class="head" onclick="toggleSection('sc-sec-webhook')">
-              <span class="chev">▶</span><strong>Webhook</strong>
-            </div>
-            <div class="body"><div id="scrob-webhook"></div></div>
           </div>
-          <div class="section" id="sc-sec-watch">
-            <div class="head" onclick="toggleSection('sc-sec-watch')">
-              <span class="chev">▶</span><strong>Watcher</strong>
-            </div>
-            <div class="body"><div id="scrob-watcher"></div></div>
-          </div>
-        </div>
-      </div>
+        </section>
 
-      <div class="section" id="sec-ui">
-        <div class="head" onclick="toggleSection('sec-ui')" style="display:flex;align-items:center">
-          <span class="chev">▶</span>
-          <strong>Settings (UI / Security / CW Tracker)</strong>
-        </div>
-        <div class="body">
-
-          <div class="cw-settings-hub" id="ui_settings_hub">
-            <button type="button" class="cw-hub-tile active" data-tab="ui" onclick="cwUiSettingsSelect?.('ui')">
-              <div class="cw-hub-title">User Interface</div>
-              <div class="cw-hub-desc">Dashboard visuals</div>
-              <div class="chips">
-                <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
-                <span class="chip" id="hub_ui_playing">Playing: -</span>
-                <span class="chip" id="hub_ui_askai">ASK AI: -</span>
-                <span class="chip" id="hub_ui_proto">Proto: -</span>
-              </div>
-            </button>
-
-            <button type="button" class="cw-hub-tile" data-tab="security" onclick="cwUiSettingsSelect?.('security')">
-              <div class="cw-hub-title">Security</div>
-              <div class="cw-hub-desc">Protect CrossWatch</div>
-              <div class="chips">
-                <span class="chip" id="hub_sec_auth">Auth: -</span>
-                <span class="chip" id="hub_sec_session">Session: -</span>
-                <span class="chip" id="hub_sec_proxy">Proxy: -</span>
-              </div>
-            </button>
-
-            <button type="button" class="cw-hub-tile" data-tab="tracker" onclick="cwUiSettingsSelect?.('tracker')">
-              <div class="cw-hub-title">CW Tracker</div>
-              <div class="cw-hub-desc">Local snapshots</div>
-              <div class="chips">
-                <span class="chip" id="hub_cw_enabled">Tracker: -</span>
-                <span class="chip" id="hub_cw_retention">Retention: -</span>
-              </div>
-            </button>
-          </div>
-
-          <div class="cw-settings-panels" id="ui_settings_panels">
-
-            <!-- Panel: User Interface -->
-            <div class="cw-settings-panel active" data-tab="ui">
-              <div class="cw-panel-head">
-                <div>
-                  <div class="cw-panel-title">User Interface</div>
-                  <div class="sub" style="margin-top:0.25rem">Dashboard visuals.</div>
-                </div>
-              </div>
-
-              <div class="grid2">
-                <div>
-                  <label>Watchlist Preview</label>
-                  <select id="ui_show_watchlist_preview">
-                    <option value="true">Show</option>
-                    <option value="false">Hide</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label>Playing Card</label>
-                  <select id="ui_show_playingcard">
-                    <option value="true">Show</option>
-                    <option value="false">Hide</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label>Help ASK AI</label>
-                  <select id="ui_show_AI">
-                    <option value="true">Show</option>
-                    <option value="false">Hide</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label>Protocol</label>
-                  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                    <select id="ui_protocol" style="min-width:220px;flex:1">
-                      <option value="http">HTTP</option>
-                      <option value="https">HTTPS (self-signed)</option>
-                    </select>
-                    <button type="button" class="btn" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
-                  </div>
-                  <div class="sub" style="margin-top:0.25rem">
-                    HTTPS generates a self-signed certificate. Your browser will show a warning unless you trust it.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Panel: Security -->
-            <div class="cw-settings-panel" data-tab="security">
-              <div class="cw-panel-head">
-                <div>
-                  <div class="cw-panel-title">Security</div>
-                  <div class="sub" style="margin-top:0.25rem">
-                    Sign-in authentication. Sessions are cached for 30 days.
-                  </div>
-                </div>
-              </div>
-
-              <div class="grid2">
-                <div>
-                  <label>Enabled</label>
-                  <select id="app_auth_enabled">
-                    <option value="false">Disabled</option>
-                    <option value="true">Enabled</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label>Username</label>
-                  <input id="app_auth_username" type="text" autocomplete="username" placeholder="admin">
-                </div>
-              </div>
-
-              <div id="app_auth_fields" class="grid2" style="margin-top:12px">
-                <div>
-                  <label>New password</label>
-                  <input id="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
-                  <div class="sub" style="margin-top:0.25rem">Leave blank to keep the current password</div>
-                </div>
-
-                <div>
-                  <label>Confirm password</label>
-                  <input id="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
-                </div>
-              </div>
-
-              <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
-                <div class="sub" id="app_auth_state" style="margin:0">—</div>
-              </div>
-              
-              <div style="margin-top:14px">
-                <label>Trusted reverse proxies (optional)</label>
-                <input id="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
-                <div class="sub" style="margin-top:0.25rem">
-                  Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
-                  Enter proxy IPs or CIDR ranges separated by <code>;</code>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Panel: CW Tracker -->
-            <div class="cw-settings-panel" data-tab="tracker">
-              <div class="cw-panel-head">
-                <div>
-                  <div class="cw-panel-title">CW Tracker</div>
-                  <div class="sub" style="margin-top:0.25rem">
-                    Local backup tracker for Watchlist, Ratings and History snapshots (stored under <code>/config/.cw_provider</code>).
-                  </div>
-                </div>
-              </div>
-
-              <div class="grid2">
-                <div>
-                  <label>Enabled</label>
-                  <select id="cw_enabled">
-                    <option value="true">Enabled</option>
-                    <option value="false">Disabled</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label>Retention (days)</label>
-                  <input id="cw_retention_days" type="number" min="0" step="1" placeholder="30">
-                  <div class="sub" style="margin-top:0.25rem">0 = keep snapshots forever</div>
-                </div>
-
-                <div>
-                  <label>Auto snapshot</label>
-                  <select id="cw_auto_snapshot">
-                    <option value="true">On (before writes)</option>
-                    <option value="false">Off</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label>Max snapshots per feature</label>
-                  <input id="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
-                  <div class="sub" style="margin-top:0.25rem">0 = unlimited</div>
-                </div>
-              </div>
-
-              <div class="sub" style="margin-top:1.25rem">Restore snapshots</div>
-              <div class="grid2" id="cw_restore_fields">
-                <div>
-                  <label>Watchlist snapshot</label>
-                  <select id="cw_restore_watchlist">
-                    <!-- options populated by JS, default "latest" -->
-                  </select>
-                </div>
-
-                <div>
-                  <label>History snapshot</label>
-                  <select id="cw_restore_history">
-                    <!-- options populated by JS, default "latest" -->
-                  </select>
-                </div>
-
-                <div>
-                  <label>Ratings snapshot</label>
-                  <select id="cw_restore_ratings">
-                    <!-- options populated by JS, default "latest" -->
-                  </select>
-                </div>
-              </div>
-
-              <div class="sub" style="margin-top:0.5rem">
-                Select <code>latest</code> to use the most recent snapshot, or choose a specific file name for each feature.
-              </div>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
-        <div class="section" id="sec-troubleshoot">
-          <div class="head" onclick="toggleSection('sec-troubleshoot')"><span class="chev">▶</span><strong>Maintenance</strong></div>
-          <div class="body">
-            <div class="sub">Use these actions to reset CrossWatch states. They are safe but cannot be undone.</div>
+        <section class="cw-settings-pane" data-pane="scheduling">
+          <div class="cw-settings-pane-head">
             <div>
-              <label>Debug</label>
-              <select id="debug">
-                <option value="off">off</option>
-                <option value="on">on</option>
-                <option value="mods">on - including MOD debug - best option for debug</option>
-                <option value="full">on - full (requires restart) - use with caution</option>
-              </select>
+              <div class="cw-settings-pane-kicker">Scheduling</div>
+              <h3>Run automation</h3>
+              <p>Use standard for simple scheduling tasks or advanced for pair-based scheduling</p>
             </div>
-            <div class="chiprow">
-              <button class="btn danger" onclick="openMaintenanceModal()">Maintenance Tools</button>
-              <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
-            </div>
-            <div id="tb_msg" class="msg ok hidden">Done ✓</div>
           </div>
-        </div>
+          <div class="section open cw-settings-section" id="sec-scheduling" data-accordion="off">
+            <div class="head"><span class="chev">▶</span><strong>Scheduling</strong></div>
+            <div class="body">
+              <div id="sched-provider-panel" class="cw-panel hidden"></div>
+              <div id="sched-provider-raw" class="hidden">
+                <div class="grid2">
+                  <div><label for="schEnabled">Enable</label><select id="schEnabled" name="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
+                  <div><label for="schMode">Frequency</label><select id="schMode" name="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option></select></div>
+                  <div><label for="schN">Every N hours</label><input id="schN" name="schN" type="number" min="1" max="24" value="2"></div>
+                  <div><label for="schTime">Time</label><input id="schTime" name="schTime" type="time" value="03:30"></div>
+                </div>
+                <div id="sched_advanced_mount"></div>
+              </div>
+            </div>
+          </div>
+        </section>
 
+        <section class="cw-settings-pane" data-pane="scrobbler">
+          <div class="cw-settings-pane-head">
+            <div>
+              <div class="cw-settings-pane-kicker">Scrobbler</div>
+              <h3>Webhook and watcher routing</h3>
+              <p>Webhooks (legacy) and watcher mode with route ingestion and filters. Only one mode can be active.</p>
+            </div>
+          </div>
+          <div id="sec-scrobbler" class="cw-settings-pane-stack cw-settings-scrobbler-stack" data-accordion="off">
+            <div id="scrobble-mount" class="cw-settings-pane-stack cw-settings-scrobbler-stack-inner">
+              <div class="section cw-settings-section cw-settings-provider-section" id="sc-sec-webhook">
+                <div class="head" onclick="toggleSection('sc-sec-webhook')">
+                  <span class="chev">▶</span><strong>Webhook</strong>
+                </div>
+                <div class="body"><div id="scrob-webhook"></div></div>
+              </div>
+              <div class="section open cw-settings-section cw-settings-provider-section" id="sc-sec-watch">
+                <div class="head" onclick="toggleSection('sc-sec-watch')">
+                  <span class="chev">▶</span><strong>Watcher</strong>
+                </div>
+                <div class="body"><div id="scrob-watcher"></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="cw-settings-pane" data-pane="app">
+          <div class="cw-settings-pane-head">
+            <div>
+              <div class="cw-settings-pane-kicker">App settings</div>
+              <h3>UI, security and CW Tracker</h3>
+              <p>Configure CrossWatch settings and security.</p>
+            </div>
+          </div>
+          <div class="section open cw-settings-section" id="sec-ui" data-accordion="off">
+            <div class="head" style="display:flex;align-items:center">
+              <span class="chev">▶</span>
+              <strong>Settings (UI / Security / CW Tracker)</strong>
+            </div>
+            <div class="body">
+
+              <div class="cw-settings-hub" id="ui_settings_hub">
+                <button type="button" class="cw-hub-tile active" data-tab="ui" onclick="cwUiSettingsSelect?.('ui')">
+                  <div class="cw-hub-title">User Interface</div>
+                  <div class="cw-hub-desc">Dashboard visuals</div>
+                  <div class="chips">
+                    <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
+                    <span class="chip" id="hub_ui_playing">Playing: -</span>
+                    <span class="chip" id="hub_ui_askai">ASK AI: -</span>
+                    <span class="chip" id="hub_ui_proto">Proto: -</span>
+                  </div>
+                </button>
+
+                <button type="button" class="cw-hub-tile" data-tab="security" onclick="cwUiSettingsSelect?.('security')">
+                  <div class="cw-hub-title">Security</div>
+                  <div class="cw-hub-desc">Protect CrossWatch</div>
+                  <div class="chips">
+                    <span class="chip" id="hub_sec_auth">Auth: -</span>
+                    <span class="chip" id="hub_sec_session">Session: -</span>
+                    <span class="chip" id="hub_sec_proxy">Proxy: -</span>
+                  </div>
+                </button>
+
+                <button type="button" class="cw-hub-tile" data-tab="tracker" onclick="cwUiSettingsSelect?.('tracker')">
+                  <div class="cw-hub-title">CW Tracker</div>
+                  <div class="cw-hub-desc">Local snapshots</div>
+                  <div class="chips">
+                    <span class="chip" id="hub_cw_enabled">Tracker: -</span>
+                    <span class="chip" id="hub_cw_retention">Retention: -</span>
+                  </div>
+                </button>
+              </div>
+
+              <div class="cw-settings-panels" id="ui_settings_panels">
+
+                <!-- Panel: User Interface -->
+                <div class="cw-settings-panel active" data-tab="ui">
+                  <div class="cw-panel-head">
+                    <div>
+                      <div class="cw-panel-title">User Interface</div>
+                      <div class="sub" style="margin-top:0.25rem">Dashboard visuals.</div>
+                    </div>
+                  </div>
+
+                  <div class="grid2">
+                    <div>
+                      <label for="ui_show_watchlist">Watchlist</label>
+                      <select id="ui_show_watchlist" name="ui_show_watchlist">
+                        <option value="true">Show</option>
+                        <option value="false">Hide</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label for="ui_show_playing">Playing card</label>
+                      <select id="ui_show_playing" name="ui_show_playing">
+                        <option value="true">Show</option>
+                        <option value="false">Hide</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label for="ui_show_AI">Help ASK AI</label>
+                      <select id="ui_show_AI" name="ui_show_AI">
+                        <option value="true">Show</option>
+                        <option value="false">Hide</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label for="ui_protocol">Protocol</label>
+                      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                        <select id="ui_protocol" name="ui_protocol" style="min-width:220px;flex:1">
+                          <option value="http">HTTP</option>
+                          <option value="https">HTTPS (self-signed)</option>
+                        </select>
+                        <button type="button" class="btn" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
+                      </div>
+                      <div class="sub" style="margin-top:0.25rem">
+                        HTTPS uses a self-signed certificate, so your browser will warn unless you trust it.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Panel: Security -->
+                <div class="cw-settings-panel" data-tab="security">
+                  <div class="cw-panel-head">
+                    <div>
+                      <div class="cw-panel-title">Security</div>
+                      <div class="sub" style="margin-top:0.25rem">
+                        Sign-in authentication. Sessions are cached for 30 days.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="grid2">
+                    <div>
+                      <label for="app_auth_enabled">Enabled</label>
+                      <select id="app_auth_enabled" name="app_auth_enabled">
+                        <option value="false">Disabled</option>
+                        <option value="true">Enabled</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label for="app_auth_username">Username</label>
+                      <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
+                    </div>
+                  </div>
+
+                  <div id="app_auth_fields" class="grid2" style="margin-top:12px">
+                    <div>
+                      <label for="app_auth_password">New password</label>
+                      <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
+                      <div class="sub" style="margin-top:0.25rem">Leave blank to keep the current password</div>
+                    </div>
+
+                    <div>
+                      <label for="app_auth_password2">Confirm password</label>
+                      <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
+                    </div>
+                  </div>
+
+                  <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
+                    <div class="sub" id="app_auth_state" style="margin:0">—</div>
+                  </div>
+
+                  <div style="margin-top:14px">
+                    <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
+                    <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
+                    <div class="sub" style="margin-top:0.25rem">
+                      Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
+                      Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Panel: CW Tracker -->
+                <div class="cw-settings-panel" data-tab="tracker">
+                  <div class="cw-panel-head">
+                    <div>
+                      <div class="cw-panel-title">CW Tracker</div>
+                      <div class="sub" style="margin-top:0.25rem">
+                        Local backup tracker for Watchlist, Ratings and History snapshots (stored under <code>/config/.cw_provider</code>).
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="grid2">
+                    <div>
+                      <label for="cw_enabled">Enabled</label>
+                      <select id="cw_enabled" name="cw_enabled">
+                        <option value="true">Enabled</option>
+                        <option value="false">Disabled</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label for="cw_retention_days">Retention (days)</label>
+                      <input id="cw_retention_days" name="cw_retention_days" type="number" min="0" step="1" placeholder="30">
+                      <div class="sub" style="margin-top:0.25rem">0 = keep snapshots forever</div>
+                    </div>
+
+                    <div>
+                      <label for="cw_auto_snapshot">Auto snapshot</label>
+                      <select id="cw_auto_snapshot" name="cw_auto_snapshot">
+                        <option value="true">On (before writes)</option>
+                        <option value="false">Off</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label for="cw_max_snapshots">Max snapshots per feature</label>
+                      <input id="cw_max_snapshots" name="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
+                      <div class="sub" style="margin-top:0.25rem">0 = unlimited</div>
+                    </div>
+                  </div>
+
+                  <div class="sub" style="margin-top:1.25rem">Restore snapshots</div>
+                  <div class="grid2" id="cw_restore_fields">
+                    <div>
+                      <label for="cw_restore_watchlist">Watchlist snapshot</label>
+                      <select id="cw_restore_watchlist" name="cw_restore_watchlist"></select>
+                    </div>
+
+                    <div>
+                      <label for="cw_restore_history">History snapshot</label>
+                      <select id="cw_restore_history" name="cw_restore_history"></select>
+                    </div>
+
+                    <div>
+                      <label for="cw_restore_ratings">Ratings snapshot</label>
+                      <select id="cw_restore_ratings" name="cw_restore_ratings"></select>
+                    </div>
+                  </div>
+
+                  <div class="sub" style="margin-top:0.5rem">
+                    Select <code>latest</code> to use the most recent snapshot, or choose a specific file name for each feature.
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="cw-settings-pane" data-pane="maintenance">
+          <div class="cw-settings-pane-head">
+            <div>
+              <div class="cw-settings-pane-kicker">Maintenance</div>
+              <h3>Maintenance zone, Debug and Restart</h3>
+              <p>Use these actions to reset CrossWatch states. They are safe but cannot be undone.</p>
+            </div>
+          </div>
+          <div class="section open cw-settings-section" id="sec-troubleshoot" data-accordion="off">
+            <div class="head"><span class="chev">▶</span><strong>Maintenance</strong></div>
+            <div class="body">
+              <div>
+                <label for="debug">Debug</label>
+                <select id="debug" name="debug">
+                  <option value="off">off</option>
+                  <option value="on">on</option>
+                  <option value="mods">on - including MOD debug - best option for debug</option>
+                  <option value="full">on - full (requires restart) - use with caution</option>
+                </select>
+              </div>
+              <div class="chiprow">
+                <button class="btn danger" onclick="openMaintenanceModal()">Maintenance Tools</button>
+                <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
+              </div>
+              <div id="tb_msg" class="msg ok hidden">Done ✓</div>
+            </div>
+          </div>
+        </section>
       </div>
-      <aside id="cw-settings-insight" aria-label="Settings Insight"></aside>
     </div>
   </section>
+
 
 </main>
 
@@ -826,11 +870,19 @@ def _get_index_html_static() -> str:
   }, true);
 </script>
 
-<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/restart_apply.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/page-loader.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/dom.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/events.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/details-log.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/providers-ui.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/settings-ui.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/settings-save.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/maintenance.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/restart_apply.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/legacy-bridge.js?v=__CW_VERSION__"></script>
 <script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>
@@ -868,26 +920,89 @@ def _get_index_html_static() -> str:
   const isOpen = s => s.classList.contains('open');
   const open  = s => { s.classList.add('open');  s.querySelector('.head')?.setAttribute('aria-expanded','true');  const c=s.querySelector('.chev'); if(c) c.textContent='▼'; };
   const close = s => { s.classList.remove('open'); s.querySelector('.head')?.setAttribute('aria-expanded','false'); const c=s.querySelector('.chev'); if(c) c.textContent='▶'; };
-  const siblingsOf = (sec) => { const p = sec?.parentElement; if (!p) return []; return Array.from(p.querySelectorAll(':scope > .section')); };
+  const managedSiblingsOf = (sec) => {
+    const p = sec?.parentElement;
+    if (!p) return [];
+    return Array.from(p.querySelectorAll(':scope > .section')).filter(s => s.dataset.accordion !== 'off');
+  };
 
   window.toggleSection = function(id){
-    const sec = document.getElementById(id); if (!sec) return;
+    const sec = document.getElementById(id); if (!sec || sec.dataset.accordion === 'off') return;
     const was = isOpen(sec);
-    siblingsOf(sec).forEach(s => { if (s !== sec) close(s); });
+    managedSiblingsOf(sec).forEach(s => { if (s !== sec) close(s); });
     was ? close(sec) : open(sec);
+  };
+
+  window.openSection = function(id){
+    const sec = document.getElementById(id); if (!sec || sec.dataset.accordion === 'off') return;
+    managedSiblingsOf(sec).forEach(s => { if (s !== sec) close(s); });
+    open(sec);
   };
 
   function initAccordion(){
     const containers = new Set();
     document.querySelectorAll('.section').forEach(s => s.parentElement && containers.add(s.parentElement));
     containers.forEach(p => {
-      const secs = Array.from(p.querySelectorAll(':scope > .section'));
+      const secs = Array.from(p.querySelectorAll(':scope > .section')).filter(s => s.dataset.accordion !== 'off');
+      if (!secs.length) return;
       const opened = secs.filter(isOpen);
       if (opened.length > 1) opened.slice(1).forEach(close);
       secs.forEach(s => (isOpen(s) ? open(s) : close(s)));
     });
   }
   document.addEventListener('DOMContentLoaded', initAccordion, { once:true });
+})();
+</script>
+
+
+<script>
+(() => {
+  const paneSel = '#page-settings .cw-settings-pane';
+  const navSel = '#cw-settings-nav .cw-settings-nav-btn';
+
+  function apply(pane){
+    const name = String(pane || 'overview').trim().toLowerCase();
+    let found = false;
+    document.querySelectorAll(paneSel).forEach(node => {
+      const on = String(node.dataset.pane || '').toLowerCase() === name;
+      node.classList.toggle('active', on);
+      if (on) found = true;
+    });
+    if (!found && name !== 'overview') return apply('overview');
+
+    document.querySelectorAll(navSel).forEach(btn => {
+      const on = String(btn.dataset.pane || '').toLowerCase() === name;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-current', on ? 'page' : 'false');
+    });
+    window.__cwSettingsPane = name;
+    document.dispatchEvent(new CustomEvent('cw-settings-pane-changed', { detail: { pane: name } }));
+  }
+
+  window.cwSettingsSelect = function(pane){
+    apply(pane);
+    const main = document.getElementById('cw-settings-left');
+    if (main && window.innerWidth < 1200) main.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  document.addEventListener('DOMContentLoaded', () => apply(window.__cwSettingsPane || 'overview'), { once:true });
+  document.addEventListener('tab-changed', (e) => {
+    if (e?.detail?.id !== 'settings') return;
+    setTimeout(() => apply(window.__cwSettingsPane || 'overview'), 0);
+  });
+})();
+</script>
+
+<script>
+(() => {
+  window.cwProvidersJump = function(sectionId){
+    window.cwSettingsSelect?.('providers');
+    setTimeout(() => {
+      window.openSection?.(sectionId);
+      const sec = document.getElementById(sectionId);
+      sec?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
 })();
 </script>
 
@@ -1045,6 +1160,57 @@ function watchAuthMount(){
 
 document.addEventListener("settings-collect", () => refreshAuthDots(true), true);
 document.addEventListener("tab-changed", () => refreshAuthDots(false), true);
+
+function syncMetadataProviderDot(){
+  const chip = document.getElementById("hub_tmdb_key");
+  const dot = document.getElementById("meta-tmdb-dot");
+  const tile = dot?.closest?.(".cw-hub-tile.tmdb");
+  if(!chip || !dot || !tile) return false;
+
+  const cfgKey = String(__cfg?.tmdb?.api_key || '').trim();
+  const cfgMasked = cfgKey === "*****" || /^[•]+$/.test(cfgKey);
+  const cfgHasKey = cfgKey.length > 0 || cfgMasked;
+
+  const keyEl = document.getElementById("tmdb_api_key");
+  let uiHasKey = false;
+  let uiTouched = false;
+  if(keyEl){
+    const v = String(keyEl.value || '').trim();
+    uiTouched = keyEl.dataset?.touched === "1";
+    const vMasked = v === "*****" || /^[•]+$/.test(v);
+    const dsMasked = keyEl.dataset?.masked === "1";
+    uiHasKey = v.length > 0 || vMasked || dsMasked;
+    if(uiTouched) uiHasKey = v.length > 0 || vMasked;
+  }
+
+  const raw = String(chip.textContent || '').trim().toLowerCase();
+  const chipHasKey = /set/.test(raw) && !/missing|not set|unset|empty|—/.test(raw);
+  const on = uiHasKey || (!uiTouched && (cfgHasKey || chipHasKey));
+
+  dot.classList.toggle("on", on);
+  dot.title = on ? "Configured" : "Not configured";
+  dot.setAttribute("aria-label", dot.title);
+  tile.classList.toggle("is-configured", on);
+  return true;
+}
+window.syncMetadataProviderDot = syncMetadataProviderDot;
+
+let __metaTmdbMo = null;
+function watchMetadataProviderTile(){
+  const chip = document.getElementById("hub_tmdb_key");
+  if(!chip){
+    setTimeout(watchMetadataProviderTile, 150);
+    return;
+  }
+  syncMetadataProviderDot();
+  if(__metaTmdbMo) return;
+  __metaTmdbMo = new MutationObserver(() => syncMetadataProviderDot());
+  __metaTmdbMo.observe(chip, { childList:true, characterData:true, subtree:true });
+}
+
+document.addEventListener("settings-collect", () => syncMetadataProviderDot(), true);
+document.addEventListener("tab-changed", () => syncMetadataProviderDot(), true);
+document.addEventListener("DOMContentLoaded", watchMetadataProviderTile, { once:true });
 
 // Connection pill
 function makeConn({ name, connected, vip, detail, key }) {
