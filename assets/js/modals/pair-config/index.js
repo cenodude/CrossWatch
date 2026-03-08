@@ -1,4 +1,6 @@
-// assets/js/modals/pair-config/index.js
+/* assets/js/modals/pair-config/index.js */
+/* Modal for configuring sync pairs, including provider selection, features, and advanced options. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 // Helpers
 const ID=(x,r=document)=>(r.getElementById?r.getElementById(x):r.querySelector("#"+x));
@@ -94,14 +96,92 @@ function applyRatingsTypeRules(state){
   try{updateRtSummary()}catch{}
 }
 
-// Flow anim CSS
-function flowAnimCSSOnce(){if(ID("cx-flow-anim-css"))return;const st=document.createElement("style");st.id="cx-flow-anim-css";st.textContent=`@keyframes cx-flow-one{0%{left:0;opacity:.2}50%{opacity:1}100%{left:calc(100% - 8px);opacity:.2}}
-@keyframes cx-flow-two-a{0%{left:0;opacity:.2}50%{opacity:1}100%{left:calc(100% - 8px);opacity:.2}}
-@keyframes cx-flow-two-b{0%{left:calc(100% - 8px);opacity:.2}50%{opacity:1}100%{left:0;opacity:.2}}
-.flow-rail.pretty.anim-one .dot.flow.a{animation:cx-flow-one 1.2s ease-in-out infinite}
-.flow-rail.pretty.anim-one .dot.flow.b{animation:cx-flow-one 1.2s ease-in-out .6s infinite}
-.flow-rail.pretty.anim-two .dot.flow.a{animation:cx-flow-two-a 1.2s ease-in-out infinite}
-.flow-rail.pretty.anim-two .dot.flow.b{animation:cx-flow-two-b 1.2s ease-in-out infinite}`;document.head.appendChild(st)}
+function flowAnimCSSOnce(){
+  const id = "cx-pair-config-css";
+  let el = document.getElementById(id);
+  if(el) return;
+  el = document.createElement("style");
+  el.id = id;
+  el.textContent = `
+    .cx-modal-shell.pair-config-modal{width:var(--cxModalW,min(var(--cxModalMaxW,1280px),calc(100vw - 64px)))!important;max-width:min(var(--cxModalMaxW,1280px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 48px))!important}
+    .cx-modal-shell.pair-config-modal #cx-modal.cx-card{background:linear-gradient(180deg,rgba(20,24,34,.98),rgba(11,14,22,.985));border:1px solid rgba(255,255,255,.08);border-radius:24px;box-shadow:0 28px 90px rgba(0,0,0,.52),0 0 0 1px rgba(139,92,246,.08) inset;overflow:hidden!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:16px 20px 15px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));backdrop-filter:blur(12px)}
+    .cx-modal-shell.pair-config-modal #cx-modal .title-wrap{display:flex;align-items:flex-start;gap:12px;min-width:0}
+    .cx-modal-shell.pair-config-modal #cx-modal .app-logo{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,rgba(139,92,246,.26),rgba(59,130,246,.16));border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 24px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.08)}
+    .cx-modal-shell.pair-config-modal #cx-modal .app-name{font-size:18px;line-height:1.1;letter-spacing:-.01em}
+    .cx-modal-shell.pair-config-modal #cx-modal .app-sub{margin-top:4px;color:rgba(226,232,240,.62)}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-body{padding:14px 20px 8px}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-top{grid-template-columns:minmax(520px,1.02fr) minmax(320px,.98fr);gap:12px 18px;align-items:start}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-main{grid-template-columns:minmax(0,1.02fr) minmax(320px,.98fr);gap:14px 18px}
+    .cx-modal-shell.pair-config-modal #cx-modal .top-left{display:grid;gap:8px}
+    .cx-modal-shell.pair-config-modal #cx-modal .top-right{display:grid;gap:8px}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;margin:0}
+    .cx-modal-shell.pair-config-modal #cx-modal .field label{margin-bottom:4px;color:rgba(226,232,240,.68);letter-spacing:.08em}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-row .input,
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select{background:linear-gradient(180deg,rgba(3,7,18,.92),rgba(5,9,22,.98));border-color:rgba(255,255,255,.08);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-row .input:hover,
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select:hover{border-color:rgba(139,92,246,.24)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-card{min-width:0;padding:12px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-title{margin-bottom:10px;font-size:12px;color:rgba(226,232,240,.66);text-transform:uppercase;letter-spacing:.06em}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-title span{color:#fff;text-transform:none;letter-spacing:0}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty{min-height:62px!important;padding:10px 14px!important;border-radius:16px!important;border-color:rgba(255,255,255,.08)!important;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .token{width:40px!important;height:40px!important;border-radius:13px!important;box-shadow:0 8px 22px rgba(0,0,0,.28),inset 0 0 0 1px rgba(255,255,255,.05)!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .arrow{height:6px!important;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 0 14px rgba(99,102,241,.18)!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .dot{transform:scale(.9)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-warn-area:empty{display:none}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow{gap:12px 16px;margin-top:2px}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs{gap:10px!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab{padding:9px 14px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);font-weight:750}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab:hover,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button:hover,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a:hover,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab:hover{transform:translateY(-1px);border-color:rgba(139,92,246,.22);box-shadow:0 8px 20px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.03)}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab.active,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button.active,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a.active,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab.active,
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs [aria-selected="true"],
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs [data-active="1"],
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .selected{border-color:rgba(139,92,246,.4);background:linear-gradient(135deg,rgba(124,92,255,.34),rgba(59,130,246,.22));box-shadow:0 14px 30px rgba(0,0,0,.22),0 0 0 1px rgba(255,255,255,.035) inset}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg{padding:4px;border-radius:14px;border-color:rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg label{padding:9px 13px;border-radius:11px;color:rgba(226,232,240,.72)}
+    .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-one:checked + label,
+    .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-two:checked + label{background:linear-gradient(135deg,rgba(99,102,241,.9),rgba(59,130,246,.88));box-shadow:0 10px 24px rgba(59,130,246,.22)}
+    .cx-modal-shell.pair-config-modal #cx-modal .panel{padding:14px;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.008) 28%,rgba(2,6,16,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+    .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title{margin-bottom:12px;font-size:13px;letter-spacing:.01em}
+    .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title.small{margin-bottom:6px;color:rgba(226,232,240,.62)}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row{padding:8px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.025);margin-bottom:8px;min-height:56px}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .t,.cx-modal-shell.pair-config-modal #cx-modal .opt-row strong{font-weight:700}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .s{color:rgba(226,232,240,.56)}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch .slider{border-color:rgba(255,255,255,.12);background:rgba(9,12,24,.96)}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch input:checked + .slider{background:linear-gradient(135deg,#7c5cff,#47c7ff);border-color:rgba(96,165,250,.36);box-shadow:0 0 0 1px rgba(255,255,255,.03) inset}
+    .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv{border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.008));border:1px solid rgba(255,255,255,.05)}
+    .cx-modal-shell.pair-config-modal #cx-modal .rules .r{border-radius:14px;border-color:rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012))}
+    .cx-modal-shell.pair-config-modal .cx-actions{padding:12px 20px 16px!important;border-top:1px solid rgba(255,255,255,.06)!important;background:linear-gradient(180deg,rgba(15,18,27,.4),rgba(15,18,27,.92) 32%,rgba(15,18,27,.98))!important;backdrop-filter:blur(14px)!important}
+    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn{border-radius:16px;padding:12px 18px;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));border-color:rgba(255,255,255,.12)}
+    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn.primary{background:linear-gradient(135deg,#5b7dff,#6e86ff 38%,#76b8ff 100%);box-shadow:0 14px 34px rgba(43,88,255,.24),0 0 0 1px rgba(255,255,255,.04) inset}
+    @media (max-width:1180px){
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-top,
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-main{grid-template-columns:1fr}
+    }
+    @media (max-width:980px){
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow{grid-template-columns:1fr}
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow .cx-mode-inline{grid-column:auto;justify-self:start}
+    }
+    @media (max-width:720px){
+      .cx-modal-shell.pair-config-modal{width:min(var(--cxModalMaxW,1280px),calc(100vw - 32px))!important;max-width:min(var(--cxModalMaxW,1280px),calc(100vw - 32px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 24px))!important}
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:14px 16px}
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-body{padding:12px 16px 6px}
+      .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{grid-template-columns:1fr}
+      .cx-modal-shell.pair-config-modal .cx-actions{padding:10px 16px 14px!important}
+    }
+  `;
+  document.head.appendChild(el);
+}
 
 // Inline footer
 function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)||modal;let bar=card.querySelector(":scope > .cx-actions");if(!bar){bar=document.createElement("div");bar.className="cx-actions";const cancel=document.createElement("button");cancel.className="cx-btn";cancel.textContent="Cancel";cancel.addEventListener("click",()=>G.cxCloseModal?.());const save=document.createElement("button");save.className="cx-btn primary";save.id="cx-inline-save";save.textContent="Save";save.addEventListener("click",async()=>{const b=ID("cx-inline-save");if(!b)return;const old=b.textContent;b.disabled=true;b.textContent="Saving…";try{await modal.__doSave?.()}finally{b.disabled=false;b.textContent=old}});bar.append(cancel,save);card.appendChild(bar)}}
@@ -133,12 +213,12 @@ const tpl=()=>`
       <div class="cx-top grid2">
         <div class="top-left">
           <div class="cx-row cx-st-row">
-            <div class="field"><label>Source</label><div id="cx-src-display" class="input static" data-value=""></div><select id="cx-src" class="input hidden"></select></div>
-            <div class="field"><label>Target</label><div id="cx-dst-display" class="input static" data-value=""></div><select id="cx-dst" class="input hidden"></select></div>
+            <div class="field"><label for="cx-src">Source</label><div id="cx-src-display" class="input static" data-value=""></div><select id="cx-src" name="cx-src" class="input hidden"></select></div>
+            <div class="field"><label for="cx-dst">Target</label><div id="cx-dst-display" class="input static" data-value=""></div><select id="cx-dst" name="cx-dst" class="input hidden"></select></div>
           </div>
           <div class="cx-row cx-st-row cx-inst-row">
-            <div class="field"><label>Source profile</label><div id="cx-src-inst-display" class="input static hidden" data-value=""></div><select id="cx-src-inst" class="input"></select></div>
-            <div class="field"><label>Target profile</label><div id="cx-dst-inst-display" class="input static hidden" data-value=""></div><select id="cx-dst-inst" class="input"></select></div>
+            <div class="field"><label for="cx-src-inst">Source profile</label><div id="cx-src-inst-display" class="input static hidden" data-value=""></div><select id="cx-src-inst" name="cx-src-inst" class="input"></select></div>
+            <div class="field"><label for="cx-dst-inst">Target profile</label><div id="cx-dst-inst-display" class="input static hidden" data-value=""></div><select id="cx-dst-inst" name="cx-dst-inst" class="input"></select></div>
           </div>
         </div>
         <div class="top-right">
@@ -750,11 +830,11 @@ function renderFeaturePanel(state){
           <div class="panel-title small">Pair library whitelist</div>
           <div class="muted">Empty = use server-level whitelist.</div>
           <div class="opt-row">
-            <label>History</label>
+            <div class="field-label">History</div>
             <div class="chip-row" id="plx-hist-libs"></div>
           </div>
           <div class="opt-row">
-            <label>Ratings</label>
+            <div class="field-label">Ratings</div>
             <div class="chip-row" id="plx-rate-libs"></div>
           </div>
           <button type="button" class="cx-btn small" id="plx-libs-load">Load libraries</button>
@@ -773,11 +853,11 @@ function renderFeaturePanel(state){
             <div class="panel-title small">Pair library whitelist</div>
             <div class="muted">Empty = use server-level whitelist.</div>
             <div class="opt-row">
-              <label>History</label>
+              <div class="field-label">History</div>
               <div class="chip-row" id="jf-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <label>Ratings</label>
+              <div class="field-label">Ratings</div>
               <div class="chip-row" id="jf-rate-libs"></div>
             </div>
             <button type="button" class="cx-btn small" id="jf-libs-load">Load libraries</button>
@@ -797,11 +877,11 @@ function renderFeaturePanel(state){
             <div class="panel-title small">Pair library whitelist</div>
             <div class="muted">Empty = use server-level whitelist.</div>
             <div class="opt-row">
-              <label>History</label>
+              <div class="field-label">History</div>
               <div class="chip-row" id="em-hist-libs"></div>
             </div>
             <div class="opt-row">
-              <label>Ratings</label>
+              <div class="field-label">Ratings</div>
               <div class="chip-row" id="em-rate-libs"></div>
             </div>
             <button type="button" class="cx-btn small" id="em-libs-load">Load libraries</button>
@@ -875,8 +955,10 @@ function renderFeaturePanel(state){
           </div>
         </div>
       </div>
-      <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${((String(g.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror")?"":"checked")}><span class="slider"></span></label></div>`;
+      <div class="grid2 compact">
+        <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${((String(g.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror")?"":"checked")}><span class="slider"></span></label></div>
+      </div>`;
     right.innerHTML=`<div class="panel-title">Advanced</div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div><div class="muted"></div>
@@ -916,7 +998,7 @@ function renderFeaturePanel(state){
         </div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <label>Mode</label>
+            <div class="field-label">Mode</div>
             <div class="seg">
               <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-fav" value="favorites" ${jfw.mode==="favorites"?"checked":""}/><label for="cx-jf-wl-mode-fav">Favorites</label>
               <input type="radio" name="cx-jf-wl-mode" id="cx-jf-wl-mode-pl"  value="playlist"  ${jfw.mode==="playlist"?"checked":""}/><label for="cx-jf-wl-mode-pl">Playlist</label>
@@ -938,7 +1020,7 @@ function renderFeaturePanel(state){
         </div>
         <div class="grid2 compact">
           <div class="opt-row" style="grid-column:1/-1">
-            <label>Mode</label>
+            <div class="field-label">Mode</div>
             <div class="seg">
               <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-fav" value="favorites" ${emw.mode==="favorites"?"checked":""}/><label for="cx-em-wl-mode-fav">Favorites</label>
               <input type="radio" name="cx-em-wl-mode" id="cx-em-wl-mode-pl"  value="playlist"  ${emw.mode==="playlist"?"checked":""}/><label for="cx-em-wl-mode-pl">Playlist</label>
@@ -1906,7 +1988,12 @@ async function savePair(payload){
 
 export default{
   async mount(hostEl,props){
-    hostEl.innerHTML=tpl(); flowAnimCSSOnce();
+    flowAnimCSSOnce();
+    hostEl.classList.add("pair-config-modal");
+    hostEl.style.setProperty("--cxModalMaxW", "1280px");
+    hostEl.style.setProperty("--cxModalMaxH", "92vh");
+    hostEl.style.setProperty("--cxModalW", "min(var(--cxModalMaxW,1280px),calc(100vw - 64px))");
+    hostEl.innerHTML=tpl();
     const wrap=ID("cx-modal",hostEl);
     const state=defaultState();
     state.feature="globals";
