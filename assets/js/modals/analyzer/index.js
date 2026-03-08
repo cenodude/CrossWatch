@@ -1,4 +1,7 @@
-// assets/js/modals/analyzer/index.js
+/* assets/js/modals/analyzer/index.js */
+/* Modal for analyzing sync issues and provider feature coverage. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
 const fjson = async (u, o) => {
   const r = await fetch(u, o);
   if (!r.ok) throw new Error(r.status);
@@ -623,7 +626,7 @@ export default {
       const ids = it.ids || {};
       const inputs = ID_FIELDS.map(name => {
         const val = ids[name] || "";
-        return `<label><span>${name}</span><input type="text" data-idfield="${name}" value="${String(
+        return `<label><span>${name}</span><input type="text" name="${name}" data-idfield="${name}" value="${String(
           val
         )}"></label>`;
       }).join("");
