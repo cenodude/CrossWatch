@@ -88,26 +88,28 @@
   } catch(e) { console.warn('legacy map failed', e); }
 
   // Proxies
+  const call = (fn, ...args) => (typeof fn === "function" ? fn(...args) : undefined);
+
   (window.CW.Providers ||= {});
-  CW.Providers.load = CW.Providers.load || (Legacy.loadProviders ? ()=>Legacy.loadProviders() : ()=>{});
-  CW.Providers.mountMetadataProviders = CW.Providers.mountMetadataProviders || (Legacy.mountMetadataProviders ? ()=>Legacy.mountMetadataProviders() : ()=>{});
+  CW.Providers.load = CW.Providers.load || (() => call(window.loadProviders || Legacy.loadProviders));
+  CW.Providers.mountMetadataProviders = CW.Providers.mountMetadataProviders || (() => call(window.mountMetadataProviders || Legacy.mountMetadataProviders));
 
   (window.CW.Pairs ||= {});
-  CW.Pairs.list = CW.Pairs.list || (Legacy.loadPairs ? ()=>Legacy.loadPairs() : ()=>{});
-  CW.Pairs.remove = CW.Pairs.remove || (Legacy.deletePair ? (id)=>Legacy.deletePair(id) : ()=>{});
-  CW.Pairs.save = CW.Pairs.save || (Legacy.cxSavePair ? (p)=>Legacy.cxSavePair(p) : ()=>{});
+  CW.Pairs.list = CW.Pairs.list || (() => call(window.loadPairs || Legacy.loadPairs));
+  CW.Pairs.remove = CW.Pairs.remove || ((id) => call(window.deletePair || Legacy.deletePair, id));
+  CW.Pairs.save = CW.Pairs.save || ((p) => call(window.cxSavePair || Legacy.cxSavePair, p));
 
   (window.CW.Modal ||= {});
-  CW.Modal.openFor = CW.Modal.openFor || (Legacy.cxOpenModalFor ? (p,id)=>Legacy.cxOpenModalFor(p,id) : ()=>{});
+  CW.Modal.openFor = CW.Modal.openFor || ((p, id) => call(window.cxOpenModalFor || Legacy.cxOpenModalFor, p, id));
 
   (window.CW.Insights ||= {});
-  CW.Insights.loadLight = CW.Insights.loadLight || (Legacy.refreshSettingsInsight ? ()=>Legacy.refreshSettingsInsight() : ()=>{});
+  CW.Insights.loadLight = CW.Insights.loadLight || (() => call(window.refreshSettingsInsight || Legacy.refreshSettingsInsight));
 
   (window.CW.Scheduling ||= {});
-  CW.Scheduling.load = CW.Scheduling.load || (typeof window.loadScheduling==='function' ? ()=>window.loadScheduling() : ()=>{});
+  CW.Scheduling.load = CW.Scheduling.load || (() => call(window.loadScheduling));
 
   (window.CW.UX ||= {});
-  CW.UX.initWallInteractions = CW.UX.initWallInteractions || (Legacy.initWallInteractions ? ()=>Legacy.initWallInteractions() : ()=>{});
+  CW.UX.initWallInteractions = CW.UX.initWallInteractions || (() => call(window.initWallInteractions || Legacy.initWallInteractions));
 
 
   // Global inline
