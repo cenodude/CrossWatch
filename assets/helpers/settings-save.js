@@ -1,9 +1,186 @@
 /* assets/helpers/settings-save.js */
-/* Refactored and expanded settings save handler with validation, user feedback, and support for new settings */
+/* Refactored and expanded settings save logic */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 function _getVal(id) {
   const el = document.getElementById(id);
   return (el && typeof el.value === "string" ? el.value : "").trim();
+}
+
+const _cwJSONHeaders = { "Content-Type": "application/json" };
+
+function _cwApi() {
+  return window.CW?.API || null;
+}
+
+async function _cwRequest(url, opt = {}, ms = 9000) {
+  const api = _cwApi();
+  const req = { cache: "no-store", ...opt };
+  if (typeof api?.f === "function") return api.f(url, req, ms);
+  return fetch(url, req);
+}
+
+async function _cwReadBody(resp) {
+  const ct = resp?.headers?.get?.("content-type") || "";
+  try {
+    return ct.includes("json") ? await resp.json() : await resp.text();
+  } catch {
+    return null;
+  }
+}
+
+async function _cwGetConfigFresh() {
+  const api = _cwApi();
+  if (typeof api?.Config?.load === "function") return api.Config.load(true);
+  const resp = await _cwRequest("/api/config");
+  if (!resp.ok) throw new Error(`GET /api/config ${resp.status}`);
+  return _cwReadBody(resp);
+}
+
+async function _cwSaveConfig(cfg) {
+  const out = cfg || {};
+  const api = _cwApi();
+  if (typeof api?.Config?.save === "function") return api.Config.save(out);
+  const resp = await _cwRequest("/api/config", {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify(out),
+  });
+  if (!resp.ok) throw new Error(`POST /api/config ${resp.status}`);
+  return _cwReadBody(resp);
+}
+
+function _cwSetConfigCache(cfg) {
+  try {
+    const fn = window.CW?.Cache?.setCfg;
+    if (typeof fn === "function") return fn(cfg);
+  } catch {}
+  try { window._cfgCache = JSON.parse(JSON.stringify(cfg)); } catch { window._cfgCache = cfg; }
+}
+
+function _cwInvalidateCaches(keys) {
+  try {
+    const fn = window.CW?.Cache?.invalidate;
+    if (typeof fn === "function") fn(keys);
+  } catch {}
+}
+
+
+function _cwNorm(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v).trim();
+  try { return String(v).trim(); } catch { return ""; }
+}
+
+function _cwTruthy(v) {
+  return ["true", "1", "yes", "on", "enabled", "enable"].includes(_cwNorm(v).toLowerCase());
+}
+
+function _cwNormInst(v) {
+  const s = _cwNorm(v);
+  return s && s.toLowerCase() !== "default" ? s : "default";
+}
+
+function _cwSelectedInst(provider, storageKey = "") {
+  try {
+    const el = document.getElementById(`${provider}_instance`);
+    return _cwNormInst((el && el.value) || (storageKey ? localStorage.getItem(storageKey) : "") || "default");
+  } catch {
+    return "default";
+  }
+}
+
+function _cwInstBlock(root, inst) {
+  const base = root && typeof root === "object" ? root : {};
+  if (inst === "default") return base;
+  return base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object"
+    ? base.instances[inst]
+    : {};
+}
+
+function _cwEnsureInstBlock(root, inst) {
+  const base = root && typeof root === "object" ? root : {};
+  if (inst === "default") return base;
+  if (!base.instances || typeof base.instances !== "object") base.instances = {};
+  if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
+  return base.instances[inst];
+}
+
+function _cwApplySecret(target, key, change, clearValue) {
+  if (!change?.changed || !target || !key) return false;
+  if (change.clear) {
+    if (clearValue !== undefined) target[key] = clearValue;
+    else delete target[key];
+  } else {
+    target[key] = change.set;
+  }
+  return true;
+}
+
+function _cwReadFirst(...ids) {
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    const v = _cwNorm(el && el.value);
+    if (v) return v;
+  }
+  return "";
+}
+
+function _cwSameList(a, b, numeric = false) {
+  const cast = numeric ? Number : String;
+  const sort = numeric ? (x, y) => x - y : undefined;
+  const A = (a || []).map(cast).filter((v) => (numeric ? Number.isFinite(v) : !!v));
+  const B = (b || []).map(cast).filter((v) => (numeric ? Number.isFinite(v) : !!v));
+  if (sort) { A.sort(sort); B.sort(sort); } else { A.sort(); B.sort(); }
+  if (A.length !== B.length) return false;
+  for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
+  return true;
+}
+
+function _cwReadLibrarySource(prefix, numeric = false) {
+  const cast = (v) => {
+    const raw = _cwNorm(v);
+    if (!raw) return null;
+    if (!numeric) return raw;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  const readRows = (rootSelector, togglePrefix) => {
+    const rows = document.querySelectorAll(`${rootSelector} .${rootSelector.includes('matrix') ? 'lm-row' : 'whrow'}`);
+    if (!rows.length) return null;
+    const out = { H: [], R: [], S: [] };
+    rows.forEach((row) => {
+      const id = cast(row.dataset.id);
+      if (id === null) return;
+      if (row.querySelector(`.${togglePrefix}hist.on`)) out.H.push(id);
+      if (row.querySelector(`.${togglePrefix}rate.on`)) out.R.push(id);
+      if (row.querySelector(`.${togglePrefix}scr.on`)) out.S.push(id);
+    });
+    return out;
+  };
+  const readSelect = (key) => {
+    const el = document.querySelector(`#${prefix}_lib_${key}`);
+    if (!el) return null;
+    const opts = el.selectedOptions ? Array.from(el.selectedOptions) : Array.from(el.querySelectorAll('option:checked'));
+    return opts.map((o) => cast(o.value || o.dataset.value || o.textContent)).filter((v) => v !== null);
+  };
+  return readRows(`#${prefix}_lib_matrix`, 'lm-dot.')
+    || readRows(`#${prefix}_lib_whitelist`, 'whtog.')
+    || { H: readSelect('history'), R: readSelect('ratings'), S: readSelect('scrobble') };
+}
+
+function _cwApplyLibraryConfig(target, prev, src, numeric = false) {
+  if (!target || !src) return false;
+  let changed = false;
+  const map = [['H', 'history'], ['R', 'ratings'], ['S', 'scrobble']];
+  for (const [shortKey, longKey] of map) {
+    const nextVals = src[shortKey] || [];
+    const prevVals = prev?.[longKey]?.libraries || [];
+    if (_cwSameList(nextVals, prevVals, numeric)) continue;
+    target[longKey] = Object.assign({}, target[longKey] || {}, { libraries: nextVals });
+    changed = true;
+  }
+  return changed;
 }
 
 async function saveSettings() {
@@ -117,20 +294,8 @@ async function saveSettings() {
     window.setTimeout(() => el.classList.add("hide"), 2000);
   };
 
-  // Normalize values coming from config/UI. Must tolerate non-strings (e.g. numeric account_id).
-  const norm = (v) => {
-    if (v === null || v === undefined) return "";
-    if (typeof v === "string") return v.trim();
-    if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v).trim();
-    try { return String(v).trim(); } catch { return ""; }
-  };
-  const readToggle = (id) => {
-    const el = document.getElementById(id);
-    if (!el) return false;
-    const raw = norm(el.value || "");
-    const s = raw.toLowerCase();
-    return ["true","1","yes","on","enabled","enable"].includes(s);
-  };
+  const norm = _cwNorm;
+  const readToggle = (id) => _cwTruthy(document.getElementById(id)?.value || "");
 
   ([
     "plex_token",
@@ -173,34 +338,9 @@ async function saveSettings() {
   }
 
   try {
-    const serverResp = await fetch("/api/config", { cache: "no-store" });
-    if (!serverResp.ok) throw new Error(`GET /api/config ${serverResp.status}`);
-    const serverCfg = await serverResp.json();
+    const serverCfg = await _cwGetConfigFresh();
     const cfg = JSON.parse(JSON.stringify(serverCfg || {}));
     let changed = false;
-
-    const _cwNormInst = (v) => {
-      const s = String(v || "").trim();
-      return (s && s.toLowerCase() !== "default") ? s : "default";
-    };
-
-    const _cwSelectedInst = (provider, storageKey = "") => {
-      try {
-        const el = document.getElementById(`${provider}_instance`);
-        const raw = String((el && el.value) || (storageKey ? localStorage.getItem(storageKey) : "") || "default").trim();
-        return _cwNormInst(raw);
-      } catch {
-        return "default";
-      }
-    };
-
-    const _cwInstBlock = (root, inst) => {
-      const base = (root && typeof root === "object") ? root : {};
-      if (inst === "default") return base;
-      return (base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object")
-        ? base.instances[inst]
-        : {};
-    };
 
     try { delete cfg.app_auth; } catch {}
 
@@ -215,8 +355,9 @@ async function saveSettings() {
 
       let st = null;
       try {
-        const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
-        st = r.ok ? await r.json() : null;
+        const r = await _cwRequest("/api/app-auth/status", { credentials: "same-origin" });
+        const body = await _cwReadBody(r);
+        st = r.ok && body && typeof body === "object" ? body : null;
       } catch {}
 
       const configured = !!(st && st.configured);
@@ -260,14 +401,13 @@ async function saveSettings() {
       }
 
       if (needsCall) {
-        const resp = await fetch("/api/app-auth/credentials", {
+        const resp = await _cwRequest("/api/app-auth/credentials", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: _cwJSONHeaders,
           credentials: "same-origin",
-          cache: "no-store",
           body: JSON.stringify({ enabled: wantEnabled, username: wantUser, password: pass1 || "" }),
         });
-        const j = await resp.json().catch(() => null);
+        const j = await _cwReadBody(resp);
         if (!resp.ok || !j || !j.ok) {
           showToast((j && j.error) ? j.error : `Auth save failed (${resp.status})`, false);
           return;
@@ -509,157 +649,53 @@ async function saveSettings() {
     })();
 
     
-    const sPlex     = readSecretSafe("plex_token", prevPlex);
-    const sHomePin  = readSecretSafe("plex_home_pin", prevHomePin);
-    const sCid      = readSecretSafe("simkl_client_id", prevCid);
-    const sSec      = readSecretSafe("simkl_client_secret", prevSec);
-    const sTmdb     = readSecretSafe("tmdb_api_key", prevTmdb);
-    const sTrkCid   = readSecretSafe("trakt_client_id", prevTraktCid);
-    const sTrkSec   = readSecretSafe("trakt_client_secret", prevTraktSec);
-    const sMdbl     = readSecretSafe("mdblist_key", prevMdbl);
-    const sAniCid   = readSecretSafe("anilist_client_id", prevAniCid);
-    const sAniSec   = readSecretSafe("anilist_client_secret", prevAniSec);
+    const sPlex = readSecretSafe("plex_token", prevPlex);
+    const sHomePin = readSecretSafe("plex_home_pin", prevHomePin);
+    const sCid = readSecretSafe("simkl_client_id", prevCid);
+    const sSec = readSecretSafe("simkl_client_secret", prevSec);
+    const sTmdb = readSecretSafe("tmdb_api_key", prevTmdb);
+    const sTrkCid = readSecretSafe("trakt_client_id", prevTraktCid);
+    const sTrkSec = readSecretSafe("trakt_client_secret", prevTraktSec);
+    const sMdbl = readSecretSafe("mdblist_key", prevMdbl);
+    const sAniCid = readSecretSafe("anilist_client_id", prevAniCid);
+    const sAniSec = readSecretSafe("anilist_client_secret", prevAniSec);
 
-    if (sMdbl.changed) {
-      cfg.mdblist = cfg.mdblist || {};
-      if (mdblistSecretInst === "default") {
-        if (sMdbl.clear) delete cfg.mdblist.api_key; else cfg.mdblist.api_key = sMdbl.set;
-      } else {
-        cfg.mdblist.instances = cfg.mdblist.instances || {};
-        cfg.mdblist.instances[mdblistSecretInst] = cfg.mdblist.instances[mdblistSecretInst] || {};
-        const mdblInstCfg = cfg.mdblist.instances[mdblistSecretInst];
-        if (sMdbl.clear) delete mdblInstCfg.api_key; else mdblInstCfg.api_key = sMdbl.set;
-      }
+    const applySecretGroup = (rootKey, inst, fields) => {
+      const changes = fields.filter(([, change]) => change?.changed);
+      if (!changes.length) return;
+      cfg[rootKey] = cfg[rootKey] || {};
+      const target = _cwEnsureInstBlock(cfg[rootKey], inst);
+      changes.forEach(([prop, change, clearValue]) => _cwApplySecret(target, prop, change, clearValue));
       changed = true;
-    }
+    };
 
-    if (sPlex.changed || sHomePin.changed) {
-      cfg.plex = cfg.plex || {};
-      let plexSecretCfg = cfg.plex;
-      if (plexSecretInst !== "default") {
-        cfg.plex.instances = cfg.plex.instances || {};
-        cfg.plex.instances[plexSecretInst] = cfg.plex.instances[plexSecretInst] || {};
-        plexSecretCfg = cfg.plex.instances[plexSecretInst];
-      }
-      if (sPlex.changed) {
-        if (sPlex.clear) delete plexSecretCfg.account_token; else plexSecretCfg.account_token = sPlex.set;
-      }
-      if (sHomePin.changed) {
-        if (sHomePin.clear) plexSecretCfg.home_pin = ""; else plexSecretCfg.home_pin = sHomePin.set;
-      }
-      changed = true;
-    }
-    if (sCid.changed || sSec.changed) {
-      cfg.simkl = cfg.simkl || {};
-      let simklSecretCfg = cfg.simkl;
-      if (simklSecretInst !== "default") {
-        cfg.simkl.instances = cfg.simkl.instances || {};
-        cfg.simkl.instances[simklSecretInst] = cfg.simkl.instances[simklSecretInst] || {};
-        simklSecretCfg = cfg.simkl.instances[simklSecretInst];
-      }
-      if (sCid.changed) {
-        if (sCid.clear) delete simklSecretCfg.client_id; else simklSecretCfg.client_id = sCid.set;
-      }
-      if (sSec.changed) {
-        if (sSec.clear) delete simklSecretCfg.client_secret; else simklSecretCfg.client_secret = sSec.set;
-      }
-      changed = true;
-    }
-    if (sTrkCid.changed || sTrkSec.changed) {
-      cfg.trakt = cfg.trakt || {};
-
-      if (traktSecretInst === "default") {
-        if (sTrkCid.changed) {
-          if (sTrkCid.clear) delete cfg.trakt.client_id; else cfg.trakt.client_id = sTrkCid.set;
-        }
-        if (sTrkSec.changed) {
-          if (sTrkSec.clear) delete cfg.trakt.client_secret; else cfg.trakt.client_secret = sTrkSec.set;
-        }
-      } else {
-        cfg.trakt.instances = cfg.trakt.instances || {};
-        cfg.trakt.instances[traktSecretInst] = cfg.trakt.instances[traktSecretInst] || {};
-        const trkInstCfg = cfg.trakt.instances[traktSecretInst];
-
-        if (sTrkCid.changed) {
-          if (sTrkCid.clear) delete trkInstCfg.client_id; else trkInstCfg.client_id = sTrkCid.set;
-        }
-        if (sTrkSec.changed) {
-          if (sTrkSec.clear) delete trkInstCfg.client_secret; else trkInstCfg.client_secret = sTrkSec.set;
-        }
-      }
-
-      changed = true;
-    }
-    if (sTmdb.changed) {
-      cfg.tmdb = cfg.tmdb || {};
-      if (sTmdb.clear) delete cfg.tmdb.api_key; else cfg.tmdb.api_key = sTmdb.set;
-      changed = true;
-    }
-    if (sAniCid.changed || sAniSec.changed) {
-      cfg.anilist = cfg.anilist || {};
-      let aniSecretCfg = cfg.anilist;
-      if (anilistSecretInst !== "default") {
-        cfg.anilist.instances = cfg.anilist.instances || {};
-        cfg.anilist.instances[anilistSecretInst] = cfg.anilist.instances[anilistSecretInst] || {};
-        aniSecretCfg = cfg.anilist.instances[anilistSecretInst];
-      }
-      if (sAniCid.changed) {
-        if (sAniCid.clear) delete aniSecretCfg.client_id; else aniSecretCfg.client_id = sAniCid.set;
-      }
-      if (sAniSec.changed) {
-        if (sAniSec.clear) delete aniSecretCfg.client_secret; else aniSecretCfg.client_secret = sAniSec.set;
-      }
-      changed = true;
-    }
+    applySecretGroup("mdblist", mdblistSecretInst, [["api_key", sMdbl]]);
+    applySecretGroup("plex", plexSecretInst, [["account_token", sPlex], ["home_pin", sHomePin, ""]]);
+    applySecretGroup("simkl", simklSecretInst, [["client_id", sCid], ["client_secret", sSec]]);
+    applySecretGroup("trakt", traktSecretInst, [["client_id", sTrkCid], ["client_secret", sTrkSec]]);
+    applySecretGroup("anilist", anilistSecretInst, [["client_id", sAniCid], ["client_secret", sAniSec]]);
+    applySecretGroup("tmdb", "default", [["api_key", sTmdb]]);
 
 
     try {
-      const norm = (s) => (s ?? "").trim();
-      const first = (...ids) => {
-        for (const id of ids) {
-          const el = document.getElementById(id);
-          const v = el && String(el.value || "").trim();
-          if (v) return v;
-        }
-        return "";
-      };
+      const jfyInst = _cwNormInst(document.getElementById("jellyfin_instance")?.value || "");
+      const prevJfy = _cwInstBlock(serverCfg?.jellyfin, jfyInst);
+      cfg.jellyfin = cfg.jellyfin && typeof cfg.jellyfin === "object" ? cfg.jellyfin : {};
+      const nextJfy = _cwEnsureInstBlock(cfg.jellyfin, jfyInst);
 
-      const jfyInstRaw = norm(document.getElementById("jellyfin_instance")?.value || "");
-      const jfyInst = (jfyInstRaw && jfyInstRaw.toLowerCase() !== "default") ? jfyInstRaw : "default";
+      const uiSrv = _cwReadFirst("jfy_server_url", "jfy_server");
+      const uiUser = _cwReadFirst("jfy_username", "jfy_user");
+      const uiUid = _cwReadFirst("jfy_user_id");
+      const uiVerify = !!(document.getElementById("jfy_verify_ssl")?.checked || document.getElementById("jfy_verify_ssl_dup")?.checked);
 
-      const jfyBaseSrv = (serverCfg?.jellyfin && typeof serverCfg.jellyfin === "object") ? serverCfg.jellyfin : {};
-      const prevJfy = jfyInst === "default"
-        ? jfyBaseSrv
-        : ((jfyBaseSrv.instances && typeof jfyBaseSrv.instances === "object" && jfyBaseSrv.instances[jfyInst]) ? jfyBaseSrv.instances[jfyInst] : {});
-
-      const jfyBaseCfg = (cfg.jellyfin && typeof cfg.jellyfin === "object") ? cfg.jellyfin : (cfg.jellyfin = {});
-      const nextJfy = (() => {
-        if (jfyInst === "default") return jfyBaseCfg;
-        if (!jfyBaseCfg.instances || typeof jfyBaseCfg.instances !== "object") jfyBaseCfg.instances = {};
-        if (!jfyBaseCfg.instances[jfyInst] || typeof jfyBaseCfg.instances[jfyInst] !== "object") jfyBaseCfg.instances[jfyInst] = {};
-        return jfyBaseCfg.instances[jfyInst];
-      })();
-
-      
-      const uiSrv    = first("jfy_server_url","jfy_server");
-      const uiUser   = first("jfy_username","jfy_user");
-      const uiUid    = first("jfy_user_id");
-      const uiVerify = !!(document.getElementById("jfy_verify_ssl")?.checked ||
-                          document.getElementById("jfy_verify_ssl_dup")?.checked);
-
-      const prevSrv    = norm(prevJfy?.server);
-      const prevUser   = norm(prevJfy?.username || prevJfy?.user);
-      const prevUid    = norm(prevJfy?.user_id);
-      const prevVerify = !!prevJfy?.verify_ssl;
-
-      if (uiSrv && uiSrv !== prevSrv) { nextJfy.server = uiSrv; changed = true; }
-      if (uiUser && uiUser !== prevUser) {
+      if (uiSrv && uiSrv !== norm(prevJfy?.server)) { nextJfy.server = uiSrv; changed = true; }
+      if (uiUser && uiUser !== norm(prevJfy?.username || prevJfy?.user)) {
         nextJfy.username = uiUser;
         nextJfy.user = uiUser;
         changed = true;
       }
-      if (uiUid && uiUid !== prevUid) { nextJfy.user_id = uiUid; changed = true; }
-      if (uiVerify !== prevVerify)   { nextJfy.verify_ssl = uiVerify; changed = true; }
+      if (uiUid && uiUid !== norm(prevJfy?.user_id)) { nextJfy.user_id = uiUid; changed = true; }
+      if (uiVerify !== !!prevJfy?.verify_ssl) { nextJfy.verify_ssl = uiVerify; changed = true; }
 
       const jfyHydrated =
         window.__jellyfinHydrated === true ||
@@ -669,144 +705,18 @@ async function saveSettings() {
         document.querySelectorAll("#jfy_lib_whitelist .whrow").length > 0 ||
         !!document.querySelector("#jfy_lib_history option, #jfy_lib_ratings option, #jfy_lib_scrobble option");
 
-      const readFromMatrix = () => {
-        const rows = document.querySelectorAll("#jfy_lib_matrix .lm-row");
-        if (!rows.length) return null;
-        const H = [], R = [], S = [];
-        rows.forEach(r => {
-          const id = String(r.dataset.id || "").trim(); 
-          if (!id) return;
-          if (r.querySelector(".lm-dot.hist.on")) H.push(id);
-          if (r.querySelector(".lm-dot.rate.on")) R.push(id);
-          if (r.querySelector(".lm-dot.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromWhitelist = () => {
-        const rows = document.querySelectorAll("#jfy_lib_whitelist .whrow");
-        if (!rows.length) return null;  
-        const H = [], R = [], S = [];
-        rows.forEach(r => {
-          const id = String(r.dataset.id || "").trim(); 
-          if (!id) return;
-          if (r.querySelector(".whtog.hist.on")) H.push(id);
-          if (r.querySelector(".whtog.rate.on")) R.push(id);
-          if (r.querySelector(".whtog.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromSelects = () => {
-        const toStrs = (selector) => {
-          const el = document.querySelector(selector);
-          if (!el) return null;
-          const opts = el.selectedOptions
-            ? Array.from(el.selectedOptions)
-            : Array.from(el.querySelectorAll("option:checked"));
-          return opts
-            .map(o => String(o.value || o.dataset.value || o.textContent).trim())
-            .filter(Boolean);
-        };
-        return { H: toStrs("#jfy_lib_history"), R: toStrs("#jfy_lib_ratings"), S: toStrs("#jfy_lib_scrobble") };
-      };
-
-      const src = jfyHydrated ? (readFromMatrix() || readFromWhitelist() || readFromSelects()) : null;
-
-      const same = (a, b) => {
-        const A = (a || []).map(String).filter(Boolean).sort();
-        const B = (b || []).map(String).filter(Boolean).sort();
-        if (A.length !== B.length) return false;
-        for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
-        return true;
-      };
-
-      if (src) {
-        const prevH = (prevJfy?.history?.libraries || []).map(String);
-        const prevR = (prevJfy?.ratings?.libraries || []).map(String);
-        const prevS = (prevJfy?.scrobble?.libraries || []).map(String);
-        if (!same(src.H, prevH)) {
-          nextJfy.history = Object.assign({}, nextJfy.history || {}, { libraries: src.H || [] });
-          changed = true;
-        }
-        if (!same(src.R, prevR)) {
-          nextJfy.ratings = Object.assign({}, nextJfy.ratings || {}, { libraries: src.R || [] });
-          changed = true;
-        }
-        if (!same(src.S, prevS)) {
-          nextJfy.scrobble = Object.assign({}, nextJfy.scrobble || {}, { libraries: src.S || [] });
-          changed = true;
-        }
-      }
+      const src = jfyHydrated ? _cwReadLibrarySource("jfy") : null;
+      if (_cwApplyLibraryConfig(nextJfy, prevJfy, src)) changed = true;
     } catch (e) {
       console.warn("saveSettings: jellyfin merge failed", e);
     }
 
       
     try {
-      const norm = (s) => (s ?? "").trim();
-
-      const embyInstRaw = norm(document.getElementById("emby_instance")?.value || "");
-      const embyInst = (embyInstRaw && embyInstRaw.toLowerCase() !== "default") ? embyInstRaw : "default";
-
-      const embyBaseSrv = (serverCfg?.emby && typeof serverCfg.emby === "object") ? serverCfg.emby : {};
-      const prevEmby = embyInst === "default"
-        ? embyBaseSrv
-        : ((embyBaseSrv.instances && typeof embyBaseSrv.instances === "object" && embyBaseSrv.instances[embyInst]) ? embyBaseSrv.instances[embyInst] : {});
-
-      const embyBaseCfg = (cfg.emby && typeof cfg.emby === "object") ? cfg.emby : (cfg.emby = {});
-      const nextEmby = (() => {
-        if (embyInst === "default") return embyBaseCfg;
-        if (!embyBaseCfg.instances || typeof embyBaseCfg.instances !== "object") embyBaseCfg.instances = {};
-        if (!embyBaseCfg.instances[embyInst] || typeof embyBaseCfg.instances[embyInst] !== "object") embyBaseCfg.instances[embyInst] = {};
-        return embyBaseCfg.instances[embyInst];
-      })();
-
-      const readFromMatrix = () => {
-        const rows = document.querySelectorAll("#emby_lib_matrix .lm-row");
-        if (!rows.length) return null;
-        const H = [], R = [], S = [];
-        rows.forEach((r) => {
-          const id = String(r.dataset.id || "").trim(); 
-          if (!id) return;
-          if (r.querySelector(".lm-dot.hist.on")) H.push(id);
-          if (r.querySelector(".lm-dot.rate.on")) R.push(id);
-          if (r.querySelector(".lm-dot.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromWhitelist = () => {
-        const rows = document.querySelectorAll("#emby_lib_whitelist .whrow");
-        if (!rows.length) return null;
-        const H = [], R = [], S = [];
-        rows.forEach((r) => {
-          const id = String(r.dataset.id || "").trim();
-          if (!id) return;
-          if (r.querySelector(".whtog.hist.on")) H.push(id);
-          if (r.querySelector(".whtog.rate.on")) R.push(id);
-          if (r.querySelector(".whtog.scr.on")) S.push(id);
-        });
-        return { H, R, S };
-      };
-
-      const readFromSelects = () => {
-        const toStrs = (selector) => {
-          const el = document.querySelector(selector);
-          if (!el) return null;
-          const opts = el.selectedOptions
-            ? Array.from(el.selectedOptions)
-            : Array.from(el.querySelectorAll("option:checked"));
-          return opts
-            .map((o) => String(o.value || o.dataset.value || o.textContent).trim())
-            .filter(Boolean);
-        };
-        return {
-          H: toStrs("#emby_lib_history"),
-          R: toStrs("#emby_lib_ratings"),
-          S: toStrs("#emby_lib_scrobble"),
-        };
-      };
+      const embyInst = _cwNormInst(document.getElementById("emby_instance")?.value || "");
+      const prevEmby = _cwInstBlock(serverCfg?.emby, embyInst);
+      cfg.emby = cfg.emby && typeof cfg.emby === "object" ? cfg.emby : {};
+      const nextEmby = _cwEnsureInstBlock(cfg.emby, embyInst);
 
       const embyHydrated =
         window.__embyHydrated === true ||
@@ -815,34 +725,8 @@ async function saveSettings() {
         document.querySelectorAll("#emby_lib_whitelist .whrow").length > 0 ||
         !!document.querySelector("#emby_lib_history option, #emby_lib_ratings option, #emby_lib_scrobble option");
 
-      const src = embyHydrated ? (readFromMatrix() || readFromWhitelist() || readFromSelects()) : null;
-
-      const same = (a, b) => {
-        const A = (a || []).map(String).filter(Boolean).sort();
-        const B = (b || []).map(String).filter(Boolean).sort();
-        if (A.length !== B.length) return false;
-        for (let i = 0; i < A.length; i++) if (A[i] !== B[i]) return false;
-        return true;
-      };
-
-      if (src) {
-        const prevH = (prevEmby?.history?.libraries || []).map(String);
-        const prevR = (prevEmby?.ratings?.libraries || []).map(String);
-        const prevS = (prevEmby?.scrobble?.libraries || []).map(String);
-
-        if (!same(src.H, prevH)) {
-          nextEmby.history = Object.assign({}, nextEmby.history || {}, { libraries: src.H || [] });
-          changed = true;
-        }
-        if (!same(src.R, prevR)) {
-          nextEmby.ratings = Object.assign({}, nextEmby.ratings || {}, { libraries: src.R || [] });
-          changed = true;
-        }
-        if (!same(src.S, prevS)) {
-          nextEmby.scrobble = Object.assign({}, nextEmby.scrobble || {}, { libraries: src.S || [] });
-          changed = true;
-        }
-      }
+      const src = embyHydrated ? _cwReadLibrarySource("emby") : null;
+      if (_cwApplyLibraryConfig(nextEmby, prevEmby, src)) changed = true;
     } catch (e) {
       console.warn("saveSettings: emby merge failed", e);
     }
@@ -930,30 +814,8 @@ async function saveSettings() {
         const rate = fromSelect("plex_lib_ratings") ?? toNums(st.rate);
         const scr  = fromSelect("plex_lib_scrobble")?? toNums(st.scr);
 
-        const _same = (a, b) => {
-          const A = (a || []).map(Number).sort((x,y)=>x-y);
-          const B = (b || []).map(Number).sort((x,y)=>x-y);
-          if (A.length !== B.length) return false;
-          for (let i=0;i<A.length;i++) if (A[i] !== B[i]) return false;
-          return true;
-        };
-
-        const prevHist = (prevPlex?.history?.libraries || []).map(Number);
-        const prevRate = (prevPlex?.ratings?.libraries || []).map(Number);
-        const prevScr  = (prevPlex?.scrobble?.libraries || []).map(Number);
-
-        if (nextPlex && !_same(hist, prevHist)) {
-          nextPlex.history = Object.assign({}, nextPlex.history || {}, { libraries: hist });
-          changed = true;
-        }
-        if (nextPlex && !_same(rate, prevRate)) {
-          nextPlex.ratings = Object.assign({}, nextPlex.ratings || {}, { libraries: rate });
-          changed = true;
-        }
-        if (nextPlex && !_same(scr, prevScr)) {
-          nextPlex.scrobble = Object.assign({}, nextPlex.scrobble || {}, { libraries: scr });
-          changed = true;
-        }
+        const src = { H: hist, R: rate, S: scr };
+        if (_cwApplyLibraryConfig(nextPlex, prevPlex, src, true)) changed = true;
       }
     } catch (e) {
       console.warn("saveSettings: plex merge failed", e);
@@ -997,14 +859,8 @@ async function saveSettings() {
     }
 
     if (changed) {
-      const postCfg = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cfg),
-      });
-      if (!postCfg.ok) throw new Error(`POST /api/config ${postCfg.status}`);
-
-      try { window._cfgCache = JSON.parse(JSON.stringify(cfg)); } catch { window._cfgCache = cfg; }
+      await _cwSaveConfig(cfg);
+      _cwSetConfigCache(cfg);
       try { if (typeof _invalidatePairsCache === "function") _invalidatePairsCache(); } catch {}
 
       queueMicrotask(() => {
@@ -1017,18 +873,26 @@ async function saveSettings() {
 
       if (schedChanged) {
         queueMicrotask(() => {
-          fetch("/api/scheduling", {
+          _cwRequest("/api/scheduling", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: _cwJSONHeaders,
             body: JSON.stringify(cfg.scheduling),
-            cache: "no-store"
+          }).then(() => {
+            _cwInvalidateCaches(["schedulingStatus"]);
           }).catch((e) => {
             console.warn("POST /api/scheduling failed", e);
           });
         });
       } else {
         queueMicrotask(() => {
-          fetch("/api/scheduling/replan_now", { method: "POST", cache: "no-store" }).catch(() => {});
+          try {
+            const sc = (cfg && cfg.scheduling) ? cfg.scheduling : (window._cfgCache && window._cfgCache.scheduling) ? window._cfgCache.scheduling : null;
+            const effectiveEnabled = !!(sc && (sc.enabled || (sc.advanced && sc.advanced.enabled)));
+            if (!effectiveEnabled) return;
+          } catch {}
+          _cwRequest("/api/scheduling/replan_now", { method: "POST" }).then(() => {
+            _cwInvalidateCaches(["schedulingStatus"]);
+          }).catch(() => {});
         });
       }
     }
