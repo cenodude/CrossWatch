@@ -1,338 +1,262 @@
-// connections.overlay.js - Providers connection UI 
+// assets/js/connections.overlay.js
+/* Provider cards overlay for the Sync section. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function () {
-  let dragSrc = null;
-  let isDragging = false;
-  function _brandClass(name) {
-    const raw = String(name || "").trim().toLowerCase();
-    if (!raw) return "";
-    const safe = raw.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    return safe ? `brand-${safe}` : "";
-  }
+  let _renderBusy = false;
+  let _pick = { source: "", target: "" };
 
-// Styles
+  const key = (s) => String(s || "").trim().toUpperCase();
+  const truthy = (v) => {
+    if (v && typeof v === "object") v = v.enable ?? v.enabled;
+    if (typeof v === "string") v = v.toLowerCase().trim();
+    return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
+  };
+
+  const BRAND_CLASS = {
+    CROSSWATCH: "brand-crosswatch",
+    PLEX: "brand-plex",
+    SIMKL: "brand-simkl",
+    TRAKT: "brand-trakt",
+    ANILIST: "brand-anilist",
+    TMDB: "brand-tmdb-sync",
+    JELLYFIN: "brand-jellyfin",
+    EMBY: "brand-emby",
+    MDBLIST: "brand-mdblist",
+    TAUTULLI: "brand-tautulli",
+  };
+
+  const FEATURE_ORDER = [
+    ["watchlist", "wl", "Watchlist"],
+    ["ratings", "rt", "Ratings"],
+    ["history", "hi", "History"],
+    ["progress", "pr", "Progress"],
+    ["playlists", "pl", "Playlists"],
+  ];
+
   function ensureStyles() {
-    if (document.getElementById("cx-overlay-style")) return;
     const css = `
-      .cx-grid{
-        display:grid;
-        grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
-        gap:16px;
-        margin-top:6px
-      }
+#providers_list{display:block!important;width:100%!important;scrollbar-gutter:stable;overscroll-behavior:contain}
+#providers_list .providers-board{display:grid!important;width:100%!important;grid-template-columns:repeat(auto-fit,minmax(300px,360px))!important;gap:14px!important;align-items:start!important;justify-content:start!important}
+#providers_list .prov-card{position:relative;min-height:124px;padding:14px 14px 16px;border-radius:22px;background:linear-gradient(180deg,rgba(8,10,18,.96),rgba(5,7,14,.94));isolation:isolate;overflow:hidden}
+#providers_list .prov-card::before{content:"";position:absolute;inset:8px;pointer-events:none;border-radius:18px;border:1px solid rgba(255,255,255,.10);opacity:.7}
+#providers_list .prov-card::after{content:"";position:absolute;inset:-30% 20% auto -10%;height:70%;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.10),transparent 55%);opacity:.28;transform:rotate(-12deg)}
+#providers_list .prov-card > *{position:relative;z-index:1}
+#providers_list .prov-card .prov-watermark{position:absolute;inset:0;z-index:0;opacity:.95}
+#providers_list .prov-card .prov-watermark::after{opacity:.12;transform:scale(1.22);transform-origin:100% 100%}
+#providers_list .prov-main{display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;min-height:92px;gap:10px}
+#providers_list .prov-title{font-size:1rem;font-weight:900;line-height:1.08;letter-spacing:.04em;text-transform:uppercase;color:#f6f7fb;text-shadow:0 1px 0 rgba(0,0,0,.35)}
+#providers_list .prov-features{display:inline-flex;align-items:center;gap:8px;padding:0;margin:0}
+#providers_list .prov-dot{width:11px;height:11px;border-radius:999px;display:inline-block;background:rgba(255,255,255,.18);box-shadow:inset 0 0 0 2px rgba(255,255,255,.14)}
+#providers_list .prov-dot.on{box-shadow:none}
+#providers_list .prov-dot.wl.on{background:#00ffa3;box-shadow:0 0 8px rgba(0,255,163,.95),0 0 18px rgba(0,255,163,.45)}
+#providers_list .prov-dot.rt.on{background:#ffc400;box-shadow:0 0 8px rgba(255,196,0,.95),0 0 18px rgba(255,196,0,.42)}
+#providers_list .prov-dot.hi.on{background:#2de2ff;box-shadow:0 0 8px rgba(45,226,255,.95),0 0 18px rgba(45,226,255,.42)}
+#providers_list .prov-dot.pr.on{background:#a78bfa;box-shadow:0 0 8px rgba(167,139,250,.95),0 0 18px rgba(167,139,250,.42)}
+#providers_list .prov-dot.pl.on{background:#ff00e5;box-shadow:0 0 8px rgba(255,0,229,.95),0 0 18px rgba(255,0,229,.42)}
+#providers_list .prov-actions{display:flex;gap:8px;flex-wrap:nowrap;align-items:center}
+#providers_list .prov-btn{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;justify-content:center;min-width:148px;min-height:44px;padding:10px 16px;white-space:nowrap;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(12,14,30,.96),rgba(7,8,20,.96));color:#f3f5fb;font-size:.96rem;font-weight:850;letter-spacing:.01em;cursor:pointer;box-shadow:0 10px 22px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .14s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
+#providers_list .prov-btn:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.10)}
+#providers_list .prov-btn:active{transform:translateY(0)}
+#providers_list .prov-btn.target{border-color:rgba(255,255,255,.22);background:linear-gradient(180deg,rgba(18,21,38,.98),rgba(8,10,22,.98))}
+#providers_list .prov-btn.selected{border-color:rgba(255,255,255,.24);background:linear-gradient(180deg,rgba(19,24,40,.98),rgba(10,13,26,.98))}
+#providers_list .prov-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;white-space:nowrap;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);font-weight:800;font-size:.75rem;letter-spacing:.03em;text-transform:uppercase;color:#eef2ff}
+#providers_list .prov-badge::before{content:"";width:8px;height:8px;border-radius:999px;background:currentColor;opacity:.9}
+#providers_list .prov-card.is-source .prov-badge{color:#7c5cff;box-shadow:0 0 16px rgba(124,92,255,.22)}
+#providers_list .prov-card.is-target .prov-badge{color:#19c37d;box-shadow:0 0 16px rgba(25,195,125,.18)}
+#providers_list .prov-empty{padding:14px 0;color:var(--muted,#9aa4b2)}
+@media (max-width:900px){#providers_list .providers-board{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))!important}}
+@media (max-width:760px){#providers_list .prov-actions{flex-wrap:wrap}}
+@media (max-width:640px){#providers_list .providers-board{grid-template-columns:1fr!important}}
+`;
 
-      /* Subtle glass look (non-invasive) */
-      .prov-card{
-        position:relative;
-        overflow:hidden;
-        border:1px solid rgba(255,255,255,.10);
-        border-radius:16px;
-        padding:14px;
-        background:
-          linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)),
-          rgba(13,15,20,.86);
-        backdrop-filter: blur(6px);
-        box-shadow:
-          inset 0 1px 0 rgba(255,255,255,.06),
-          0 4px 18px rgba(0,0,0,.35);
-        transition:transform .12s ease, box-shadow .18s ease, filter .18s ease, opacity .18s ease;
-        user-select:none;
-      }
-      .prov-card:focus-visible{ outline:2px solid rgba(124,92,255,.7); }
-      .prov-card.selected{ outline:2px solid rgba(124,92,255,.6); box-shadow:0 0 22px rgba(124,92,255,.25) }
-
-      /* Uppercase */
-      .prov-title{
-        font-family: inherit;
-        font-weight: 800;
-        font-size: .9rem;
-        letter-spacing: .02em;
-        color: #fff;
-        margin-bottom: 8px;
-        text-transform: uppercase;
-      }
-
-      .prov-caps{display:flex;gap:6px;margin:8px 0}
-      .prov-caps .dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#555}
-      .prov-caps .dot.off{background:#555}
-      .prov-caps .dot.on{background:#5ad27a} /* fallback */
-
-      /* Feature colors (match pairs overlay) */
-      .prov-caps .dot.wl.on{background:#00ffa3; box-shadow:0 0 6px #00ffa3,0 0 12px #00ffa3aa}
-      .prov-caps .dot.rt.on{background:#ffc400; box-shadow:0 0 6px #ffc400,0 0 12px #ffc40099}
-      .prov-caps .dot.hi.on{background:#2de2ff; box-shadow:0 0 6px #2de2ff,0 0 12px #2de2ffaa}
-      .prov-caps .dot.pr.on{background:#a78bfa; box-shadow:0 0 6px #a78bfa,0 0 12px #a78bfaaa}
-      .prov-caps .dot.pl.on{background:#ff00e5; box-shadow:0 0 6px #ff00e5,0 0 12px #ff00e599}
-
-      .btn.neon{
-        display:inline-block;padding:8px 14px;border-radius:12px;
-        border:1px solid rgba(255,255,255,.18);background:#121224;color:#fff;
-        font-weight:700;cursor:pointer
-      }
-      .prov-action{ position:relative; z-index:2; }
-
-      /* DnD feedback */
-      .prov-card[draggable="true"]{ cursor:grab; }
-      .prov-card.dragging{
-        cursor:grabbing;
-        opacity:.87;
-        transform:scale(.985);
-        animation: prov-wiggle .35s ease-in-out infinite;
-        z-index: 2;
-      }
-      @keyframes prov-wiggle{
-        0%{ transform:scale(.985) rotate(-.6deg); }
-        50%{ transform:scale(.985) rotate(.6deg); }
-        100%{ transform:scale(.985) rotate(-.6deg); }
-      }
-      .prov-card.drop-ok{
-        outline:2px dashed rgba(255,255,255,.35);
-        outline-offset:-3px;
-      }
-      .prov-card.drop-ok::before{
-        content:"Drop for Target";
-        position:absolute; bottom:10px; right:12px; padding:4px 8px; font-size:11px; border-radius:8px;
-        background:rgba(0,0,0,.45); border:1px solid rgba(255,255,255,.22);
-      }
-      .prov-card.pulse{ animation: prov-pulse .6s ease-out 1; }
-      @keyframes prov-pulse{
-        0%{ box-shadow:0 0 0 0 rgba(124,92,255,.45); }
-        100%{ box-shadow:0 0 0 14px rgba(124,92,255,0); }
-      }
-    `;
-    const s = document.createElement("style");
-    s.id = "cx-overlay-style";
-    s.textContent = css;
-    document.head.appendChild(s);
-  }
-
-  /**
-   * capability check for a provider object.
-   * @param {any} obj
-   * @param {string} key
-   * @returns {boolean}
-   */
-  function cap(obj, key) {
-    try { return !!(obj && obj.features && obj.features[key]); } catch (_) { return false; }
-  }
-
-  function _provByName(name) {
-    const key = String(name || "").trim().toUpperCase();
-    const list = (window.cx && window.cx.providers) || [];
-    return (list || []).find((p) => String(p?.name || "").trim().toUpperCase() === key) || null;
-  }
-
-  function _canTarget(name, sourceName) {
-    const tgt = String(name || "").trim().toUpperCase();
-    const src = String(sourceName || "").trim().toUpperCase();
-
-    // Policy: Tautulli is read-only 
-    if (tgt === "TAUTULLI" && src !== "TAUTULLI") return false;
-
-    const p = _provByName(tgt);
-    const caps = p && typeof p === "object" ? p.capabilities : null;
-    if (caps && typeof caps === "object") {
-      if (caps.can_target === false) return false;
-      if (caps.read_only === true && tgt !== src) return false;
+    let el = document.getElementById("cx-connections-style");
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "cx-connections-style";
+      document.head.appendChild(el);
     }
-    return true;
+    el.textContent = css;
   }
 
-  function _toast(msg) {
+  function ensureHost() {
+    const host = document.getElementById("providers_list");
+    if (!host) return null;
+    let board = host.querySelector(":scope > .providers-board");
+    if (!board) {
+      host.innerHTML = "";
+      board = document.createElement("div");
+      board.className = "providers-board";
+      host.appendChild(board);
+    }
+    return { host, board };
+  }
+
+  function syncLegacySelectors(source = "", target = "") {
+    const src = document.getElementById("source-provider");
+    const dst = document.getElementById("target-provider");
+    if (src) src.value = source || "";
+    if (dst) dst.value = target || "";
+  }
+
+  function featureDots(features) {
+    return FEATURE_ORDER.map(([field, cls, label]) => {
+      const on = truthy(features?.[field]);
+      return `<span class="prov-dot ${cls} ${on ? "on" : ""}" title="${label}"></span>`;
+    }).join("");
+  }
+
+  function renderCards(providers) {
+    const containers = ensureHost();
+    if (!containers) return;
+    const { host, board } = containers;
+
+    if (!Array.isArray(providers) || !providers.length) {
+      board.innerHTML = '<div class="prov-empty">No providers discovered.</div>';
+      syncLegacySelectors();
+      return;
+    }
+
+    const source = key(_pick.source);
+    const target = key(_pick.target);
+
+    board.innerHTML = providers.map((item) => {
+      const providerKey = key(item.key || item.name || item.label);
+      const label = String(item.label || item.name || providerKey || "Provider");
+      const cls = BRAND_CLASS[providerKey] || "";
+      const isSource = providerKey === source;
+      const isTarget = providerKey === target;
+      const btnClass = isSource ? "selected" : (source && !isTarget ? "target" : "");
+      const btnText = isSource ? "Clear Source" : (source ? "Set as Target" : "Set as Source");
+      const badge = isSource
+        ? '<span class="prov-badge">Source selected</span>'
+        : (isTarget ? '<span class="prov-badge">Target selected</span>' : "");
+
+      return `
+        <article class="card prov-card ${cls} ${isSource ? "is-source" : ""} ${isTarget ? "is-target" : ""}" data-prov="${providerKey}" data-sync-prov="${providerKey}">
+          <div class="prov-watermark" aria-hidden="true"></div>
+          <div class="prov-main">
+            <div class="prov-title">${label}</div>
+            <div class="prov-features" aria-label="Supported features">${featureDots(item.features || {})}</div>
+            <div class="prov-actions">
+              <button type="button" class="prov-btn ${btnClass}" data-action="pick" data-prov="${providerKey}">${btnText}</button>
+              ${badge}
+            </div>
+          </div>
+        </article>`;
+    }).join("");
+
+    syncLegacySelectors(source, target);
+    try { window.scheduleApplySyncVisibility?.(); } catch {}
+  }
+
+  function openPairModal(source, target) {
+    const src = key(source);
+    const dst = key(target);
+    if (!src || !dst || src === dst) return;
+
+    _pick.target = dst;
+    syncLegacySelectors(src, dst);
+    renderConnections();
+
+    const payload = {
+      source: src,
+      target: dst,
+      mode: "one-way",
+      enabled: true,
+      source_instance: "default",
+      target_instance: "default",
+    };
+
     try {
-      if (typeof window.showToast === "function") return window.showToast(String(msg || ""), false);
-    } catch (_) {}
-    alert(String(msg || ""));
+      if (typeof window.cxOpenModalFor === "function") {
+        window.cxOpenModalFor(payload);
+        return;
+      }
+      if (typeof window.openPairModal === "function") {
+        window.openPairModal(payload);
+      }
+    } catch (e) {
+      console.warn("[connections.overlay] open pair modal failed", e);
+    }
   }
 
-  function rebuildProviders() {
+  function handlePick(provider) {
+    const prov = key(provider);
+    if (!prov) return;
+
+    if (!_pick.source) {
+      _pick.source = prov;
+      _pick.target = "";
+      syncLegacySelectors(prov, "");
+      renderConnections();
+      return;
+    }
+
+    if (_pick.source === prov) {
+      _pick.source = "";
+      _pick.target = "";
+      syncLegacySelectors();
+      renderConnections();
+      return;
+    }
+
+    openPairModal(_pick.source, prov);
+  }
+
+  function wireEvents(host) {
+    if (!host || host.__cxConnectionsBound) return;
+
+    host.addEventListener("click", (ev) => {
+      const btn = ev.target.closest?.(".prov-btn[data-action='pick']");
+      if (!btn || !host.contains(btn)) return;
+      handlePick(btn.dataset.prov || "");
+    });
+
+    host.__cxConnectionsBound = true;
+  }
+
+  async function loadProvidersIfNeeded() {
+    if (Array.isArray(window.cx?.providers) && window.cx.providers.length) return window.cx.providers;
+
+    try {
+      const arr = typeof window.loadProviders === "function"
+        ? await window.loadProviders()
+        : await fetch("/api/sync/providers", { cache: "no-store" }).then((r) => r.ok ? r.json() : []);
+      window.cx = window.cx || {};
+      window.cx.providers = Array.isArray(arr) ? arr : [];
+    } catch (e) {
+      window.cx = window.cx || {};
+      if (!Array.isArray(window.cx.providers)) window.cx.providers = [];
+      console.warn("[connections.overlay] provider fetch failed", e);
+    }
+
+    return window.cx.providers;
+  }
+
+  function renderConnections() {
     ensureStyles();
     const host = document.getElementById("providers_list");
     if (!host) return;
-    const provs = (window.cx && window.cx.providers) || [];
-    if (!provs.length) return;
-
-    const sel = (window.cx && window.cx.connect) || {};
-    const selSrc = sel.source || null;
-
-    const html = provs.map((p) => {
-      const rawName = p.label || p.name;
-      const displayName = String(rawName || "").toUpperCase(); // force uppercase display
-      const brandCls = _brandClass(p.name);
-      const isSrc = !!(selSrc && String(selSrc).toUpperCase() === String(p.name).toUpperCase());
-      const isPickingTarget = !!(selSrc && !isSrc);
-      const targetOk = !isPickingTarget ? true : _canTarget(p.name, selSrc);
-      const btnLab = !selSrc ? "Set as Source" : isSrc ? "Cancel" : (targetOk ? "Set as Target" : "Source only");
-      const btnOn = !selSrc
-        ? `cxToggleConnect('${p.name}')`
-        : isSrc
-          ? `cxToggleConnect('${p.name}')`
-          : (targetOk ? `cxPickTarget('${p.name}')` : "");
-      const btnDis = isPickingTarget && !targetOk ? "disabled" : "";
-      const btnTitle = isPickingTarget && !targetOk ? "This provider can only be used as a source." : "";
-
-      const wl = cap(p, "watchlist"),
-            rat = cap(p, "ratings"),
-            hist = cap(p, "history"),
-            prog = cap(p, "progress"),
-            pl = cap(p, "playlists");
-
-      const caps = `<div class="prov-caps">
-        <span class="dot wl ${wl ? "on" : "off"}"   title="Watchlist"></span>
-        <span class="dot rt ${rat ? "on" : "off"}"  title="Ratings"></span>
-        <span class="dot hi ${hist ? "on" : "off"}" title="History"></span>
-        <span class="dot pr ${prog ? "on" : "off"}" title="Progress"></span>
-        <span class="dot pl ${pl ? "on" : "off"}"   title="Playlists"></span>
-      </div>`;
-
-      return `
-        <div class="prov-card ${brandCls}${isSrc ? " selected" : ""}" data-prov="${p.name}" draggable="true" tabindex="0">
-          <div class="prov-watermark"></div>
-          <div class="prov-head">
-            <div class="prov-title">${displayName}</div>
-          </div>
-          ${caps}
-          <button type="button" class="btn neon prov-action" ${btnDis} title="${btnTitle}" onclick="${btnOn}">${btnLab}</button>
-        </div>`;
-    }).join("");
-
-    const wrap =
-      host.querySelector(".cx-grid") ||
-      (() => {
-        const d = document.createElement("div");
-        d.className = "cx-grid";
-        host.innerHTML = "";
-        host.appendChild(d);
-        return d;
-      })();
-    wrap.innerHTML = html;
+    wireEvents(host);
+    renderCards(Array.isArray(window.cx?.providers) ? window.cx.providers : []);
   }
 
-  // refresh on state change
-  document.addEventListener("cx-state-change", function () {
-    try { rebuildProviders(); } catch (_) {}
-  });
-
-  const _origRender = window.renderConnections;
-  window.renderConnections = function () {
-    try { if (typeof _origRender === "function") _origRender(); } catch {}
-    rebuildProviders();
-  };
-
-  const _origStart = window.cxStartConnect;
-  window.cxStartConnect = function (name) {
-    try { if (typeof _origStart === "function") _origStart(name); } catch {}
-    window.cx = window.cx || {};
-    window.cx.connect = { source: String(name), target: null };
-    try { window.renderConnections(); } catch (_) {}
-  };
-
-  window.cxPickTarget = window.cxPickTarget || function (name) {
-    if (!window.cx || !window.cx.connect || !window.cx.connect.source) return;
-    const src = String(window.cx.connect.source || "");
-    if (!_canTarget(name, src)) {
-      _toast("Tautulli can only be used as a source (not as a destination).");
-      return;
-    }
-    window.cx.connect.target = String(name);
-    const detail = { source: window.cx.connect.source, target: window.cx.connect.target };
+  async function renderOrEnhance() {
+    if (_renderBusy) return;
+    _renderBusy = true;
     try {
-      const srcCard = document.querySelector(`.prov-card[data-prov="\${detail.source}"]`);
-      const tgtCard = document.querySelector(`.prov-card[data-prov="\${detail.target}"]`);
-      srcCard && srcCard.classList.add('pulse');
-      tgtCard && tgtCard.classList.add('pulse');
-    } catch(_) {}
-    if (typeof window.cxOpenModalFor === "function") {
-      try { window.cxOpenModalFor(detail); } catch (e) { console.warn("cxOpenModalFor failed", e); }
-    } else {
-      window.dispatchEvent(new CustomEvent("cx:open-modal", { detail }));
+      await loadProvidersIfNeeded();
+      renderConnections();
+    } finally {
+      _renderBusy = false;
     }
-  };
+  }
 
-  window.cxToggleConnect = function (name) {
-    name = String(name || "");
-    window.cx = window.cx || { providers: [], pairs: [], connect: { source: null, target: null } };
-    const sel = window.cx.connect || (window.cx.connect = { source: null, target: null });
-    if (!sel.source) { window.cxStartConnect(name); return; }
-    if (sel.source && sel.source !== name) { window.cxPickTarget(name); return; }
-    window.cx.connect = { source: null, target: null };
-    try { window.renderConnections(); } catch (_) {}
-  };
+  document.addEventListener("DOMContentLoaded", renderOrEnhance);
+  document.addEventListener("cx-state-change", renderConnections);
+  window.addEventListener("cx:pairs:changed", renderConnections);
 
-  document.addEventListener("click", (e) => {
-    if (!isDragging) return;
-    if (e.target.closest && e.target.closest(".prov-action")) {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    }
-  }, true);
-
-  document.addEventListener("dragstart", (e) => {
-    const card = e.target.closest && e.target.closest(".prov-card");
-    if (!card) return;
-    if (e.target.closest && e.target.closest(".prov-action")) {
-      e.preventDefault(); return;
-    }
-    const name = card.getAttribute("data-prov");
-    if (!name) return;
-
-    dragSrc = name;
-    isDragging = true;
-
-    try { e.dataTransfer.setData("text/plain", name); e.dataTransfer.effectAllowed = "move"; } catch (_) {}
-    card.classList.add("dragging");
-
-    document.querySelectorAll('.prov-card').forEach(c=>{
-      if (c === card) return;
-      const tgt = c.getAttribute("data-prov");
-      if (tgt && _canTarget(tgt, name)) c.classList.add('drop-ok');
-    });
-  });
-
-  document.addEventListener("dragend", (e) => {
-    const card = e.target.closest && e.target.closest(".prov-card");
-    if (card) card.classList.remove("dragging");
-    isDragging = false;
-    dragSrc = null;
-    document.querySelectorAll('.prov-card').forEach(c=>c.classList.remove('drop-ok'));
-  });
-
-  document.addEventListener("dragover", (e) => {
-    const card = e.target.closest && e.target.closest(".prov-card");
-    if (card) { e.preventDefault(); e.dataTransfer && (e.dataTransfer.dropEffect = "move"); }
-  });
-
-  document.addEventListener("drop", (e) => {
-    const card = e.target.closest && e.target.closest(".prov-card");
-    if (!card) return; e.preventDefault();
-    if (!dragSrc) return;
-    const target = card.getAttribute("data-prov");
-    if (target && dragSrc && target !== dragSrc) {
-      try { window.cxToggleConnect(dragSrc); } catch (_) {}
-      try { window.cxPickTarget(target); } catch (_) {}
-    }
-    isDragging = false;
-    dragSrc = null;
-    document.querySelectorAll('.prov-card').forEach(c=>c.classList.remove('drop-ok','dragging'));
-  });
-
-
-  document.addEventListener("keydown", (e)=>{
-    const card = e.target.closest && e.target.closest(".prov-card");
-    if (!card) return;
-    if (e.key === "Enter" && !e.shiftKey){
-      e.preventDefault();
-      const name = card.getAttribute("data-prov");
-      window.cxToggleConnect(name);
-    }
-    if (e.key === "Enter" && e.shiftKey){
-      e.preventDefault();
-      const name = card.getAttribute("data-prov");
-      window.cxPickTarget(name);
-    }
-  });
-
-  
-  document.addEventListener("DOMContentLoaded", () => {
-    try { window.renderConnections && window.renderConnections(); } catch (_) {}
-  });
+  window.renderConnections = renderConnections;
+  window.cxRenderConnections = renderOrEnhance;
 })();
