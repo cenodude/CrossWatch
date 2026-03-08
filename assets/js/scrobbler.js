@@ -1,9 +1,21 @@
-// Scrobbler UI
+/* assets/js/scrobbler.js */
+/* Scrobbler configuration UI and logic. */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
   const $ = (s, r) => (r || d).querySelector(s);
   const $all = (s, r) => [...(r || d).querySelectorAll(s)];
   const el = (t, a) => Object.assign(d.createElement(t), a || {});
   const on = (n, e, f) => n && n.addEventListener(e, f);
+
+  const fieldKey = (value, fallback = "field") => String(value || fallback).replace(/[^a-z0-9_-]+/gi, "_");
+  const bindFieldIdentity = (node, base, rid, fallback = "field") => {
+    if (!node) return node;
+    const key = fieldKey(rid, fallback);
+    const safeBase = fieldKey(base, "field");
+    node.id = `${safeBase}_${key}`;
+    node.name = `${safeBase}_${key}`;
+    return node;
+  };
 
   const j = async (u, o) => {
     const r = await fetch(u, { cache: "no-store", ...(o || {}) });
@@ -99,14 +111,14 @@ function clearStickyNote(id) {
     .row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
     .codepair{display:flex;gap:8px;align-items:center}
     .codepair code{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
-    .badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}.badge.is-on{background:#0a3;color:#fff}.badge.is-off{background:#333;color:#bbb;border:1px solid #444}
-    .status-dot{width:10px;height:10px;border-radius:50%}.status-dot.on{background:#22c55e}.status-dot.off{background:#ef4444}
+    #card-scrobbler .badge,#sec-scrobbler .badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}#card-scrobbler .badge.is-on,#sec-scrobbler .badge.is-on{background:#0a3;color:#fff}#card-scrobbler .badge.is-off,#sec-scrobbler .badge.is-off{background:#333;color:#bbb;border:1px solid #444}
+    #card-scrobbler .status-dot,#sec-scrobbler .status-dot{width:10px;height:10px;border-radius:50%}#card-scrobbler .status-dot.on,#sec-scrobbler .status-dot.on{background:#22c55e}#card-scrobbler .status-dot.off,#sec-scrobbler .status-dot.off{background:#ef4444}
     .watcher-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     @media (max-width:960px){.watcher-row{grid-template-columns:1fr}}
 
-    .chips{display:flex;flex-wrap:wrap;gap:6px}
-    .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}
-    .chip .rm{cursor:pointer;opacity:.7}
+    #card-scrobbler .chips,#sec-scrobbler .chips{display:flex;flex-wrap:wrap;gap:6px}
+    #card-scrobbler .chip,#sec-scrobbler .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}
+    #card-scrobbler .chip .rm,#sec-scrobbler .chip .rm{cursor:pointer;opacity:.7}
 
     .sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 
@@ -175,8 +187,13 @@ function clearStickyNote(id) {
     .sc-user-pop .row1{display:flex;justify-content:space-between;align-items:center;gap:8px}
     .sc-user-pop .sub{font-size:12px;opacity:.7;padding:10px}
     .sc-user-pop .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);opacity:.85}
+    #card-scrobbler .input,#sec-scrobbler .input{background:#0a0a17;border:1px solid rgba(255,255,255,.12);border-radius:14px;color:#e7e9f4;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+    #card-scrobbler .input:focus,#sec-scrobbler .input:focus{outline:none;border-color:rgba(124,92,255,.52);box-shadow:0 0 0 3px rgba(124,92,255,.18),inset 0 0 0 1px rgba(255,255,255,.03)}
+    #card-scrobbler select.input,#sec-scrobbler select.input{background-color:#0a0a17;color:#e7e9f4}
+    #card-scrobbler select.input option,#sec-scrobbler select.input option{background:#11131a;color:#fff}
+
     .sc-prov-wrap{position:relative;display:inline-block}
-    .sc-prov-btn{width:140px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;cursor:pointer}
+    .sc-prov-btn{width:140px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;cursor:pointer;background:#0a0a17;border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
     .sc-prov-left{display:inline-flex;align-items:center;gap:8px;min-width:0}
     .sc-prov-ico{width:18px;height:18px;object-fit:contain}
     .sc-prov-caret{opacity:.7}
@@ -1068,14 +1085,14 @@ try {
       tr.dataset.rid = r.id;
 
       const cOn = el("td");
-      const chk = el("input", { type: "checkbox", checked: !!r.enabled });
+      const chk = bindFieldIdentity(el("input", { type: "checkbox", checked: !!r.enabled }), "sc_route_enabled", r.id, "route");
       chk.dataset.rid = r.id;
       chk.dataset.f = "enabled";
       cOn.appendChild(chk);
       tr.appendChild(cOn);
 
       const cP = el("td");
-      const pSel = el("select", { className: "input" });
+      const pSel = bindFieldIdentity(el("select", { className: "input" }), "sc_route_provider", r.id, "route");
       pSel.appendChild(el("option", { value: "", textContent: "Select…" }));
       ROUTE_PROVIDERS.forEach((p) => {
         const meta = PROVIDER_META[p] || { label: p, icon: "", alt: p };
@@ -1088,7 +1105,7 @@ try {
       tr.appendChild(cP);
 
       const cPI = el("td");
-      const piSel = el("select", { className: "input" });
+      const piSel = bindFieldIdentity(el("select", { className: "input" }), "sc_route_provider_instance", r.id, "route");
       const hasP = !!String(r.provider || "").trim();
       const pOpts = hasP ? await getInstanceOptions(r.provider) : [{ id: "default", name: "Default" }];
       pOpts.forEach(i => piSel.appendChild(el("option", { value: i.id, textContent: i.name })));
@@ -1100,7 +1117,7 @@ try {
       tr.appendChild(cPI);
 
       const cS = el("td");
-      const sSel = el("select", { className: "input" });
+      const sSel = bindFieldIdentity(el("select", { className: "input" }), "sc_route_sink", r.id, "route");
       sSel.appendChild(el("option", { value: "", textContent: "Select…" }));
       ROUTE_SINKS.forEach((s) => {
         const meta = SINK_META[s] || { label: s, icon: "", alt: s };
@@ -1113,7 +1130,7 @@ try {
       tr.appendChild(cS);
 
       const cSI = el("td");
-      const siSel = el("select", { className: "input" });
+      const siSel = bindFieldIdentity(el("select", { className: "input" }), "sc_route_sink_instance", r.id, "route");
       const hasS = !!String(r.sink || "").trim();
       const sOpts = hasS ? await getInstanceOptions(r.sink) : [{ id: "default", name: "Default" }];
       sOpts.forEach(i => siSel.appendChild(el("option", { value: i.id, textContent: i.name })));
@@ -1380,17 +1397,16 @@ function chip(text, onRemove, onClick) {
         <div class="cw-panel">
           <div class="cw-meta-provider-panel active" data-provider="webhook">
             <div class="cw-panel-head">
-              <div>
+              <div class="cw-panel-head-main">
                 <div class="cw-panel-title">Webhooks</div>
                 <div class="muted">Legacy endpoints that scrobble to Trakt.</div>
               </div>
-            </div>
-
-            <div class="cw-subtiles" style="margin-top:2px">
-              <button type="button" class="cw-subtile active" data-sub="plex">Plex</button>
-              <button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button>
-              <button type="button" class="cw-subtile" data-sub="emby">Emby</button>
-              <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+              <div class="cw-subtiles" aria-label="Webhook sections">
+                <button type="button" class="cw-subtile active" data-sub="plex">Plex</button>
+                <button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button>
+                <button type="button" class="cw-subtile" data-sub="emby">Emby</button>
+                <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+              </div>
             </div>
 
             <div id="sc-webhook-warning" class="micro-note" style="margin-top:10px"></div>
@@ -1578,9 +1594,9 @@ function chip(text, onRemove, onClick) {
           .cc-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.85}
           .cc-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
           .cc-auto{display:flex;justify-content:center;margin-top:2px}
-          .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor}
-          .status-dot.on{background:#22c55e;color:#22c55e}
-          .status-dot.off{background:#ef4444;color:#ef4444}
+          #scrob-watcher .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor}
+          #scrob-watcher .status-dot.on{background:#22c55e;color:#22c55e}
+          #scrob-watcher .status-dot.off{background:#ef4444;color:#ef4444}
           @media (max-width:900px){.cc-wrap{grid-template-columns:1fr}}
         
           .sc-box{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
@@ -1591,16 +1607,15 @@ function chip(text, onRemove, onClick) {
         <div class="cw-panel">
           <div class="cw-meta-provider-panel active" data-provider="watcher">
             <div class="cw-panel-head">
-              <div>
+              <div class="cw-panel-head-main">
                 <div class="cw-panel-title">Watcher</div>
                 <div class="muted">Monitor playback and scrobble automatically.</div>
               </div>
-            </div>
-
-            <div class="cw-subtiles" style="margin-top:2px">
-              <button type="button" class="cw-subtile active" data-sub="watcher">Watcher</button>
-              <button type="button" class="cw-subtile" data-sub="filters">Filters</button>
-              <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+              <div class="cw-subtiles" aria-label="Watcher sections">
+                <button type="button" class="cw-subtile active" data-sub="watcher">Watcher</button>
+                <button type="button" class="cw-subtile" data-sub="filters">Filters</button>
+                <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
+              </div>
             </div>
 
             <div class="cw-subpanels">
@@ -3520,8 +3535,10 @@ async function init(opts = {}) {
     if (!STATE.webhookHost || !STATE.watcherHost) {
       const root = STATE.mount || d.body;
       const makeSec = (id, title) => {
-        const sec = el("div", { className: "section", id });
-        sec.innerHTML = `<div class="head"><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
+        const className = ["section", "cw-settings-section", "cw-settings-provider-section"];
+        if (id === "sc-sec-watch") className.push("open");
+        const sec = el("div", { className: className.join(" "), id });
+        sec.innerHTML = `<div class="head" onclick="toggleSection('${id}')"><span class="chev">▶</span><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
         root.append(sec);
       };
       if (!STATE.webhookHost) {
