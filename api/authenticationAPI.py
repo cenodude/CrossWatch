@@ -58,6 +58,14 @@ def _safe_log(fn: Optional[Callable[[str, str], None]], tag: str, msg: str) -> N
         if callable(fn): fn(tag, msg)
     except Exception:
         pass
+
+def _looks_masked_secret(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text in {"••••••••", "********", "**********"}:
+        return True
+    return len(text) >= 3 and all(ch in {"•", "*"} for ch in text)
 def _defaults_for_provider(provider_key: str) -> dict[str, Any]:
     blk = DEFAULT_CFG.get(provider_key)
     return copy.deepcopy(blk) if isinstance(blk, dict) else {}
@@ -1199,7 +1207,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             key = str((payload or {}).get("api_key") or "").strip()
             cfg = load_config()
             m = ensure_instance_block(cfg, "mdblist", instance)
-            m["api_key"] = key
+            if key:
+                if _looks_masked_secret(key):
+                    key = ""
+                else:
+                    m["api_key"] = key
             save_config(cfg)
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] api_key saved instance={normalize_instance_id(instance)}")
             if isinstance(probe_cache, dict):
@@ -1414,6 +1426,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             if payload:
                 cid = str(payload.get("client_id") or "").strip()
                 secr = str(payload.get("client_secret") or "").strip()
+                if _looks_masked_secret(cid):
+                    cid = ""
+                if _looks_masked_secret(secr):
+                    secr = ""
                 if cid or secr:
                     cfg = load_config()
                     tr = ensure_instance_block(cfg, "trakt", inst)
@@ -1498,6 +1514,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
             cid = str((payload or {}).get("client_id") or "").strip()
             sec = str((payload or {}).get("client_secret") or "").strip()
+            if _looks_masked_secret(cid):
+                cid = ""
+            if _looks_masked_secret(sec):
+                sec = ""
             if cid:
                 a["client_id"] = cid
             if sec:
