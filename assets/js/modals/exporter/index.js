@@ -1,514 +1,111 @@
-// assets/js/modals/exporter/index.js
-const fjson = async (u, o) => {
-  const r = await fetch(u, o);
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-};
-const $  = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+/* assets/js/modals/exporter/index.js */
+/* refactored */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+const fjson=async(u,o)=>{const r=await fetch(u,o);if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()};
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+const LS={get:(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch{return d}},set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
 
-const LS = {
-  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
-};
-
-function injectCSS() {
-  if (document.getElementById("cw-exporter-css")) return;
-  const el = document.createElement("style");
-  el.id = "cw-exporter-css";
-  el.textContent = `
-  .cw-exporter{position:relative;display:flex;flex-direction:column;height:100%}
-
-  .cw-exporter .cx-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.12)}
-  .cw-exporter .cx-left{display:flex;align-items:center;gap:10px;flex:1;min-width:0}
-  .cw-exporter .cx-title{font-weight:800}
-  .cw-exporter .badge{opacity:.85;font-size:12px}
-  .cw-exporter .close-btn{border:1px solid rgba(255,255,255,.2);background:#171b2a;color:#fff;border-radius:10px;padding:6px 10px}
-
-  .cw-exporter .ex-body{flex:1;min-height:0;display:grid;grid-template-rows:auto 1fr;overflow:hidden}
-  .cw-exporter .row{display:flex;flex-wrap:wrap;gap:12px;padding:10px;border-bottom:1px solid rgba(255,255,255,.06);align-items:flex-end}
-  .cw-exporter .row .field{display:flex;flex-direction:column;gap:6px;min-width:160px}
-  .cw-exporter .input{background:#0b0f19;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:8px 10px;height:36px}
-  .cw-exporter .search{min-width:260px;flex:1}
-  .cw-exporter .row-right{margin-left:auto;display:flex;gap:8px;align-items:center}
-  .cw-exporter .btn{border:1px solid rgba(255,255,255,.16);background:#111524;color:#dfe7ff;border-radius:12px;padding:8px 12px;cursor:pointer}
-  .cw-exporter .btn.primary{background:rgba(122,107,255,.14);box-shadow:0 0 10px #7a6bff44 inset}
-  .cw-exporter .btn:disabled{opacity:.6;cursor:not-allowed}
-
-  .cw-exporter .ex-grid{overflow:auto}
-  .cw-exporter table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
-  .cw-exporter th,.cw-exporter td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;vertical-align:top;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cw-exporter th{position:relative;text-align:left;opacity:.85;user-select:none}
-  .cw-exporter th .resizer{position:absolute;right:-2px;top:0;width:6px;height:100%;cursor:col-resize}
-  .cw-exporter th:hover .resizer{background:linear-gradient(90deg,transparent 0,rgba(122,107,255,.35) 50%,transparent 100%)}
-  .cw-exporter .td-wrap{white-space:normal;overflow:visible;text-overflow:clip}
-  .cw-exporter .ids span{margin-right:8px}
-  .cw-exporter .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-  .cw-exporter .hint{opacity:.75;font-size:12px}
-
-  .cw-exporter .glow-check{appearance:none;width:14px;height:14px;border-radius:4px;border:1px solid rgba(255,255,255,.28);background:#0b0f19;box-shadow:inset 0 0 0 2px rgba(255,255,255,.06);display:inline-block}
-  .cw-exporter .glow-check:checked{background:#7a6bff;box-shadow:0 0 8px #7a6bffbb, inset 0 0 0 2px rgba(0,0,0,.25)}
-
-  .cw-exporter .neon-switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
-  .cw-exporter .neon-switch input{display:none}
-  .cw-exporter .neon-pill{width:44px;height:24px;border-radius:999px;background:#0b0f19;border:1px solid rgba(122,107,255,.4);position:relative;box-shadow:0 0 12px #7a6bff33 inset}
-  .cw-exporter .neon-knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#7a6bff;box-shadow:0 0 12px #7a6bffaa;transition:transform .18s ease}
-  .cw-exporter .neon-switch input:checked + .neon-pill .neon-knob{transform:translateX(20px)}
-  .cw-exporter .neon-label{font-size:12px;opacity:.9}
-
-  .cw-exporter .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.72);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease;}
-  .cw-exporter .wait-overlay.hidden{opacity:0;pointer-events:none}
-  .cw-exporter .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#0b0f19,#0e1325);box-shadow:0 0 40px #7a6bff55, inset 0 0 1px rgba(255,255,255,.08)}
-  .cw-exporter .wait-ring{width:56px;height:56px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px #7a6bff88)}
-  .cw-exporter .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
-  .cw-exporter .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px #7a6bff88}
-  @keyframes wait-spin{to{transform:rotate(360deg)}}
-  `;
+function injectCSS(){
+  if($("#cw-exporter-css")) return;
+  const el=document.createElement("style");
+  el.id="cw-exporter-css";
+  el.textContent=`.cx-modal-shell.cw-exporter-modal{width:min(var(--cxModalMaxW,1200px),calc(100vw - 40px))!important;max-width:min(var(--cxModalMaxW,1200px),calc(100vw - 40px))!important;height:min(var(--cxModalMaxH,84vh),calc(100vh - 40px))!important;background:linear-gradient(180deg,rgba(8,10,18,.98),rgba(6,8,14,.98))!important;border:1px solid rgba(108,126,255,.18)!important;box-shadow:0 28px 90px rgba(0,0,0,.58),inset 0 0 0 1px rgba(255,255,255,.03)!important}.cw-exporter{position:relative;display:flex;flex-direction:column;height:100%;min-height:0;background:radial-gradient(1100px 380px at -10% -10%,rgba(122,107,255,.14),transparent 45%),radial-gradient(900px 320px at 110% 0,rgba(35,168,255,.11),transparent 40%),linear-gradient(180deg,rgba(7,9,16,.98),rgba(5,7,12,.98));color:#e8eeff}.cw-exporter .cx-head{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))}.cw-exporter .cx-left{display:flex;align-items:center;gap:12px;flex:1;min-width:0;flex-wrap:wrap}.cw-exporter .head-mark{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(111,91,255,.24),rgba(38,196,255,.18));border:1px solid rgba(122,107,255,.28);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04),0 10px 24px rgba(0,0,0,.24);font-size:16px;flex:0 0 auto}.cw-exporter .head-copy{display:flex;flex-direction:column;gap:2px;min-width:240px;flex:1 1 280px}.cw-exporter .cx-title{font-weight:900;font-size:15px;letter-spacing:.08em;text-transform:uppercase}.cw-exporter .cx-sub{font-size:12px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cw-exporter .badge{display:flex;align-items:center;flex:1 1 100%;min-width:0;max-width:100%;min-height:36px;padding:8px 14px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;opacity:.86;line-height:1.25}.cw-exporter .close-btn,.cw-exporter .btn{height:38px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:#eef3ff;border-radius:14px;padding:0 14px;cursor:pointer;font-size:12px;font-weight:800;letter-spacing:.05em;transition:background .16s ease,border-color .16s ease,transform .12s ease,box-shadow .16s ease}.cw-exporter .close-btn{height:auto;padding:8px 14px;border-radius:999px;font-size:11px;letter-spacing:.08em;text-transform:uppercase}.cw-exporter .close-btn:hover,.cw-exporter .btn:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.18)}.cw-exporter .close-btn:active,.cw-exporter .btn:active{transform:translateY(1px)}.cw-exporter .btn.primary{background:linear-gradient(135deg,rgba(111,91,255,.28),rgba(59,130,246,.24));border-color:rgba(122,107,255,.38);box-shadow:0 10px 28px rgba(58,90,255,.12),inset 0 1px 0 rgba(255,255,255,.07)}.cw-exporter .btn.primary:hover{background:linear-gradient(135deg,rgba(111,91,255,.34),rgba(59,130,246,.28))}.cw-exporter .btn:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}.cw-exporter .ex-body{flex:1;min-height:0;display:grid;grid-template-rows:auto 1fr;gap:12px;padding:14px 16px 16px;overflow:hidden}.cw-exporter .row{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr)) minmax(220px,1.35fr) auto;gap:10px;align-items:end;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 18px 40px rgba(0,0,0,.18)}.cw-exporter .field{display:flex;flex-direction:column;gap:6px;min-width:0}.cw-exporter .field label{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.72;padding-left:2px}.cw-exporter .input{width:100%;background:rgba(7,10,18,.92);border:1px solid rgba(255,255,255,.1);color:#e7eeff;border-radius:14px;padding:0 12px;height:38px;outline:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}.cw-exporter select.input{appearance:none;background-image:linear-gradient(45deg,transparent 50%,rgba(255,255,255,.74) 50%),linear-gradient(135deg,rgba(255,255,255,.74) 50%,transparent 50%);background-position:calc(100% - 16px) calc(50% - 3px),calc(100% - 10px) calc(50% - 3px);background-size:6px 6px;background-repeat:no-repeat;padding-right:34px}.cw-exporter .input::placeholder{color:rgba(224,232,255,.38)}.cw-exporter .input:focus{border-color:rgba(122,107,255,.48);box-shadow:0 0 0 3px rgba(122,107,255,.16);background:rgba(9,13,23,.96)}.cw-exporter .search{min-width:0}.cw-exporter .row-right{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0}.cw-exporter .hint{font-size:12px;opacity:.72}.cw-exporter .count-chip,.cw-exporter .toggle{display:inline-flex;align-items:center;min-height:38px;padding:0 12px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.16)}.cw-exporter .count-chip{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}.cw-exporter .toggle{gap:10px;cursor:pointer;user-select:none}.cw-exporter .toggle input{display:none}.cw-exporter .toggle-track{width:42px;height:24px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);position:relative;transition:background .18s ease,border-color .18s ease,box-shadow .18s ease}.cw-exporter .toggle-knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#eef3ff;box-shadow:0 4px 10px rgba(0,0,0,.35);transition:transform .18s ease,background .18s ease}.cw-exporter .toggle input:checked+.toggle-track{background:linear-gradient(90deg,rgba(111,91,255,.45),rgba(42,191,255,.34));border-color:rgba(122,107,255,.34);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)}.cw-exporter .toggle input:checked+.toggle-track .toggle-knob{transform:translateX(18px);background:#fff}.cw-exporter .toggle-label{font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;opacity:.8}.cw-exporter .ex-grid-wrap{min-height:0;border:1px solid rgba(255,255,255,.08);border-radius:20px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.02));overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 20px 40px rgba(0,0,0,.16)}.cw-exporter .ex-grid{height:100%;overflow:auto}.cw-exporter table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}.cw-exporter thead th{position:sticky;top:0;z-index:2;background:rgba(8,10,18,.94);backdrop-filter:blur(10px);text-align:left;opacity:.82;user-select:none}.cw-exporter th,.cw-exporter td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cw-exporter th:first-child,.cw-exporter td:first-child{width:46px;min-width:46px;max-width:46px;padding-left:14px;padding-right:10px;text-align:center}.cw-exporter tbody tr{transition:background .14s ease,box-shadow .14s ease}.cw-exporter tbody tr:hover{background:rgba(255,255,255,.03)}.cw-exporter tbody tr:last-child td{border-bottom:0}.cw-exporter th .resizer{position:absolute;right:-2px;top:0;width:6px;height:100%;cursor:col-resize}.cw-exporter th:hover .resizer{background:linear-gradient(90deg,transparent 0,rgba(122,107,255,.38) 50%,transparent 100%)}.cw-exporter .td-wrap,.cw-exporter .ids{white-space:normal;overflow:visible;text-overflow:clip}.cw-exporter .ids span{display:inline-flex;align-items:center;min-height:22px;margin:0 6px 6px 0;padding:0 8px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}.cw-exporter .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px}.cw-exporter input[type=checkbox].glow-check{appearance:none;-webkit-appearance:none;display:inline-grid;place-items:center;cursor:pointer;width:20px!important;height:20px!important;margin:0;padding:0;border-radius:7px;border:1px solid rgba(255,255,255,.16);background:linear-gradient(180deg,rgba(15,20,31,.96),rgba(9,12,20,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.24);outline:none;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease,transform .12s ease}.cw-exporter input[type=checkbox].glow-check:hover{border-color:rgba(126,136,255,.30);background:linear-gradient(180deg,rgba(18,24,36,.98),rgba(10,14,23,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 10px 22px rgba(0,0,0,.28)}.cw-exporter input[type=checkbox].glow-check::after{content:"";width:10px;height:6px;border:2px solid transparent;border-right-color:#f7f9ff;border-bottom-color:#f7f9ff;transform:rotate(45deg) scale(.78);opacity:0;transition:opacity .14s ease,transform .14s ease}.cw-exporter input[type=checkbox].glow-check:checked{border-color:rgba(104,116,255,.42);background:linear-gradient(180deg,rgba(84,92,212,.86),rgba(47,68,170,.92));box-shadow:0 0 0 3px rgba(90,106,255,.12),0 10px 24px rgba(26,33,82,.34),inset 0 1px 0 rgba(255,255,255,.12)}.cw-exporter input[type=checkbox].glow-check:checked::after{opacity:1;transform:rotate(45deg) scale(1)}.cw-exporter input[type=checkbox].glow-check:focus-visible{box-shadow:0 0 0 3px rgba(90,106,255,.16),0 10px 24px rgba(26,33,82,.34),inset 0 1px 0 rgba(255,255,255,.12)}.wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.66);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease}.wait-overlay.hidden{opacity:0;pointer-events:none}.wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 26px;border-radius:20px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(10,13,23,.96),rgba(8,10,18,.96));box-shadow:0 24px 60px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.04)}.wait-ring{width:52px;height:52px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px rgba(122,107,255,.34))}.wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23a8ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}.wait-text{font-weight:800;color:#dbe8ff;letter-spacing:.04em}@keyframes wait-spin{to{transform:rotate(360deg)}}@media (max-width:1080px){.cw-exporter .row{grid-template-columns:repeat(2,minmax(0,1fr))}.cw-exporter .search,.cw-exporter .row-right{grid-column:1/-1}.cw-exporter .row-right{justify-content:flex-start;margin-left:0}}@media (max-width:720px){.cx-modal-shell.cw-exporter-modal{width:min(var(--cxModalMaxW,1200px),calc(100vw - 20px))!important;max-width:min(var(--cxModalMaxW,1200px),calc(100vw - 20px))!important;height:min(var(--cxModalMaxH,84vh),calc(100vh - 20px))!important}.cw-exporter .cx-head{padding:12px}.cw-exporter .ex-body{padding:12px;gap:10px}.cw-exporter .row{grid-template-columns:1fr;padding:10px}.cw-exporter .row-right{justify-content:flex-start}.cw-exporter th,.cw-exporter td{padding:9px 10px}}`;
   document.head.appendChild(el);
 }
 
-function closeModal() {
-  if (window.cxCloseModal) { window.cxCloseModal(); return; }
-  document.querySelector(".cx-modal-shell")?.dispatchEvent(new CustomEvent("cw-modal-close", { bubbles: true }));
-}
+const closeModal=()=>window.cxCloseModal?window.cxCloseModal():document.querySelector(".cx-modal-shell")?.dispatchEvent(new CustomEvent("cw-modal-close",{bubbles:true}));
+async function downloadFile(u){const r=await fetch(u);if(!r.ok)throw new Error(`Download failed: ${r.status}`);const blob=await r.blob(),cd=r.headers.get("Content-Disposition")||"",m=/filename="([^"]+)"/i.exec(cd),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=m?.[1]||"export.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
 
-async function downloadFile(u) {
-  const r = await fetch(u);
-  if (!r.ok) throw new Error("Download failed: " + r.status);
-  const blob = await r.blob();
-  const cd = r.headers.get("Content-Disposition") || "";
-  const m = /filename="([^"]+)"/i.exec(cd);
-  const name = m ? m[1] : "export.csv";
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-}
-/* column resize */
-function enableColumnResize(table, lsKey = "cw.exporter.cols.v2") {
-  try {
-    if (!table || !table.isConnected) return;
-    let colgroup = table.querySelector("colgroup");
-    const ths = $$("thead th", table);
-    if (!ths.length) return;
-
-    if (!colgroup) {
-      colgroup = document.createElement("colgroup");
-      table.insertBefore(colgroup, table.firstChild);
-    }
-    while (colgroup.children.length < ths.length) colgroup.appendChild(document.createElement("col"));
-    while (colgroup.children.length > ths.length) colgroup.removeChild(colgroup.lastElementChild);
-
-    const cols = Array.from(colgroup.children);
-    const saved = LS.get(lsKey, {});
-
-    ths.forEach((th, i) => {
-      const key = th.getAttribute("data-col") || `c${i}`;
-      const col = cols[i]; if (!col) return;
-      const initW = saved[key] || Math.max(90, Math.round(th.getBoundingClientRect().width));
-      col.style.width = initW + "px";
-      th.style.width  = initW + "px";
+function enableColumnResize(table,key="cw.exporter.cols.v2"){
+  try{
+    if(!table?.isConnected) return;
+    const ths=$$("thead th",table); if(!ths.length) return;
+    const cg=table.querySelector("colgroup")||table.insertBefore(document.createElement("colgroup"),table.firstChild);
+    while(cg.children.length<ths.length) cg.appendChild(document.createElement("col"));
+    while(cg.children.length>ths.length) cg.lastElementChild.remove();
+    const cols=[...cg.children], saved=LS.get(key,{}), cv=document.createElement("canvas"), ctx=cv.getContext("2d");
+    const tw=(txt,ref)=>{const cs=getComputedStyle(ref);ctx.font=`${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`.replace(/\s{2,}/g," ");return Math.ceil(ctx.measureText(txt||"").width)};
+    const setW=(i,w)=>{const th=ths[i], col=cols[i]; if(!th||!col) return; col.style.width=th.style.width=`${w}px`; saved[th.dataset.col||`c${i}`]=Math.round(w)};
+    ths.forEach((th,i)=>setW(i,saved[th.dataset.col||`c${i}`]||Math.max(90,Math.round(th.getBoundingClientRect().width))));
+    const autofit=i=>{const th=ths[i]; if(!th) return; const cells=$$(`tbody tr td:nth-child(${i+1})`,table).slice(0,250); let w=tw(th.innerText.trim(),th)+24; for(const td of cells) w=Math.max(w,tw(td.innerText?.trim?.()||td.textContent||"",td)+24); setW(i,Math.max(90,Math.min(1000,w))); LS.set(key,saved)};
+    let drag;
+    const move=e=>drag&&setW(drag.i,Math.max(80,drag.w+e.clientX-drag.x));
+    const up=()=>{if(!drag) return; drag=null; document.body.style.userSelect=""; document.removeEventListener("mousemove",move); document.removeEventListener("mouseup",up); LS.set(key,saved)};
+    ths.forEach((th,i)=>{
+      const h=th.querySelector(".resizer")||th.appendChild(Object.assign(document.createElement("div"),{className:"resizer"}));
+      h.onmousedown=e=>{drag={i,x:e.clientX,w:parseInt(cols[i].style.width||th.offsetWidth,10)||120};document.body.style.userSelect="none";document.addEventListener("mousemove",move);document.addEventListener("mouseup",up);e.preventDefault();e.stopPropagation()};
+      h.ondblclick=e=>{e.stopPropagation();autofit(i)};
     });
-
-    const _canvas = document.createElement("canvas");
-    const ctx = _canvas.getContext("2d");
-    function textWidth(text, ref) {
-      const cs = getComputedStyle(ref);
-      ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`.replace(/\s{2,}/g, " ");
-      return Math.ceil(ctx.measureText(text || "").width);
-    }
-    function autoFit(i) {
-      const th = ths[i]; const col = cols[i];
-      if (!th || !col) return;
-      const tds = $$(`tbody tr td:nth-child(${i + 1})`, table);
-      const pad = 24;
-      let maxW = textWidth(th.innerText.trim(), th) + pad;
-      for (let j = 0; j < Math.min(250, tds.length); j++) {
-        const td = tds[j];
-        const txt = td.innerText?.trim?.() || td.textContent || "";
-        const w = textWidth(txt, td) + pad;
-        if (w > maxW) maxW = w;
-      }
-      const w = Math.max(90, Math.min(1000, maxW));
-      col.style.width = w + "px";
-      th.style.width  = w + "px";
-      const key = th.getAttribute("data-col") || `c${i}`;
-      saved[key] = Math.round(w);
-      LS.set(lsKey, saved);
-    }
-
-    let drag = null;
-    function onDown(e, idx) {
-      const col = cols[idx]; const th = ths[idx];
-      if (!col || !th) return;
-      drag = { idx, startX: e.clientX, startW: parseInt(col.style.width || th.offsetWidth, 10) || 120 };
-      document.body.style.userSelect = "none";
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-      e.preventDefault(); e.stopPropagation();
-    }
-    function onMove(e) {
-      if (!drag) return;
-      const col = cols[drag.idx]; const th = ths[drag.idx];
-      if (!col || !th) return;
-      const w = Math.max(80, drag.startW + (e.clientX - drag.startX));
-      col.style.width = w + "px";
-      th.style.width  = w + "px";
-    }
-    function onUp() {
-      if (!drag) return;
-      const i = drag.idx; const col = cols[i]; const th = ths[i];
-      if (col && th) {
-        const key = th.getAttribute("data-col") || `c${i}`;
-        const w = parseInt(col.style.width, 10) || th.offsetWidth;
-        saved[key] = Math.round(w);
-        LS.set(lsKey, saved);
-      }
-      drag = null;
-      document.body.style.userSelect = "";
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    }
-
-    ths.forEach((th, i) => {
-      let handle = th.querySelector(".resizer");
-      if (!handle) { handle = document.createElement("div"); handle.className = "resizer"; th.appendChild(handle); }
-      handle.onmousedown = (e) => onDown(e, i);
-      handle.ondblclick  = (e) => { e.stopPropagation(); autoFit(i); };
-    });
-  } catch (err) {
-    console.warn("Column resize init failed:", err);
-  }
-}
-
-/* selected counter */
-function selectedSummary({ mode, selected, filteredTotal }) {
-  return mode === "all" ? `Selected: ${filteredTotal} of ${filteredTotal}` : `Selected: ${selected.size} of ${filteredTotal}`;
+  }catch(err){console.warn("Column resize init failed:",err)}
 }
 
 export default {
-  async mount(root) {
+  async mount(root){
     injectCSS();
+    root.classList.add("cw-exporter-modal");
+    root.style.setProperty("--cxModalMaxW","1200px");
+    root.style.setProperty("--cxModalMaxH","84vh");
+    root.innerHTML=`<div class="cw-exporter"><div class="cx-head"><div class="cx-left"><div class="head-mark">⇩</div><div class="head-copy"><div class="cx-title">Exporter</div><div class="cx-sub">Filter, preview and export source data.</div></div><div class="badge" id="ex-badge">-</div></div><div class="ex-actions"><button class="close-btn" id="ex-close">Close</button></div></div><div class="ex-body"><div class="row"><div class="field"><label for="ex-prov">Provider</label><select id="ex-prov" name="ex-prov" class="input"></select></div><div class="field"><label for="ex-inst">Instance</label><select id="ex-inst" name="ex-inst" class="input"></select></div><div class="field"><label for="ex-feat">Feature</label><select id="ex-feat" name="ex-feat" class="input"><option value="watchlist">Watchlist</option><option value="history">History</option><option value="ratings">Ratings</option></select></div><div class="field"><label for="ex-fmt">Format</label><select id="ex-fmt" name="ex-fmt" class="input"></select></div><div class="field search"><label for="ex-q">Search</label><input id="ex-q" name="ex-q" class="input" type="text" placeholder="Title, year or id…"></div><div class="row-right"><label class="toggle" title="Export all filtered results (live)"><input id="ex-all" type="checkbox" checked><span class="toggle-track"><span class="toggle-knob"></span></span><span class="toggle-label">All filtered</span></label><div class="hint count-chip" id="ex-count">—</div><button class="btn" id="ex-preview">Preview</button><button class="btn primary" id="ex-export">Export</button></div></div><div class="ex-grid-wrap"><div class="ex-grid"><table id="ex-table"><colgroup></colgroup><thead><tr><th data-col="sel" style="width:34px"></th><th data-col="title">Title</th><th data-col="year">Year</th><th data-col="type">Type</th><th data-col="ids">IDs</th><th data-col="extra">Watched / Rating</th></tr></thead><tbody id="ex-tbody"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody></table></div></div></div></div><div class="wait-overlay hidden" id="ex-wait"><div class="wait-card" role="status" aria-live="assertive"><div class="wait-ring"></div><div class="wait-text" id="ex-wait-text">Loading…</div></div></div>`;
 
-    const shell = document.createElement("div");
-    shell.className = "cw-exporter";
-    root.appendChild(shell);
+    const el=n=>$(n,root), badge=el("#ex-badge"), countEl=el("#ex-count"), provSel=el("#ex-prov"), instSel=el("#ex-inst"), featSel=el("#ex-feat"), fmtSel=el("#ex-fmt"), qInput=el("#ex-q"), allChk=el("#ex-all"), btnPrev=el("#ex-preview"), btnExp=el("#ex-export"), tbody=el("#ex-tbody"), table=el("#ex-table"), wait=el("#ex-wait"), waitText=el("#ex-wait-text");
+    const state={opts:null,total:0,lastQuery:"",selected:new Set(),mode:"all"};
+    const PREFS_KEY="cw.exporter.prefs", prefs=LS.get(PREFS_KEY,{}), savePrefs=()=>LS.set(PREFS_KEY,{provider:provSel.value,instance:instSel.value,feature:featSel.value,format:fmtSel.value,q:qInput.value,all:allChk.checked});
+    let waitTimer, shownAt=0;
+    const setWait=t=>waitText.textContent=t, showWait=(t="Loading…")=>{setWait(t);wait.classList.remove("hidden");shownAt=performance.now();clearTimeout(waitTimer);waitTimer=setTimeout(()=>setWait(`${t} (still working…)`),3000)}, hideWait=()=>{clearTimeout(waitTimer);const ms=250-(performance.now()-shownAt);setTimeout(()=>wait.classList.add("hidden"),Math.max(0,ms))};
+    const refreshCounts=()=>countEl.textContent=`Selected: ${state.mode==="all"?state.total:state.selected.size} of ${state.total}`;
+    const fmtBadge=counts=>!counts?"—":Object.keys(counts).map(p=>{const c=counts[p]||{},n=(p||"").toUpperCase();const label=n==="JELLYFIN"?"JF":n==="MDBLIST"?"MDB":n==="CROSSWATCH"?"CW":n;return `${label}: W${c.watchlist||0}/H${c.history||0}/R${c.ratings||0}`}).join(" • ");
+    const rowHTML=it=>`<tr data-key="${esc(it.key)}"><td><input type="checkbox" class="glow-check row-check" aria-label="Select ${esc(it.title||it.key||"row")}" ${state.mode==="all"||state.selected.has(it.key)?"checked":""}></td><td class="td-wrap">${esc(it.title||"")}</td><td>${esc(it.year||"")}</td><td>${esc(it.type||"")}</td><td class="ids">${Object.entries(it.ids||{}).map(([k,v])=>`<span class="mono">${esc(k)}:${esc(v)}</span>`).join(" ")}</td><td>${esc(it.rating||it.watched_at||"")}</td></tr>`;
+    const syncInstances=()=>{const prov=provSel.value,list=state.opts?.instances?.[prov]||[{id:"default",label:"Default"}];instSel.innerHTML=[`<option value="all">All</option>`,...list.map(x=>`<option value="${esc(x.id)}">${esc(x.label||x.id)}</option>`)].join("");const want=prefs.instance;if(want&&(want==="all"||list.some(x=>x.id===want))) instSel.value=want; if(!instSel.value) instSel.value="all"};
+    const syncFormats=()=>{const list=state.opts?.formats?.[featSel.value]||[], labels=state.opts?.labels||{};fmtSel.innerHTML=list.map(x=>`<option value="${esc(x)}">${esc(labels[x]||x.toUpperCase())}</option>`).join(""); if(prefs.format&&list.includes(prefs.format)) fmtSel.value=prefs.format};
 
-    shell.innerHTML = `
-      <div class="cx-head">
-        <div class="cx-left">
-          <div class="cx-title">Exporter</div>
-          <div class="badge" id="ex-badge">—</div>
-        </div>
-        <div class="ex-actions">
-          <button class="close-btn" id="ex-close">Close</button>
-        </div>
-      </div>
-
-      <div class="ex-body">
-        <div class="row">
-          <div class="field">
-            <label for="ex-prov">Provider</label>
-            <select id="ex-prov" name="ex-prov" class="input"></select>
-          </div>
-          <div class="field">
-            <label for="ex-inst">Instance</label>
-            <select id="ex-inst" name="ex-inst" class="input"></select>
-          </div>
-          <div class="field">
-            <label for="ex-feat">Feature</label>
-            <select id="ex-feat" name="ex-feat" class="input">
-              <option value="watchlist">Watchlist</option>
-              <option value="history">History</option>
-              <option value="ratings">Ratings</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="ex-fmt">Format</label>
-            <select id="ex-fmt" name="ex-fmt" class="input"></select>
-          </div>
-
-          <div class="field search">
-            <label for="ex-q">Search (title/id/year)</label>
-            <input id="ex-q" name="ex-q" class="input" type="text" placeholder="e.g. imdb:tt0468569, 2025, Twisted Metal">
-          </div>
-
-          <div class="row-right">
-            <label class="neon-switch" title="Export all filtered results (live)">
-              <input id="ex-all" type="checkbox" checked>
-              <span class="neon-pill"><span class="neon-knob"></span></span>
-              <span class="neon-label">Select all (filtered)</span>
-            </label>
-            <div class="hint" id="ex-count">—</div>
-            <button class="btn" id="ex-preview">Preview</button>
-            <button class="btn primary" id="ex-export">Export</button>
-          </div>
-        </div>
-
-        <div class="ex-grid">
-          <table id="ex-table">
-            <colgroup></colgroup>
-            <thead>
-              <tr>
-                <th data-col="sel"   style="width:26px"></th>
-                <th data-col="title">Title</th>
-                <th data-col="year">Year</th>
-                <th data-col="type">Type</th>
-                <th data-col="ids">IDs</th>
-                <th data-col="extra">Watched/Rating</th>
-              </tr>
-            </thead>
-            <tbody id="ex-tbody">
-              <tr><td colspan="6" class="hint">Loading…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-
-    // wait overlay
-    const wait = document.createElement("div");
-    wait.className = "wait-overlay hidden";
-    wait.innerHTML = `
-      <div class="wait-card" role="status" aria-live="assertive">
-        <div class="wait-ring"></div>
-        <div class="wait-text" id="ex-wait-text">Loading…</div>
-      </div>`;
-    shell.appendChild(wait);
-    const setWait = (t) => { $("#ex-wait-text", shell).textContent = t; };
-    let waitTimer = null, shownAt = 0;
-    const showWait = (t = "Loading…") => {
-      setWait(t); wait.classList.remove("hidden");
-      shownAt = performance.now();
-      clearTimeout(waitTimer);
-      waitTimer = setTimeout(() => setWait(`${t} (still working…)`), 3000);
-    };
-    const hideWait = () => {
-      clearTimeout(waitTimer);
-      const min = 250, elapsed = performance.now() - shownAt;
-      const doHide = () => wait.classList.add("hidden");
-      if (elapsed < min) setTimeout(doHide, min - elapsed); else doHide();
-    };
-
-    // refs
-    const badge   = $("#ex-badge", shell);
-    const countEl = $("#ex-count", shell);
-    const provSel = $("#ex-prov", shell);
-    const instSel = $("#ex-inst", shell);
-    const featSel = $("#ex-feat", shell);
-    const fmtSel  = $("#ex-fmt", shell);
-    const qInput  = $("#ex-q", shell);
-    const allChk  = $("#ex-all", shell);
-    const btnPrev = $("#ex-preview", shell);
-    const btnExp  = $("#ex-export", shell);
-    const btnClose= $("#ex-close", shell);
-    const tbody   = $("#ex-tbody", shell);
-    const table   = $("#ex-table", shell);
-
-    // state
-    let OPTS = null;
-    let filteredTotal = 0;
-    const selected = new Set();
-    let mode = "all";
-    let lastQuery = "";
-
-    // prefs
-    const PREFS_KEY = "cw.exporter.prefs";
-    const prefs = LS.get(PREFS_KEY, {});
-    const savePrefs = () => LS.set(PREFS_KEY, {
-      provider: provSel.value, instance: instSel.value, feature: featSel.value, format: fmtSel.value,
-      q: qInput.value, all: allChk.checked
-    });
-
-    const fmtBadge = (optCounts) => {
-      if (!optCounts) return "—";
-      const seg = (p) => {
-        const c = optCounts[p] || {};
-        return `${p}: W${c.watchlist||0}/H${c.history||0}/R${c.ratings||0}`;
-      };
-      return Object.keys(optCounts).map(seg).join(" • ");
-    };
-
-    function syncInstances() {
-      const prov = provSel.value;
-      const list = (OPTS?.instances && OPTS.instances[prov]) || [{ id: "default", label: "Default" }];
-      const opts = [`<option value="all">All</option>`].concat(
-        (list || []).map(x => `<option value="${x.id}">${x.label || x.id}</option>`)
-      );
-      instSel.innerHTML = opts.join("");
-      const want = prefs.instance;
-      if (want && (want === "all" || (list || []).some(x => x.id === want))) instSel.value = want;
-      if (!instSel.value) instSel.value = "all";
+    async function renderPreview(auto=false){
+      if(!state.opts?.providers?.length){tbody.innerHTML=`<tr><td colspan="6" class="hint">No state loaded. Nothing to show.</td></tr>`; state.total=0; state.selected.clear(); btnExp.disabled=true; return refreshCounts()}
+      tbody.innerHTML=`<tr><td colspan="6" class="hint">Loading…</td></tr>`; showWait(auto?"Refreshing…":"Generating preview…");
+      try{
+        state.lastQuery=qInput.value||"";
+        const data=await fjson(`/api/export/sample?provider=${encodeURIComponent(provSel.value)}&provider_instance=${encodeURIComponent(instSel.value)}&feature=${encodeURIComponent(featSel.value)}&limit=50&q=${encodeURIComponent(state.lastQuery)}`);
+        state.total=data.total||0; if(state.mode==="all") state.selected.clear();
+        const rows=(data.items||[]).map(rowHTML).join("");
+        tbody.innerHTML=rows||`<tr><td colspan="6" class="hint">No items.</td></tr>`;
+        btnExp.disabled=!state.total&&!state.selected.size; refreshCounts();
+      }catch{
+        tbody.innerHTML=`<tr><td colspan="6" class="hint">No data.</td></tr>`; state.total=0; state.selected.clear(); btnExp.disabled=true; refreshCounts();
+      }finally{hideWait()}
     }
 
-    function syncFormats() {
-      const f = featSel.value;
-      const list = (OPTS?.formats && OPTS.formats[f]) || [];
-      const labels = OPTS?.labels || {};
-      fmtSel.innerHTML = list.map(x => `<option value="${x}">${labels[x] || x.toUpperCase()}</option>`).join("");
-      if (prefs.format && list.includes(prefs.format)) fmtSel.value = prefs.format;
+    async function doExport(){
+      const label=btnExp.textContent; btnExp.disabled=true; btnExp.textContent="Preparing…"; showWait("Preparing file…");
+      try{
+        const ids=state.mode==="manual"&&state.selected.size?`&ids=${encodeURIComponent([...state.selected].join(","))}`:"";
+        await downloadFile(`/api/export/file?provider=${encodeURIComponent(provSel.value)}&provider_instance=${encodeURIComponent(instSel.value)}&feature=${encodeURIComponent(featSel.value)}&format=${encodeURIComponent(fmtSel.value)}&q=${encodeURIComponent(state.lastQuery)}${ids}`);
+      }finally{btnExp.disabled=false; btnExp.textContent=label; hideWait()}
     }
 
-    function rowHTML(it) {
-      const idsHTML = Object.entries(it.ids || {}).map(([k,v]) => `<span class="mono">${k}:${v}</span>`).join(" ");
-      const extra = (it.rating || "") || (it.watched_at || "");
-      const isChecked = (mode === "all") ? true : selected.has(it.key);
-      return `<tr data-key="${it.key}">
-        <td><input type="checkbox" name="ex-row" class="glow-check row-check" ${isChecked ? "checked" : ""}></td>
-        <td class="td-wrap">${it.title || ""}</td>
-        <td>${it.year || ""}</td>
-        <td>${it.type || ""}</td>
-        <td class="ids">${idsHTML}</td>
-        <td>${extra || ""}</td>
-      </tr>`;
-    }
-
-    function refreshCounts() {
-      countEl.textContent = mode === "all"
-        ? `Selected: ${filteredTotal} of ${filteredTotal}`
-        : `Selected: ${selected.size} of ${filteredTotal}`;
-    }
-
-    async function renderPreview({ auto = false } = {}) {
-      if (!OPTS?.providers?.length) {
-        tbody.innerHTML = `<tr><td colspan="6" class="hint">No state loaded. Nothing to show.</td></tr>`;
-        filteredTotal = 0; selected.clear(); refreshCounts();
-        btnExp.disabled = true;
-        return;
-      }
-
-      tbody.innerHTML = `<tr><td colspan="6" class="hint">Loading…</td></tr>`;
-      showWait(auto ? "Refreshing…" : "Generating preview…");
-      try {
-        const limit = 50;
-        lastQuery = qInput.value || "";
-        const u = `/api/export/sample?provider=${encodeURIComponent(provSel.value)}&provider_instance=${encodeURIComponent(instSel.value)}&feature=${encodeURIComponent(featSel.value)}&limit=${limit}&q=${encodeURIComponent(lastQuery)}`;
-        const data = await fjson(u);
-        filteredTotal = data.total || 0;
-
-        if (mode === "all") selected.clear();
-
-        const rows = (data.items || []).map(rowHTML);
-        tbody.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="6" class="hint">No items.</td></tr>`;
-
-        $$(".row-check", tbody).forEach(cb => {
-          cb.addEventListener("change", () => {
-            const tr = cb.closest("tr"); const key = tr?.getAttribute("data-key");
-            if (!key) return;
-            if (mode === "all") { mode = "manual"; allChk.checked = false; }
-            if (cb.checked) selected.add(key); else selected.delete(key);
-            refreshCounts();
-          });
-        });
-
-        $$("tbody tr", table).forEach(tr => {
-          tr.addEventListener("click", (e) => {
-            if (e.target.closest("input,button,select,.resizer")) return;
-            const cb = tr.querySelector(".row-check"); if (!cb) return;
-            cb.checked = !cb.checked;
-            cb.dispatchEvent(new Event("change"));
-          });
-        });
-
-        btnExp.disabled = filteredTotal === 0 && selected.size === 0;
-        refreshCounts();
-      } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="hint">No data.</td></tr>`;
-        filteredTotal = 0; selected.clear(); refreshCounts();
-        btnExp.disabled = true;
-      } finally {
-        hideWait();
-      }
-    }
-
-    async function doExport() {
-      btnExp.disabled = true;
-      const label = btnExp.textContent;
-      btnExp.textContent = "Preparing…";
-      showWait("Preparing file…");
-      try {
-        const base = `/api/export/file?provider=${encodeURIComponent(provSel.value)}&provider_instance=${encodeURIComponent(instSel.value)}&feature=${encodeURIComponent(featSel.value)}&format=${encodeURIComponent(fmtSel.value)}`;
-        const q = `&q=${encodeURIComponent(lastQuery)}`;
-        let extra = "";
-        if (mode === "manual" && selected.size > 0) extra = "&ids=" + encodeURIComponent(Array.from(selected).join(","));
-        await downloadFile(base + q + extra);
-      } finally {
-        btnExp.disabled = false;
-        btnExp.textContent = label;
-        hideWait();
-      }
-    }
-
-    // init
     showWait("Loading options…");
-    try {
-      try {
-        OPTS = await fjson("/api/export/options");
-      } catch {
-        OPTS = {
-          providers: [],
-          counts: {},
-          formats: {
-            watchlist: ["letterboxd","imdb","justwatch","yamtrack","tmdb"],
-            history:   ["letterboxd","justwatch","yamtrack"],
-            ratings:   ["letterboxd","yamtrack","tmdb"],
-          },
-          labels: {
-            letterboxd: "Letterboxd",
-            imdb: "IMDb (list)",
-            justwatch: "JustWatch",
-            yamtrack: "Yamtrack",
-            tmdb: "TMDB (Auto: IMDb/Trakt/SIMKL)",
-          }
-        };
-      }
+    try{
+      state.opts=await fjson("/api/export/options").catch(()=>({providers:[],counts:{},formats:{watchlist:["letterboxd","imdb","justwatch","yamtrack","tmdb"],history:["letterboxd","justwatch","yamtrack"],ratings:["letterboxd","yamtrack","tmdb"]},labels:{letterboxd:"Letterboxd",imdb:"IMDb (list)",justwatch:"JustWatch",yamtrack:"Yamtrack",tmdb:"TMDB (Auto: IMDb/Trakt/SIMKL)"}}));
+      badge.textContent=state.opts.providers?.length?fmtBadge(state.opts.counts):"No state.json detected";
+      if(state.opts.providers?.length){provSel.innerHTML=state.opts.providers.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join("")}else{provSel.innerHTML='<option value="" disabled>(no providers)</option>'; provSel.disabled=instSel.disabled=true; instSel.innerHTML='<option value="all">All</option>'}
+      if(state.opts.providers?.includes(prefs.provider)) provSel.value=prefs.provider;
+      if(["watchlist","history","ratings"].includes(prefs.feature)) featSel.value=prefs.feature;
+      qInput.value=prefs.q||""; allChk.checked=prefs.all!==false; syncInstances(); syncFormats(); enableColumnResize(table);
+    }finally{hideWait()}
 
-      badge.textContent = OPTS.providers?.length ? fmtBadge(OPTS.counts) : "No state.json detected";
-
-      if (OPTS.providers?.length) {
-        provSel.innerHTML = OPTS.providers.map(p => `<option value="${p}">${p}</option>`).join("");
-        instSel.disabled = false;
-      } else {
-        provSel.innerHTML = `<option value="" disabled>(no providers)</option>`;
-        provSel.disabled = true; instSel.disabled = true; instSel.innerHTML = `<option value="all">All</option>`; featSel.disabled = false; fmtSel.disabled = false;
-      }
-
-      if (OPTS.providers?.includes(prefs.provider)) provSel.value = prefs.provider;
-      if (["watchlist","history","ratings"].includes(prefs.feature)) featSel.value = prefs.feature;
-      qInput.value = prefs.q || "";
-      allChk.checked = prefs.all !== false;
-
-      syncInstances();
-      syncFormats();
-      enableColumnResize(table);
-    } finally {
-      hideWait();
-    }
-
-    // events
-    const debounced = (fn, ms=250) => { let t=null; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; };
-    const autoRefresh = debounced(() => renderPreview({ auto:true }), 200);
-
-    provSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; syncInstances(); savePrefs(); autoRefresh(); });
-    instSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; savePrefs(); autoRefresh(); });
-    featSel.addEventListener("change", () => { selected.clear(); mode="all"; allChk.checked=true; syncFormats(); savePrefs(); autoRefresh(); });
-    fmtSel .addEventListener("change", savePrefs);
-    qInput.addEventListener("input", () => { savePrefs(); autoRefresh(); });
-
-    allChk.addEventListener("change", () => {
-      mode = allChk.checked ? "all" : "manual";
-      if (mode === "all") selected.clear();
-      savePrefs();
-      autoRefresh();
-    });
-
-    btnPrev.addEventListener("click", () => renderPreview({ auto:false }));
-    btnExp .addEventListener("click", doExport);
-    btnClose.addEventListener("click", closeModal);
-
-    await renderPreview({ auto:false });
+    const debounce=(fn,ms=250)=>{let t; return (...a)=>{clearTimeout(t); t=setTimeout(()=>fn(...a),ms)}};
+    const autoRefresh=debounce(()=>renderPreview(true),200), reset=cb=>()=>{state.selected.clear(); state.mode="all"; allChk.checked=true; cb?.(); savePrefs(); autoRefresh()};
+    provSel.addEventListener("change",reset(syncInstances));
+    instSel.addEventListener("change",reset());
+    featSel.addEventListener("change",reset(syncFormats));
+    fmtSel.addEventListener("change",savePrefs);
+    qInput.addEventListener("input",()=>{savePrefs(); autoRefresh()});
+    allChk.addEventListener("change",()=>{state.mode=allChk.checked?"all":"manual"; if(state.mode==="all") state.selected.clear(); savePrefs(); autoRefresh()});
+    btnPrev.addEventListener("click",()=>renderPreview(false));
+    btnExp.addEventListener("click",doExport);
+    el("#ex-close").addEventListener("click",closeModal);
+    tbody.addEventListener("change",e=>{const cb=e.target.closest(".row-check"); if(!cb) return; const key=cb.closest("tr")?.dataset.key; if(!key) return; if(state.mode==="all"){state.mode="manual"; allChk.checked=false} cb.checked?state.selected.add(key):state.selected.delete(key); refreshCounts()});
+    tbody.addEventListener("click",e=>{const tr=e.target.closest("tr[data-key]"); if(!tr||e.target.closest("input,button,select,.resizer")) return; const cb=$(".row-check",tr); if(cb){cb.checked=!cb.checked; cb.dispatchEvent(new Event("change",{bubbles:true}))}});
+    await renderPreview(false);
   },
-  unmount() {
-  }
+  unmount(){}
 };
