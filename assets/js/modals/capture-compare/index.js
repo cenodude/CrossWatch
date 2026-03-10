@@ -1,153 +1,42 @@
-// assets/js/modals/capture-compare/index.js
-// reused analyzer modal
-
+/* assets/js/modals/capture-compare/index.js */
+/* refactored */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 const fjson = async (u, o = {}) => {
   const r = await fetch(u, { cache: "no-store", ...o });
   if (!r.ok) throw new Error(String(r.status));
   return r.json();
 };
 const Q = (s, r = document) => r.querySelector(s);
-const QA = (s, r = document) => Array.from(r.querySelectorAll(s));
-const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
+const QA = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+const emptyCounts = () => ({ movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 });
+const STATUS_ORDER = { added: 0, removed: 1, updated: 2, unchanged: 3 };
+const STATUS_CLASS = { added: "add", removed: "del", updated: "upd", unchanged: "unc" };
+const STATUS_LABEL = { added: "Added", removed: "Deleted", updated: "Updated", unchanged: "Unchanged" };
+const SPLIT = "10px";
+const ROOT_HTML = `
+<div class="cx-head"><div class="cc-left"><div class="cc-title">Capture Compare</div><div class="cc-meta" id="cc-meta">Loading…</div></div><div class="cc-actions"><button class="pill" id="cc-refresh" type="button">Refresh</button><button class="close-btn" id="cc-close" type="button">Close</button></div></div>
+<div class="cc-toolbar"><input id="cc-search" type="search" placeholder="Search title, ids, key…"><div class="cc-chip add on" data-st="added">Added</div><div class="cc-chip del on" data-st="removed">Deleted</div><div class="cc-chip on" data-st="updated">Updated</div><div class="cc-chip unc" data-st="unchanged">Unchanged</div><select id="cc-type"><option value="">All types</option><option value="movie">Movies</option><option value="show">Shows</option><option value="season">Seasons</option><option value="episode">Episodes</option></select><select id="cc-sort"><option value="status">Sort: status</option><option value="title">Sort: title</option><option value="key">Sort: key</option></select><div class="cc-chip on" id="cc-changed">Changed only</div></div>
+<div class="cc-wrap" id="cc-wrap"><div class="cc-top" id="cc-top"><div class="cc-pane" id="cc-pane-a"><div class="cc-pane-head"><div class="h"><div class="t" id="cc-a-title">File A - Capture</div><div class="s" id="cc-a-sub">—</div></div><span class="tag">A</span></div><div class="cc-pane-list" id="cc-list-a"></div><div class="cc-pane-foot"><div id="cc-a-pills"></div><div class="cc-foot-mini" id="cc-a-total">—</div></div></div><div class="cc-vsplit" id="cc-vsplit-top" title="drag to resize"></div><div class="cc-pane" id="cc-pane-b"><div class="cc-pane-head"><div class="h"><div class="t" id="cc-b-title">File B - Capture</div><div class="s" id="cc-b-sub">—</div></div><span class="tag">B</span></div><div class="cc-pane-list" id="cc-list-b"></div><div class="cc-pane-foot"><div id="cc-b-pills"></div><div class="cc-foot-mini" id="cc-b-total">—</div></div></div></div><div class="cc-hsplit" id="cc-hsplit" title="drag to resize"></div><div class="cc-bottom"><div class="cc-detail-head"><div class="h"><div class="t"><span class="tt" id="cc-d-title">Select an item</span><span class="k mono" id="cc-d-key">—</span></div></div><div class="cc-detail-actions"><button class="pill ghost" id="cc-copy-key" type="button">Copy key</button><button class="pill" id="cc-copy-a" type="button">Copy JSON A</button><button class="pill" id="cc-copy-b" type="button">Copy JSON B</button></div></div><div class="cc-bottom-wrap"><div class="cc-changes" id="cc-changes"></div><div class="cc-detail-split" id="cc-detail-split"><div class="cc-rec" id="cc-rec-a"></div><div class="cc-vsplit" id="cc-vsplit-detail" title="drag to resize"></div><div class="cc-rec" id="cc-rec-b"></div></div></div></div></div>
+<div id="cc-wait" class="wait-overlay hidden"><div class="wait-card" role="status" aria-live="assertive"><div class="wait-ring"></div><div class="wait-text" id="cc-wait-text">Loading…</div></div></div>`;
+const CSS = `.cx-modal-shell.cc-modal{position:relative;background:linear-gradient(180deg,rgba(7,9,14,.985),rgba(4,6,10,.985))!important;width:min(var(--cxModalMaxW,1620px),calc(100vw - 120px))!important;border-radius:28px!important;border:1px solid rgba(255,255,255,.08)!important;box-shadow:0 28px 80px rgba(0,0,0,.56)!important;overflow:hidden;isolation:isolate}.cx-modal-shell.cc-modal::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 100% at 0 0,rgba(88,72,168,.08),transparent 40%),radial-gradient(80% 90% at 100% 100%,rgba(30,48,98,.06),transparent 44%),linear-gradient(180deg,rgba(255,255,255,.03),transparent 26%);z-index:0}.cc-modal{position:relative;display:flex;flex-direction:column;height:100%;background:transparent;color:#edf2ff}.cc-modal::before{content:none}.cc-modal>*{position:relative;z-index:1}.cc-modal .cx-head,.cc-modal .cc-pane-head,.cc-modal .cc-detail-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.cc-modal .cx-head{padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(13,16,24,.92),rgba(7,10,16,.88));backdrop-filter:blur(14px)}.cc-modal .cc-left{display:flex;align-items:center;gap:12px;min-width:0;flex:1}.cc-modal .cc-title{font:950 18px/1 inherit;letter-spacing:-.02em;white-space:nowrap}.cc-modal .cc-meta,.cc-modal .cc-sub,.cc-modal .cc-mini,.cc-modal .cc-foot-mini,.cc-modal .kv .k,.cc-modal .empty,.cc-modal .cc-pane-head .s,.cc-modal .cc-detail-head .k,.cc-modal .cc-rec .card .ttl .mini{font-size:12px;color:rgba(205,214,230,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cc-modal .cc-actions,.cc-modal .cc-pills,.cc-modal .chips,.cc-modal .cc-detail-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.cc-modal .pill,.cc-modal .close-btn,.cc-modal .stat-pill,.cc-modal .chip{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 12px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));color:#eef3ff;font-size:12px}.cc-modal .pill,.cc-modal .close-btn{min-height:34px;font-weight:800}.cc-modal .pill.ghost{background:rgba(255,255,255,.03)}.cc-modal .pill[disabled]{opacity:.55;pointer-events:none}.cc-modal .pill.cc-copied{border-color:rgba(35,213,255,.5);box-shadow:0 0 0 1px rgba(35,213,255,.26),0 10px 24px rgba(35,213,255,.12)}.cc-modal .pill.cc-fail{border-color:rgba(255,59,127,.55);box-shadow:0 0 0 1px rgba(255,59,127,.24),0 10px 24px rgba(255,59,127,.1)}.cc-modal .cc-toolbar{display:flex;flex-wrap:nowrap;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(6,8,13,.9);align-items:center;overflow-x:auto;scrollbar-width:none}.cc-modal .cc-toolbar::-webkit-scrollbar{display:none}.cc-modal input[type=search],.cc-modal select{min-height:36px;background:rgba(4,6,10,.92);border:1px solid rgba(255,255,255,.1);color:#dbe8ff;border-radius:12px;padding:0 10px}.cc-modal input[type=search]{min-width:220px;flex:1 1 320px;max-width:520px}.cc-modal .cc-chip{cursor:pointer;user-select:none;font-size:11px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;min-height:32px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));color:#f5f6ff;font-weight:850;letter-spacing:.05em;text-transform:uppercase;transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease;white-space:nowrap}.cc-modal .cc-chip:hover,.cc-modal .chip:hover{transform:translateY(-1px);border-color:rgba(122,107,255,.55)}.cc-modal .cc-chip.on{border-color:rgba(122,107,255,.72);box-shadow:0 0 0 1px rgba(122,107,255,.24)}.cc-modal .cc-chip.add.on{border-color:rgba(35,213,255,.66);box-shadow:0 0 0 1px rgba(35,213,255,.22)}.cc-modal .cc-chip.del.on{border-color:rgba(255,59,127,.68);box-shadow:0 0 0 1px rgba(255,59,127,.22)}.cc-modal .cc-chip.unc.on{border-color:rgba(255,255,255,.28)}.cc-modal .cc-wrap,.cc-modal .cc-bottom-wrap{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}.cc-modal .cc-top{flex:0 0 var(--ccTopH,43%);min-height:250px;display:flex;overflow:hidden;border-top:1px solid rgba(255,255,255,.04)}.cc-modal .cc-hsplit,.cc-modal .cc-vsplit{position:relative;flex:0 0 var(--ccSplitW,10px);background:transparent;touch-action:none}.cc-modal .cc-hsplit{height:var(--ccSplitW,10px);cursor:row-resize}.cc-modal .cc-vsplit{width:var(--ccSplitW,10px);cursor:col-resize}.cc-modal .cc-hsplit::after,.cc-modal .cc-vsplit::after{content:"";position:absolute;border-radius:999px}.cc-modal .cc-hsplit::after{left:0;right:0;top:50%;height:2px;transform:translateY(-50%);background:linear-gradient(90deg,rgba(122,107,255,.1),rgba(122,107,255,.8),rgba(122,107,255,.1))}.cc-modal .cc-vsplit::after{top:0;bottom:0;left:50%;width:2px;transform:translateX(-50%);background:linear-gradient(180deg,rgba(122,107,255,.1),rgba(122,107,255,.8),rgba(122,107,255,.1))}.cc-modal #cc-pane-a,.cc-modal #cc-pane-b,.cc-modal #cc-rec-a,.cc-modal #cc-rec-b{flex:1 1 0;min-width:320px}.cc-modal .cc-pane,.cc-modal .cc-bottom{min-width:0;display:flex;flex-direction:column;overflow:hidden;background:transparent}.cc-modal .cc-pane-head,.cc-modal .cc-detail-head{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(12,15,23,.9),rgba(6,8,13,.82))}.cc-modal .cc-pane-head .h,.cc-modal .cc-detail-head .h{min-width:0}.cc-modal .cc-pane-head .t,.cc-modal .cc-detail-head .tt{font-weight:900;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cc-modal .cc-pane-head .tag,.cc-modal .cc-st{font-size:11px;font-weight:900;letter-spacing:.05em;border-radius:999px;text-transform:uppercase}.cc-modal .cc-pane-head .tag{padding:0 8px;min-height:24px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.05);display:inline-flex;align-items:center}.cc-modal .cc-pane-list{flex:1;min-height:0;overflow:auto}.cc-modal .cc-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.05);align-items:center;cursor:pointer}.cc-modal .cc-row:hover{background:rgba(255,255,255,.03)}.cc-modal .cc-row.sel{background:rgba(122,107,255,.08);box-shadow:inset 0 0 0 1px rgba(122,107,255,.34)}.cc-modal .cc-st{padding:5px 8px;border:1px solid rgba(255,255,255,.12)}.cc-modal .cc-st.add{background:rgba(35,213,255,.12);border-color:rgba(35,213,255,.35)}.cc-modal .cc-st.del{background:rgba(255,59,127,.12);border-color:rgba(255,59,127,.35)}.cc-modal .cc-st.upd{background:rgba(122,107,255,.14);border-color:rgba(122,107,255,.35)}.cc-modal .cc-st.unc{background:rgba(255,255,255,.07)}.cc-modal .cc-title2{font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cc-modal .cc-pane-foot{padding:10px 12px;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:rgba(6,8,13,.84)}.cc-modal .stat-pill,.cc-modal .chip{min-height:30px;border-color:rgba(255,255,255,.12);background:rgba(255,255,255,.05)}.cc-modal .stat-pill{font-weight:900;letter-spacing:.02em}.cc-modal .stat-pill.movie{border-color:rgba(35,213,255,.35);background:rgba(35,213,255,.1)}.cc-modal .stat-pill.show{border-color:rgba(122,107,255,.35);background:rgba(122,107,255,.1)}.cc-modal .stat-pill.season{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.06)}.cc-modal .stat-pill.episode{border-color:rgba(255,59,127,.25);background:rgba(255,59,127,.08)}.cc-modal .cc-bottom{flex:1;min-height:320px;border-top:1px solid rgba(255,255,255,.06)}.cc-modal .cc-changes{flex:0 0 auto;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.06);overflow:auto;max-height:180px}.cc-modal .cc-changes.hidden{display:none}.cc-modal .chg{display:grid;grid-template-columns:minmax(140px,220px) 1fr 1fr;gap:10px;padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03);margin-bottom:8px}.cc-modal .chg .p{font-weight:900;opacity:.95}.cc-modal .chg .v,.cc-modal .kv{font-size:12.5px;opacity:.95;word-break:break-word}.cc-modal .chg .v{font-size:12px;opacity:.88;white-space:pre-wrap}.cc-modal .chg .lab{font-size:11px;color:rgba(205,214,230,.68);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}.cc-modal .cc-detail-split{flex:1;min-height:0;display:flex;overflow:hidden}.cc-modal .cc-rec{min-width:0;overflow:auto;padding:10px 12px}.cc-modal .cc-rec .card{border-radius:18px;padding:12px;background:linear-gradient(180deg,rgba(12,15,23,.9),rgba(5,7,11,.94));border:1px solid rgba(255,255,255,.09);box-shadow:0 12px 30px rgba(0,0,0,.22)}.cc-modal .cc-rec .card+.card{margin-top:10px}.cc-modal .cc-rec .card .ttl{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}.cc-modal .cc-rec .card .ttl .name{font-weight:950}.cc-modal .kv{display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:6px 10px}.cc-modal .chip:hover{background:rgba(122,107,255,.08)}.cc-modal .chip.copied{border-color:rgba(35,213,255,.55);background:rgba(35,213,255,.1)}.cc-modal .chip .k{opacity:.75;text-transform:uppercase;letter-spacing:.03em;font-weight:850}.cc-modal .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.cc-modal details{border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.03);padding:10px 11px;margin-top:10px}.cc-modal details>summary{cursor:pointer;font-weight:900;opacity:.95}.cc-modal pre{margin:10px 0 0;white-space:pre-wrap;word-break:break-word;background:#04050a;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:10px 12px}.wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,4,10,.74);backdrop-filter:blur(7px);z-index:9999;opacity:1;transition:opacity .18s ease}.wait-overlay.hidden{opacity:0;pointer-events:none}.wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:20px;background:linear-gradient(180deg,rgba(8,10,15,.97),rgba(5,7,11,.97));border:1px solid rgba(255,255,255,.08);box-shadow:0 24px 60px rgba(0,0,0,.44)}.wait-ring{width:64px;height:64px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px rgba(122,107,255,.35))}.wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23d5ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}.wait-text{font-weight:950;color:#dbe8ff}@keyframes wait-spin{to{transform:rotate(360deg)}}@media (max-width:980px){.cx-modal-shell.cc-modal{width:min(100vw - 28px,1620px)!important}.cc-modal .cc-top,.cc-modal .cc-detail-split{flex-direction:column}.cc-modal #cc-pane-a,.cc-modal #cc-pane-b,.cc-modal #cc-rec-a,.cc-modal #cc-rec-b{min-width:0}.cc-modal .cc-vsplit{width:100%;height:10px;cursor:row-resize}.cc-modal .cc-vsplit::after{top:50%;bottom:auto;left:0;right:0;width:auto;height:2px;transform:translateY(-50%)}}`;
 
-function css() {
-  const existing = Q("#cc-css");
-  const el = existing || document.createElement("style");
-  el.id = "cc-css";
-  el.textContent = `
-  .cx-modal-shell.cc-modal{background:#05060c!important;width:min(var(--cxModalMaxW,1700px),calc(100vw - 160px))!important}
-  .cc-modal{position:relative;display:flex;flex-direction:column;height:100%;background:#05060c}
-  .cc-modal .cx-head{display:flex;align-items:center;gap:10px;justify-content:space-between;background:linear-gradient(90deg,#05070d,#05040b);padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);box-shadow:0 0 24px rgba(0,0,0,.85)}
-  .cc-modal .cc-left{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
-  .cc-modal .cc-title{font-weight:950;letter-spacing:.02em;white-space:nowrap}
-  .cc-modal .cc-meta{font-size:12px;opacity:.76;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cc-modal .cc-actions{display:flex;gap:8px;align-items:center}
-  .cc-modal .pill{border:1px solid rgba(255,255,255,.14);background:#080a12;color:#e5ecff;border-radius:16px;padding:6px 12px;font-size:13px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;flex:0 0 auto}
-  .cc-modal .pill.ghost{background:transparent}
-  .cc-modal .pill[disabled]{opacity:.55;pointer-events:none}
-  .cc-modal .pill.cc-copied{border-color:rgba(35,213,255,.65);box-shadow:0 0 12px rgba(35,213,255,.22)}
-  .cc-modal .pill.cc-fail{border-color:rgba(255,59,127,.65);box-shadow:0 0 12px rgba(255,59,127,.18)}
-  .cc-modal .close-btn{border:1px solid rgba(255,255,255,.16);background:#11131e;color:#fff;border-radius:10px;padding:6px 10px}
-
-  .cc-modal .cc-toolbar{display:flex;flex-wrap:nowrap;gap:6px;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:#05060c;align-items:center;overflow-x:auto;scrollbar-width:none}
-  .cc-modal .cc-toolbar::-webkit-scrollbar{display:none}
-  .cc-modal input[type=search]{background:#05060c;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px;min-width:220px;flex:1 1 320px;max-width:520px}
-  .cc-modal select{background:#05060c;border:1px solid rgba(255,255,255,.12);color:#dbe8ff;border-radius:12px;padding:6px 10px}
-  .cc-modal .cc-chip{cursor:pointer;user-select:none;font-size:11.5px;display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:radial-gradient(circle at top,#12131f,#05060c);opacity:.86;color:#f5f6ff;font-weight:850;letter-spacing:.03em;text-transform:uppercase;box-shadow:0 0 10px rgba(0,0,0,.9);transition:opacity .16s ease,transform .12s ease,border-color .12s ease,box-shadow .12s ease;white-space:nowrap}
-  .cc-modal .cc-chip:hover{opacity:1;transform:translateY(-1px);border-color:rgba(122,107,255,.55)}
-  .cc-modal .cc-chip.on{opacity:1;border-color:rgba(122,107,255,.85);box-shadow:0 0 18px rgba(122,107,255,.35)}
-  .cc-modal .cc-chip.add.on{border-color:rgba(35,213,255,.8);box-shadow:0 0 18px rgba(35,213,255,.28)}
-  .cc-modal .cc-chip.del.on{border-color:rgba(255,59,127,.85);box-shadow:0 0 18px rgba(255,59,127,.28)}
-  .cc-modal .cc-chip.unc.on{border-color:rgba(255,255,255,.35)}
-  .cc-modal .cc-chip.small{padding:5px 9px;font-weight:750}
-
-  .cc-modal .cc-wrap{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-  .cc-modal .cc-top{flex:0 0 var(--ccTopH,44%);min-height:250px;display:flex;overflow:hidden;border-top:1px solid rgba(255,255,255,.04)}
-  .cc-modal .cc-hsplit,.cc-modal .cc-vsplit{position:relative;flex:0 0 var(--ccSplitW,10px);background:transparent;touch-action:none}
-.cc-modal .cc-hsplit{height:var(--ccSplitW,10px);cursor:row-resize}
-.cc-modal .cc-vsplit{width:var(--ccSplitW,10px);cursor:col-resize}
-.cc-modal .cc-hsplit::after{content:"";position:absolute;left:0;right:0;top:50%;height:var(--ccSplitLine,2px);transform:translateY(-50%);border-radius:999px;background:linear-gradient(90deg,rgba(122,107,255,.12),rgba(122,107,255,.85),rgba(122,107,255,.12));box-shadow:0 0 10px rgba(122,107,255,.28)}
-.cc-modal .cc-vsplit::after{content:"";position:absolute;top:0;bottom:0;left:50%;width:var(--ccSplitLine,2px);transform:translateX(-50%);border-radius:999px;background:linear-gradient(180deg,rgba(122,107,255,.12),rgba(122,107,255,.85),rgba(122,107,255,.12));box-shadow:0 0 10px rgba(122,107,255,.28)}
-.cc-modal .cc-hsplit:hover::after,.cc-modal .cc-vsplit:hover::after{box-shadow:0 0 14px rgba(122,107,255,.42)}
-  .cc-modal #cc-pane-a{flex:1 1 0;min-width:360px}
-  .cc-modal #cc-pane-b{flex:1 1 0;min-width:360px}
-
-  .cc-modal .cc-pane{min-width:0;display:flex;flex-direction:column;overflow:hidden;background:#05060c}
-  .cc-modal .cc-pane-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:radial-gradient(circle at top left,#151624,#05060c)}
-  .cc-modal .cc-pane-head .h{min-width:0}
-  .cc-modal .cc-pane-head .t{font-weight:950;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cc-modal .cc-pane-head .s{font-size:12px;opacity:.76;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cc-modal .cc-pane-head .tag{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);font-weight:900;letter-spacing:.05em;text-transform:uppercase}
-
-  .cc-modal .cc-pane-list{flex:1;min-height:0;overflow:auto}
-  .cc-modal .cc-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);align-items:center;cursor:pointer}
-  .cc-modal .cc-row:hover{background:rgba(122,107,255,.06)}
-  .cc-modal .cc-row.sel{outline:1px solid rgba(122,163,255,.9);background:rgba(122,107,255,.09)}
-  .cc-modal .cc-row.miss{opacity:.55}
-  .cc-modal .cc-st{font-size:11px;font-weight:950;letter-spacing:.05em;border-radius:999px;padding:4px 8px;border:1px solid rgba(255,255,255,.12);text-transform:uppercase}
-  .cc-modal .cc-st.add{background:rgba(35,213,255,.12);border-color:rgba(35,213,255,.35)}
-  .cc-modal .cc-st.del{background:rgba(255,59,127,.12);border-color:rgba(255,59,127,.35)}
-  .cc-modal .cc-st.upd{background:rgba(122,107,255,.14);border-color:rgba(122,107,255,.35)}
-  .cc-modal .cc-st.unc{background:rgba(255,255,255,.07)}
-  .cc-modal .cc-main{min-width:0}
-  .cc-modal .cc-title2{font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cc-modal .cc-sub{font-size:12px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .cc-modal .cc-mini{font-size:12px;opacity:.85;white-space:nowrap}
-  .cc-modal .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-
-  .cc-modal .cc-pane-foot{padding:10px 12px;border-top:1px solid rgba(255,255,255,.08);display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;background:#05060c}
-  .cc-modal .cc-pills{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  .cc-modal .stat-pill{font-size:12px;font-weight:900;letter-spacing:.02em;border-radius:999px;padding:6px 10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);white-space:nowrap}
-  .cc-modal .stat-pill.movie{border-color:rgba(35,213,255,.35);background:rgba(35,213,255,.10)}
-  .cc-modal .stat-pill.show{border-color:rgba(122,107,255,.35);background:rgba(122,107,255,.10)}
-  .cc-modal .stat-pill.season{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.06)}
-  .cc-modal .stat-pill.episode{border-color:rgba(255,59,127,.25);background:rgba(255,59,127,.08)}
-  .cc-modal .cc-foot-mini{font-size:12px;opacity:.75;white-space:nowrap}
-
-  .cc-modal .cc-bottom{flex:1;min-height:320px;display:flex;flex-direction:column;overflow:hidden;background:#05060c;border-top:1px solid rgba(255,255,255,.06)}
-  .cc-modal .cc-detail-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.08);background:radial-gradient(circle at top left,#151624,#05060c)}
-  .cc-modal .cc-detail-head .h{display:flex;min-width:0}
-  .cc-modal .cc-detail-head .t{display:flex;align-items:baseline;gap:10px;font-weight:950;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-  .cc-modal .cc-detail-head .tt{min-width:0;overflow:hidden;text-overflow:ellipsis}
-  .cc-modal .cc-detail-head .k{font-size:12px;opacity:.72;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto}
-  .cc-modal .cc-detail-actions{display:flex;gap:8px;align-items:center}
-
-  .cc-modal .cc-bottom-wrap{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-  .cc-modal .cc-changes{flex:0 0 auto;padding:8px 12px;border-bottom:1px solid rgba(255,255,255,.06);overflow:auto;max-height:160px}
-  .cc-modal .cc-changes.hidden{display:none}
-  .cc-modal #cc-rec-b{scrollbar-width:none}
-  .cc-modal #cc-rec-b::-webkit-scrollbar{display:none}
-
-  .cc-modal .chg{display:grid;grid-template-columns:minmax(160px,260px) 1fr 1fr;gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.03);margin-bottom:8px}
-  .cc-modal .chg .p{font-weight:900;opacity:.95}
-  .cc-modal .chg .v{font-size:12px;opacity:.88;word-break:break-word;white-space:pre-wrap}
-  .cc-modal .chg .lab{font-size:11px;opacity:.7;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
-
-  .cc-modal .cc-detail-split{flex:1;min-height:0;display:flex;overflow:hidden}
-  .cc-modal #cc-rec-a{flex:1 1 0;min-width:320px}
-  .cc-modal #cc-rec-b{flex:1 1 0;min-width:320px}
-  .cc-modal .cc-rec{min-width:0;overflow:auto;padding:10px 12px}
-  .cc-modal .cc-rec .card{border-radius:16px;padding:12px 12px;background:radial-gradient(circle at top left,#151624,#05060c);border:1px solid rgba(255,255,255,.10);box-shadow:0 0 18px rgba(0,0,0,.85)}
-  .cc-modal .cc-rec .card + .card{margin-top:10px}
-  .cc-modal .cc-rec .card .ttl{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px}
-  .cc-modal .cc-rec .card .ttl .name{font-weight:950}
-  .cc-modal .cc-rec .card .ttl .mini{font-size:12px;opacity:.75}
-  .cc-modal .kv{display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:6px 10px;font-size:12.5px}
-  .cc-modal .kv .k{opacity:.75}
-  .cc-modal .kv .v{opacity:.95;word-break:break-word}
-  .cc-modal .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-  .cc-modal .chip{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer;transition:transform .12s ease,border-color .12s ease,background .12s ease;user-select:none}
-  .cc-modal .chip:hover{transform:translateY(-1px);border-color:rgba(122,107,255,.55);background:rgba(122,107,255,.08)}
-  .cc-modal .chip.copied{border-color:rgba(35,213,255,.55);background:rgba(35,213,255,.10)}
-  .cc-modal .chip .k{opacity:.75;text-transform:uppercase;letter-spacing:.03em;font-weight:850}
-  .cc-modal details{border-radius:14px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.03);padding:10px 11px;margin:10px 0 0}
-  .cc-modal details>summary{cursor:pointer;font-weight:900;opacity:.95}
-  .cc-modal pre{margin:10px 0 0;white-space:pre-wrap;word-break:break-word;background:#04050a;border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:10px 12px;max-height:none;overflow:visible}
-
-  .cc-modal .empty{padding:18px 12px;opacity:.75}
-
-  .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,4,10,.8);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease}
-  .wait-overlay.hidden{opacity:0;pointer-events:none}
-  .wait-card{display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 28px;border-radius:18px;background:linear-gradient(180deg,#05060c,#101124);box-shadow:0 0 40px rgba(122,107,255,.45),inset 0 0 1px rgba(255,255,255,.08)}
-  .wait-ring{width:64px;height:64px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px rgba(122,107,255,.55))}
-  .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23d5ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
-  .wait-text{font-weight:950;color:#dbe8ff;text-shadow:0 0 12px rgba(122,107,255,.6)}
-  @keyframes wait-spin{to{transform:rotate(360deg)}}
-  `;
-  document.head.appendChild(el);
-}
+const css = () => {
+  let el = Q("#cc-css");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "cc-css";
+    document.head.appendChild(el);
+  }
+  el.textContent = CSS;
+};
 
 function kindOf(r) {
   if (!r || typeof r !== "object") return "unknown";
   const t = String(r.type || r.media_type || r.entity || "").toLowerCase();
-  const s = r.season;
-  const e = r.episode;
-  if (t === "episode" || e != null) return "episode";
-  if (t === "season" || s != null) return "season";
+  if (t === "episode" || r.episode != null) return "episode";
+  if (t === "season" || r.season != null) return "season";
   if (["tv", "show", "shows", "series", "anime"].includes(t)) return "show";
   if (["movie", "movies", "film", "films"].includes(t)) return "movie";
   return t || "unknown";
@@ -157,49 +46,32 @@ function displayTitle(r) {
   if (!r || typeof r !== "object") return "Item";
   const t = String(r.type || "").toLowerCase();
   const series = String(r.series_title || r.show_title || r.series || "");
-  const title = String(r.title || "");
-  const year = r.year ? ` (${r.year})` : "";
   const season = r.season != null ? String(r.season).padStart(2, "0") : "";
   const episode = r.episode != null ? String(r.episode).padStart(2, "0") : "";
   if (t === "episode" && series && season && episode) return `${series} - S${season}E${episode}`;
   if (t === "season" && series && season) return `${series} - S${season}`;
-  return `${title || series || kindOf(r)}${year}`;
+  return `${String(r.title || series || kindOf(r))}${r.year ? ` (${r.year})` : ""}`;
 }
 
 function displaySub(r) {
   if (!r || typeof r !== "object") return "";
-  const parts = [];
+  const out = [];
   const k = kindOf(r);
-  if (k && k !== "unknown") parts.push(k);
-  if (r.year) parts.push(String(r.year));
-  if (k === "episode" && r.season != null && r.episode != null) {
-    parts.push(`S${String(r.season).padStart(2, "0")}E${String(r.episode).padStart(2, "0")}`);
-  } else if (k === "season" && r.season != null) {
-    parts.push(`S${String(r.season).padStart(2, "0")}`);
-  }
-  if (r.watched_at) parts.push("watched");
-  return parts.join(" • ");
+  if (k !== "unknown") out.push(k);
+  if (r.year) out.push(String(r.year));
+  if (k === "episode" && r.season != null && r.episode != null) out.push(`S${String(r.season).padStart(2, "0")}E${String(r.episode).padStart(2, "0")}`);
+  else if (k === "season" && r.season != null) out.push(`S${String(r.season).padStart(2, "0")}`);
+  if (r.watched_at) out.push("watched");
+  return out.join(" • ");
 }
 
-function stringify(v) {
+const stringify = (v) => {
   if (v === null) return "null";
   if (v === undefined) return "—";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  try {
-    return JSON.stringify(v);
-  } catch {
-    return String(v);
-  }
-}
-
-function pretty(v) {
-  try {
-    return JSON.stringify(v, null, 2);
-  } catch {
-    return String(v);
-  }
-}
+  if (["string", "number", "boolean"].includes(typeof v)) return String(v);
+  try { return JSON.stringify(v); } catch { return String(v); }
+};
+const pretty = (v) => { try { return JSON.stringify(v, null, 2); } catch { return String(v); } };
 
 async function copyText(t) {
   const s = String(t ?? "");
@@ -209,12 +81,9 @@ async function copyText(t) {
     return true;
   } catch {
     try {
-      const ta = document.createElement("textarea");
-      ta.value = s;
-      ta.style.position = "fixed";
-      ta.style.left = "-9999px";
+      const ta = Object.assign(document.createElement("textarea"), { value: s });
+      ta.style.cssText = "position:fixed;left:-9999px";
       document.body.appendChild(ta);
-      // Ensure focus and selection for browsers that require it
       ta.focus({ preventScroll: true });
       ta.select();
       ta.setSelectionRange(0, ta.value.length);
@@ -229,214 +98,88 @@ async function copyText(t) {
 
 function flashCopy(btn, ok, okText = "Copied", failText = "Copy blocked") {
   if (!btn) return;
-  const orig = btn.dataset.ccOrig || btn.textContent || "";
-  btn.dataset.ccOrig = orig;
+  btn.dataset.ccOrig ||= btn.textContent || "";
   btn.classList.remove("cc-copied", "cc-fail");
   btn.classList.add(ok ? "cc-copied" : "cc-fail");
   btn.textContent = ok ? okText : failText;
   window.setTimeout(() => {
-    btn.textContent = btn.dataset.ccOrig || orig;
+    btn.textContent = btn.dataset.ccOrig || "";
     btn.classList.remove("cc-copied", "cc-fail");
   }, 850);
 }
 
-
 function countsFor(records) {
-  const out = { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 };
-  for (const r of records) {
-    if (!r) continue;
-    const k = kindOf(r);
-    out[k] = (out[k] || 0) + 1;
+  return records.reduce((out, r) => {
+    if (!r) return out;
+    out[kindOf(r)] = (out[kindOf(r)] || 0) + 1;
     out.total++;
-  }
-  return out;
+    return out;
+  }, emptyCounts());
 }
 
 function countsFromSnapshotMeta(meta, fallback) {
-  const base = fallback && typeof fallback === "object"
-    ? { ...fallback }
-    : { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 };
-  if (!meta || typeof meta !== "object") return base;
-
-  const by = meta.by_type && typeof meta.by_type === "object" ? meta.by_type : null;
+  const base = fallback && typeof fallback === "object" ? { ...fallback } : emptyCounts();
+  const by = meta?.by_type && typeof meta.by_type === "object" ? meta.by_type : null;
   if (!by) return base;
-
-  const out = { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 };
+  const out = emptyCounts();
   const feat = String(meta.feature || "").toLowerCase();
-
   for (const [rawKey, rawVal] of Object.entries(by)) {
-    const n = Number(rawVal || 0);
+    const n = Number(rawVal || 0), k = String(rawKey || "").toLowerCase();
     if (!Number.isFinite(n) || n <= 0) continue;
-    const k = String(rawKey || "").toLowerCase();
-    if (["movie", "movies", "film", "films"].includes(k)) {
-      out.movie += n;
-      continue;
-    }
-    if (["episode", "episodes"].includes(k)) {
-      out.episode += n;
-      continue;
-    }
-    if (["season", "seasons"].includes(k)) {
-      out.season += n;
-      continue;
-    }
-    if (["show", "shows", "series", "anime"].includes(k)) {
-      out.show += n;
-      continue;
-    }
-    if (k === "tv") {
-      // History snapshot stats often aggregate TV rows as `tv` while the diff UI shows episode/show pills.
-      if (feat === "history") out.episode += n;
-      else out.show += n;
-      continue;
-    }
-    out.unknown += n;
+    if (["movie", "movies", "film", "films"].includes(k)) out.movie += n;
+    else if (["episode", "episodes"].includes(k)) out.episode += n;
+    else if (["season", "seasons"].includes(k)) out.season += n;
+    else if (["show", "shows", "series", "anime"].includes(k)) out.show += n;
+    else if (k === "tv") feat === "history" ? (out.episode += n) : (out.show += n);
+    else out.unknown += n;
   }
-
   const total = Number(meta.count || 0);
-  out.total = Number.isFinite(total) && total > 0
-    ? total
-    : out.movie + out.show + out.season + out.episode + out.unknown;
+  out.total = Number.isFinite(total) && total > 0 ? total : out.movie + out.show + out.season + out.episode + out.unknown;
   return out;
 }
 
-function renderCountsPills(c) {
-  return `
-    <div class="cc-pills">
-      <span class="stat-pill movie">Movies ${c.movie || 0}</span>
-      <span class="stat-pill show">Shows ${c.show || 0}</span>
-      <span class="stat-pill season">Seasons ${c.season || 0}</span>
-      <span class="stat-pill episode">Episodes ${c.episode || 0}</span>
-    </div>`;
-}
+const renderCountsPills = (c) => `<div class="cc-pills"><span class="stat-pill movie">Movies ${c.movie || 0}</span><span class="stat-pill show">Shows ${c.show || 0}</span><span class="stat-pill season">Seasons ${c.season || 0}</span><span class="stat-pill episode">Episodes ${c.episode || 0}</span></div>`;
 
 function renderRecordCard(label, rec, missingText = "Missing") {
-  if (!rec) {
-    return `
-      <div class="card">
-        <div class="ttl"><div class="name">${esc(label)}</div><div class="mini">${esc(missingText)}</div></div>
-        <div class="empty">No record in this file.</div>
-      </div>`;
-  }
-
-  const ids = rec.ids && typeof rec.ids === "object" ? rec.ids : null;
-  const showIds = rec.show_ids && typeof rec.show_ids === "object" ? rec.show_ids : null;
-
-  const kv = [];
-  const k = kindOf(rec);
-  kv.push(["Type", k]);
-  if (rec.title) kv.push(["Title", rec.title]);
-  if (rec.series_title || rec.show_title) kv.push(["Series", rec.series_title || rec.show_title]);
-  if (rec.year != null) kv.push(["Year", rec.year]);
-  if (rec.season != null) kv.push(["Season", rec.season]);
-  if (rec.episode != null) kv.push(["Episode", rec.episode]);
-  if (rec.watched_at) kv.push(["Watched", rec.watched_at]);
-  if (rec.added_at) kv.push(["Added", rec.added_at]);
-  if (rec.updated_at) kv.push(["Updated", rec.updated_at]);
-
+  if (!rec) return `<div class="card"><div class="ttl"><div class="name">${esc(label)}</div><div class="mini">${esc(missingText)}</div></div><div class="empty">No record in this file.</div></div>`;
+  const kv = [["Type", kindOf(rec)], ["Title", rec.title], ["Series", rec.series_title || rec.show_title], ["Year", rec.year], ["Season", rec.season], ["Episode", rec.episode], ["Watched", rec.watched_at], ["Added", rec.added_at], ["Updated", rec.updated_at]].filter(([, v]) => v != null && v !== "");
   const chips = [];
-  const mkChips = (obj, prefix) => {
-    if (!obj) return;
-    for (const [kk, vv] of Object.entries(obj)) {
-      if (vv == null || vv === "" || vv === 0 || vv === false) continue;
-      chips.push(
-        `<span class="chip" data-copy="${esc(vv)}" title="Click to copy"><span class="k">${esc(
-          prefix + kk
-        )}</span><span class="v mono">${esc(vv)}</span></span>`
-      );
+  for (const [prefix, obj] of [["", rec.ids], ["show.", rec.show_ids]]) {
+    if (!obj || typeof obj !== "object") continue;
+    for (const [k, v] of Object.entries(obj)) {
+      if (v == null || v === "" || v === 0 || v === false) continue;
+      chips.push(`<span class="chip" data-copy="${esc(v)}" title="Click to copy"><span class="k">${esc(prefix + k)}</span><span class="v mono">${esc(v)}</span></span>`);
     }
-  };
-  mkChips(ids, "");
-  mkChips(showIds, "show.");
-
-  return `
-    <div class="card">
-      <div class="ttl">
-        <div class="name">${esc(label)}</div>
-        <div class="mini">${esc(displayTitle(rec))}</div>
-      </div>
-      <div class="kv">
-        ${kv
-          .map(
-            ([kk, vv]) =>
-              `<div class="k">${esc(kk)}</div><div class="v">${esc(stringify(vv))}</div>`
-          )
-          .join("")}
-      </div>
-      ${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}
-      <details data-cc-raw="1">
-        <summary>Raw JSON</summary>
-        <pre class="mono">${esc(pretty(rec))}</pre>
-      </details>
-    </div>`;
-}
-
-function renderChanges(changes) {
-  if (!Array.isArray(changes) || !changes.length) {
-    return `<div class="empty">No field-level changes for this item.</div>`;
   }
-  const rows = changes.slice(0, 200).map((c) => {
-    const p = esc(String(c.path || ""));
-    const o = esc(stringify(c.old));
-    const n = esc(stringify(c.new));
-    return `
-      <div class="chg">
-        <div class="p mono">${p}</div>
-        <div>
-          <div class="lab">A</div>
-          <div class="v mono">${o}</div>
-        </div>
-        <div>
-          <div class="lab">B</div>
-          <div class="v mono">${n}</div>
-        </div>
-      </div>`;
-  });
-  return rows.join("");
+  return `<div class="card"><div class="ttl"><div class="name">${esc(label)}</div><div class="mini">${esc(displayTitle(rec))}</div></div><div class="kv">${kv.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(stringify(v))}</div>`).join("")}</div>${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}<details data-cc-raw="1"><summary>Raw JSON</summary><pre class="mono">${esc(pretty(rec))}</pre></details></div>`;
 }
 
-function initSplit({
-  handle,
-  container,
-  axis,
-  getMin,
-  getMax,
-  onSet,
-}) {
-  let dragging = false;
-  let start = 0;
+const renderChanges = (changes) => !Array.isArray(changes) || !changes.length ? `<div class="empty">No field-level changes for this item.</div>` : changes.slice(0, 200).map((c) => `<div class="chg"><div class="p mono">${esc(String(c.path || ""))}</div><div><div class="lab">A</div><div class="v mono">${esc(stringify(c.old))}</div></div><div><div class="lab">B</div><div class="v mono">${esc(stringify(c.new))}</div></div></div>`).join("");
 
+function initSplit({ handle, container, axis, getMin, getMax, onSet }) {
+  let dragging = false, start = 0;
+  const pos = (e) => axis === "x" ? e.clientX : e.clientY;
   const onDown = (e) => {
     dragging = true;
-    start = axis === "x" ? e.clientX : e.clientY;
+    start = pos(e);
     handle.setPointerCapture?.(e.pointerId);
     document.body.style.userSelect = "none";
     e.preventDefault();
   };
-
   const onMove = (e) => {
     if (!dragging) return;
-    const pos = axis === "x" ? e.clientX : e.clientY;
-    const delta = pos - start;
-    start = pos;
-
-    const rect = container.getBoundingClientRect();
-    const min = getMin(rect);
-    const max = getMax(rect);
-
-    onSet(delta, min, max, rect);
+    const next = pos(e), delta = next - start, rect = container.getBoundingClientRect();
+    start = next;
+    onSet(delta, getMin(rect), getMax(rect), rect);
   };
-
   const onUp = () => {
     if (!dragging) return;
     dragging = false;
     document.body.style.userSelect = "";
   };
-
   handle.addEventListener("pointerdown", onDown);
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
-
   return () => {
     handle.removeEventListener("pointerdown", onDown);
     window.removeEventListener("pointermove", onMove);
@@ -446,671 +189,245 @@ function initSplit({
 
 export default {
   async mount(root, props = {}) {
+    this._root = root;
     css();
-
-    root.style.setProperty("--cxModalMaxW", "1700px");
-    root.style.setProperty("--cxModalMaxH", "94vh");
-
-    root.style.setProperty("--ccSplitW", "10px");
-    root.style.setProperty("--ccSplitLine", "2px");
-
+    Object.entries({ "--cxModalMaxW": "1700px", "--cxModalMaxH": "94vh", "--ccSplitW": SPLIT }).forEach(([k, v]) => root.style.setProperty(k, v));
     root.classList.add("modal-root", "cc-modal");
-    root.innerHTML = `
-      <div class="cx-head">
-        <div class="cc-left">
-          <div class="cc-title">Capture Compare</div>
-          <div class="cc-meta" id="cc-meta">Loading…</div>
-        </div>
-        <div class="cc-actions">
-          <button class="pill" id="cc-refresh" type="button">Refresh</button>
-          <button class="close-btn" id="cc-close" type="button">Close</button>
-        </div>
-      </div>
+    root.innerHTML = ROOT_HTML;
 
-      <div class="cc-toolbar">
-        <input id="cc-search" type="search" placeholder="Search title, ids, key…">
-        <div class="cc-chip add on" data-st="added">Added</div>
-        <div class="cc-chip del on" data-st="removed">Deleted</div>
-        <div class="cc-chip on" data-st="updated">Updated</div>
-        <div class="cc-chip unc" data-st="unchanged">Unchanged</div>
-        <select id="cc-type">
-          <option value="">All types</option>
-          <option value="movie">Movies</option>
-          <option value="show">Shows</option>
-          <option value="season">Seasons</option>
-          <option value="episode">Episodes</option>
-        </select>
-        <select id="cc-sort">
-          <option value="status">Sort: status</option>
-          <option value="title">Sort: title</option>
-          <option value="key">Sort: key</option>
-        </select>
-        <div class="cc-chip small on" id="cc-changed">Changed only</div>
-      </div>
-
-      <div class="cc-wrap" id="cc-wrap">
-        <div class="cc-top" id="cc-top">
-          <div class="cc-pane" id="cc-pane-a">
-            <div class="cc-pane-head">
-              <div class="h">
-                <div class="t" id="cc-a-title">File A - Capture</div>
-                <div class="s" id="cc-a-sub">—</div>
-              </div>
-              <span class="tag" id="cc-a-tag">A</span>
-            </div>
-            <div class="cc-pane-list" id="cc-list-a"></div>
-            <div class="cc-pane-foot">
-              <div id="cc-a-pills"></div>
-              <div class="cc-foot-mini" id="cc-a-total">—</div>
-            </div>
-          </div>
-
-          <div class="cc-vsplit" id="cc-vsplit-top" title="drag to resize"></div>
-
-          <div class="cc-pane" id="cc-pane-b">
-            <div class="cc-pane-head">
-              <div class="h">
-                <div class="t" id="cc-b-title">File B - Capture</div>
-                <div class="s" id="cc-b-sub">—</div>
-              </div>
-              <span class="tag" id="cc-b-tag">B</span>
-            </div>
-            <div class="cc-pane-list" id="cc-list-b"></div>
-            <div class="cc-pane-foot">
-              <div id="cc-b-pills"></div>
-              <div class="cc-foot-mini" id="cc-b-total">—</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="cc-hsplit" id="cc-hsplit" title="drag to resize"></div>
-
-        <div class="cc-bottom" id="cc-bottom">
-          <div class="cc-detail-head">
-            <div class="h">
-              <div class="t"><span class="tt" id="cc-d-title">Select an item</span><span class="k mono" id="cc-d-key">—</span></div>
-            </div>
-            <div class="cc-detail-actions">
-              <button class="pill ghost" id="cc-copy-key" type="button">Copy key</button>
-              <button class="pill" id="cc-copy-a" type="button">Copy JSON A</button>
-              <button class="pill" id="cc-copy-b" type="button">Copy JSON B</button>
-            </div>
-          </div>
-
-          <div class="cc-bottom-wrap">
-            <div class="cc-changes" id="cc-changes"></div>
-            <div class="cc-detail-split" id="cc-detail-split">
-              <div class="cc-rec" id="cc-rec-a"></div>
-              <div class="cc-vsplit" id="cc-vsplit-detail" title="drag to resize"></div>
-              <div class="cc-rec" id="cc-rec-b"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-
-    const wait = document.createElement("div");
-    wait.id = "cc-wait";
-    wait.className = "wait-overlay hidden";
-    wait.innerHTML = `
-      <div class="wait-card" role="status" aria-live="assertive">
-        <div class="wait-ring"></div>
-        <div class="wait-text" id="cc-wait-text">Loading…</div>
-      </div>`;
-    root.appendChild(wait);
-
-    const state = {
-      aPath: String(props.aPath || props.a || ""),
-      bPath: String(props.bPath || props.b || ""),
-      diff: null,
-      rows: [],
-      filtered: [],
-      selectedKey: "",
-      search: "",
-      st: new Set(["added", "removed", "updated"]),
-      type: "",
-      sort: "status",
-      countsA: { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 },
-      countsB: { movie: 0, show: 0, season: 0, episode: 0, unknown: 0, total: 0 },
-      layout: {
-        topH: null,
-        aW: null,
-        detailAW: null,
-      },
-    };
+    const el = Object.fromEntries(["meta", "aTitle", "aSub", "aPills", "aTotal", "bTitle", "bSub", "bPills", "bTotal", "listA", "listB", "changes", "dTitle", "dKey", "recA", "recB", "wait", "waitText", "search", "type", "sort", "changed", "top", "wrap", "detailSplit", "paneA", "paneB", "copyKey", "copyA", "copyB", "refresh", "close"].map((k) => [k, Q({ meta: "#cc-meta", aTitle: "#cc-a-title", aSub: "#cc-a-sub", aPills: "#cc-a-pills", aTotal: "#cc-a-total", bTitle: "#cc-b-title", bSub: "#cc-b-sub", bPills: "#cc-b-pills", bTotal: "#cc-b-total", listA: "#cc-list-a", listB: "#cc-list-b", changes: "#cc-changes", dTitle: "#cc-d-title", dKey: "#cc-d-key", recA: "#cc-rec-a", recB: "#cc-rec-b", wait: "#cc-wait", waitText: "#cc-wait-text", search: "#cc-search", type: "#cc-type", sort: "#cc-sort", changed: "#cc-changed", top: "#cc-top", wrap: "#cc-wrap", detailSplit: "#cc-detail-split", paneA: "#cc-pane-a", paneB: "#cc-pane-b", copyKey: "#cc-copy-key", copyA: "#cc-copy-a", copyB: "#cc-copy-b", refresh: "#cc-refresh", close: "#cc-close" }[k], root)]));
+    const state = { aPath: String(props.aPath || props.a || ""), bPath: String(props.bPath || props.b || ""), diff: null, rows: [], filtered: [], selectedKey: "", search: "", st: new Set(["added", "removed", "updated"]), type: "", sort: "status", countsA: emptyCounts(), countsB: emptyCounts(), layout: { topH: null, aW: null, detailAW: null } };
+    const cleanup = [];
+    let syncing = false;
 
     const setWait = (on, text = "Loading…") => {
-      const w = Q("#cc-wait", root);
-      const t = Q("#cc-wait-text", root);
-      if (t) t.textContent = text;
-      if (!w) return;
-      if (on) w.classList.remove("hidden");
-      else w.classList.add("hidden");
+      if (el.waitText) el.waitText.textContent = text;
+      el.wait?.classList.toggle("hidden", !on);
     };
-
-    const stOrder = (s) => ({ added: 0, removed: 1, updated: 2, unchanged: 3 }[s] ?? 99);
-    const stCls = (s) => ({ added: "add", removed: "del", updated: "upd", unchanged: "unc" }[s] ?? "unc");
-
+    const rowByKey = (k) => state.rows.find((r) => r.key === k) || null;
     const normalizeRow = (r) => {
-      const st = String(r.status || "unchanged");
-      const recA = st === "added" ? null : r.old || r.item || null;
-      const recB = st === "removed" ? null : r.new || r.item || null;
-      const brief = r.brief && typeof r.brief === "object" ? r.brief : recB || recA || {};
-      const changes = Array.isArray(r.changes) ? r.changes : [];
-      return { key: String(r.key || ""), status: st, brief, recA, recB, changes };
+      const status = String(r.status || "unchanged"), recA = status === "added" ? null : r.old || r.item || null, recB = status === "removed" ? null : r.new || r.item || null;
+      return { key: String(r.key || ""), status, brief: r.brief && typeof r.brief === "object" ? r.brief : recB || recA || {}, recA, recB, changes: Array.isArray(r.changes) ? r.changes : [] };
     };
-
-    const computeCounts = () => {
-      const a = [];
-      const b = [];
-      for (const r of state.rows) {
-        if (r.recA) a.push(r.recA);
-        if (r.recB) b.push(r.recB);
+    const renderSideList = (host, side) => {
+      if (!host) return;
+      const rows = state.filtered.filter((r) => side === "A" ? r.recA : r.recB);
+      host.innerHTML = rows.length ? rows.map((r) => {
+        const ref = side === "A" ? r.recA : r.recB, st = r.status, delta = st === "updated" ? `<span class="cc-mini mono">Δ${r.changes.length}</span>` : "";
+        return `<div class="cc-row ${r.key === state.selectedKey ? "sel" : ""}" data-key="${esc(r.key)}"><span class="cc-st ${STATUS_CLASS[st] || "unc"}">${esc(st)}</span><div class="cc-main"><div class="cc-title2">${esc(displayTitle(ref || r.brief))}</div><div class="cc-sub">${esc(displaySub(ref || r.brief))}</div></div>${delta}</div>`;
+      }).join("") : `<div class="empty">No matches.</div>`;
+      host.querySelector(".cc-row.sel")?.scrollIntoView?.({ block: "nearest" });
+    };
+    const renderLists = () => {
+      renderSideList(el.listA, "A");
+      renderSideList(el.listB, "B");
+    };
+    const renderDetail = () => {
+      const row = rowByKey(state.selectedKey);
+      if (!row) {
+        if (el.dTitle) el.dTitle.textContent = "Select an item";
+        if (el.dKey) el.dKey.textContent = "—";
+        el.changes?.classList.add("hidden");
+        if (el.changes) el.changes.innerHTML = "";
+        if (el.recA) el.recA.innerHTML = renderRecordCard("File A", null);
+        if (el.recB) el.recB.innerHTML = renderRecordCard("File B", null);
+        [el.copyKey, el.copyA, el.copyB].forEach((b) => b && (b.disabled = true));
+        return;
       }
-      state.countsA = countsFor(a);
-      state.countsB = countsFor(b);
+      const best = row.recB || row.recA || row.brief, status = row.status, delta = status === "updated" ? `<span class="mono" style="opacity:.75;font-size:12px">Δ${row.changes.length}</span>` : "";
+      if (el.dTitle) el.dTitle.innerHTML = `<span class="cc-st ${STATUS_CLASS[status] || "unc"}">${esc(status)}</span><span class="tt">${esc(displayTitle(best))}</span>${delta}`;
+      if (el.dKey) el.dKey.textContent = row.key;
+      if (el.changes) {
+        const show = status === "updated";
+        el.changes.classList.toggle("hidden", !show);
+        el.changes.innerHTML = show ? renderChanges(row.changes) : "";
+      }
+      if (el.recA) el.recA.innerHTML = renderRecordCard("File A", row.recA, status === "added" ? "(missing)" : "");
+      if (el.recB) el.recB.innerHTML = renderRecordCard("File B", row.recB, status === "removed" ? "(missing)" : "");
+      if (el.copyKey) el.copyKey.disabled = !row.key;
+      if (el.copyA) el.copyA.disabled = !row.recA;
+      if (el.copyB) el.copyB.disabled = !row.recB;
     };
-
     const renderMeta = () => {
-      const meta = Q("#cc-meta", root);
-      const d = state.diff;
-      if (!meta) return;
-      if (!d) {
-        meta.textContent = "No data";
-        return;
-      }
-      const a = d.a || {};
-      const b = d.b || {};
-      const s = d.summary || {};
-      meta.textContent = `${a.provider || ""} • ${(a.feature || "").toLowerCase()} • +${s.added ?? 0} -${s.removed ?? 0} ~${s.updated ?? 0} =${s.unchanged ?? 0}`;
-
-      const at = Q("#cc-a-title", root);
-      const bt = Q("#cc-b-title", root);
-      const as = Q("#cc-a-sub", root);
-      const bs = Q("#cc-b-sub", root);
-      if (at) at.textContent = "File A - Capture";
-      if (bt) bt.textContent = "File B - Capture";
-      if (as) as.textContent = `${(a.created_at || "").replace("T", " ").replace("Z", "")} • ${a.count ?? "?"} items`;
-      if (bs) bs.textContent = `${(b.created_at || "").replace("T", " ").replace("Z", "")} • ${b.count ?? "?"} items`;
-
-      const displayCountsA = countsFromSnapshotMeta(a, state.countsA);
-      const displayCountsB = countsFromSnapshotMeta(b, state.countsB);
-
-      const ap = Q("#cc-a-pills", root);
-      const bp = Q("#cc-b-pills", root);
-      if (ap) ap.innerHTML = renderCountsPills(displayCountsA);
-      if (bp) bp.innerHTML = renderCountsPills(displayCountsB);
-
-      const atot = Q("#cc-a-total", root);
-      const btot = Q("#cc-b-total", root);
-      if (atot) atot.textContent = `Total: ${displayCountsA.total}`;
-      if (btot) btot.textContent = `Total: ${displayCountsB.total}`;
+      const d = state.diff, a = d?.a || {}, b = d?.b || {}, s = d?.summary || {}, fmt = (createdAt, count) => `${String(createdAt || "").replace("T", " ").replace("Z", "")} • ${count ?? "?"} items`;
+      if (!el.meta) return;
+      if (!d) return void (el.meta.textContent = "No data");
+      el.meta.textContent = `${a.provider || ""} • ${String(a.feature || "").toLowerCase()} • +${s.added ?? 0} -${s.removed ?? 0} ~${s.updated ?? 0} =${s.unchanged ?? 0}`;
+      if (el.aTitle) el.aTitle.textContent = "File A - Capture";
+      if (el.bTitle) el.bTitle.textContent = "File B - Capture";
+      if (el.aSub) el.aSub.textContent = fmt(a.created_at, a.count);
+      if (el.bSub) el.bSub.textContent = fmt(b.created_at, b.count);
+      const ca = countsFromSnapshotMeta(a, state.countsA), cb = countsFromSnapshotMeta(b, state.countsB);
+      if (el.aPills) el.aPills.innerHTML = renderCountsPills(ca);
+      if (el.bPills) el.bPills.innerHTML = renderCountsPills(cb);
+      if (el.aTotal) el.aTotal.textContent = `Total: ${ca.total}`;
+      if (el.bTotal) el.bTotal.textContent = `Total: ${cb.total}`;
     };
-
-    const sortRows = (rows) => {
-      const sort = String(state.sort || "status");
-      if (sort === "key") {
-        rows.sort((a, b) => a.key.localeCompare(b.key));
-        return;
-      }
-      if (sort === "title") {
-        rows.sort((a, b) => displayTitle(a.brief).localeCompare(displayTitle(b.brief)));
-        return;
-      }
-      rows.sort(
-        (a, b) =>
-          stOrder(a.status) - stOrder(b.status) ||
-          displayTitle(a.brief).localeCompare(displayTitle(b.brief)) ||
-          a.key.localeCompare(b.key)
-      );
-    };
-
     const applyFilters = () => {
-      const q = String(state.search || "").trim().toLowerCase();
-      const wantType = String(state.type || "").toLowerCase();
-      const st = state.st;
-
-      let rows = state.rows.filter((r) => st.has(r.status));
-      if (wantType) {
-        rows = rows.filter((r) => {
-          const ref = r.recB || r.recA || r.brief;
-          return kindOf(ref) === wantType;
-        });
-      }
-      if (q) {
-        rows = rows.filter((r) => {
-          const ref = r.recB || r.recA || r.brief;
-          const ids = ref && typeof ref === "object" ? ref.ids : null;
-          const showIds = ref && typeof ref === "object" ? ref.show_ids : null;
-          const bits = [r.key, displayTitle(ref), displaySub(ref)];
-          if (ids && typeof ids === "object") bits.push(JSON.stringify(ids));
-          if (showIds && typeof showIds === "object") bits.push(JSON.stringify(showIds));
-          return bits.join(" ").toLowerCase().includes(q);
-        });
-      }
-
-      sortRows(rows);
+      const q = state.search.trim().toLowerCase(), wantType = state.type.toLowerCase();
+      const rows = state.rows.filter((r) => state.st.has(r.status)).filter((r) => !wantType || kindOf(r.recB || r.recA || r.brief) === wantType).filter((r) => {
+        if (!q) return true;
+        const ref = r.recB || r.recA || r.brief, bits = [r.key, displayTitle(ref), displaySub(ref)];
+        if (ref?.ids && typeof ref.ids === "object") bits.push(JSON.stringify(ref.ids));
+        if (ref?.show_ids && typeof ref.show_ids === "object") bits.push(JSON.stringify(ref.show_ids));
+        return bits.join(" ").toLowerCase().includes(q);
+      });
+      rows.sort((a, b) => state.sort === "key" ? a.key.localeCompare(b.key) : state.sort === "title" ? displayTitle(a.brief).localeCompare(displayTitle(b.brief)) : (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99) || displayTitle(a.brief).localeCompare(displayTitle(b.brief)) || a.key.localeCompare(b.key));
       state.filtered = rows;
-
-      if (state.selectedKey && !rows.some((x) => x.key === state.selectedKey)) state.selectedKey = "";
+      if (state.selectedKey && !rows.some((r) => r.key === state.selectedKey)) state.selectedKey = "";
       if (!state.selectedKey && rows.length) state.selectedKey = rows[0].key;
-
       renderLists();
       renderDetail();
     };
-
-    const renderList = (hostSel, side) => {
-      const host = Q(hostSel, root);
-      if (!host) return;
-
-      const rows = state.filtered.filter((r) => (side === "A" ? !!r.recA : !!r.recB));
-      if (!rows.length) {
-        host.innerHTML = `<div class="empty">No matches.</div>`;
-        return;
-      }
-
-      host.innerHTML = rows
-        .map((r) => {
-          const ref = side === "A" ? r.recA : r.recB;
-          const title = esc(displayTitle(ref || r.brief));
-          const sub = esc(displaySub(ref || r.brief));
-          const sel = r.key === state.selectedKey ? "sel" : "";
-          const st = esc(r.status);
-          const cls = stCls(r.status);
-          const changeCount = r.status === "updated" ? r.changes.length : 0;
-          const mini = changeCount ? `<span class="cc-mini mono">Δ${changeCount}</span>` : "";
-          return `
-            <div class="cc-row ${sel}" data-key="${esc(r.key)}" data-side="${side}">
-              <span class="cc-st ${cls}">${st}</span>
-              <div class="cc-main">
-                <div class="cc-title2">${title}</div>
-                <div class="cc-sub">${sub}</div>
-              </div>
-              ${mini}
-            </div>`;
-        })
-        .join("");
+    const computeCounts = () => {
+      state.countsA = countsFor(state.rows.map((r) => r.recA).filter(Boolean));
+      state.countsB = countsFor(state.rows.map((r) => r.recB).filter(Boolean));
     };
-
-    const renderLists = () => {
-      renderList("#cc-list-a", "A");
-      renderList("#cc-list-b", "B");
-
-      for (const sel of ["#cc-list-a", "#cc-list-b"]) {
-        const host = Q(sel, root);
-        const row = host?.querySelector?.(`.cc-row.sel`);
-        if (row && typeof row.scrollIntoView === "function") {
-          row.scrollIntoView({ block: "nearest" });
-        }
-      }
-    };
-
-    const rowByKey = (k) => state.rows.find((x) => x.key === k) || null;
-
-    const renderDetail = () => {
-      const row = rowByKey(state.selectedKey);
-      const dt = Q("#cc-d-title", root);
-      const dk = Q("#cc-d-key", root);
-      const ch = Q("#cc-changes", root);
-      const ra = Q("#cc-rec-a", root);
-      const rb = Q("#cc-rec-b", root);
-
-      const btnKey = Q("#cc-copy-key", root);
-      const btnA = Q("#cc-copy-a", root);
-      const btnB = Q("#cc-copy-b", root);
-
-      if (!row) {
-        if (dt) dt.textContent = "Select an item";
-        if (dk) dk.textContent = "—";
-        if (ch) { ch.classList.add("hidden"); ch.innerHTML = ""; }
-        if (ra) ra.innerHTML = renderRecordCard("File A", null);
-        if (rb) rb.innerHTML = renderRecordCard("File B", null);
-        if (btnA) btnA.disabled = true;
-        if (btnB) btnB.disabled = true;
-        if (btnKey) btnKey.disabled = true;
-        return;
-      }
-
-      const best = row.recB || row.recA || row.brief;
-      if (dt) {
-        const st = row.status;
-        const cls = stCls(st);
-        const delta = st === "updated" ? `<span class="mono" style="opacity:.75;font-size:12px">Δ${row.changes.length}</span>` : "";
-        dt.innerHTML = `<span class="cc-st ${cls}">${esc(st)}</span><span class="tt">${esc(
-          displayTitle(best)
-        )}</span>${delta}`;
-      }
-      if (dk) dk.textContent = row.key;
-
-      if (ch) {
-        if (row.status === "updated") {
-          ch.classList.remove("hidden");
-          ch.innerHTML = renderChanges(row.changes);
-        } else {
-          ch.classList.add("hidden");
-          ch.innerHTML = "";
-        }
-      }
-
-      if (ra) ra.innerHTML = renderRecordCard("File A", row.recA, row.status === "added" ? "(missing)" : "");
-      if (rb) rb.innerHTML = renderRecordCard("File B", row.recB, row.status === "removed" ? "(missing)" : "");
-
-      if (btnKey) btnKey.disabled = !row.key;
-      if (btnA) btnA.disabled = !row.recA;
-      if (btnB) btnB.disabled = !row.recB;
-    };
-
+    const syncChanged = () => el.changed?.classList.toggle("on", !state.st.has("unchanged"));
     const load = async () => {
       if (!state.aPath || !state.bPath) return;
       setWait(true, "Loading diff…");
       try {
-        const url = `/api/snapshots/diff/extended?a=${encodeURIComponent(state.aPath)}&b=${encodeURIComponent(
-          state.bPath
-        )}&kind=all&q=&offset=0&limit=20000&max_changes=250&max_depth=6`;
-        const res = await fjson(url);
+        const res = await fjson(`/api/snapshots/diff/extended?a=${encodeURIComponent(state.aPath)}&b=${encodeURIComponent(state.bPath)}&kind=all&q=&offset=0&limit=20000&max_changes=250&max_depth=6`);
         const d = res?.diff;
         if (!d || d.ok === false) throw new Error(d?.error || "Invalid response");
-
         state.diff = d;
-        const items = Array.isArray(d.items) ? d.items : [];
-        state.rows = items.map(normalizeRow).filter((r) => r.key);
-
+        state.rows = (Array.isArray(d.items) ? d.items : []).map(normalizeRow).filter((r) => r.key);
         computeCounts();
         renderMeta();
         applyFilters();
       } catch (e) {
         console.error("Capture Compare load failed:", e);
-        const meta = Q("#cc-meta", root);
-        if (meta) meta.textContent = `Error: ${String(e?.message || e)}`;
-        Q("#cc-list-a", root).innerHTML = `<div class="empty">Failed to load diff.</div>`;
-        Q("#cc-list-b", root).innerHTML = `<div class="empty">Failed to load diff.</div>`;
-        Q("#cc-changes", root).innerHTML = `<div class="empty">—</div>`;
+        if (el.meta) el.meta.textContent = `Error: ${String(e?.message || e)}`;
+        [el.listA, el.listB].forEach((x) => x && (x.innerHTML = `<div class="empty">Failed to load diff.</div>`));
+        if (el.changes) el.changes.innerHTML = `<div class="empty">—</div>`;
       } finally {
         setWait(false);
       }
     };
-
-    // Events
-    const onClickRow = (e) => {
-      const row = e.target.closest?.(".cc-row");
-      if (!row) return;
-      const key = String(row.dataset.key || "");
-      if (!key) return;
-      state.selectedKey = key;
-      renderLists();
-      renderDetail();
-    };
-
-    const listA = Q("#cc-list-a", root);
-    const listB = Q("#cc-list-b", root);
-    listA?.addEventListener("click", onClickRow);
-    listB?.addEventListener("click", onClickRow);
-
-    Q("#cc-search", root)?.addEventListener("input", (e) => {
-      state.search = e.target.value || "";
-      applyFilters();
-    });
-
-    Q("#cc-type", root)?.addEventListener("change", (e) => {
-      state.type = e.target.value || "";
-      applyFilters();
-    });
-
-    Q("#cc-sort", root)?.addEventListener("change", (e) => {
-      state.sort = e.target.value || "status";
-      applyFilters();
-    });
-
-    const changedBtn = Q("#cc-changed", root);
-    const syncChangedBtn = () => {
-      if (!changedBtn) return;
-      changedBtn.classList.toggle("on", !state.st.has("unchanged"));
-    };
-
-    QA(".cc-chip[data-st]", root).forEach((chip) => {
-      chip.addEventListener("click", () => {
-        const st = String(chip.dataset.st || "");
-        if (!st) return;
-        if (state.st.has(st)) {
-          state.st.delete(st);
-          chip.classList.remove("on");
-        } else {
-          state.st.add(st);
-          chip.classList.add("on");
-        }
-        syncChangedBtn();
-        applyFilters();
-      });
-    });
-
-    syncChangedBtn();
-    if (changedBtn) {
-      changedBtn.addEventListener("click", () => {
-        const want = ["added", "removed", "updated"];
-        const isChangedOnly = want.every((x) => state.st.has(x)) && !state.st.has("unchanged");
-        state.st = new Set(isChangedOnly ? ["added", "removed", "updated", "unchanged"] : want);
-        QA(".cc-chip[data-st]", root).forEach((chip) => {
-          const st = String(chip.dataset.st || "");
-          chip.classList.toggle("on", state.st.has(st));
-        });
-        syncChangedBtn();
-        applyFilters();
-      });
-    }
-
-    Q("#cc-refresh", root)?.addEventListener("click", () => load());
-    Q("#cc-close", root)?.addEventListener("click", () => window.cxCloseModal?.());
-
-    Q("#cc-copy-key", root)?.addEventListener("click", async (e) => {
-      const btn = e.currentTarget;
-      const ok = await copyText(state.selectedKey);
-      flashCopy(btn, ok, "Copied", "Copy blocked");
-    });
-
-    Q("#cc-copy-a", root)?.addEventListener("click", async (e) => {
-      const btn = e.currentTarget;
-      const row = rowByKey(state.selectedKey);
-      const ok = row?.recA ? await copyText(pretty(row.recA)) : false;
-      flashCopy(btn, ok, "Copied A", "Copy blocked");
-    });
-
-    Q("#cc-copy-b", root)?.addEventListener("click", async (e) => {
-      const btn = e.currentTarget;
-      const row = rowByKey(state.selectedKey);
-      const ok = row?.recB ? await copyText(pretty(row.recB)) : false;
-      flashCopy(btn, ok, "Copied B", "Copy blocked");
-    });
-
-    const onChipCopy = async (e) => {
-      const chip = e.target.closest?.('.chip[data-copy]');
-      if (!chip) return;
-      const val = String(chip.dataset.copy || "");
-      if (!val) return;
-      const ok = await copyText(val);
-      if (!ok) return;
-      chip.classList.add("copied");
-      window.setTimeout(() => chip.classList.remove("copied"), 450);
-    };
-    root.addEventListener("click", onChipCopy);
-
-    // Splitters
-    const cleanup = [];
-    const top = Q("#cc-top", root);
-    const wrap = Q("#cc-wrap", root);
-    const detailSplit = Q("#cc-detail-split", root);
-    const paneAEl = Q("#cc-pane-a", root);
-    const paneBEl = Q("#cc-pane-b", root);
-    const recAEl = Q("#cc-rec-a", root);
-    const recBEl = Q("#cc-rec-b", root);
-
-    // One scrollbar
-    let ccSyncing = false;
-    const onSync = (src, dst) => () => {
-      if (!src || !dst || ccSyncing) return;
-      ccSyncing = true;
+    const syncScroll = (src, dst) => () => {
+      if (!src || !dst || syncing) return;
+      syncing = true;
       dst.scrollTop = src.scrollTop;
-      ccSyncing = false;
+      syncing = false;
     };
-    const onScrollA = onSync(recAEl, recBEl);
-    const onScrollB = onSync(recBEl, recAEl);
-    recAEl?.addEventListener("scroll", onScrollA, { passive: true });
-    recBEl?.addEventListener("scroll", onScrollB, { passive: true });
-    cleanup.push(() => {
-      try { recAEl?.removeEventListener("scroll", onScrollA); } catch {}
-      try { recBEl?.removeEventListener("scroll", onScrollB); } catch {}
-    });
-
-    // Sync Raw JSON toggle (open/close both sides)
-    const onRawJsonToggle = (e) => {
-      const sum = e.target.closest?.('details[data-cc-raw="1"] > summary');
-      if (!sum) return;
-      const details = sum.parentElement;
-      const inA = !!sum.closest("#cc-rec-a");
-      const inB = !!sum.closest("#cc-rec-b");
-      if (!inA && !inB) return;
-
-      e.preventDefault();
-
-      const open = !details.open;
-      details.open = open;
-
-      const otherHost = inA ? recBEl : recAEl;
-      const other = otherHost?.querySelector?.('details[data-cc-raw="1"]');
-      if (other) other.open = open;
-
-      // Keep scroll position unified
-      if (recAEl && recBEl) {
-        ccSyncing = true;
-        if (inA) recBEl.scrollTop = recAEl.scrollTop;
-        else recAEl.scrollTop = recBEl.scrollTop;
-        ccSyncing = false;
-      }
+    const syncRaw = (fromA, details) => {
+      const other = (fromA ? el.recB : el.recA)?.querySelector?.('details[data-cc-raw="1"]');
+      if (other) other.open = details.open;
+      if (!el.recA || !el.recB) return;
+      syncing = true;
+      (fromA ? el.recB : el.recA).scrollTop = (fromA ? el.recA : el.recB).scrollTop;
+      syncing = false;
     };
-    root.addEventListener("click", onRawJsonToggle);
-    cleanup.push(() => {
-      try { root.removeEventListener("click", onRawJsonToggle); } catch {}
-    });
-
-
-
+    const half = (node, axis = "width", ratio = .5) => Math.round((node?.getBoundingClientRect?.()[axis] || 0) * ratio);
     const applyDefaultLayout = () => {
-      const h = wrap?.getBoundingClientRect?.().height || 800;
-      const topH = Math.max(240, Math.round(h * 0.44));
-      if (!state.layout.topH) root.style.setProperty("--ccTopH", `${topH}px`);
+      if (!state.layout.topH) root.style.setProperty("--ccTopH", `${Math.max(240, Math.round((el.wrap?.getBoundingClientRect?.().height || 800) * .44))}px`);
+      const splitW = parseInt(getComputedStyle(root).getPropertyValue("--ccSplitW")) || 10;
       if (!state.layout.aW) {
-        const r = top?.getBoundingClientRect?.();
-        const splitW = parseInt(getComputedStyle(root).getPropertyValue("--ccSplitW")) || 10;
-        const half = r ? Math.floor((r.width - splitW) * 0.5) : null;
-        if (paneAEl) paneAEl.style.flex = half ? `0 0 ${Math.max(360, half)}px` : "1 1 0";
-        if (paneBEl) paneBEl.style.flex = "1 1 0";
+        const width = Math.max(360, Math.floor(((el.top?.getBoundingClientRect?.().width || 0) - splitW) * .5));
+        if (el.paneA) el.paneA.style.flex = width ? `0 0 ${width}px` : "1 1 0";
+        if (el.paneB) el.paneB.style.flex = "1 1 0";
       }
       if (!state.layout.detailAW) {
-        const r = detailSplit?.getBoundingClientRect?.();
-        const splitW = parseInt(getComputedStyle(root).getPropertyValue("--ccSplitW")) || 10;
-        const half = r ? Math.floor((r.width - splitW) * 0.5) : null;
-        if (recAEl) recAEl.style.flex = half ? `0 0 ${Math.max(320, half)}px` : "1 1 0";
-        if (recBEl) recBEl.style.flex = "1 1 0";
+        const width = Math.max(320, Math.floor(((el.detailSplit?.getBoundingClientRect?.().width || 0) - splitW) * .5));
+        if (el.recA) el.recA.style.flex = width ? `0 0 ${width}px` : "1 1 0";
+        if (el.recB) el.recB.style.flex = "1 1 0";
       }
     };
+
+    const onInput = ({ target }) => {
+      if (target === el.search) state.search = target.value || "";
+      else if (target === el.type) state.type = target.value || "";
+      else if (target === el.sort) state.sort = target.value || "status";
+      else return;
+      applyFilters();
+    };
+    const onClick = async (e) => {
+      const row = e.target.closest?.(".cc-row"), chip = e.target.closest?.(".chip[data-copy]"), summary = e.target.closest?.('details[data-cc-raw="1"]>summary'), stChip = e.target.closest?.(".cc-chip[data-st]");
+      if (row) {
+        state.selectedKey = String(row.dataset.key || "");
+        renderLists();
+        return void renderDetail();
+      }
+      if (chip) {
+        const ok = await copyText(chip.dataset.copy || "");
+        if (ok) {
+          chip.classList.add("copied");
+          return void window.setTimeout(() => chip.classList.remove("copied"), 450);
+        }
+      }
+      if (summary) {
+        const details = summary.parentElement, inA = !!summary.closest("#cc-rec-a"), inB = !!summary.closest("#cc-rec-b");
+        if (inA || inB) {
+          e.preventDefault();
+          details.open = !details.open;
+          return void syncRaw(inA, details);
+        }
+      }
+      if (stChip) {
+        const st = String(stChip.dataset.st || "");
+        if (!st) return;
+        state.st.has(st) ? state.st.delete(st) : state.st.add(st);
+        stChip.classList.toggle("on", state.st.has(st));
+        syncChanged();
+        return void applyFilters();
+      }
+      const id = e.target.closest?.("button,[id]")?.id;
+      if (id === "cc-refresh") return void load();
+      if (id === "cc-close") return void window.cxCloseModal?.();
+      if (id === "cc-changed") {
+        const changedOnly = ["added", "removed", "updated"].every((x) => state.st.has(x)) && !state.st.has("unchanged");
+        state.st = new Set(changedOnly ? Object.keys(STATUS_LABEL) : ["added", "removed", "updated"]);
+        QA(".cc-chip[data-st]", root).forEach((x) => x.classList.toggle("on", state.st.has(x.dataset.st)));
+        syncChanged();
+        return void applyFilters();
+      }
+      const btn = e.target.closest?.("#cc-copy-key,#cc-copy-a,#cc-copy-b");
+      if (!btn) return;
+      const rowData = rowByKey(state.selectedKey), payload = btn.id === "cc-copy-key" ? state.selectedKey : btn.id === "cc-copy-a" ? pretty(rowData?.recA) : pretty(rowData?.recB), ok = btn.id === "cc-copy-a" ? !!rowData?.recA && await copyText(payload) : btn.id === "cc-copy-b" ? !!rowData?.recB && await copyText(payload) : await copyText(payload);
+      flashCopy(btn, ok, btn.id === "cc-copy-a" ? "Copied A" : btn.id === "cc-copy-b" ? "Copied B" : "Copied", "Copy blocked");
+    };
+
+    root.addEventListener("click", onClick);
+    root.addEventListener("input", onInput);
+    root.addEventListener("change", onInput);
+    cleanup.push(() => {
+      root.removeEventListener("click", onClick);
+      root.removeEventListener("input", onInput);
+      root.removeEventListener("change", onInput);
+    });
+
+    const onScrollA = syncScroll(el.recA, el.recB), onScrollB = syncScroll(el.recB, el.recA);
+    el.recA?.addEventListener("scroll", onScrollA, { passive: true });
+    el.recB?.addEventListener("scroll", onScrollB, { passive: true });
+    cleanup.push(() => {
+      el.recA?.removeEventListener("scroll", onScrollA);
+      el.recB?.removeEventListener("scroll", onScrollB);
+    });
 
     applyDefaultLayout();
     window.setTimeout(applyDefaultLayout, 50);
-
-    const onResize = () => {
-      if (!state.layout.aW || !state.layout.detailAW || !state.layout.topH) applyDefaultLayout();
-    };
+    const onResize = () => (!state.layout.aW || !state.layout.detailAW || !state.layout.topH) && applyDefaultLayout();
     window.addEventListener("resize", onResize);
     cleanup.push(() => window.removeEventListener("resize", onResize));
 
-    const vTop = Q("#cc-vsplit-top", root);
-    if (vTop && top) {
-      cleanup.push(
-        initSplit({
-          handle: vTop,
-          container: top,
-          axis: "x",
-          getMin: () => 360,
-          getMax: (rect) => rect.width - 360,
-          onSet: (delta, min, max) => {
-            const cur = paneAEl?.getBoundingClientRect?.().width || rectHalf(top);
-            const nxt = clamp(cur + delta, min, max);
-            if (paneAEl) paneAEl.style.flex = `0 0 ${nxt}px`;
-            if (paneBEl) paneBEl.style.flex = "1 1 0";
-            state.layout.aW = nxt;
-          },
-        })
-      );
-    }
+    [["#cc-vsplit-top", el.top, "x", () => 360, (r) => r.width - 360, (d, min, max) => { const n = clamp((el.paneA?.getBoundingClientRect?.().width || half(el.top)) + d, min, max); if (el.paneA) el.paneA.style.flex = `0 0 ${n}px`; if (el.paneB) el.paneB.style.flex = "1 1 0"; state.layout.aW = n; }], ["#cc-hsplit", el.wrap, "y", () => 260, (r) => r.height - 220, (d, min, max) => { const n = clamp((parseInt(getComputedStyle(root).getPropertyValue("--ccTopH")) || half(el.wrap, "height", .58)) + d, min, max); root.style.setProperty("--ccTopH", `${n}px`); state.layout.topH = n; }], ["#cc-vsplit-detail", el.detailSplit, "x", () => 340, (r) => r.width - 340, (d, min, max) => { const n = clamp((el.recA?.getBoundingClientRect?.().width || half(el.detailSplit)) + d, min, max); if (el.recA) el.recA.style.flex = `0 0 ${n}px`; if (el.recB) el.recB.style.flex = "1 1 0"; state.layout.detailAW = n; }]].forEach(([sel, container, axis, getMin, getMax, onSet]) => {
+      const handle = Q(sel, root);
+      if (handle && container) cleanup.push(initSplit({ handle, container, axis, getMin, getMax, onSet }));
+    });
 
-    const hSplit = Q("#cc-hsplit", root);
-    if (hSplit && wrap) {
-      cleanup.push(
-        initSplit({
-          handle: hSplit,
-          container: wrap,
-          axis: "y",
-          getMin: () => 260,
-          getMax: (rect) => rect.height - 220,
-          onSet: (delta, min, max) => {
-            const cur = parseInt(getComputedStyle(root).getPropertyValue("--ccTopH")) || rectHalfY(wrap);
-            const nxt = clamp(cur + delta, min, max);
-            root.style.setProperty("--ccTopH", `${nxt}px`);
-            state.layout.topH = nxt;
-          },
-        })
-      );
-    }
-
-    const vDetail = Q("#cc-vsplit-detail", root);
-    if (vDetail && detailSplit) {
-      cleanup.push(
-        initSplit({
-          handle: vDetail,
-          container: detailSplit,
-          axis: "x",
-          getMin: () => 340,
-          getMax: (rect) => rect.width - 340,
-          onSet: (delta, min, max) => {
-            const cur = recAEl?.getBoundingClientRect?.().width || rectHalf(detailSplit);
-            const nxt = clamp(cur + delta, min, max);
-            if (recAEl) recAEl.style.flex = `0 0 ${nxt}px`;
-            if (recBEl) recBEl.style.flex = "1 1 0";
-            state.layout.detailAW = nxt;
-          },
-        })
-      );
-    }
-
-    function rectHalf(el) {
-      const r = el.getBoundingClientRect();
-      return Math.round(r.width * 0.5);
-    }
-
-    function rectHalfY(el) {
-      const r = el.getBoundingClientRect();
-      return Math.round(r.height * 0.58);
-    }
-
-    // Bootstrap
+    syncChanged();
     await load();
-
     root._ccCleanup = () => {
-      try {
-        listA?.removeEventListener("click", onClickRow);
-        listB?.removeEventListener("click", onClickRow);
-        root.removeEventListener("click", onChipCopy);
-      } catch {}
       cleanup.forEach((fn) => {
-        try {
-          fn();
-        } catch {}
+        try { fn(); } catch {}
       });
     };
   },
 
   unmount() {
     try {
-      if (this._root && this._root._ccCleanup) this._root._ccCleanup();
+      this._root?._ccCleanup?.();
     } catch {}
   },
 };
