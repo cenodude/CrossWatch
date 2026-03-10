@@ -12,9 +12,11 @@
     PLEX: "brand-plex", SIMKL: "brand-simkl", TRAKT: "brand-trakt", ANILIST: "brand-anilist"
   };
   const logoProviders = new Set(order);
+  const logLogoProviders = new Set(["PLEX","SIMKL","TRAKT","JELLYFIN","EMBY","MDBLIST"]);
   function keyOf(v){ return String(v || "").trim().toUpperCase(); }
   function label(v){ const k = keyOf(v); return labels[k] || k || "?"; }
   function logoPath(v){ const k = keyOf(v); return logoProviders.has(k) ? `/assets/img/${k}.svg` : ""; }
+  function logLogoPath(v){ const k = keyOf(v); return logLogoProviders.has(k) ? `/assets/img/${k}-log.svg` : ""; }
   function brandInfo(v){ const k = keyOf(v); return { cls: brandClasses[k] || "", icon: logoPath(k) || "" }; }
   function logoHtml(v, cls = "token-logo"){
     const k = keyOf(v);
@@ -22,6 +24,12 @@
     if (!src) return `<span class="token-text">${v || ""}</span>`;
     return `<img class="${cls}" src="${src}" alt="${k} logo" width="28" height="28" loading="lazy">`;
   }
+  function logLogoHtml(v, cls = "token-logo"){
+    const k = keyOf(v);
+    const src = logLogoPath(k);
+    if (!src) return logoHtml(k, cls);
+    return `<img class="${cls}" src="${src}" alt="${k} logo" width="28" height="28" loading="lazy">`;
+  }
   (window.CW ||= {});
-  window.CW.ProviderMeta = { labels, order, keyOf, label, logoPath, brandInfo, logoHtml };
+  window.CW.ProviderMeta = { labels, order, keyOf, label, logoPath, logLogoPath, brandInfo, logoHtml, logLogoHtml, logo: logoPath, logLogo: logLogoPath };
 })();
