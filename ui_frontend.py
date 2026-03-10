@@ -1,4 +1,5 @@
 # ui_frontend.py
+# Refactored
 # CrossWatch - UI Frontend Registration
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -16,7 +17,7 @@ __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 # Static favicon
 FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
 <defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/></linearGradient></defs>
+<stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#5f69d6"/><stop offset="1" stop-color="#7a6aa8"/></linearGradient></defs>
 <rect width="64" height="64" rx="14" fill="#0b0b0f"/>
 <rect x="10" y="16" width="44" height="28" rx="6" fill="none" stroke="url(#g)" stroke-width="3"/>
 <rect x="24" y="46" width="16" height="3" rx="1.5" fill="url(#g)"/>
@@ -52,17 +53,7 @@ self.addEventListener("fetch", (event) => {
 });
 """
 
-GITBOOK_SITE_URL: str = "https://wiki.crosswatch.app"
-GITBOOK_EMBED_SCRIPT_URL: str = "https://wiki.crosswatch.app/~gitbook/embed/script.js"
-GITBOOK_REPORT_URL: str = "https://github.com/cenodude/CrossWatch/issues/new"
-GITBOOK_EMBED_BLOCK: str = r"""<script id="cw-gitbook-embed" src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script>
-<script>
-  window.__cwGitBookConfig = {
-    siteUrl: "https://wiki.crosswatch.app",
-    reportUrl: "https://github.com/cenodude/CrossWatch/issues/new"
-  };
-</script>
-<script src="/assets/js/gitbook.js?v=__CW_VERSION__" defer></script>"""
+GITBOOK_EMBED_BLOCK: str = r"""<script id="cw-gitbook-embed" src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script><script>window.__cwGitBookConfig={siteUrl:"https://wiki.crosswatch.app",reportUrl:"https://github.com/cenodude/CrossWatch/issues/new"};</script><script src="/assets/js/gitbook.js?v=__CW_VERSION__" defer></script>"""
 
 
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
@@ -70,71 +61,73 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     assets_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
-    def _svg_resp() -> Response:
-        return Response(
-            content=FAVICON_SVG,
-            media_type="image/svg+xml",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
+    def asset_response(name: str, fallback: str, media_type: str, **headers: str) -> Response:
+        try:
+            content = (assets_dir / name).read_text(encoding="utf-8")
+        except Exception:
+            content = fallback
+        return Response(content=content, media_type=media_type, headers=headers)
 
     @app.get("/favicon.svg", include_in_schema=False, tags=["ui"])
-    def favicon_svg() -> Response:
-        return _svg_resp()
-
     @app.get("/favicon.ico", include_in_schema=False, tags=["ui"])
-    def favicon_ico() -> Response:
-        # serve SVG for legacy path
-        return _svg_resp()
-
-    def _asset_text(name: str, fallback: str) -> str:
-        p = assets_dir / name
-        try:
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            return fallback
+    def favicon() -> Response:
+        return Response(FAVICON_SVG, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/manifest.webmanifest", include_in_schema=False, tags=["ui"])
     def manifest_webmanifest() -> Response:
-        content = _asset_text("manifest.webmanifest", DEFAULT_MANIFEST)
-        return Response(
-            content=content,
-            media_type="application/manifest+json",
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
+        return asset_response("manifest.webmanifest", DEFAULT_MANIFEST, "application/manifest+json", **{"Cache-Control": "public, max-age=3600"})
 
     @app.get("/sw.js", include_in_schema=False, tags=["ui"])
     def service_worker() -> Response:
-        content = _asset_text("sw.js", DEFAULT_SW)
-        return Response(
-            content=content,
-            media_type="text/javascript",
-            headers={"Cache-Control": "no-store", "Service-Worker-Allowed": "/"},
-        )
+        return asset_response("sw.js", DEFAULT_SW, "text/javascript", **{"Cache-Control": "no-store", "Service-Worker-Allowed": "/"})
+
+def _ui_show_ai_enabled() -> bool:
+    try:
+        cfg = load_config()
+        ui = (cfg if isinstance(cfg, dict) else {}).get("ui", {})
+        return bool(ui.get("show_AI", True)) if isinstance(ui, dict) else True
+    except Exception:
+        return True
 
 
 def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
     def ui_root(request: Request) -> HTMLResponse:
-        is_https = _is_https_request(request)
-        try:
-            cfg = load_config()
-            ui = cfg.get("ui") if isinstance(cfg, dict) else {}
-            show_ai = bool(ui.get("show_AI", True)) if isinstance(ui, dict) else True
-        except Exception:
-            show_ai = True
+        show_ai = _ui_show_ai_enabled()
+        return HTMLResponse(get_index_html(include_gitbook_embed=_is_https_request(request) and show_ai, ui_show_ai=show_ai), headers={"Cache-Control": "no-store"})
 
-        include_embed = bool(is_https and show_ai)
-        return HTMLResponse(
-            get_index_html(include_gitbook_embed=include_embed, ui_show_ai=show_ai),
-            headers={"Cache-Control": "no-store"},
-        )
 
 def _is_https_request(request: Request) -> bool:
-    xf_proto = request.headers.get("x-forwarded-proto")
-    if xf_proto:
-        scheme = xf_proto.split(",")[0].strip().lower()
-        return scheme == "https"
-    return request.url.scheme.lower() == "https"
+    return request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip().lower() == "https"
+
+
+_HELPER_SCRIPTS = (
+    "provider-meta.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
+    "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js",
+    "restart_apply.js", "legacy-bridge.js",
+)
+_APP_SCRIPTS = (
+    "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "settings-insight.js", "scrobbler.js",
+    "editor.js", "snapshots.js",
+)
+
+
+def _asset_block() -> str:
+    helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in _HELPER_SCRIPTS)
+    app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in _APP_SCRIPTS)
+    return "\n".join((
+        helper_tags,
+        '<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>',
+        '<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>',
+        app_tags,
+        '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
+        '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
+        '<script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>',
+        '<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">',
+        '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
+    ))
+
 
 def _get_index_html_static() -> str:
     return r"""<!doctype html><html lang="en"><head>
@@ -150,6 +143,22 @@ def _get_index_html_static() -> str:
 
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
+<style id="cw-dark-shell-overrides">
+:root{--cw-ov-shell:linear-gradient(180deg,rgba(8,10,14,.96),rgba(3,5,8,.98));--cw-ov-shell-soft:linear-gradient(180deg,rgba(11,14,20,.94),rgba(5,7,10,.97));--cw-ov-shell-strong:linear-gradient(180deg,rgba(13,16,23,.96),rgba(6,8,11,.98));--cw-ov-border:rgba(255,255,255,.075);--cw-ov-border-strong:rgba(255,255,255,.12);--cw-ov-shadow:0 20px 48px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.03);--cw-ov-fg:rgba(242,245,255,.96);--cw-ov-soft:rgba(194,202,222,.72)}
+header{background:radial-gradient(120% 150% at 0% 0%,rgba(72,80,120,.10),transparent 36%),radial-gradient(120% 150% at 100% 100%,rgba(52,58,86,.08),transparent 42%),var(--cw-ov-shell);border:1px solid var(--cw-ov-border);box-shadow:var(--cw-ov-shadow)}
+header .tab,header .cw-ui-btn,header .iconbtn,header .cw-menu{background:var(--cw-ov-shell-soft)!important;border-color:var(--cw-ov-border)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 10px 22px rgba(0,0,0,.16)}
+header .tab:hover,header .cw-ui-btn:hover,header .iconbtn:hover,header .cw-menu-item:hover{background:var(--cw-ov-shell-strong)!important;border-color:var(--cw-ov-border-strong)!important}
+header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rgba(49,55,78,.82),rgba(12,15,22,.98))!important;border-color:rgba(148,156,194,.18)!important;box-shadow:0 14px 28px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.04)}
+#page-settings,#page-settings .cw-settings-nav-card,#page-settings .cw-settings-overview-card,#page-settings .cw-settings-pane-head,#page-settings .cw-settings-section,#page-settings .cw-settings-action,#page-settings .cw-settings-jump,#page-settings .cw-settings-nav-btn,#page-settings .cw-hub-tile,#page-settings .cw-settings-panel,#page-settings .cw-panel,#page-settings .cw-menu{background:radial-gradient(125% 150% at 0% 0%,rgba(72,80,120,.10),transparent 38%),var(--cw-ov-shell)!important;border-color:var(--cw-ov-border)!important;box-shadow:var(--cw-ov-shadow)!important}
+#page-settings .cw-settings-section .head,#page-settings .cw-settings-section .body,#page-settings .cw-settings-pane-stack,#page-settings .cw-settings-panels,#page-settings .cw-settings-hub{background:transparent!important}
+#page-settings .cw-settings-nav-btn:hover,#page-settings .cw-settings-action:hover,#page-settings .cw-settings-jump:hover,#page-settings .cw-hub-tile:hover{background:radial-gradient(125% 150% at 0% 0%,rgba(82,90,132,.12),transparent 34%),var(--cw-ov-shell-strong)!important;border-color:var(--cw-ov-border-strong)!important;transform:translateY(-1px)}
+#page-settings .cw-settings-nav-btn.active,#page-settings .cw-settings-jump.active,#page-settings .cw-hub-tile.active,#page-settings .cw-hub-tile[aria-selected="true"],#page-settings .cw-settings-panel.active{background:linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,13,.99))!important;border-color:rgba(154,162,198,.18)!important;box-shadow:0 18px 34px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.04)!important}
+#page-settings input,#page-settings select,#page-settings textarea{background:rgba(4,6,10,.94)!important;border:1px solid rgba(255,255,255,.08)!important;color:var(--cw-ov-fg)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)!important}
+#page-settings input:focus,#page-settings select:focus,#page-settings textarea:focus{outline:none;box-shadow:0 0 0 3px rgba(112,122,170,.14),inset 0 1px 0 rgba(255,255,255,.03)!important;border-color:rgba(160,168,202,.18)!important;background:rgba(6,8,12,.98)!important}
+#page-settings .sub,#page-settings p,#page-settings small,#page-settings label,#page-settings .cw-settings-pane-kicker,#page-settings .cw-settings-overview-kicker,#page-settings .cw-settings-jumpbar,#page-settings .cw-hub-desc{color:var(--cw-ov-soft)!important}
+#page-settings h3,#page-settings h4,#page-settings strong,#page-settings .cw-panel-title,#page-settings .cw-settings-nav-title{color:var(--cw-ov-fg)!important}
+#page-settings .chip,#page-settings .pill,#page-settings .cw-provider-head-icon,#page-settings .auth-dot{filter:saturate(.88)}
+</style>
 <script>
 (() => {
   try {
@@ -168,7 +177,7 @@ def _get_index_html_static() -> str:
 <header>
   <div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
     <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="CrossWatch">
-      <defs><linearGradient id="cw-g" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#2de2ff"/><stop offset=".5" stop-color="#7c5cff"/><stop offset="1" stop-color="#ff7ae0"/></linearGradient></defs>
+      <defs><linearGradient id="cw-g" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#2de2ff"/><stop offset=".5" stop-color="#5f69d6"/><stop offset="1" stop-color="#7a6aa8"/></linearGradient></defs>
       <rect x="3" y="4" width="18" height="12" rx="2" ry="2" stroke="url(#cw-g)" stroke-width="1.7"/>
       <rect x="8" y="18" width="8" height="1.6" rx=".8" fill="url(#cw-g)"/>
       <circle cx="8" cy="9" r="1" fill="url(#cw-g)"/><circle cx="12" cy="11" r="1" fill="url(#cw-g)"/><circle cx="16" cy="8" r="1" fill="url(#cw-g)"/>
@@ -207,19 +216,26 @@ def _get_index_html_static() -> str:
 </header>
 
 <main id="layout">
-  <section id="ops-card" class="card">
+  <section id="ops-card" class="card cw-main-card cw-main-card--sync">
     <div class="title">Synchronization</div>
-    <div class="ops-header">
-      <div id="conn-badges" class="vip-badges" style="margin-left:auto"></div>
-      <div id="update-banner" class="hidden"><span id="update-text">A new version is available.</span>
-        <a id="update-link" href="https://github.com/cenodude/crosswatch/releases" target="_blank" rel="noopener">Get update</a>
+    <div class="ops-header cw-main-card-head">
+      <div class="cw-main-card-head-copy">
+        <h2>Synchronization</h2>
       </div>
-      <button id="btn-status-refresh" class="iconbtn" title="Re-check status" aria-label="Refresh status">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-          <path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M21 5v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
+      <div class="cw-main-card-head-side">
+        <div id="conn-badges" class="vip-badges"></div>
+        <div class="cw-main-card-head-actions">
+          <div id="update-banner" class="hidden"><span id="update-text">A new version is available.</span>
+            <a id="update-link" href="https://github.com/cenodude/crosswatch/releases" target="_blank" rel="noopener">Get update</a>
+          </div>
+          <button id="btn-status-refresh" class="iconbtn" title="Re-check status" aria-label="Refresh status">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M21 5v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
 
     <div class="sync-status" style="display:none"><div id="sync-icon"></div><div id="sync-status-text"></div><span id="sched-inline" style="display:none"></span></div>
@@ -235,7 +251,6 @@ def _get_index_html_static() -> str:
         <button class="btn" onclick="toggleDetails()">View details</button>
         <button class="btn" onclick="openAnalyzer()">Analyzer</button>
         <button class="btn" onclick="openExporter()">Exporter</button>
-        <button class="btn" onclick="downloadSummary()">Download report</button>
       </div>
     </div>
 
@@ -274,15 +289,20 @@ def _get_index_html_static() -> str:
               <div class="meta-label">Started</div><div class="meta-value"><span id="det-start" class="pillvalue mono">–</span></div>
               <div class="meta-label">Finished</div><div class="meta-value"><span id="det-finish" class="pillvalue mono">–</span></div>
             </div>
-            <div class="meta-actions"><button class="btn" onclick="copySummary(this)">Copy summary</button><button class="btn" onclick="downloadSummary()">Download</button></div>
+            <div class="meta-actions"><button class="btn" onclick="copySummary(this)">Copy summary</button></div>
           </div>
         </div>
       </div>
     </div>
   </section>
 
-  <section id="stats-card" class="card">
+  <section id="stats-card" class="card cw-main-card cw-main-card--stats">
     <div class="title">Statistics</div>
+    <div class="cw-main-card-head cw-main-card-head--compact">
+      <div class="cw-main-card-head-copy">
+        <div class="cw-main-card-kicker">Statistics</div>
+      </div>
+    </div>
 
     <div class="stats-modern v2">
       <div class="now"><div class="label">Now</div><div id="stat-now" class="value" data-v="0">0</div><div class="chips"><span id="trend-week" class="chip trend flat">no change</span></div></div>
@@ -302,8 +322,13 @@ def _get_index_html_static() -> str:
     </div>
   </section>
 
-  <section id="placeholder-card" class="card hidden">
+  <section id="placeholder-card" class="card cw-main-card cw-main-card--wall hidden">
     <div class="title">Watchlist Preview</div>
+    <div class="cw-main-card-head cw-main-card-head--compact">
+      <div class="cw-main-card-head-copy">
+        <div class="cw-main-card-kicker">Watchlist Preview</div>
+      </div>
+    </div>
     <div id="wall-msg" class="wall-msg">Loading…</div>
     <div class="wall-wrap">
       <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
@@ -322,11 +347,9 @@ def _get_index_html_static() -> str:
   <section id="page-editor" class="card hidden"></section>
 
   <section id="page-settings" class="card hidden">
-    <div class="title">Settings</div>
     <div id="cw-settings-shell">
       <aside id="cw-settings-nav" aria-label="Settings navigation">
         <div class="cw-settings-nav-card">
-          <div class="cw-settings-overview-kicker">Workspace</div>
           <div class="cw-settings-nav-title">Settings</div>
         </div>
 
@@ -801,892 +824,37 @@ def _get_index_html_static() -> str:
 
 
 <script>window.__CW_BUILD__="0.2.5-20251014-02";</script>
-<script>
-  window.APP_VERSION="__CW_VERSION__";
-  window["__CW_" + "VERSION__"] = window.APP_VERSION;
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=()=>{const m=$("cw-about-menu"),b=$("tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}};window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=closeMenu;window.cwToggleAboutMenu=e=>{e?.preventDefault?.();e?.stopPropagation?.();const m=$("cw-about-menu"),b=$("tab-about");if(!m||!b)return;const open=m.classList.contains("hidden");document.querySelectorAll(".cw-menu").forEach(x=>x.classList.add("hidden"));m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))};window.cwAboutMenuSelect=w=>(closeMenu(),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),h=$("tab-about-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(h&&!h.contains(e.target))closeMenu()},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeMenu()},true)})();</script>
 
-  window.cwOpenHelp = function(){
-    const overlay = document.getElementById("cw-help-overlay");
-    const frame = document.getElementById("cw-help-frame");
-    if (!overlay || !frame) return;
-    if (!frame.src) frame.src = "https://wiki.crosswatch.app";
-    overlay.classList.remove("hidden");
-    overlay.setAttribute("aria-hidden","false");
-  };
-
-  window.cwCloseHelp = function(){
-    const overlay = document.getElementById("cw-help-overlay");
-    if (!overlay) return;
-    overlay.classList.add("hidden");
-    overlay.setAttribute("aria-hidden","true");
-  };
-
-  window.openHelp = function () {
-    if (window.location && window.location.protocol === "https:") return window.cwOpenHelp?.();
-    window.open("https://wiki.crosswatch.app", "_blank", "noopener,noreferrer");
-  };
-
-  window.cwCloseAboutMenu = function(){
-    const menu = document.getElementById("cw-about-menu");
-    const btn  = document.getElementById("tab-about");
-    if (menu) menu.classList.add("hidden");
-    if (btn) btn.setAttribute("aria-expanded", "false");
-  };
-
-  window.cwToggleAboutMenu = function (ev) {
-    ev?.preventDefault?.();
-    ev?.stopPropagation?.();
-    const menu = document.getElementById("cw-about-menu");
-    const btn  = document.getElementById("tab-about");
-    if (!menu || !btn) return;
-
-    const willOpen = menu.classList.contains("hidden");
-    document.querySelectorAll(".cw-menu").forEach(m => m.classList.add("hidden"));
-    menu.classList.toggle("hidden", !willOpen);
-    btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
-  };
-
-  window.cwAboutMenuSelect = function(which){
-    window.cwCloseAboutMenu?.();
-    if (which === "about") return window.openAbout?.();
-    if (which === "help")  return window.openHelp?.();
-  };
-
-  document.addEventListener("click", (e) => {
-    const overlay = document.getElementById("cw-help-overlay");
-    const card = document.getElementById("cw-help-card");
-    if (overlay && !overlay.classList.contains("hidden") && card && !card.contains(e.target)) window.cwCloseHelp?.();
-  }, true);
-
-  document.addEventListener("click", (e) => {
-    const host = document.getElementById("tab-about-menu");
-    if (host && !host.contains(e.target)) window.cwCloseAboutMenu?.();
-  }, true);
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    window.cwCloseHelp?.();
-    window.cwCloseAboutMenu?.();
-  }, true);
-</script>
-
-<script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/page-loader.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/dom.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/events.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/api.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/details-log.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/providers-ui.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/settings-ui.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/settings-save.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/maintenance.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/restart_apply.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/legacy-bridge.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>
-<script src="/assets/js/syncbar.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/main.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/connections.overlay.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/connections.pairs.overlay.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/scheduler.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/schedulerbanner.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/playingcard.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/insights.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/settings-insight.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/scrobbler.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/editor.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/snapshots.js?v=__CW_VERSION__" defer></script>
-
-<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>
-
-<script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>
-
-<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
-<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
+__CW_ASSET_BLOCK__
 
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 
 <div id="save-frost" class="hidden" aria-hidden="true"></div>
-<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save">
-  <button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-ic">✔</span> <span class="btn-label">Save</span></button>
-</div>
+<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-ic">✔</span> <span class="btn-label">Save</span></button></div>
 
-<script>
-// Accordion: one open per container
-(() => {
-  const isOpen = s => s.classList.contains('open');
-  const open  = s => { s.classList.add('open');  s.querySelector('.head')?.setAttribute('aria-expanded','true');  const c=s.querySelector('.chev'); if(c) c.textContent='▼'; };
-  const close = s => { s.classList.remove('open'); s.querySelector('.head')?.setAttribute('aria-expanded','false'); const c=s.querySelector('.chev'); if(c) c.textContent='▶'; };
-  const managedSiblingsOf = (sec) => {
-    const p = sec?.parentElement;
-    if (!p) return [];
-    return Array.from(p.querySelectorAll(':scope > .section')).filter(s => s.dataset.accordion !== 'off');
-  };
+<script>(()=>{const list=p=>[...p.querySelectorAll(':scope>.section')].filter(s=>s.dataset.accordion!=='off'),set=(s,on)=>{s.classList.toggle('open',!!on);s.querySelector('.head')?.setAttribute('aria-expanded',String(!!on));const c=s.querySelector('.chev');if(c)c.textContent=on?'▼':'▶'},siblings=s=>s?.parentElement?list(s.parentElement):[];window.toggleSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;const on=!s.classList.contains('open');siblings(s).forEach(x=>set(x,x===s&&on))};window.openSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;siblings(s).forEach(x=>set(x,x===s))};document.addEventListener('DOMContentLoaded',()=>[...new Set([...document.querySelectorAll('.section')].map(s=>s.parentElement).filter(Boolean))].forEach(p=>{const open=list(p).find(s=>s.classList.contains('open'));list(p).forEach(s=>set(s,s===open))}),{once:true})})();</script>
 
-  window.toggleSection = function(id){
-    const sec = document.getElementById(id); if (!sec || sec.dataset.accordion === 'off') return;
-    const was = isOpen(sec);
-    managedSiblingsOf(sec).forEach(s => { if (s !== sec) close(s); });
-    was ? close(sec) : open(sec);
-  };
 
-  window.openSection = function(id){
-    const sec = document.getElementById(id); if (!sec || sec.dataset.accordion === 'off') return;
-    managedSiblingsOf(sec).forEach(s => { if (s !== sec) close(s); });
-    open(sec);
-  };
+<script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
 
-  function initAccordion(){
-    const containers = new Set();
-    document.querySelectorAll('.section').forEach(s => s.parentElement && containers.add(s.parentElement));
-    containers.forEach(p => {
-      const secs = Array.from(p.querySelectorAll(':scope > .section')).filter(s => s.dataset.accordion !== 'off');
-      if (!secs.length) return;
-      const opened = secs.filter(isOpen);
-      if (opened.length > 1) opened.slice(1).forEach(close);
-      secs.forEach(s => (isOpen(s) ? open(s) : close(s)));
-    });
-  }
-  document.addEventListener('DOMContentLoaded', initAccordion, { once:true });
-})();
-</script>
+<script>(()=>{window.cwProvidersJump=sectionId=>(window.cwSettingsSelect?.('providers'),setTimeout(()=>{window.openSection?.(sectionId);document.getElementById(sectionId)?.scrollIntoView({behavior:'smooth',block:'start'})},0))})();</script>
 
+<script>(()=>{const $=id=>document.getElementById(id),txt=v=>String(v??'').trim(),up=v=>txt(v).toUpperCase(),mask=v=>v==='*****'||/^[•]+$/.test(v),pretty=v=>txt(v).toLowerCase()==='default'?'Default':txt(v),CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>',LABELS={PLEX:'Plex',TRAKT:'Trakt',SIMKL:'SIMKL',ANILIST:'AniList',JELLYFIN:'Jellyfin',EMBY:'Emby',MDBLIST:'MDBlist',TMDB:'TMDb',TAUTULLI:'Tautulli'},AUTH_MAP=[['sec-plex','PLEX'],['sec-emby','EMBY'],['sec-jellyfin','JELLYFIN'],['sec-trakt','TRAKT'],['sec-simkl','SIMKL'],['sec-anilist','ANILIST'],['sec-mdblist','MDBLIST'],['sec-tmdb-sync','TMDB'],['sec-tautulli','TAUTULLI']];let cfg=null,lastCfg=null,authMo=null,metaMo=null;async function getConfig(force=false){if(cfg&&!force)return cfg;const prev=lastCfg||cfg;try{const r=await fetch('/api/config?ts='+Date.now(),{cache:'no-store'});if(r?.ok){const j=await r.json();return lastCfg=cfg=j&&typeof j==='object'?j:{}}}catch{}return cfg=prev||{}}window.invalidateConfigCache=()=>{cfg=null};function isProviderConfigured(key,c=cfg||{}){switch(up(key)){case'PLEX':return!!c?.plex?.account_token;case'TRAKT':return!!(c?.trakt?.access_token||c?.auth?.trakt?.access_token);case'SIMKL':return!!c?.simkl?.access_token;case'ANILIST':return!!(c?.anilist?.access_token||c?.auth?.anilist?.access_token);case'JELLYFIN':return!!c?.jellyfin?.access_token;case'EMBY':return!!(c?.emby?.access_token||c?.auth?.emby?.access_token);case'MDBLIST':return!!c?.mdblist?.api_key;case'TMDB':{const tm=c?.tmdb_sync||c?.auth?.tmdb_sync||{};return!!(tm?.account_id||tm?.session_id)}case'TAUTULLI':return!!((c?.tautulli?.server_url||c?.auth?.tautulli?.server_url)&&(c?.tautulli?.api_key||c?.auth?.tautulli?.api_key));default:return false}}const setDot=(id,on)=>{const sec=$(id),head=sec?.querySelector('.head')||sec?.firstElementChild;if(!head)return false;if(getComputedStyle(head).display!=='flex')Object.assign(head.style,{display:'flex',alignItems:'center'});const dot=head.querySelector('.auth-dot')||head.appendChild(Object.assign(document.createElement('span'),{className:'auth-dot'}));dot.classList.toggle('on',!!on);dot.title=on?'Configured':'Not configured';dot.setAttribute('aria-label',dot.title);return true};async function refreshAuthDots(force=false){const c=await getConfig(force),host=$('auth-providers-icons');host?.querySelectorAll('img[data-prov]').forEach(img=>img.style.display=isProviderConfigured(img.dataset.prov,c)?'inline-block':'none');return AUTH_MAP.reduce((any,[id,key])=>setDot(id,isProviderConfigured(key,c))||any,false)}window.refreshAuthDots=refreshAuthDots;function syncMetadataProviderDot(){const chip=$('hub_tmdb_key'),dot=$('meta-tmdb-dot'),tile=dot?.closest?.('.cw-hub-tile.tmdb');if(!chip||!dot||!tile)return false;const cfgKey=txt(cfg?.tmdb?.api_key),cfgHas=cfgKey.length>0||mask(cfgKey),keyEl=$('tmdb_api_key');let uiHas=false,touched=false;if(keyEl){const v=txt(keyEl.value);touched=keyEl.dataset?.touched==='1';uiHas=v.length>0||mask(v)||keyEl.dataset?.masked==='1';if(touched)uiHas=v.length>0||mask(v)}const raw=txt(chip.textContent).toLowerCase(),chipHas=/\bset\b/.test(raw)&&!/\bmissing\b|\bnot set\b|\bunset\b|\bempty\b|—/.test(raw),on=uiHas||(!touched&&(cfgHas||chipHas));dot.classList.toggle('on',on);dot.title=on?'Configured':'Not configured';dot.setAttribute('aria-label',dot.title);tile.classList.toggle('is-configured',on);return true}window.syncMetadataProviderDot=syncMetadataProviderDot;const observe=(hostId,slot,delay,fn,opts)=>{const host=$(hostId);if(!host)return slot==='meta'?setTimeout(()=>observe(hostId,slot,delay,fn,opts),150):undefined;fn();if((slot==='auth'&&authMo)||(slot==='meta'&&metaMo))return;const mo=new MutationObserver(()=>{clearTimeout(mo._t);mo._t=setTimeout(fn,delay)});mo.observe(host,opts);if(slot==='auth')authMo=mo;else metaMo=mo};document.addEventListener('settings-collect',()=>{refreshAuthDots(true).catch(()=>{});syncMetadataProviderDot()},true);document.addEventListener('tab-changed',()=>{refreshAuthDots(false).catch(()=>{});syncMetadataProviderDot()},true);document.addEventListener('DOMContentLoaded',()=>observe('hub_tmdb_key','meta',0,syncMetadataProviderDot,{childList:true,characterData:true,subtree:true}),{once:true});const titleCase=v=>{v=txt(v);return v?v[0]+v.slice(1).toLowerCase():v},instancesDetail=d=>{const inst=d&&typeof d==='object'?d.instances:null,sum=d&&typeof d==='object'?d.instances_summary:null;if(!inst||typeof inst!=='object')return'';const total=Number(sum?.total);if(!Number.isFinite(total)||total<=1)return'';const lines=[Number.isFinite(Number(sum?.ok))?`Profiles: ${Number(sum.ok)}/${total} connected`:`Profiles: ${total}`],used=Array.isArray(sum?.used)?sum.used:[];if(used.length){const labs=used.slice(0,4).map(pretty);lines.push(`Used: ${labs.join(', ')}${used.length>4?'…':''}`)}const entries=Object.entries(inst).slice(0,6).map(([id,v])=>`${pretty(id)}=${!!(v&&typeof v==='object'?v.connected:v)?'OK':'NO'}`);if(entries.length)lines.push(entries.join(' · '));const rep=txt(sum?.rep);if(rep&&rep.toLowerCase()!=='default')lines.push(`Rep: ${rep}`);return lines.join('\n')},usageDetail=d=>{const hint=txt(d?.usage_hint).replace(/\s*\+\s*/g,' and ');if(hint)return hint;const usedBy=Array.isArray(d?.used_by)?d.used_by:[];return usedBy.length?`Used by: ${usedBy.map(x=>txt(x).toLowerCase()==='pair'?'Sync':'Watcher').join(' and ')}`:''};function providerMeta(K,d){switch(up(K)){case'PLEX':{const vip=!!(d.plexpass||d.subscription?.plan);return{vip,detail:vip?`Plex Pass - ${d.subscription?.plan||'Active'}`:''}}case'TRAKT':{const vip=!!d.vip,wl=d?.limits?.watchlist||{},col=d?.limits?.collection||{},parts=[vip?'VIP status':'Free account'],add=(label,obj)=>{const used=Number(obj.used),max=Number(obj.item_count);if(Number.isFinite(used)&&Number.isFinite(max)&&max>0)parts.push(`${label}: ${used}/${max}`)};add('Watchlist',wl);add('Collection',col);if(d?.last_limit_error?.feature&&d?.last_limit_error?.ts)parts.push(`Last limit: ${d.last_limit_error.feature} @ ${d.last_limit_error.ts}`);return{vip,detail:parts.join(' · ')}}case'EMBY':return{vip:!!d.premiere,detail:d.premiere?'Premiere — Active':''};case'MDBLIST':{const vip=!!d.vip,lim=d?.limits||{},used=Number(lim.api_requests_count),max=Number(lim.api_requests),pat=txt(d.patron_status);return{vip,detail:`API requests: ${Number.isFinite(used)?used.toLocaleString():'-'}/${Number.isFinite(max)?max.toLocaleString():'-'}${pat?` - Status: ${pat}`:''}`}}case'ANILIST':{const nm=d?.user?.name||d?.user?.username||d?.user?.id;return{vip:false,detail:nm?`User: ${nm}`:''}}default:return{vip:false,detail:''}}}const makeConn=({name,connected,vip,detail,key})=>{const wrap=document.createElement('div'),pill=document.createElement('div');wrap.className='conn-item';pill.className=`conn-pill ${connected?'ok':'no'}${vip?' has-vip':''}`;if(key)pill.dataset.prov=up(key||name);pill.role='status';pill.ariaLabel=`${name} ${connected?'connected':'disconnected'}`;if(detail)pill.title=detail;pill.innerHTML=`<div class="conn-brand"><span class="conn-logo"></span>${vip?`<span class="conn-slot">${CROWN}</span>`:''}</div><span class="conn-text"></span><span class="dot ${connected?'ok':'no'}" aria-hidden="true"></span>`;pill.querySelector('.conn-text').textContent=name;wrap.appendChild(pill);return wrap};function render(payload){const host=$('conn-badges'),btn=$('btn-status-refresh');if(!host)return;host.classList.add('vip-badges');if(btn&&host.contains(btn))host.removeChild(btn);host.querySelectorAll('.conn-item').forEach(n=>n.remove());const providers=payload?.providers||{},keys=Object.keys(providers).filter(k=>isProviderConfigured(k,cfg||{})).sort(),none=!keys.length;host.classList.toggle('hidden',none);if(none){const hdr=document.querySelector('.cw-main-card-head-actions')||document.querySelector('.ops-header');if(btn&&hdr)hdr.appendChild(btn);return}keys.map(K=>{const d=providers[K]||{},name=LABELS[K]||titleCase(K),connected=!!d.connected,meta=providerMeta(K,d),detail=connected?[instancesDetail(d),meta.detail,usageDetail(d)].filter(Boolean).join('\n'):(d.reason||`${name} not connected`),el=makeConn({name,connected,vip:meta.vip,detail,key:K});el.style.margin='0';return el}).forEach(el=>host.appendChild(el))}async function fetchAndRender(e,opts){e?.preventDefault?.();const btn=e?.currentTarget||$('btn-status-refresh');if(!btn||btn.dataset.busy==='1')return;btn.dataset.busy='1';btn.classList.remove('spinning');void btn.offsetWidth;btn.classList.add('spinning');btn.setAttribute('aria-busy','true');btn.disabled=true;const minSpin=new Promise(r=>setTimeout(r,600)),ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),4500);try{await getConfig(true);refreshAuthDots(false).catch(()=>{});const r=await fetch(`/api/status${opts?.fresh===true?'?fresh=1':''}`,{cache:'no-store',signal:ctl.signal}),d=r.ok?await r.json():null;render(d?.providers?d:{providers:{}})}catch(err){console.error('Status refresh failed:',err);render({providers:{}})}finally{clearTimeout(t);await minSpin;btn.classList.remove('spinning');btn.removeAttribute('aria-busy');btn.disabled=false;delete btn.dataset.busy}}window.manualRefreshStatus=e=>fetchAndRender(e,{fresh:true});function init(){getConfig().catch(()=>{});const btn=$('btn-status-refresh');if(btn&&btn.dataset.boundClick!=='1'){btn.dataset.boundClick='1';btn.addEventListener('click',window.manualRefreshStatus)}observe('auth-providers','auth',200,()=>refreshAuthDots(false).catch(()=>{}),{childList:true,subtree:false});let tries=0;(function retry(){refreshAuthDots(false).then(ok=>ok||++tries>=50||setTimeout(retry,200)).catch(()=>++tries<50&&setTimeout(retry,200))})();fetchAndRender(null,{fresh:false})}document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init,{once:true}):init()})();</script>
 
-<script>
-(() => {
-  const paneSel = '#page-settings .cw-settings-pane';
-  const navSel = '#cw-settings-nav .cw-settings-nav-btn';
+<script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),visible=()=>{if(!page)return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
 
-  function apply(pane){
-    const name = String(pane || 'overview').trim().toLowerCase();
-    let found = false;
-    document.querySelectorAll(paneSel).forEach(node => {
-      const on = String(node.dataset.pane || '').toLowerCase() === name;
-      node.classList.toggle('active', on);
-      if (on) found = true;
-    });
-    if (!found && name !== 'overview') return apply('overview');
-
-    document.querySelectorAll(navSel).forEach(btn => {
-      const on = String(btn.dataset.pane || '').toLowerCase() === name;
-      btn.classList.toggle('active', on);
-      btn.setAttribute('aria-current', on ? 'page' : 'false');
-    });
-    window.__cwSettingsPane = name;
-    document.dispatchEvent(new CustomEvent('cw-settings-pane-changed', { detail: { pane: name } }));
-  }
-
-  window.cwSettingsSelect = function(pane){
-    apply(pane);
-    const main = document.getElementById('cw-settings-left');
-    if (main && window.innerWidth < 1200) main.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  document.addEventListener('DOMContentLoaded', () => apply(window.__cwSettingsPane || 'overview'), { once:true });
-  document.addEventListener('tab-changed', (e) => {
-    if (e?.detail?.id !== 'settings') return;
-    setTimeout(() => apply(window.__cwSettingsPane || 'overview'), 0);
-  });
-})();
-</script>
-
-<script>
-(() => {
-  window.cwProvidersJump = function(sectionId){
-    window.cwSettingsSelect?.('providers');
-    setTimeout(() => {
-      window.openSection?.(sectionId);
-      const sec = document.getElementById(sectionId);
-      sec?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 0);
-  };
-})();
-</script>
-
-<script>
-(()=>{const CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>';
-let __cfg=null;
-let __cfgLastGood=null;
-
-async function getConfig(force=false){
-  if(__cfg && !force) return __cfg;
-
-  const prev = __cfgLastGood || __cfg;
-  try{
-    const r = await fetch('/api/config?ts=' + Date.now(), { cache: 'no-store' });
-
-    if(r && r.ok){
-      const j = await r.json();
-      __cfg = (j && typeof j === 'object') ? j : {};
-      __cfgLastGood = __cfg;
-      return __cfg;
-    }
-
-    // On auth expiry / transient errors, keep last known-good config so icons don't flicker off.
-    if(prev){
-      __cfg = prev;
-      return __cfg;
-    }
-  }catch{
-    if(prev){
-      __cfg = prev;
-      return __cfg;
-    }
-  }
-
-  __cfg = {};
-  return __cfg;
-}
-
-function invalidateConfigCache(){
-  __cfg=null;
-}
-
-function isProviderConfigured(key,cfg){
-  const k=(key||'').toUpperCase(), c=cfg||__cfg||{};
-  switch(k){
-    case 'PLEX':     return !!(c?.plex?.account_token);
-    case 'TRAKT':    return !!(c?.trakt?.access_token || c?.auth?.trakt?.access_token);
-    case 'SIMKL':    return !!(c?.simkl?.access_token);
-    case 'ANILIST':  return !!(c?.anilist?.access_token || c?.auth?.anilist?.access_token);
-    case 'JELLYFIN': return !!(c?.jellyfin?.access_token);
-    case 'EMBY':     return !!(c?.emby?.access_token || c?.auth?.emby?.access_token); 
-    case 'MDBLIST':  return !!(c?.mdblist?.api_key);
-    case 'TMDB':{
-      // TMDb Sync auth (not Metadata TMDb). /api/config may redact secrets; account_id is a safe configured hint.
-      const tm = c?.tmdb_sync || c?.auth?.tmdb_sync || {};
-      return !!(tm?.account_id || tm?.session_id);
-    }
-    case 'TAUTULLI': return !!((c?.tautulli?.server_url || c?.auth?.tautulli?.server_url) && (c?.tautulli?.api_key || c?.auth?.tautulli?.api_key));
-    default: return false;
-  }
-}
-
-function refreshAuthHeaderIcons(cfg){
-  const host = document.getElementById("auth-providers-icons");
-  if(!host) return;
-  const imgs = host.querySelectorAll("img[data-prov]");
-  imgs.forEach(img => {
-    const key = String(img.dataset.prov || "").toUpperCase();
-    const on = isProviderConfigured(key, cfg);
-    img.style.display = on ? "inline-block" : "none";
-  });
-}
-function _cwScrobNorm(v){
-  const s=String(v||'').trim().toUpperCase();
-  if(!s) return '';
-  if(s==='MDB' || s==='MDB_LIST') return 'MDBLIST';
-  return s;
-}
-
-
-
-// Auth provider configured dots
-function ensureAuthDot(secId, on){
-  const sec = document.getElementById(secId);
-  if(!sec) return false;
-
-  const head = sec.querySelector(".head") || sec.firstElementChild;
-  if(!head) return false;
-
-  // ensure flex
-  const ds = getComputedStyle(head).display;
-  if(ds !== "flex"){
-    head.style.display = "flex";
-    head.style.alignItems = "center";
-  }
-
-  let dot = head.querySelector(".auth-dot");
-  if(!dot){
-    dot = document.createElement("span");
-    dot.className = "auth-dot";
-    head.appendChild(dot); 
-  }
-
-  dot.classList.toggle("on", !!on);
-  dot.title = on ? "Configured" : "Not configured";
-  dot.setAttribute("aria-label", dot.title);
-  return true;
-}
-
-async function refreshAuthDots(force=false){
-  const cfg = await getConfig(force);
-  refreshAuthHeaderIcons(cfg);
-  const map = [
-    ["sec-plex",     "PLEX"],
-    ["sec-emby",     "EMBY"],
-    ["sec-jellyfin", "JELLYFIN"],
-    ["sec-trakt",    "TRAKT"],
-    ["sec-simkl",    "SIMKL"],
-    ["sec-anilist",  "ANILIST"],
-    ["sec-mdblist",  "MDBLIST"],
-    ["sec-tmdb-sync","TMDB"],
-    ["sec-tautulli", "TAUTULLI"],
-  ];
-
-  let any = false;
-  map.forEach(([id,key]) => {
-    any = ensureAuthDot(id, isProviderConfigured(key, cfg)) || any;
-  });
-  return any;
-}
-window.refreshAuthDots = refreshAuthDots;
-
-
-let __authMo = null;
-
-function watchAuthMount(){
-  const host = document.getElementById("auth-providers");
-  if (!host) return;
-
-  refreshAuthDots(true).catch(()=>{});
-
-  if (__authMo) return;
-  let t = 0;
-  const kick = () => {
-    if (t) return;
-    t = setTimeout(() => {
-      t = 0;
-      refreshAuthDots(false).catch(()=>{});
-    }, 200);
-  };
-
-  __authMo = new MutationObserver(() => kick());
-  __authMo.observe(host, { childList: true, subtree: false });
-}
-
-document.addEventListener("settings-collect", () => refreshAuthDots(true), true);
-document.addEventListener("tab-changed", () => refreshAuthDots(false), true);
-
-function syncMetadataProviderDot(){
-  const chip = document.getElementById("hub_tmdb_key");
-  const dot = document.getElementById("meta-tmdb-dot");
-  const tile = dot?.closest?.(".cw-hub-tile.tmdb");
-  if(!chip || !dot || !tile) return false;
-
-  const cfgKey = String(__cfg?.tmdb?.api_key || '').trim();
-  const cfgMasked = cfgKey === "*****" || /^[•]+$/.test(cfgKey);
-  const cfgHasKey = cfgKey.length > 0 || cfgMasked;
-
-  const keyEl = document.getElementById("tmdb_api_key");
-  let uiHasKey = false;
-  let uiTouched = false;
-  if(keyEl){
-    const v = String(keyEl.value || '').trim();
-    uiTouched = keyEl.dataset?.touched === "1";
-    const vMasked = v === "*****" || /^[•]+$/.test(v);
-    const dsMasked = keyEl.dataset?.masked === "1";
-    uiHasKey = v.length > 0 || vMasked || dsMasked;
-    if(uiTouched) uiHasKey = v.length > 0 || vMasked;
-  }
-
-  const raw = String(chip.textContent || '').trim().toLowerCase();
-  const chipHasKey = /set/.test(raw) && !/missing|not set|unset|empty|—/.test(raw);
-  const on = uiHasKey || (!uiTouched && (cfgHasKey || chipHasKey));
-
-  dot.classList.toggle("on", on);
-  dot.title = on ? "Configured" : "Not configured";
-  dot.setAttribute("aria-label", dot.title);
-  tile.classList.toggle("is-configured", on);
-  return true;
-}
-window.syncMetadataProviderDot = syncMetadataProviderDot;
-
-let __metaTmdbMo = null;
-function watchMetadataProviderTile(){
-  const chip = document.getElementById("hub_tmdb_key");
-  if(!chip){
-    setTimeout(watchMetadataProviderTile, 150);
-    return;
-  }
-  syncMetadataProviderDot();
-  if(__metaTmdbMo) return;
-  __metaTmdbMo = new MutationObserver(() => syncMetadataProviderDot());
-  __metaTmdbMo.observe(chip, { childList:true, characterData:true, subtree:true });
-}
-
-document.addEventListener("settings-collect", () => syncMetadataProviderDot(), true);
-document.addEventListener("tab-changed", () => syncMetadataProviderDot(), true);
-document.addEventListener("DOMContentLoaded", watchMetadataProviderTile, { once:true });
-
-// Connection pill
-function makeConn({ name, connected, vip, detail, key }) {
-  const wrap = document.createElement('div');
-  wrap.className = 'conn-item';
-
-  const pill = document.createElement('div');
-  pill.className = `conn-pill ${connected ? 'ok' : 'no'}${vip ? ' has-vip' : ''}`;
-
-  const prov = String(key || name || '').toUpperCase();
-  if (prov) pill.dataset.prov = prov;
-
-  pill.role = 'status';
-  pill.ariaLabel = `${name} ${connected ? 'connected' : 'disconnected'}`;
-  if (detail) pill.title = detail;
-
-  const brand = document.createElement('div');
-  brand.className = 'conn-brand';
-
-  const logo = document.createElement('span');
-  logo.className = 'conn-logo';
-  brand.appendChild(logo);
-
-  if (vip) {
-    const crown = document.createElement('span');
-    crown.className = 'conn-slot';
-    crown.innerHTML = CROWN;
-    brand.appendChild(crown);
-  }
-
-  const label = document.createElement('span');
-  label.className = 'conn-text';
-  label.textContent = name;
-
-  const dot = document.createElement('span');
-  dot.className = `dot ${connected ? 'ok' : 'no'}`;
-  dot.setAttribute('aria-hidden', 'true');
-
-  pill.appendChild(brand);
-  pill.appendChild(label);
-  pill.appendChild(dot);
-
-  wrap.appendChild(pill);
-  return wrap;
-}
-
-function titleCase(k){k=String(k||'');return k? (k[0]+k.slice(1).toLowerCase()) : k;}
-
-// refresh button fixup
-function placeRefreshTopRight(){
-  const card=document.getElementById('ops-card')||document.querySelector('.ops-header');
-  const btn=document.getElementById('btn-status-refresh');
-  if(!card||!btn) return;
-  if(btn.parentElement!==card) card.appendChild(btn);
-  btn.classList.add('sync-ctrl-fixed');
-  btn.onclick=null;
-  btn.removeEventListener('click',fetchAndRender,true);
-  btn.addEventListener('click',fetchAndRender,true);
-}
-window.putRefreshBeforeTrakt=placeRefreshTopRight;
-document.addEventListener('DOMContentLoaded',placeRefreshTopRight,{once:true});
-(function patchFetchAndRender(){
-  const orig=window.fetchAndRender;
-  if(typeof orig==='function'){
-    window.fetchAndRender=async function(...args){ try{ return await orig.apply(this,args);} finally{placeRefreshTopRight();} };
-  }else{
-    const t=setInterval(()=>{ if(typeof window.fetchAndRender==='function'){ clearInterval(t); patchFetchAndRender(); } },50);
-  }
-})();
-
-// Instance tooltip from /api/status providers payload
-function instancesDetail(d){
-  const inst = (d && typeof d === 'object') ? d.instances : null;
-  const sum  = (d && typeof d === 'object') ? d.instances_summary : null;
-  if (!inst || typeof inst !== 'object') return '';
-
-  const total = Number(sum && sum.total);
-  if (!Number.isFinite(total) || total <= 1) return '';
-
-  const ok = Number(sum && sum.ok);
-  const used = Array.isArray(sum && sum.used) ? sum.used : [];
-
-  const lines = [];
-
-  if (Number.isFinite(ok)) lines.push(`Profiles: ${ok}/${total} connected`);
-  else lines.push(`Profiles: ${total}`);
-
-  if (used.length) {
-    const labs = used.slice(0, 4).map(id => (String(id).toLowerCase() === 'default' ? 'Default' : String(id)));
-    lines.push(`Used: ${labs.join(', ')}${used.length > 4 ? '…' : ''}`);
-  }
-
-  const entries = Object.entries(inst).slice(0, 6).map(([id, v]) => {
-    const label = (String(id).toLowerCase() === 'default' ? 'Default' : String(id));
-    const c = !!(v && typeof v === 'object' ? v.connected : v);
-    return `${label}=${c ? 'OK' : 'NO'}`;
-  });
-  if (entries.length) lines.push(entries.join(' · '));
-
-  const rep = (sum && sum.rep) ? String(sum.rep) : '';
-  if (rep && rep.toLowerCase() !== 'default') lines.push(`Rep: ${rep}`);
-
-  return lines.join('\n');
-}
-
-// Render status
-function render(payload){
-  const host = document.getElementById('conn-badges');
-  if (!host) return;
-
-  host.classList.add('vip-badges');
-
-  // layout: max 6 per row
-  const MAX_PER_ROW = 6;
-  host.style.display = 'grid';
-  host.style.gridTemplateColumns = `repeat(${MAX_PER_ROW}, max-content)`;
-  host.style.columnGap = '8px';
-  host.style.rowGap = '8px';
-
-  const btn = document.getElementById('btn-status-refresh');
-  if (btn && host.contains(btn)) host.removeChild(btn);
-  host.querySelectorAll('.conn-item').forEach(n => n.remove());
-
-  const P   = payload?.providers || {};
-  const cfg = __cfg || {};
-  const keys = Object.keys(P).filter(k => isProviderConfigured(k, cfg)).sort();
-
-  const none = keys.length === 0;
-  host.classList.toggle('hidden', none);
-  if (none) {
-    const hdr = document.querySelector('.ops-header');
-    if (btn && hdr) hdr.appendChild(btn);
-    return;
-  }
-
-  const items = [];
-
-  keys.forEach(K => {
-    const d = P[K] || {};
-    const LABELS = {
-      PLEX: 'Plex',
-      TRAKT: 'Trakt',
-      SIMKL: 'SIMKL',
-      ANILIST: 'AniList',
-      JELLYFIN: 'Jellyfin',
-      EMBY: 'Emby',
-      MDBLIST: 'MDBlist',
-      TMDB: 'TMDb',
-      TAUTULLI: 'Tautulli',
-    };
-    const name = LABELS[K] || titleCase(K);
-    const connected = !!d.connected;
-    let vip = false;
-    let detail = '';
-    const instDetail = instancesDetail(d);
-
-    if (!connected) {
-      detail = d.reason || `${name} not connected`;
-    } else {
-      if (K.toUpperCase() === 'PLEX') {
-        vip = !!(d.plexpass || d.subscription?.plan);
-        if (vip) detail = `Plex Pass - ${d.subscription?.plan || 'Active'}`;
-      } else if (K.toUpperCase() === 'TRAKT') {
-        vip = !!d.vip;
-
-        const lim = (d && typeof d === 'object' && d.limits && typeof d.limits === 'object') ? d.limits : {};
-        const wl  = lim.watchlist  || {};
-        const col = lim.collection || {};
-
-        const parts = [];
-
-        if (vip) {
-          parts.push('VIP status');
-        } else {
-          parts.push('Free account');
-        }
-
-        const wlUsed = Number(wl.used);
-        const wlMax  = Number(wl.item_count);
-        if (Number.isFinite(wlUsed) && Number.isFinite(wlMax) && wlMax > 0) {
-          parts.push(`Watchlist: ${wlUsed}/${wlMax}`);
-        }
-
-        const colUsed = Number(col.used);
-        const colMax  = Number(col.item_count);
-        if (Number.isFinite(colUsed) && Number.isFinite(colMax) && colMax > 0) {
-          parts.push(`Collection: ${colUsed}/${colMax}`);
-        }
-
-        const last = d.last_limit_error;
-        if (last && last.feature && last.ts) {
-          parts.push(`Last limit: ${last.feature} @ ${last.ts}`);
-        }
-
-        detail = parts.join(' · ');
-      } else if (K.toUpperCase() === 'EMBY') {
-        vip = !!d.premiere;
-        if (vip) detail = 'Premiere — Active';
-      } else if (K.toUpperCase() === 'MDBLIST') {
-        vip = !!d.vip;
-        const lim = (d && typeof d === 'object' && d.limits && typeof d.limits === 'object') ? d.limits : {};
-        const used = Number(lim.api_requests_count);
-        const max  = Number(lim.api_requests);
-        const usedStr = Number.isFinite(used) ? used.toLocaleString() : '-';
-        const maxStr  = Number.isFinite(max)  ? max.toLocaleString() : '-';
-        const pat = d.patron_status || '';
-        detail = `API requests: ${usedStr}/${maxStr}` + (pat ? ` - Status: ${pat}` : '');
-      } else if (K.toUpperCase() === 'ANILIST') {
-        const u = (d.user && typeof d.user === 'object') ? d.user : {};
-        const nm = u.name || u.username || u.id;
-        if (nm) detail = `User: ${nm}`;
-      }
-    }
-
-
-    if (instDetail) detail = detail ? (instDetail + '\n' + detail) : instDetail;
-
-    // Usage hint (Sync/Watcher) from /api/status providers payload
-    const usageHintRaw = (d && typeof d === 'object') ? String(d.usage_hint || '') : '';
-    const usageHint = usageHintRaw ? usageHintRaw.replace(/\s*\+\s*/g, ' and ') : '';
-    let usage = usageHint;
-    if (!usage && d && typeof d === 'object') {
-      const usedBy = Array.isArray(d.used_by) ? d.used_by : [];
-      if (usedBy.length) {
-        const pretty = usedBy.map(x => (String(x).toLowerCase() === 'pair') ? 'Sync' : 'Watcher');
-        usage = `Used by: ${pretty.join(' and ')}`;
-      }
-    }
-    if (usage) detail = detail ? (detail + '\n' + usage) : usage;
-
-    const el = makeConn({ name, connected, vip, detail, key: K });
-    el.style.margin = '0';
-    items.push(el);
-  });
-
-  for (let i = 0; i < items.length; i += MAX_PER_ROW) {
-    const row = items.slice(i, i + MAX_PER_ROW);
-    const rowIndex = i / MAX_PER_ROW;
-
-    if (rowIndex > 0 && row.length < MAX_PER_ROW) {
-      const pad = MAX_PER_ROW - row.length;
-      for (let p = 0; p < pad; p++) {
-        const spacer = document.createElement('div');
-        spacer.className = 'conn-item conn-spacer';
-        spacer.style.visibility = 'hidden';
-        spacer.style.margin = '0';
-        spacer.style.pointerEvents = 'none';
-        host.appendChild(spacer);
-      }
-    }
-
-    row.forEach(el => host.appendChild(el));
-  }
-
-  putRefreshBeforeTrakt();
-}
-
-async function fetchAndRender(e, opts){
-  e?.preventDefault?.();
-
-  const btn = e?.currentTarget || document.getElementById('btn-status-refresh');
-  if (!btn) return;
-
-  if (btn.dataset.busy === '1') return;
-
-  const fresh = opts?.fresh === true;
-
-  btn.dataset.busy='1';
-  btn.classList.add('spinning');
-  btn.setAttribute('aria-busy','true');
-  btn.disabled=true;
-
-  const minSpin = new Promise(r => setTimeout(r, 600));
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), 4500);
-
-  try {
-    await getConfig(true);
-    refreshAuthDots(false).catch(()=>{});
-
-    const url = fresh ? '/api/status?fresh=1' : '/api/status';
-    const r = await fetch(url, { cache:'no-store', signal: ctl.signal });
-
-    const d = r.ok ? await r.json() : null;
-    render(d?.providers ? d : { providers:{} });
-  } catch (err) {
-    console.error('Status refresh failed:', err);
-    render({ providers:{} });
-  } finally {
-    clearTimeout(t);
-    await minSpin;
-    btn.classList.remove('spinning');
-    btn.removeAttribute('aria-busy');
-    btn.disabled=false;
-    delete btn.dataset.busy;
-    placeRefreshTopRight?.();
-  }
-}
-
-window.manualRefreshStatus = (e) => fetchAndRender(e, { fresh: true });
-
-
-async function init(){
-  if(typeof putRefreshBeforeTrakt==='function') putRefreshBeforeTrakt();
-  if(typeof getConfig==='function') await getConfig();
-
-  watchAuthMount();
-  let tries = 0;
-  const retryDots = async () => {
-    try {
-      if (await refreshAuthDots(false)) return;
-    } catch {}
-    if (++tries < 50) setTimeout(retryDots, 200);
-  };
-  retryDots();
-
-  fetchAndRender(null, { fresh: false });
-}
-
-document.readyState==='loading'
-  ? document.addEventListener('DOMContentLoaded',init,{once:true})
-  : init();
-})();
-</script>
-
-<script>
-// Sticky Save
-(() => {
-  const fab   = document.getElementById('save-fab');
-  const frost = document.getElementById('save-frost');
-  const page  = document.getElementById('page-settings');
-  const tab   = document.getElementById('tab-settings');
-
-  function isSettingsVisible(){
-    if (!page) return false;
-    const cs = getComputedStyle(page);
-    return !page.classList.contains('hidden') && cs.display !== 'none' && cs.visibility !== 'hidden';
-  }
-
-  function update(){
-    const show = isSettingsVisible();
-    if (fab)   fab.classList.toggle('hidden', !show);
-    if (frost) frost.classList.toggle('hidden', !show);
-  }
-
-  function bindObservers(){
-    if (page){
-      const mo = new MutationObserver(update);
-      mo.observe(page, { attributes: true, attributeFilter: ['class','style'] });
-    }
-    if (tab){
-      const mo2 = new MutationObserver(update);
-      mo2.observe(tab, { attributes: true, attributeFilter: ['class'] });
-    }
-  }
-
-  document.addEventListener('DOMContentLoaded', () => { bindObservers(); update(); }, { once:true });
-  document.addEventListener('tab-changed', update);
-  window.addEventListener('hashchange', update);
-  document.querySelector('.tabs')?.addEventListener('click', update, true);
-})();
-</script>
-
-<script>
-
-// Save settings wrapper
-(() => {
-  const install = () => {
-    const orig = window.saveSettings;
-    if (typeof orig !== 'function' || orig._wrapped) return;
-
-    async function wrapped(btnOrEvent){
-      const btn = btnOrEvent instanceof HTMLElement ? btnOrEvent : document.getElementById('save-fab-btn');
-      if (btn && !btn.dataset.defaultHtml) btn.dataset.defaultHtml = btn.innerHTML;
-      if (btn) btn.disabled = true;
-
-      try {
-        const ret = orig.apply(this, arguments);
-        await (ret && typeof ret.then === 'function' ? ret : Promise.resolve());
-        window.invalidateConfigCache?.();
-        window.manualRefreshStatus?.();
-
-        if (btn){
-          btn.innerHTML = 'Settings saved ✓';
-          setTimeout(() => {
-            btn.innerHTML = btn.dataset.defaultHtml || '<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';
-            btn.disabled = false;
-          }, 1600);
-        }
-        return ret;
-      } catch (e) {
-        if (btn){
-          btn.innerHTML = 'Save failed';
-          setTimeout(() => {
-            btn.innerHTML = btn.dataset.defaultHtml || '<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';
-            btn.disabled = false;
-          }, 2000);
-        }
-        throw e;
-      }
-    }
-
-    wrapped._wrapped = true;
-    window.saveSettings = wrapped;
-  };
-
-  if (document.readyState === 'complete') {
-    install();
-  } else {
-    window.addEventListener('load', install, { once:true });
-  }
-})();
-</script>
-<script>
-(function () {
-  const origShowTab = window.showTab;
-
-  function setVisible(id, show) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.toggle("hidden", !show);
-  }
-
-  function setActive(id, on) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.classList.toggle("active", !!on);
-  }
-
-  window.showTab = function (name) {
-    if (typeof origShowTab === "function") {
-      try { origShowTab(name); } catch (e) {}
-    }
-
-    const tab = String(name || "main");
-    const isMain      = tab === "main";
-    const isWatchlist = tab === "watchlist";
-    const isEditor    = tab === "editor";
-    const isSettings  = tab === "settings";
-
-    // Cards
-    setVisible("ops-card",          isMain);
-    setVisible("stats-card",        isMain);
-    setVisible("placeholder-card",  isMain);
-    setVisible("page-watchlist",    isWatchlist);
-    setVisible("page-editor",       isEditor);
-    setVisible("page-settings",     isSettings);
-
-    // Tabs
-    setActive("tab-main",      isMain);
-    setActive("tab-watchlist", isWatchlist);
-    setActive("tab-editor",    isEditor);
-    setActive("tab-settings",  isSettings);
-
-    try {
-      document.dispatchEvent(new CustomEvent("tab-changed", { detail: { tab } }));
-    } catch (e) {}
-  };
-})();
-</script>
+<script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved ✓';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
+<script>(()=>{const origShowTab=window.showTab,toggle=(id,on)=>document.getElementById(id)?.classList.toggle('hidden',!on),active=(id,on)=>document.getElementById(id)?.classList.toggle('active',!!on);window.showTab=name=>{if(typeof origShowTab==='function')try{origShowTab(name)}catch{}const tab=String(name||'main'),flags={main:tab==='main',watchlist:tab==='watchlist',snapshots:tab==='snapshots',editor:tab==='editor',settings:tab==='settings'};toggle('ops-card',flags.main);toggle('stats-card',flags.main);toggle('placeholder-card',flags.main);toggle('page-watchlist',flags.watchlist);toggle('page-snapshots',flags.snapshots);toggle('page-editor',flags.editor);toggle('page-settings',flags.settings);Object.entries(flags).forEach(([k,on])=>active(`tab-${k}`,on));try{document.dispatchEvent(new CustomEvent('tab-changed',{detail:{tab}}))}catch{}}})();</script>
 </body></html>
 
 """
 
 def get_index_html(include_gitbook_embed: bool = True, ui_show_ai: bool = True) -> str:
-    html = _get_index_html_static()
-
-    needle = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
-    if needle in html and "__cwUiShowAI" not in html:
-        flag = "true" if ui_show_ai else "false"
-        html = html.replace(needle, f"<script>window.__cwUiShowAI={flag};</script>\n" + needle, 1)
-
+    html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block())
+    core_script = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
+    if core_script in html and "__cwUiShowAI" not in html:
+        html = html.replace(core_script, f'<script>window.__cwUiShowAI={"true" if ui_show_ai else "false"};</script>\n{core_script}', 1)
     if include_gitbook_embed and "gitbook/embed/script.js" not in html:
-        if needle in html:
-            html = html.replace(needle, GITBOOK_EMBED_BLOCK + "\n\n" + needle, 1)
-        else:
-            html = html + "\n\n" + GITBOOK_EMBED_BLOCK + "\n"
-
+        html = html.replace(core_script, f"{GITBOOK_EMBED_BLOCK}\n\n{core_script}", 1) if core_script in html else f"{html}\n\n{GITBOOK_EMBED_BLOCK}\n"
     return html.replace("__CW_VERSION__", CURRENT_VERSION)
