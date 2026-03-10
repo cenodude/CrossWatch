@@ -21,6 +21,7 @@ export default {
     if (!hostEl) return;
 
     const ver = _norm(props.current_version || window.__CW_VERSION__ || '0.0.0');
+    const crossWatchLogo = window.CW?.ProviderMeta?.logoPath?.('crosswatch') || '/assets/img/CROSSWATCH.svg';
 
     _openSettings();
 
@@ -109,7 +110,7 @@ export default {
     <div id="setup-host" role="dialog" aria-label="CrossWatch first run">
       <div class="head">
         <div class="logoWrap" aria-hidden="true">
-          <img class="logo" src="/assets/img/CROSSWATCH.svg" alt="" />
+          <img class="logo" src="${crossWatchLogo}" alt="" />
         </div>
         <div>
           <div class="title">Welcome to CrossWatch</div>
