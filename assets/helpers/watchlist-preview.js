@@ -75,6 +75,8 @@
     return `/art/tmdb/${isTV(item.type || item.entity || item.media_type) ? "tv" : "movie"}/${tmdb}?size=${encodeURIComponent(size)}&cb=${window._lastSyncEpoch || 0}`;
   }
 
+  const providerLogoPath = name => window.CW?.ProviderMeta?.logoPath?.(name) || "";
+
   function pillFor(status) {
     switch (String(status || "").toLowerCase()) {
       case "deleted": return { text: "DELETED", cls: "p-del" };
@@ -88,6 +90,36 @@
       case "cw_only": return { text: "CW", cls: "p-sk" };
       default: return { text: "—", cls: "p-sk" };
     }
+  }
+
+  function providersForItem(item) {
+    const direct = Array.isArray(item?.sources)
+      ? item.sources.map(v => String(v || "").toUpperCase()).filter(Boolean)
+      : [];
+    if (direct.length) return [...new Set(direct)];
+
+    const sbp = item?.sources_by_provider || item?.sourcesByProvider || {};
+    const byProvider = Object.keys(sbp || {}).map(v => String(v || "").toUpperCase()).filter(Boolean);
+    if (byProvider.length) return [...new Set(byProvider)];
+
+    switch (String(item?.status || "").toLowerCase()) {
+      case "plex_only": return ["PLEX"];
+      case "simkl_only": return ["SIMKL"];
+      case "trakt_only": return ["TRAKT"];
+      case "anilist_only": return ["ANILIST"];
+      case "jellyfin_only": return ["JELLYFIN"];
+      case "crosswatch_only":
+      case "cw_only": return ["CROSSWATCH"];
+      default: return [];
+    }
+  }
+
+  function providerIconMarkup(name) {
+    const src = providerLogoPath(name);
+    const label = String(name || "").toUpperCase();
+    return src
+      ? `<span title="${label}" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0 6px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:14px;max-width:16px;object-fit:contain;filter:brightness(1.02)"></span>`
+      : `<span title="${label}" style="display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);font-size:10px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${label}</span>`;
   }
 
   async function resolveOverview(type, tmdb) {
@@ -185,8 +217,16 @@
         link.appendChild(img);
 
         const overlay = document.createElement("div");
+        const currentProviders = providersForItem(item).slice(0, 3);
+        const synced = String(source).toLowerCase() === "both";
         overlay.className = "ovr";
-        overlay.innerHTML = `<div class="pill ${pill.cls}">${pill.text}</div>`;
+        overlay.style.left = synced ? "8px" : "8px";
+        overlay.style.right = synced ? "8px" : "auto";
+        overlay.style.justifyContent = synced ? "center" : "flex-start";
+        overlay.style.width = synced ? "calc(100% - 16px)" : "auto";
+        overlay.innerHTML = synced
+          ? `<div class="pill ${pill.cls}">${pill.text}</div>`
+          : currentProviders.map(providerIconMarkup).join("");
         link.appendChild(overlay);
 
         const cap = document.createElement("div");
