@@ -40,28 +40,16 @@
   const PROVIDER_ORDER = META.order || [
     "CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"
   ];
-  const PROVIDER_LABELS = META.labels || {
-    CROSSWATCH: "CrossWatch",
-    PLEX: "Plex",
-    SIMKL: "SIMKL",
-    TRAKT: "Trakt",
-    ANILIST: "AniList",
-    TMDB: "TMDB",
-    JELLYFIN: "Jellyfin",
-    EMBY: "Emby",
-    MDBLIST: "MDBList",
-    TAUTULLI: "Tautulli",
-  };
   const STATUS_PROVIDERS = [
-    { key: "PLEX", badgeId: "badge-plex", legacy: ["plex_connected", "plex"], label: "Plex" },
-    { key: "SIMKL", badgeId: "badge-simkl", legacy: ["simkl_connected", "simkl"], label: "SIMKL" },
-    { key: "TRAKT", badgeId: "badge-trakt", legacy: ["trakt_connected", "trakt"], label: "Trakt" },
-    { key: "ANILIST", badgeId: "badge-anilist", legacy: ["anilist_connected", "anilist"], label: "AniList" },
-    { key: "TMDB", badgeId: "badge-tmdb", legacy: ["tmdb_connected", "tmdb"], label: "TMDB" },
-    { key: "JELLYFIN", badgeId: "badge-jellyfin", legacy: ["jellyfin_connected", "jellyfin"], label: "Jellyfin" },
-    { key: "EMBY", badgeId: "badge-emby", legacy: ["emby_connected", "emby"], label: "Emby" },
-    { key: "MDBLIST", badgeId: "badge-mdblist", legacy: ["mdblist_connected", "mdblist"], label: "MDBList" },
-    { key: "TAUTULLI", badgeId: "badge-tautulli", legacy: ["tautulli_connected", "tautulli"], label: "Tautulli" },
+    { key: "PLEX", badgeId: "badge-plex", legacy: ["plex_connected", "plex"] },
+    { key: "SIMKL", badgeId: "badge-simkl", legacy: ["simkl_connected", "simkl"] },
+    { key: "TRAKT", badgeId: "badge-trakt", legacy: ["trakt_connected", "trakt"] },
+    { key: "ANILIST", badgeId: "badge-anilist", legacy: ["anilist_connected", "anilist"] },
+    { key: "TMDB", badgeId: "badge-tmdb", legacy: ["tmdb_connected", "tmdb"] },
+    { key: "JELLYFIN", badgeId: "badge-jellyfin", legacy: ["jellyfin_connected", "jellyfin"] },
+    { key: "EMBY", badgeId: "badge-emby", legacy: ["emby_connected", "emby"] },
+    { key: "MDBLIST", badgeId: "badge-mdblist", legacy: ["mdblist_connected", "mdblist"] },
+    { key: "TAUTULLI", badgeId: "badge-tautulli", legacy: ["tautulli_connected", "tautulli"] },
   ];
   const BADGE_IDS = Object.fromEntries([
     ...STATUS_PROVIDERS.map((p) => [p.key, p.badgeId]),
@@ -341,7 +329,7 @@
   function buildProviderOption(key) {
     const option = document.createElement("option");
     option.value = key;
-    option.textContent = PROVIDER_LABELS[key] || key;
+    option.textContent = providerLabel(key);
     return option;
   }
 
@@ -641,7 +629,7 @@
     const source = providers || {};
     STATUS_PROVIDERS.forEach((def) => {
       const info = pickCase(source, def.key);
-      setBadge(def.badgeId, def.label, info ?? false, stale, def.key, info);
+      setBadge(def.badgeId, providerLabel(def.key), info ?? false, stale, def.key, info);
     });
   }
 
