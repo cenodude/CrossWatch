@@ -1,632 +1,11 @@
+/* assets/js/editor.js */
+/* refactored */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
   const PAGE_SIZE = 50;
   const STORAGE_KEY = "cw-editor-ui";
 
-  const css = `
-.cw-root{display:flex;flex-direction:column;gap:10px}
-.cw-topline{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.cw-title{font-weight:900;font-size:22px;letter-spacing:.01em}
-.cw-sub{opacity:.72;font-size:13px;margin-top:4px;line-height:1.3}
-.cw-wrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px;align-items:flex-start}
-.cw-main{display:flex;flex-direction:column;gap:8px}
-.cw-side{display:flex;flex-direction:column;gap:6px}
-
-.cw-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px}
-.cw-controls .cw-input{flex:1 1 260px;max-width:420px}
-.cw-controls-spacer{flex:1 1 auto}
-.cw-status-text{font-size:12px;opacity:.8}
-.cw-input,.cw-select,.cw-btn{
-  font:inherit;
-    background:#15151c;
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:8px;
-  color:#fff;
-  font-size:13px;
-  padding:8px 10px;
-}
-.cw-input{width:100%}
-.cw-select{min-height:34px}
-.cw-btn{
-  background:#1d1d26;
-  border-color:rgba(255,255,255,.15);
-  cursor:pointer;
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  white-space:nowrap;
-}
-.cw-btn.primary{background:#2154ff;border-color:#2154ff}
-.cw-btn.danger{background:#2a1113;border-color:#57252a}
-.cw-btn-del{
-  padding:3px 6px;
-  font-size:11px;
-  min-width:26px;
-  width:26px;
-  height:26px;
-  justify-content:center;
-  border-radius:10px;
-}
-.cw-btn-del .material-symbol{font-size:14px;line-height:1}
-.cw-side .cw-select,.cw-side .cw-input{width:100%}
-.cw-backup-actions{display:flex;flex-wrap:wrap;gap:6px}
-
-.cw-table-wrap{
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:10px;
-  overflow:auto;
-  max-height:70vh;
-}
-.cw-table{
-  width:100%;
-  border-collapse:separate;
-  border-spacing:0;
-  table-layout:fixed;
-  font-size:12px;
-}
-.cw-table th,.cw-table td{
-  padding:6px 8px;
-  border-bottom:1px solid rgba(255,255,255,.08);
-  white-space:nowrap;
-  text-align:left;
-}
-.cw-table th{
-  position:sticky;
-  top:0;
-  background:#101018;
-  font-weight:600;
-  z-index:1;
-}
-.cw-table tr:last-child td{border-bottom:none}
-.cw-table input{
-  width:100%;
-  background:#111119;
-  border:1px solid rgba(255,255,255,.12);
-  border-radius:6px;
-  padding:3px 5px;
-  font-size:12px;
-  color:#fff;
-}
-.cw-table input:focus{
-  outline:none;
-  border-color:#2154ff;
-  box-shadow:0 0 0 1px rgba(33,84,255,.5);
-}
-.cw-table .cw-key{font-family:monospace;font-size:11px}
-.cw-row-episode{background:rgba(108,92,231,.05)}
-.cw-row-deleted td{opacity:.4;text-decoration:line-through}
-
-.cw-title-cell{display:flex;flex-direction:column;align-items:stretch;gap:4px}
-.cw-title-row{display:flex;align-items:center;gap:4px}
-.cw-title-sub{font-size:12px;opacity:.75;line-height:1.1;padding-left:2px}
-.cw-title-cell input{flex:1 1 auto}
-.cw-title-search-btn{
-  flex:0 0 auto;
-  width:26px;
-  height:26px;
-  border-radius:999px;
-  border:1px solid rgba(148,163,184,.7);
-  background:#020617;
-  color:#e5e7eb;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  cursor:pointer;
-  padding:0;
-  font-size:15px;
-}
-.cw-title-search-btn .material-symbol{font-size:16px}
-/* search popup + results */
-.cw-pop{
-  position:fixed;
-  z-index:10060;
-  background:linear-gradient(180deg,#05060c,#0a0d16);
-  border-radius:16px;
-  border:1px solid rgba(255,255,255,.10);
-  box-shadow:0 22px 60px rgba(0,0,0,.75),inset 0 0 0 1px rgba(255,255,255,.04);
-  padding:10px 12px 12px;
-  color:#e5e7eb;
-
-  width:min(560px,calc(100vw - 28px));
-  max-height:calc(100vh - 120px);
-  overflow:hidden;
-
-  display:flex;
-  flex-direction:column;
-}
-
-.cw-pop-title{
-  font-size:11px;
-  font-weight:600;
-  margin-bottom:4px;
-  letter-spacing:.08em;
-  text-transform:uppercase;
-  opacity:.8;
-}
-.cw-pop-actions{
-  display:flex;
-  justify-content:flex-end;
-  gap:8px;
-  margin-top:8px;
-}
-.cw-pop-btn{
-  border-radius:999px;
-  border:1px solid rgba(148,163,184,.8);
-  background:radial-gradient(circle at 0 0,rgba(15,23,42,.9),rgba(15,23,42,.98));
-  padding:4px 10px;
-  font-size:12px;
-  color:#e5e7eb;
-  cursor:pointer;
-}
-.cw-pop-btn.primary{
-  border-color:#4f46e5;
-  background:linear-gradient(135deg,#4f46e5,#22c1c3);
-  color:#f9fafb;
-  box-shadow:0 0 14px rgba(79,70,229,.7);
-}
-.cw-pop-btn.ghost{
-  background:transparent;
-}
-
-.cw-search-bar{
-  display:grid;
-  grid-template-columns:minmax(0,1fr) 70px 90px;
-  gap:6px;
-  margin-top:2px;
-}
-.cw-search-bar input,
-.cw-search-bar select,
-.cw-pop input[type="date"],
-.cw-pop input[type="time"]{
-  width:100%;
-  background:#020617;
-  border-radius:9px;
-  border:1px solid rgba(129,140,248,.75);
-  color:#e5e7eb;
-  font-size:12px;
-  padding:4px 7px;
-}
-.cw-search-bar input:focus,
-.cw-search-bar select:focus,
-.cw-pop input[type="date"]:focus,
-.cw-pop input[type="time"]:focus{
-  outline:none;
-  border-color:#818cf8;
-  box-shadow:0 0 0 1px rgba(129,140,248,.75);
-}
-
-.cw-search-results{
-  margin-top:6px;
-  border-radius:12px;
-  border:1px solid rgba(255,255,255,.08);
-  background:#05060c;
-  box-shadow:0 18px 50px rgba(0,0,0,.55);
-
-  flex:0 1 auto;
-  max-height:min(360px, calc(100vh - 260px));
-  overflow:auto;
-}
-
-.cw-search-item{
-  width:100%;
-  text-align:left;
-  padding:8px 10px;
-  border:none;
-  border-bottom:1px solid rgba(255,255,255,.06);
-  cursor:pointer;
-  display:flex;
-  align-items:flex-start;
-  gap:10px;
-  background:transparent;
-}
-.cw-search-item:last-child{border-bottom:none}
-.cw-search-item:hover{
-  background:rgba(255,255,255,.03);
-}
-
-.cw-search-poster{
-  flex:0 0 auto;
-  width:40px;
-  height:60px;
-  border-radius:8px;
-  overflow:hidden;
-  background:radial-gradient(circle at 30% 0,rgba(79,70,229,.7),rgba(15,23,42,1));
-  border:1px solid rgba(148,163,184,.6);
-  box-shadow:0 0 0 1px rgba(15,23,42,.9),0 0 10px rgba(79,70,229,.55);
-}
-.cw-search-poster img{
-  width:100%;
-  height:100%;
-  object-fit:cover;
-  display:block;
-}
-.cw-search-poster-placeholder{
-  width:100%;
-  height:100%;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  font-size:9px;
-  letter-spacing:.06em;
-  text-transform:uppercase;
-  opacity:.8;
-  color:#e5e7ff;
-}
-
-.cw-search-content{
-  flex:1 1 auto;
-  min-width:0;
-  display:flex;
-  flex-direction:column;
-  gap:1px;
-}
-
-.cw-search-title-line{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:6px;
-}
-.cw-search-title{
-  font-size:12px;
-  font-weight:600;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  color:#f9fafb;
-}
-.cw-search-tag{
-  flex:0 0 auto;
-  font-size:9px;
-  text-transform:uppercase;
-  padding:2px 7px;
-  border-radius:999px;
-  background:rgba(255,255,255,.08);
-  border:1px solid rgba(255,255,255,.10);
-  color:#e5e7eb;
-  letter-spacing:.06em;
-}
-
-.cw-search-meta{
-  font-size:10px;
-  opacity:.9;
-  color:#cbd5e1;
-  white-space:normal;
-  overflow:visible;
-  text-overflow:clip;
-  overflow-wrap:anywhere;
-}
-
-.cw-search-overview{
-  font-size:10px;
-  opacity:.9;
-  color:#e5e9ff;
-
-  white-space:normal;
-  overflow:hidden;
-  display:-webkit-box;
-  -webkit-line-clamp:2;
-  -webkit-box-orient:vertical;
-  word-break:break-word;
-}
-
-.cw-search-empty{
-  font-size:11px;
-  opacity:.9;
-  color:#e5e7ff;
-  padding:6px 9px;
-}
-.cw-search-status{
-  margin-top:4px;
-  font-size:10px;
-  opacity:.85;
-  color:#e5e7ff;
-}
-
-/* datetime editor */
-.cw-datetime-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:8px;
-  margin-top:6px;
-}
-
-/* rating + type pills */
-.cw-rating-grid{
-  display:grid;
-  grid-template-columns:repeat(5,minmax(0,1fr));
-  gap:6px;
-  margin-top:6px;
-}
-.cw-rating-pill{
-  border-radius:999px;
-  border:1px solid rgba(148,163,184,.7);
-  background:#020617;
-  color:#e5e7eb;
-  font-size:12px;
-  padding:4px 0;
-  text-align:center;
-  cursor:pointer;
-  transition:border-color .15s,background .15s,box-shadow .15s;
-}
-.cw-rating-pill:hover{
-  border-color:#a5b4fc;
-  box-shadow:0 0 12px rgba(129,140,248,.55);
-}
-.cw-rating-pill.active{
-  background:linear-gradient(135deg,#4f46e5,#22c1c3);
-  border-color:#c4b5fd;
-  color:#f9fafb;
-}
-
-.cw-type-grid{
-  display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
-  gap:6px;
-  margin-top:6px;
-}
-.cw-type-pill{
-  border-radius:999px;
-  border:1px solid rgba(148,163,184,.7);
-  background:#020617;
-  color:#e5e7eb;
-  font-size:12px;
-  padding:4px 0;
-  text-align:center;
-  cursor:pointer;
-  transition:border-color .15s,background .15s,box-shadow .15s;
-}
-.cw-type-pill:hover{
-  border-color:#a5b4fc;
-  box-shadow:0 0 12px rgba(129,140,248,.55);
-}
-.cw-type-pill.active{
-  background:linear-gradient(135deg,#4f46e5,#22c1c3);
-  border-color:#c4b5fd;
-  color:#f9fafb;
-}
-
-.cw-type-filter{display:flex;flex-wrap:wrap;gap:6px}
-.cw-type-chip{
-  border-radius:999px;
-  border:1px solid rgba(148,163,184,.7);
-  background:#020617;
-  color:#e5e7eb;
-  font-size:11px;
-  padding:4px 10px;
-  cursor:pointer;
-  transition:border-color .15s,background .15s,box-shadow .15s;
-}
-.cw-type-chip.active{
-  background:linear-gradient(135deg,#4f46e5,#22c1c3);
-  border-color:#c4b5fd;
-  color:#f9fafb;
-}
-
-/* sort + empty + pager */
-.cw-table th.sortable{cursor:pointer;user-select:none}
-.cw-table th.sortable::after{content:"";margin-left:6px;opacity:.6;font-size:10px}
-.cw-table th.sort-asc::after{content:"▲"}
-.cw-table th.sort-desc::after{content:"▼"}
-
-.cw-empty{
-  padding:24px;
-  border:1px dashed rgba(255,255,255,.12);
-  border-radius:12px;
-  text-align:center;
-  font-size:13px;
-  opacity:.7;
-}
-.cw-pager{
-  display:flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:8px;
-  margin:6px 0;
-  font-size:12px;
-}
-.cw-pager .cw-page-info{opacity:.8}
-.cw-pager .cw-btn{min-width:80px;padding:6px 10px;font-size:12px}
-
-/* sidebar cards */
-#page-editor .ins-card{
-  background:linear-gradient(180deg,rgba(20,20,28,.95),rgba(16,16,24,.95));
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:16px;
-  padding:10px 12px;
-}
-#page-editor .ins-row{
-  display:flex;
-  align-items:center;
-  gap:12px;
-  padding:8px 6px;
-  border-top:1px solid rgba(255,255,255,.06);
-}
-#page-editor .ins-row:first-child{
-  border-top:none;
-  padding-top:2px;
-}
-#page-editor .ins-icon{
-  width:32px;
-  height:32px;
-  border-radius:10px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:#13131b;
-  border:1px solid rgba(255,255,255,.06);
-}
-#page-editor .ins-title{font-weight:700}
-#page-editor .ins-kv{
-  display:grid;
-  grid-template-columns:110px 1fr;
-  gap:10px;
-  align-items:center;
-}
-#page-editor .ins-kv label{opacity:.85}
-
-#page-editor .ins-metrics{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-  width:100%;
-}
-#page-editor .metric-row{
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(0,1fr));
-  gap:8px;
-}
-#page-editor .metric-divider{
-  height:1px;
-  background:rgba(148,163,184,.28);
-  margin:2px 0;
-}
-#page-editor .metric{
-  position:relative;
-  display:flex;
-  align-items:center;
-  gap:8px;
-  background:#12121a;
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:12px;
-  padding:10px;
-}
-#page-editor .metric .material-symbol{font-size:18px;opacity:.9}
-#page-editor .metric .m-val{font-weight:700}
-#page-editor .metric .m-lbl{font-size:12px;opacity:.75}
-
-/* status tag */
-.cw-tag{
-  position:relative;
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  font-size:11px;
-  padding:4px 12px;
-  border-radius:999px;
-  background:radial-gradient(circle at 0 50%,rgba(52,211,153,.28),rgba(15,23,42,.96));
-  border:1px solid rgba(52,211,153,.85);
-  box-shadow:0 0 0 1px rgba(15,23,42,1),0 0 18px rgba(52,211,153,.45);
-  color:#e5e7eb;
-  letter-spacing:.02em;
-  transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,color .18s ease;
-}
-.cw-tag::before{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  border-radius:inherit;
-  background:radial-gradient(circle at 0 50%,rgba(52,211,153,.45),transparent 55%);
-  opacity:.85;
-  filter:blur(8px);
-  z-index:-1;
-}
-.cw-tag-dot{
-  width:8px;
-  height:8px;
-  border-radius:999px;
-  background:linear-gradient(135deg,#6ee7b7,#22c55e);
-  box-shadow:0 0 8px rgba(52,211,153,.9),0 0 14px rgba(52,211,153,.75);
-  animation:cw-status-pulse 1.4s ease-in-out infinite;
-}
-.cw-tag.loaded{
-  background:radial-gradient(circle at 0 50%,rgba(147,197,253,.25),rgba(15,23,42,.96));
-  border-color:rgba(96,165,250,.9);
-  box-shadow:0 0 0 1px rgba(15,23,42,1),0 0 18px rgba(96,165,250,.5);
-}
-.cw-tag.loaded .cw-tag-dot{
-  background:linear-gradient(135deg,#93c5fd,#3b82f6);
-  box-shadow:0 0 10px rgba(147,197,253,1),0 0 20px rgba(59,130,246,.9);
-}
-.cw-tag.warn{
-  background:radial-gradient(circle at 0 50%,rgba(248,187,109,.3),rgba(24,16,4,.96));
-  border-color:rgba(250,204,21,.9);
-  box-shadow:0 0 0 1px rgba(15,23,42,1),0 0 18px rgba(251,191,36,.5);
-}
-.cw-tag.warn .cw-tag-dot{
-  background:linear-gradient(135deg,#fbbf24,#f97316);
-  box-shadow:0 0 10px rgba(251,191,36,1),0 0 20px rgba(249,115,22,.95);
-}
-.cw-tag.error{
-  background:radial-gradient(circle at 0 50%,rgba(248,113,113,.35),rgba(24,6,7,.96));
-  border-color:rgba(248,113,113,.9);
-  box-shadow:0 0 0 1px rgba(15,23,42,1),0 0 18px rgba(248,113,113,.55);
-}
-.cw-tag.error .cw-tag-dot{
-  background:linear-gradient(135deg,#fb7185,#ef4444);
-  box-shadow:0 0 10px rgba(248,113,113,1),0 0 20px rgba(248,113,113,.9);
-}
-@keyframes cw-status-pulse{
-  0%{
-    transform:scale(.9);
-    opacity:.7;
-    box-shadow:0 0 6px rgba(52,211,153,.8),0 0 12px rgba(52,211,153,.6);
-  }
-  100%{
-    transform:scale(1.18);
-    opacity:1;
-    box-shadow:0 0 12px rgba(52,211,153,1),0 0 22px rgba(52,211,153,.95);
-  }
-}
-
-/* extra-display pill */
-.cw-extra-display{
-  width:100%;
-  background:#111119;
-  border-radius:6px;
-  border:1px solid rgba(129,140,248,.45);
-  padding:4px 8px;
-  font-size:12px;
-  color:#e5e7ff;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:8px;
-  cursor:pointer;
-  box-shadow:0 0 0 1px rgba(15,23,42,.6);
-  transition:border-color .15s,box-shadow .15s,background .15s;
-}
-.cw-extra-display:hover{
-  border-color:#818cf8;
-  box-shadow:0 0 0 1px rgba(129,140,248,.7),0 0 18px rgba(129,140,248,.35);
-  background:#151528;
-}
-.cw-extra-display-label{
-  flex:1;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  white-space:nowrap;
-}
-.cw-extra-display-placeholder{opacity:.55;font-style:italic}
-.cw-extra-display-value{color:#e5e7ff;font-weight:400}
-.cw-extra-display-icon{font-size:14px;opacity:.7}
-
-/* hint + responsive */
-.cw-state-hint{
-  margin-top:6px;
-  font-size:11px;
-  line-height:1.4;
-  background:rgba(15,23,42,.96);
-  border-radius:10px;
-  border:1px dashed rgba(148,163,184,.65);
-  padding:8px 10px;
-  color:#e5e7eb;
-}
-.cw-state-hint strong{color:#a5b4fc}
-
-/* bulk selection */
-.cw-checkbox{width:16px;height:16px;cursor:pointer;accent-color:#4f46e5}
-.cw-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.cw-bulk-count{font-size:12px;opacity:.85}
-
-.cw-btn.sm{padding:6px 10px;font-size:12px;min-height:30px}
-.cw-progress{width:100%;height:8px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10)}
-.cw-progress>span{display:block;height:100%;width:40%;background:linear-gradient(90deg,rgba(129,140,248,.15),rgba(129,140,248,.85),rgba(34,193,195,.85),rgba(129,140,248,.15));animation:cw-progress-move 1.2s linear infinite}
-@keyframes cw-progress-move{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}
-
-@media (max-width:1100px){
-  .cw-wrap{grid-template-columns:minmax(0,1fr)}
-}
-`;
+  const css = `.cw-root{--cw-shell-bg:linear-gradient(180deg,rgba(7,10,16,.98),rgba(4,6,10,.97));--cw-panel-bg:linear-gradient(180deg,rgba(11,15,22,.96),rgba(6,8,14,.95));--cw-panel-strong:linear-gradient(180deg,rgba(9,12,19,.985),rgba(4,6,10,.975));--cw-border:rgba(255,255,255,.08);--cw-border-soft:rgba(255,255,255,.05);--cw-shadow:0 18px 46px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.03);--cw-fg:#f3f6ff;--cw-fg-soft:rgba(204,213,229,.70);--cw-accent:rgba(112,96,245,.34);--cw-accent-strong:rgba(112,96,245,.52);display:flex;flex-direction:column;gap:12px;color:var(--cw-fg)}.cw-topline{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:2px;padding:16px 18px;border-radius:24px;border:1px solid var(--cw-border);background:radial-gradient(120% 130% at 12% 0%,rgba(86,75,196,.13),transparent 42%),radial-gradient(90% 120% at 100% 100%,rgba(70,54,170,.08),transparent 52%),var(--cw-shell-bg);box-shadow:var(--cw-shadow);backdrop-filter:blur(16px) saturate(125%);-webkit-backdrop-filter:blur(16px) saturate(125%)}.cw-head-copy{min-width:0;display:grid;gap:6px}.cw-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.cw-title{font-weight:900;font-size:28px;letter-spacing:-.03em;line-height:1.02;color:var(--cw-fg)}.cw-sub{max-width:74ch;color:var(--cw-fg-soft);font-size:14px;line-height:1.45}.cw-head-pills{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}.cw-chip{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));color:var(--cw-fg-soft);font-size:12px;font-weight:700;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}.cw-chip strong{color:var(--cw-fg);font-weight:800}.cw-wrap{display:grid;grid-template-columns:minmax(0,1fr) 368px;gap:14px;align-items:start}.cw-main,.cw-side{display:flex;flex-direction:column;gap:12px;min-width:0}.cw-table-wrap,.cw-empty,#page-editor .ins-card,.cw-pop{border:1px solid var(--cw-border);background:var(--cw-panel-bg);box-shadow:var(--cw-shadow);backdrop-filter:blur(14px) saturate(124%);-webkit-backdrop-filter:blur(14px) saturate(124%)}.cw-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px;border-radius:20px;border:1px solid var(--cw-border);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}.cw-controls .cw-input{flex:1 1 280px;max-width:none}.cw-controls-spacer{flex:1 1 auto}.cw-status-text{font-size:12px;color:var(--cw-fg-soft)}.cw-input,.cw-select,.cw-btn,.cw-pop-btn,.cw-extra-display{font:inherit;color:var(--cw-fg);outline:none}.cw-input,.cw-select{width:100%;min-height:40px;padding:9px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(3,6,11,.86);box-shadow:inset 0 1px 0 rgba(255,255,255,.02);transition:border-color .16s ease,background .16s ease,box-shadow .16s ease,transform .16s ease}.cw-input:hover,.cw-select:hover{border-color:rgba(255,255,255,.12);background:rgba(5,8,14,.92)}.cw-input:focus,.cw-select:focus{border-color:rgba(117,104,240,.34);box-shadow:0 0 0 3px rgba(117,104,240,.11),inset 0 1px 0 rgba(255,255,255,.03);background:rgba(5,8,14,.96)}.cw-btn,.cw-pop-btn{min-height:38px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap;font-weight:700;transition:transform .16s ease,background .16s ease,border-color .16s ease,opacity .16s ease,box-shadow .16s ease}.cw-btn:hover,.cw-pop-btn:hover,.cw-extra-display:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.04))}.cw-btn:active,.cw-pop-btn:active{transform:translateY(0)}.cw-btn[disabled],.cw-pop-btn[disabled]{opacity:.46;cursor:not-allowed;transform:none}.cw-btn.primary,.cw-pop-btn.primary{background:linear-gradient(180deg,rgba(96,104,242,.40),rgba(68,74,170,.26));border-color:rgba(133,140,255,.24);color:#f8fbff;box-shadow:0 8px 24px rgba(76,82,182,.16),inset 0 1px 0 rgba(255,255,255,.05)}.cw-btn.danger{background:linear-gradient(180deg,rgba(120,35,52,.30),rgba(72,18,29,.22));border-color:rgba(255,132,154,.14);color:#ffe7ee}.cw-btn-del{padding:0;width:30px;min-width:30px;height:30px;border-radius:10px}.cw-btn-del .material-symbol{font-size:15px;line-height:1}.cw-btn.sm{min-height:34px;padding:0 12px;font-size:12px}.cw-side .cw-select,.cw-side .cw-input{width:100%}.cw-backup-actions{display:flex;flex-wrap:wrap;gap:8px}.cw-table-wrap{border-radius:22px;overflow:auto;max-height:70vh;background:var(--cw-panel-strong)}.cw-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px;color:var(--cw-fg)}.cw-table th,.cw-table td{padding:10px 10px;border-bottom:1px solid rgba(255,255,255,.05);text-align:left;vertical-align:middle;white-space:nowrap}.cw-table th{position:sticky;top:0;z-index:1;font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,233,246,.68);background:linear-gradient(180deg,rgba(12,16,24,.98),rgba(7,9,15,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}.cw-table th.sortable{cursor:pointer;user-select:none}.cw-table th.sortable::after{content:"";margin-left:6px;opacity:.55;font-size:10px}.cw-table th.sort-asc::after{content:"▲"}.cw-table th.sort-desc::after{content:"▼"}.cw-table tbody tr{transition:background .15s ease,box-shadow .15s ease}.cw-table tbody tr:hover{background:rgba(255,255,255,.028)}.cw-table tr:last-child td{border-bottom:none}.cw-table input:not(.cw-checkbox){width:100%;min-height:34px;padding:7px 9px;background:rgba(3,6,11,.82);border:1px solid rgba(255,255,255,.08);border-radius:10px;font-size:12px;color:var(--cw-fg);transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}.cw-table input:not(.cw-checkbox):focus{border-color:rgba(117,104,240,.36);box-shadow:0 0 0 3px rgba(117,104,240,.10);background:rgba(6,9,14,.95)}.cw-col-year input{min-width:74px}.cw-table .cw-key{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}.cw-row-episode{background:rgba(96,104,242,.04)}.cw-row-deleted td{opacity:.38;text-decoration:line-through}.cw-title-cell{display:flex;flex-direction:column;align-items:stretch;gap:5px;min-width:0}.cw-title-row{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:nowrap}.cw-title-sub{font-size:11px;color:var(--cw-fg-soft);line-height:1.25;padding-left:2px;white-space:normal}.cw-title-row>input{flex:1 1 auto;min-width:0;width:auto}.cw-title-search-btn{flex:0 0 auto;width:34px;height:34px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));color:#eff4ff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:transform .16s ease,border-color .16s ease,background .16s ease,box-shadow .16s ease}.cw-title-search-btn:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.15);background:linear-gradient(180deg,rgba(255,255,255,.09),rgba(255,255,255,.04));box-shadow:0 8px 20px rgba(0,0,0,.18)}.cw-title-search-btn .material-symbol{font-size:18px}.cw-pop{position:fixed;z-index:10060;padding:12px 12px 13px;color:var(--cw-fg);width:min(560px,calc(100vw - 28px));max-height:calc(100vh - 120px);overflow:hidden;display:flex;flex-direction:column;border-radius:22px;background:linear-gradient(180deg,rgba(8,11,18,.98),rgba(4,6,10,.97))}.cw-pop-title{font-size:11px;font-weight:800;margin-bottom:6px;letter-spacing:.12em;text-transform:uppercase;color:var(--cw-fg-soft)}.cw-pop-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px;flex-wrap:wrap}.cw-pop-btn.ghost{background:rgba(255,255,255,.03)}.cw-search-bar{display:grid;gap:8px;padding:12px;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}.cw-search-bar input,.cw-search-bar select,.cw-pop input[type="time"]{width:100%;min-height:42px;padding:10px 14px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:rgba(2,4,9,.92);color:var(--cw-fg);outline:none}.cw-search-bar input:focus,.cw-search-bar select:focus,.cw-pop input[type="time"]:focus{border-color:rgba(117,104,240,.26);box-shadow:0 0 0 3px rgba(117,104,240,.08)}.cw-search-results{margin-top:10px;border:1px solid rgba(255,255,255,.06);border-radius:18px;overflow:auto;background:rgba(255,255,255,.02)}.cw-search-item{display:flex;gap:12px;width:100%;padding:14px;border:0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer;transition:background .14s ease,border-color .14s ease,transform .14s ease;background:linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.015));color:var(--cw-fg);font:inherit;text-align:left}.cw-search-item:last-child{border-bottom:none}.cw-search-item:hover{background:rgba(255,255,255,.05)}.cw-search-poster{width:52px;height:76px;border-radius:10px;overflow:hidden;background:#050810;border:1px solid rgba(255,255,255,.06);flex:0 0 auto}.cw-search-poster img{width:100%;height:100%;object-fit:cover}.cw-search-poster-placeholder{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--cw-fg-soft);font-size:11px}.cw-search-content{display:grid;gap:4px;min-width:0;align-content:start}.cw-search-title-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.cw-search-title{font-weight:800;color:var(--cw-fg)}.cw-search-tag,.cw-rating-pill,.cw-type-pill,.cw-type-chip,.cw-extra-display,.cw-tag{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}.cw-search-tag{min-height:22px;padding:0 8px;font-size:10px;font-weight:800;color:rgba(236,242,251,.78);letter-spacing:.04em;text-transform:uppercase}.cw-search-meta,.cw-search-overview,.cw-search-empty,.cw-search-status{font-size:12px;color:var(--cw-fg-soft);line-height:1.4}.cw-search-overview{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.cw-search-empty{padding:14px}.cw-datetime-grid,.cw-rating-grid,.cw-type-grid{display:grid;gap:8px}.cw-datetime-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.cw-rating-grid{grid-template-columns:repeat(auto-fit,minmax(64px,1fr));margin-top:10px}.cw-rating-pill,.cw-type-pill{min-height:34px;padding:0 10px;font-size:12px;font-weight:800;color:var(--cw-fg-soft);cursor:pointer;transition:transform .16s ease,border-color .16s ease,background .16s ease}.cw-rating-pill:hover,.cw-type-pill:hover,.cw-type-chip:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.04))}.cw-rating-pill.active,.cw-type-pill.active,.cw-type-chip.active{color:#f7f9ff;border-color:rgba(133,140,255,.22);background:linear-gradient(180deg,rgba(96,104,242,.24),rgba(70,74,150,.12))}.cw-type-grid{grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-top:10px}.cw-type-filter{display:flex;gap:8px;flex-wrap:wrap}.cw-type-chip{min-height:34px;padding:0 12px;font-size:12px;font-weight:800;color:var(--cw-fg-soft);cursor:pointer;transition:transform .16s ease,border-color .16s ease,background .16s ease}.cw-empty{display:grid;place-items:center;min-height:160px;border-radius:22px;padding:18px;text-align:center;color:var(--cw-fg-soft)}.cw-pager{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:2px;color:var(--cw-fg-soft);font-size:12px}.cw-pager .cw-page-info{min-width:200px;text-align:center}.cw-pager .cw-btn{min-width:110px}#page-editor .ins-card{position:relative;border-radius:22px;padding:12px 13px;overflow:hidden}#page-editor .ins-card::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(130% 120% at 100% 0%,rgba(94,81,210,.09),transparent 58%)}#page-editor .ins-row{position:relative;z-index:1;display:flex;align-items:center;gap:10px;padding:10px 4px;border-top:1px solid rgba(255,255,255,.05)}#page-editor .ins-row:first-child{border-top:none;padding-top:2px}#page-editor .ins-icon{width:36px;height:36px;border-radius:14px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 22px rgba(0,0,0,.22)}#page-editor .ins-title{font-weight:900;letter-spacing:-.01em;font-size:15px;color:var(--cw-fg)}#page-editor .ins-kv{display:grid;grid-template-columns:92px minmax(0,1fr);gap:10px;align-items:center;width:100%}#page-editor .ins-kv label{color:var(--cw-fg-soft);font-size:12px;font-weight:700;letter-spacing:.03em}#page-editor .ins-metrics{display:flex;flex-direction:column;gap:8px;width:100%}#page-editor .metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}#page-editor .metric-divider{height:1px;background:rgba(255,255,255,.06);margin:2px 0}#page-editor .metric{position:relative;display:grid;grid-template-columns:32px minmax(0,1fr);align-items:center;gap:8px;min-height:60px;padding:10px;border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.07);overflow:hidden}#page-editor .metric::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.03),transparent 55%)}#page-editor .metric .material-symbol{font-size:18px;color:#edf3ff;opacity:.92;-webkit-text-fill-color:currentColor}#page-editor .metric .m-val{font-weight:900;font-size:18px;line-height:1;color:#f8fbff}#page-editor .metric .m-lbl{font-size:11px;opacity:.72;letter-spacing:.08em;text-transform:uppercase;margin-top:3px}.cw-tag{position:relative;gap:8px;min-height:34px;padding:0 12px;color:var(--cw-fg-soft);font-size:12px;font-weight:800}.cw-tag-dot{width:8px;height:8px;border-radius:999px;background:#94a3b8;box-shadow:0 0 0 6px rgba(148,163,184,.08)}.cw-tag.loaded{color:#ebfff4;border-color:rgba(108,216,167,.16);background:linear-gradient(180deg,rgba(31,85,58,.18),rgba(255,255,255,.025))}.cw-tag.loaded .cw-tag-dot{background:#42d392;box-shadow:0 0 0 6px rgba(66,211,146,.10)}.cw-tag.warn{color:#fff9ea;border-color:rgba(255,210,109,.18);background:linear-gradient(180deg,rgba(112,88,33,.18),rgba(255,255,255,.025))}.cw-tag.warn .cw-tag-dot{background:#f5c563;box-shadow:0 0 0 6px rgba(245,197,99,.10)}.cw-tag.error{color:#fff0f3;border-color:rgba(255,132,154,.16);background:linear-gradient(180deg,rgba(108,34,49,.18),rgba(255,255,255,.025))}.cw-tag.error .cw-tag-dot{background:#ff879d;box-shadow:0 0 0 6px rgba(255,135,157,.10)}.cw-extra-display{min-height:34px;width:100%;padding:0 12px;display:inline-flex;align-items:center;justify-content:space-between;gap:8px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);cursor:pointer;transition:transform .16s ease,border-color .16s ease,background .16s ease}.cw-extra-display-label,.cw-extra-display-placeholder{font-size:11px;font-weight:800;color:var(--cw-fg-soft);letter-spacing:.05em;text-transform:uppercase}.cw-extra-display-value{font-size:12px;font-weight:700;color:var(--cw-fg)}.cw-extra-display-icon{opacity:.7}.cw-state-hint{border:1px dashed rgba(255,255,255,.12);border-radius:16px;padding:12px 13px;background:rgba(255,255,255,.02);color:var(--cw-fg-soft);font-size:12px;line-height:1.5}.cw-state-hint strong{color:var(--cw-fg)}.cw-checkbox{appearance:none;-webkit-appearance:none;position:relative;display:inline-block;vertical-align:middle;flex:none;width:18px!important;height:18px!important;min-width:18px!important;min-height:18px!important;margin:0;padding:0!important;border-radius:6px;border:1px solid rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.015));box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 4px 12px rgba(0,0,0,.16);cursor:pointer;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease,transform .16s ease}.cw-checkbox:hover{border-color:rgba(255,255,255,.22);background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03))}.cw-checkbox:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(104,112,236,.12),inset 0 1px 0 rgba(255,255,255,.04),0 4px 12px rgba(0,0,0,.18)}.cw-checkbox:checked{border-color:rgba(132,140,255,.34);background:linear-gradient(180deg,rgba(84,94,214,.52),rgba(56,63,144,.30));box-shadow:0 0 0 3px rgba(104,112,236,.11),inset 0 1px 0 rgba(255,255,255,.06),0 6px 16px rgba(0,0,0,.18)}.cw-checkbox:checked::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;border-right:2px solid #fff;border-bottom:2px solid #fff;transform:rotate(45deg)}.cw-checkbox:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}.cw-bulk{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}.cw-bulk-count{font-size:12px;font-weight:800;color:var(--cw-fg)}.cw-progress{height:10px;border-radius:999px;background:rgba(255,255,255,.06);overflow:hidden;border:1px solid rgba(255,255,255,.07)}.cw-progress>span{display:block;height:100%;width:40%;background:linear-gradient(90deg,rgba(96,104,242,.10),rgba(96,104,242,.72),rgba(122,132,255,.88),rgba(96,104,242,.10));animation:cw-progress-move 1.15s linear infinite}@keyframes cw-progress-move{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}.cw-collapse summary{list-style:none;color:var(--cw-fg);font-weight:800}.cw-collapse summary::-webkit-details-marker{display:none}@media (max-width:1120px){.cw-wrap{grid-template-columns:minmax(0,1fr)}.cw-head-pills{margin-left:0;justify-content:flex-start}}@media (max-width:760px){.cw-topline{padding:14px}.cw-title{font-size:24px}.cw-sub{font-size:13px}.cw-controls{padding:10px}.cw-table th,.cw-table td{padding:9px 8px}#page-editor .ins-kv{grid-template-columns:1fr;gap:8px}.cw-pager{flex-wrap:wrap}}`;
 
   const ensureStyle = (id, txt) => {
     let s = document.getElementById(id);
@@ -714,290 +93,7 @@
 
   restoreUIState();
 
-  host.innerHTML = `
-    <div class="cw-root">
-      <div class="cw-topline">
-        <div>
-          <div class="cw-title">Editor</div>
-          <div class="cw-sub">Edit tracker/state data (watchlist / ratings / history / progress).</div>
-        </div>
-      </div>
-
-      <div class="cw-wrap">
-        <div class="cw-main">
-          <div class="cw-controls">
-            <input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id...">
-            <span class="cw-status-text" id="cw-status"></span>
-            <div class="cw-controls-spacer"></div>
-            <div class="cw-bulk" id="cw-bulk" style="display:none">
-              <span class="cw-bulk-count" id="cw-bulk-count"></span>
-              <button id="cw-bulk-remove" class="cw-btn danger" type="button"></button>
-              <button id="cw-bulk-restore" class="cw-btn" type="button"></button>
-              <button id="cw-bulk-clear" class="cw-btn" type="button">Clear</button>
-            </div>
-            <button id="cw-reload" class="cw-btn" type="button">Reload</button>
-            <button id="cw-add" class="cw-btn" type="button">Add row</button>
-            <button id="cw-save" class="cw-btn primary" type="button">Save changes</button>
-          </div>
-
-          <div class="cw-table-wrap" id="cw-table-wrap">
-            <table class="cw-table">
-              <thead>
-                <tr>
-                  <th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th>
-                  <th style="width:30px"></th>
-                  <th style="width:12%" data-sort="key" class="sortable">Key</th>
-                  <th style="width:10%" data-sort="type" class="sortable">Type</th>
-                  <th style="width:24%" data-sort="title" class="sortable">Title</th>
-                  <th style="width:6%">Year</th>
-                  <th style="width:10%">IMDb</th>
-                  <th style="width:10%" id="cw-col-id-a">TMDB</th>
-                  <th style="width:10%" id="cw-col-id-b">Trakt</th>
-                  <th style="width:16%" data-sort="extra" class="sortable">Extra</th>
-                </tr>
-              </thead>
-              <tbody id="cw-tbody"></tbody>
-            </table>
-          </div>
-
-          <div class="cw-pager" id="cw-pager" style="display:none">
-            <button id="cw-prev" class="cw-btn" type="button">Previous</button>
-            <span id="cw-page-info" class="cw-page-info"></span>
-            <button id="cw-next" class="cw-btn" type="button">Next</button>
-          </div>
-
-          <div class="cw-empty" id="cw-empty" style="display:none">No items</div>
-        </div>
-
-        <aside class="cw-side">
-          <div class="ins-card">
-            <div class="ins-row">
-              <div class="ins-icon"><span class="material-symbol">tune</span></div>
-              <div class="ins-title">Editor filters</div>
-            </div>
-
-            <div class="ins-row">
-              <div class="ins-kv" style="width:100%">
-                <label>Data</label>
-                <select id="cw-source" class="cw-select">
-                  <option value="tracker">CW Tracker</option>
-                  <option value="pair">Pair Cache</option>
-                  <option value="state">Current State</option>
-                </select>
-
-                <label>Kind</label>
-                <select id="cw-kind" class="cw-select">
-                  <option value="watchlist">Watchlist</option>
-                  <option value="history">History</option>
-                  <option value="ratings">Ratings</option>
-                  <option value="progress">Progress</option>
-                </select>
-
-
-                <label id="cw-pair-label" style="display:none">Pair</label>
-                <select id="cw-pair" class="cw-select" style="display:none"></select>
-
-                <label id="cw-snapshot-label">Snapshot</label>
-                <select id="cw-snapshot" class="cw-select">
-                  <option value="">Latest</option>
-                </select>
-
-                <label id="cw-instance-label" style="display:none">Profile</label>
-                <select id="cw-instance" class="cw-select" style="display:none">
-                  <option value="default">Default</option>
-                </select>
-              </div>
-            </div>
-
-            <div class="ins-row">
-              <div class="ins-kv" style="width:100%">
-                <div class="field-label">Types</div>
-                <div id="cw-type-filter" class="cw-type-filter">
-                  <button type="button" data-type="movie" class="cw-type-chip active">Movies</button>
-                  <button type="button" data-type="show" class="cw-type-chip active">Shows</button>
-                  <button type="button" data-type="anime" class="cw-type-chip active">Anime</button>
-                  <button type="button" data-type="season" class="cw-type-chip active">S</button>
-                  <button type="button" data-type="episode" class="cw-type-chip active">EP</button>
-                  <button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked only</button>
-                </div>
-              </div>
-            </div>
-
-            <div class="ins-row" id="cw-state-bulk" style="display:none">
-              <details class="cw-collapse" id="cw-bulk-details" style="width:100%">
-                <summary style="cursor:pointer;font-weight:700;user-select:none">Bulk policy</summary>
-                <div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px">
-                  <select id="cw-bulk-type" class="cw-select" style="width:100%"></select>
-                  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-                    <button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button>
-                    <button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button>
-                  </div>
-                  <div class="cw-status-text">Current State only • affects baseline items</div>
-                </div>
-              </details>
-            </div>
-
-            <div class="ins-row" id="cw-import-row" style="display:none">
-              <details class="cw-collapse" id="cw-import-details" style="width:100%">
-                <summary style="cursor:pointer;font-weight:700;user-select:none">Import datasets</summary>
-
-                <div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px">
-                  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-                    <select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select>
-                    <select id="cw-import-instance" class="cw-select" style="min-width:180px"></select>
-                    <select id="cw-import-mode" class="cw-select" style="min-width:180px">
-                      <option value="replace">Replace baseline</option>
-                      <option value="merge">Merge (keep old)</option>
-                    </select>
-                  </div>
-
-                  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
-                    <label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
-                      <input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist
-                    </label>
-                    <label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
-                      <input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History
-                    </label>
-                    <label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
-                      <input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings
-                    </label>
-                    <label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0">
-                      <input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress
-                    </label>
-
-                    <span style="flex:1 1 auto"></span>
-                    <button id="cw-import-run" class="cw-btn sm" type="button">Import</button>
-                  </div>
-
-                  <div id="cw-import-progress" style="display:none">
-                    <div class="cw-progress"><span></span></div>
-                    <div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div>
-                  </div>
-                </div>
-              </details>
-            </div>
-          </div>
-
-          <div class="ins-card">
-            <div class="ins-row" style="align-items:center">
-              <div class="ins-icon"><span class="material-symbol">insights</span></div>
-              <div class="ins-title" style="margin-right:auto">State</div>
-              <span class="cw-tag" id="cw-tag-status">
-                <span class="cw-tag-dot"></span>
-                <span id="cw-tag-label">Idle</span>
-              </span>
-            </div>
-            <div class="ins-row">
-              <div class="ins-metrics">
-                <div class="metric-row">
-                  <div class="metric">
-                    <span class="material-symbol">view_list</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-total">0</div>
-                      <div class="m-lbl">Total rows</div>
-                    </div>
-                  </div>
-                  <div class="metric">
-                    <span class="material-symbol">visibility</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-visible">0</div>
-                      <div class="m-lbl">Rows visible</div>
-                    </div>
-                  </div>
-                </div>
-                <div class="metric-divider"></div>
-                <div class="metric-row">
-                  <div class="metric">
-                    <span class="material-symbol">movie</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-movies">0</div>
-                      <div class="m-lbl">Movies</div>
-                    </div>
-                  </div>
-                  <div class="metric">
-                    <span class="material-symbol">monitoring</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-shows">0</div>
-                      <div class="m-lbl">Shows</div>
-                    </div>
-                  </div>
-                  <div class="metric">
-                    <span class="material-symbol">layers</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-seasons">0</div>
-                      <div class="m-lbl">S</div>
-                    </div>
-                  </div>
-                  <div class="metric">
-                    <span class="material-symbol">live_tv</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-episodes">0</div>
-                      <div class="m-lbl">EP</div>
-                    </div>
-                  </div>
-                </div>
-                <div class="metric-divider"></div>
-                <div class="metric-row">
-                  <div class="metric">
-                    <span class="material-symbol">description</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-state-files">0</div>
-                      <div class="m-lbl">State files</div>
-                    </div>
-                  </div>
-                  <div class="metric">
-                    <span class="material-symbol">folder_copy</span>
-                    <div>
-                      <div class="m-val" id="cw-summary-snapshots">0</div>
-                      <div class="m-lbl">Snapshots</div>
-                    </div>
-                  </div>
-                </div>
-                <div id="cw-state-hint" class="cw-state-hint" style="display:none">
-                  <strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="ins-card" id="cw-backup-card">
-            <div class="ins-row">
-              <div class="ins-icon"><span class="material-symbol">backup</span></div>
-              <div class="ins-title">Backup</div>
-            </div>
-            <div class="ins-row">
-              <div class="ins-kv" style="width:100%">
-                <label>Export / Import</label>
-                <div class="cw-backup-actions">
-                  <button id="cw-download" class="cw-btn" type="button">Download ZIP</button>
-                  <button id="cw-upload" class="cw-btn" type="button">Import file</button>
-                  <input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none">
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="ins-card" id="cw-state-backup-card">
-            <div class="ins-row">
-              <div class="ins-icon"><span class="material-symbol">backup</span></div>
-              <div class="ins-title">Policy Backup</div>
-            </div>
-            <div class="ins-row">
-              <div class="ins-kv" style="width:100%">
-                <label>Export / Import</label>
-                <div class="cw-backup-actions">
-                  <button id="cw-state-download" class="cw-btn" type="button">Download JSON</button>
-                  <button id="cw-state-upload" class="cw-btn" type="button">Import file</button>
-                  <input id="cw-state-upload-input" type="file" accept=".json" style="display:none">
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </aside>
-      </div>
-    </div>
-  `;
+  host.innerHTML = `<div class="cw-root"><div class="cw-topline"><div class="cw-head-copy"><div class="cw-title-row"><div><div class="cw-title">Editor</div><div class="cw-sub">Edit your current state, tracker or cache</div></div></div></div><div class="cw-head-pills"><span class="cw-chip"><strong id="cw-pill-source">Current state</strong></span><span class="cw-chip"><strong id="cw-pill-kind">Watchlist</strong></span><span class="cw-chip"><strong id="cw-pill-count">0 rows</strong></span></div></div><div class="cw-wrap"><div class="cw-main"><div class="cw-controls"><input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id..."><span class="cw-status-text" id="cw-status"></span><div class="cw-controls-spacer"></div><div class="cw-bulk" id="cw-bulk" style="display:none"><span class="cw-bulk-count" id="cw-bulk-count"></span><button id="cw-bulk-remove" class="cw-btn danger" type="button"></button><button id="cw-bulk-restore" class="cw-btn" type="button"></button><button id="cw-bulk-clear" class="cw-btn" type="button">Clear</button></div><button id="cw-reload" class="cw-btn" type="button">Reload</button><button id="cw-add" class="cw-btn" type="button">Add row</button><button id="cw-save" class="cw-btn primary" type="button">Save changes</button></div><div class="cw-table-wrap" id="cw-table-wrap"><table class="cw-table"><thead><tr><th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th><th style="width:30px"></th><th style="width:12%" data-sort="key" class="sortable">Key</th><th style="width:10%" data-sort="type" class="sortable">Type</th><th style="width:30%" data-sort="title" class="sortable">Title</th><th style="width:84px">Year</th><th style="width:11%">IMDb</th><th style="width:11%" id="cw-col-id-a">TMDB</th><th style="width:16%" data-sort="extra" class="sortable">Extra</th></tr></thead><tbody id="cw-tbody"></tbody></table></div><div class="cw-pager" id="cw-pager" style="display:none"><button id="cw-prev" class="cw-btn" type="button">Previous</button><span id="cw-page-info" class="cw-page-info"></span><button id="cw-next" class="cw-btn" type="button">Next</button></div><div class="cw-empty" id="cw-empty" style="display:none">No rows match this view.</div></div><aside class="cw-side"><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title">Workspace</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Source</label><select id="cw-source" class="cw-select"><option value="tracker">CW Tracker</option><option value="pair">Pair Cache</option><option value="state">Current State</option></select><label>Kind</label><select id="cw-kind" class="cw-select"><option value="watchlist">Watchlist</option><option value="history">History</option><option value="ratings">Ratings</option><option value="progress">Progress</option></select><label id="cw-pair-label" style="display:none">Pair</label><select id="cw-pair" class="cw-select" style="display:none"></select><label id="cw-snapshot-label">Snapshot</label><select id="cw-snapshot" class="cw-select"><option value="">Latest</option></select><label id="cw-instance-label" style="display:none">Profile</label><select id="cw-instance" class="cw-select" style="display:none"><option value="default">Default</option></select></div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><div class="field-label">Types</div><div id="cw-type-filter" class="cw-type-filter"><button type="button" data-type="movie" class="cw-type-chip active">Movies</button><button type="button" data-type="show" class="cw-type-chip active">Shows</button><button type="button" data-type="anime" class="cw-type-chip active">Anime</button><button type="button" data-type="season" class="cw-type-chip active">S</button><button type="button" data-type="episode" class="cw-type-chip active">EP</button><button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked only</button></div></div></div><div class="ins-row" id="cw-state-bulk" style="display:none"><details class="cw-collapse" id="cw-bulk-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Block rules</summary><div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px"><select id="cw-bulk-type" class="cw-select" style="width:100%"></select><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button><button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button></div><div class="cw-status-text">Current State only • affects baseline items</div></div></details></div><div class="ins-row" id="cw-import-row" style="display:none"><details class="cw-collapse" id="cw-import-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Import provider state</summary><div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select><select id="cw-import-instance" class="cw-select" style="min-width:180px"></select><select id="cw-import-mode" class="cw-select" style="min-width:180px"><option value="replace">Replace baseline</option><option value="merge">Merge (keep old)</option></select></div><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist </label><label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History </label><label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings </label><label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress </label><span style="flex:1 1 auto"></span><button id="cw-import-run" class="cw-btn sm" type="button">Import</button></div><div id="cw-import-progress" style="display:none"><div class="cw-progress"><span></span></div><div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div></div></div></details></div></div><div class="ins-card"><div class="ins-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">insights</span></div><div class="ins-title" style="margin-right:auto">Pulse</div><span class="cw-tag" id="cw-tag-status"><span class="cw-tag-dot"></span><span id="cw-tag-label">Idle</span></span></div><div class="ins-row"><div class="ins-metrics"><div class="metric-row"><div class="metric"><span class="material-symbol">view_list</span><div><div class="m-val" id="cw-summary-total">0</div><div class="m-lbl">Total rows</div></div></div><div class="metric"><span class="material-symbol">visibility</span><div><div class="m-val" id="cw-summary-visible">0</div><div class="m-lbl">Rows visible</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">movie</span><div><div class="m-val" id="cw-summary-movies">0</div><div class="m-lbl">Movies</div></div></div><div class="metric"><span class="material-symbol">monitoring</span><div><div class="m-val" id="cw-summary-shows">0</div><div class="m-lbl">Shows</div></div></div><div class="metric"><span class="material-symbol">layers</span><div><div class="m-val" id="cw-summary-seasons">0</div><div class="m-lbl">Seasons</div></div></div><div class="metric"><span class="material-symbol">live_tv</span><div><div class="m-val" id="cw-summary-episodes">0</div><div class="m-lbl">Episodes</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">description</span><div><div class="m-val" id="cw-summary-state-files">0</div><div class="m-lbl">State files</div></div></div><div class="metric"><span class="material-symbol">folder_copy</span><div><div class="m-val" id="cw-summary-snapshots">0</div><div class="m-lbl">Snapshots</div></div></div></div><div id="cw-state-hint" class="cw-state-hint" style="display:none"><strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them. </div></div></div></div><div class="ins-card" id="cw-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Archive</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-download" class="cw-btn" type="button">Download ZIP</button><button id="cw-upload" class="cw-btn" type="button">Import file</button><input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none"></div></div></div></div><div class="ins-card" id="cw-state-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Policy backup</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-state-download" class="cw-btn" type="button">Download JSON</button><button id="cw-state-upload" class="cw-btn" type="button">Import file</button><input id="cw-state-upload-input" type="file" accept=".json" style="display:none"></div></div></div></div></aside></div></div>`;
 
   const $ = id => document.getElementById(id);
   const sourceSel = $("cw-source");
@@ -1041,6 +137,10 @@
   const stateUploadBtn = $("cw-state-upload");
   const stateUploadInput = $("cw-state-upload-input");
 
+  const pillSource = $("cw-pill-source");
+  const pillKind = $("cw-pill-kind");
+  const pillCount = $("cw-pill-count");
+
   const importRow = $("cw-import-row");
   const importProviderSel = $("cw-import-provider");
   const importInstanceSel = $("cw-import-instance");
@@ -1070,6 +170,16 @@
   const bulkUnblockTypeBtn = $("cw-bulk-unblock-type");
 
   let statusStickyUntil = 0;
+
+  function syncHeaderPills(visible, total) {
+    const srcMap = { tracker: "Tracker snapshots", pair: "Pair cache", state: "Current state" };
+    const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress" };
+    if (pillSource) pillSource.textContent = srcMap[state.source] || "Source";
+    if (pillKind) pillKind.textContent = kindMap[state.kind] || "Kind";
+    const all = typeof total === "number" ? total : ((state.rows && state.rows.length) || 0);
+    const vis = typeof visible === "number" ? visible : all;
+    if (pillCount) pillCount.textContent = all ? `${vis}/${all} rows` : "0 rows";
+  }
 
   function setStatus(message) {
     if (!statusEl) return;
@@ -1106,16 +216,8 @@
 
   function syncIdColumnHeaders() {
     const a = $("cw-col-id-a");
-    const b = $("cw-col-id-b");
-    if (!a || !b) return;
-
-    if (isAnilistMode()) {
-      a.textContent = "MAL";
-      b.textContent = "AniList";
-    } else {
-      a.textContent = "TMDB";
-      b.textContent = "Trakt";
-    }
+    if (!a) return;
+    a.textContent = isAnilistMode() ? "MAL" : "TMDB";
   }
 
   function enforceKindTypeRules() {
@@ -1504,6 +606,7 @@
     }
     syncStateBulkUI();
     syncImportUI();
+    syncHeaderPills();
   }
 
   function showStateHint(mode) {
@@ -2587,6 +1690,7 @@
     let filtered = applyFilter(state.rows);
     const totalFiltered = filtered.length;
     const totalAll = state.rows.length;
+    syncHeaderPills(totalFiltered, totalAll);
 
     filtered = sortRows(filtered);
 
@@ -2793,7 +1897,7 @@
           yearIn,
           imdbIn,
           tmdbIn: anilistMode ? null : idAIn,
-          traktIn: anilistMode ? null : idBIn,
+          traktIn: null,
           typeBtn,
         });
       };
@@ -2811,10 +1915,11 @@
       }
       tr.appendChild(cell(titleCell));
 
-      tr.appendChild(cell(yearIn));
+      const yearTd = cell(yearIn);
+      yearTd.className = "cw-col-year";
+      tr.appendChild(yearTd);
       tr.appendChild(cell(imdbIn));
       tr.appendChild(cell(idAIn));
-      tr.appendChild(cell(idBIn));
 
       const extraBtn = document.createElement("button");
       extraBtn.type = "button";
@@ -2944,11 +2049,80 @@
     }
   }
 
-  async function fetchJSON(url, opts) {
-    const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
-    if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-    return await res.json();
+const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
+
+async function fetchJSON(url, opts) {
+  const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
+  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  return await res.json();
+}
+
+async function fetchBlob(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  return await res.blob();
+}
+
+function saveBlob(blob, filename) {
+  const href = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement("a"), { href, download: filename });
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(href);
+    a.remove();
+  }, 0);
+}
+
+async function downloadFile(url, filename, toast) {
+  try {
+    setTag("warn", "Preparing download…");
+    saveBlob(await fetchBlob(url), filename);
+    setTag("loaded", "Ready");
+    if (toast && window.cxToast) window.cxToast(toast);
+  } catch (e) {
+    console.error(e);
+    setTag("error", "Download failed");
+    setStatus(String(e));
   }
+}
+
+async function uploadJSON(url, file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await fetch(url, { method: "POST", body: fd });
+  if (!res.ok) {
+    let msg = `Import failed: ${res.status}`;
+    try {
+      const err = await res.json();
+      if (err && err.detail) msg += ` – ${err.detail}`;
+    } catch (_) {}
+    throw new Error(msg);
+  }
+  return await res.json();
+}
+
+const listParts = (data, defs) => defs.flatMap(([k, label]) => data && data[k] != null ? [`${data[k]} ${label}${data[k] === 1 ? "" : "s"}`] : []);
+
+function bindFileImport(btn, input, url, done) {
+  if (!btn || !input) return;
+  on(btn, "click", () => input.click());
+  on(input, "change", async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      setTag("warn", "Importing…");
+      setStatus("");
+      await done(await uploadJSON(url, file));
+    } catch (e) {
+      console.error(e);
+      setTag("error", "Import failed");
+      setStatus(String(e));
+    } finally {
+      try { input.value = ""; } catch (_) {}
+    }
+  });
+}
 
   async function loadSnapshots() {
     try {
@@ -3002,57 +2176,6 @@
     }
   }
 
-  async function resolveRowIds(row) {
-    const t = ((row.type || "") + "").toLowerCase();
-    if (t === "season") return;
-    if (!row.tmdb) return;
-
-    try {
-      const payload = {
-        entity: row.type || "movie",
-        ids: { tmdb: row.tmdb },
-        locale: null,
-        need: { ids: true, titles: true, year: true },
-      };
-
-      const data = await fetchJSON("/api/metadata/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!data || data.ok === false || !data.result) return;
-
-      const result = data.result;
-      const ids = result.ids || {};
-
-      row.imdb = ids.imdb || row.imdb || "";
-      row.tmdb = ids.tmdb || row.tmdb || "";
-      row.trakt = ids.trakt || row.trakt || "";
-
-      row.raw.ids = Object.assign({}, row.raw.ids || {}, {
-        imdb: row.imdb || undefined,
-        tmdb: row.tmdb || undefined,
-        trakt: row.trakt || undefined,
-      });
-
-      if (row.imdb) {
-        const imdbKey = `imdb:${row.imdb}`;
-        const prevKey = (row.key || "").trim();
-        if (!prevKey || /^imdb:tt\d+$/i.test(prevKey)) row.key = imdbKey;
-      }
-      if (result.title) {
-        row.title = result.title;
-        row.raw.title = result.title;
-      }
-      if (result.year) {
-        row.year = String(result.year);
-        row.raw.year = result.year;
-      }
-    } catch (err) {
-      console.error("Metadata resolve failed", err);
-    }
-  }
 
   async function loadTrackerCounts() {
     try {
@@ -3102,7 +2225,7 @@
       }
     }
     state.loading = true;
-    setTag("warn", "Loading…");
+    setTag("warn", "Loading");
     try {
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
       if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
@@ -3169,7 +2292,7 @@
         showStateHint(null);
       }
 
-      setTag("loaded", "Loaded");
+      setTag("loaded", "Ready");
     } catch (e) {
       console.error(e);
       const msg = String(e || "");
@@ -3227,7 +2350,7 @@
     }
 
     state.saving = true;
-    setTag("warn", "Saving…");
+    setTag("warn", "Saving");
     if (saveBtn) saveBtn.disabled = true;
 
     try {
@@ -3330,23 +2453,18 @@
     renderRows();
   }
 
-  if (prevBtn) {
-    prevBtn.addEventListener("click", () => {
-      if (state.page <= 0) return;
-      state.page -= 1;
-      renderRows();
-    });
-  }
+  on(prevBtn, "click", () => {
+    if (state.page <= 0) return;
+    state.page -= 1;
+    renderRows();
+  });
 
-  if (nextBtn) {
-    nextBtn.addEventListener("click", () => {
-      const filteredCount = applyFilter(state.rows).length;
-      const pageCount = Math.max(1, Math.ceil(filteredCount / PAGE_SIZE));
-      if (state.page >= pageCount - 1) return;
-      state.page += 1;
-      renderRows();
-    });
-  }
+  on(nextBtn, "click", () => {
+    const pageCount = Math.max(1, Math.ceil(applyFilter(state.rows).length / PAGE_SIZE));
+    if (state.page >= pageCount - 1) return;
+    state.page += 1;
+    renderRows();
+  });
 
   sortHeaders.forEach(th => {
     th.addEventListener("click", () => {
@@ -3390,82 +2508,19 @@
     });
   }
 
-  if (downloadBtn) {
-    downloadBtn.addEventListener("click", async () => {
-      try {
-        setTag("warn", "Preparing download…");
-        const res = await fetch("/api/editor/export", { cache: "no-store" });
-        if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "crosswatch-tracker.zip";
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-          a.remove();
-        }, 0);
-        setTag("loaded", "Loaded");
-        if (window.cxToast) window.cxToast("Tracker export downloaded");
-      } catch (e) {
-        console.error(e);
-        setTag("error", "Download failed");
-        setStatus(String(e));
-      }
-    });
-  }
+  on(downloadBtn, "click", () => downloadFile("/api/editor/export", "crosswatch-tracker.zip", "Tracker export downloaded"));
 
-  if (uploadBtn && uploadInput) {
-    uploadBtn.addEventListener("click", () => uploadInput.click());
-
-    uploadInput.addEventListener("change", async () => {
-      const file = uploadInput.files && uploadInput.files[0];
-      if (!file) return;
-
-      try {
-        const fd = new FormData();
-        fd.append("file", file);
-        setTag("warn", "Importing…");
-        setStatus("");
-
-        const res = await fetch("/api/editor/import", { method: "POST", body: fd });
-        if (!res.ok) {
-          let msg = `Import failed: ${res.status}`;
-          try {
-            const err = await res.json();
-            if (err && err.detail) msg += ` – ${err.detail}`;
-          } catch (_) {}
-          throw new Error(msg);
-        }
-
-        const data = await res.json();
-
-        const parts = [];
-        if (data.files != null) parts.push(`${data.files} file${data.files === 1 ? "" : "s"}`);
-        if (data.states != null) parts.push(`${data.states} state file${data.states === 1 ? "" : "s"}`);
-        if (data.snapshots != null) parts.push(`${data.snapshots} snapshot${data.snapshots === 1 ? "" : "s"}`);
-
-        let msg = "Imported " + (parts.length ? parts.join(", ") : "tracker data");
-        if (data.overwritten) msg += ` (${data.overwritten} overwritten)`;
-
-        setTag("loaded", "Loaded");
-        setStatusSticky(msg, 5000);
-        if (window.cxToast) window.cxToast(msg);
-
-        await loadTrackerCounts();
-        await loadSnapshots();
-        await loadState();
-      } catch (e) {
-        console.error(e);
-        setTag("error", "Import failed");
-        setStatus(String(e));
-      } finally {
-        uploadInput.value = "";
-      }
-    });
-  }
+  bindFileImport(uploadBtn, uploadInput, "/api/editor/import", async data => {
+    const parts = listParts(data, [["files", "file"], ["states", "state file"], ["snapshots", "snapshot"]]);
+    let msg = "Imported " + (parts.length ? parts.join(", ") : "tracker data");
+    if (data.overwritten) msg += ` (${data.overwritten} overwritten)`;
+    setTag("loaded", "Ready");
+    setStatusSticky(msg, 5000);
+    if (window.cxToast) window.cxToast(msg);
+    await loadTrackerCounts();
+    await loadSnapshots();
+    await loadState();
+  });
 
   if (sourceSel) {
     sourceSel.addEventListener("change", async () => {
@@ -3546,29 +2601,10 @@ if (importProviderSel) {
     });
   }
 
-  if (importWatchlistCb) {
-    importWatchlistCb.addEventListener("change", () => {
-      state.importFeatures.watchlist = !!importWatchlistCb.checked;
-    });
-  }
+  [[importWatchlistCb, "watchlist"], [importHistoryCb, "history"], [importRatingsCb, "ratings"], [importProgressCb, "progress"]]
+    .forEach(([el, key]) => on(el, "change", () => { state.importFeatures[key] = !!el.checked; }));
 
-  if (importHistoryCb) {
-    importHistoryCb.addEventListener("change", () => {
-      state.importFeatures.history = !!importHistoryCb.checked;
-    });
-  }
-
-  if (importRatingsCb) {
-    importRatingsCb.addEventListener("change", () => {
-      state.importFeatures.ratings = !!importRatingsCb.checked;
-    });
-  }
-
-  if (importRunBtn) {
-    importRunBtn.addEventListener("click", async () => {
-      await runStateImport();
-    });
-  }
+  on(importRunBtn, "click", runStateImport);
 
 
   if (filterInput) {
@@ -3617,15 +2653,14 @@ if (importProviderSel) {
     });
   }
 
-  if (bulkRemoveBtn) bulkRemoveBtn.addEventListener("click", () => bulkSetDeletedForSelected(true));
-  if (bulkRestoreBtn) bulkRestoreBtn.addEventListener("click", () => bulkSetDeletedForSelected(false));
-  if (bulkClearBtn) bulkClearBtn.addEventListener("click", () => { clearSelection(); renderRows(); });
+  on(bulkRemoveBtn, "click", () => bulkSetDeletedForSelected(true));
+  on(bulkRestoreBtn, "click", () => bulkSetDeletedForSelected(false));
+  on(bulkClearBtn, "click", () => { clearSelection(); renderRows(); });
+  on(bulkBlockTypeBtn, "click", () => bulkSetBlocksByType(bulkTypeSel && bulkTypeSel.value, true));
+  on(bulkUnblockTypeBtn, "click", () => bulkSetBlocksByType(bulkTypeSel && bulkTypeSel.value, false));
 
-  if (bulkBlockTypeBtn) bulkBlockTypeBtn.addEventListener("click", () => bulkSetBlocksByType(bulkTypeSel && bulkTypeSel.value, true));
-  if (bulkUnblockTypeBtn) bulkUnblockTypeBtn.addEventListener("click", () => bulkSetBlocksByType(bulkTypeSel && bulkTypeSel.value, false));
-
-  if (addBtn) addBtn.addEventListener("click", addRow);
-  if (saveBtn) saveBtn.addEventListener("click", saveState);
+  on(addBtn, "click", addRow);
+  on(saveBtn, "click", saveState);
 
   window.addEventListener("beforeunload", e => {
     if (!state.hasChanges) return;
@@ -3633,76 +2668,15 @@ if (importProviderSel) {
     e.returnValue = "";
   });
 
-  if (stateDownloadBtn) {
-    stateDownloadBtn.addEventListener("click", async () => {
-      try {
-        setTag("warn", "Preparing download…");
-        const res = await fetch("/api/editor/state/manual/export", { cache: "no-store" });
-        if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "crosswatch-state-policy.json";
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-          a.remove();
-        }, 0);
-        setTag("loaded", "Loaded");
-        if (window.cxToast) window.cxToast("Policy export downloaded");
-      } catch (e) {
-        console.error(e);
-        setTag("error", "Download failed");
-        setStatus(String(e));
-      }
-    });
-  }
+  on(stateDownloadBtn, "click", () => downloadFile("/api/editor/state/manual/export", "crosswatch-state-policy.json", "Policy export downloaded"));
 
-  if (stateUploadBtn && stateUploadInput) {
-    stateUploadBtn.addEventListener("click", () => stateUploadInput.click());
-
-    stateUploadInput.addEventListener("change", async () => {
-      const file = stateUploadInput.files && stateUploadInput.files[0];
-      if (!file) return;
-
-      try {
-        const fd = new FormData();
-        fd.append("file", file);
-        setTag("warn", "Importing…");
-        setStatus("");
-
-        const res = await fetch("/api/editor/state/manual/import?mode=merge", { method: "POST", body: fd });
-        if (!res.ok) {
-          let msg = `Import failed: ${res.status}`;
-          try {
-            const err = await res.json();
-            if (err && err.detail) msg += ` – ${err.detail}`;
-          } catch (_) {}
-          throw new Error(msg);
-        }
-
-        const data = await res.json();
-        const parts = [];
-        if (data.providers != null) parts.push(`${data.providers} provider${data.providers === 1 ? "" : "s"}`);
-        if (data.blocks != null) parts.push(`${data.blocks} block${data.blocks === 1 ? "" : "s"}`);
-        if (data.adds != null) parts.push(`${data.adds} add${data.adds === 1 ? "" : "s"}`);
-
-        const msg = "Imported " + (parts.length ? parts.join(", ") : "policy");
-        if (window.cxToast) window.cxToast(msg);
-        setTag("warn", "Imported");
-        await loadSnapshots();
-        await loadState();
-      } catch (e) {
-        console.error(e);
-        setTag("error", "Import failed");
-        setStatus(String(e));
-      } finally {
-        try { stateUploadInput.value = ""; } catch (_) {}
-      }
-    });
-  }
+  bindFileImport(stateUploadBtn, stateUploadInput, "/api/editor/state/manual/import?mode=merge", async data => {
+    const msg = "Imported " + (listParts(data, [["providers", "provider"], ["blocks", "block"], ["adds", "add"]]).join(", ") || "policy");
+    if (window.cxToast) window.cxToast(msg);
+    setTag("warn", "Imported");
+    await loadSnapshots();
+    await loadState();
+  });
 
   (async () => {
     syncSourceUI();
