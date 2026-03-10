@@ -847,6 +847,7 @@ function cwMetaSettingsHubEnsure() {
   tile.type = "button";
   tile.className = "cw-hub-tile tmdb active";
   tile.dataset.tab = "tmdb";
+  const tmdbLogo = window.CW?.ProviderMeta?.logoPath?.("tmdb") || "/assets/img/TMDB.svg";
   tile.innerHTML = `
     <div class="cw-hub-dots" aria-hidden="true">
       <span class="cw-hub-dot dot-a"></span>
@@ -854,7 +855,7 @@ function cwMetaSettingsHubEnsure() {
       <span class="cw-hub-dot dot-c"></span>
     </div>
     <div class="cw-hub-title-row">
-      <img class="cw-hub-logo" src="/assets/img/TMDB.svg" alt="" loading="lazy">
+      <img class="cw-hub-logo" src="${tmdbLogo}" alt="" loading="lazy">
       <div>
         <div class="cw-hub-title">TMDb</div>
         <div class="cw-hub-desc">The Movie Database</div>
