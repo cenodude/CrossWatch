@@ -1,1315 +1,589 @@
 /* assets/js/main.js */
+/* refactored */
 /* CrossWatch - Main UI Module */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-// Playing card UI guard
 (() => {
-  const cfg = (typeof window !== "undefined" && window._cfgCache) || null;
-  if (!cfg) return;
-
+  const cfg = window._cfgCache;
   const key = cfg?.tmdb?.api_key;
   const hasTmdb = typeof key === "string" ? key.trim().length > 0 : !!key;
-
-  if (cfg.ui?.show_playingcard === false || !hasTmdb) {
-    document.head.insertAdjacentHTML(
-      "beforeend",
-      `<style>#playing-card{display:none!important}</style>`
-    );
+  if (cfg && (cfg.ui?.show_playingcard === false || !hasTmdb)) {
+    document.head.insertAdjacentHTML("beforeend", `<style>#playing-card{display:none!important}</style>`);
   }
 })();
 
-// Main UI logic
 (() => {
-  const FEATS_ALL = [
-    { key: "watchlist", icon: "movie", label: "Watchlist" },
-    { key: "ratings",   icon: "star",  label: "Ratings" },
-    { key: "history",   icon: "play_arrow", label: "History" },
-    { key: "progress",  icon: "timelapse", label: "Progress" },
-    { key: "playlists", icon: "queue_music", label: "Playlists" }
-  ];
-  const FEAT_BY_KEY = Object.fromEntries(FEATS_ALL.map((f) => [f.key, f]));
-
+  const FEATS = [
+    ["watchlist", "movie", "Watchlist"],
+    ["ratings", "star", "Ratings"],
+    ["history", "play_arrow", "History"],
+    ["progress", "timelapse", "Progress"],
+    ["playlists", "queue_music", "Playlists"]
+  ].map(([key, icon, label]) => ({ key, icon, label }));
+  const FEAT_KEYS = FEATS.map((f) => f.key);
+  const FEAT_BY_KEY = Object.fromEntries(FEATS.map((f) => [f.key, f]));
+  const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: false, playlists: true };
+  const EMPTY_ENABLED = () => Object.fromEntries(FEAT_KEYS.map((k) => [k, false]));
+  const mkLane = () => ({ added: 0, removed: 0, updated: 0, spotAdd: [], spotRem: [], spotUpd: [] });
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const safe = (fn, ...args) => {
+    try { return fn?.(...args); } catch {}
+  };
+  const nowTs = () => Date.now();
+  const parseTs = (v) => {
+    let n = typeof v === "number" ? v : Date.parse(v || 0);
+    if (!Number.isFinite(n)) return 0;
+    return n < 1e12 ? n * 1000 : n;
+  };
+  const last25 = (arr) => arr.slice(-25).reverse();
+  const laneHasCounts = (lane) => (+lane?.added || 0) + (+lane?.removed || 0) + (+lane?.updated || 0) > 0;
+  const on = (target, names, fn) => names.forEach((name) => target.addEventListener(name, fn));
 
   const elProgress = document.getElementById("ux-progress");
-  const elLanes    = document.getElementById("ux-lanes");
-  const elSpot     = document.getElementById("ux-spotlight");
+  const elLanes = document.getElementById("ux-lanes");
+  const elSpot = document.getElementById("ux-spotlight");
   if (!elProgress || !elLanes || !elSpot) return;
 
-  // Styles
-  (document.getElementById("lanes-css") || {}).remove?.();
-  document.head.appendChild(
-    Object.assign(document.createElement("style"), {
-      id: "lanes-css",
-      textContent: `
-  .ux-provider-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-  .ux-provider-row>*{flex:0 1 auto}
-
-  #ux-lanes{margin-top:12px}
-  .lanes{display:grid;grid-template-columns:1fr;gap:10px}
-  @media (min-width:900px){.lanes{grid-template-columns:1fr 1fr}}
-  .lane{border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.02);transition:transform .15s ease}
-  .lane.disabled{opacity:.45;filter:saturate(.5) brightness(.95)}
-  .lane.shake{animation:laneShake .42s cubic-bezier(.36,.07,.19,.97)}
-  @keyframes laneShake{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(2px)}30%,50%,70%{transform:translateX(-4px)}40%,60%{transform:translateX(4px)}}
-  .lane-h{display:flex;align-items:center;gap:10px}
-  .lane-ico{font-size:18px;line-height:1}
-  .lane-title{font-weight:600;font-size:13px;opacity:.95}
-  .lane-badges{margin-left:auto;display:flex;gap:6px;align-items:center}
-  #ux-lanes .chip,#ux-spotlight .chip,.ux-spots-modal .chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.12);opacity:.9}
-  #ux-lanes .chip.ok,#ux-spotlight .chip.ok,.ux-spots-modal .chip.ok{border-color:rgba(0,220,130,.45);color:#4be3a6}
-  #ux-lanes .chip.run,#ux-spotlight .chip.run,.ux-spots-modal .chip.run{border-color:rgba(0,180,255,.45);color:#4dd6ff}
-  #ux-lanes .chip.skip,#ux-spotlight .chip.skip,.ux-spots-modal .chip.skip{border-color:rgba(255,255,255,.18);color:rgba(255,255,255,.7)}
-  #ux-lanes .chip.err,#ux-spotlight .chip.err,.ux-spots-modal .chip.err{border-color:rgba(255,80,80,.5);color:#ff7b7b}
-  .delta{font-size:11px;display:inline-flex;gap:6px;align-items:center;opacity:.9}
-  .delta b{font-weight:600}
-  .lane-body{margin-top:8px;display:grid;grid-template-columns:1fr;gap:6px}
-  .spot{font-size:12px;opacity:.95;display:flex;gap:8px;align-items:baseline}
-  #ux-lanes .tag,#ux-spotlight .tag,.ux-spots-modal .tag{font-size:10px;padding:2px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.12);opacity:.85;white-space:nowrap;flex:0 0 auto;display:inline-flex;align-items:center;gap:4px}
-  .t-add{color:#7cffc4;border-color:rgba(124,255,196,.25)}
-  .t-rem{color:#ff9aa2;border-color:rgba(255,154,162,.25)}
-  .t-upd{color:#9ecbff;border-color:rgba(158,203,255,.25)}
-  #ux-lanes .muted,#ux-spotlight .muted,.ux-spots-modal .muted{opacity:.7}
-  #ux-lanes .small,#ux-spotlight .small,.ux-spots-modal .small{font-size:11px}
-  #run[disabled]{pointer-events:none;opacity:.6;filter:saturate(.7);cursor:not-allowed}
-  #run.glass{position:relative}
-  #run.glass::after{content:"";position:absolute;inset:6px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .9s linear infinite}
-  #ux-lanes .chip.more,#ux-spotlight .chip.more,.ux-spots-modal .chip.more{cursor:pointer;border-color:rgba(255,255,255,.22);font-size:10px;padding:1px 6px;line-height:1.2;width:auto}
-  #ux-lanes .chip.more:hover,#ux-spotlight .chip.more:hover,.ux-spots-modal .chip.more:hover{background:rgba(255,255,255,.06)}
-  .ux-spots-modal{position:fixed;inset:0;z-index:9999}
-  .ux-spots-modal.hidden{display:none}
-  .ux-spots-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(2px)}
-  .ux-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .ux-date{margin-left:auto;font-size:10px;opacity:.7;white-space:nowrap}
-  .ux-spots-card{position:relative;max-width:640px;margin:6vh auto;background:rgba(12,12,14,.88);border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:10px 12px;box-shadow:0 0 0 1px rgba(255,255,255,.06),0 0 22px rgba(120,80,255,.18);backdrop-filter:blur(6px)}
-  .ux-spots-h{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-  .ux-spots-title{font-weight:700;font-size:13px;letter-spacing:.2px}
-  .ux-spots-close{margin-left:auto;border:none;background:transparent;color:inherit;font-size:18px;cursor:pointer;opacity:.9}
-  .ux-spots-close:hover{opacity:1;filter:drop-shadow(0 0 6px currentColor)}
-  .ux-spots-body{display:grid;grid-template-columns:1fr 1fr;gap:8px;max-height:55vh;overflow:auto;padding-right:4px}
-  .ux-spots-body.single{grid-template-columns:1fr}
-  .ux-col{display:flex;flex-direction:column;gap:4px}
-  .ux-col-full{width:100%;display:block}
-  .ux-sec-row{font-size:11px;display:flex;gap:8px;align-items:baseline;padding:2px 3px;border-radius:8px;background:rgba(255,255,255,.02)}
-  `
-    })
-  );
-
-  // State
   const sync = new window.SyncBar({
     el: elProgress,
-    onStart: () => startRunVisualsSafe(true),
-    onStop: () => stopRunVisualsSafe()
+    onStart: () => safe(window.startRunVisuals, true),
+    onStop: () => safe(window.stopRunVisuals)
   });
 
   let summary = null;
   let enabledFromPairs = null;
-  const getDisplayFeats = () =>
-    enabledFromPairs?.progress
-      ? [
-          FEAT_BY_KEY.watchlist,
-          FEAT_BY_KEY.ratings,
-          FEAT_BY_KEY.history,
-          FEAT_BY_KEY.progress
-        ]
-      : [
-          FEAT_BY_KEY.watchlist,
-          FEAT_BY_KEY.ratings,
-          FEAT_BY_KEY.history,
-          FEAT_BY_KEY.playlists
-        ];
   let lastPairsAt = 0;
-  let _lastSummaryEventAt = 0;
-  let _renderTO = null;
-  let _lastRenderAt = 0;
-  let _finishedForRun = null;
-  let _prevRunKey = null;
-  let _sumBusy = false;
-  let _sumAbort = null;
-  let _insightsTriedForRun = null;
-  let _logHydratedForRun = null;
-  const INSIGHTS_RETRY_DELAYS = [0, 800, 2000, 5000];
-  let _insightsRetry = { runKey: null, tries: 0, t: null };
-
-  const runKeyOf = (s) =>
-    s?.run_id ||
-    s?.run_uuid ||
-    s?.raw_started_ts ||
-    (s?.started_at ? Date.parse(s.started_at) : null);
-
+  let lastSummaryEventAt = 0;
+  let renderTO = null;
+  let lastRenderAt = 0;
+  let finishedForRun = null;
+  let prevRunKey = null;
+  let sumBusy = false;
+  let sumAbort = null;
+  let insightsTriedForRun = null;
+  let logHydratedForRun = null;
+  let pairsRefreshTO = null;
+  let spotsModal = null;
+  let esSummary = null;
+  let esLogs = null;
+  let runButtonWired = false;
   const hydratedLanes = Object.create(null);
   const lastCounts = Object.create(null);
-  const lastLaneTs = { watchlist: 0, ratings: 0, history: 0, progress: 0, playlists: 0 };
+  const lastLaneTs = Object.fromEntries(FEAT_KEYS.map((k) => [k, 0]));
+  const insightsRetry = { runKey: null, tries: 0, t: null };
+  const INSIGHTS_RETRY_DELAYS = [0, 800, 2000, 5000];
 
-  const startRunVisualsSafe = (...a) => window.startRunVisuals?.(...a);
-  const stopRunVisualsSafe = (...a) => window.stopRunVisuals?.(...a);
+  const runKeyOf = (s) => s?.run_id || s?.run_uuid || s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) : null);
+  const defaultEnabledMap = () => ({ ...DEFAULT_ENABLED });
+  const getEnabledMap = () => enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
+  const getDisplayFeats = () => (enabledFromPairs?.progress ? [FEAT_BY_KEY.watchlist, FEAT_BY_KEY.ratings, FEAT_BY_KEY.history, FEAT_BY_KEY.progress] : [FEAT_BY_KEY.watchlist, FEAT_BY_KEY.ratings, FEAT_BY_KEY.history, FEAT_BY_KEY.playlists]);
+  const fmtDelta = (a, r, u) => `+${a || 0} / -${r || 0} / ~${u || 0}`;
 
   const fetchJSON = async (url, fallback = null, signal) => {
     try {
-      const r = await fetch(
-        url + (url.includes("?") ? "&" : "?") + "_ts=" + Date.now(),
-        { credentials: "same-origin", cache: "no-store", signal }
-      );
-      if (!r.ok) return fallback;
-      return await r.json();
+      const r = await fetch(`${url}${url.includes("?") ? "&" : "?"}_ts=${nowTs()}`, { credentials: "same-origin", cache: "no-store", signal });
+      return r.ok ? await r.json() : fallback;
     } catch {
       return fallback;
     }
   };
 
-  // Lanes helpers
+  const ensureOpsStatusDock = () => {
+    const row = document.querySelector("#ops-card .action-row");
+    if (!row || row.querySelector(".cw-status-dock")) return;
+    row.appendChild(Object.assign(document.createElement("div"), { className: "cw-status-dock" }));
+  };
+  ensureOpsStatusDock();
+  window.addEventListener("cw:ops-layout-refresh", ensureOpsStatusDock);
+
+  const toInt = (v) => Number.isInteger(v) ? v : typeof v === "number" && Number.isFinite(v) && Math.floor(v) === v ? v : typeof v === "string" && /^\d+$/.test(v.trim()) ? parseInt(v.trim(), 10) : null;
   const titleOf = (x) => {
     if (typeof x === "string") return x;
     if (!x || typeof x !== "object") return "item";
-
-    const toInt = (v) => {
-      if (Number.isInteger(v)) return v;
-      if (typeof v === "number" && Number.isFinite(v) && Math.floor(v) === v)
-        return v;
-      if (typeof v === "string" && /^\d+$/.test(v.trim()))
-        return parseInt(v.trim(), 10);
-      return null;
-    };
-
     const key = String(x.key || "");
     const show = String(x.series_title || x.show_title || "").trim();
-
+    const rawTitle = String(x.title || "").trim();
     const mKey = key.match(/#s(\d{1,3})e(\d{1,3})/i);
-    const rawTitle = (x.title && String(x.title).trim()) || "";
     const mRaw = rawTitle.match(/^s(\d{1,3})e(\d{1,3})$/i);
-
-    let season = toInt(x.season);
-    let episode = toInt(x.episode);
-
-    if (mKey) {
-      season ??= parseInt(mKey[1], 10);
-      episode ??= parseInt(mKey[2], 10);
-    }
-    if (mRaw) {
-      season ??= parseInt(mRaw[1], 10);
-      episode ??= parseInt(mRaw[2], 10);
-    }
-
-    let type = String(x.type || "").toLowerCase();
-    const isEpisode =
-      type === "episode" ||
-      !!mKey ||
-      !!mRaw ||
-      (show && season != null && episode != null);
-
-    // Episode: always prefer Show - SxxEyy
-    if (isEpisode) {
-      if (show && season != null && episode != null) {
-        const code = `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
-        return `${show} - ${code}`;
-      }
-
-      if (
-        typeof x.display_title === "string" &&
-        /S\d{2}E\d{2}/i.test(x.display_title)
-      ) {
-        return x.display_title.trim();
-      }
-
+    let season = toInt(x.season), episode = toInt(x.episode), type = String(x.type || "").toLowerCase();
+    if (mKey) [season, episode] = [season ?? +mKey[1], episode ?? +mKey[2]];
+    if (mRaw) [season, episode] = [season ?? +mRaw[1], episode ?? +mRaw[2]];
+    if (type === "episode" || mKey || mRaw || (show && season != null && episode != null)) {
+      if (show && season != null && episode != null) return `${show} - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+      if (typeof x.display_title === "string" && /S\d{2}E\d{2}/i.test(x.display_title)) return x.display_title.trim();
       if (show) return show;
     }
-
-    if (typeof x.display_title === "string" && x.display_title.trim()) {
-      return x.display_title.trim();
-    }
-
+    if (typeof x.display_title === "string" && x.display_title.trim()) return x.display_title.trim();
     if (type === "season") {
-      const seasonLabel =
-        (x.title && String(x.title).trim()) ||
-        (toInt(x.season) != null ? `Season ${toInt(x.season)}` : "");
-
-      if (show && seasonLabel) return `${show} - ${seasonLabel}`;
-      if (show) return show;
-      if (seasonLabel) return seasonLabel;
+      const seasonLabel = rawTitle || (toInt(x.season) != null ? `Season ${toInt(x.season)}` : "");
+      return show && seasonLabel ? `${show} - ${seasonLabel}` : show || seasonLabel || "item";
     }
-
-    const title = (x.title || x.name || "").toString().trim();
-    if (show && title && show.toLowerCase() === title.toLowerCase()) return show;
-
-    return title || x.series_title || x.name || x.key || "item";
+    const title = String(x.title || x.name || "").trim();
+    return show && title && show.toLowerCase() === title.toLowerCase() ? show : title || x.series_title || x.name || x.key || "item";
   };
 
   const synthSpots = (items, key) => {
     const arr = Array.isArray(items) ? [...items] : [];
-
     const tsOf = (it) => {
-      const v =
-        it?.ts ??
-        it?.seen_ts ??
-        it?.sync_ts ??
-        it?.ingested_ts ??
-        it?.watched_at ??
-        it?.rated_at ??
-        0;
+      const v = it?.ts ?? it?.seen_ts ?? it?.sync_ts ?? it?.ingested_ts ?? it?.watched_at ?? it?.rated_at ?? 0;
       const n = typeof v === "number" ? v : Date.parse(v);
       return Number.isFinite(n) ? n : 0;
     };
-
-    arr.sort((x, y) => tsOf(y) - tsOf(x));
-
-    const a = [];
-    const r = [];
-    const u = [];
-
+    arr.sort((a, b) => tsOf(b) - tsOf(a));
+    const out = { a: [], r: [], u: [] };
     for (const it of arr) {
-      const t = titleOf(it);
-      const act = String(it?.action || it?.op || it?.change || "")
-        .toLowerCase();
-
-      let tag = "upd";
-
-      if (
-        key === "history" &&
-        (it?.watched ||
-          it?.watched_at ||
-          act.includes("watch") ||
-          act.includes("scrobble"))
-      ) {
-        tag = "add";
-      } else if (
-        key === "ratings" &&
-        (act.includes("rate") || ("rating" in (it || {})))
-      ) {
-        tag = "add";
-      } else if (
-        key === "progress" &&
-        (
-          act.includes("progress") ||
-          act.includes("resume") ||
-          act.includes("position") ||
-          act.includes("offset")
-        )
-      ) {
-        tag = "upd";
-      } else if (
-        key === "playlists" &&
-        (act.includes("add") || act.includes("playlist"))
-      ) {
-        tag = "add";
-      } else if (act.includes("add")) {
-        tag = "add";
-      } else if (
-        act.includes("rem") ||
-        act.includes("del") ||
-        act.includes("unwatch")
-      ) {
-        tag = "rem";
-      }
-
-      if (tag === "add" && a.length < 3) a.push(t);
-      else if (tag === "rem" && r.length < 3) r.push(t);
-      else if (u.length < 3) u.push(t);
-
-      if (a.length + r.length + u.length >= 3) break;
+      const act = String(it?.action || it?.op || it?.change || "").toLowerCase();
+      const tag = key === "history" && (it?.watched || it?.watched_at || act.includes("watch") || act.includes("scrobble")) ? "a"
+        : key === "ratings" && (act.includes("rate") || "rating" in (it || {})) ? "a"
+        : key === "progress" && ["progress", "resume", "position", "offset"].some((s) => act.includes(s)) ? "u"
+        : key === "playlists" && (act.includes("add") || act.includes("playlist")) ? "a"
+        : act.includes("add") ? "a"
+        : ["rem", "del", "unwatch"].some((s) => act.includes(s)) ? "r"
+        : "u";
+      const bucket = out[tag];
+      if (bucket.length < 3) bucket.push(titleOf(it));
+      if (out.a.length + out.r.length + out.u.length >= 3) break;
     }
-
-    return { a, r, u };
+    return out;
   };
 
-  const defaultEnabledMap = () => ({
-    watchlist: true,
-    ratings: true,
-    history: true,
-    progress: false,
-    playlists: true
-  });
-
-  const getEnabledMap = () =>
-    enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
-
-  const guardLaneOverwrite = (key, payload, ts) => {
-    const sum =
-      (+payload.added || 0) +
-      (+payload.removed || 0) +
-      (+payload.updated || 0);
-
+  const guardLaneOverwrite = (key, payload, ts = nowTs()) => {
+    const sum = (+payload.added || 0) + (+payload.removed || 0) + (+payload.updated || 0);
     const prev = hydratedLanes[key];
-    const prevSum = prev
-      ? (+prev.added || 0) + (+prev.removed || 0) + (+prev.updated || 0)
-      : 0;
-
+    const prevSum = prev ? (+prev.added || 0) + (+prev.removed || 0) + (+prev.updated || 0) : 0;
     if (sync.isRunning() && sum === 0 && prevSum > 0) return false;
-    if ((ts || 0) < (lastLaneTs[key] || 0)) return false;
-
-    lastLaneTs[key] = ts || Date.now();
+    if (ts < (lastLaneTs[key] || 0)) return false;
+    lastLaneTs[key] = ts;
     return true;
   };
 
   const getLaneStats = (sum, key) => {
     const f = sum?.features?.[key] || sum?.[key] || {};
-    const added = (f.added ?? 0) | 0;
-    const removed = (f.removed ?? 0) | 0;
-    const updated = (f.updated ?? 0) | 0;
-    const items = Array.isArray(f.items) ? f.items : [];
-
-    let spotAdd = Array.isArray(f.spotlight_add) ? f.spotlight_add : [];
-    let spotRem = Array.isArray(f.spotlight_remove) ? f.spotlight_remove : [];
-    let spotUpd = Array.isArray(f.spotlight_update) ? f.spotlight_update : [];
-
-    if (
-      (added || removed || updated) === 0 &&
-      hydratedLanes[key] &&
-      sync.isRunning()
-    ) {
-      return { ...hydratedLanes[key] };
+    const out = {
+      added: (f.added ?? 0) | 0,
+      removed: (f.removed ?? 0) | 0,
+      updated: (f.updated ?? 0) | 0,
+      items: Array.isArray(f.items) ? f.items : [],
+      spotAdd: Array.isArray(f.spotlight_add) ? f.spotlight_add : [],
+      spotRem: Array.isArray(f.spotlight_remove) ? f.spotlight_remove : [],
+      spotUpd: Array.isArray(f.spotlight_update) ? f.spotlight_update : []
+    };
+    if (!out.added && !out.removed && !out.updated && hydratedLanes[key] && sync.isRunning()) return { ...hydratedLanes[key] };
+    if (!out.spotAdd.length && !out.spotRem.length && !out.spotUpd.length && out.items.length) {
+      const s = synthSpots(out.items, key);
+      out.spotAdd = s.a; out.spotRem = s.r; out.spotUpd = s.u;
     }
-
-    if (!spotAdd.length && !spotRem.length && !spotUpd.length && items.length) {
-      const s = synthSpots(items, key);
-      spotAdd = s.a;
-      spotRem = s.r;
-      spotUpd = s.u;
-    }
-
-    const out = { added, removed, updated, items, spotAdd, spotRem, spotUpd };
-
-    if (guardLaneOverwrite(key, out, Date.now())) hydratedLanes[key] = out;
+    if (guardLaneOverwrite(key, out)) hydratedLanes[key] = out;
     return out;
   };
 
   const laneState = (key) => {
-    const err = summary?.exit_code != null && summary.exit_code !== 0;
-    const enabled = !!getEnabledMap()[key];
-    if (!enabled) return "skip";
-    if (err) return "err";
-    return sync.isRunning()
-      ? "run"
-      : sync.state().timeline.done
-      ? "ok"
-      : "skip";
+    if (!getEnabledMap()[key]) return "skip";
+    if (summary?.exit_code != null && summary.exit_code !== 0) return "err";
+    return sync.isRunning() ? "run" : sync.state().timeline.done ? "ok" : "skip";
   };
-
-  const fmtDelta = (a, r, u) => `+${a || 0} / -${r || 0} / ~${u || 0}`;
-
-  // Spotlight more modal
-  let _spotsModal = null;
-  const esc = (s) =>
-    String(s ?? "").replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[
-        c
-      ])
-    );
 
   const ensureSpotsModal = () => {
-    if (_spotsModal) return _spotsModal;
-
-    const m = document.createElement("div");
-    m.id = "ux-spots-modal";
-    m.className = "ux-spots-modal hidden";
-    m.innerHTML = `
-      <div class="ux-spots-backdrop"></div>
-      <div class="ux-spots-card">
-        <div class="ux-spots-h">
-          <div class="ux-spots-title"></div>
-          <button class="ux-spots-close" aria-label="Close">✕</button>
-        </div>
-        <div class="ux-spots-body"></div>
-      </div>`;
-
-    document.body.appendChild(m);
-
-    m.querySelector(".ux-spots-close").onclick = () => closeSpotsModal();
-    m.querySelector(".ux-spots-backdrop").onclick = () => closeSpotsModal();
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") closeSpotsModal();
-    });
-
-    _spotsModal = m;
-    return m;
-  };
-
-  const closeSpotsModal = () => {
-    if (_spotsModal) _spotsModal.classList.add("hidden");
+    if (spotsModal) return spotsModal;
+    spotsModal = Object.assign(document.createElement("div"), { id: "ux-spots-modal", className: "ux-spots-modal hidden" });
+    spotsModal.innerHTML = `<div class="ux-spots-backdrop"></div><div class="ux-spots-card"><div class="ux-spots-h"><div class="ux-spots-title"></div><button class="ux-spots-close" aria-label="Close">✕</button></div><div class="ux-spots-body"></div></div>`;
+    document.body.appendChild(spotsModal);
+    const close = () => spotsModal?.classList.add("hidden");
+    spotsModal.querySelector(".ux-spots-close").onclick = close;
+    spotsModal.querySelector(".ux-spots-backdrop").onclick = close;
+    document.addEventListener("keydown", (e) => e.key === "Escape" && close());
+    return spotsModal;
   };
 
   const openSpotsModal = (label, buckets) => {
-    const m = ensureSpotsModal();
-    m.querySelector(".ux-spots-title").textContent = `${label} - last 25`;
-    const body = m.querySelector(".ux-spots-body");
-
-    const tsOf = (it) => {
-      if (!it || typeof it === "string") return 0;
-      const v =
-        it.added_at ??
-        it.listed_at ??
-        it.watched_at ??
-        it.rated_at ??
-        it.last_watched_at ??
-        it.user_rated_at ??
-        it.ts ??
-        it.seen_ts ??
-        it.ingested_ts ??
-        it.sync_ts ??
-        0;
-
-      let n = typeof v === "number" ? v : Date.parse(v);
-      if (!Number.isFinite(n)) return 0;
-      if (n < 1e12) n *= 1000;
-      return n;
-    };
-
-    const fmtDate = (ts) => (ts ? new Date(ts).toLocaleDateString() : "");
-
-    const tagMeta = (kind) => {
-      if (kind === "rem") {
-        return { cls: "t-rem", text: "Removed", icon: "mdi mdi-delete-outline" };
-      }
-      if (kind === "upd") {
-        return { cls: "t-upd", text: "Updated", icon: "mdi mdi-sync" };
-      }
-      return { cls: "t-add", text: "Added", icon: "mdi mdi-plus" };
-    };
-
-    const markKind = (arr, kind) =>
-      (arr || []).map((it) =>
-        typeof it === "object" && it !== null
-          ? Object.assign({}, it, { __kind: kind })
-          : { title: it, __kind: kind }
-      );
-
-    const all = [
-      ...markKind(buckets.add || [], "add"),
-      ...markKind(buckets.rem || [], "rem"),
-      ...markKind(buckets.upd || [], "upd")
-    ];
-
-    all.sort((a, b) => tsOf(b) - tsOf(a));
-    const last25 = all.slice(0, 25);
-
+    const modal = ensureSpotsModal();
+    const body = modal.querySelector(".ux-spots-body");
+    const meta = { add: ["t-add", "Added", "mdi mdi-plus"], rem: ["t-rem", "Removed", "mdi mdi-delete-outline"], upd: ["t-upd", "Updated", "mdi mdi-sync"] };
+    const stampOf = (it) => !it || typeof it === "string" ? 0 : parseTs(it.added_at ?? it.listed_at ?? it.watched_at ?? it.rated_at ?? it.last_watched_at ?? it.user_rated_at ?? it.ts ?? it.seen_ts ?? it.ingested_ts ?? it.sync_ts ?? 0);
+    const all = ["add", "rem", "upd"].flatMap((kind) => (buckets[kind] || []).map((it) => typeof it === "object" && it ? { ...it, __kind: kind } : { title: it, __kind: kind }));
+    const rows = all.sort((a, b) => stampOf(b) - stampOf(a)).slice(0, 25);
     const hasRem = (buckets.rem || []).length > 0;
-    const leftItems = last25.filter((it) => it.__kind !== "rem");
-    const rightItems = hasRem ? last25.filter((it) => it.__kind === "rem") : [];
-
-    const mkCol = (items) => {
-      if (!items.length) return `<div class="muted small">No items.</div>`;
-      return items
-        .map((it) => {
-          const t = esc(titleOf(it));
-          const d = fmtDate(tsOf(it));
-          const { cls, text, icon } = tagMeta(it.__kind);
-          return `
-          <div class="ux-sec-row">
-            <span class="tag ${cls}">
-              <i class="${icon}"></i> ${text}
-            </span>
-            <span class="ux-title">${t}</span>
-            ${d ? `<span class="ux-date">${d}</span>` : ``}
-          </div>`;
-        })
-        .join("");
-    };
-
+    const columns = hasRem ? [rows.filter((it) => it.__kind !== "rem"), rows.filter((it) => it.__kind === "rem")] : [rows.filter((it) => it.__kind !== "rem")];
+    const mkCol = (items) => !items.length ? `<div class="muted small">No items.</div>` : items.map((it) => {
+      const [cls, text, icon] = meta[it.__kind] || meta.add;
+      const d = stampOf(it) ? new Date(stampOf(it)).toLocaleDateString() : "";
+      return `<div class="ux-sec-row"><span class="tag ${cls}"><i class="${icon}"></i> ${text}</span><span class="ux-title">${esc(titleOf(it))}</span>${d ? `<span class="ux-date">${d}</span>` : ""}</div>`;
+    }).join("");
+    modal.querySelector(".ux-spots-title").textContent = `${label} - last 25`;
     body.classList.toggle("single", !hasRem);
-    body.innerHTML = hasRem
-      ? `
-        <div class="ux-col ux-col-add">${mkCol(leftItems)}</div>
-        <div class="ux-col ux-col-rem">${mkCol(rightItems)}</div>`
-      : `
-        <div class="ux-col ux-col-full">${mkCol(leftItems)}</div>`;
-
-    m.classList.remove("hidden");
+    body.innerHTML = columns.map((items, i) => `<div class="ux-col ${hasRem ? i ? "ux-col-rem" : "ux-col-add" : "ux-col-full"}">${mkCol(items)}</div>`).join("");
+    modal.classList.remove("hidden");
   };
 
-  // Renderers
+  const createSpotRow = (kind, text) => {
+    const row = Object.assign(document.createElement("div"), { className: "spot" });
+    row.innerHTML = `<span class="tag ${kind === "add" ? "t-add" : kind === "rem" ? "t-rem" : "t-upd"}">${kind === "add" ? "Added" : kind === "rem" ? "Removed" : "Updated"}</span><span></span>`;
+    row.lastChild.textContent = text;
+    return row;
+  };
+
   function renderLanes() {
-    elLanes.innerHTML = "";
-    const wrap = document.createElement("div");
-    wrap.className = "lanes";
+    const wrap = Object.assign(document.createElement("div"), { className: "lanes" });
     const running = sync.isRunning();
-
-    for (const f of getDisplayFeats()) {
-      const isEnabled = !!getEnabledMap()[f.key];
-      const { added, removed, updated, items, spotAdd, spotRem, spotUpd } =
-        getLaneStats(summary || {}, f.key);
-      const st = laneState(f.key);
-
-      const lane = document.createElement("div");
-      lane.className = "lane";
-      if (!isEnabled) lane.classList.add("disabled");
-
+    for (const feat of getDisplayFeats()) {
+      const enabled = !!getEnabledMap()[feat.key];
+      const { added, removed, updated, items, spotAdd, spotRem, spotUpd } = getLaneStats(summary || {}, feat.key);
+      const lane = Object.assign(document.createElement("div"), { className: `lane${enabled ? "" : " disabled"}` });
       const total = (added || 0) + (removed || 0) + (updated || 0);
-      const prev = lastCounts[f.key] ?? 0;
-      if (running && total > prev && isEnabled) {
+      if (running && enabled && total > (lastCounts[feat.key] ?? 0)) {
         lane.classList.add("shake");
         setTimeout(() => lane.classList.remove("shake"), 450);
       }
-      lastCounts[f.key] = total;
+      lastCounts[feat.key] = total;
 
-      const h = document.createElement("div");
-      h.className = "lane-h";
+      const chipState = laneState(feat.key);
+      const header = Object.assign(document.createElement("div"), { className: "lane-h" });
+      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-outlined material-symbol material-icons">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
+      lane.appendChild(header);
 
-      const ico = document.createElement("div");
-      ico.className = "lane-ico";
-      ico.innerHTML =
-        `<span class="material-symbols-outlined material-symbol material-icons">${f.icon}</span>`;
-
-      const ttl = document.createElement("div");
-      ttl.className = "lane-title";
-      ttl.textContent = f.label;
-
-      const badges = document.createElement("div");
-      badges.className = "lane-badges";
-
-      const delta = document.createElement("span");
-      delta.className = "delta";
-      delta.innerHTML = `<b>${fmtDelta(added, removed, updated)}</b>`;
-
-      const chip = document.createElement("span");
-      chip.className =
-        "chip " +
-        (st === "ok"
-          ? "ok"
-          : st === "run"
-          ? "run"
-          : st === "err"
-          ? "err"
-          : "skip");
-      chip.textContent = !isEnabled
-        ? "Disabled"
-        : st === "err"
-        ? "Failed"
-        : st === "ok"
-        ? "Synced"
-        : st === "run"
-        ? "Running"
-        : "Skipped";
-
-      badges.append(delta, chip);
-      h.append(ico, ttl, badges);
-      lane.appendChild(h);
-
-      const body = document.createElement("div");
-      body.className = "lane-body";
-
-      const spots = [];
-      for (const x of (spotAdd || []).slice(0, 2))
-        spots.push({ t: "add", text: titleOf(x) });
-      for (const x of (spotRem || []).slice(0, 2))
-        spots.push({ t: "rem", text: titleOf(x) });
-      for (const x of (spotUpd || []).slice(0, 2))
-        spots.push({ t: "upd", text: titleOf(x) });
-
+      const body = Object.assign(document.createElement("div"), { className: "lane-body" });
+      const spots = [...(spotAdd || []).slice(0, 2).map((x) => ["add", titleOf(x)]), ...(spotRem || []).slice(0, 2).map((x) => ["rem", titleOf(x)]), ...(spotUpd || []).slice(0, 2).map((x) => ["upd", titleOf(x)])];
       if (!spots.length && items?.length) {
-        const s = synthSpots(items, f.key);
-        for (const x of s.a.slice(0, 2)) spots.push({ t: "add", text: x });
-        for (const x of s.r.slice(0, 2)) spots.push({ t: "rem", text: x });
-        for (const x of s.u.slice(0, 2)) spots.push({ t: "upd", text: x });
+        const s = synthSpots(items, feat.key);
+        spots.push(...s.a.slice(0, 2).map((x) => ["add", x]), ...s.r.slice(0, 2).map((x) => ["rem", x]), ...s.u.slice(0, 2).map((x) => ["upd", x]));
       }
 
-      const rawTotal =
-        (spotAdd?.length || 0) +
-        (spotRem?.length || 0) +
-        (spotUpd?.length || 0);
-      const logicalTotal = (added || 0) + (removed || 0) + (updated || 0);
-      const cappedTotal = Math.min(25, logicalTotal);
-
-      const maxShow = Math.min(3, cappedTotal);
-      const shownSpots = Math.min(maxShow, spots.length);
-      const moreCount = Math.max(0, cappedTotal - shownSpots);
-
-      if (!isEnabled) {
-        body.appendChild(
-          Object.assign(document.createElement("div"), {
-            className: "spot muted small",
-            textContent: "Feature not configured"
-          })
-        );
-      } else if (cappedTotal === 0 || !spots.length) {
-        body.appendChild(
-          Object.assign(document.createElement("div"), {
-            className: "spot muted small",
-            textContent: sync.state().timeline.done
-              ? "No changes"
-              : "Awaiting results…"
-          })
-        );
+      const cappedTotal = Math.min(25, total);
+      if (!enabled || !cappedTotal || !spots.length) {
+        body.appendChild(Object.assign(document.createElement("div"), { className: "spot muted small", textContent: !enabled ? "Feature not configured" : sync.state().timeline.done ? "No changes" : "Awaiting results…" }));
       } else {
         let lastRow = null;
-
-        for (const s of spots.slice(0, maxShow)) {
-          const row = document.createElement("div");
-          row.className = "spot";
-
-          const tag = document.createElement("span");
-          tag.className =
-            "tag " +
-            (s.t === "add"
-              ? "t-add"
-              : s.t === "rem"
-              ? "t-rem"
-              : "t-upd");
-          tag.textContent =
-            s.t === "add" ? "Added" : s.t === "rem" ? "Removed" : "Updated";
-
-          row.append(
-            tag,
-            Object.assign(document.createElement("span"), {
-              textContent: s.text
-            })
-          );
-
-          body.appendChild(row);
-          lastRow = row;
+        for (const [kind, text] of spots.slice(0, Math.min(3, cappedTotal))) {
+          lastRow = createSpotRow(kind, text);
+          body.appendChild(lastRow);
         }
-
+        const moreCount = Math.max(0, cappedTotal - Math.min(Math.min(3, cappedTotal), spots.length));
         if (moreCount > 0 && lastRow) {
-          const moreChip = document.createElement("span");
-          moreChip.className = "chip more";
-          moreChip.textContent = `+${moreCount} more`;
-          moreChip.title = "Show recent items";
-          moreChip.style.marginLeft = "auto";
-          moreChip.addEventListener("click", (ev) => {
+          const more = Object.assign(document.createElement("span"), { className: "chip more", textContent: `+${moreCount} more`, title: "Show recent items" });
+          more.style.marginLeft = "auto";
+          more.addEventListener("click", (ev) => {
             ev.stopPropagation();
-            openSpotsModal(f.label, {
-              add: spotAdd,
-              rem: spotRem,
-              upd: spotUpd
-            });
+            openSpotsModal(feat.label, { add: spotAdd, rem: spotRem, upd: spotUpd });
           });
-
-          lastRow.appendChild(moreChip);
+          lastRow.appendChild(more);
         }
       }
 
       lane.appendChild(body);
       wrap.appendChild(lane);
     }
-
-    elLanes.appendChild(wrap);
+    elLanes.replaceChildren(wrap);
   }
 
-  const renderSpotlightSummary = () => {
-    elSpot.innerHTML = "";
-  };
+  const renderAll = () => { renderLanes(); elSpot.textContent = ""; };
 
-  const renderAll = () => {
-    renderLanes();
-    renderSpotlightSummary();
-  };
-
-  // Pairs hydration
   async function pullPairs() {
     const arr = await fetchJSON("/api/pairs", null);
     if (!Array.isArray(arr)) return;
-
-    if (!arr.length) {
-      enabledFromPairs = {
-        watchlist: false,
-        ratings: false,
-        history: false,
-        progress: false,
-        playlists: false
-      };
-      return;
+    if (!arr.length) return void (enabledFromPairs = EMPTY_ENABLED());
+    const enabled = EMPTY_ENABLED();
+    for (const pair of arr) {
+      const feats = pair?.features || {};
+      for (const key of FEAT_KEYS) if (feats[key] && (feats[key].enable === true || feats[key].enabled === true)) enabled[key] = true;
     }
-
-    const enabled = {
-      watchlist: false,
-      ratings: false,
-      history: false,
-      progress: false,
-      playlists: false
-    };
-
-    for (const p of arr) {
-      const feats = p?.features || {};
-      for (const f of FEATS_ALL) {
-        const cfg = feats[f.key];
-        if (cfg && (cfg.enable === true || cfg.enabled === true)) {
-          enabled[f.key] = true;
-        }
-      }
-    }
-
     enabledFromPairs = enabled;
   }
 
-
-  let _pairsRefreshTO = null;
-  function queuePairsRefresh(reason) {
-    clearTimeout(_pairsRefreshTO);
-    _pairsRefreshTO = setTimeout(() => {
+  const queuePairsRefresh = () => {
+    clearTimeout(pairsRefreshTO);
+    pairsRefreshTO = setTimeout(() => {
       pullPairs().finally(() => {
-        lastPairsAt = Date.now();
+        lastPairsAt = nowTs();
         renderLanes();
       });
     }, 250);
-  }
+  };
+  window.addEventListener("cx:pairs:changed", queuePairsRefresh);
+  document.addEventListener("config-saved", queuePairsRefresh);
+  window.addEventListener("sync-complete", queuePairsRefresh);
 
-  window.addEventListener("cx:pairs:changed", () => queuePairsRefresh("cx:pairs:changed"));
-  document.addEventListener("config-saved", () => queuePairsRefresh("config-saved"));
-  window.addEventListener("sync-complete", () => queuePairsRefresh("sync-complete"));
+  const inferInsightFeature = (e) => {
+    const f = String(e.feature || e.lane || e.kind || "").toLowerCase();
+    if (f) return f;
+    const act = String(e.action || "").toLowerCase();
+    if (act.includes("watch") || act.includes("scrobble")) return "history";
+    if (act.includes("rate") || "rating" in (e || {})) return "ratings";
+    if (["progress", "resume", "position", "offset"].some((s) => act.includes(s)) || "progress_ms" in (e || {}) || "playback_position" in (e || {})) return "progress";
+    if (act.includes("playlist")) return "playlists";
+    return "watchlist";
+  };
 
   async function hydrateFromInsights(startTsEpoch) {
-    const src = await fetchJSON("/api/insights", null);
-    const events = src?.events;
+    const events = (await fetchJSON("/api/insights", null))?.events;
     if (!Array.isArray(events) || !events.length) return false;
-
     const since = Math.floor(startTsEpoch || 0);
-
-    function mk() {
-      return {
-        added: 0,
-        removed: 0,
-        updated: 0,
-        spotAdd: [],
-        spotRem: [],
-        spotUpd: []
-      };
-    }
-
-    const tallies = {
-      watchlist: mk(),
-      ratings: mk(),
-      history: mk(),
-      progress: mk(),
-      playlists: mk()
-    };
-
-    const mapFeature = (e) => {
-      const f = String(e.feature || e.lane || e.kind || "").toLowerCase();
-      if (f) return f;
-
-      const act = String(e.action || "").toLowerCase();
-      if (act.includes("watch") || act.includes("scrobble")) return "history";
-      if (act.includes("rate") || "rating" in (e || {})) return "ratings";
-      if (
-        act.includes("progress") ||
-        act.includes("resume") ||
-        act.includes("position") ||
-        act.includes("offset") ||
-        "progress_ms" in (e || {}) ||
-        "playback_position" in (e || {})
-      )
-        return "progress";
-      if (act.includes("playlist")) return "playlists";
-      return "watchlist";
-    };
+    const tallies = Object.fromEntries(FEAT_KEYS.map((k) => [k, mkLane()]));
 
     for (const e of events) {
       if ((e.ts || 0) < since) continue;
-
-      const k = mapFeature(e);
-      const L = tallies[k] || (tallies[k] = mk());
-      
-      const title = titleOf(e);
+      const key = inferInsightFeature(e);
+      const lane = tallies[key] || (tallies[key] = mkLane());
       const act = String(e.action || "").toLowerCase();
-
-      const spot = {
-        title,
-        key: e.key,
-        type: e.type,
-        ts: e.ts,
-        source: e.source || e.provider || e.side,
-        series_title: e.series_title || e.show_title,
-        season: e.season,
-        episode: e.episode,
-        display_title: e.display_title
-      };
-
-      if (act === "add") {
-        L.added++;
-        if (L.spotAdd.length < 25) L.spotAdd.push(spot);
-      } else if (act === "remove") {
-        L.removed++;
-        if (L.spotRem.length < 25) L.spotRem.push(spot);
-      } else {
-        L.updated++;
-        if (L.spotUpd.length < 25) L.spotUpd.push(spot);
-      }
-}
-
-    summary ||= {};
-    summary.features ||= {};
-
-    const nowTs = Date.now();
-    let appliedAny = false;
-
-    for (const [feat, L] of Object.entries(tallies)) {
-      if (
-        L.added + L.removed + L.updated === 0 &&
-        !L.spotAdd.length &&
-        !L.spotRem.length &&
-        !L.spotUpd.length
-      ) {
-        continue;
-      }
-
-      const prev = summary.features[feat] || {};
-      const prevAdded = +prev.added || 0;
-      const prevRemoved = +prev.removed || 0;
-      const prevUpdated = +prev.updated || 0;
-      const hasPrevCounts = prevAdded + prevRemoved + prevUpdated > 0;
-
-      if (!hasPrevCounts) continue;
-
-      const merged = {
-        added: prevAdded,
-        removed: prevRemoved,
-        updated: prevUpdated,
-        
-        spotlight_add:
-          (prev.spotlight_add && prev.spotlight_add.length
-            ? prev.spotlight_add
-            : (L.spotAdd && L.spotAdd.length ? L.spotAdd : [])) || [],
-        spotlight_remove:
-          (prev.spotlight_remove && prev.spotlight_remove.length
-            ? prev.spotlight_remove
-            : (L.spotRem && L.spotRem.length ? L.spotRem : [])) || [],
-        spotlight_update:
-          (prev.spotlight_update && prev.spotlight_update.length
-            ? prev.spotlight_update
-            : (L.spotUpd && L.spotUpd.length ? L.spotUpd : [])) || []
-};
-
-      if (guardLaneOverwrite(feat, merged, nowTs)) {
-        appliedAny = true;
-        summary.features[feat] = merged;
-        hydratedLanes[feat] = {
-          added: merged.added,
-          removed: merged.removed,
-          updated: merged.updated,
-          spotAdd: merged.spotlight_add,
-          spotRem: merged.spotlight_remove,
-          spotUpd: merged.spotlight_update
-        };
-      }
+      const spot = { title: titleOf(e), key: e.key, type: e.type, ts: e.ts, source: e.source || e.provider || e.side, series_title: e.series_title || e.show_title, season: e.season, episode: e.episode, display_title: e.display_title };
+      if (act === "add") { lane.added++; if (lane.spotAdd.length < 25) lane.spotAdd.push(spot); }
+      else if (act === "remove") { lane.removed++; if (lane.spotRem.length < 25) lane.spotRem.push(spot); }
+      else { lane.updated++; if (lane.spotUpd.length < 25) lane.spotUpd.push(spot); }
     }
 
+    summary ||= {}; summary.features ||= {};
+    let appliedAny = false;
+    for (const [feat, lane] of Object.entries(tallies)) {
+      if (!laneHasCounts(lane) && !lane.spotAdd.length && !lane.spotRem.length && !lane.spotUpd.length) continue;
+      const prev = summary.features[feat] || {};
+      const prevCounts = (+prev.added || 0) + (+prev.removed || 0) + (+prev.updated || 0);
+      if (!prevCounts) continue;
+      const merged = {
+        added: +prev.added || 0,
+        removed: +prev.removed || 0,
+        updated: +prev.updated || 0,
+        spotlight_add: prev.spotlight_add?.length ? prev.spotlight_add : lane.spotAdd,
+        spotlight_remove: prev.spotlight_remove?.length ? prev.spotlight_remove : lane.spotRem,
+        spotlight_update: prev.spotlight_update?.length ? prev.spotlight_update : lane.spotUpd
+      };
+      if (!guardLaneOverwrite(feat, merged)) continue;
+      appliedAny = true;
+      summary.features[feat] = merged;
+      hydratedLanes[feat] = { added: merged.added, removed: merged.removed, updated: merged.updated, spotAdd: merged.spotlight_add, spotRem: merged.spotlight_remove, spotUpd: merged.spotlight_update };
+    }
     if (!appliedAny) return false;
-    summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
+    summary.enabled = { ...defaultEnabledMap(), ...(summary.enabled || {}) };
     renderAll();
     return true;
   }
-
-  
-  const _laneHasCounts = (lane) =>
-    (+lane?.added || 0) + (+lane?.removed || 0) + (+lane?.updated || 0) > 0;
 
   const needsSpotlights = (s) => {
     const feats = s?.features;
     if (!feats) return false;
-
-    for (const f of getDisplayFeats()) {
-      const lane = feats[f.key] || {};
-      if (!_laneHasCounts(lane)) continue;
-
-      const has =
-        (lane.spotlight_add?.length || 0) +
-          (lane.spotlight_remove?.length || 0) +
-          (lane.spotlight_update?.length || 0) >
-        0;
-
-      if (!has) return true;
-    }
-
-    return false;
+    return getDisplayFeats().some(({ key }) => {
+      const lane = feats[key] || {};
+      return laneHasCounts(lane) && !((lane.spotlight_add?.length || 0) + (lane.spotlight_remove?.length || 0) + (lane.spotlight_update?.length || 0));
+    });
   };
 
-  function queueInsightsHydration(runKey, startTs) {
+  const queueInsightsHydration = (runKey, startTs) => {
     if (!runKey) return;
-
-    if (_insightsRetry.runKey !== runKey) {
-      _insightsRetry.runKey = runKey;
-      _insightsRetry.tries = 0;
-    }
-
-    clearTimeout(_insightsRetry.t);
-
-    const i = Math.min(_insightsRetry.tries, INSIGHTS_RETRY_DELAYS.length - 1);
-    const delay = INSIGHTS_RETRY_DELAYS[i] || 0;
-
-    _insightsRetry.t = setTimeout(async () => {
+    if (insightsRetry.runKey !== runKey) Object.assign(insightsRetry, { runKey, tries: 0 });
+    clearTimeout(insightsRetry.t);
+    const delay = INSIGHTS_RETRY_DELAYS[Math.min(insightsRetry.tries, INSIGHTS_RETRY_DELAYS.length - 1)] || 0;
+    insightsRetry.t = setTimeout(async () => {
       const got = await hydrateFromInsights(startTs).catch(() => false);
-      if (got) return;
-      if (_insightsRetry.runKey !== runKey) return;
-      if (!needsSpotlights(summary)) return;
-
-      if (_insightsRetry.tries >= INSIGHTS_RETRY_DELAYS.length - 1) {
-        if (_logHydratedForRun !== runKey) {
-          _logHydratedForRun = runKey;
+      if (got || insightsRetry.runKey !== runKey || !needsSpotlights(summary)) return;
+      if (insightsRetry.tries >= INSIGHTS_RETRY_DELAYS.length - 1) {
+        if (logHydratedForRun !== runKey) {
+          logHydratedForRun = runKey;
           hydrateFromLog();
         }
         return;
       }
-
-      _insightsRetry.tries++;
+      insightsRetry.tries++;
       queueInsightsHydration(runKey, startTs);
     }, delay);
-  }
+  };
 
-function hydrateFromLog() {
-    const det = document.getElementById("det-log");
-    if (!det) return false;
-    const txt = det.innerText || det.textContent || "";
+  function hydrateFromLog() {
+    const txt = document.getElementById("det-log")?.innerText || document.getElementById("det-log")?.textContent || "";
     if (!txt) return false;
-
-    const lines = txt.split(/\n+/).slice(-800);
     const tallies = Object.create(null);
-    const ensureLane = (k) =>
-      (tallies[k] ||= {
-        added: 0,
-        removed: 0,
-        updated: 0,
-        spotAdd: [],
-        spotRem: [],
-        spotUpd: []
-      });
-
+    const ensureLane = (k) => (tallies[k] ||= mkLane());
     const mapFeat = (s) => {
       const f = String(s || "").trim().toLowerCase();
-      if (!f) return "";
-      if (f === "watch" || f === "watched") return "history";
-      return f;
+      return !f ? "" : f === "watch" || f === "watched" ? "history" : f;
     };
 
     let lastFeatHint = "";
-
-    for (const raw of lines) {
-      const i = raw.indexOf("{");
-      if (i < 0) {
+    for (const raw of txt.split(/\n+/).slice(-800)) {
+      const idx = raw.indexOf("{");
+      if (idx < 0) {
         const m = raw.match(/feature["']?\s*:\s*"?(\w+)"?/i);
         if (m) lastFeatHint = mapFeat(m[1]) || lastFeatHint;
         continue;
       }
-
       let obj;
-      try {
-        obj = JSON.parse(raw.slice(i));
-      } catch {
-        continue;
-      }
-
-      if (!obj || !obj.event) continue;
+      try { obj = JSON.parse(raw.slice(idx)); } catch { continue; }
+      if (!obj?.event) continue;
 
       const feat = mapFeat(obj.feature);
       if (feat) lastFeatHint = feat;
-
-      if (
-        obj.event === "snapshot:progress" ||
-        obj.event === "progress:snapshot"
-      ) {
-        sync.snap({
-          done: obj.done,
-          total: obj.total,
-          final: !!obj.final,
-          dst: obj.dst,
-          feature: obj.feature
-        });
-      }
-
+      if (obj.event === "snapshot:progress" || obj.event === "progress:snapshot") sync.snap({ done: obj.done, total: obj.total, final: !!obj.final, dst: obj.dst, feature: obj.feature });
       if (/^apply:/.test(obj.event || "")) {
-        const isStart = /:start$/.test(obj.event);
-        const isProg = /:progress$/.test(obj.event);
-        const isDone = /:done$/.test(obj.event);
-
-        if (isStart) {
-          sync.applyStart({ feature: lastFeatHint, total: obj.total });
-        }
-        if (isProg) {
-          sync.applyProg({
-            feature: lastFeatHint,
-            done: obj.done,
-            total: obj.total
-          });
-        }
-        if (isDone) {
-          sync.applyDone({
-            feature: lastFeatHint,
-            count: obj.result?.count || obj.count
-          });
-        }
-          const lane = ensureLane(lastFeatHint || feat || obj.feature);
-          const evt = String(obj.event || "");
-          const cnt = +(obj.result?.count || obj.count || 0);
-          if (/^apply:add:done$/.test(evt)) lane.added += cnt;
-          else if (/^apply:remove:done$/.test(evt)) lane.removed += cnt;
-          else if (/^apply:update:done$/.test(evt)) lane.updated += cnt;
-
+        if (/:start$/.test(obj.event)) sync.applyStart({ feature: lastFeatHint, total: obj.total });
+        if (/:progress$/.test(obj.event)) sync.applyProg({ feature: lastFeatHint, done: obj.done, total: obj.total });
+        if (/:done$/.test(obj.event)) sync.applyDone({ feature: lastFeatHint, count: obj.result?.count || obj.count });
+        const lane = ensureLane(lastFeatHint || feat || obj.feature);
+        const cnt = +(obj.result?.count || obj.count || 0);
+        if (/^apply:add:done$/.test(obj.event)) lane.added += cnt;
+        else if (/^apply:remove:done$/.test(obj.event)) lane.removed += cnt;
+        else if (/^apply:update:done$/.test(obj.event)) lane.updated += cnt;
       }
-
-      const laneKey = feat || lastFeatHint;
-
-      if (
-        obj.event === "spotlight" &&
-        (feat || obj.feature) &&
-        obj.action &&
-        obj.title
-      ) {
-        const L = ensureLane(laneKey || obj.feature);
+      if (obj.event === "spotlight" && (feat || obj.feature) && obj.action && obj.title) {
+        const lane = ensureLane(feat || lastFeatHint || obj.feature);
         const act = String(obj.action).toLowerCase();
-        if (act === "add" && L.spotAdd.length < 25) L.spotAdd.push(obj.title);
-        if (act === "remove" && L.spotRem.length < 25)
-          L.spotRem.push(obj.title);
-        if (act === "update" && L.spotUpd.length < 25)
-          L.spotUpd.push(obj.title);
+        if (act === "add" && lane.spotAdd.length < 25) lane.spotAdd.push(obj.title);
+        if (act === "remove" && lane.spotRem.length < 25) lane.spotRem.push(obj.title);
+        if (act === "update" && lane.spotUpd.length < 25) lane.spotUpd.push(obj.title);
       }
     }
-
     if (!Object.keys(tallies).length) return false;
 
-    summary ||= {};
-    summary.features ||= {};
-
+    summary ||= {}; summary.features ||= {};
     for (const [feat, lane] of Object.entries(tallies)) {
       const prev = summary.features[feat] || {};
-
-      const saPrev = prev.spotlight_add?.length;
-      const srPrev = prev.spotlight_remove?.length;
-      const suPrev = prev.spotlight_update?.length;
-
-      const sa = saPrev ? prev.spotlight_add : lane.spotAdd;
-      const sr = srPrev ? prev.spotlight_remove : lane.spotRem;
-      const su = suPrev ? prev.spotlight_update : lane.spotUpd;
-
+      const sa = prev.spotlight_add?.length ? prev.spotlight_add.slice(0, 25) : last25(lane.spotAdd);
+      const sr = prev.spotlight_remove?.length ? prev.spotlight_remove.slice(0, 25) : last25(lane.spotRem);
+      const su = prev.spotlight_update?.length ? prev.spotlight_update.slice(0, 25) : last25(lane.spotUpd);
       const merged = {
         added: Math.max(prev.added || 0, lane.added || 0),
         removed: Math.max(prev.removed || 0, lane.removed || 0),
         updated: Math.max(prev.updated || 0, lane.updated || 0),
-        spotlight_add: saPrev ? sa.slice(0, 25) : sa.slice(-25).reverse(),
-        spotlight_remove: srPrev ? sr.slice(0, 25) : sr.slice(-25).reverse(),
-        spotlight_update: suPrev ? su.slice(0, 25) : su.slice(-25).reverse()
+        spotlight_add: sa,
+        spotlight_remove: sr,
+        spotlight_update: su
       };
-
-      if (guardLaneOverwrite(feat, merged, Date.now())) {
-        summary.features[feat] = merged;
-        hydratedLanes[feat] = {
-          added: merged.added,
-          removed: merged.removed,
-          updated: merged.updated,
-          items: [],
-          spotAdd: merged.spotlight_add || [],
-          spotRem: merged.spotlight_remove || [],
-          spotUpd: merged.spotlight_update || []
-        };
-      }
+      if (!guardLaneOverwrite(feat, merged)) continue;
+      summary.features[feat] = merged;
+      hydratedLanes[feat] = { added: merged.added, removed: merged.removed, updated: merged.updated, items: [], spotAdd: merged.spotlight_add || [], spotRem: merged.spotlight_remove || [], spotUpd: merged.spotlight_update || [] };
     }
-
-    summary.enabled = Object.assign(defaultEnabledMap(), summary.enabled || {});
+    summary.enabled = { ...defaultEnabledMap(), ...(summary.enabled || {}) };
     renderAll();
     return true;
   }
 
-  function setRunButtonState(running) {
-    const btn = document.getElementById("run");
+  const runBtn = () => document.getElementById("run");
+  const setRunButtonState = (running) => {
+    const btn = runBtn();
     if (!btn) return;
-    if (running) {
-      btn.setAttribute("disabled", "");
-    } else {
-      btn.removeAttribute("disabled");
-      try { window.recomputeRunDisabled?.(); } catch {}
-    }
+    btn.toggleAttribute("disabled", !!running);
+    if (!running) safe(window.recomputeRunDisabled);
     btn.setAttribute("aria-busy", running ? "true" : "false");
     btn.classList.toggle("glass", !!running);
     btn.title = running ? "Synchronization running…" : "Run synchronization";
-  }
+  };
 
-  function wireRunButton() {
-    const btn = document.getElementById("run");
-    if (!btn || wireRunButton._done) return;
-    wireRunButton._done = true;
-
-    btn.addEventListener(
-      "click",
-      () => {
-        if (btn.disabled || btn.classList.contains("glass")) return;
-        setRunButtonState(true);
-      },
-      { capture: true }
-    );
-  }
+  const wireRunButton = () => {
+    const btn = runBtn();
+    if (!btn || runButtonWired) return;
+    runButtonWired = true;
+    btn.addEventListener("click", () => {
+      if (!btn.disabled && !btn.classList.contains("glass")) setRunButtonState(true);
+    }, { capture: true });
+  };
 
   const scheduleRender = () => {
-    const now = Date.now();
-    if (now - _lastRenderAt < 200) {
-      clearTimeout(_renderTO);
-      _renderTO = setTimeout(() => {
-        _lastRenderAt = Date.now();
+    const now = nowTs();
+    if (now - lastRenderAt < 200) {
+      clearTimeout(renderTO);
+      return void (renderTO = setTimeout(() => {
+        lastRenderAt = nowTs();
         renderAll();
-      }, 200);
-      return;
+      }, 200));
     }
-    _lastRenderAt = now;
+    lastRenderAt = now;
     renderAll();
   };
 
   function applySummarySnapshot(s, source) {
     if (!s) return;
-    _lastSummaryEventAt = Date.now();
-
+    lastSummaryEventAt = nowTs();
     const runKey = runKeyOf(s) || "_";
-    if (runKey != _prevRunKey) {
-      _finishedForRun = null;
-      _prevRunKey = runKey;
-      _insightsTriedForRun = null;
-      _logHydratedForRun = null;
+    if (runKey !== prevRunKey) {
+      finishedForRun = null;
+      prevRunKey = runKey;
+      insightsTriedForRun = null;
+      logHydratedForRun = null;
     }
 
     const { running, justFinished } = sync.fromSummary(s);
     summary = s;
     setRunButtonState(running);
 
-    if (justFinished && _finishedForRun !== runKey) {
-      _finishedForRun = runKey;
+    if (justFinished && finishedForRun !== runKey) {
+      finishedForRun = runKey;
       if ("_optimistic" in sync) sync._optimistic = false;
-
-      try { window.updatePreviewVisibility?.(); window.refreshSchedulingBanner?.(); } catch {}
-      try { (window.Insights?.refreshInsights || window.refreshInsights)?.(); } catch {}
-
-      if (_insightsTriedForRun !== runKey) _insightsTriedForRun = runKey;
+      safe(window.updatePreviewVisibility);
+      safe(window.refreshSchedulingBanner);
+      safe(window.Insights?.refreshInsights || window.refreshInsights);
+      if (insightsTriedForRun !== runKey) insightsTriedForRun = runKey;
       try {
         const startTs = s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
         if (needsSpotlights(s)) queueInsightsHydration(runKey, startTs);
       } catch {}
-
       try {
         window.wallLoaded = false;
-        if (typeof window.updateWatchlistPreview === "function") {
-          window.updateWatchlistPreview();
-        } else if (typeof window.updatePreviewVisibility === "function") {
-          window.updatePreviewVisibility();
-        } else if (typeof window.loadWatchlist === "function") {
-          window.loadWatchlist();
-        }
+        if (typeof window.updateWatchlistPreview === "function") window.updateWatchlistPreview();
+        else if (typeof window.updatePreviewVisibility === "function") window.updatePreviewVisibility();
+        else if (typeof window.loadWatchlist === "function") window.loadWatchlist();
       } catch {}
-
       try {
-        window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: Date.now(), summary: s, source: source || "?" } }));
+        window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: nowTs(), summary: s, source: source || "?" } }));
       } catch {}
     }
 
     if (!summary.enabled) summary.enabled = defaultEnabledMap();
     scheduleRender();
 
-    const hasFeatures = summary?.features && Object.values(summary.features).some((v) =>
-      (v?.added || v?.removed || v?.updated || 0) > 0 ||
-      v?.spotlight_add?.length || v?.spotlight_remove?.length || v?.spotlight_update?.length
-    );
-
-    if (sync.state().timeline.done) {
-      const startTs =
-        summary?.raw_started_ts ||
-        (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
-
-      if (needsSpotlights(summary)) {
-        if (_insightsTriedForRun !== runKey) _insightsTriedForRun = runKey;
-        queueInsightsHydration(runKey, startTs);
-      } else if (!hasFeatures) {
-        setTimeout(() => {
-          if (_logHydratedForRun !== runKey) {
-            _logHydratedForRun = runKey;
-            hydrateFromLog();
-          }
-        }, 300);
-      }
-    }
-  }  // Summary pull
-  async function pullSummary() {
-    if (_sumBusy) return;
-    _sumBusy = true;
-
-    try {
-      try { _sumAbort?.abort?.(); } catch {}
-      _sumAbort = new AbortController();
-      const snap = await fetchJSON("/api/run/summary", null, _sumAbort.signal);
-      if (snap) applySummarySnapshot(snap, "poll");
-    } finally {
-      _sumBusy = false;
+    if (!sync.state().timeline.done) return;
+    const startTs = summary?.raw_started_ts || (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
+    const hasFeatures = summary?.features && Object.values(summary.features).some((v) => laneHasCounts(v) || v?.spotlight_add?.length || v?.spotlight_remove?.length || v?.spotlight_update?.length);
+    if (needsSpotlights(summary)) {
+      if (insightsTriedForRun !== runKey) insightsTriedForRun = runKey;
+      queueInsightsHydration(runKey, startTs);
+    } else if (!hasFeatures) {
+      setTimeout(() => {
+        if (logHydratedForRun !== runKey) {
+          logHydratedForRun = runKey;
+          hydrateFromLog();
+        }
+      }, 300);
     }
   }
 
-  // Streams
-  let esSummary = null;
-  let esLogs = null;
+  const pullSummary = async () => {
+    if (sumBusy) return;
+    sumBusy = true;
+    try {
+      safe(sumAbort?.abort?.bind(sumAbort));
+      sumAbort = new AbortController();
+      const snap = await fetchJSON("/api/run/summary", null, sumAbort.signal);
+      if (snap) applySummarySnapshot(snap, "poll");
+    } finally {
+      sumBusy = false;
+    }
+  };
 
   window.openSummaryStream = function openSummaryStream() {
     try {
-      try {
-        esSummary?.close?.();
-      } catch {}
-
+      safe(esSummary?.close?.bind(esSummary));
       esSummary = new EventSource("/api/run/summary/stream");
       window.esSum = esSummary;
-
       esSummary.onmessage = (ev) => {
-        try {
-          const snap = JSON.parse(ev.data || "{}");
-          applySummarySnapshot(snap, "sse");
-        } catch {}
+        try { applySummarySnapshot(JSON.parse(ev.data || "{}"), "sse"); } catch {}
       };
-
-      const markInit = () => {
-        try {
-          sync.markInit();
-        } catch {}
-      };
-
-      ["run:start", "run:pair", "feature:start"].forEach((n) =>
-        esSummary.addEventListener(n, markInit)
-      );
-
-      ["one:plan", "two:plan"].forEach((evt) =>
-        esSummary.addEventListener(evt, (e) => {
-          try {
-            const obj = JSON.parse(e.data || "{}");
-            sync.setPair(obj);
-          } catch {}
-        })
-      );
-
-      const onSnap = (ev) => {
-        try {
-          sync.snap(JSON.parse(ev.data || "{}"));
-        } catch {}
-      };
-
-      esSummary.addEventListener("progress:snapshot", onSnap);
-      esSummary.addEventListener("snapshot:progress", onSnap);
-
-      const onApplyProg = (ev) => {
-        try {
-          const d = JSON.parse(ev.data || "{}");
-          sync.applyProg(d);
-        } catch {}
-      };
-
-      esSummary.addEventListener("progress:apply", onApplyProg);
-      esSummary.addEventListener("apply:add:progress", onApplyProg);
-      esSummary.addEventListener("apply:remove:progress", onApplyProg);
-
-      ["apply:add:start", "apply:remove:start"].forEach((name) =>
-        esSummary.addEventListener(name, (ev) => {
-          try {
-            sync.applyStart(JSON.parse(ev.data || "{}"));
-          } catch {}
-        })
-      );
-
-      ["apply:add:done", "apply:remove:done"].forEach((name) =>
-        esSummary.addEventListener(name, (ev) => {
-          try {
-            sync.applyDone(JSON.parse(ev.data || "{}"));
-          } catch {}
-        })
-      );
-
-      ["run:error", "run:aborted"].forEach((name) =>
-        esSummary.addEventListener(name, () => {
-          try {
-            sync.error();
-            setRunButtonState(false);
-          } catch {}
-        })
-      );
-
+      on(esSummary, ["run:start", "run:pair", "feature:start"], () => safe(sync.markInit?.bind(sync)));
+      on(esSummary, ["one:plan", "two:plan"], (e) => {
+        try { sync.setPair(JSON.parse(e.data || "{}")); } catch {}
+      });
+      on(esSummary, ["progress:snapshot", "snapshot:progress"], (e) => {
+        try { sync.snap(JSON.parse(e.data || "{}")); } catch {}
+      });
+      on(esSummary, ["progress:apply", "apply:add:progress", "apply:remove:progress"], (e) => {
+        try { sync.applyProg(JSON.parse(e.data || "{}")); } catch {}
+      });
+      on(esSummary, ["apply:add:start", "apply:remove:start"], (e) => {
+        try { sync.applyStart(JSON.parse(e.data || "{}")); } catch {}
+      });
+      on(esSummary, ["apply:add:done", "apply:remove:done"], (e) => {
+        try { sync.applyDone(JSON.parse(e.data || "{}")); } catch {}
+      });
+      on(esSummary, ["run:error", "run:aborted"], () => {
+        try { sync.error(); setRunButtonState(false); } catch {}
+      });
       esSummary.onerror = () => {
-        try {
-          esSummary.close();
-        } catch {}
+        safe(esSummary?.close?.bind(esSummary));
         window.esSum = null;
         setTimeout(openSummaryStream, 2000);
       };
@@ -1318,9 +592,7 @@ function hydrateFromLog() {
 
   window.openLogStream = function openLogStream() {
     try {
-      try {
-        esLogs?.close?.();
-      } catch {}
+      safe(esLogs?.close?.bind(esLogs));
       esLogs = null;
       window.esLogs = null;
     } catch {}
@@ -1328,9 +600,8 @@ function hydrateFromLog() {
 
   window.UX = {
     updateTimeline: (tl) => sync.updateTimeline(tl || {}),
-    updateProgress: (payload) =>
-      payload?.pct != null && sync.updatePct(payload.pct),
-    refresh: () => pullSummary().then(() => renderAll())
+    updateProgress: (payload) => payload?.pct != null && sync.updatePct(payload.pct),
+    refresh: () => pullSummary().then(renderAll)
   };
 
   window.addEventListener("visibilitychange", () => {
@@ -1340,28 +611,19 @@ function hydrateFromLog() {
     }
   });
 
-    async function tick() {
-    const now = Date.now();
+  async function tick() {
+    const now = nowTs();
     const running = sync.isRunning();
-
-    const sseUp = esSummary && esSummary.readyState === 1;
-
-    const pollDue = !sseUp || !summary || (running && (now - _lastSummaryEventAt) > 15000);
-    if (pollDue) await pullSummary();
-
-    if (now - lastPairsAt > 120000) queuePairsRefresh("sanity");
-
-    if (running && !sync.state().timeline.pre && !sync.state().timeline.post) {
-      if (now - sync._lastPhaseAt > 900) {
-        sync.updatePct(Math.min((sync._pctMemo || 0) + 2, 24));
-      }
+    const sseUp = esSummary?.readyState === 1;
+    if (!sseUp || !summary || (running && now - lastSummaryEventAt > 15000)) await pullSummary();
+    if (now - lastPairsAt > 120000) queuePairsRefresh();
+    if (running && !sync.state().timeline.pre && !sync.state().timeline.post && now - sync._lastPhaseAt > 900) {
+      sync.updatePct(Math.min((sync._pctMemo || 0) + 2, 24));
     }
-
     if (now - sync.lastEvent() > 20000) {
       openSummaryStream();
       openLogStream();
     }
-
     clearTimeout(tick._t);
     tick._t = setTimeout(tick, running ? 2000 : 6000);
   }
@@ -1370,59 +632,38 @@ function hydrateFromLog() {
   wireRunButton();
   openSummaryStream();
   openLogStream();
-  queuePairsRefresh("init");
+  queuePairsRefresh();
   tick();
 })();
 
 (() => {
-  (document.getElementById("preview-guard-css") || {}).remove?.();
-  document.head.appendChild(
-    Object.assign(document.createElement("style"), {
-      id: "preview-guard-css",
-      textContent: `html[data-tab!="main"] #placeholder-card { display: none !important; }`
-    })
-  );
+  document.getElementById("preview-guard-css")?.remove();
+  document.head.appendChild(Object.assign(document.createElement("style"), { id: "preview-guard-css", textContent: `html[data-tab!="main"] #placeholder-card{display:none!important;}` }));
 
   const DOC = document.documentElement;
   DOC.dataset.tab ||= "main";
-
-  const _showTab = window.showTab;
-  window.showTab = function (name) {
-    const ret = _showTab ? _showTab.apply(this, arguments) : undefined;
-    try {
-      DOC.dataset.tab = name || "main";
-      document.dispatchEvent(
-        new CustomEvent("tab-changed", { detail: { tab: name } })
-      );
-    } catch {}
-    return ret;
-  };
-
   const isMain = () => DOC.dataset.tab === "main";
-  const hidePreview = () =>
-    document.getElementById("placeholder-card")?.classList.add("hidden");
-
-  const guard = (fn) => {
-    const orig = window[fn];
+  const hidePreview = () => document.getElementById("placeholder-card")?.classList.add("hidden");
+  const guard = (name) => {
+    const orig = window[name];
     if (typeof orig !== "function") return;
-    window[fn] = function (...args) {
-      if (!isMain()) {
-        hidePreview();
-        return;
-      }
+    window[name] = function (...args) {
+      if (!isMain()) return hidePreview();
       return orig.apply(this, args);
     };
   };
 
-  ["updateWatchlistPreview", "updatePreviewVisibility", "loadWatchlist"].forEach(
-    guard
-  );
+  const showTab = window.showTab;
+  window.showTab = function (name) {
+    const ret = typeof showTab === "function" ? showTab.apply(this, arguments) : undefined;
+    try {
+      DOC.dataset.tab = name || "main";
+      document.dispatchEvent(new CustomEvent("tab-changed", { detail: { tab: name } }));
+    } catch {}
+    return ret;
+  };
 
-  document.addEventListener("tab-changed", () => {
-    if (!isMain()) hidePreview();
-  });
-
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && !isMain()) hidePreview();
-  });
+  ["updateWatchlistPreview", "updatePreviewVisibility", "loadWatchlist"].forEach(guard);
+  document.addEventListener("tab-changed", () => !isMain() && hidePreview());
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && !isMain() && hidePreview());
 })();
