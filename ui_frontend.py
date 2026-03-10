@@ -153,6 +153,14 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-section .head,#page-settings .cw-settings-section .body,#page-settings .cw-settings-pane-stack,#page-settings .cw-settings-panels,#page-settings .cw-settings-hub{background:transparent!important}
 #page-settings .cw-settings-nav-btn:hover,#page-settings .cw-settings-action:hover,#page-settings .cw-settings-jump:hover,#page-settings .cw-hub-tile:hover{background:radial-gradient(125% 150% at 0% 0%,rgba(82,90,132,.12),transparent 34%),var(--cw-ov-shell-strong)!important;border-color:var(--cw-ov-border-strong)!important;transform:translateY(-1px)}
 #page-settings .cw-settings-nav-btn.active,#page-settings .cw-settings-jump.active,#page-settings .cw-hub-tile.active,#page-settings .cw-hub-tile[aria-selected="true"],#page-settings .cw-settings-panel.active{background:linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,13,.99))!important;border-color:rgba(154,162,198,.18)!important;box-shadow:0 18px 34px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.04)!important}
+#page-settings .cw-settings-overview-actions{background:radial-gradient(125% 145% at 0% 0%,rgba(124,92,255,.20),transparent 40%),radial-gradient(115% 135% at 100% 100%,rgba(84,70,188,.12),transparent 48%),var(--cw-ov-shell)!important;border-color:rgba(150,132,255,.16)!important}
+#page-settings .cw-settings-overview-actions .cw-settings-action{background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.022))!important;border-color:rgba(146,128,248,.14)!important}
+#page-settings .cw-settings-overview-actions .cw-settings-action:hover{background:radial-gradient(900px 240px at 0% 0%,rgba(124,92,255,.16),transparent 55%),linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.026))!important;border-color:rgba(150,132,255,.24)!important}
+#page-settings .cw-settings-nav-card{background:radial-gradient(120% 150% at 0% 0%,rgba(68,76,120,.07),transparent 34%),var(--cw-ov-shell-soft)!important;opacity:.94}
+#page-settings .cw-settings-nav-btn{background:linear-gradient(180deg,rgba(255,255,255,.024),rgba(255,255,255,.012))!important;border-color:rgba(255,255,255,.07)!important}
+#page-settings .cw-settings-nav-btn.active{background:radial-gradient(860px 240px at 4% 0%,rgba(124,92,255,.18),transparent 52%),linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,13,.99))!important;border-color:rgba(156,140,255,.22)!important;box-shadow:0 0 0 1px rgba(124,92,255,.12),0 12px 22px rgba(0,0,0,.22)!important}
+#page-settings .cw-settings-overview-main>.cw-settings-overview-card:not(.cw-settings-overview-actions),#page-settings .cw-settings-overview-duo .cw-settings-overview-card{background:radial-gradient(125% 145% at 0% 0%,rgba(74,84,148,.10),transparent 36%),linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))!important;border-color:rgba(255,255,255,.09)!important;box-shadow:0 22px 42px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.03)!important}
+#page-settings .cw-settings-overview-duo .cw-settings-overview-card{background:radial-gradient(115% 130% at 100% 100%,rgba(70,80,138,.08),transparent 42%),linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.012))!important}
 #page-settings input,#page-settings select,#page-settings textarea{background:rgba(4,6,10,.94)!important;border:1px solid rgba(255,255,255,.08)!important;color:var(--cw-ov-fg)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)!important}
 #page-settings input:focus,#page-settings select:focus,#page-settings textarea:focus{outline:none;box-shadow:0 0 0 3px rgba(112,122,170,.14),inset 0 1px 0 rgba(255,255,255,.03)!important;border-color:rgba(160,168,202,.18)!important;background:rgba(6,8,12,.98)!important}
 #page-settings .sub,#page-settings p,#page-settings small,#page-settings label,#page-settings .cw-settings-pane-kicker,#page-settings .cw-settings-overview-kicker,#page-settings .cw-settings-jumpbar,#page-settings .cw-hub-desc{color:var(--cw-ov-soft)!important}
@@ -399,10 +407,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                     <strong>Open providers</strong>
                     <small>Auth, sync pairs and metadata</small>
                   </button>
-                  <button type="button" class="cw-settings-action" onclick="cwSettingsSelect?.('scheduling')">
-                    <span class="material-symbols-rounded">schedule</span>
-                    <strong>Open scheduling</strong>
-                    <small>Standard and advanced scheduling jobs</small>
+                  <button type="button" class="cw-settings-action" onclick="cwProvidersJump?.('sec-sync')">
+                    <span class="material-symbols-rounded">sync_alt</span>
+                    <strong>Open sync pairs</strong>
+                    <small>Create source/target pairs</small>
                   </button>
                   <button type="button" class="cw-settings-action" onclick="cwSettingsSelect?.('scrobbler')">
                     <span class="material-symbols-rounded">sensors</span>
@@ -561,7 +569,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
         <section class="cw-settings-pane" data-pane="app">
           <div class="cw-settings-pane-head">
             <div>
-              <div class="cw-settings-pane-kicker">App settings</div>
+              <div class="cw-settings-pane-kicker">Settings</div>
               <h3>UI, security and CW Tracker</h3>
               <p>Configure CrossWatch settings and security.</p>
             </div>
