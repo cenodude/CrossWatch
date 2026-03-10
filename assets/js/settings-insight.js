@@ -1,6 +1,6 @@
 /* assets/js/settings-insight.js */
 /* refactored */
-/* Compact settings insight panel */
+/* Settings insight panel */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
@@ -18,7 +18,7 @@
     auth: '<div class="si-empty"><div class="h1">No authentication providers</div><p class="p">Configure at least one authentication provider to get started. To sync, you need at least two sides in play.</p></div>',
     pairs: '<div class="si-empty"><div class="h1">No synchronization pairs or scrobbler</div><p class="p">Authentication looks good. Next step: add a sync pair or enable the scrobbler.</p></div>'
   };
-  const css = `#cw-settings-insight{display:block;min-width:0;--si-bg:linear-gradient(180deg,rgba(9,12,18,.96),rgba(4,6,10,.98));--si-panel:linear-gradient(180deg,rgba(12,15,22,.94),rgba(6,8,12,.97));--si-panel-hover:linear-gradient(180deg,rgba(15,18,26,.96),rgba(8,10,15,.98));--si-border:rgba(255,255,255,.075);--si-border-strong:rgba(255,255,255,.12);--si-shadow:0 22px 44px rgba(0,0,0,.40),inset 0 1px 0 rgba(255,255,255,.03);--si-fg:#f3f5ff;--si-soft:rgba(196,204,223,.74)}.si-card{position:relative;border:1px solid var(--si-border);border-radius:22px;overflow:hidden;background:radial-gradient(125% 140% at 0% 0%,rgba(84,92,132,.10),transparent 38%),radial-gradient(120% 140% at 100% 100%,rgba(50,56,84,.08),transparent 46%),var(--si-bg);box-shadow:var(--si-shadow);backdrop-filter:blur(16px) saturate(118%);-webkit-backdrop-filter:blur(16px) saturate(118%)}.si-card::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(255,255,255,.028),transparent 22%,rgba(255,255,255,.012) 100%)}.si-header{position:relative;padding:16px 18px 14px;border-bottom:1px solid rgba(255,255,255,.06)}.si-header-kicker{display:block;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--si-soft);line-height:1.2}#cw-si-scroll{overflow:auto;overscroll-behavior:contain}.si-body{padding:12px;display:grid;gap:10px}.si-row{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr);gap:12px;align-items:start;padding:14px 14px 13px;border-radius:18px;border:1px solid var(--si-border);background:var(--si-panel);box-shadow:0 12px 26px rgba(0,0,0,.18);cursor:pointer;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}.si-row::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(135deg,rgba(255,255,255,.035),transparent 56%);opacity:.8}.si-row:hover{transform:translateY(-1px);border-color:var(--si-border-strong);background:var(--si-panel-hover);box-shadow:0 16px 28px rgba(0,0,0,.26)}.si-ic{display:flex;align-items:center;justify-content:center;min-height:20px}.si-ic .material-symbols-rounded{font-size:19px;color:rgba(230,235,248,.88)}.si-col{min-width:0}.si-h{margin:0 0 6px;color:var(--si-fg);font-weight:800;font-size:14px;line-height:1.2}.si-one{color:var(--si-soft);font-size:12px;line-height:1.5}.si-one b,.si-one strong{color:var(--si-fg)}.si-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.si-sep{color:rgba(196,204,223,.42);font-weight:800}.si-status{color:var(--si-fg);font-weight:700}.si-text,.si-inline-text{display:inline-flex;align-items:center}.si-to{color:rgba(196,204,223,.70);font-weight:700}.si-pchips,.si-inline-logos{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.si-pchip{display:inline-flex;align-items:center;gap:8px;padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.08);font-size:12px;font-weight:800;color:#e7ecfb;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}.si-count{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.08);font-size:11px;line-height:1}.si-logo{height:18px;width:auto;display:block;opacity:.95;flex:0 0 auto;filter:saturate(.92) brightness(.98)}.si-empty{padding:20px 18px;color:var(--si-soft)}.si-empty .h1{font-size:16px;font-weight:800;color:#e7ecfb;margin-bottom:8px}.si-empty .p{font-size:13px;line-height:1.55;margin:0 0 10px}`;
+  const css = `#cw-settings-insight{display:block;min-width:0;--si-bg:linear-gradient(180deg,rgba(9,12,18,.96),rgba(4,6,10,.98));--si-panel:linear-gradient(180deg,rgba(12,15,22,.94),rgba(6,8,12,.97));--si-panel-hover:linear-gradient(180deg,rgba(15,18,26,.96),rgba(8,10,15,.98));--si-border:rgba(255,255,255,.075);--si-border-strong:rgba(255,255,255,.12);--si-shadow:0 22px 44px rgba(0,0,0,.40),inset 0 1px 0 rgba(255,255,255,.03);--si-fg:#f3f5ff;--si-soft:rgba(196,204,223,.74)}.si-card{position:relative;border:1px solid var(--si-border);border-radius:22px;overflow:hidden;background:radial-gradient(125% 140% at 0% 0%,rgba(84,92,132,.08),transparent 36%),radial-gradient(120% 140% at 100% 100%,rgba(50,56,84,.06),transparent 44%),var(--si-bg);box-shadow:var(--si-shadow);backdrop-filter:blur(16px) saturate(118%);-webkit-backdrop-filter:blur(16px) saturate(118%)}.si-card::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(255,255,255,.024),transparent 22%,rgba(255,255,255,.01) 100%)}.si-header{position:relative;padding:14px 16px 12px;border-bottom:1px solid rgba(255,255,255,.055)}.si-header-kicker{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--si-soft);line-height:1.2}#cw-si-scroll{overflow:auto;overscroll-behavior:contain}.si-body{padding:10px;display:grid;gap:8px}.si-row{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;align-items:start;padding:12px 12px 11px;border-radius:16px;border:1px solid var(--si-border);background:var(--si-panel);box-shadow:0 10px 20px rgba(0,0,0,.16);cursor:pointer;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}.si-row::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(135deg,rgba(255,255,255,.03),transparent 56%);opacity:.78}.si-row:hover{transform:translateY(-1px);border-color:var(--si-border-strong);background:var(--si-panel-hover);box-shadow:0 14px 24px rgba(0,0,0,.22)}.si-ic{display:flex;align-items:center;justify-content:center;min-height:18px}.si-ic .material-symbols-rounded{font-size:18px;color:rgba(230,235,248,.84)}.si-col{min-width:0}.si-h{margin:0 0 5px;color:var(--si-fg);font-weight:800;font-size:13px;line-height:1.18}.si-one{color:var(--si-soft);font-size:11px;line-height:1.42}.si-one b,.si-one strong{color:var(--si-fg)}.si-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.si-sep{color:rgba(196,204,223,.38);font-weight:800}.si-status{color:var(--si-fg);font-weight:700}.si-text,.si-inline-text{display:inline-flex;align-items:center}.si-to{color:rgba(196,204,223,.66);font-weight:700}.si-pchips,.si-inline-logos{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.si-pchip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);font-size:11px;font-weight:800;color:#e7ecfb;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}.si-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);font-size:10px;line-height:1}.si-logo{height:17px;width:auto;display:block;opacity:.95;flex:0 0 auto;filter:saturate(.92) brightness(.98)}.si-empty{padding:18px 16px;color:var(--si-soft)}.si-empty .h1{font-size:15px;font-weight:800;color:#e7ecfb;margin-bottom:8px}.si-empty .p{font-size:12px;line-height:1.5;margin:0 0 10px}`;
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
   const has = (v) => typeof v === 'string' ? v.trim().length > 0 : !!v;
@@ -47,11 +47,11 @@
 
   function providerMeta(provider) {
     const raw = String(provider || '').trim(), key = raw.toUpperCase(), meta = Meta();
-    return { key, label: meta?.label?.(key) || meta?.label?.(raw) || key || '?', logo: meta?.logo?.(key) || meta?.logo?.(raw) || '' };
+    return { key, label: meta?.label?.(key) || meta?.label?.(raw) || key || '?', logo: meta?.logoPath?.(key) || meta?.logoPath?.(raw) || '' };
   }
 
   function providerIcon(provider) {
-    const meta = providerMeta(provider), src = meta.logo || `/assets/img/${meta.key}-log.svg`;
+    const meta = providerMeta(provider), src = meta.logo;
     return src ? `<img loading="lazy" class="si-logo" src="${esc(src)}" alt="${esc(meta.label)}" title="${esc(meta.label)}">` : `<span class="si-inline-text">${esc(meta.label)}</span>`;
   }
 
@@ -60,6 +60,7 @@
   const line = (...items) => `<div class="si-line">${items.filter(Boolean).join('')}</div>`;
   const kv = (k, v) => `<span class="si-status">${k}</span><span class="si-text">${v}</span>`;
   const sep = (s = '•') => `<span class="si-sep">${s}</span>`;
+  const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
   function profileConfigured(provider, blk, cfg) {
     const p = String(provider || '').toLowerCase(), b = blk && typeof blk === 'object' ? blk : {};
@@ -162,12 +163,43 @@
     return line(`<span class="si-text">${mode}</span>`, sep('|'), `<span class="si-status">${status}:</span>`, route[0] || route[1] ? `${route[0] || ''}${route[0] && route[1] ? '<span class="si-to">to</span>' : ''}${route[1] || ''}` : '<span class="si-inline-text">No routes configured</span>');
   }
 
-  function row(icon, title, body, pane) {
+  function row(icon, title, body, pane, target) {
     const el = d.createElement('div');
     el.className = 'si-row';
     if (pane) el.dataset.pane = pane;
+    if (target) el.dataset.target = target;
     el.innerHTML = `<div class="si-ic"><span class="material-symbols-rounded">${icon}</span></div><div class="si-col"><div class="si-h">${title}</div><div class="si-one">${body}</div></div>`;
     return el;
+  }
+
+  async function openPaneSection(pane, sectionId) {
+    w.cwSettingsSelect?.(pane);
+    await wait(60);
+    w.openSection?.(sectionId);
+    await wait(0);
+    d.getElementById(sectionId)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function openScrobblerSection(mode) {
+    const isWatch = String(mode || '').toLowerCase() === 'watch';
+    const sectionId = isWatch ? 'sc-sec-watch' : 'sc-sec-webhook';
+    const hostId = isWatch ? 'scrob-watcher' : 'scrob-webhook';
+    const sub = isWatch ? 'watcher' : 'plex';
+    await openPaneSection('scrobbler', sectionId);
+    await wait(80);
+    const host = d.getElementById(hostId);
+    const tab = host?.querySelector?.(`.cw-subtile[data-sub="${sub}"]`);
+    tab?.click?.();
+  }
+
+  async function handleRowOpen(target) {
+    const key = String(target || '').toLowerCase();
+    if (key === 'auth') return openPaneSection('providers', 'sec-auth');
+    if (key === 'sync') return openPaneSection('providers', 'sec-sync');
+    if (key === 'meta') return openPaneSection('providers', 'sec-meta');
+    if (key === 'scheduling') return openPaneSection('scheduling', 'sec-scheduling');
+    if (key === 'scrobbler') return openScrobblerSection(state.liveData?.scrob?.mode);
+    if (key) w.cwSettingsSelect?.(key);
   }
 
   const state = { cfg: null, staticData: null, liveData: null, liveTimer: null, busyStatic: false, busyLive: false, queuedStatic: false, queuedLive: false, lastKey: '' };
@@ -182,12 +214,12 @@
     if (!data?.pairs?.count && !data?.scrob?.enabled) return void (body.innerHTML = EMPTY.pairs);
     body.innerHTML = '';
     [
-      row('lock', 'Authentication Providers', authProfilesHTML(data.auth), 'providers'),
-      row('link', 'Synchronization Pairs', line(kv('Pairs:', data.pairs.count)), 'providers'),
+      row('lock', 'Authentication Providers', authProfilesHTML(data.auth), 'providers', 'auth'),
+      row('link', 'Synchronization Providers', line(kv('Pairs:', data.pairs.count)), 'providers', 'sync'),
       data.whitelist?.active && row('filter_alt', 'Whitelisting', line(kv('Active blocks:', data.whitelist.active)), 'providers'),
-      row('image', 'Metadata Providers', metadataHTML(data.meta), 'providers'),
-      row('schedule', 'Scheduling', schedulingHTML(data.sched), 'scheduling'),
-      row('sensors', 'Scrobbler', scrobblerHTML(data.scrob), 'scrobbler')
+      row('image', 'Metadata Providers', metadataHTML(data.meta), 'providers', 'meta'),
+      row('schedule', 'Scheduling', schedulingHTML(data.sched), 'scheduling', 'scheduling'),
+      row('sensors', 'Scrobbler', scrobblerHTML(data.scrob), 'scrobbler', 'scrobbler')
     ].filter(Boolean).forEach((el) => body.appendChild(el));
     syncHeight();
   }
@@ -252,7 +284,13 @@
     d.addEventListener('scheduling-status-refresh', () => refreshLive(true));
     d.addEventListener('watcher-status-refresh', () => refreshLive(true));
     d.addEventListener('visibilitychange', () => !d.hidden && isVisible() && refreshLive(false));
-    d.addEventListener('click', (e) => { const pane = e.target?.closest?.('.si-row[data-pane]')?.dataset?.pane; if (pane) w.cwSettingsSelect?.(pane); });
+    d.addEventListener('click', (e) => {
+      const row = e.target?.closest?.('.si-row[data-pane]');
+      const target = row?.dataset?.target;
+      if (target) return void handleRowOpen(target);
+      const pane = row?.dataset?.pane;
+      if (pane) w.cwSettingsSelect?.(pane);
+    });
     w.addEventListener('focus', () => isVisible() && refreshLive(false));
     w.addEventListener('resize', syncHeight);
     w.addEventListener('scroll', syncHeight, { passive: true });
