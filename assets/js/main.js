@@ -13,13 +13,15 @@
 })();
 
 (() => {
+  const featureMeta = window.CW?.FeatureMeta || {};
+  const featureLabel = (key) => featureMeta.label?.(key) || String(key || "");
   const FEATS = [
-    ["watchlist", "movie", "Watchlist"],
-    ["ratings", "star", "Ratings"],
-    ["history", "play_arrow", "History"],
-    ["progress", "timelapse", "Progress"],
-    ["playlists", "queue_music", "Playlists"]
-  ].map(([key, icon, label]) => ({ key, icon, label }));
+    ["watchlist", "movie"],
+    ["ratings", "star"],
+    ["history", "play_arrow"],
+    ["progress", "timelapse"],
+    ["playlists", "queue_music"]
+  ].map(([key, icon]) => ({ key, icon, label: featureLabel(key) }));
   const FEAT_KEYS = FEATS.map((f) => f.key);
   const FEAT_BY_KEY = Object.fromEntries(FEATS.map((f) => [f.key, f]));
   const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: false, playlists: true };
