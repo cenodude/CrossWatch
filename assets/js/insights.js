@@ -1,209 +1,107 @@
 /* assets/js/insights.js */
+/* refactored */
 /* CrossWatch - Insight Module for watchlist, ratings, history, progress, playlists */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
-  // Helpers
   const FEATS = ["watchlist","ratings","history","progress","playlists"];
   const FEAT_LABEL = { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
-
+  const PROVIDER_LABEL = { plex:"Plex", simkl:"SIMKL", trakt:"Trakt", anilist:"AniList", jellyfin:"Jellyfin", emby:"Emby", mdblist:"MDBList", tmdb:"TMDB", tautulli:"Tautulli", crosswatch:"CrossWatch" };
   const PREF_KEY = "insights.settings.v1";
-
-  const loadPrefs = () => {
-    try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}") || {}; }
-    catch { return {}; }
-  };
-
-  const savePrefs = (p) => {
-    try { localStorage.setItem(PREF_KEY, JSON.stringify(p || {})); } catch {}
-  };
-
-  const normalizePrefs = (p, instancesByProvider = {}) => {
-    const out = (p && typeof p === "object") ? JSON.parse(JSON.stringify(p)) : {};
-    const f = out.features && typeof out.features === "object" ? out.features : {};
-    out.features = {
-      watchlist: f.watchlist !== false,
-      ratings: f.ratings !== false,
-      history: f.history !== false,
-      progress: f.progress !== false,
-      /* playlists are opt-in */
-      playlists: f.playlists === true,
-    };
-
-    const inst = out.instances && typeof out.instances === "object" ? out.instances : {};
-    out.instances = inst;
-
-    const known = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
-    out.known_instances = known;
-
-    for (const [prov, instList] of Object.entries(instancesByProvider || {})) {
-      const pkey = String(prov || "").toLowerCase();
-      if (!pkey) continue;
-
-      const all = Array.isArray(instList) && instList.length ? instList.map(String) : ["default"];
-      const prevKnown = Array.isArray(known[pkey]) && known[pkey].length ? known[pkey].map(String) : [];
-      const cur = inst[pkey];
-
-      if (cur !== undefined) {
-        const curArr = Array.isArray(cur) ? cur.map(String) : [];
-        const nowSet = new Set(all);
-        const prevSet = new Set(prevKnown);
-
-        // Keep only existing instances
-        const kept = curArr.filter(x => nowSet.has(x));
-
-        // Auto-enable brand new instances
-        for (const x of all) {
-          if (!prevSet.has(x) && !kept.includes(x)) kept.push(x);
-        }
-
-        inst[pkey] = kept;
-      }
-
-      // Update "known" snapshot
-      known[pkey] = all.slice();
-    }
-
-    if (!Object.values(out.features).some(Boolean)) out.features.watchlist = true;
-
-    return out;
-  };
-
-  const visibleFeatures = (p) => {
-    const f = (p && p.features) || {};
-    const v = FEATS.filter(k => f[k] !== false);
-    return v.length ? v : ["watchlist"];
-  };
-
-  const selectionDiffers = (p, instancesByProvider = {}) => {
-    const inst = (p && p.instances) || {};
-    for (const [prov, allList] of Object.entries(instancesByProvider || {})) {
-      const pkey = String(prov || "").toLowerCase();
-      const all = Array.isArray(allList) && allList.length ? allList.map(String) : ["default"];
-      const cur = inst[pkey];
-      if (cur === undefined) continue; // all
-      if (!Array.isArray(cur)) return true;
-      if (cur.length !== all.length) return true;
-      const A = new Set(all), C = new Set(cur.map(String));
-      for (const x of A) if (!C.has(x)) return true;
-    }
-    return false;
-  };
-
-  let _prefs = loadPrefs();
-  let _visibleFeats = visibleFeatures(_prefs);
-
-  const clampFeature = (name) => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
-  let _feature = clampFeature(localStorage.getItem("insights.feature"));
-
-  const titleOf = x =>
-    (x?.display_title
-    || x?.title
-    || x?.series_title
-    || x?.name
-    || ((x?.type==="episode" && x?.series_title && Number.isInteger(x?.season) && Number.isInteger(x?.episode))
-          ? `${x.series_title} S${String(x.season).padStart(2,"0")}E${String(x.episode).padStart(2,"0")}`
-          : x?.key)
-    || "item");
-
-  const subtitleOf = x => (x?.display_subtitle || "");
-  const $  = (s,r)=> (r||d).querySelector(s);
-  const $$ = (s,r)=> Array.from((r||d).querySelectorAll(s));
-
-  const fetchJSON = async (url) => {
-    const full = url + (url.includes("?") ? "&" : "?") + "_ts=" + Date.now();
-    const res = await fetch(full, {
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} for ${url}`);
-    }
+  const $ = (s, r = d) => r.querySelector(s), $$ = (s, r = d) => [...r.querySelectorAll(s)], lc = s => String(s || "").toLowerCase();
+  const titleOf = x => x?.display_title || x?.title || x?.series_title || x?.name || (x?.type === "episode" && x?.series_title && Number.isInteger(x?.season) && Number.isInteger(x?.episode) ? `${x.series_title} S${String(x.season).padStart(2,"0")}E${String(x.episode).padStart(2,"0")}` : x?.key) || "item";
+  const subtitleOf = x => x?.display_subtitle || "";
+  const readJSON = (key, fallback = {}) => { try { return JSON.parse(localStorage.getItem(key) || "{}") || fallback; } catch { return fallback; } };
+  const loadPrefs = () => readJSON(PREF_KEY, {});
+  const savePrefs = p => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p || {})); } catch {} };
+  const rowTs = row => { const ts = new Date(row?.finished_at || row?.started_at || 0).getTime(); return Number.isFinite(ts) ? ts : null; };
+  const totalsFor = (feat, row) => { const f = row?.features?.[feat] || {}; const a = f.added | 0, r = f.removed | 0, u = f.updated | 0; return { a, r, u, sum: a + r + u }; };
+  const fmtWhen = row => { const dt = new Date(row?.finished_at || row?.started_at || 0); if (!Number.isFinite(+dt)) return "—"; return `${String(dt.getDate()).padStart(2,"0")}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getFullYear()).slice(-2)} ${String(dt.getHours()).padStart(2,"0")}:${String(dt.getMinutes()).padStart(2,"0")}`; };
+  const fmtDur = v => { if (v == null) return "—"; const n = parseFloat(String(v).replace(/[^\d.]/g, "")); return Number.isFinite(n) ? `${n.toFixed(1)}s` : "—"; };
+  const asNum = (v, fb = 0) => Number.isFinite(+v) ? +v : fb;
+  const tickUrl = url => `${url}${url.includes("?") ? "&" : "?"}_ts=${Date.now()}`;
+  const fetchJSON = async url => {
+    const res = await fetch(tickUrl(url), { credentials: "same-origin", cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     return res.json();
   };
+  const postOK = async url => {
+    const res = await fetch(url, { method: "POST", credentials: "same-origin" });
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+    const body = await res.json().catch(() => ({}));
+    if (body?.ok === false) throw new Error(body.error || "Backend reported failure");
+    return body;
+  };
+  const clone = v => v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : {};
 
-  // Configured providers cache
-  const _lc = s => String(s || "").toLowerCase();
-  let _cfgSet = null, _cfgAt = 0;
-  const CFG_TTL = 60_000;
-
-  async function getConfiguredProviders(force = false) {
-    if (!force && _cfgSet && (Date.now() - _cfgAt < CFG_TTL)) return _cfgSet;
-
-    let cfg = {};
-    try {
-      cfg = await fetchJSON("/api/config?no_secrets=1");
-    } catch (e) {
-      console.error("[Insights] Failed to load /api/config", e);
-      cfg = {};
+  function normalizePrefs(p, instancesByProvider = {}) {
+    const out = clone(p), f = out.features && typeof out.features === "object" ? out.features : {};
+    out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists === true };
+    out.instances = out.instances && typeof out.instances === "object" ? out.instances : {};
+    out.known_instances = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
+    for (const [prov, list] of Object.entries(instancesByProvider || {})) {
+      const key = lc(prov);
+      if (!key) continue;
+      const all = Array.isArray(list) && list.length ? list.map(String) : ["default"];
+      const prev = new Set(Array.isArray(out.known_instances[key]) ? out.known_instances[key].map(String) : []);
+      const cur = out.instances[key];
+      if (cur !== undefined) {
+        const keep = (Array.isArray(cur) ? cur : []).map(String).filter(x => all.includes(x));
+        for (const x of all) if (!prev.has(x) && !keep.includes(x)) keep.push(x);
+        out.instances[key] = keep;
+      }
+      out.known_instances[key] = all.slice();
     }
-
-    const has = v => typeof v === "string" ? v.trim().length > 0 : !!v;
-    const hasAny = (blk, keys) => {
-      if (!blk || typeof blk !== "object") return false;
-      for (const k of (keys || [])) {
-        if (has(blk?.[k])) return true;
-      }
-      const insts = blk?.instances;
-      if (insts && typeof insts === "object") {
-        for (const v of Object.values(insts)) {
-          if (!v || typeof v !== "object") continue;
-          for (const k of (keys || [])) {
-            if (has(v?.[k])) return true;
-          }
-        }
-      }
-      return false;
-    };
-
-    const S = new Set();
-
-    if (hasAny(cfg?.plex, ["account_token", "token"])) S.add("PLEX");
-    if (hasAny(cfg?.trakt, ["access_token"])) S.add("TRAKT");
-    if (hasAny(cfg?.simkl, ["access_token"])) S.add("SIMKL");
-    if (hasAny(cfg?.anilist, ["access_token", "token"])) S.add("ANILIST");
-    if (hasAny(cfg?.jellyfin, ["access_token"])) S.add("JELLYFIN");
-    if (hasAny(cfg?.emby, ["access_token", "api_key", "token"])) S.add("EMBY");
-    if (hasAny(cfg?.mdblist, ["api_key"])) S.add("MDBLIST");
-
-    const tm = cfg?.tmdb_sync || cfg?.tmdb || cfg?.auth?.tmdb_sync || {};
-    if (hasAny(tm, ["api_key"]) && hasAny(tm, ["session_id", "session"])) S.add("TMDB");
-
-    const t = cfg?.tautulli || cfg?.auth?.tautulli || {};
-    if (hasAny(t, ["server_url", "server"])) S.add("TAUTULLI");
-
-    S.add("crosswatch");
-
-    _cfgSet = S;
-    _cfgAt = Date.now();
-    return S;
+    if (!Object.values(out.features).some(Boolean)) out.features.watchlist = true;
+    return out;
   }
 
-  // Preferences + settings modal
-  function injectInsightsPrefsCSS() {
-    if (d.getElementById("cw-insights-prefs-css")) return;
-    const el = d.createElement("style");
-    el.id = "cw-insights-prefs-css";
-    el.textContent = `
-    .ins-switch{display:flex;align-items:center;gap:10px;flex-wrap:nowrap}
-    .ins-switch .seg{flex:1;min-width:0;display:flex;gap:.4rem;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
-    .ins-switch .seg::-webkit-scrollbar{display:none}
-    .ins-switch .seg .seg-btn{flex:0 0 auto;white-space:nowrap}
+  const visibleFeatures = p => {
+    const out = FEATS.filter(k => (p?.features || {})[k] !== false);
+    return out.length ? out : ["watchlist"];
+  };
 
-    .ins-switch .ins-gear{flex:0 0 auto;border:1px solid rgba(255,255,255,.16);background:rgba(0,0,0,.18);color:#fff;border-radius:999px;padding:5px 9px;cursor:pointer;font-size:12px;line-height:1;opacity:.9}
-    .ins-switch .ins-gear:hover{opacity:1;background:rgba(255,255,255,.06)}
-    .ins-switch .ins-gear:active{transform:translateY(1px)}
-    `;
-    d.head.appendChild(el);
+  function selectionDiffers(p, instancesByProvider = {}) {
+    const inst = p?.instances || {};
+    for (const [prov, list] of Object.entries(instancesByProvider || {})) {
+      const all = Array.isArray(list) && list.length ? list.map(String) : ["default"], cur = inst[lc(prov)];
+      if (cur === undefined) continue;
+      if (!Array.isArray(cur) || cur.length !== all.length) return true;
+      const want = new Set(cur.map(String));
+      for (const x of all) if (!want.has(x)) return true;
+    }
+    return false;
+  }
+
+  let _prefs = loadPrefs(), _visibleFeats = visibleFeatures(_prefs);
+  const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
+  let _feature = clampFeature(localStorage.getItem("insights.feature"));
+  let _lastStatsFetch = 0, _cwSnapModal = null;
+
+  function syncPrefs(instancesByProvider = {}) {
+    const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
+    _prefs = next;
+    if (changed) savePrefs(_prefs);
+    _visibleFeats = visibleFeatures(_prefs);
+    const keep = clampFeature(_feature);
+    if (keep !== _feature) {
+      _feature = keep;
+      localStorage.setItem("insights.feature", keep);
+    }
+  }
+
+  function ensureStyles() {
+    const id = "insights-provider-styles-v8";
+    if (d.getElementById(id)) return;
+    const s = d.createElement("style");
+    s.id = id;
+    s.textContent = `#insights-footer{position:absolute;left:12px;right:12px;bottom:12px;z-index:2}#insights-footer .ins-foot-wrap{position:relative;display:flex;flex-direction:column;gap:12px;padding:12px;border-radius:18px;background:linear-gradient(180deg,rgba(9,11,19,.82),rgba(8,10,18,.62));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 0 0 1px rgba(130,150,255,.10),0 18px 36px rgba(0,0,0,.32);backdrop-filter:blur(10px) saturate(118%);-webkit-backdrop-filter:blur(10px) saturate(118%)}#insights-footer .ins-foot-wrap::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(135deg,rgba(124,92,255,.10),transparent 34%,transparent 68%,rgba(45,161,255,.08));opacity:.9}@media(max-width:820px){#insights-footer{position:static;margin-top:10px}}#insights-switch{display:grid;grid-template-columns:minmax(0,1fr) 34px;align-items:center;gap:10px}#insights-switch .seg{min-width:0;display:grid;grid-template-columns:repeat(var(--ins-feat-count,4),minmax(0,1fr));gap:8px}#insights-switch .seg-btn{min-width:0;display:flex;align-items:center;justify-content:center;height:40px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;appearance:none;border:1px solid rgba(255,255,255,.08);cursor:pointer;font:inherit;font-weight:800;letter-spacing:.18px;font-size:.79rem;padding:0 14px;border-radius:999px;color:rgba(234,240,255,.82);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.06);transition:transform .14s ease,box-shadow .16s ease,border-color .16s ease,color .16s ease,background .16s ease}#insights-switch .seg-btn:hover{transform:translateY(-1px);color:#fff;border-color:rgba(124,92,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 18px rgba(0,0,0,.16)}#insights-switch .seg-btn.active{color:#f4f7ff;border-color:rgba(124,92,255,.34);background:linear-gradient(180deg,rgba(124,92,255,.18),rgba(45,161,255,.10));box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 0 0 1px rgba(124,92,255,.20),0 12px 22px rgba(13,19,38,.34)}#insights-switch .ins-gear{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid rgba(255,255,255,.08)!important;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.025))!important;border-radius:999px!important;padding:0!important;color:#fff!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08);transition:transform .14s ease,box-shadow .16s ease,border-color .16s ease,color .16s ease}#insights-switch .ins-gear .material-symbols-rounded{display:block;font-size:22px;line-height:1;color:#fff;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24}#insights-switch .ins-gear:hover{transform:translateY(-1px);color:#fff!important;border-color:rgba(124,92,255,.24)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 10px 18px rgba(0,0,0,.16)}#stats-card #stat-providers{--prov-cols:4;--tile-h:104px;display:grid!important;grid-template-columns:repeat(var(--prov-cols),minmax(0,1fr))!important;grid-auto-rows:var(--tile-h)!important;gap:12px!important;width:100%!important;align-items:stretch!important}#stats-card #stat-providers .tile{--brand:255,255,255;--wm:none;position:relative!important;display:block!important;height:var(--tile-h)!important;min-height:var(--tile-h)!important;max-height:var(--tile-h)!important;border-radius:18px!important;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02))!important;overflow:hidden!important;isolation:isolate!important;margin:0!important;padding:0!important;border:1px solid rgba(var(--brand),.18)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 16px 30px rgba(0,0,0,.26),0 0 0 1px rgba(var(--brand),.06);backdrop-filter:blur(4px) saturate(120%);-webkit-backdrop-filter:blur(4px) saturate(120%);transition:transform .16s ease,box-shadow .18s ease,border-color .18s ease}#stats-card #stat-providers .tile:hover{transform:translateY(-2px);border-color:rgba(var(--brand),.28)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 20px 36px rgba(0,0,0,.30),0 0 26px rgba(var(--brand),.14)}#stats-card #stat-providers .tile::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:0;background:radial-gradient(88% 72% at 18% 14%,rgba(var(--brand),.20),transparent 52%),radial-gradient(72% 58% at 82% 76%,rgba(var(--brand),.10),transparent 66%),linear-gradient(180deg,rgba(255,255,255,.04),transparent 42%)}#stats-card #stat-providers .tile::after{content:"";position:absolute;left:50%;top:54%;transform:translate(-50%,-50%) rotate(-8deg);width:220%;height:220%;background-repeat:no-repeat;background-position:center;background-size:contain;background-image:var(--wm);mix-blend-mode:screen;opacity:.22;filter:saturate(1.4) brightness(1.18) contrast(1.02)}#stats-card #stat-providers .tile.inactive{border-color:rgba(var(--brand),.12)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 12px 20px rgba(0,0,0,.20),0 0 0 1px rgba(var(--brand),.04);filter:saturate(.88)}#stats-card #stat-providers .tile.inactive::after{opacity:.14;filter:saturate(.95) brightness(.96)}#stats-card #stat-providers .tile .tile-head{position:absolute;left:50%;top:8px;transform:translateX(-50%);display:flex;align-items:center;justify-content:center;gap:8px;z-index:2;pointer-events:none}#stats-card #stat-providers .tile .tile-k{display:none!important}#stats-card #stat-providers .tile .tile-state{display:inline-flex;align-items:center;gap:5px;padding:2px 6px;border-radius:999px;border:1px solid rgba(255,255,255,.06);background:rgba(6,10,18,.24);color:rgba(236,241,255,.58);font-size:10px;line-height:1;font-weight:800;letter-spacing:.08em;text-transform:uppercase;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}#stats-card #stat-providers .tile .tile-state i{display:block;width:7px;height:7px;border-radius:999px;background:rgba(148,163,184,.55);box-shadow:0 0 0 1px rgba(255,255,255,.06)}#stats-card #stat-providers .tile .tile-state.on{color:rgba(216,255,232,.78);border-color:rgba(34,197,94,.18);background:rgba(8,26,18,.24)}#stats-card #stat-providers .tile .tile-state.on i{background:#21d07a;box-shadow:0 0 12px rgba(33,208,122,.42)}#stats-card #stat-providers .tile .n{position:absolute;top:53%;left:50%;transform:translate(-50%,-50%) scale(var(--ins-font-scale,1));transform-origin:center;margin:0;font-weight:900;letter-spacing:.25px;font-variant-numeric:tabular-nums;font-size:clamp(28px,calc(var(--tile-h)*.46),54px);line-height:1;color:rgba(255,255,255,.38);z-index:1}@supports(-webkit-background-clip:text){#stats-card #stat-providers .tile .n{background-image:linear-gradient(180deg,rgba(255,255,255,.88),rgba(232,236,245,.48) 52%,rgba(255,255,255,.16));-webkit-background-clip:text;-webkit-text-fill-color:transparent;color:transparent}}@supports(background-clip:text){#stats-card #stat-providers .tile .n{background-image:linear-gradient(180deg,rgba(255,255,255,.88),rgba(232,236,245,.48) 52%,rgba(255,255,255,.16));background-clip:text;color:transparent}}#stats-card #stat-providers [data-provider=crosswatch] .cw-snapshot{position:absolute;left:10px;right:10px;bottom:10px;padding:0 2px;font-size:11px;line-height:1.2;font-weight:800;text-align:center;color:rgba(255,255,255,.62);text-shadow:0 1px 2px rgba(0,0,0,.85);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:2}#stats-card #stat-providers .tile .mse{position:absolute;left:50%;bottom:4px;transform-origin:center bottom;display:inline-grid!important;grid-auto-flow:column!important;grid-auto-columns:max-content!important;place-items:center!important;justify-content:center!important;justify-items:center!important;gap:6px!important;width:max-content!important;max-width:none;padding:0;white-space:nowrap;text-align:center;transform:translateX(-50%) scale(var(--ins-mse-scale,1));pointer-events:none;z-index:2}html.cw-compact #stats-card #stat-providers .tile .mse{display:inline-grid!important;grid-auto-flow:column!important;grid-auto-columns:max-content!important;place-items:center!important;justify-content:center!important;justify-items:center!important;width:max-content!important}html.cw-compact #stats-card #stat-providers .tile .mse .mse-chip{flex:0 0 auto!important}#stats-card #stat-providers .tile .mse .mse-chip{display:inline-flex;align-items:center;justify-content:center;gap:4px;min-width:0;padding:4px 7px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(6,10,18,.36);box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}#stats-card #stat-providers .tile .mse .mse-chip .k{font-size:10px;line-height:1;letter-spacing:.12em;text-transform:uppercase;color:rgba(255,255,255,.48);font-weight:800}#stats-card #stat-providers .tile .mse .mse-chip .v{font-size:12px;line-height:1;color:rgba(255,255,255,.82);font-weight:900;font-variant-numeric:tabular-nums}.cw-snap-picker{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(4,8,16,.46);backdrop-filter:blur(10px) saturate(116%);-webkit-backdrop-filter:blur(10px) saturate(116%);z-index:1200;opacity:1;transition:opacity .16s ease}.cw-snap-picker.cw-snap-hidden{opacity:0;pointer-events:none}.cw-snap-dialog{width:min(760px,calc(100vw - 32px));display:grid;gap:14px;padding:16px;border-radius:22px;background:linear-gradient(180deg,rgba(10,13,22,.92),rgba(7,10,18,.84));border:1px solid rgba(124,92,255,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 28px 60px rgba(0,0,0,.42),0 0 0 1px rgba(59,130,246,.06)}.cw-snap-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.cw-snap-title-wrap{min-width:0;display:grid;gap:4px}.cw-snap-kicker{font-size:10px;line-height:1;letter-spacing:.16em;text-transform:uppercase;color:rgba(190,198,214,.56);font-weight:800}.cw-snap-title{font-size:14px;line-height:1.25;font-weight:800;color:rgba(243,246,255,.92)}.cw-snap-title .hl{color:#d9e6ff}.snap-icon-close,.snap-close,.snap-btn{appearance:none;font:inherit}.snap-icon-close{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:rgba(240,244,255,.74);cursor:pointer;transition:transform .14s ease,border-color .16s ease,background .16s ease,color .16s ease}.snap-icon-close:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.24);background:rgba(255,255,255,.06);color:#fff}.cw-snap-body{display:grid;gap:8px;grid-auto-rows:max-content;align-content:start;justify-items:center;max-height:min(56vh,392px);overflow:auto;padding-right:2px}.cw-snap-empty{padding:10px 2px;font-size:13px;line-height:1.45;color:rgba(197,205,220,.72)}.snap-btn{width:min(100%,640px);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.022));color:rgba(240,244,255,.84);cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);transition:transform .14s ease,border-color .16s ease,box-shadow .18s ease,background .16s ease}.snap-btn:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.24);background:linear-gradient(180deg,rgba(124,92,255,.10),rgba(45,161,255,.06));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 14px 24px rgba(0,0,0,.20)}.snap-btn:active{transform:translateY(0)}.snap-btn .snap-name{min-width:0;font-size:13px;line-height:1.2;font-weight:800;letter-spacing:.01em;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.snap-btn .snap-meta{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;min-width:56px;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(8,12,22,.44);font-size:10px;line-height:1;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(201,210,226,.64)}.snap-btn.is-latest .snap-meta{color:rgba(216,255,232,.82);border-color:rgba(34,197,94,.20);background:rgba(8,26,18,.30)}.cw-snap-foot{display:flex;justify-content:flex-end}.snap-close{padding:8px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:rgba(236,241,255,.78);cursor:pointer;transition:transform .14s ease,border-color .16s ease,background .16s ease}.snap-close:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.22);background:rgba(255,255,255,.06);color:#fff}#sync-history{display:grid;gap:8px}#sync-history .history-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.018));border:1px solid rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);transition:border-color .16s ease,transform .14s ease,box-shadow .18s ease}#sync-history .history-item:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 12px 22px rgba(0,0,0,.14)}#sync-history .history-item.ok{border-color:rgba(34,197,94,.12)}#sync-history .history-item.warn{border-color:rgba(245,158,11,.16)}#sync-history .history-item.err{border-color:rgba(239,68,68,.18)}#sync-history .history-main{min-width:0;display:grid;gap:4px}#sync-history .history-meta{display:flex;align-items:center;gap:8px;min-width:0;font-size:12px;opacity:1}#sync-history .history-time{min-width:0;color:rgba(227,233,245,.82);font-weight:700;letter-spacing:.01em}#sync-history .history-sub{font-size:11px;line-height:1.2;color:rgba(174,182,194,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#sync-history .history-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}#sync-history .history-badges .badge,#sync-history .history-meta .badge{display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;border-radius:999px;line-height:1.1;border:1px solid rgba(255,255,255,.10);background:rgba(8,10,18,.46);font-size:11px;font-weight:800}#sync-history .history-meta .badge.ok{background:rgba(25,195,125,.12);border-color:rgba(25,195,125,.30);color:#c8ffe6}#sync-history .history-meta .badge.warn{background:rgba(255,196,0,.10);border-color:rgba(255,196,0,.28);color:#ffe28a}#sync-history .history-meta .badge.err{background:rgba(255,77,79,.12);border-color:rgba(255,77,79,.30);color:#ffd2d2}#sync-history .history-badges .badge.add{background:rgba(25,195,125,.10);border-color:rgba(25,195,125,.26);color:#c8ffe6}#sync-history .history-badges .badge.del{background:rgba(255,77,79,.10);border-color:rgba(255,77,79,.26);color:#ffd2d2}#sync-history .history-badges .badge.micro{background:rgba(124,92,255,.10);border-color:rgba(124,92,255,.24);color:#ddd7ff}@media(max-width:720px){#insights-switch{grid-template-columns:minmax(0,1fr) 32px;gap:8px}#insights-switch .seg{gap:8px}#insights-switch .seg-btn{height:38px;padding:0 12px;font-size:.76rem}#insights-switch .ins-gear{width:32px;height:32px}}@media(max-width:560px){#insights-switch{grid-template-columns:minmax(0,1fr) 30px;gap:6px}#insights-switch .seg{gap:6px}#insights-switch .seg-btn{height:36px;padding:0 10px;font-size:.72rem}#insights-switch .ins-gear{width:30px;height:30px}#stats-card #stat-providers{grid-template-columns:repeat(2,minmax(0,1fr))!important}#stats-card #stat-providers .tile{border-radius:16px!important}#stats-card #stat-providers .tile .tile-state .txt{display:none}}@media(max-width:380px){#stats-card #stat-providers{grid-template-columns:repeat(1,minmax(0,1fr))!important}#sync-history .history-item{align-items:flex-start;flex-direction:column}#sync-history .history-badges{justify-content:flex-start}}`;
+    d.head.appendChild(s);
   }
 
   async function openInsightSettingsModal() {
     try {
-      if (typeof w.openInsightSettingsModal === "function") {
-        await w.openInsightSettingsModal({});
-        return;
-      }
-      // Fallback: load modals module and open directly
+      if (typeof w.openInsightSettingsModal === "function") return await w.openInsightSettingsModal({});
       const v = encodeURIComponent(String(w.__CW_VERSION__ || w.__CW_BUILD__ || Date.now()));
       const mod = await import(`./modals.js?v=${v}`);
       if (typeof mod.openModal === "function") await mod.openModal("insight-settings", {});
@@ -212,1000 +110,442 @@
     }
   }
 
-  function _filteredProviderTotals(block, instancesByProvider) {
-    const raw = block?.raw || {};
-    const instCounts = raw.providers_instances || null;
-    const instMse = raw.providers_instances_mse || null;
+  const getConfiguredProviders = async force => {
+    try {
+      const out = typeof w.getConfiguredProviders === "function" ? await w.getConfiguredProviders(force) : ["crosswatch"];
+      return out instanceof Set ? out : new Set([...(out || [])]);
+    } catch (e) {
+      console.error("[Insights] Failed to resolve configured providers", e);
+      return new Set(["crosswatch"]);
+    }
+  };
 
-    const differs = selectionDiffers(_prefs, instancesByProvider || {});
-    if (!differs || !instCounts || typeof instCounts !== "object") {
+  function filterProviderTotals(block, instancesByProvider = {}) {
+    const raw = block?.raw || {}, instCounts = raw.providers_instances, instMse = raw.providers_instances_mse;
+    if (!selectionDiffers(_prefs, instancesByProvider) || !instCounts || typeof instCounts !== "object") {
       return { providers: block.providers || {}, mse: raw.providers_mse || null, now: block.now };
     }
-
-    const sel = (_prefs && _prefs.instances) || {};
-    const out = {};
-    const outMse = {};
-    const mseZero = () => ({ movies:0, shows:0, anime:0, episodes:0 });
-
-    for (const [prov, byInst] of Object.entries(instCounts)) {
-      const p = String(prov || "").toLowerCase();
-      const m = (byInst && typeof byInst === "object") ? byInst : {};
-      const keys = Object.keys(m);
-      const want = Array.isArray(sel[p]) ? sel[p].map(String) : (sel[p] === undefined ? keys : []);
-      let sum = 0;
-      for (const iid of want) sum += (m[iid] | 0);
-      out[p] = sum;
-
-      const mseByInst = (instMse && instMse[p] && typeof instMse[p] === "object") ? instMse[p] : {};
-      const agg = mseZero();
-      for (const iid of want) {
-        const part = mseByInst[iid];
+    const out = {}, outMse = {}, selected = _prefs?.instances || {}, zero = () => ({ movies:0, shows:0, anime:0, episodes:0 });
+    for (const [prov, byInst] of Object.entries(instCounts || {})) {
+      const key = lc(prov), map = byInst && typeof byInst === "object" ? byInst : {}, keys = Object.keys(map), want = Array.isArray(selected[key]) ? selected[key].map(String) : selected[key] === undefined ? keys : [];
+      out[key] = want.reduce((sum, id) => sum + (map[id] | 0), 0);
+      const mseMap = instMse?.[key] && typeof instMse[key] === "object" ? instMse[key] : {}, agg = zero();
+      for (const id of want) {
+        const part = mseMap[id];
         if (!part || typeof part !== "object") continue;
-        agg.movies += part.movies | 0;
-        agg.shows += part.shows | 0;
-        agg.anime += part.anime | 0;
-        agg.episodes += part.episodes | 0;
+        agg.movies += part.movies | 0; agg.shows += part.shows | 0; agg.anime += part.anime | 0; agg.episodes += part.episodes | 0;
       }
-      outMse[p] = agg;
+      outMse[key] = agg;
     }
-
-    // Keep any providers that aren't instance-aware (fallback to original)
-    for (const [prov, v] of Object.entries(block.providers || {})) {
-      const p = String(prov || "").toLowerCase();
-      if (out[p] === undefined) out[p] = v | 0;
-    }
-    const baseMse = raw.providers_mse || {};
-    for (const [prov, v] of Object.entries(baseMse || {})) {
-      const p = String(prov || "").toLowerCase();
-      if (outMse[p] === undefined) outMse[p] = v;
-    }
-
-    const vals = Object.values(out).map(x => x | 0).filter(x => x > 0);
-    const now = vals.length ? Math.max(...vals) : (block.now | 0);
-
-    return { providers: out, mse: outMse, now };
+    for (const [prov, v] of Object.entries(block.providers || {})) if (out[lc(prov)] === undefined) out[lc(prov)] = v | 0;
+    for (const [prov, v] of Object.entries(raw.providers_mse || {})) if (outMse[lc(prov)] === undefined) outMse[lc(prov)] = v;
+    const vals = Object.values(out).map(v => v | 0).filter(v => v > 0);
+    return { providers: out, mse: outMse, now: vals.length ? Math.max(...vals) : block.now | 0 };
   }
 
-  function applyPrefsFromData(instancesByProvider) {
-    const before = JSON.stringify(_prefs || {});
-    _prefs = normalizePrefs(_prefs, instancesByProvider || {});
-    if (JSON.stringify(_prefs || {}) !== before) savePrefs(_prefs);
-    _visibleFeats = visibleFeatures(_prefs);
-    if (!_visibleFeats.includes(_feature)) {
-      _feature = _visibleFeats[0] || "watchlist";
-      localStorage.setItem("insights.feature", _feature);
+  function pickBlock(data, feat) {
+    const raw = data?.features?.[feat];
+    if (!raw) throw new Error(`[Insights] Missing feature block for "${feat}"`);
+    let { now, week, month, added, removed } = raw;
+    const rows = (Array.isArray(data.history) ? data.history : []).map(r => ({ r, ts: rowTs(r) })).filter(x => x.ts != null).sort((a, b) => a.ts - b.ts);
+    const sumSince = since => rows.reduce((acc, { r, ts }) => {
+      if (ts < since) return acc;
+      const t = totalsFor(feat, r);
+      acc.A += t.a; acc.R += t.r; acc.S += t.sum;
+      return acc;
+    }, { A: 0, R: 0, S: 0 });
+    const ms = Date.now();
+    if (!Number.isFinite(+now)) now = rows.length ? totalsFor(feat, rows.at(-1).r).sum : 0;
+    if (!Number.isFinite(+week)) week = sumSince(ms - 7 * 86400000).S;
+    if (!Number.isFinite(+month)) month = sumSince(ms - 30 * 86400000).S;
+    if (!Number.isFinite(+added) || !Number.isFinite(+removed)) {
+      const m = sumSince(ms - 30 * 86400000);
+      if (!Number.isFinite(+added)) added = m.A;
+      if (!Number.isFinite(+removed)) removed = m.R;
     }
+    return {
+      series: Array.isArray(raw.series) ? raw.series : [],
+      providers: raw.providers || {},
+      active: raw.providers_active || data?.providers_active || {},
+      now: asNum(now), week: asNum(week), month: asNum(month), added: asNum(added), removed: asNum(removed),
+      raw
+    };
   }
 
-  w.addEventListener("insights:settings-changed", (ev) => {
-    _prefs = loadPrefs();
-    _visibleFeats = visibleFeatures(_prefs);
-    if (!_visibleFeats.includes(_feature)) {
-      _feature = _visibleFeats[0] || "watchlist";
-      localStorage.setItem("insights.feature", _feature);
-    }
-    refreshInsights(true);
-  });
+  function hydrateBlock(data) {
+    syncPrefs(data?.instances_by_provider || {});
+    const blk = pickBlock(data, _feature), filtered = filterProviderTotals(blk, data?.instances_by_provider || {});
+    blk.providers = filtered.providers;
+    blk.now = Number.isFinite(filtered.now) ? filtered.now : blk.now;
+    if (blk.raw) blk.raw.providers_mse = filtered.mse || blk.raw.providers_mse;
+    return blk;
+  }
 
-  // Sparkline and animated counters/bars
   function renderSparkline(id, points) {
-    const el = d.getElementById(id); if (!el) return;
-    if (!points?.length) { el.innerHTML = '<div class="muted">No data</div>'; return; }
-    const wv=el.clientWidth||260, hv=el.clientHeight||64, pad=4;
-    const xs=points.map(p=>+p.ts||0), ys=points.map(p=>+p.count||0);
-    const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
-    const X=t=> maxX===minX? pad : pad + ((wv-2*pad)*(t-minX))/(maxX-minX);
-    const Y=v=> maxY===minY? hv/2: hv - pad - ((hv-2*pad)*(v-minY))/(maxY-minY);
-    const dStr=points.map((p,i)=>(i?"L":"M")+X(p.ts)+","+Y(p.count)).join(" ");
-    const dots=points.map(p=>`<circle class="dot" cx="${X(p.ts)}" cy="${Y(p.count)}"></circle>`).join("");
-    el.innerHTML = `<svg viewBox="0 0 ${wv} ${hv}" preserveAspectRatio="none"><path class="line" d="${dStr}"></path>${dots}</svg>`;
+    const el = d.getElementById(id);
+    if (!el) return;
+    if (!points?.length) return void (el.innerHTML = '<div class="muted">No data</div>');
+    const wv = el.clientWidth || 260, hv = el.clientHeight || 64, pad = 4, xs = points.map(p => +p.ts || 0), ys = points.map(p => +p.count || 0);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    const X = t => maxX === minX ? pad : pad + (wv - 2 * pad) * (t - minX) / (maxX - minX);
+    const Y = v => maxY === minY ? hv / 2 : hv - pad - (hv - 2 * pad) * (v - minY) / (maxY - minY);
+    el.innerHTML = `<svg viewBox="0 0 ${wv} ${hv}" preserveAspectRatio="none"><path class="line" d="${points.map((p, i) => `${i ? "L" : "M"}${X(p.ts)},${Y(p.count)}`).join(" ")}"></path>${points.map(p => `<circle class="dot" cx="${X(p.ts)}" cy="${Y(p.count)}"></circle>`).join("")}</svg>`;
   }
 
-  const _ease = t => t<.5 ? 2*t*t : -1 + (4-2*t)*t;
-
-  function fitProviderNumber(el){
-    if (!el || !el.closest) return;
-    const tile = el.closest("#stat-providers .tile");
+  const ease = t => t < .5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+  function fitProviderNumber(el) {
+    const tile = el?.closest?.("#stat-providers .tile");
     if (!tile) return;
     el.style.setProperty("--ins-font-scale", "1");
-    const tb = tile.getBoundingClientRect();
-    const nb = el.getBoundingClientRect();
-    if (!tb.width || !nb.width) return;
-    const maxW = tb.width * 0.78;
-    const scale = Math.min(1, maxW / nb.width);
-    el.style.setProperty("--ins-font-scale", String(scale.toFixed(3)));
+    const tw = tile.getBoundingClientRect().width, nw = el.getBoundingClientRect().width;
+    if (tw && nw) el.style.setProperty("--ins-font-scale", String(Math.min(1, tw * .78 / nw).toFixed(3)));
   }
-
-  function fitProviderMSE(el){
-    if (!el || !el.closest) return;
-    const tile = el.closest("#stat-providers .tile");
+  function fitProviderMSE(el) {
+    const tile = el?.closest?.("#stat-providers .tile");
     if (!tile) return;
     el.style.setProperty("--ins-mse-scale", "1");
-    const tb = tile.getBoundingClientRect();
-    const mb = el.getBoundingClientRect();
-    if (!tb.width || !mb.width) return;
-    const maxW = tb.width - 16;
-    const scale = Math.min(1, maxW / mb.width);
-    el.style.setProperty("--ins-mse-scale", String(scale.toFixed(3)));
+    const tw = tile.getBoundingClientRect().width, mw = el.getBoundingClientRect().width;
+    if (!tw || !mw) return;
+    const digits = [...el.querySelectorAll(".mse-chip .v")].map(n => String(n.textContent || "").trim().length).filter(Boolean), maxDigits = digits.length ? Math.max(...digits) : 0, totalDigits = digits.reduce((a, n) => a + n, 0);
+    let minScale = .84;
+    if (maxDigits <= 1 && totalDigits <= 3) minScale = .97;
+    else if (maxDigits <= 2 && totalDigits <= 5) minScale = .93;
+    else if (maxDigits <= 3 && totalDigits <= 8) minScale = .89;
+    el.style.setProperty("--ins-mse-scale", String(Math.max(minScale, Math.min(1, (tw - 10) / mw)).toFixed(3)));
   }
-
-  function animateNumber(el, to, duration = 650){
+  function animateNumber(el, to, duration = 650) {
     if (!el) return;
-    const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0;
-    const finish = () => {
-      el.textContent = String(to);
-      el.dataset.v = String(to);
-      fitProviderNumber(el);
-    };
-    if (from === to){ finish(); return; }
-    const t0 = performance.now();
-    const dur = Math.max(180, duration);
+    const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0, done = () => { el.textContent = String(to); el.dataset.v = String(to); fitProviderNumber(el); };
+    if (from === to) return done();
+    const start = performance.now(), dur = Math.max(180, duration);
     const step = now => {
-      const p = Math.min(1, (now - t0) / dur);
-      const v = Math.round(from + (to - from) * _ease(p));
-      el.textContent = String(v);
-      if (p < 1) requestAnimationFrame(step);
-      else finish();
+      const p = Math.min(1, (now - start) / dur);
+      el.textContent = String(Math.round(from + (to - from) * ease(p)));
+      p < 1 ? requestAnimationFrame(step) : done();
     };
     requestAnimationFrame(step);
   }
-
-  function refitProviderNumbers(){
-    $$("#stat-providers .tile .n").forEach(fitProviderNumber);
-    $$("#stat-providers .tile .mse").forEach(fitProviderMSE);
+  function animateChart(now, week, month) {
+    const max = Math.max(1, now, week, month), scale = v => Math.max(.04, v / max);
+    [[".bar.week", week], [".bar.month", month], [".bar.now", now]].forEach(([sel, val]) => { const el = $(sel); if (el) el.style.transform = `scaleY(${scale(val)})`; });
   }
+  const refitProviderNumbers = () => { $$("#stat-providers .tile .n").forEach(fitProviderNumber); $$("#stat-providers .tile .mse").forEach(fitProviderMSE); };
+  w.addEventListener("resize", refitProviderNumbers, { passive: true });
 
-  window.addEventListener("resize", refitProviderNumbers, { passive:true });
-
-  function animateChart(now,week,month){
-    const bars = { now:$('.bar.now'), week:$('.bar.week'), month:$('.bar.month') };
-    const max = Math.max(1, now, week, month), h=v=> Math.max(.04, v/max);
-    bars.week && (bars.week.style.transform = `scaleY(${h(week)})`);
-    bars.month&& (bars.month.style.transform= `scaleY(${h(month)})`);
-    bars.now  && (bars.now.style.transform  = `scaleY(${h(now)})`);
-  }
-
-  // Footer host
-  const footWrap = (()=>{ let _padTimer=0;
-    function ensureFooter(){
-      let foot = d.getElementById("insights-footer");
+  const footWrap = (() => {
+    let timer = 0;
+    const ensure = () => {
+      ensureStyles();
+      let foot = $("#insights-footer");
       if (!foot) {
-        foot = d.createElement("div"); foot.id="insights-footer"; foot.className="ins-footer";
-        foot.innerHTML = '<div class="ins-foot-wrap"></div>'; (d.getElementById("stats-card")||d.body).appendChild(foot);
+        foot = d.createElement("div");
+        foot.id = "insights-footer";
+        foot.className = "ins-footer";
+        foot.innerHTML = '<div class="ins-foot-wrap"></div>';
+        ($("#stats-card") || d.body).appendChild(foot);
       }
-      return foot.querySelector(".ins-foot-wrap")||foot;
-    }
-    function reserve(){ const card=$("#stats-card"), foot=$("#insights-footer"); if(!card||!foot) return;
-      clearTimeout(_padTimer); _padTimer=setTimeout(()=>{ const h=(foot.getBoundingClientRect().height||foot.offsetHeight||120)+14; card.style.paddingBottom=h+"px"; },0);
-    }
-    w.addEventListener("resize", reserve, { passive:true });
-    return Object.assign(ensureFooter, { reserve });
+      return $(".ins-foot-wrap", foot) || foot;
+    };
+    ensure.reserve = () => {
+      const card = $("#stats-card"), foot = $("#insights-footer");
+      if (!card || !foot) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => card.style.paddingBottom = `${(foot.getBoundingClientRect().height || foot.offsetHeight || 120) + 14}px`, 0);
+    };
+    w.addEventListener("resize", ensure.reserve, { passive: true });
+    return ensure;
   })();
 
-  // Feature switcher
+  function placeSwitchBeforeTiles() {
+    const wrap = footWrap(), sw = $("#insights-switch"), grid = $("#stat-providers");
+    if (!sw) return;
+    if (!wrap.contains(sw)) wrap.appendChild(sw);
+    const ref = grid?.parentNode === wrap ? grid : null;
+    if (sw.nextSibling !== ref) try { wrap.insertBefore(sw, ref); } catch {}
+  }
+
+  function markActiveSwitcher() {
+    $$("#insights-switch .seg-btn").forEach(btn => {
+      const on = btn.dataset.key === _feature;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  }
+
+  function switchFeature(name) {
+    const want = clampFeature(name);
+    if (want === _feature) return;
+    _feature = want;
+    localStorage.setItem("insights.feature", want);
+    markActiveSwitcher();
+    refreshInsights(true);
+  }
+
   function ensureSwitch() {
     const wrap = footWrap();
-    injectInsightsPrefsCSS();
-    let host = d.getElementById("insights-switch");
+    let host = $("#insights-switch");
     if (!host) {
       host = d.createElement("div");
-      host.id = "insights-switch"; host.className = "ins-switch";
-      host.innerHTML = '<div class="seg" role="tablist" aria-label="Insights features"></div><button class="ins-gear" id="ins-open-settings" type="button" title="Insight settings" aria-label="Insight settings">⚙︎</button>';
+      host.id = "insights-switch";
+      host.className = "ins-switch";
+      host.innerHTML = '<div class="seg" role="tablist" aria-label="Insights features"></div><button class="ins-gear" type="button" title="Insight settings" aria-label="Insight settings"><span class="material-symbols-rounded" aria-hidden="true">settings</span></button>';
       wrap.appendChild(host);
-    } else if (host.parentNode !== wrap) {
-      wrap.appendChild(host);
-    }
-    const seg = host.querySelector(".seg");
-
-    if (!host.dataset.bind) {
-      seg.addEventListener("click", ev => {
-        const b = ev.target.closest(".seg-btn"); if (!b) return;
-        switchFeature(b.dataset.key);
+    } else if (host.parentNode !== wrap) wrap.appendChild(host);
+    if (!host.dataset.bound) {
+      host.addEventListener("click", ev => {
+        const btn = ev.target.closest(".seg-btn");
+        if (btn) return switchFeature(btn.dataset.key);
+        if (ev.target.closest(".ins-gear")) openInsightSettingsModal();
       });
-      const gear = host.querySelector("#ins-open-settings");
-      if (gear) gear.addEventListener("click", () => openInsightSettingsModal());
-      host.dataset.bind = "1";
+      host.dataset.bound = "1";
     }
-
-    const sig = (_visibleFeats || []).join(",");
-    if (host.dataset.feats !== sig) {
-      seg.innerHTML = (_visibleFeats || []).map(f => {
-        const on = _feature === f;
-        return `<button class="seg-btn${on ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${on}">${FEAT_LABEL[f]}</button>`;
-      }).join("");
+    const seg = $(".seg", host), sig = _visibleFeats.join(",");
+    host.style.setProperty("--ins-feat-count", String(Math.max(1, _visibleFeats.length)));
+    if (host.dataset.feats !== sig || host.dataset.cur !== _feature) {
+      seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${_feature === f}">${FEAT_LABEL[f]}</button>`).join("");
       host.dataset.feats = sig;
+      host.dataset.cur = _feature;
     }
-
     placeSwitchBeforeTiles();
     markActiveSwitcher();
     footWrap.reserve();
   }
-  function placeSwitchBeforeTiles(){
-    const wrap = footWrap(), sw=$("#insights-switch"), grid=$("#stat-providers"); if (!wrap||!sw) return;
-    if (!wrap.contains(sw)) wrap.appendChild(sw);
-    const ref = (grid && grid.parentNode === wrap) ? grid : null;
-    if (sw.nextSibling !== ref) { try { wrap.insertBefore(sw, ref); } catch {} }
-  }
-  function markActiveSwitcher(){
-    $$("#insights-switch .seg .seg-btn").forEach(b=>{
-      const on=b.dataset.key===_feature; b.classList.toggle("active",on); b.setAttribute("aria-selected", on?"true":"false");
-    });
-  }
-  function switchFeature(name){
-    const want = clampFeature(name); if (want===_feature) return;
-    _feature=want; localStorage.setItem("insights.feature", want); markActiveSwitcher(); refreshInsights(true);
-  }
 
-  // Provider tiles 
-  function renderProviderStats(provTotals, provActive, configuredSet, breakdownMap) {
+  const providerSelected = prov => {
+    const cur = _prefs?.instances?.[lc(prov)];
+    return cur === undefined || !Array.isArray(cur) ? cur !== false : cur.length > 0;
+  };
+
+  function renderProviderStats(provTotals = {}, provActive = {}, configuredSet = new Set(), breakdownMap = {}, instancesByProvider = {}) {
     const wrap = footWrap();
-    injectInsightsPrefsCSS();
-    const host = d.getElementById("stat-providers") || (()=>{ const c=d.createElement("div"); c.id="stat-providers"; wrap.appendChild(c); return c; })();
-    if (host.parentNode !== wrap) wrap.appendChild(host);
+    let host = $("#stat-providers");
+    if (!host) {
+      host = d.createElement("div");
+      host.id = "stat-providers";
+      wrap.appendChild(host);
+    } else if (host.parentNode !== wrap) wrap.appendChild(host);
+    if (!host.dataset.bound) {
+      host.addEventListener("click", ev => {
+        const tile = ev.target.closest('.tile[data-provider="crosswatch"]');
+        if (tile && _feature !== "playlists") openCrosswatchSnapshotPicker(_feature);
+      });
+      host.dataset.bound = "1";
+    }
 
-    const canonical = (k) => {
-      const lc = _lc(k);
-      if (lc === "crosswatch") return "crosswatch";
-      return String(k || "").toUpperCase();
-    };
+    const canonical = k => lc(k) === "crosswatch" ? "crosswatch" : String(k || "").toUpperCase();
+    const totals = Object.fromEntries(Object.entries(provTotals).map(([k, v]) => [canonical(k), v]));
+    const active = Object.fromEntries(Object.entries(provActive).map(([k, v]) => [canonical(k), v]));
+    const conf = new Set([...configuredSet].map(canonical));
+    const keys = [...new Set([...Object.keys(totals), ...Object.keys(active), ...conf])]
+      .filter(k => conf.has(canonical(k)) && providerSelected(k, instancesByProvider))
+      .sort((a, b) => a === "crosswatch" ? -1 : b === "crosswatch" ? 1 : a.localeCompare(b));
 
-    const totals0 = provTotals || {};
-    const active0 = Object.assign({}, provActive || {});
-    const conf0   = configuredSet || _cfgSet || new Set();
-    const breakdown = breakdownMap || {};
-
-    const totals = {};
-    for (const [k, v] of Object.entries(totals0)) totals[canonical(k)] = v;
-    const active = {};
-    for (const [k, v] of Object.entries(active0)) active[canonical(k)] = v;
-    const conf = new Set(Array.from(conf0).map(canonical));
-
-    let keys = Array.from(new Set([
-      ...Object.keys(Object.assign({}, totals, active)),
-      ...Array.from(conf)
-    ])).filter(k => conf.has(canonical(k)))
-      .sort((a, b) => (b === "crosswatch") - (a === "crosswatch") || a.localeCompare(b));
-
-    // Hide if no providers
     if (!keys.length) {
       host.hidden = true;
-      footWrap.reserve();
-      return;
+      return footWrap.reserve();
     }
 
     host.hidden = false;
     host.style.setProperty("--prov-cols", Math.max(1, Math.min(keys.length, 4)));
-
     const seen = new Set();
-    keys.forEach(k=>{
-      const id=`tile-${k}`, valId=`stat-${k}`;
-      const kLc = _lc(k);
 
-      let tile=d.getElementById(id);
+    for (const key of keys) {
+      const prov = lc(key), label = PROVIDER_LABEL[prov] || key, total = +totals[key] || 0, per = breakdownMap?.[prov] || null, live = !!active[key];
+      let tile = $(`#tile-${key}`);
       if (!tile) {
-        tile=d.createElement("div"); tile.id=id; tile.dataset.provider=kLc; tile.className="tile provider";
-        tile.innerHTML=`<div class="n" id="${valId}" data-v="0">0</div>`;
+        tile = d.createElement("div");
+        tile.id = `tile-${key}`;
+        tile.className = "tile provider";
+        tile.dataset.provider = prov;
+        tile.innerHTML = '<div class="tile-head"><span class="tile-k"></span><span class="tile-state"><i></i><span class="txt"></span></span></div><div class="n" data-v="0">0</div><div class="mse"></div>';
         host.appendChild(tile);
       } else if (tile.parentNode !== host) host.appendChild(tile);
 
-      if (kLc === "crosswatch") {
-        tile.style.cursor = "pointer";
+      tile.style.cursor = prov === "crosswatch" ? "pointer" : "";
+      tile.classList.toggle("inactive", !live);
+      $(".tile-k", tile).textContent = label;
+      $(".tile-state", tile).classList.toggle("on", live);
+      $(".tile-state .txt", tile).textContent = live ? "Live" : "Idle";
+      animateNumber($(".n", tile), total, 650);
 
-        if (!tile.dataset.cwSnapBound) {
-          tile.addEventListener("click", () => {
-            if (_feature === "playlists") return;
-            openCrosswatchSnapshotPicker(_feature);
-          });
-          tile.dataset.cwSnapBound = "1";
-        }
-      }
-
-      let valEl=d.getElementById(valId);
-      if (!valEl) {
-        valEl=d.createElement("div");
-        valEl.className="n";
-        valEl.id=valId;
-        valEl.dataset.v="0";
-        valEl.textContent="0";
-        tile.appendChild(valEl);
-      }
-      animateNumber(valEl, (+totals[k]||0), 650);
-      tile.classList.toggle("inactive", !active[k]);
-
-      // Per-provider movie/show/anime line
-      let infoEl = tile.querySelector(".mse");
-      if (!infoEl) {
-        infoEl = d.createElement("div");
-        infoEl.className = "mse";
-        tile.appendChild(infoEl);
-      }
-
-      const per = breakdown[kLc] || null;
-      if (!per || kLc === "crosswatch" || _feature === "playlists") {
-        infoEl.textContent = "";
-        infoEl.style.display = "none";
+      const info = $(".mse", tile);
+      if (!per || prov === "crosswatch" || _feature === "playlists") {
+        info.textContent = "";
+        info.style.display = "none";
+        tile.title = prov === "crosswatch" ? `${label} • ${total} • Click to switch snapshot` : `${label} • ${total}`;
       } else {
-        const m = +(per.movies || 0);
-        const s = +(per.shows  || 0);
-        const a = +(per.anime  || 0);
-
-        const parts = [];
-        if (m) parts.push(`M:${m}`);
-        if (s) parts.push(`S:${s}`);
-        if (a) parts.push(`A:${a}`);
-
+        const m = +per.movies || 0, s = +per.shows || 0, a = +per.anime || 0, parts = [["M", m], ["S", s], ["A", a]].filter(([, v]) => v).map(([k, v]) => `<span class="mse-chip"><span class="k">${k}</span><span class="v">${v}</span></span>`);
         if (!parts.length) {
-          infoEl.textContent = "";
-          infoEl.style.display = "none";
+          info.textContent = "";
+          info.style.display = "none";
+          tile.title = `${label} • ${total}`;
         } else {
-          infoEl.textContent = parts.join(" ");
-          infoEl.style.display = "";
-          fitProviderMSE(infoEl); 
+          info.innerHTML = parts.join("");
+          info.style.display = "";
+          fitProviderMSE(info);
+          tile.title = `${label} • ${total} • Movies ${m} • Shows ${s} • Anime ${a}`;
         }
       }
-      seen.add(id);
-    });
+      seen.add(tile.id);
+    }
 
-    Array.from(host.querySelectorAll(".tile")).forEach(t=>{ if(!seen.has(t.id)) t.remove(); });
-    placeSwitchBeforeTiles(); footWrap.reserve();
+    [...host.querySelectorAll(".tile")].forEach(tile => !seen.has(tile.id) && tile.remove());
+    placeSwitchBeforeTiles();
+    footWrap.reserve();
   }
-    function renderCrossWatchSnapshotHint(cwSnapshots) {
+
+  function renderCrossWatchSnapshotHint(cwSnapshots) {
     const tile = d.querySelector('#stat-providers [data-provider="crosswatch"]');
     if (!tile) return;
-
-    // Currently No playlists supported
-    if (_feature === "playlists") {
-      const old = tile.querySelector(".cw-snapshot");
-      if (old) old.remove();
-      return;
-    }
-
-    const key = _feature;
-    const info = cwSnapshots && cwSnapshots[key] || null;
-    let label = tile.querySelector(".cw-snapshot");
-
-    if (!info || !info.has_snapshots || !info.actual) {
-      if (label) label.remove();
-      return;
-    }
-    if (!label) {
-      label = d.createElement("div");
-      label.className = "cw-snapshot";
-      tile.appendChild(label);
-    }
-    const sel   = String(info.selected || "latest");
-    const human = info.human || info.actual;
-
-    let text;
-    if (sel === "latest") {
-      text = "Latest";
-    } else {
-      text = human;
-    }
-    label.textContent = text;
+    const old = $(".cw-snapshot", tile);
+    if (_feature === "playlists") return void old?.remove();
+    const info = cwSnapshots?.[_feature];
+    if (!info?.has_snapshots || !info?.actual) return void old?.remove();
+    const label = old || (() => { const el = d.createElement("div"); el.className = "cw-snapshot"; tile.appendChild(el); return el; })();
+    label.textContent = String(info.selected || "latest") === "latest" ? "Latest" : (info.human || info.actual);
     label.title = info.actual;
   }
 
-  // History tabs
-  function renderHistoryTabs(hist){
-    const LIMIT_HISTORY = +(localStorage.getItem("insights.history.limit") || 4);
+  function renderHistoryTabs(hist) {
     const wrap = $("#sync-history") || $("[data-role='sync-history']") || $(".sync-history");
     if (!wrap) return;
-
-    if (!wrap.dataset.listInit){
+    if (!wrap.dataset.listInit) {
       wrap.innerHTML = '<div class="list"></div>';
       wrap.dataset.listInit = "1";
     }
-
-    const listEl = wrap.querySelector(".list");
-    if (!listEl) return;
-
-    const emptyMsg = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>';
-    const when = row => { const t=row?.finished_at||row?.started_at; if(!t) return "—"; const dt=new Date(t); if(isNaN(+dt)) return "—"; const dd=String(dt.getDate()).padStart(2,"0"), mm=String(dt.getMonth()+1).padStart(2,"0"), yy=String(dt.getFullYear()).slice(-2), hh=String(dt.getHours()).padStart(2,"0"), mi=String(dt.getMinutes()).padStart(2,"0"); return `${dd}-${mm}-${yy} ${hh}:${mi}`; };
-    const dur  = v => { if(v==null) return "—"; const n=parseFloat(String(v).replace(/[^\d.]/g,"")); return Number.isFinite(n)? n.toFixed(1)+'s':'—'; };
-
-    const feat = _feature;
-
-    const totalsFor = (row) => {
-      const f = (row?.features?.[feat]) || {};
-      const a = f.added   | 0;
-      const r = f.removed | 0;
-      const u = f.updated | 0;
-      return { a, r, u, sum: a + r + u };
-    };
-
-    const badgeCls = (row,t) => {
-      const exit = (typeof row?.exit_code==="number") ? row.exit_code : null;
-      const res  = (row?.result?String(row.result):"");
-      if (exit!=null && exit!==0) return "err";
-      if (res.toUpperCase()==="EQUAL" || t.sum===0) return "ok";
-      return "warn";
-    };
-
-    const all = Array.isArray(hist) ? hist.slice() : [];
-    const sorted = all
-      .slice()
-      .sort((a,b)=> new Date(b.finished_at||b.started_at||0) - new Date(a.finished_at||a.started_at||0));
-
-    const rows = [];
-    for (const row of sorted) {
-      const en = row?.features_enabled;
-      if (en && en[feat] === false) continue;
-      rows.push(row);
-      if (rows.length >= LIMIT_HISTORY) break;
-    }
-
-    if (!rows.length){ listEl.innerHTML = emptyMsg; return; }
-
-    listEl.innerHTML = rows.map(row=>{
-      const t = totalsFor(row);
-      const b = badgeCls(row, t);
-      const upd = t.u ? ` <span class="badge micro">~${t.u}</span>` : "";
-      return `<div class="history-item">
-        <div class="history-meta">${when(row)} • <span class="badge ${b}">${(row?.result)||"—"}${(typeof row?.exit_code==="number")?(' · '+row.exit_code):''}</span> • ${dur(row?.duration_sec)}</div>
-        <div class="history-badges"><span class="badge">+${t.a|0}</span><span class="badge">-${t.r|0}</span>${upd}</div>
-      </div>`;
+    const list = $(".list", wrap);
+    if (!list) return;
+    const rows = (Array.isArray(hist) ? hist : []).slice().sort((a, b) => new Date(b.finished_at || b.started_at || 0) - new Date(a.finished_at || a.started_at || 0)).filter(row => row?.features_enabled?.[_feature] !== false).slice(0, +(localStorage.getItem("insights.history.limit") || 4));
+    if (!rows.length) return void (list.innerHTML = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>');
+    list.innerHTML = rows.map(row => {
+      const t = totalsFor(_feature, row), cls = typeof row?.exit_code === "number" && row.exit_code !== 0 ? "err" : String(row?.result || "").toUpperCase() === "EQUAL" || t.sum === 0 ? "ok" : "warn";
+      return `<div class="history-item ${cls}"><div class="history-main"><div class="history-meta"><span class="history-time">${fmtWhen(row)}</span><span class="badge ${cls}">${row?.result || "—"}${typeof row?.exit_code === "number" ? ` · ${row.exit_code}` : ""}</span></div><div class="history-sub">${FEAT_LABEL[_feature] || _feature} • ${fmtDur(row?.duration_sec)}</div></div><div class="history-badges"><span class="badge add">+${t.a}</span><span class="badge del">-${t.r}</span>${t.u ? `<span class="badge micro">~${t.u}</span>` : ""}</div></div>`;
     }).join("");
   }
 
-  // Top counters
-  function renderTopStats(s) {
-    const now    = +(s?.now || 0);
-    const week   = +(s?.week || 0);
-    const month  = +(s?.month || 0);
-    const added  = +(s?.added || 0);
-    const removed = +(s?.removed || 0);
-
-    const elNow = $("#stat-now");
-    const elW   = $("#stat-week");
-    const elM   = $("#stat-month");
-    const elA   = $("#stat-added");
-    const elR   = $("#stat-removed");
-
-    if (elNow) animateNumber(elNow, now | 0);
-    if (elW)   animateNumber(elW,   week | 0);
-    if (elM)   animateNumber(elM,   month | 0);
-    if (elA)   animateNumber(elA,   added | 0);
-    if (elR)   animateNumber(elR,   removed | 0);
-
-    const fill = $("#stat-fill");
-    if (fill) {
-      const max = Math.max(1, now, week, month);
-      fill.style.width = Math.round((now / max) * 100) + "%";
-    }
-
+  function renderTopStats({ now = 0, week = 0, month = 0, added = 0, removed = 0 }) {
+    [["#stat-now", now], ["#stat-week", week], ["#stat-month", month], ["#stat-added", added], ["#stat-removed", removed]].forEach(([sel, val]) => animateNumber($(sel), val | 0));
+    const fill = $("#stat-fill"), max = Math.max(1, now, week, month);
+    if (fill) fill.style.width = `${Math.round(now / max * 100)}%`;
     animateChart(now, week, month);
-
     const lab = $("#stat-feature-label");
     if (lab) lab.textContent = FEAT_LABEL[_feature] || _feature;
-
     const chip = $("#trend-week") || $("#stat-delta-chip");
     if (chip) {
       const diff = (now | 0) - (week | 0);
-      chip.textContent = diff === 0
-        ? "no change"
-        : (diff > 0 ? `+${diff} vs last week` : `${diff} vs last week`);
+      chip.textContent = diff === 0 ? "no change" : `${diff > 0 ? "+" : ""}${diff} vs last week`;
+      chip.classList.remove("up", "down", "flat", "muted");
+      chip.classList.add(diff > 0 ? "up" : diff < 0 ? "down" : "flat");
       chip.classList.toggle("muted", diff === 0);
+      chip.title = diff === 0 ? "No change versus last week" : `${Math.abs(diff)} ${diff > 0 ? "more" : "fewer"} than last week`;
     }
-
-    const bdEl = $("#stat-breakdown");
-    if (bdEl && bdEl.parentElement) bdEl.parentElement.removeChild(bdEl);
+    $("#stat-breakdown")?.remove();
   }
 
-  // Rendering
-  async function refreshInsights(force = false) {
-    let data;
-    try {
-      data = await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? "&t=" + Date.now() : ""}`);
-    } catch (e) {
-      console.error("[Insights] Failed to load /api/insights", e);
-      return;
-    }
+  function renderWatchtime(wt) {
+    const el = $("#watchtime"), note = $("#watchtime-note");
+    if (el) el.innerHTML = `<div class="big">≈ ${wt.hours | 0}</div><div class="units">hrs <span style="opacity:.6">(${wt.days | 0} days)</span><br><span style="opacity:.8">${wt.movies | 0} movies • ${wt.shows | 0} shows</span></div>`;
+    if (note) note.textContent = wt.method || "estimate";
+  }
 
-    applyPrefsFromData(data.instances_by_provider || {});
-
-    let blk;
-    try {
-      blk = pickBlock(data, _feature);
-    } catch (e) {
-      console.error("[Insights] Failed to resolve feature block", e);
-      return;
-    }
-
+  async function renderFromData(data, statsOnly = false) {
+    const blk = hydrateBlock(data);
     footWrap();
     ensureSwitch();
-
-    const fp = _filteredProviderTotals(blk, data.instances_by_provider || {});
-    if (fp && fp.providers) {
-      blk.providers = fp.providers;
-      blk.now = Number.isFinite(fp.now) ? fp.now : blk.now;
-      if (blk.raw) blk.raw.providers_mse = fp.mse || blk.raw.providers_mse;
+    if (!statsOnly) {
+      try { renderSparkline("sparkline", blk.series || []); } catch {}
+      renderHistoryTabs(data?.history || []);
+      if (data?.watchtime) renderWatchtime(data.watchtime);
     }
-
-    try {
-      renderSparkline("sparkline", blk.series || []);
-    } catch {
-    }
-
-    renderHistoryTabs(data.history || []);
-    renderTopStats({
-      now: blk.now,
-      week: blk.week,
-      month: blk.month,
-      added: blk.added,
-      removed: blk.removed,
-      feature: _feature,
-      breakdown: blk.raw && blk.raw.breakdown ? blk.raw.breakdown : null,
-    });
-
+    renderTopStats(blk);
     const configured = await getConfiguredProviders();
-    renderProviderStats(
-      blk.providers,
-      blk.active,
-      configured,
-      blk.raw && blk.raw.providers_mse ? blk.raw.providers_mse : null,
-    );
-
-    renderCrossWatchSnapshotHint(data.crosswatch_snapshots || null);
-
-    const wt = data.watchtime || null;
-    if (wt) {
-      const wEl = $("#watchtime");
-      if (wEl) {
-        wEl.innerHTML = `<div class="big">≈ ${wt.hours | 0}</div><div class="units">hrs <span style="opacity:.6">(${wt.days | 0} days)</span><br><span style="opacity:.8">${wt.movies | 0} movies • ${wt.shows | 0} shows</span></div>`;
-      }
-      const note = $("#watchtime-note");
-      if (note) note.textContent = wt.method || "estimate";
-    }
-
+    renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
+    renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
     footWrap.reserve();
-    setTimeout(footWrap.reserve, 0);
+    if (!statsOnly) setTimeout(footWrap.reserve, 0);
   }
 
-  let _lastStatsFetch = 0;
+  async function refreshInsights(force = false) {
+    try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`)); }
+    catch (e) { console.error("[Insights] Failed to load /api/insights", e); }
+  }
+
   async function refreshStats(force = false) {
-    const nowT = Date.now();
-    if (!force && nowT - _lastStatsFetch < 900) return;
-    _lastStatsFetch = nowT;
-
-    let data;
-    try {
-      data = await fetchJSON("/api/insights?limit_samples=0&history=60");
-    } catch (e) {
-      console.error("[Insights] Failed to load /api/insights (stats)", e);
-      return;
-    }
-
-    applyPrefsFromData(data.instances_by_provider || {});
-
-    applyPrefsFromData(data.instances_by_provider || {});
-
-    let blk;
-    try {
-      blk = pickBlock(data, _feature);
-    } catch (e) {
-      console.error("[Insights] Failed to resolve feature block (stats)", e);
-      return;
-    }
-
-    const fp = _filteredProviderTotals(blk, data.instances_by_provider || {});
-    if (fp && fp.providers) {
-      blk.providers = fp.providers;
-      blk.now = Number.isFinite(fp.now) ? fp.now : blk.now;
-      if (blk.raw) blk.raw.providers_mse = fp.mse || blk.raw.providers_mse;
-    }
-
-    renderTopStats({
-      now: blk.now,
-      week: blk.week,
-      month: blk.month,
-      added: blk.added,
-      removed: blk.removed,
-      feature: _feature,
-      breakdown: blk.raw && blk.raw.breakdown ? blk.raw.breakdown : null,
-    });
-
-    const configured = await getConfiguredProviders();
-    renderProviderStats(
-      blk.providers,
-      blk.active,
-      configured,
-      blk.raw && blk.raw.providers_mse ? blk.raw.providers_mse : null,
-    )
-    renderCrossWatchSnapshotHint(data.crosswatch_snapshots || null);
-    footWrap.reserve();
+    const now = Date.now();
+    if (!force && now - _lastStatsFetch < 900) return;
+    _lastStatsFetch = now;
+    try { await renderFromData(await fetchJSON("/api/insights?limit_samples=0&history=60"), true); }
+    catch (e) { console.error("[Insights] Failed to load /api/insights (stats)", e); }
   }
 
-  // Data picker
-  function pickBlock(data, feat) {
-    if (!data || !data.features || !data.features[feat]) {
-      throw new Error(`[Insights] Missing feature block for "${feat}"`);
-    }
+  w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsights(true); });
 
-    const featureBlock = data.features[feat];
-    const history = Array.isArray(data.history) ? data.history : [];
-    const n = (v, fb = 0) => Number.isFinite(+v) ? +v : fb;
-
-    const series = Array.isArray(featureBlock.series) ? featureBlock.series : [];
-    const providers = featureBlock.providers || {};
-
-    const active =
-      featureBlock.providers_active ||
-      data.providers_active ||
-      {};
-
-    let { now, week, month, added, removed } = featureBlock;
-    now    = n(now);
-    week   = n(week);
-    month  = n(month);
-    added  = n(added);
-    removed = n(removed);
-
-    const MS = { w: 7 * 86400000, m: 30 * 86400000 };
-    const nowMs = Date.now();
-    const rowTs = row => {
-      const t = row?.finished_at || row?.started_at;
-      const ts = t ? new Date(t).getTime() : NaN;
-      return Number.isFinite(ts) ? ts : null;
-    };
-
-    const totalsFor = row => {
-      const f = (row?.features?.[feat]) || {};
-      const a = f.added   | 0;
-      const r = f.removed | 0;
-      const u = f.updated | 0;
-      return {
-        a,
-        r,
-        u,
-        sum: a + r + u,
-      };
-    };
-
-    const rowsAll = history
-      .map(r => ({ r, ts: rowTs(r) }))
-      .filter(x => x.ts != null)
-      .sort((a, b) => a.ts - b.ts);
-
-    if (!Number.isFinite(now)) {
-      now = rowsAll.length ? totalsFor(rowsAll[rowsAll.length - 1].r).sum : 0;
-    }
-
-    const sumSince = since =>
-      rowsAll.reduce((acc, { r, ts }) => {
-        if (ts < since) return acc;
-        const t = totalsFor(r);
-        acc.A += t.a;
-        acc.R += t.r;
-        acc.S += t.sum;
-        return acc;
-      }, { A: 0, R: 0, S: 0 });
-
-    if (!Number.isFinite(week)) {
-      week = sumSince(nowMs - MS.w).S;
-    }
-    if (!Number.isFinite(month)) {
-      month = sumSince(nowMs - MS.m).S;
-    }
-
-    if (!Number.isFinite(added) || !Number.isFinite(removed)) {
-      const m = sumSince(nowMs - MS.m);
-      if (!Number.isFinite(added)) added = m.A;
-      if (!Number.isFinite(removed)) removed = m.R;
-    }
-
-    return {
-      series,
-      providers,
-      active,
-      now: n(now),
-      week: n(week),
-      month: n(month),
-      added: n(added),
-      removed: n(removed),
-      raw: featureBlock,
-    };
-  }
-
-  // Public API
-  w.Insights = Object.assign(w.Insights||{}, {
-    renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart,
-    titleOf, subtitleOf,
-    switchFeature, get feature(){ return _feature; }
+  w.Insights = Object.assign(w.Insights || {}, {
+    renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,
+    switchFeature, get feature() { return _feature; }
   });
-  w.renderSparkline  = renderSparkline;
-  w.refreshInsights  = refreshInsights;
-  w.refreshStats     = refreshStats;
-  w.scheduleInsights = function scheduleInsights(max){
-    let tries=0, limit=max||20;
-    (function tick(){
-      if ($("#sync-history")||$("#stat-now")||$("#sparkline")){ refreshInsights(); return; }
-      if (++tries<limit) setTimeout(tick,250);
+  w.renderSparkline = renderSparkline;
+  w.refreshInsights = refreshInsights;
+  w.refreshStats = refreshStats;
+  w.fetchJSON = fetchJSON;
+  w.animateNumber = w.animateNumber || animateNumber;
+  w.titleOf = titleOf;
+  w.subtitleOf = subtitleOf;
+  w.scheduleInsights = function scheduleInsights(max) {
+    let tries = 0, limit = max || 20;
+    (function tick() {
+      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) return refreshInsights();
+      if (++tries < limit) setTimeout(tick, 250);
     })();
   };
-  w.fetchJSON      = fetchJSON;
-  w.animateNumber  = w.animateNumber || animateNumber;
-  w.titleOf        = titleOf;
-  w.subtitleOf     = subtitleOf;
 
-  d.addEventListener("DOMContentLoaded", ()=>{ w.scheduleInsights(); });
-  d.addEventListener("tab-changed", ev=>{ if (ev?.detail?.id === "main") refreshInsights(true); });
+  d.addEventListener("DOMContentLoaded", () => w.scheduleInsights());
+  d.addEventListener("tab-changed", ev => ev?.detail?.id === "main" && refreshInsights(true));
 
-  // Snapshot Picker
-  let _cwSnapModal = null;
+  const snapLabel = name => {
+    const base = String(name || "").replace(/\.json$/, ""), stem = base.split("-", 1)[0], m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stem);
+    return m ? `${m[1]}-${m[2]}-${m[3]} - ${m[4]}:${m[5]}` : base;
+  };
 
   function ensureCrosswatchSnapshotModal() {
-    if (_cwSnapModal && _cwSnapModal.parentNode) return _cwSnapModal;
-
+    if (_cwSnapModal?.parentNode) return _cwSnapModal;
     const modal = d.createElement("div");
     modal.className = "cw-snap-picker cw-snap-hidden";
-    modal.innerHTML = `
-      <div class="cw-snap-dialog">
-        <div class="cw-snap-head">
-          Select snapshot for <span class="hl"></span>
-        </div>
-        <div class="cw-snap-body"></div>
-        <div class="cw-snap-foot">
-          <button class="snap-close">Cancel</button>
-        </div>
-      </div>
-    `;
-    d.body.appendChild(modal);
-
-    // Close
-    modal.querySelector(".snap-close").addEventListener("click", () => {
-      modal.classList.add("cw-snap-hidden");
-    });
-
-    modal.addEventListener("click", ev => {
-      if (ev.target === modal) {
-        modal.classList.add("cw-snap-hidden");
+    modal.innerHTML = '<div class="cw-snap-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-snap-title"><div class="cw-snap-head"><div class="cw-snap-title-wrap"><div class="cw-snap-kicker">Snapshot selector</div><div class="cw-snap-title" id="cw-snap-title">Select snapshot for <span class="hl"></span></div></div><button class="snap-icon-close" type="button" aria-label="Close snapshot selector">×</button></div><div class="cw-snap-body"></div><div class="cw-snap-foot"><button class="snap-close" type="button">Cancel</button></div></div>';
+    modal.addEventListener("click", async ev => {
+      const close = ev.target === modal || ev.target.closest(".snap-close,.snap-icon-close");
+      if (close) modal.classList.add("cw-snap-hidden");
+      const btn = ev.target.closest(".snap-btn");
+      if (!btn) return;
+      const feature = modal.dataset.feature, name = btn.dataset.name;
+      try { await postOK(`/api/crosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`); }
+      catch (err) {
+        console.error("[Insights] Failed to select snapshot", err);
+        return void w.cxToast?.("Failed to set snapshot. Check server logs.");
       }
+      modal.classList.add("cw-snap-hidden");
+      w.cxToast?.(`Snapshot set: ${name === "latest" ? "latest" : snapLabel(name)}`);
+      refreshInsights(true);
     });
-
+    d.body.appendChild(modal);
     _cwSnapModal = modal;
     return modal;
   }
 
   async function openCrosswatchSnapshotPicker(feature) {
-    const rootDir = "/config/.cw_provider";
-    const snapRoot = `${rootDir}/snapshots`;
-    const formatSnapshotLabel = name => {
-      const base = String(name || "").replace(/\.json$/,"");
-      const stem = base.split("-", 1)[0];
-      const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stem);
-      if (!m) return base;
-      const [, Y, M, D, h, m2] = m;
-      return `${Y}-${M}-${D} - ${h}:${m2}`;
-    };
-
-    let filesRaw = null;
-    let loadError = null;
+    const modal = ensureCrosswatchSnapshotModal(), body = $(".cw-snap-body", modal), head = $(".cw-snap-head .hl", modal);
+    modal.dataset.feature = feature;
+    if (head) head.textContent = FEAT_LABEL[feature] || feature;
 
     try {
-      const res = await fetch(
-        `/api/files?path=${encodeURIComponent(snapRoot)}`,
-        { credentials: "same-origin", cache: "no-store" }
-      );
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} for /api/files`);
-      }
-      filesRaw = await res.json();
+      const data = await fetchJSON(`/api/files?path=${encodeURIComponent("/config/.cw_provider/snapshots")}`);
+      const files = (Array.isArray(data?.files) ? data.files : data || []).filter(f => !f.is_dir && f.name?.endsWith(`-${feature}.json`)).sort((a, b) => a.name.localeCompare(b.name)).slice(-10).reverse();
+      if (!files.length) body.innerHTML = '<div class="cw-snap-empty muted">No snapshots found for this feature yet.</div>';
+      else body.innerHTML = [{ name: "latest", label: "Latest snapshot", meta: "Live" }, ...files.map(f => ({ name: f.name, label: snapLabel(f.name), meta: "Saved" }))].map(o => `<button class="snap-btn${o.name === "latest" ? " is-latest" : ""}" data-name="${o.name}" type="button"><span class="snap-name">${o.label}</span><span class="snap-meta">${o.meta}</span></button>`).join("");
     } catch (e) {
       console.error("[Insights] Failed to load snapshot files", e);
-      loadError = e;
+      body.innerHTML = '<div class="cw-snap-empty muted">Failed to load snapshots. Check server logs or configuration.</div>';
     }
-
-    const files = Array.isArray(filesRaw?.files) ? filesRaw.files : (filesRaw || []);
-    const filtered = files
-      .filter(f => !f.is_dir && f.name && f.name.endsWith(`-${feature}.json`))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    if (loadError) {
-      const modal = ensureCrosswatchSnapshotModal();
-      const headSpan = modal.querySelector(".cw-snap-head .hl");
-      const body = modal.querySelector(".cw-snap-body");
-
-      if (headSpan) headSpan.textContent = feature;
-      body.innerHTML = `<div class="muted">Failed to load snapshots. Check server logs or configuration.</div>`;
-      modal.classList.remove("cw-snap-hidden");
-      return;
-    }
-    const latestList = filtered.slice(-10).reverse();
-
-    const modal = ensureCrosswatchSnapshotModal();
-    const headSpan = modal.querySelector(".cw-snap-head .hl");
-    const body = modal.querySelector(".cw-snap-body");
-
-    if (headSpan) headSpan.textContent = feature;
-
-    if (!latestList.length) {
-      body.innerHTML = `<div class="muted">No snapshots found for this feature yet.</div>`;
-      modal.classList.remove("cw-snap-hidden");
-      return;
-    }
-
-    const options = [
-      { name: "latest", label: "🟢 Latest" },
-      ...latestList.map(f => ({
-        name: f.name,
-        label: formatSnapshotLabel(f.name),
-      })),
-    ];
-
-    body.innerHTML = options.map(o => `
-      <button class="snap-btn" data-name="${o.name}">
-        ${o.label}
-      </button>
-    `).join("");
-
-    body.querySelectorAll(".snap-btn").forEach(btn => {
-      btn.addEventListener("click", async e => {
-        const name = e.currentTarget.dataset.name;
-
-        try {
-          const res = await fetch(
-            `/api/crosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`,
-            { method: "POST" }
-          );
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status} for /api/crosswatch/select-snapshot`);
-          }
-          const bodyJson = await res.json().catch(() => ({}));
-          if (bodyJson && bodyJson.ok === false) {
-            throw new Error(bodyJson.error || "Backend reported failure");
-          }
-        } catch (err) {
-          console.error("[Insights] Failed to select snapshot", err);
-          if (window.cxToast) {
-            window.cxToast("Failed to set snapshot. Check server logs.");
-          }
-          return;
-        }
-
-        modal.classList.add("cw-snap-hidden");
-        if (window.cxToast) {
-          const label = name === "latest" ? "latest" : formatSnapshotLabel(name);
-          window.cxToast(`Snapshot set: ${label}`);
-        }
-        refreshInsights(true);
-      });
-    });
-
     modal.classList.remove("cw-snap-hidden");
   }
-
 })(window, document);
-
-(() => {
-  const id = 'insights-provider-styles-v6';
-  if (document.getElementById(id)) return;
-
-  const s = document.createElement('style');
-  s.id = id;
-  s.textContent = `
-  #insights-footer {
-    position:absolute;left:12px;right:12px;bottom:12px;z-index:2;
-  }
-  #insights-footer .ins-foot-wrap {
-    display:flex;flex-direction:column;gap:10px;padding:10px 12px;border-radius:14px;
-    background:linear-gradient(180deg,rgba(8,8,14,.28),rgba(8,8,14,.48));
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.06),0 8px 22px rgba(0,0,0,.28);
-    backdrop-filter:blur(6px) saturate(110%);-webkit-backdrop-filter:blur(6px) saturate(110%);
-  }
-  @media(max-width:820px){
-    #insights-footer{position:static;margin-top:10px;}
-  }
-
-  #insights-switch{display:flex;align-items:center;gap:10px;justify-content:flex-start;flex-wrap:nowrap;}
-  /* Slightly smaller tabs to fit more buttons on one line */
-  #insights-switch .seg{flex:1;min-width:0;display:flex;gap:.32rem;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;scrollbar-width:none;}
-  #insights-switch .seg::-webkit-scrollbar{display:none;}
-  #insights-switch .seg-btn{flex:0 0 auto;white-space:nowrap;}
-  #insights-switch .seg-btn{
-    appearance:none;border:0;cursor:pointer;font:inherit;font-weight:700;letter-spacing:.15px;
-    font-size:.78rem; /* ~12.5px on 16px base */
-    padding:.28rem .58rem;border-radius:.72rem;color:rgba(255,255,255,.85);
-    background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));
-    border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);
-    transition:transform .12s,box-shadow .12s,background .12s,border-color .12s;opacity:.95;
-  }
-  #insights-switch .seg-btn:hover{
-    transform:translateY(-1px);opacity:1;
-  }
-  #insights-switch .seg-btn.active{
-    background:linear-gradient(180deg,rgba(22,22,30,.24),rgba(130,150,255,.10));
-    border-color:rgba(128,140,255,.30);
-    box-shadow:0 0 0 1px rgba(128,140,255,.35),0 8px 22px rgba(0,0,0,.18);
-  }
-
-  #stats-card #stat-providers{
-    --prov-cols:4;--tile-h:96px;
-    display:grid!important;grid-template-columns:repeat(var(--prov-cols),minmax(0,1fr))!important;
-    grid-auto-rows:var(--tile-h)!important;gap:12px!important;width:100%!important;align-items:stretch!important;
-  }
-  #stats-card #stat-providers .tile{
-    --brand:255,255,255;--wm:none;
-    position:relative!important;display:block!important;
-    height:var(--tile-h)!important;min-height:var(--tile-h)!important;max-height:var(--tile-h)!important;
-    border-radius:12px!important;background:rgba(255,255,255,.045)!important;overflow:hidden!important;isolation:isolate!important;
-    margin:0!important;padding:0!important;border:0!important;
-    box-shadow:inset 0 0 0 1px rgba(var(--brand),.25),0 0 24px rgba(var(--brand),.16);
-  }
-  #stats-card #stat-providers .tile::before{
-    content:"";position:absolute;inset:0;pointer-events:none;z-index:0;
-    background:
-      radial-gradient(80% 60% at 35% 40%,rgba(var(--brand),.24),transparent 60%),
-      radial-gradient(80% 60% at 55% 75%,rgba(var(--brand),.12),transparent 70%);
-  }
-  #stats-card #stat-providers .tile::after{
-    content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) rotate(-8deg);
-    width:220%;height:220%;background-repeat:no-repeat;background-position:center;background-size:contain;
-    background-image:var(--wm);mix-blend-mode:screen;opacity:.28;
-    filter:saturate(1.5) brightness(1.22) contrast(1.05);
-  }
-  #stats-card #stat-providers .tile.inactive{
-    box-shadow:inset 0 0 0 1px rgba(var(--brand),.18),0 0 16px rgba(var(--brand),.10);
-  }
-  #stats-card #stat-providers .tile.inactive::after{
-    opacity:.18;filter:saturate(1.1) brightness(1);
-  }
-
-  #stats-card #stat-providers .tile .n{
-    position:absolute;top:50%;left:50%;
-    transform:translate(-50%,-50%) scale(var(--ins-font-scale,1));
-    transform-origin:center;margin:0;font-weight:900;letter-spacing:.25px;font-variant-numeric:tabular-nums;
-    font-size:clamp(26px,calc(var(--tile-h)*.48),56px);line-height:1;color:rgba(255,255,255,.36);
-  }
-
-  @supports(-webkit-background-clip:text){
-    #stats-card #stat-providers .tile .n{
-      background-image:linear-gradient(180deg,rgba(255,255,255,.82),rgba(224,224,224,.40) 52%,rgba(255,255,255,.18));
-      -webkit-background-clip:text;-webkit-text-fill-color:transparent;color:transparent;
-    }
-  }
-  @supports(background-clip:text){
-    #stats-card #stat-providers .tile .n{
-      background-image:linear-gradient(180deg,rgba(255,255,255,.82),rgba(224,224,224,.40) 52%,rgba(255,255,255,.18));
-      background-clip:text;color:transparent;
-    }
-  }
-  #stats-card #stat-providers [data-provider=crosswatch] .cw-snapshot{
-    position:absolute;left:0;right:0;bottom:6px;padding:0 8px;
-    font-size:11px;line-height:1.2;font-weight:700;text-align:center;
-    color:rgba(255,255,255,.60);text-shadow:0 1px 2px rgba(0,0,0,.85);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  }
-
-  #stats-card #stat-providers .tile .mse{
-    position:absolute;left:50%;bottom:6px;transform-origin:center bottom;
-    padding:0 6px;font-size:11px;line-height:1.2;font-weight:700;font-variant-numeric:tabular-nums;
-    white-space:nowrap;text-align:center;
-    transform:translateX(-50%) scale(var(--ins-mse-scale,1));
-    color:rgba(255,255,255,.60);
-    text-shadow:0 1px 2px rgba(0,0,0,.85);
-    pointer-events:none;
-  }
-
-  #stats-card #stat-providers .tile .mse .mse-group{
-    display:inline-flex;align-items:center;gap:3px;margin:0 4px;
-  }
-  #stats-card #stat-providers .tile .mse .mse-icon{
-    font-family:"Material Symbols Rounded";font-weight:400;font-style:normal;
-    font-variation-settings:"FILL" 1,"wght" 400,"GRAD" 0,"opsz" 20;
-    font-size:1.1em;line-height:1;
-  }
-
-  @media(max-width:560px){
-    #stats-card #stat-providers{
-      grid-template-columns:repeat(2,minmax(0,1fr))!important;
-    }
-  }
-  @media(max-width:380px){
-    #stats-card #stat-providers{
-      grid-template-columns:repeat(1,minmax(0,1fr))!important;
-    }
-  }
-  `;
-  document.head.appendChild(s);
-})();
