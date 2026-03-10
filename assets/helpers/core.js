@@ -1572,10 +1572,6 @@
     }
   }
 
-  function downloadSummary() {
-    window.open("/api/run/summary/file", "_blank");
-  }
-
   function setRefreshBusy(busy) {
     const btn = byId("btn-status-refresh");
     if (!btn) return;
@@ -1754,7 +1750,7 @@ Object.assign(window, {
   runSync, setStatsExpanded, isElementOpen, findDetailsButton, findDetailsPanel, wireDetailsToStats,
   fetchJSON, scheduleInsights, refreshInsights, renderSparkline, animateNumber, animateChart, refreshStats,
   _setBarValues, _initStatsTooltip, ensureMainUpdateSlot, renderMainUpdatePill, checkForUpdate,
-  renderSummary, copySummary, downloadSummary, setRefreshBusy, isPlaceholder,
+  renderSummary, copySummary, setRefreshBusy, isPlaceholder,
   isSettingsVisible, setBtnBusy, flashBtnOK, loadPairs, deletePair, cxSavePair, fixFormLabels,
   cwToggleSyncMenu, cwCloseSyncMenu, DETAILS_MAX_LINES,
 });
