@@ -12,15 +12,6 @@
 .sb-label{font-size:12px;font-weight:700;letter-spacing:.02em;color:rgba(244,247,255,.94)}
 .sb-phase{min-width:0}
 .sb-phase-text{font-size:11px;color:rgba(190,199,215,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sb-pair{display:flex;align-items:center;gap:8px;min-width:0;margin-top:5px}
-.sb-node{display:inline-flex;align-items:center;gap:7px;min-width:0;height:28px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.028);backdrop-filter:blur(10px) saturate(108%);-webkit-backdrop-filter:blur(10px) saturate(108%)}
-.sb-node-logo{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex:0 0 auto}
-.sb-node-logo img{display:block;max-width:18px;max-height:14px;width:auto;height:auto;object-fit:contain;filter:brightness(1.02)}
-.sb-node-logo-text{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.05);font-size:9px;font-weight:800;letter-spacing:.04em;color:rgba(242,247,255,.9)}
-.sb-node-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:700;color:rgba(237,242,250,.92)}
-.sb-link{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 auto;color:rgba(170,191,235,.84)}
-.sb-link .material-symbol{font-family:"Material Symbols Rounded";font-size:20px;line-height:1;-webkit-text-fill-color:currentColor;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 20}
-.sb-feat{display:inline-flex;align-items:center;justify-content:center;height:22px;max-width:110px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018));font-size:10px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:rgba(196,208,228,.82);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-badge{display:inline-flex;align-items:center;justify-content:center;min-width:74px;height:26px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.02);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:rgba(235,241,252,.88)}
 .sb-badge.running{background:linear-gradient(180deg,rgba(88,104,170,.2),rgba(28,35,58,.24));border-color:rgba(132,149,214,.18);color:#edf4ff}
 .sb-badge.done{background:linear-gradient(180deg,rgba(48,92,78,.22),rgba(17,45,38,.24));border-color:rgba(109,176,147,.16);color:#e9fff8}
@@ -48,7 +39,7 @@
 .sb-rail.indet .sb-fill::after{content:"";position:absolute;inset:0;background:linear-gradient(120deg,transparent 0%,rgba(255,255,255,.09) 20%,transparent 40%);transform:translateX(-100%);animation:sbShimmer 1.4s linear infinite;pointer-events:none}
 .sb-rail.apply.indet .sb-fill::after{animation-duration:1s}
 @media (prefers-reduced-motion:reduce){.sb-rail.running.indet::after,.sb-fill.indet,.sb-rail.starting .sb-fill{animation:none}}
-@media (max-width:640px){#ux-progress{padding:11px 12px 10px}.sb-head{align-items:flex-start;flex-direction:column}.sb-badge{min-width:0}.sb-pair{gap:6px;flex-wrap:wrap}.sb-node{max-width:calc(50% - 18px);padding:0 8px}.sb-link{width:22px}.sb-link .material-symbol{font-size:18px}.sb-feat{max-width:100%}#ux-progress .sb-steps{gap:6px}#ux-progress .sb-steps span{height:26px;padding:0 6px;font-size:9px}#ux-progress .sb-steps span.current::after{left:8px}}
+@media (max-width:640px){#ux-progress{padding:11px 12px 10px}.sb-head{align-items:flex-start;flex-direction:column}.sb-badge{min-width:0}#ux-progress .sb-steps{gap:6px}#ux-progress .sb-steps span{height:26px;padding:0 6px;font-size:9px}#ux-progress .sb-steps span.current::after{left:8px}}
 ` }));
 
   const Anch = Object.freeze({ start0: 0, preStart: 35, preEnd: 57, postEnd: 67, done: 100 });
@@ -267,34 +258,6 @@
       }
     }
 
-    _providerLogo(name) {
-      return window.CW?.ProviderMeta?.logoPath?.(name || "") || "";
-    }
-
-    _providerNode(name) {
-      const node = document.createElement("span");
-      node.className = "sb-node";
-      const logoWrap = document.createElement("span");
-      logoWrap.className = "sb-node-logo";
-      const logo = this._providerLogo(name);
-      if (logo) {
-        const img = document.createElement("img");
-        img.src = logo;
-        img.alt = `${name || ""} logo`;
-        logoWrap.appendChild(img);
-      } else {
-        const fallback = document.createElement("span");
-        fallback.className = "sb-node-logo-text";
-        fallback.textContent = String(name || "?").slice(0, 3);
-        logoWrap.appendChild(fallback);
-      }
-      const label = document.createElement("span");
-      label.className = "sb-node-label";
-      label.textContent = name || "?";
-      node.append(logoWrap, label);
-      return node;
-    }
-
     success() {
       this._finishState({ exitCode: 0 });
     }
@@ -464,20 +427,7 @@
       phase.className = "sb-phase";
       const phaseText = document.createElement("div");
       phaseText.className = "sb-phase-text";
-      const pair = document.createElement("div");
-      pair.className = "sb-pair";
-      pair.hidden = true;
-      const srcNode = document.createElement("span");
-      srcNode.className = "sb-pair-src";
-      const link = document.createElement("span");
-      link.className = "sb-link";
-      link.innerHTML = `<span class="material-symbol" aria-hidden="true">trending_flat</span>`;
-      const dstNode = document.createElement("span");
-      dstNode.className = "sb-pair-dst";
-      const feat = document.createElement("span");
-      feat.className = "sb-feat";
-      pair.append(srcNode, link, dstNode, feat);
-      phase.append(phaseText, pair);
+      phase.append(phaseText);
       meta.append(label, phase);
       headMain.append(meta);
       const badge = document.createElement("div");
@@ -501,7 +451,7 @@
       });
       rail.append(fill, fly);
       host.append(head, rail, steps);
-      dom = { head, badge, phaseText, pair, srcNode, dstNode, feat, rail, fill, fly, steps };
+      dom = { head, badge, phaseText, rail, fill, fly, steps };
       this._dom = dom;
       return dom;
     }
@@ -511,7 +461,7 @@
       if (!host) return;
       const dom = this._ensureDom();
       if (!dom) return;
-      const { badge, phaseText: phaseTextEl, pair, srcNode, dstNode, feat, rail, fill, fly, steps } = dom;
+      const { badge, phaseText: phaseTextEl, rail, fill, fly, steps } = dom;
       fly.textContent = this._pairText || "";
 
       const allowDone = !!this._successExit0Seen;
@@ -553,17 +503,6 @@
       badge.classList.toggle("done", hardDone && !this._hadError);
       badge.classList.toggle("error", this._hadError);
       phaseTextEl.textContent = phaseLabel;
-
-      const pairMeta = this._pairMeta;
-      const showPair = isRunning && !!(pairMeta?.src || pairMeta?.dst);
-      pair.hidden = !showPair;
-      pair.style.display = showPair ? "flex" : "none";
-      if (showPair) {
-        srcNode.replaceChildren(this._providerNode(pairMeta.src || "?"));
-        dstNode.replaceChildren(this._providerNode(pairMeta.dst || "?"));
-        feat.textContent = pairMeta.feat || "";
-        feat.hidden = !pairMeta.feat;
-      }
 
       rail.classList.toggle("running", isRunning && !this.timeline.done);
       rail.classList.toggle("indet", shouldFlow);
