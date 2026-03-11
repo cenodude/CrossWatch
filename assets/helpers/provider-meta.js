@@ -9,7 +9,16 @@
   };
   const order = ["CROSSWATCH","PLEX","SIMKL","TRAKT","ANILIST","TMDB","JELLYFIN","EMBY","MDBLIST","TAUTULLI"];
   const brandClasses = {
-    PLEX: "brand-plex", SIMKL: "brand-simkl", TRAKT: "brand-trakt", ANILIST: "brand-anilist"
+    CROSSWATCH: "brand-crosswatch",
+    PLEX: "brand-plex",
+    SIMKL: "brand-simkl",
+    TRAKT: "brand-trakt",
+    ANILIST: "brand-anilist",
+    TMDB: "brand-tmdb-sync",
+    JELLYFIN: "brand-jellyfin",
+    EMBY: "brand-emby",
+    MDBLIST: "brand-mdblist",
+    TAUTULLI: "brand-tautulli"
   };
   const logoProviders = new Set(order);
   const logLogoProviders = new Set(["PLEX","SIMKL","TRAKT","JELLYFIN","EMBY","MDBLIST"]);
