@@ -35,28 +35,27 @@ const displayTitle = r => {
   return r.title || "Untitled";
 };
 
-const fmtCounts = c => {
+const fmtCountNumber = total =>
+  total > 999 ? `${(total / 1000).toFixed(1).replace(/\.0$/, "")}k` : total;
+
+const renderCounts = c => {
   const entries = Object.entries(c || {});
   if (!entries.length) return "";
-  const shortName = p => {
-    const up = String(p || "").toUpperCase();
-    if (up === "JELLYFIN") return "JF";
-    if (up === "MDBLIST") return "MDB";
-    if (up === "CROSSWATCH") return "CW";
-    return up;
-  };
+  const meta = window.CW?.ProviderMeta || {};
   return entries
     .map(([p, v]) => {
+      const key = meta.keyOf?.(p) || String(p || "").toUpperCase();
       const total =
         v.total || (v.history || 0) + (v.watchlist || 0) + (v.ratings || 0);
-      const label = shortName(p);
-      const shortTotal =
-        total > 999
-          ? `${(total / 1000).toFixed(1).replace(/\.0$/, "")}k`
-          : total;
-      return `${label} ${shortTotal}`;
+      const label = meta.label?.(key) || key;
+      const logo = meta.logLogoPath?.(key) || meta.logoPath?.(key) || "";
+      const count = fmtCountNumber(total);
+      return `<span class="prov-stat" title="${label} ${count}">
+        <span class="prov-stat-brand">${logo ? `<img src="${logo}" alt="${label} logo" loading="lazy">` : `<span class="prov-stat-text">${label}</span>`}</span>
+        <span class="prov-stat-count">${count}</span>
+      </span>`;
     })
-    .join(" | ");
+    .join("");
 };
 
 const ID_FIELDS = [
@@ -89,11 +88,6 @@ function buildPairScopeKeys(pairMap) {
         const prov = String(t || "").toUpperCase();
         if (prov) out.add(`${prov}::${feat}`);
       });
-    } else if (Array.isArray(targets)) {
-      for (const t of targets) {
-        const prov = String(t || "").toUpperCase();
-        if (prov) out.add(`${prov}::${feat}`);
-      }
     }
   }
   return out;
@@ -104,14 +98,20 @@ function css() {
   const el = document.createElement("style");
   el.id = "an-css";
   el.textContent = `
-  .cx-modal-shell.analyzer-modal-shell{width:min(var(--cxModalMaxW,1260px),calc(100vw - 64px))!important;max-width:min(var(--cxModalMaxW,1260px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,86vh),calc(100vh - 56px))!important;background:linear-gradient(180deg,rgba(7,10,18,.96),rgba(5,8,15,.94))!important;border:1px solid rgba(103,128,255,.16)!important;box-shadow:0 34px 90px rgba(0,0,0,.58),0 0 0 1px rgba(255,255,255,.03) inset!important}
-  .an-modal{position:relative;display:flex;flex-direction:column;height:100%;background:radial-gradient(120% 120% at 0% 0%,rgba(102,88,255,.10),transparent 34%),radial-gradient(110% 140% at 100% 100%,rgba(0,208,255,.08),transparent 30%),linear-gradient(180deg,rgba(6,9,16,.98),rgba(4,6,12,.98));color:#eaf1ff}
+  .cx-modal-shell.analyzer-modal-shell{width:min(var(--cxModalMaxW,960px),calc(100vw - 64px))!important;max-width:min(var(--cxModalMaxW,960px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,86vh),calc(100vh - 56px))!important;background:linear-gradient(180deg,rgba(7,10,18,.96),rgba(5,8,15,.94))!important;border:1px solid rgba(103,128,255,.16)!important;box-shadow:0 34px 90px rgba(0,0,0,.58),0 0 0 1px rgba(255,255,255,.03) inset!important}
+  .an-modal{position:relative;display:flex;flex-direction:column;height:100%;background:radial-gradient(120% 120% at 0% 0%,rgba(102,88,255,.08),transparent 34%),radial-gradient(110% 140% at 100% 100%,rgba(0,208,255,.06),transparent 30%),linear-gradient(180deg,rgba(6,9,16,.985),rgba(4,6,12,.985));color:#eaf1ff}
   .an-modal::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(255,255,255,.025),transparent 28%,transparent 72%,rgba(255,255,255,.02));opacity:.55}
   .an-modal .cx-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 14px 10px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));backdrop-filter:blur(10px)}
   .an-modal .cx-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0}
+  .an-modal .cx-mark{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(94,226,172,.18),rgba(56,189,248,.12));border:1px solid rgba(79,209,156,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);font-size:16px;flex:0 0 auto}
   .an-modal .cx-title{display:inline-flex;align-items:center;gap:10px;font-weight:900;font-size:18px;letter-spacing:.08em;text-transform:uppercase;color:#f3f6ff;text-shadow:0 0 18px rgba(104,122,255,.16)}
-  .an-modal .cx-title::before{content:"";width:10px;height:10px;border-radius:999px;background:radial-gradient(circle,#5cf4bd 0%,#12c978 78%);box-shadow:0 0 0 4px rgba(23,184,122,.12),0 0 16px rgba(26,207,137,.35)}
   .an-modal .an-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+  .an-modal .an-intro{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px 12px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.006))}
+  .an-modal .an-intro-copy{min-width:0}
+  .an-modal .an-intro-title{font-size:14px;font-weight:800;letter-spacing:.01em;color:#f4f7ff}
+  .an-modal .an-intro-sub{margin-top:4px;font-size:12px;line-height:1.45;color:rgba(205,215,235,.74)}
+  .an-modal .an-intro-meta{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+  .an-modal .an-intro-meta .mini{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:rgba(230,237,250,.84)}
   .an-modal .pill,.an-modal .close-btn{appearance:none;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));color:#edf3ff;border-radius:14px;padding:8px 12px;font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;flex:0 0 auto;box-shadow:0 10px 24px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.04);transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease,background .14s ease}
   .an-modal .pill:hover,.an-modal .close-btn:hover{transform:translateY(-1px);border-color:rgba(123,112,255,.4);box-shadow:0 14px 30px rgba(0,0,0,.24),0 0 0 1px rgba(123,112,255,.14) inset}
   .an-modal .pill:active,.an-modal .close-btn:active{transform:none}
@@ -127,7 +127,7 @@ function css() {
   .an-modal .an-pair-chip:hover{transform:translateY(-1px);border-color:rgba(139,92,246,.4);box-shadow:0 14px 28px rgba(0,0,0,.22),0 0 0 1px rgba(139,92,246,.12) inset}
   .an-modal .an-pair-chip.on{background:linear-gradient(180deg,rgba(107,92,255,.28),rgba(58,130,246,.12));border-color:rgba(118,110,255,.5);box-shadow:0 16px 30px rgba(0,0,0,.24),0 0 18px rgba(110,94,255,.14)}
   .an-modal .an-pair-chip span.dir{opacity:.82}
-  .an-modal .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(230px,1fr) 10px minmax(200px,.88fr);overflow:hidden;padding:10px 14px 0;gap:0}
+  .an-modal .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(230px,1fr) 10px minmax(180px,.8fr);overflow:hidden;padding:10px 14px 0;gap:0}
   .an-modal .an-grid,.an-modal .an-issues{overflow:auto;min-height:0;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(11,16,29,.92),rgba(6,9,16,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 18px 36px rgba(0,0,0,.18)}
   .an-modal .an-grid{border-radius:20px 20px 14px 14px}
   .an-modal .an-issues{border-radius:14px 14px 20px 20px;padding:12px}
@@ -165,8 +165,13 @@ function css() {
   .an-modal .an-footer{padding:9px 14px 12px;border-top:1px solid rgba(255,255,255,.08);display:grid;grid-template-columns:auto 1fr;align-items:center;font-size:12px;background:linear-gradient(180deg,rgba(255,255,255,.012),rgba(255,255,255,.03));gap:12px}
   .an-modal .an-footer .count-stack{display:inline-flex;align-items:center;flex-wrap:wrap;gap:8px;line-height:1.15;white-space:nowrap}
   .an-modal .an-footer .count-stack > span{display:inline-flex;align-items:center;min-height:30px;padding:0 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
-  .an-modal .an-footer .stats{justify-self:end;text-align:right;white-space:nowrap;opacity:.78}
+  .an-modal .an-footer .stats{justify-self:end;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;opacity:.88}
   .an-modal .an-footer .stats.empty{opacity:.4}
+  .an-modal .an-footer .prov-stat{display:inline-flex;align-items:center;gap:8px;min-height:30px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035)}
+  .an-modal .an-footer .prov-stat-brand{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px}
+  .an-modal .an-footer .prov-stat-brand img{display:block;width:auto;height:13px;max-width:42px;object-fit:contain;filter:brightness(1.03)}
+  .an-modal .an-footer .prov-stat-text{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#e7eeff}
+  .an-modal .an-footer .prov-stat-count{font-size:11px;font-weight:800;color:rgba(231,238,255,.84)}
   .an-modal .an-grid,.an-modal .an-issues{scrollbar-width:thin;scrollbar-color:#8b5cf6 #10131a}
   .an-modal .an-grid::-webkit-scrollbar,.an-modal .an-issues::-webkit-scrollbar{height:10px;width:10px}
   .an-modal .an-grid::-webkit-scrollbar-track,.an-modal .an-issues::-webkit-scrollbar-track{background:rgba(255,255,255,.03);border-radius:12px}
@@ -182,9 +187,11 @@ function css() {
   .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px rgba(122,107,255,.28)}
   @keyframes wait-spin{to{transform:rotate(360deg)}}
   @media (max-width:980px){
-    .cx-modal-shell.analyzer-modal-shell{width:min(var(--cxModalMaxW,1260px),calc(100vw - 24px))!important;max-width:min(var(--cxModalMaxW,1260px),calc(100vw - 24px))!important;height:min(var(--cxModalMaxH,86vh),calc(100vh - 24px))!important}
+    .cx-modal-shell.analyzer-modal-shell{width:min(var(--cxModalMaxW,960px),calc(100vw - 24px))!important;max-width:min(var(--cxModalMaxW,960px),calc(100vw - 24px))!important;height:min(var(--cxModalMaxH,86vh),calc(100vh - 24px))!important}
     .an-modal .cx-head{grid-template-columns:1fr}
     .an-modal .an-actions{justify-content:flex-start}
+    .an-modal .an-intro{grid-template-columns:1fr}
+    .an-modal .an-intro-meta{justify-content:flex-start}
     .an-modal .an-wrap{padding:10px 12px 0}
   }
   @media (max-width:720px){
@@ -192,7 +199,7 @@ function css() {
     .an-modal input[type=search]{min-width:100%;max-width:none}
     .an-modal .an-pairs{padding:8px 12px 10px}
     .an-modal .an-footer{grid-template-columns:1fr}
-    .an-modal .an-footer .stats{justify-self:start;text-align:left;white-space:normal}
+    .an-modal .an-footer .stats{justify-self:start;justify-content:flex-start}
   }
     `;
   document.head.appendChild(el);
@@ -209,12 +216,13 @@ export default {
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
       shell.classList.add("analyzer-modal-shell");
-      shell.style.setProperty("--cxModalMaxW", "1260px");
+      shell.style.setProperty("--cxModalMaxW", "960px");
       shell.style.setProperty("--cxModalMaxH", "86vh");
     }
     root.innerHTML = `
       <div class="cx-head">
         <div class="cx-left">
+          <div class="cx-mark">⌕</div>
           <div class="cx-title">Analyzer</div>
           <button class="pill ghost" id="an-toggle-ids">IDs: hidden</button>
           <button class="pill ghost" id="an-scope">Scope: issues</button>
@@ -223,6 +231,17 @@ export default {
         <div class="an-actions">
           <button class="pill" id="an-run" type="button">Analyze</button>
           <button class="close-btn" id="an-close">Close</button>
+        </div>
+      </div>
+      <div class="an-intro">
+        <div class="an-intro-copy">
+          <div class="an-intro-title">Find missing, blocked, and out-of-scope deltas</div>
+          <div class="an-intro-sub" id="an-summary-copy">Analyzer compares the selected source and destination pairs so you can see why a title is not lining up between providers.</div>
+        </div>
+        <div class="an-intro-meta" id="an-summary-meta">
+          <span class="mini">Scoped 0</span>
+          <span class="mini">Visible 0</span>
+          <span class="mini">Issues 0</span>
         </div>
       </div>
       <div class="an-pairs" id="an-pairs"></div>
@@ -282,6 +301,8 @@ export default {
     const issues = Q("#an-issues", root);
     const pairBar = Q("#an-pairs", root);
     const stats = Q("#an-stats", root);
+    const summaryCopy = Q("#an-summary-copy", root);
+    const summaryMeta = Q("#an-summary-meta", root);
     const issuesCount = Q("#an-issues-count", root);
     const blockedCount = Q("#an-blocked-count", root);
     const search = Q("#an-search", root);
@@ -312,6 +333,17 @@ export default {
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
     let BLOCKS_BY_PF = new Map();
+    const setSummary = () => {
+      const scoped = ITEMS.filter(inPairScope);
+      if (summaryCopy) {
+        summaryCopy.textContent = SCOPE === "issues"
+          ? "Showing only items with detected delta issues for the selected pairs."
+          : "Showing all scoped items for the selected pairs, including healthy matches.";
+      }
+      if (summaryMeta) {
+        summaryMeta.innerHTML = `<span class="mini">Scoped ${scoped.length}</span><span class="mini">Visible ${VIEW.length}</span><span class="mini">Issues ${UNSYNCED.size}</span>`;
+      }
+    };
 
     function selectedPairIds() {
       const all = (PAIRS || [])
@@ -517,18 +549,6 @@ export default {
         .join("");
     }
 
-    function bindHeader() {
-      QA(".head .sort", grid).forEach(h =>
-        h.addEventListener("click", () => {
-          const k = h.dataset.k;
-          SORT_DIR =
-            SORT_KEY === k && SORT_DIR === "asc" ? "desc" : "asc";
-          SORT_KEY = k;
-          draw();
-        })
-      );
-    }
-
     function inPairScope(r) {
       if (!PAIR_SCOPE_KEYS || !PAIR_SCOPE_KEYS.size) return true;
       const key = `${String(r.provider || "").toUpperCase()}::${String(
@@ -550,13 +570,8 @@ export default {
 
     function draw() {
       grid.innerHTML = renderHeader() + renderBody(sortRows(VIEW.slice()));
-      bindHeader();
       setCols();
-      QA(".row:not(.head)", grid).forEach(r =>
-        r.addEventListener("click", () =>
-          select(r.getAttribute("data-tag"))
-        )
-      );
+      setSummary();
     }
 
     function filter(q) {
@@ -577,6 +592,19 @@ export default {
       });
       draw();
     }
+
+    grid.addEventListener("click", e => {
+      const sortEl = e.target.closest(".head .sort");
+      if (sortEl) {
+        const k = sortEl.dataset.k;
+        SORT_DIR = SORT_KEY === k && SORT_DIR === "asc" ? "desc" : "asc";
+        SORT_KEY = k;
+        draw();
+        return;
+      }
+      const row = e.target.closest(".row:not(.head)");
+      if (row) select(row.getAttribute("data-tag"));
+    });
 
     function escHtml(s) {
       return String(s)
@@ -1092,18 +1120,11 @@ function renderPairs() {
             continue;
           const src = p.source;
           const dst = p.target;
-          const mode = String(p.mode || "one-way").toLowerCase();
           const F = p.features || {};
           for (const feat of ["history", "watchlist", "ratings"]) {
             if (!on(F[feat])) continue;
             add(src, feat, dst);
-            if (
-              mode === "two-way" ||
-              mode === "bi" ||
-              mode === "both" ||
-              mode === "mirror"
-            )
-              add(dst, feat, src);
+            if (_isTwoWayMode(p.mode)) add(dst, feat, src);
           }
         }
         return map;
@@ -1131,8 +1152,8 @@ function renderPairs() {
       }
       ITEMS = s.items || [];
       VIEW = ITEMS.slice();
-      const countsText = fmtCounts(s.counts);
-      stats.textContent = countsText;
+      const countsText = renderCounts(s.counts);
+      stats.innerHTML = countsText;
       if (!countsText) stats.classList.add("empty");
       else stats.classList.remove("empty");
       issuesCount.textContent = "Issues: 0";
@@ -1327,7 +1348,7 @@ function renderPairs() {
         if (NORMALIZATION && NORMALIZATION.length) {
           issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + notes;
         } else {
-          const ok = `<div class="issue"><div class="h">No issues detected</div><div>All good.</div></div>`;
+          const ok = `<div class="issue"><div class="h">No issues detected</div><div>The selected source and destination pairs are currently aligned for this scope.</div></div>`;
           issues.innerHTML = notes + ok;
         }
         if (!silent) hideWait();
