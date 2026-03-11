@@ -4,9 +4,14 @@ services:
     image: ghcr.io/cenodude/crosswatch:latest
     container_name: crosswatch
     ports:
-      - "8787:8787"          # host:container
+      - "8787:8787"
     environment:
       TZ: Europe/Amsterdam
     volumes:
-      - /path/to/config:/config
+      - type: volume
+        source: crosswatch_config
+        target: /config
     restart: unless-stopped
+
+volumes:
+  crosswatch_config:
