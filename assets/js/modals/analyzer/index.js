@@ -103,7 +103,8 @@ function css() {
   .an-modal::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(255,255,255,.025),transparent 28%,transparent 72%,rgba(255,255,255,.02));opacity:.55}
   .an-modal .cx-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 14px 10px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));backdrop-filter:blur(10px)}
   .an-modal .cx-left{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0}
-  .an-modal .cx-mark{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(94,226,172,.18),rgba(56,189,248,.12));border:1px solid rgba(79,209,156,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);font-size:16px;flex:0 0 auto}
+  .an-modal .cx-mark{width:36px;height:36px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(94,226,172,.18),rgba(56,189,248,.12));border:1px solid rgba(79,209,156,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.03);flex:0 0 auto}
+  .an-modal .cx-mark .material-symbols-rounded{font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24;font-size:18px;line-height:1;color:#f3f6ff}
   .an-modal .cx-title{display:inline-flex;align-items:center;gap:10px;font-weight:900;font-size:18px;letter-spacing:.08em;text-transform:uppercase;color:#f3f6ff;text-shadow:0 0 18px rgba(104,122,255,.16)}
   .an-modal .an-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
   .an-modal .an-intro{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px 12px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.006))}
@@ -222,7 +223,7 @@ export default {
     root.innerHTML = `
       <div class="cx-head">
         <div class="cx-left">
-          <div class="cx-mark">⌕</div>
+          <div class="cx-mark"><span class="material-symbols-rounded" aria-hidden="true">troubleshoot</span></div>
           <div class="cx-title">Analyzer</div>
           <button class="pill ghost" id="an-toggle-ids">IDs: hidden</button>
           <button class="pill ghost" id="an-scope">Scope: issues</button>
