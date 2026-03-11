@@ -1232,7 +1232,7 @@
         ? (pairId ? "Run synchronization (single pair)" : "Run synchronization")
         : "Sync options";
     });
-    try { window.SyncBar?.reset?.(); } catch {}
+    try { window.syncBar?.reset?.(); } catch {}
   }
 
   function clearDetailsLogBeforeRun() {
