@@ -7,23 +7,13 @@
   let _pick = { source: "", target: "" };
 
   const key = (s) => String(s || "").trim().toUpperCase();
+  const providerMeta = () => window.CW?.ProviderMeta || null;
+  const providerLabel = (item, providerKey) => providerMeta()?.label?.(providerKey) || String(item?.label || item?.name || providerKey || "Provider");
+  const providerClass = (providerKey) => providerMeta()?.brandInfo?.(providerKey)?.cls || "";
   const truthy = (v) => {
     if (v && typeof v === "object") v = v.enable ?? v.enabled;
     if (typeof v === "string") v = v.toLowerCase().trim();
     return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
-  };
-
-  const BRAND_CLASS = {
-    CROSSWATCH: "brand-crosswatch",
-    PLEX: "brand-plex",
-    SIMKL: "brand-simkl",
-    TRAKT: "brand-trakt",
-    ANILIST: "brand-anilist",
-    TMDB: "brand-tmdb-sync",
-    JELLYFIN: "brand-jellyfin",
-    EMBY: "brand-emby",
-    MDBLIST: "brand-mdblist",
-    TAUTULLI: "brand-tautulli",
   };
 
   const FEATURE_ORDER = [
@@ -132,8 +122,8 @@
 
     board.innerHTML = providers.map((item) => {
       const providerKey = key(item.key || item.name || item.label);
-      const label = String(item.label || item.name || providerKey || "Provider");
-      const cls = BRAND_CLASS[providerKey] || "";
+      const label = providerLabel(item, providerKey);
+      const cls = providerClass(providerKey);
       const isSource = providerKey === source;
       const isTarget = providerKey === target;
       const btnClass = isSource ? "selected" : (source && !isTarget ? "target" : "");
@@ -158,6 +148,13 @@
 
     syncLegacySelectors(source, target);
     try { window.scheduleApplySyncVisibility?.(); } catch {}
+  }
+
+  function resetPick() {
+    _pick.source = "";
+    _pick.target = "";
+    syncLegacySelectors();
+    renderConnections();
   }
 
   function openPairModal(source, target) {
@@ -265,8 +262,9 @@
 
   document.addEventListener("DOMContentLoaded", renderOrEnhance);
   document.addEventListener("cx-state-change", renderConnections);
-  window.addEventListener("cx:pairs:changed", renderConnections);
+  window.addEventListener("cx:pairs:changed", resetPick);
 
   window.renderConnections = renderConnections;
   window.cxRenderConnections = renderOrEnhance;
+  window.cxResetConnectionPick = resetPick;
 })();
