@@ -26,34 +26,48 @@
 
   // styles (once)
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css", textContent: `
-.sch-adv{padding:0;margin-top:0}
-.sch-adv .mini{font-size:12px;color:var(--muted)}
-.sch-adv table{width:100%;border-collapse:collapse;margin-top:10px}
-.sch-adv th,.sch-adv td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
-.sch-adv th{font-weight:600;color:var(--muted)}
-.sch-adv select,.sch-adv input[type=time]{width:100%}
-.sch-adv .chipdays{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;align-items:center}
-.sch-adv .chipdays label{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:6px 8px;border:1px solid var(--border);border-radius:10px;cursor:pointer;width:100%}
-.sch-adv .chipdays input{transform:translateY(1px)}
+#sec-scheduling{--sch-shell-bg:radial-gradient(120% 140% at 0% 0%,rgba(90,74,201,.11) 0%,rgba(90,74,201,0) 42%),radial-gradient(110% 130% at 100% 100%,rgba(41,110,214,.08) 0%,rgba(41,110,214,0) 44%),linear-gradient(180deg,rgba(8,11,18,.985),rgba(3,5,10,.99));--sch-card-bg:linear-gradient(180deg,rgba(10,13,21,.92),rgba(4,6,11,.96));--sch-card-bg-soft:linear-gradient(180deg,rgba(14,18,30,.84),rgba(5,7,13,.9));--sch-border:rgba(255,255,255,.08);--sch-border-soft:rgba(255,255,255,.055);--sch-shadow:0 22px 56px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.03);--sch-fg:#f3f7ff;--sch-fg-soft:rgba(208,217,233,.7)}
+#sec-scheduling .cw-subpanel[data-sub]{padding-top:6px}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#schAdv{position:relative;border:1px solid var(--sch-border);border-radius:22px;background:var(--sch-shell-bg);box-shadow:var(--sch-shadow);overflow:hidden}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card::before,#schAdv::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.045),transparent 38%),radial-gradient(90% 120% at 0% 0%,rgba(92,76,204,.1),transparent 52%)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{position:relative;z-index:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field{display:grid;gap:8px;padding:14px 16px;border:1px solid var(--sch-border-soft);border-radius:18px;background:var(--sch-card-bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{grid-column:1 / -1}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field>.muted{margin:0!important;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-notes{margin-top:0;color:var(--sch-fg-soft);font-size:12px;line-height:1.45}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time],#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number],.sch-adv select,.sch-adv input[type=time]{width:100%;min-height:46px;padding:0 14px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:linear-gradient(180deg,rgba(4,6,11,.94),rgba(2,4,8,.98));color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.02);transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover{border-color:rgba(255,255,255,.13);background:linear-gradient(180deg,rgba(7,10,18,.96),rgba(3,5,10,.985))}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:focus,.sch-adv select:focus,.sch-adv input[type=time]:focus{outline:none;border-color:rgba(122,120,255,.42);box-shadow:0 0 0 3px rgba(101,107,255,.12),inset 0 1px 0 rgba(255,255,255,.025)}
+.sch-adv{padding:16px}
+.sch-adv .cw-panel-head{position:relative;z-index:1;display:flex;align-items:center;min-height:104px;margin:0 0 14px;padding:14px 16px;border:1px solid var(--sch-border-soft);border-radius:18px;background:var(--sch-card-bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+.sch-adv .cw-panel-head::before{content:"Enable";position:absolute;top:14px;left:16px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
+.sch-adv .cw-panel-head .cx-toggle{margin-top:20px}
+.sch-adv .mini,.sch-adv .status{position:relative;z-index:1}
+.sch-adv .mini{font-size:12px;color:var(--sch-fg-soft)}
+.sch-adv .status{display:flex;align-items:center;min-height:22px;font-size:12px;font-weight:700;color:rgba(255,214,128,.88)}
+.sch-adv .status:empty{display:none}
+.sch-adv table{position:relative;z-index:1;width:100%;border-collapse:separate;border-spacing:0 10px;margin-top:0}
+.sch-adv thead th{padding:0 10px 6px;text-align:left;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56);border-bottom:none}
+.sch-adv tbody tr{background:var(--sch-card-bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.sch-adv tbody td{padding:12px 10px;vertical-align:middle;border-top:1px solid var(--sch-border-soft);border-bottom:1px solid var(--sch-border-soft)}
+.sch-adv tbody td:first-child{border-left:1px solid var(--sch-border-soft);border-radius:18px 0 0 18px}
+.sch-adv tbody td:last-child{border-right:1px solid var(--sch-border-soft);border-radius:0 18px 18px 0}
+.sch-adv .chipdays{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:center}
+.sch-adv .chipdays label{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:0 10px;border:1px solid var(--sch-border-soft);border-radius:999px;cursor:pointer;width:100%;background:var(--sch-card-bg-soft);color:rgba(236,241,251,.78);font-size:12px;font-weight:700;transition:border-color .18s ease,background .18s ease,transform .18s ease,color .18s ease}
+.sch-adv .chipdays label:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.13);background:linear-gradient(180deg,rgba(16,20,33,.92),rgba(7,9,15,.96))}
+.sch-adv .chipdays input{accent-color:#7c76ff;transform:translateY(1px)}
+.sch-adv .chipdays label:has(input:checked){color:#f7f9ff;border-color:rgba(122,120,255,.34);background:linear-gradient(180deg,rgba(89,86,196,.22),rgba(16,18,34,.96))}
 .sch-adv .chipdays .chipspacer{width:100%;height:1px;visibility:hidden;pointer-events:none}
-.sch-adv .row-disabled{opacity:.55;filter:grayscale(.25)}
+.sch-adv .row-disabled{opacity:.5;filter:grayscale(.24)}
 .sch-adv option[disabled]{color:#666}
-.sch-adv .status{margin-top:10px;min-height:20px}
-
-/* Shared toggle  */
-.cx-toggle{position:relative;display:inline-flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
-.cx-toggle input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
-.cx-toggle-ui{display:inline-block;width:46px;height:26px;border-radius:999px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.14);position:relative;box-shadow:inset 0 0 0 1px rgba(0,0,0,.18);transition:background .15s ease,border-color .15s ease,box-shadow .15s ease}
-.cx-toggle-ui:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 8px 18px rgba(0,0,0,.35);transition:transform .15s ease,background .15s ease}
-.cx-toggle-text{display:inline-block;font-size:12px;opacity:.9;white-space:nowrap}
-.cx-toggle-state{display:inline-flex;align-items:center;font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);opacity:.85}
-.cx-toggle-state:before{content:"Off"}
-.cx-toggle:hover .cx-toggle-ui{border-color:rgba(255,255,255,.22)}
-.cx-toggle input:checked + .cx-toggle-ui{background:rgba(34,197,94,.28);border-color:rgba(34,197,94,.45)}
-.cx-toggle input:checked + .cx-toggle-ui:after{transform:translateX(20px)}
-.cx-toggle input:checked ~ .cx-toggle-state:before{content:"On"}
-.cx-toggle input:focus-visible + .cx-toggle-ui{box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 6px rgba(34,197,94,.15),inset 0 0 0 1px rgba(0,0,0,.18)}
+.sch-adv-actions{position:relative;z-index:1;display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.sch-adv .btn,.sch-adv .btn.ghost{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03));color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:transform .18s ease,background .18s ease,border-color .18s ease}
+.sch-adv .btn:hover,.sch-adv .btn.ghost:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(110,112,255,.16),rgba(255,255,255,.04))}
+.sch-adv tbody .btn.ghost{min-width:38px;padding:0 12px}
+.sch-adv.adv-disabled{opacity:.55;filter:saturate(.75)}
 .sch-std-toggle{margin-top:0}
+@media (max-width:980px){#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td::before{font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56)}.sch-adv tbody td:nth-child(1)::before{content:"Pair"}.sch-adv tbody td:nth-child(2)::before{content:"Time"}.sch-adv tbody td:nth-child(3)::before{content:"Days"}.sch-adv tbody td:nth-child(4)::before{content:"After"}.sch-adv tbody td:nth-child(5)::before{content:"Active"}.sch-adv tbody td:nth-child(6)::before{content:"Remove"}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}}
 ` }));
 
   // state
@@ -119,6 +133,11 @@ const ensureStdEnabledToggle = () => {
     });
   };
 
+  const decorateStandardPanel = () => {
+    const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
+    if (!basic) return;
+  };
+
   const applyModeLocks = () => {
     const sel = $("#schEnabled");
     const stdToggle = $("#schEnabledToggle");
@@ -165,7 +184,7 @@ const ensureStdEnabledToggle = () => {
       const arr = await r.json();
       _pairs = Array.isArray(arr) ? arr.map(p => ({
         id: String(p.id),
-        label: `${String(p.source||"").toUpperCase()} → ${String(p.target||"").toUpperCase()} ${String(p.mode||"")}`.trim(),
+        label: `${String(p.source || "").toUpperCase()} -> ${String(p.target || "").toUpperCase()} ${String(p.mode || "")}`.trim(),
         enabled: !!p.enabled
       })) : [];
     } catch (e) { console.warn("[scheduler] /api/pairs failed", e); _pairs = []; }
@@ -181,7 +200,7 @@ const ensureStdEnabledToggle = () => {
     const tdPair = el("td"), sel = el("select");
     sel.id = `sched_pair_${rowKey}`;
     sel.name = sel.id;
-    sel.appendChild(Object.assign(el("option"), { value: "", textContent: "— select pair —" }));
+    sel.appendChild(Object.assign(el("option"), { value: "", textContent: "Select pair" }));
     _pairs.forEach(p => {
       const o = Object.assign(el("option"), { value: p.id, textContent: p.label + (p.enabled ? "" : " (disabled)"), disabled: !p.enabled, selected: String(j.pair_id||"") === p.id });
       sel.appendChild(o);
@@ -197,11 +216,12 @@ const ensureStdEnabledToggle = () => {
     // days
     const tdDays = el("td"), wrap = el("div","chipdays"), cur = new Set(Array.isArray(j.days) ? j.days : []);
     DAY.forEach((d,i) => {
-      const lab = el("label"), chk = Object.assign(el("input"), { type: "checkbox", checked: cur.has(i+1) });
+      const lab = el("label"), chk = Object.assign(el("input"), { type: "checkbox", checked: cur.has(i+1) }), txt = el("span");
       chk.id = `sched_days_${rowKey}_${i+1}`;
       chk.name = `sched_days_${rowKey}[]`;
       chk.onchange = () => { const S = new Set(Array.isArray(j.days) ? j.days : []); chk.checked ? S.add(i+1) : S.delete(i+1); j.days = [...S].sort((a,b)=>a-b); };
-      lab.append(chk, document.createTextNode(d)); wrap.appendChild(lab);
+      txt.textContent = d;
+      lab.append(chk, txt); wrap.appendChild(lab);
     if(i===2){ wrap.appendChild(el("span","chipspacer")); }
     });
     tdDays.appendChild(wrap);
@@ -210,7 +230,7 @@ const ensureStdEnabledToggle = () => {
     const tdAfter = el("td"), sa = el("select");
     sa.id = `sched_after_${rowKey}`;
     sa.name = sa.id;
-    sa.appendChild(Object.assign(el("option"), { value: "", textContent: "— none —" }));
+    sa.appendChild(Object.assign(el("option"), { value: "", textContent: "None" }));
     _jobs.filter(x => x !== j).forEach((x,i) => sa.appendChild(Object.assign(el("option"), { value: String(x.id), textContent: `Step ${i+1}`, selected: String(j.after||"") === String(x.id) })));
     sa.onchange = () => { j.after = sa.value || null; renderJobs(); }; tdAfter.appendChild(sa);
 
@@ -221,7 +241,7 @@ const ensureStdEnabledToggle = () => {
     c.onchange = () => { j.active = !!c.checked; renderJobs(); }; tdOn.appendChild(c);
 
     // delete
-    const tdDel = el("td"), del = Object.assign(el("button"), { className: "btn ghost", textContent: "✕" });
+    const tdDel = el("td"), del = Object.assign(el("button"), { className: "btn ghost", textContent: "x" });
     del.onclick = () => { _jobs = _jobs.filter(x => x !== j); renderJobs(); }; tdDel.appendChild(del);
 
     tr.append(tdPair, tdTime, tdDays, tdAfter, tdOn, tdDel);
@@ -256,9 +276,9 @@ const ensureStdEnabledToggle = () => {
   <tbody id="schJobsBody"></tbody>
 </table>
 
-<div class="mini" style="margin-top:8px">Only enabled pairs are selectable; disabled pairs are greyed-out.</div>
+<div class="mini">Only enabled pairs are selectable; disabled pairs are greyed out.</div>
 <div class="status" id="schAdvStatus"></div>
-<div style="display:flex;gap:8px;margin-top:10px">
+<div class="sch-adv-actions">
   <button class="btn" id="btnAddStep">Add step</button>
   <button class="btn" id="btnAutoFromPairs">Auto-create from enabled pairs</button>
 </div>`;
@@ -304,6 +324,7 @@ const ensureStdEnabledToggle = () => {
     if (_loading) return; _loading = true;
     try {
       ensureUI();
+      decorateStandardPanel();
       await fetchPairs();
 
       let saved = {};
