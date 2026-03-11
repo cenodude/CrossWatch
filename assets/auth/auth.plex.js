@@ -48,6 +48,16 @@ function getPlexCfgBlock(cfg) {
   const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
   const inst = getPlexInstance();
   if (inst === "default") return base;
+  return (base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object")
+    ? base.instances[inst]
+    : {};
+}
+
+function ensurePlexCfgBlock(cfg) {
+  cfg = cfg || {};
+  const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (cfg.plex = {});
+  const inst = getPlexInstance();
+  if (inst === "default") return base;
   if (!base.instances || typeof base.instances !== "object") base.instances = {};
   if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
   return base.instances[inst];
@@ -1177,7 +1187,7 @@ const tags = [
     };
 
     cfg = cfg || (w.__cfg ||= {});
-    const plex = getPlexCfgBlock(cfg);
+    const plex = ensurePlexCfgBlock(cfg);
 
     const url  = v("#plex_server_url");
     const user = v("#plex_username");
