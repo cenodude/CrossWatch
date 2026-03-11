@@ -1,14 +1,15 @@
 /* assets/helpers/watchlist-preview.js */
 /* Extracted watchlist preview/wall UI from core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
-(function(){
-  const isTV = window.isTV || (v => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v || "")));
+(function () {
+  const isTV = window.isTV || ((v) => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v || "")));
   let wallReqSeq = 0;
   let previewBusy = false;
 
   window.wallLoaded = window.wallLoaded || false;
   window.__wallLoading = window.__wallLoading || false;
   window._lastSyncEpoch = window._lastSyncEpoch || null;
+  window.__wallRenderSignature = window.__wallRenderSignature || "";
 
   const json = async (url, opt) => {
     if (window.CW?.API?.j && !opt) return window.CW.API.j(url);
@@ -75,7 +76,28 @@
     return `/art/tmdb/${isTV(item.type || item.entity || item.media_type) ? "tv" : "movie"}/${tmdb}?size=${encodeURIComponent(size)}&cb=${window._lastSyncEpoch || 0}`;
   }
 
-  const providerLogoPath = name => window.CW?.ProviderMeta?.logoPath?.(name) || "";
+  const providerLogoPath = (name) => window.CW?.ProviderMeta?.logoPath?.(name) || "";
+  const previewGate = async () => {
+    const [wlEnabled, hasKey, uiAllowed] = await Promise.all([
+      Promise.resolve(window.isWatchlistEnabledInPairs?.() ?? true).catch(() => false),
+      hasTmdbKey().catch(() => false),
+      isWatchlistPreviewAllowed().catch(() => true),
+    ]);
+    return { wlEnabled, hasKey, uiAllowed, allowed: !!(wlEnabled && hasKey && uiAllowed) };
+  };
+  const hidePreviewCard = (card, row, msg) => {
+    card?.classList.add("hidden");
+    if (row) { row.innerHTML = ""; row.classList.add("hidden"); }
+    if (msg) msg.textContent = "";
+    window.wallLoaded = false;
+  };
+  const setWallEmpty = (row, msg, text) => {
+    window.__wallRenderSignature = "";
+    row.replaceChildren();
+    row.classList.add("hidden");
+    msg.textContent = text;
+    msg.classList.remove("hidden");
+  };
 
   function pillFor(status) {
     switch (String(status || "").toLowerCase()) {
@@ -88,18 +110,18 @@
       case "jellyfin_only": return { text: "JELLYFIN", cls: "p-sk" };
       case "crosswatch_only":
       case "cw_only": return { text: "CW", cls: "p-sk" };
-      default: return { text: "—", cls: "p-sk" };
+      default: return { text: "-", cls: "p-sk" };
     }
   }
 
   function providersForItem(item) {
     const direct = Array.isArray(item?.sources)
-      ? item.sources.map(v => String(v || "").toUpperCase()).filter(Boolean)
+      ? item.sources.map((v) => String(v || "").toUpperCase()).filter(Boolean)
       : [];
     if (direct.length) return [...new Set(direct)];
 
     const sbp = item?.sources_by_provider || item?.sourcesByProvider || {};
-    const byProvider = Object.keys(sbp || {}).map(v => String(v || "").toUpperCase()).filter(Boolean);
+    const byProvider = Object.keys(sbp || {}).map((v) => String(v || "").toUpperCase()).filter(Boolean);
     if (byProvider.length) return [...new Set(byProvider)];
 
     switch (String(item?.status || "").toLowerCase()) {
@@ -117,23 +139,23 @@
   function providerIconMarkup(name) {
     const src = providerLogoPath(name);
     const label = String(name || "").toUpperCase();
+    const shell = `display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);`;
     return src
-      ? `<span title="${label}" style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0 6px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:14px;max-width:16px;object-fit:contain;filter:brightness(1.02)"></span>`
-      : `<span title="${label}" style="display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);font-size:10px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${label}</span>`;
+      ? `<span title="${label}" style="${shell}width:26px;height:26px;padding:0 6px;"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:14px;max-width:16px;object-fit:contain;filter:brightness(1.02)"></span>`
+      : `<span title="${label}" style="${shell}min-width:26px;height:26px;padding:0 8px;font-size:10px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${label}</span>`;
   }
 
-  async function resolveOverview(type, tmdb) {
-    try {
-      const res = await fetch("/api/metadata/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: isTV(type) ? "tv" : "movie", ids: { tmdb: String(tmdb) }, need: { overview: true } }),
-      });
-      const data = await res.json();
-      return data?.ok ? (data.result?.overview || "—") : "—";
-    } catch {
-      return "—";
-    }
+  function wallSignature(items, epoch) {
+    return JSON.stringify({
+      epoch: Number(epoch || 0),
+      items: (Array.isArray(items) ? items : []).map((item) => [
+        item?.key || "",
+        item?.status || "",
+        item?.tmdb || "",
+        item?.type || "",
+        item?.year || "",
+      ]),
+    });
   }
 
   async function loadWall() {
@@ -143,12 +165,8 @@
     if (!card || !msg || !row) return;
 
     try {
-      const [wlEnabled, hasKey, uiAllowed] = await Promise.all([
-        window.isWatchlistEnabledInPairs?.() ?? true,
-        hasTmdbKey(),
-        isWatchlistPreviewAllowed(),
-      ]);
-      if (!wlEnabled || !hasKey || !uiAllowed) {
+      const gate = await previewGate();
+      if (!gate.allowed) {
         card.classList.add("hidden");
         return;
       }
@@ -156,10 +174,12 @@
     } catch {}
 
     const myReq = ++wallReqSeq;
-    msg.textContent = "Loading…";
-    msg.classList.remove("hidden");
-    row.innerHTML = "";
-    row.classList.add("hidden");
+    const hasRenderedWall = row.childElementCount > 0 && !row.classList.contains("hidden");
+    if (!hasRenderedWall) {
+      msg.textContent = "Loading...";
+      msg.classList.remove("hidden");
+      row.classList.add("hidden");
+    }
 
     const hidden = readHidden();
     const isDeleted = (item) => {
@@ -180,7 +200,10 @@
       let items = Array.isArray(data.items) ? data.items.slice() : [];
       if (!items.length) items = (data.items || []).filter((it) => String(it?.status || "").toLowerCase() === "both");
       window._lastSyncEpoch = data.last_sync_epoch || null;
-      if (!items.length) { msg.textContent = "No items to show yet."; return; }
+      if (!items.length) {
+        setWallEmpty(row, msg, "No items to show yet.");
+        return;
+      }
 
       const firstSeen = firstSeenMap();
       const now = Date.now();
@@ -191,8 +214,15 @@
       items.sort((a, b) => getTs(b) - getTs(a));
       items = items.slice(0, Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20);
 
-      msg.classList.add("hidden");
-      row.classList.remove("hidden");
+      const signature = wallSignature(items, data.last_sync_epoch);
+      if (signature === window.__wallRenderSignature && hasRenderedWall) {
+        msg.classList.add("hidden");
+        row.classList.remove("hidden");
+        return;
+      }
+
+      const frag = document.createDocumentFragment();
+      let renderedCount = 0;
 
       for (const item of items) {
         if (!item?.tmdb) continue;
@@ -213,14 +243,14 @@
         img.loading = "lazy";
         img.alt = `${item.title || ""} (${item.year || ""})`;
         img.src = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
-        img.onerror = function(){ this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
+        img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
         link.appendChild(img);
 
         const overlay = document.createElement("div");
         const currentProviders = providersForItem(item).slice(0, 3);
         const synced = String(source).toLowerCase() === "both";
         overlay.className = "ovr";
-        overlay.style.left = synced ? "8px" : "8px";
+        overlay.style.left = "8px";
         overlay.style.right = synced ? "8px" : "auto";
         overlay.style.justifyContent = synced ? "center" : "flex-start";
         overlay.style.width = synced ? "calc(100% - 16px)" : "auto";
@@ -231,7 +261,7 @@
 
         const cap = document.createElement("div");
         cap.className = "cap";
-        cap.textContent = `${item.title || ""}${item.year ? ` · ${item.year}` : ""}`;
+        cap.textContent = `${item.title || ""}${item.year ? ` - ${item.year}` : ""}`;
         link.appendChild(cap);
 
         const hover = document.createElement("div");
@@ -243,18 +273,25 @@
           </div>`;
         link.appendChild(hover);
 
-        link.addEventListener("mouseenter", async () => {
-          const descEl = document.getElementById(`desc-${item.type}-${item.tmdb}`);
-          if (!descEl || descEl.dataset.loaded) return;
-          descEl.textContent = await resolveOverview(item.type, item.tmdb);
-          descEl.dataset.loaded = "1";
-        }, { passive: true });
-
-        row.appendChild(link);
+        frag.appendChild(link);
+        renderedCount++;
       }
 
+      if (!renderedCount) {
+        setWallEmpty(row, msg, "No items to show yet.");
+        return;
+      }
+
+      row.replaceChildren(frag);
+      row.classList.remove("hidden");
+      msg.classList.add("hidden");
+      window.__wallRenderSignature = signature;
       initWallInteractions();
     } catch {
+      if (!hasRenderedWall) {
+        row.classList.add("hidden");
+        msg.classList.remove("hidden");
+      }
       msg.textContent = "Failed to load preview.";
     }
   }
@@ -302,13 +339,9 @@
 
   async function updateWatchlistPreview() {
     try {
-      const [hasKey, wlEnabled, uiAllowed] = await Promise.all([
-        hasTmdbKey(),
-        window.isWatchlistEnabledInPairs?.() ?? true,
-        isWatchlistPreviewAllowed(),
-      ]);
+      const { allowed } = await previewGate();
       const card = document.getElementById("placeholder-card");
-      if (!hasKey || !wlEnabled || !uiAllowed) {
+      if (!allowed) {
         if (card) card.classList.add("hidden");
         window.wallLoaded = false;
         return;
@@ -329,22 +362,10 @@
       const msg = document.getElementById("wall-msg");
       if (!card) return false;
 
-      const hideAll = () => {
-        card.classList.add("hidden");
-        if (row) { row.innerHTML = ""; row.classList.add("hidden"); }
-        if (msg) msg.textContent = "";
-        window.wallLoaded = false;
-      };
+      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
 
-      if (!isOnMain()) { hideAll(); return false; }
-
-      const [hasKey, wlEnabled, uiAllowed] = await Promise.all([
-        hasTmdbKey().catch(() => false),
-        Promise.resolve(window.isWatchlistEnabledInPairs?.()).catch(() => false),
-        isWatchlistPreviewAllowed().catch(() => true),
-      ]);
-
-      if (!hasKey || !wlEnabled || !uiAllowed) { hideAll(); return false; }
+      const { allowed } = await previewGate();
+      if (!allowed) { hidePreviewCard(card, row, msg); return false; }
       card.classList.remove("hidden");
 
       if (!window.wallLoaded && !window.__wallLoading) {
@@ -364,26 +385,6 @@
     window.dispatchEvent(new CustomEvent("watchlist-hidden-changed"));
   });
 
-  async function resolvePosterUrl(entity, id, size = "w342") {
-    if (!id) return null;
-    if (window._cfgCache && !String(window._cfgCache?.tmdb?.api_key || "").trim()) return null;
-    const typ = isTV(entity) ? "tv" : "movie";
-    const cb = window._lastSyncEpoch || 0;
-    try {
-      const res = await fetch("/api/metadata/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entity: typ, ids: { tmdb: String(id) }, need: { poster: true } }),
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (!(data?.ok && data?.result?.images?.poster?.length)) return null;
-      return `/art/tmdb/${typ}/${id}?size=${encodeURIComponent(size)}&cb=${cb}`;
-    } catch {
-      return null;
-    }
-  }
-
   const WatchlistPreview = {
     updateEdges,
     scrollWall,
@@ -395,7 +396,6 @@
     isOnMain,
     isWatchlistPreviewAllowed,
     updatePreviewVisibility,
-    resolvePosterUrl,
   };
 
   (window.CW ||= {}).WatchlistPreview = WatchlistPreview;
