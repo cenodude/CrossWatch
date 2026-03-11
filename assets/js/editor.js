@@ -1689,6 +1689,7 @@
     rows.forEach(row => {
       const tr = document.createElement("tr");
       const locked = false;
+      const fieldName = suffix => `cw-row-${row._rid || "new"}-${suffix}`;
       if (row.episode) tr.classList.add("cw-row-episode");
       if (row.deleted) tr.classList.add("cw-row-deleted");
 
@@ -1700,6 +1701,7 @@
 
       const selCb = document.createElement("input");
       selCb.type = "checkbox";
+      selCb.name = fieldName("selected");
       selCb.className = "cw-checkbox";
       selCb.checked = (state.selected || new Set()).has(row._rid);
       selCb.onchange = () => {
@@ -1724,6 +1726,7 @@
       tr.appendChild(cell(delBtn));
 
       const keyIn = document.createElement("input");
+      keyIn.name = fieldName("key");
       keyIn.value = row.key || "";
       keyIn.className = "cw-key";
       keyIn.disabled = locked;
@@ -1756,6 +1759,7 @@
       titleCell.appendChild(titleRow);
 
       const titleIn = document.createElement("input");
+      titleIn.name = fieldName("title");
       titleIn.value = row.title || "";
       titleIn.disabled = locked;
       titleIn.oninput = e => {
@@ -1766,6 +1770,7 @@
       titleRow.appendChild(titleIn);
 
       const yearIn = document.createElement("input");
+      yearIn.name = fieldName("year");
       yearIn.value = row.year || "";
       yearIn.disabled = locked;
       yearIn.oninput = e => {
@@ -1777,6 +1782,7 @@
       };
 
       const imdbIn = document.createElement("input");
+      imdbIn.name = fieldName("imdb");
       imdbIn.value = row.imdb || "";
       imdbIn.disabled = locked;
       imdbIn.oninput = e => {
@@ -1787,6 +1793,7 @@
         markChanged();
       };
       const idAIn = document.createElement("input");
+      idAIn.name = fieldName(anilistMode ? "mal" : "tmdb");
       idAIn.value = anilistMode ? (row.mal || "") : (row.tmdb || "");
       idAIn.placeholder = anilistMode ? "MAL…" : "TMDB…";
       idAIn.disabled = locked;
@@ -1806,6 +1813,7 @@
       };
 
       const idBIn = document.createElement("input");
+      idBIn.name = fieldName(anilistMode ? "anilist" : "trakt");
       idBIn.value = anilistMode ? (row.anilist || "") : (row.trakt || "");
       idBIn.placeholder = anilistMode ? "AniList…" : "Trakt…";
       idBIn.disabled = locked;

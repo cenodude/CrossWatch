@@ -384,7 +384,7 @@
               </div>
 
               <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
-                <input class="sr-only" type="checkbox" ${enabled ? "checked" : ""}
+                <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}
                   onchange="this.closest('.icon-btn.power')?.setAttribute('aria-checked', this.checked); window.cxToggleEnable && window.cxToggleEnable('${pr.id}', this.checked, this)">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg>
               </label>
