@@ -104,29 +104,38 @@ function flowAnimCSSOnce(){
   el.id = id;
   el.textContent = `
     .cx-modal-shell.pair-config-modal{width:var(--cxModalW,min(var(--cxModalMaxW,1280px),calc(100vw - 64px)))!important;max-width:min(var(--cxModalMaxW,1280px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 48px))!important}
-    .cx-modal-shell.pair-config-modal #cx-modal.cx-card{background:linear-gradient(180deg,rgba(20,24,34,.98),rgba(11,14,22,.985));border:1px solid rgba(255,255,255,.08);border-radius:24px;box-shadow:0 28px 90px rgba(0,0,0,.52),0 0 0 1px rgba(139,92,246,.08) inset;overflow:hidden!important}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:16px 20px 15px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));backdrop-filter:blur(12px)}
+    .cx-modal-shell.pair-config-modal #cx-modal.cx-card{background:
+      radial-gradient(95% 140% at 0% 0%,rgba(90,72,193,.2) 0%,rgba(90,72,193,0) 38%),
+      radial-gradient(85% 120% at 100% 100%,rgba(31,89,173,.14) 0%,rgba(31,89,173,0) 42%),
+      linear-gradient(180deg,rgba(7,10,18,.992),rgba(3,5,11,.992));
+      border:1px solid rgba(255,255,255,.06);border-radius:24px;
+      box-shadow:0 36px 110px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.03),0 0 0 1px rgba(108,92,213,.08);
+      overflow:hidden!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:16px 20px 15px;border-bottom:1px solid rgba(255,255,255,.05);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.006));backdrop-filter:blur(12px)}
     .cx-modal-shell.pair-config-modal #cx-modal .title-wrap{display:flex;align-items:flex-start;gap:12px;min-width:0}
-    .cx-modal-shell.pair-config-modal #cx-modal .app-logo{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:linear-gradient(135deg,rgba(139,92,246,.26),rgba(59,130,246,.16));border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 24px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.08)}
+    .cx-modal-shell.pair-config-modal #cx-modal .app-logo{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:linear-gradient(180deg,rgba(89,79,192,.34),rgba(58,87,178,.18));border:1px solid rgba(255,255,255,.07);box-shadow:0 14px 28px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.08);color:#eef2ff}
     .cx-modal-shell.pair-config-modal #cx-modal .app-name{font-size:18px;line-height:1.1;letter-spacing:-.01em}
-    .cx-modal-shell.pair-config-modal #cx-modal .app-sub{margin-top:4px;color:rgba(226,232,240,.62)}
+    .cx-modal-shell.pair-config-modal #cx-modal .app-sub{margin-top:4px;color:rgba(205,214,231,.56)}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-body{padding:14px 20px 8px}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-top{grid-template-columns:minmax(520px,1.02fr) minmax(320px,.98fr);gap:12px 18px;align-items:start}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-main{grid-template-columns:minmax(0,1.02fr) minmax(320px,.98fr);gap:14px 18px}
     .cx-modal-shell.pair-config-modal #cx-modal .top-left{display:grid;gap:8px}
     .cx-modal-shell.pair-config-modal #cx-modal .top-right{display:grid;gap:8px}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;margin:0}
-    .cx-modal-shell.pair-config-modal #cx-modal .field label{margin-bottom:4px;color:rgba(226,232,240,.68);letter-spacing:.08em}
+    .cx-modal-shell.pair-config-modal #cx-modal .field label{margin-bottom:4px;color:rgba(209,218,235,.64);letter-spacing:.08em}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-row .input,
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select{background:linear-gradient(180deg,rgba(3,7,18,.92),rgba(5,9,22,.98));border-color:rgba(255,255,255,.08);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select{background:linear-gradient(180deg,rgba(2,6,17,.98),rgba(3,7,18,.995));border-color:rgba(255,255,255,.06);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 0 0 1px rgba(255,255,255,.015)}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-row .input:hover,
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select:hover{border-color:rgba(139,92,246,.24)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-card{min-width:0;padding:12px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-title{margin-bottom:10px;font-size:12px;color:rgba(226,232,240,.66);text-transform:uppercase;letter-spacing:.06em}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select:hover{border-color:rgba(122,108,228,.28)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-card{min-width:0;padding:12px 14px;border-radius:22px;border:1px solid rgba(255,255,255,.06);background:
+      radial-gradient(90% 120% at 10% 0%,rgba(108,86,218,.13) 0%,rgba(108,86,218,0) 44%),
+      radial-gradient(90% 120% at 100% 100%,rgba(39,100,190,.1) 0%,rgba(39,100,190,0) 44%),
+      linear-gradient(180deg,rgba(16,21,36,.72),rgba(8,11,20,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-title{margin-bottom:10px;font-size:12px;color:rgba(206,214,229,.62);text-transform:uppercase;letter-spacing:.06em}
     .cx-modal-shell.pair-config-modal #cx-modal .flow-title span{color:#fff;text-transform:none;letter-spacing:0}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty{min-height:62px!important;padding:10px 14px!important;border-radius:16px!important;border-color:rgba(255,255,255,.08)!important;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .token{width:40px!important;height:40px!important;border-radius:13px!important;box-shadow:0 8px 22px rgba(0,0,0,.28),inset 0 0 0 1px rgba(255,255,255,.05)!important}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .arrow{height:6px!important;box-shadow:0 0 0 1px rgba(255,255,255,.04) inset,0 0 14px rgba(99,102,241,.18)!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty{min-height:62px!important;padding:10px 14px!important;border-radius:18px!important;border-color:rgba(255,255,255,.06)!important;background:linear-gradient(180deg,rgba(18,23,38,.78),rgba(8,11,19,.94))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 0 0 1px rgba(255,255,255,.015)}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .token{width:40px!important;height:40px!important;border-radius:13px!important;box-shadow:0 10px 26px rgba(0,0,0,.34),inset 0 0 0 1px rgba(255,255,255,.04)!important}
+    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .arrow{height:6px!important;box-shadow:0 0 0 1px rgba(255,255,255,.03) inset,0 0 18px rgba(94,108,233,.16)!important}
     .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .dot{transform:scale(.9)}
     .cx-modal-shell.pair-config-modal #cx-modal .flow-warn-area:empty{display:none}
     .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow{gap:12px 16px;margin-top:2px}
@@ -134,35 +143,38 @@ function flowAnimCSSOnce(){
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab{padding:9px 14px;border-radius:14px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);font-weight:750}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab{padding:9px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(25,29,44,.88),rgba(11,15,26,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.025);font-weight:750;color:rgba(235,240,251,.92)}
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab:hover,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button:hover,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a:hover,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab:hover{transform:translateY(-1px);border-color:rgba(139,92,246,.22);box-shadow:0 8px 20px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.03)}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab:hover{transform:translateY(-1px);border-color:rgba(111,95,223,.24);box-shadow:0 10px 24px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab.active,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button.active,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a.active,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab.active,
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs [aria-selected="true"],
     .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs [data-active="1"],
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .selected{border-color:rgba(139,92,246,.4);background:linear-gradient(135deg,rgba(124,92,255,.34),rgba(59,130,246,.22));box-shadow:0 14px 30px rgba(0,0,0,.22),0 0 0 1px rgba(255,255,255,.035) inset}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg{padding:4px;border-radius:14px;border-color:rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg label{padding:9px 13px;border-radius:11px;color:rgba(226,232,240,.72)}
+    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .selected{border-color:rgba(109,93,223,.42);background:linear-gradient(135deg,rgba(89,72,203,.5),rgba(61,118,220,.34));box-shadow:0 16px 34px rgba(0,0,0,.28),0 0 0 1px rgba(255,255,255,.03) inset}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg{padding:4px;border-radius:16px;border-color:rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(24,29,43,.86),rgba(9,12,22,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg label{padding:9px 13px;border-radius:12px;color:rgba(203,212,229,.68)}
     .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-one:checked + label,
-    .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-two:checked + label{background:linear-gradient(135deg,rgba(99,102,241,.9),rgba(59,130,246,.88));box-shadow:0 10px 24px rgba(59,130,246,.22)}
-    .cx-modal-shell.pair-config-modal #cx-modal .panel{padding:14px;border-radius:18px;border:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.008) 28%,rgba(2,6,16,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+    .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-two:checked + label{background:linear-gradient(135deg,rgba(91,99,231,.92),rgba(75,138,230,.9));box-shadow:0 12px 30px rgba(49,82,197,.28)}
+    .cx-modal-shell.pair-config-modal #cx-modal .panel{padding:14px;border-radius:22px;border:1px solid rgba(255,255,255,.055);background:
+      radial-gradient(90% 130% at 0% 0%,rgba(80,65,172,.08) 0%,rgba(80,65,172,0) 38%),
+      radial-gradient(90% 130% at 100% 100%,rgba(24,82,158,.07) 0%,rgba(24,82,158,0) 42%),
+      linear-gradient(180deg,rgba(12,16,27,.9),rgba(4,7,14,.975));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
     .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title{margin-bottom:12px;font-size:13px;letter-spacing:.01em}
-    .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title.small{margin-bottom:6px;color:rgba(226,232,240,.62)}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row{padding:8px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012));box-shadow:inset 0 1px 0 rgba(255,255,255,.025);margin-bottom:8px;min-height:56px}
+    .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title.small{margin-bottom:6px;color:rgba(203,212,228,.58)}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row{padding:8px 12px;border-radius:18px;border:1px solid rgba(255,255,255,.05);background:linear-gradient(180deg,rgba(16,20,34,.84),rgba(5,8,16,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.02);margin-bottom:8px;min-height:56px}
     .cx-modal-shell.pair-config-modal #cx-modal .opt-row .t,.cx-modal-shell.pair-config-modal #cx-modal .opt-row strong{font-weight:700}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .s{color:rgba(226,232,240,.56)}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch .slider{border-color:rgba(255,255,255,.12);background:rgba(9,12,24,.96)}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch input:checked + .slider{background:linear-gradient(135deg,#7c5cff,#47c7ff);border-color:rgba(96,165,250,.36);box-shadow:0 0 0 1px rgba(255,255,255,.03) inset}
-    .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv{border-radius:16px;background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.008));border:1px solid rgba(255,255,255,.05)}
-    .cx-modal-shell.pair-config-modal #cx-modal .rules .r{border-radius:14px;border-color:rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012))}
-    .cx-modal-shell.pair-config-modal .cx-actions{padding:12px 20px 16px!important;border-top:1px solid rgba(255,255,255,.06)!important;background:linear-gradient(180deg,rgba(15,18,27,.4),rgba(15,18,27,.92) 32%,rgba(15,18,27,.98))!important;backdrop-filter:blur(14px)!important}
-    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn{border-radius:16px;padding:12px 18px;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));border-color:rgba(255,255,255,.12)}
-    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn.primary{background:linear-gradient(135deg,#5b7dff,#6e86ff 38%,#76b8ff 100%);box-shadow:0 14px 34px rgba(43,88,255,.24),0 0 0 1px rgba(255,255,255,.04) inset}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .s{color:rgba(203,211,226,.52)}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch .slider{border-color:rgba(255,255,255,.1);background:linear-gradient(180deg,rgba(8,11,21,.98),rgba(5,8,16,.98))}
+    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch input:checked + .slider{background:linear-gradient(135deg,#6d61ff,#4ca0ff);border-color:rgba(110,141,255,.34);box-shadow:0 0 0 1px rgba(255,255,255,.02) inset,0 0 24px rgba(73,122,255,.16)}
+    .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv{border-radius:18px;background:linear-gradient(180deg,rgba(14,18,31,.82),rgba(5,8,15,.95));border:1px solid rgba(255,255,255,.045)}
+    .cx-modal-shell.pair-config-modal #cx-modal .rules .r{border-radius:16px;border-color:rgba(255,255,255,.055);background:linear-gradient(180deg,rgba(16,20,34,.82),rgba(5,8,16,.96))}
+    .cx-modal-shell.pair-config-modal .cx-actions{padding:12px 20px 16px!important;border-top:1px solid rgba(255,255,255,.05)!important;background:linear-gradient(180deg,rgba(9,12,22,.34),rgba(8,11,20,.92) 32%,rgba(6,8,15,.985))!important;backdrop-filter:blur(14px)!important}
+    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn{border-radius:18px;padding:12px 18px;background:linear-gradient(180deg,rgba(28,33,46,.88),rgba(10,13,23,.96));border-color:rgba(255,255,255,.09);color:#f1f5ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn.primary{background:linear-gradient(135deg,#685dff,#6d72ff 38%,#4ba4ff 100%);box-shadow:0 18px 40px rgba(55,91,255,.28),0 0 0 1px rgba(255,255,255,.04) inset}
     @media (max-width:1180px){
       .cx-modal-shell.pair-config-modal #cx-modal .cx-top,
       .cx-modal-shell.pair-config-modal #cx-modal .cx-main{grid-template-columns:1fr}
@@ -2055,7 +2067,7 @@ export default{
       if(!res.ok){alert("Save failed");return;}
 
       try{
-        if(typeof window.loadPairs==="function"){await window.loadPairs()}
+        if(typeof window.loadPairs==="function"){await window.loadPairs(true)}
         else{
           const r=await fetch("/api/pairs",{cache:"no-store"});
           const arr=r.ok?await r.json():[];
