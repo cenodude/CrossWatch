@@ -51,6 +51,8 @@
     onStart: () => safe(window.startRunVisuals, true),
     onStop: () => safe(window.stopRunVisuals)
   });
+  window.syncBar = sync;
+  (window.CW ||= {}).syncBar = sync;
 
   let summary = null;
   let enabledFromPairs = null;
