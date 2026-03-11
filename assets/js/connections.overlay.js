@@ -42,8 +42,18 @@
 #providers_list .prov-card::before{content:"";position:absolute;inset:8px;pointer-events:none;border-radius:18px;border:1px solid rgba(255,255,255,.10);opacity:.7}
 #providers_list .prov-card::after{content:"";position:absolute;inset:-30% 20% auto -10%;height:70%;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.10),transparent 55%);opacity:.28;transform:rotate(-12deg)}
 #providers_list .prov-card > *{position:relative;z-index:1}
-#providers_list .prov-card .prov-watermark{position:absolute;inset:0;z-index:0;opacity:.95}
-#providers_list .prov-card .prov-watermark::after{opacity:.12;transform:scale(1.22);transform-origin:100% 100%}
+#providers_list .prov-card .prov-watermark{position:absolute;inset:0;z-index:0;opacity:1}
+#providers_list .prov-card .prov-watermark::after{right:var(--wm-right,-7%);bottom:var(--wm-bottom,-12%);width:var(--wm-width,78%);height:var(--wm-height,92%);opacity:.16;transform:scale(1.42);transform-origin:108% 94%;filter:grayscale(.12) brightness(1.06) saturate(1.08);mix-blend-mode:screen}
+#providers_list .prov-card.brand-crosswatch .prov-watermark::after{width:84%;height:106%;right:-12%;bottom:-16%;transform:scale(1.48)}
+#providers_list .prov-card.brand-mdblist .prov-watermark::after{width:70%;height:98%;right:-4%;bottom:-10%;transform:scale(1.4)}
+#providers_list .prov-card.brand-plex .prov-watermark::after{width:72%;height:98%;right:-2%;bottom:-8%;transform:scale(1.46)}
+#providers_list .prov-card.brand-simkl .prov-watermark::after{width:74%;height:100%;right:-4%;bottom:-10%;transform:scale(1.48)}
+#providers_list .prov-card.brand-trakt .prov-watermark::after{width:72%;height:98%;right:-2%;bottom:-8%;transform:scale(1.46)}
+#providers_list .prov-card.brand-anilist .prov-watermark::after{width:74%;height:100%;right:-4%;bottom:-10%;transform:scale(1.46)}
+#providers_list .prov-card.brand-emby .prov-watermark::after{width:76%;height:102%;right:-5%;bottom:-11%;transform:scale(1.44)}
+#providers_list .prov-card.brand-jellyfin .prov-watermark::after{width:88%;height:112%;right:-14%;bottom:-18%;transform:scale(1.44)}
+#providers_list .prov-card.brand-tmdb-sync .prov-watermark::after{width:86%;height:58%;right:-10%;bottom:7%;transform:scale(1.32);transform-origin:104% 52%}
+#providers_list .prov-card.brand-tautulli .prov-watermark::after{width:76%;height:102%;right:-5%;bottom:-10%;transform:scale(1.46)}
 #providers_list .prov-main{display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;min-height:92px;gap:10px}
 #providers_list .prov-title{font-size:1rem;font-weight:900;line-height:1.08;letter-spacing:.04em;text-transform:uppercase;color:#f6f7fb;text-shadow:0 1px 0 rgba(0,0,0,.35)}
 #providers_list .prov-features{display:inline-flex;align-items:center;gap:8px;padding:0;margin:0}
