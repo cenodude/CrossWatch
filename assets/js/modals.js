@@ -4,9 +4,9 @@
 
 const _cwGetV = () => {
   try {
-    return (window.__CW_VERSION__ || window.__CW_BUILD__ || new URL(import.meta.url).searchParams.get('v') || Date.now());
+    return (window.__CW_VERSION__ || new URL(import.meta.url).searchParams.get('v') || Date.now());
   } catch {
-    return (window.__CW_VERSION__ || window.__CW_BUILD__ || Date.now());
+    return (window.__CW_VERSION__ || Date.now());
   }
 };
 

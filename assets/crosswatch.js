@@ -395,7 +395,7 @@ async function _cwShouldOpenSetupWizard(meta) {
         async function ensureModals() {
           if (typeof window.openUpgradeWarning === "function" || typeof window.openSetupWizard === "function") return true;
           try {
-            const v = encodeURIComponent(String(window.APP_VERSION || window.__CW_VERSION__ || window.__CW_BUILD__ || Date.now()));
+            const v = encodeURIComponent(String(window.APP_VERSION || window.__CW_VERSION__ || Date.now()));
             await import(`/assets/js/modals.js?v=${v}`);
             return true;
           } catch (e) {

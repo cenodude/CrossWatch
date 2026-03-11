@@ -105,7 +105,7 @@
   async function openInsightSettingsModal() {
     try {
       if (typeof w.openInsightSettingsModal === "function") return await w.openInsightSettingsModal({});
-      const v = encodeURIComponent(String(w.__CW_VERSION__ || w.__CW_BUILD__ || Date.now()));
+      const v = encodeURIComponent(String(w.__CW_VERSION__ || Date.now()));
       const mod = await import(`./modals.js?v=${v}`);
       if (typeof mod.openModal === "function") await mod.openModal("insight-settings", {});
     } catch (e) {

@@ -35,7 +35,7 @@
   }
 
   function _ver() {
-    return String(w.__CW_BUILD__ || w.__CW_VERSION__ || "").trim();
+    return String(w.__CW_VERSION__ || "").trim();
   }
 
   function load(provider) {
