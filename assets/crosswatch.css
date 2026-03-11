@@ -769,7 +769,7 @@ html.cw-compact main#layout{padding-bottom:24px}
 @media (max-width: 720px){.cw-main-card-head-copy h2{font-size:21px} #ops-card .action-row{padding:10px} #ops-card .action-buttons{gap:8px} #update-banner{width:100%;justify-content:space-between}}
 
 /* Settings */
-#page-settings{padding-bottom:calc(132px + env(safe-area-inset-bottom,0px))}
+#page-settings{padding-bottom:0}
 #cw-settings-shell{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;align-items:start;margin-top:12px;padding-bottom:calc(132px + env(safe-area-inset-bottom,0px))}
 #cw-settings-nav{position:sticky;top:12px;display:grid;gap:12px}
 .cw-settings-nav-card{border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:16px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));box-shadow:0 18px 40px rgba(0,0,0,.24)}
