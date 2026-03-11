@@ -284,12 +284,16 @@ function cwSchedProviderSelect(open, opts = {}) {
 function cwSchedSettingsSelect(tab, opts = {}) {
   const panelHost = document.getElementById("sched-provider-panel");
   const panel = panelHost?.querySelector('.cw-meta-provider-panel[data-provider="scheduler"]');
+  const paneTabs = document.getElementById("sched-pane-tabs");
   if (!panelHost || !panel) return;
 
   const t = (tab || "basic").toLowerCase();
   const want = ["basic", "advanced"].includes(t) ? t : "basic";
 
   panel.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+    btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
+  });
+  paneTabs?.querySelectorAll("[data-sub]").forEach((btn) => {
     btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
   });
   panel.querySelectorAll(".cw-subpanel[data-sub]").forEach((sp) => {
@@ -319,18 +323,6 @@ function cwBuildSchedulerPanel() {
       <div class="muted">Run sync automatically on a timer.</div>
     </div>
   `;
-
-  const headActions = document.createElement("div");
-  headActions.className = "cw-panel-head-actions";
-
-  const subTiles = document.createElement("div");
-  subTiles.className = "cw-subtiles";
-  subTiles.innerHTML = `
-    <button type="button" class="cw-subtile active" data-sub="basic">Standard</button>
-    <button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>
-  `;
-  headActions.appendChild(subTiles);
-  head.appendChild(headActions);
 
   const subPanels = document.createElement("div");
   subPanels.className = "cw-subpanels";
@@ -405,7 +397,7 @@ function cwBuildSchedulerPanel() {
     if (raw) raw.classList.add("hidden");
   } catch {}
 
-  subTiles.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+  document.querySelectorAll("#sched-pane-tabs [data-sub]").forEach((btn) => {
     btn.addEventListener("click", () => cwSchedSettingsSelect(btn.dataset.sub));
   });
 
