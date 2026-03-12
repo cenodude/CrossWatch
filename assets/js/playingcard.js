@@ -75,6 +75,13 @@
     return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?size=w342`;
   };
 
+  const buildBackdropUrl = (p) => {
+    const id = tmdbIdOf(p);
+    if (!id) return "";
+    const type = String(p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
+    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280`;
+  };
+
   const runtimeLabel = (mins) => {
     const m = Number(mins) || 0;
     if (!m) return "";
@@ -145,18 +152,10 @@
   };
 
   const backdropFromMeta = (meta) => {
-    if (!meta) return "";
-    const images = meta.images || {};
-    let arr = images.backdrop || images.backdrops || [];
-    if (!arr) return "";
-    if (!Array.isArray(arr)) arr = [arr];
-    const first = arr[0];
-    if (!first) return "";
-    if (typeof first === "string") return first;
-    if (first.url) return first.url;
-    if (first.path) return `https://image.tmdb.org/t/p/w1280${first.path}`;
-    if (first.file_path) return `https://image.tmdb.org/t/p/w1280${first.file_path}`;
-    return "";
+    const id = meta?.ids?.tmdb;
+    if (!id) return "";
+    const type = String(meta?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
+    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280`;
   };
 
   const metaCache = new Map();
