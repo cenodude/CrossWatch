@@ -185,6 +185,23 @@ def _is_debug_enabled() -> bool:
     except Exception:
         return False
 
+
+def _resolve_config_scoped_path(raw_path: str) -> Path:
+    raw = str(raw_path or "").strip()
+    if not raw:
+        raise ValueError("Missing path")
+
+    cfg_root = CONFIG_DIR.resolve()
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = cfg_root / candidate
+    candidate = candidate.resolve()
+    try:
+        candidate.relative_to(cfg_root)
+    except ValueError as e:
+        raise ValueError("Invalid path") from e
+    return candidate
+
 def _is_static_noise(path: str, status: int) -> bool:
     if path.startswith("/assets/") or path.startswith("/favicon"):
         return True
@@ -829,24 +846,12 @@ async def cache_headers_for_api(request: Request, call_next):
 def api_list_files(
     path: str = Query(..., description="Directory path (absolute or config-relative)")
 ) -> List[Dict[str, Any]]:
-    raw = (path or "").strip()
-    if not raw:
-        return []
-
-    p = Path(raw)
-    if not p.is_absolute():
-        p = (CONFIG_DIR / raw)
-
-    # Resolve and enforce that listing stays under CONFIG_DIR
-    p = p.resolve()
     try:
-        cfg_root = CONFIG_DIR.resolve()
-        p.relative_to(cfg_root)
-    except Exception:
+        p = _resolve_config_scoped_path(path)
+    except ValueError:
         return []
 
     try:
-
         if not p.exists() or not p.is_dir():
             return []
         out: List[Dict[str, Any]] = []
