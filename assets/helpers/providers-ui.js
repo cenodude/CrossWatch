@@ -56,18 +56,38 @@
     return window.CW?.ProviderMeta?.logoHtml?.(providerName) || `<span class="token-text">${providerName || ""}</span>`;
   }
 
+  function renderProviderToken(el, key) {
+    if (!el) return;
+    el.replaceChildren();
+    if (!key) return;
+
+    const src = window.CW?.ProviderMeta?.logoPath?.(key) || "";
+    if (src) {
+      const img = document.createElement("img");
+      img.className = "token-logo";
+      img.src = src;
+      img.alt = `${key} logo`;
+      img.width = 28;
+      img.height = 28;
+      img.loading = "lazy";
+      el.appendChild(img);
+      return;
+    }
+
+    const span = document.createElement("span");
+    span.className = "token-text";
+    span.textContent = String(key || "");
+    el.appendChild(span);
+  }
+
   function updateFlowRailLogos() {
     const rail = document.querySelector(".flow-rail.pretty");
     if (!rail) return;
     const tokens = rail.querySelectorAll(".token");
     if (!tokens.length) return;
     const keyOf = (id) => String(document.getElementById(id)?.value || "").trim().toUpperCase();
-    const setToken = (el, key) => {
-      if (!el) return;
-      el.innerHTML = key ? (window.CW?.ProviderMeta?.logoHtml?.(key) || "") : "";
-    };
-    setToken(tokens[0], keyOf("cx-src"));
-    setToken(tokens[1], keyOf("cx-dst"));
+    renderProviderToken(tokens[0], keyOf("cx-src"));
+    renderProviderToken(tokens[1], keyOf("cx-dst"));
   }
 
   let authHtml = "";
