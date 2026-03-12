@@ -47,6 +47,7 @@
     loading: false,
     saving: false,
     snapshots: [],
+    instance: "default",
     importEnabled: false,
     importProviders: [],
     importProvider: "",
@@ -77,6 +78,7 @@
       if (saved.kind && kinds.includes(saved.kind)) state.kind = saved.kind;
 
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
+      if (typeof saved.instance === "string" && saved.instance.trim()) state.instance = saved.instance;
 
       if (typeof saved.pair === "string") state.pair = saved.pair;
       if (typeof saved.filter === "string") state.filter = saved.filter;
@@ -569,6 +571,7 @@
         source: state.source,
         kind: state.kind,
         snapshot: state.snapshot,
+        instance: state.instance,
         pair: state.pair,
         filter: state.filter,
         typeFilter: state.typeFilter,
@@ -1453,6 +1456,11 @@
                 row.raw.ids = row.raw.ids || {};
                 row.raw.ids.tmdb = tmdbId;
                 if (refs.tmdbIn) refs.tmdbIn.value = tmdbStr;
+                const prevKey = (row.key || "").trim();
+                if (!prevKey || /^(tmdb|imdb|trakt|tvdb|slug):/i.test(prevKey)) {
+                  row.key = `tmdb:${tmdbStr}`;
+                  if (refs.keyIn) refs.keyIn.value = row.key;
+                }
               }
 
               if (tmdbId != null) {
@@ -1471,18 +1479,17 @@
                       row.imdb = ids.imdb;
                       row.raw.ids.imdb = ids.imdb;
                       refs.imdbIn.value = ids.imdb;
-                      const imdbKey = `imdb:${ids.imdb}`;
-                      const prevKey = (row.key || "").trim();
-                      if (!prevKey || /^imdb:/i.test(prevKey)) {
-                        row.key = imdbKey;
-                        if (refs.keyIn) refs.keyIn.value = imdbKey;
-                      }
                     }
                     if (ids.tmdb) {
                       const tVal = String(ids.tmdb);
                       row.tmdb = tVal;
                       row.raw.ids.tmdb = ids.tmdb;
                       if (refs.tmdbIn) refs.tmdbIn.value = tVal;
+                      const prevKey = (row.key || "").trim();
+                      if (!prevKey || /^(tmdb|imdb|trakt|tvdb|slug):/i.test(prevKey)) {
+                        row.key = `tmdb:${tVal}`;
+                        if (refs.keyIn) refs.keyIn.value = row.key;
+                      }
                     }
                     if (ids.trakt) {
                       const trVal = String(ids.trakt);
@@ -2117,12 +2124,17 @@ function bindFileImport(btn, input, url, done) {
         const prov = state.snapshot || (snapSel ? (snapSel.value || "") : "");
         if (prov) {
           const nextInst = await loadInstanceOptions(prov, instanceSel, state.instance);
-          if (nextInst !== state.instance) {
+          if (prov !== state.snapshot || nextInst !== state.instance) {
+            state.snapshot = prov;
             state.instance = nextInst;
             persistUIState();
           }
         } else {
-          state.instance = renderInstanceOptions(instanceSel, [{ id: "default", label: "Default" }], "default");
+          const nextInst = renderInstanceOptions(instanceSel, [{ id: "default", label: "Default" }], "default");
+          if (state.instance !== nextInst) {
+            state.instance = nextInst;
+            persistUIState();
+          }
         }
 
         if (!state.snapshots.length) showStateHint("state");
@@ -2525,8 +2537,12 @@ function bindFileImport(btn, input, url, done) {
     snapSel.addEventListener("change", async () => {
       state.snapshot = snapSel.value || "";
       if (state.source === "state") renderProviderDropdown(snapSel, snapProviderDDRef);
+      if (state.source === "state") {
+        state.instance = await loadInstanceOptions(state.snapshot, instanceSel, state.instance);
+        persistUIState();
+      }
       state.page = 0;
-      persistUIState();
+      if (state.source !== "state") persistUIState();
       await loadState();
     });
   }
