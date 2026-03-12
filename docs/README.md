@@ -9,7 +9,6 @@
 
 
 <img src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
-</center>
 <img alt="provider" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
