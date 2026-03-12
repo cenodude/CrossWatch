@@ -35,6 +35,10 @@ TRAKT_API = "https://api.trakt.tv"
 APP_AGENT = "CrossWatch/Watcher/1.0"
 _TOKEN_OVERRIDE: dict[str, str] = {}
 _AR_TTL = 60
+_SENSITIVE_KEYS = {
+    "access_token", "refresh_token", "token", "authorization",
+    "client_secret", "password", "code", "api_key",
+}
 
 
 def _cfg() -> dict[str, Any]:
@@ -73,6 +77,36 @@ def _log(msg: str, level: str = "INFO") -> None:
 
 def _dbg(msg: str) -> None:
     _log(msg, "DEBUG")
+
+
+def _mask_account(value: Any) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return "unknown"
+    if len(s) <= 2:
+        return s[0] + "*"
+    return s[:2] + "***"
+
+
+def _redact_log_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            key = str(k or "").strip().lower()
+            out[str(k)] = "****" if key in _SENSITIVE_KEYS else _redact_log_value(v)
+        return out
+    if isinstance(value, list):
+        return [_redact_log_value(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_log_value(v) for v in value)
+    return value
+
+
+def _safe_log_repr(value: Any) -> str:
+    try:
+        return repr(_redact_log_value(value))
+    except Exception:
+        return "<unavailable>"
 
 
 def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
@@ -153,7 +187,7 @@ def _tok_refresh(instance_id: Any = None) -> bool:
         return False
 
     if not isinstance(res, dict) or not res.get("ok"):
-        _log(f"Token refresh via AUTH_TRAKT failed: {res!r}", "ERROR")
+        _log(f"Token refresh via AUTH_TRAKT failed: {_safe_log_repr(res)}", "ERROR")
         return False
 
     new_cfg = _cfg()
@@ -819,10 +853,9 @@ class TraktSink(ScrobbleSink):
                 if action == "start" and step > 1 and bucket is not None:
                     self._p_step[(sk, mk)] = int(bucket)
                 try:
-                    _log(
-                        f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}",
-                        "INFO",
-                    )
+                    account = _mask_account(ev.account)
+                    prog = float(body.get("progress") or p_send)
+                    _log(f"user='{account}' {act} {prog:.1f}% - {name}", "INFO")
                 except Exception:
                     pass
                 return
@@ -865,10 +898,9 @@ class TraktSink(ScrobbleSink):
                     if action == "start" and step > 1 and bucket is not None:
                         self._p_step[(sk, mk)] = int(bucket)
                     try:
-                        _log(
-                            f"user='{ev.account}' {act} {float(body.get('progress') or p_send):.1f}% • {name}",
-                            "INFO",
-                        )
+                        account = _mask_account(ev.account)
+                        prog = float(body.get("progress") or p_send)
+                        _log(f"user='{account}' {act} {prog:.1f}% - {name}", "INFO")
                     except Exception:
                         pass
                     return
@@ -883,4 +915,4 @@ class TraktSink(ScrobbleSink):
             return
 
         if last_err:
-            _log(f"{path} {last_err.get('status')} err={last_err.get('resp')}", "ERROR")
+            _log(f"{path} {last_err.get('status')} err={_safe_log_repr(last_err.get('resp'))}", "ERROR")
