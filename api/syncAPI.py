@@ -19,6 +19,10 @@ __all__ = ["router", "_is_sync_running", "_load_state", "_find_state_path", "_pe
 
 router = APIRouter(prefix="/api", tags=["synchronization"])
 
+
+def _public_error(message: str = "operation_failed") -> str:
+    return str(message or "operation_failed")
+
 def _env():
     from cw_platform.config_base import load_config, save_config
     return load_config, save_config
@@ -2006,7 +2010,7 @@ def api_pairs_list() -> JSONResponse:
             _rt()[8]("TRBL", f"/api/pairs GET failed: {e}")
         except Exception:
             pass
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        return JSONResponse({"ok": False, "error": _public_error("pairs_list_failed")}, status_code=500)
 
 @router.post("/pairs")
 def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
@@ -2037,7 +2041,7 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
             _rt()[8]("TRBL", f"/api/pairs POST failed: {e}")
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _public_error("pair_create_failed")}
 
 @router.post("/pairs/reorder")
 def api_pairs_reorder(order: list[str] = Body(...)) -> dict:
@@ -2080,7 +2084,7 @@ def api_pairs_reorder(order: list[str] = Body(...)) -> dict:
             _rt()[8]("TRBL", f"/api/pairs/reorder failed: {e}")
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _public_error("pair_reorder_failed")}
 
 @router.put("/pairs/{pair_id}")
 def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, Any]:
@@ -2112,7 +2116,7 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...)) -> dict[str, 
             _rt()[8]("TRBL", f"/api/pairs PUT failed: {e}")
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _public_error("pair_update_failed")}
 
 
 
@@ -2188,7 +2192,7 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True) -> dict[str, Any]:
             _rt()[8]("TRBL", f"/api/pairs DELETE failed: {e}")
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": _public_error("pair_delete_failed")}
 
 # Provider counts endpoint
 _PROVIDER_COUNTS_CACHE = {"ts": 0.0, "data": None}
