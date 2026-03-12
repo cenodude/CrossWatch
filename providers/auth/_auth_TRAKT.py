@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Any
 
@@ -17,13 +18,28 @@ try:
 except ImportError:
     _real_log = None
 
+_SECRET_TEXT_RE = re.compile(
+    r"(?i)(\b(?:access_token|refresh_token|client_secret|authorization|token|code)\b\s*[=:]\s*)([^\s,;]+)"
+)
+_SECRET_JSON_RE = re.compile(
+    r'(?i)("(?:access_token|refresh_token|client_secret|authorization|token|code)"\s*:\s*")([^"]*)(")'
+)
+
+
+def _redact_log_message(msg: Any) -> str:
+    text = str(msg or "")
+    text = _SECRET_JSON_RE.sub(r"\1****\3", text)
+    text = _SECRET_TEXT_RE.sub(r"\1****", text)
+    return text
+
 
 def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    safe_msg = _redact_log_message(msg)
     try:
         if _real_log is not None:
-            _real_log(msg, level=level, module=module, **_)
+            _real_log(safe_msg, level=level, module=module, **_)
         else:
-            print(f"[{module}] {level}: {msg}")
+            print(f"[{module}] {level}: {safe_msg}")
     except Exception:
         pass
 
