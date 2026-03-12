@@ -1,5 +1,4 @@
-<div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
-<center>
+
 <img width="1468" height="795" alt="overview (1)" src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
 </center>
 
@@ -37,18 +36,6 @@
     <img alt="Wiki" src="https://img.shields.io/badge/Wiki-wiki.crosswatch.app-B026FF?style=for-the-badge">
   </a>
 </p>
-
-
-
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, TMDb, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
-
-Supported: **Movies** and **TV shows / episodes / Seasons**\
-Supported: **Plex, Emby, Jellyfin, MDBList, Tautulli, AniList, Trakt, SIMKL, TMDb and CW internal tracker**\
-Supported: **Profiles** (Multi-users / Multi-servers per instance)\
-Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
-
-<center><B>Please note this software is still in beta/experimental. Make sure you have good backups before using it, there are still bugs. </B></center><p>DO NOT EXPOSE CROSSWATCH TO THE PUBLIC INTERNET</p>
-
 <img
   align="right"
   src="https://github.com/user-attachments/assets/f219a392-839f-4ced-a263-1c745fbdf999"
@@ -57,7 +44,12 @@ Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
   style="max-width:170px; height:auto; margin:0 0 12px 16px;"
 />
 
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, TMDb, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+
 ### CW in a nutshell:
+* **One brain for all your media syncs** A single place to configure everything.
+* **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
+* **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
   * Watchlists, ratings and History
   * Progress sync your progress status between Plex, Emby and Jellyfin.
@@ -70,9 +62,8 @@ Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
   * Editor: Inspect and adjust your items and add or block items.
   * Captures: Rollback tool for provider watchlist, ratings, and history.
-* **One brain for all your media syncs** A single place to configure everything.
-* **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
-* **Multi media-server** and **multi tracker** support with profiles.
+
+And much more...such as:
 * Simple and advanced scheduling: From standard to more detailed pair schedules
 * CW Tracker Keeps snapshots/backups from your media servers and trackers.
 * Unified Watchlist: View all watchlist items in one place.
