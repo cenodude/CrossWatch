@@ -24,6 +24,21 @@ router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
 
 RestoreMode = Literal["merge", "clear_restore"]
 Feature = Literal["watchlist", "ratings", "history", "progress", "all"]
+_SAFE_ERROR_PREFIXES = (
+    "Snapshot path is required",
+    "Invalid snapshot path",
+    "Snapshot not found",
+    "Unknown provider:",
+    "Provider not configured:",
+    "Feature not enabled for provider:",
+    "Unsupported feature:",
+    "No shared child captures found",
+    "Feature not available in both full captures:",
+    "Compare Captures only supports",
+    "Advanced compare supports",
+    "Invalid capture contents",
+    "Invalid compare kind",
+)
 
 
 def _ok(payload: dict[str, Any], *, status_code: int = 200) -> JSONResponse:
@@ -31,8 +46,15 @@ def _ok(payload: dict[str, Any], *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(payload, status_code=status_code)
 
 
+def _public_error(msg: str, default: str = "snapshot_request_failed") -> str:
+    text = str(msg or "").strip()
+    if text and any(text.startswith(prefix) for prefix in _SAFE_ERROR_PREFIXES):
+        return text
+    return default
+
+
 def _err(msg: str, *, status_code: int = 400, extra: dict[str, Any] | None = None) -> JSONResponse:
-    payload: dict[str, Any] = {"ok": False, "error": msg}
+    payload: dict[str, Any] = {"ok": False, "error": _public_error(msg)}
     if extra:
         payload.update(extra)
     return JSONResponse(payload, status_code=status_code)
