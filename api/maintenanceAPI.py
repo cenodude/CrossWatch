@@ -237,7 +237,7 @@ def clear_state_minimal() -> dict[str, Any]:
     except Exception as e:
         return {
             "ok": False,
-            "error": str(e),
+            "error": "clear_state_failed",
             "path": str(state_path),
             "existed": bool(existed),
         }
@@ -400,7 +400,7 @@ def reset_currently_watching() -> dict[str, Any]:
     except Exception as e:
         return {
             "ok": False,
-            "error": str(e),
+            "error": "reset_currently_watching_failed",
             "path": str(path),
             "existed": bool(existed),
         }
@@ -546,5 +546,5 @@ def reset_stats(
             },
             "recalculated": bool(recalc),
         }
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    except Exception:
+        return {"ok": False, "error": "reset_stats_failed"}
