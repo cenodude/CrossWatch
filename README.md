@@ -58,68 +58,27 @@ Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
 />
 
 ### CW in a nutshell:
+* **Synchronization**
+  * Watchlists, ratings and History
+  * Progress sync your progress status between Plex, Emby and Jellyfin.
+* **Scrobble (tracks your activity)**
+  * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
+    * Does not require any Plex Pass, Emby Premiere,etc.  
+  * **Webhooks** (Plex/Emby/Jellyfin to Trakt)
+  * **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
+* **Tools**
+  * Analyzer: Finds items that are **stuck** or inconsistent between providers.
+  * Editor: Inspect and adjust your items and add or block items.
+  * Captures: Rollback tool for provider watchlist, ratings, and history.
 * **One brain for all your media syncs** A single place to configure everything.
 * **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
-* **Multi media-server** and **multi tracker** support, in just one tool.
-* **Mobile-friendly overview** that prioritizes only the essentials
-* **Flexible sync directions** Between media server and trackers.
-* **Progress** sync your progress status between Plex, Emby and Jellyfin.
-* **Simple and advanced scheduling** From standard to more detailed pair schedules
-* **Internal CW Tracker** Keeps snapshots/backups from your media servers and trackers.
-* **Unified Watchlist across providers** View all watchlist items in one place.
-* **Fallback GUID** Revives old items from  your Plex library.
-* **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList) subscription-free.
-* **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
-* **Analyzer** Finds items that are **stuck** or inconsistent between providers.
-* **Editor** Inspect and adjust your items and add or block items.
-* **Player card** Shows what you are currently watching in real time.
-* **Snapshosts** Rollback tool for provider watchlist, ratings, and history
+* **Multi media-server** and **multi tracker** support with profiles.
+* Simple and advanced scheduling: From standard to more detailed pair schedules
+* CW Tracker Keeps snapshots/backups from your media servers and trackers.
+* Unified Watchlist: View all watchlist items in one place.
+* Player card: Shows what you are currently watching in real time.
+* Fallback GUID: Revives old items from  your Plex library.
 
-<!-- Features (no header row, titles visible, no "empty grid") -->
-<table width="100%" border="0" cellspacing="0" cellpadding="0" style="border:0; border-collapse:collapse;">
-  <tr>
-    <td valign="top" width="50%" style="border:0; padding-right:18px;">
-      <h4 style="margin:0 0 8px 0;">Core features</h4>
-      <ul>
-        <li>Sync watchlists (one-/two-way)</li>
-        <li>Live scrobble (Plex/Jellyfin/Emby to Trakt/SIMKL/MDBList)</li>
-        <li>Sync ratings (one-/two-way)</li>
-        <li>Sync history (one-/two-way)</li>
-        <li>Sync progress (one-/to-way)</li>
-        <li>Keep snapshots with CW tracker</li>
-        <li>Profiles configurations</li>
-        <li>Auto-remove from watchlist after finish</li>
-      </ul>
-    </td>
-    <td valign="top" width="50%" style="border:0; padding-left:18px;">
-      <h4 style="margin:0 0 8px 0;">Tools &amp; modes</h4>
-      <ul>
-        <li>Analyzer: finds broken or missing matches/IDs</li>
-        <li>Exporter: CSV files for popular services</li>
-        <li>Editor: Edit and adjust your items</li>
-        <li>Snapshots: Create and restore snapshots</li>
-        <li>Now Playing card, Stats, history, live logs</li>
-        <li>Headless scheduled runs</li>
-      </ul>
-      <p style="margin:10px 0 6px 0;"><b>Trackers</b><br>
-          <img src="https://img.shields.io/badge/CrossWatch-7C5CFF?labelColor=1f2328&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI%2BCiAgPHJlY3QgeD0iMjQiIHk9IjIiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxMCIgcng9IjQiIGZpbGw9IiNmZmYiLz4KICA8cmVjdCB4PSIyNCIgeT0iNTIiIHdpZHRoPSIxNiIgaGVpZ2h0PSIxMCIgcng9IjQiIGZpbGw9IiNmZmYiLz4KICA8Y2lyY2xlIGN4PSIzMiIgY3k9IjMyIiByPSIxOCIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjYiIGZpbGw9Im5vbmUiLz4KICA8cGF0aCBkPSJNMzIgMjR2MTZNMjQgMzJoMTYiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPC9zdmc%2B" alt="CrossWatch">
-          <img src="https://img.shields.io/badge/SIMKL-0AAEEF?labelColor=1f2328&amp;logo=simkl&amp;logoColor=white" alt="SIMKL">
-          <img src="https://img.shields.io/badge/AniList-02A9FF?labelColor=1f2328&amp;logo=anilist&amp;logoColor=white" alt="AniList">
-          <img src="https://img.shields.io/badge/Trakt-ED1C24?labelColor=1f2328&amp;logo=trakt&amp;logoColor=white" alt="Trakt">
-          <img src="https://img.shields.io/badge/MDBList-3B73B9?labelColor=1f2328&amp;logo=mdblist&amp;logoColor=white" alt="MDBList">
-        <img src="https://img.shields.io/badge/TMDb-01B4E4?labelColor=1f2328&logo=themoviedatabase&logoColor=white" alt="TMDb">
-      </p>
-      <p style="margin:10px 0 6px 0;"><b>Media servers</b><br>
-        <img src="https://img.shields.io/badge/Plex-E08A00?logo=plex&amp;logoColor=white&amp;labelColor=1f2328" alt="Plex">
-        <img src="https://img.shields.io/badge/Jellyfin-946AD9?logo=jellyfin&amp;logoColor=white&amp;labelColor=1f2328" alt="Jellyfin">
-        <img src="https://img.shields.io/badge/Emby-52B54B?logo=emby&amp;logoColor=white&amp;labelColor=1f2328" alt="Emby">
-      </p>
-      <p style="margin:10px 0 0 0;"><b>Others</b><br>
-       <img src="https://img.shields.io/badge/Tautulli-FF5C5C?labelColor=1f2328&amp;logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI%2BCiAgPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTE0IDE0aDM2djhIMzZ2MjhoLThWMjJIMTR6Ii8%2BCjwvc3ZnPg%3D%3D&amp;logoColor=white" alt="Tautulli">
-      </p>
-    </td>
-  </tr>
-</table>
 
 
 ### Download
@@ -136,24 +95,34 @@ Supported: **Progress** sync progress between Plex, Emby and Jellyfin.
 ### Run as Container
 
 ```bash
-docker run -d   --name crosswatch   -p 8787:8787   -v /path/to/config:/config   -e TZ=UTC   ghcr.io/cenodude/crosswatch:latest
+docker run -d \
+  --name crosswatch \
+  -p 8787:8787 \
+  -v crosswatch_config:/config \
+  -e TZ=Europe/Amsterdam \
+  --restart unless-stopped \
+  ghcr.io/cenodude/crosswatch:latest
 ```
 
 or
 
 ```bash
-# docker-compose.yml
 services:
   crosswatch:
     image: ghcr.io/cenodude/crosswatch:latest
     container_name: crosswatch
     ports:
-      - "8787:8787"          # host:container
+      - "8787:8787"
     environment:
-      - TZ=UTC
+      TZ: Europe/Amsterdam
     volumes:
-      - /path/to/config:/config
+      - type: volume
+        source: crosswatch_config
+        target: /config
     restart: unless-stopped
+
+volumes:
+  crosswatch_config:
 ```
 
 > The container exposes the web UI at:\
