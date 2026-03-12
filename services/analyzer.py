@@ -136,6 +136,18 @@ def _parse_pairs_raw(pairs_raw: str | None) -> list[str]:
     return out
 
 
+def _resolve_analyzer_path(path: Path) -> Path:
+    candidate = path.resolve()
+    roots = [CONFIG_DIR.resolve(), CWS_DIR.resolve()]
+    for root in roots:
+        try:
+            candidate.relative_to(root)
+            return candidate
+        except ValueError:
+            continue
+    raise HTTPException(400, "Invalid analyzer path")
+
+
 def _state_candidates(token: str) -> list[Path]:
     return [
         CONFIG_DIR / f"state.{token}.json",
@@ -152,7 +164,7 @@ def _pick_existing(paths: list[Path]) -> Path | None:
 
 def _load_state_at(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(_resolve_analyzer_path(path).read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise HTTPException(404, f"{path.name} not found")
     except Exception:
@@ -255,6 +267,7 @@ def _load_state(pairs_raw: str | None = None) -> dict[str, Any]:
 
 
 def _save_state_at(path: Path, s: dict[str, Any]) -> None:
+    path = _resolve_analyzer_path(path)
     with _LOCK:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(s, ensure_ascii=False, indent=2), encoding="utf-8")
