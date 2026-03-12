@@ -23,7 +23,7 @@ from services.snapshots import (
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
 
 RestoreMode = Literal["merge", "clear_restore"]
-Feature = Literal["watchlist", "ratings", "history", "all"]
+Feature = Literal["watchlist", "ratings", "history", "progress", "all"]
 
 
 def _ok(payload: dict[str, Any], *, status_code: int = 200) -> JSONResponse:
@@ -82,6 +82,7 @@ def api_snapshots_diff(
 def api_snapshots_diff_extended(
     a: str = Query(..., description="Snapshot A path (relative under /config/snapshots)"),
     b: str = Query(..., description="Snapshot B path (relative under /config/snapshots)"),
+    feature: str = Query("", description="Specific feature to compare when using full captures"),
     kind: str = Query("all", description="all|added|removed|updated|unchanged"),
     q: str = Query("", description="Search query"),
     offset: int = Query(0, ge=0),
@@ -93,6 +94,7 @@ def api_snapshots_diff_extended(
         res = diff_snapshots_extended(
             a,
             b,
+            feature=feature,
             kind=kind,
             q=q,
             offset=offset,
