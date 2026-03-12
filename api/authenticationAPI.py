@@ -654,9 +654,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
             msg = res.get("error") or "Login failed"
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
-        except Exception as e:
-            msg = str(e) or "Login failed"
-            return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Login failed"}, 500)
 
     @app.post("/api/jellyfin/token/delete", tags=["auth"])
     def api_jellyfin_token_delete(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -832,9 +831,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             msg = (res or {}).get("error") if isinstance(res, dict) else None
             msg = msg or "Login failed"
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
-        except Exception as e:
-            msg = str(e) or "Login failed"
-            return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
+        except Exception:
+            return JSONResponse({"ok": False, "error": "Login failed"}, 500)
 
     @app.get("/api/emby/status", tags=["auth"])
     def api_emby_status(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1178,8 +1176,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 except Exception:
                     pass
             return {"ok": True, "connected": True, "pending": False, "account": {"id": (me or {}).get("id"), "username": (me or {}).get("username")}, "instance": inst}
-        except Exception as e:
-            return {"ok": False, "connected": False, "pending": False, "error": str(e), "instance": inst}
+        except Exception:
+            return {"ok": False, "connected": False, "pending": False, "error": "verify_failed", "instance": inst}
 
     @app.post("/api/tmdb_sync/disconnect", tags=["auth"])
     def api_tmdb_sync_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1198,8 +1196,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _probe_bust("tmdb_sync")
             _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] disconnected instance={inst}")
             return {"ok": True, "instance": inst}
-        except Exception as e:
-            return {"ok": False, "error": str(e), "instance": inst}
+        except Exception:
+            return {"ok": False, "error": "disconnect_failed", "instance": inst}
 
     @app.post("/api/mdblist/save", tags=["auth"])
     def api_mdblist_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1332,8 +1330,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             elif not r.ok:
                 reason = f"HTTP {r.status_code}"
             return {"connected": False, "instance": inst, "reason": reason}
-        except Exception as e:
-            return {"connected": False, "instance": inst, "reason": str(e)}
+        except Exception:
+            return {"connected": False, "instance": inst, "reason": "verify_failed"}
 
     @app.post("/api/tautulli/disconnect", tags=["auth"])
     def api_tautulli_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1350,7 +1348,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "TAUTULLI", f"[TAUTULLI] ERROR disconnect: {e}")
-            return {"ok": False, "error": str(e), "instance": inst}
+            return {"ok": False, "error": "disconnect_failed", "instance": inst}
 
 
 
