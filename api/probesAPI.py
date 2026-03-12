@@ -106,7 +106,7 @@ def _h(v: str) -> str:
     s = str(v or "").strip()
     if not s:
         return ""
-    return hashlib.sha1(s.encode("utf-8")).hexdigest()[:10]
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:10]
 
 
 def _norm_url(v: Any) -> str:
