@@ -18,6 +18,7 @@
 
 <p align="center" style="font-size:14px;">
 <b>⭐ Star this repository to get updates</b><br>
+  v0.9.13 is released with improved user interface
 </p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
