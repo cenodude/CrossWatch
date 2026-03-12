@@ -33,6 +33,16 @@ def _root_dir() -> Path:
         p = Path(CONFIG) / p
     return p
 
+
+def _ensure_under_root(root: Path, path: Path) -> Path:
+    root_r = root.resolve()
+    path_r = path.resolve()
+    try:
+        path_r.relative_to(root_r)
+    except ValueError as e:
+        raise ValueError("Invalid path") from e
+    return path_r
+
 def _snapshots_dir() -> Path:
     d = _root_dir() / "snapshots"
     d.mkdir(parents=True, exist_ok=True)
@@ -40,6 +50,21 @@ def _snapshots_dir() -> Path:
 
 def _state_path(kind: Kind) -> Path:
     return _root_dir() / f"{kind}.json"
+
+
+def _resolve_snapshot_name(name: str) -> Path:
+    raw = PurePosixPath(str(name or "").strip()).name
+    if not raw or raw != str(name or "").strip() or not raw.lower().endswith(".json"):
+        raise ValueError("Invalid snapshot name")
+    return _ensure_under_root(_snapshots_dir(), _snapshots_dir() / raw)
+
+
+def _resolve_pair_dataset_path(name: str) -> Path:
+    raw = PurePosixPath(str(name or "").strip()).name
+    if not raw or raw != str(name or "").strip() or not raw.lower().endswith(".json"):
+        raise ValueError("Invalid dataset name")
+    root = _cw_state_dir()
+    return _ensure_under_root(root, root / raw)
 
 def _parse_ts_from_name(name: str) -> datetime | None:
     try:
@@ -141,7 +166,7 @@ def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[st
         raise ValueError(f"Unsupported kind: {kind!r}")
 
     if snapshot:
-        path = _snapshots_dir() / snapshot
+        path = _resolve_snapshot_name(snapshot)
     else:
         path = _state_path(kind_val)
 
@@ -215,7 +240,7 @@ def import_tracker_zip(fp: IO[bytes]) -> TrackerImportStats:
             rel = PurePosixPath(info.filename)
             if rel.is_absolute() or ".." in rel.parts:
                 continue
-            dest = root / rel
+            dest = _ensure_under_root(root, root.joinpath(*rel.parts))
             dest.parent.mkdir(parents=True, exist_ok=True)
             existed = dest.exists()
             with zf.open(info, "r") as src, dest.open("wb") as out:
@@ -300,7 +325,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
                 "Use filenames like 'watchlist.json' or "
                 "'YYYYMMDDTHHMMSSZ-watchlist.json'.",
             )
-        dest = _snapshots_dir() / name
+        dest = _resolve_snapshot_name(name)
         target = "snapshot"
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -488,16 +513,19 @@ def _resolve_pair_file(kind: Kind, pair: str, dataset: str | None) -> Path | Non
         return None
 
     if dataset:
-        name = _safe_name(dataset)
-        if not name:
+        try:
+            p = _resolve_pair_dataset_path(dataset)
+        except ValueError:
             return None
-        p = root / name
         return p if p.exists() else None
 
     dsets = list_pair_datasets(kind, pair)
     if not dsets:
         return None
-    return root / str(dsets[0]["name"])
+    try:
+        return _resolve_pair_dataset_path(str(dsets[0]["name"]))
+    except ValueError:
+        return None
 
 def load_pair_state(kind: Kind, pair: str, dataset: str | None = None) -> dict[str, Any]:
     scope = str(pair or "").strip()
