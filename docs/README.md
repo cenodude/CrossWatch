@@ -1,10 +1,15 @@
+<div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
+
+<p align="center">
+  <a class="cw-cta" href="https://github.com/cenodude/CrossWatch">
+    <span class="cw-cta-icon" aria-hidden="true"></span>
+    Join us on GitHub
+  </a>
+</p>
+
 
 <img width="1468" height="795" alt="overview (1)" src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
 </center>
-
-<p align="center" style="font-size:14px;">
-<b>⭐ Star this repository to get updates</b><br>
-</p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
