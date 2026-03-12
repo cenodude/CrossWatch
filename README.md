@@ -1,24 +1,10 @@
 <div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
-
-<!-- Screenshots row  -->
-<p align="center">
-  <a href="images/screenshot1.jpg">
-    <img src="images/screenshot1.jpg" alt="CrossWatch - Screenshot 1" width="180" style="border-radius:10px; margin:6px;">
-  </a>
-  <a href="images/screenshot2.jpg">
-    <img src="images/screenshot2.jpg" alt="CrossWatch - Screenshot 2" width="180" style="border-radius:10px; margin:6px;">
-  </a>
-  <a href="images/screenshot3.jpg">
-    <img src="images/screenshot3.jpg" alt="CrossWatch - Screenshot 3" width="180" style="border-radius:10px; margin:6px;">
-  </a>
-  <a href="images/screenshot4.jpg">
-    <img src="images/screenshot4.jpg" alt="CrossWatch - Screenshot 4" width="180" style="border-radius:10px; margin:6px;">
-  </a>
-</p>
+<center>
+<img width="1468" height="795" alt="overview (1)" src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
+</center>
 
 <p align="center" style="font-size:14px;">
 <b>⭐ Star this repository to get updates</b><br>
-  v0.9.13 is released with improved user interface
 </p>
 <img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
