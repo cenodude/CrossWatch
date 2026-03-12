@@ -344,8 +344,8 @@ def api_config_migrate() -> dict[str, Any]:
             backup_result = backup()
             if backup_result is not None:
                 backup_path = str(backup_result)
-    except Exception as e:
-        return {"ok": False, "error": f"config_backup_failed: {e}"}
+    except Exception:
+        return {"ok": False, "error": "config_backup_failed"}
 
     cfg: dict[str, Any] = dict(current or {})
 
@@ -359,8 +359,8 @@ def api_config_migrate() -> dict[str, Any]:
                     cfg = next_cfg
                 if isinstance(next_paths, list):
                     forced_paths = [str(path) for path in next_paths]
-    except Exception as e:
-        return {"ok": False, "error": f"migration_overrides_failed: {e}"}
+    except Exception:
+        return {"ok": False, "error": "migration_overrides_failed"}
 
     # Scrobble watcher: ensure routes exist when legacy fields are used
     try:
@@ -406,8 +406,8 @@ def api_config_migrate() -> dict[str, Any]:
 
     try:
         env["save"](cfg)
-    except Exception as e:
-        return {"ok": False, "error": f"config_save_failed: {e}"}
+    except Exception:
+        return {"ok": False, "error": "config_save_failed"}
 
     _after_config_save(env, cfg)
 
