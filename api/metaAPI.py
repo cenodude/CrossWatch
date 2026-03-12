@@ -468,32 +468,45 @@ def _cache_download(
 def _placeholder_poster() -> Path:
     return Path("/app/assets/img/placeholder_poster.svg")
 
-def get_poster_file(
+def _art_candidates(
+    meta: dict[str, Any],
+    kind: str,
+) -> list[dict[str, Any]]:
+    images = meta.get("images") or {}
+    arr = images.get(kind) or images.get(f"{kind}s") or []
+    if isinstance(arr, list):
+        return [x for x in arr if isinstance(x, dict)]
+    if isinstance(arr, dict):
+        return [arr]
+    return []
+
+
+def get_art_file(
     api_key: str,
     typ: str,
     tmdb_id: str | int,
     size: str,
     cache_dir: Path | str,
     locale: str | None = None,
+    *,
+    kind: str = "poster",
 ) -> tuple[str, str]:
     cache_root = Path(cache_dir) / "art"
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    meta = get_meta(api_key, typ, str(tmdb_id), cache_dir=cache_dir, need={"poster": True}, locale=locale) or {}
+    art_kind = "backdrop" if str(kind).strip().lower() == "backdrop" else "poster"
+    meta = get_meta(api_key, typ, str(tmdb_id), cache_dir=cache_dir, need={art_kind: True}, locale=locale) or {}
     eff_locale = locale or meta.get("locale") or None
 
-    images = meta.get("images") or {}
-    posters = images.get("poster") or images.get("posters") or []
-    if not isinstance(posters, list):
-        posters = []
+    art = _art_candidates(meta, art_kind)
 
-    has_lang = any(_img_lang(p) for p in posters if isinstance(p, dict))
-    if not posters or not has_lang:
+    has_lang = any(_img_lang(p) for p in art if isinstance(p, dict))
+    if art_kind == "poster" and (not art or not has_lang):
         posters2 = _tmdb_fetch_posters(api_key, typ, str(tmdb_id), eff_locale)
         if posters2:
-            posters = posters2
+            art = posters2
 
-    best = _pick_best_image(posters, eff_locale)
+    best = _pick_best_image(art, eff_locale)
     if not best:
         return str(_placeholder_poster()), "image/svg+xml"
 
@@ -503,7 +516,7 @@ def get_poster_file(
         return str(_placeholder_poster()), "image/svg+xml"
 
     loc_tag = _locale_tag(eff_locale)
-    base = cache_root / f"{typ}_{tmdb_id}_{loc_tag}_{size_tag}"
+    base = cache_root / f"{typ}_{tmdb_id}_{art_kind}_{loc_tag}_{size_tag}"
     meta_path = base.with_suffix(".json")
 
     ext = Path(src_url.split("?", 1)[0]).suffix or ".jpg"
@@ -525,6 +538,17 @@ def get_poster_file(
     path, mime = _cache_download(src_url, dest)
     _write_json(meta_path, {"url": src_url, "ts": int(time.time())})
     return str(path), mime
+
+
+def get_poster_file(
+    api_key: str,
+    typ: str,
+    tmdb_id: str | int,
+    size: str,
+    cache_dir: Path | str,
+    locale: str | None = None,
+) -> tuple[str, str]:
+    return get_art_file(api_key, typ, tmdb_id, size, cache_dir, locale=locale, kind="poster")
 
 def _tmdb_external_ids(entity: str, tmdb_id: str | int) -> dict[str, str]:
     try:
@@ -570,6 +594,7 @@ def api_tmdb_art(
     typ: str = FPath(...),
     tmdb_id: int = FPath(...),
     size: str = Query("w342"),
+    kind: str = Query("poster"),
     locale: str | None = Query(None),
 ):
     t = typ.lower()
@@ -591,7 +616,15 @@ def api_tmdb_art(
         except Exception:
             return PlainTextResponse("Invalid size", status_code=400)
 
-        local_path, mime = get_poster_file(api_key, t, tmdb_id, size_tag, base, locale=eff_locale)
+        local_path, mime = get_art_file(
+            api_key,
+            t,
+            tmdb_id,
+            size_tag,
+            base,
+            locale=eff_locale,
+            kind=kind,
+        )
         return FileResponse(
             str(local_path),
             media_type=mime,
