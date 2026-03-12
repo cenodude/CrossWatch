@@ -87,8 +87,8 @@ def register_insights(app: FastAPI) -> None:
 
         try:
             save_config(cfg)
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except Exception:
+            return {"ok": False, "error": "save_config_failed"}
 
         return {"ok": True, "feature": feature, "snapshot": snapshot}
 
