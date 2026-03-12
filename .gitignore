@@ -21,8 +21,6 @@ pip-wheel-metadata/
 
 # VS Code
 .vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
 
 # Docker and Container data
 docker-compose.override.yml
