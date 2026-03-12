@@ -8,9 +8,9 @@
 </p>
 
 
-<img width="1468" height="795" alt="overview (1)" src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
+<img src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
 </center>
-<img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
+<img alt="provider" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&amp;sort=semver&amp;logo=github&amp;label=Latest%20Release&amp;style=for-the-badge" alt="Latest Release">
@@ -76,73 +76,6 @@ And much more...such as:
 * Fallback GUID: Revives old items from  your Plex library.
 
 
-
 ### Download
 [![Guide: Container Installation](https://img.shields.io/badge/Guide-Container%20Installation-2ea44f?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/container-installation)
 [![Guide: Docker Setup](https://img.shields.io/badge/Guide-Docker%20Setup-0d6efd?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/docker-setup)
-
-
-*   **Docker:**
-
-    ```bash
-    docker pull ghcr.io/cenodude/crosswatch:latest
-    ```
-
-### Run as Container
-
-```bash
-docker run -d \
-  --name crosswatch \
-  -p 8787:8787 \
-  -v crosswatch_config:/config \
-  -e TZ=Europe/Amsterdam \
-  --restart unless-stopped \
-  ghcr.io/cenodude/crosswatch:latest
-```
-
-or
-
-```bash
-services:
-  crosswatch:
-    image: ghcr.io/cenodude/crosswatch:latest
-    container_name: crosswatch
-    ports:
-      - "8787:8787"
-    environment:
-      TZ: Europe/Amsterdam
-    volumes:
-      - type: volume
-        source: crosswatch_config
-        target: /config
-    restart: unless-stopped
-
-volumes:
-  crosswatch_config:
-```
-
-> The container exposes the web UI at:\
-> http://localhost:8787
-
-## Sponsors
-
-<div align="center">
-
-<a href="https://www.buymeacoffee.com/cenodude">
-  <img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=000000">
-</a><center><br>
-Every cent goes to the <b>ALS Foundation</b> in the Netherlands</center>
-<br/>
-<br/>
-
-<a href="https://www.gitbook.com/">
-  <img alt="GitBook" src="https://img.shields.io/badge/GitBook-sponsored-3884ff?style=for-the-badge&logo=gitbook&logoColor=white">
-</a>
-
-</div>
-
-<p align="center">
-  Huge thanks to our sponsors for keeping this project moving.
-</p>
-
-
