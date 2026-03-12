@@ -1366,8 +1366,15 @@
 
             if (item.poster_path) {
               const img = document.createElement("img");
-              img.src = "https://image.tmdb.org/t/p/w92" + item.poster_path;
+              img.src = `/art/tmdb/${item.type === "show" ? "tv" : "movie"}/${encodeURIComponent(String(item.tmdb))}?size=w92`;
               img.alt = "";
+              img.onerror = () => {
+                img.remove();
+                const ph = document.createElement("div");
+                ph.className = "cw-search-poster-placeholder";
+                ph.textContent = item.type === "show" ? "TV" : "MOV";
+                posterWrap.appendChild(ph);
+              };
               posterWrap.appendChild(img);
             } else {
               const ph = document.createElement("div");
