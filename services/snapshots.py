@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import json
@@ -65,6 +65,34 @@ def _write_json_atomic(path: Path, data: Mapping[str, Any]) -> None:
     tmp = path.with_suffix(path.suffix + f".tmp.{uuid.uuid4().hex[:8]}")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=False), encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _resolve_snapshot_file(path: str, *, must_exist: bool = True) -> tuple[str, Path]:
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("Snapshot path is required")
+
+    posix = PurePosixPath(raw)
+    if posix.is_absolute():
+        raise ValueError("Invalid snapshot path")
+
+    parts = [part for part in posix.parts if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts):
+        raise ValueError("Invalid snapshot path")
+    if Path(parts[-1]).suffix.lower() != ".json":
+        raise ValueError("Invalid snapshot path")
+
+    rel = "/".join(parts)
+    base = _snapshots_dir().resolve()
+    target = base.joinpath(*parts).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as e:
+        raise ValueError("Invalid snapshot path") from e
+
+    if must_exist and (not target.exists() or not target.is_file()):
+        raise ValueError("Snapshot not found")
+    return rel, target
 
 
 def _norm_feature(x: str) -> Feature:
@@ -511,15 +539,7 @@ def list_snapshots() -> list[dict[str, Any]]:
 
 
 def read_snapshot(path: str) -> dict[str, Any]:
-    base = _snapshots_dir()
-    rel = str(path or "").strip().lstrip("/").replace("\\", "/")
-    if not rel:
-        raise ValueError("Snapshot path is required")
-    p = (base / rel).resolve()
-    if base.resolve() not in p.parents and p != base.resolve():
-        raise ValueError("Invalid snapshot path")
-    if not p.exists():
-        raise ValueError("Snapshot not found")
+    rel, p = _resolve_snapshot_file(path)
 
     raw = json.loads(p.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
@@ -655,15 +675,8 @@ def _restore_single_snapshot(
 
 
 def delete_snapshot(path: str, *, delete_children: bool = True) -> dict[str, Any]:
-    base = _snapshots_dir()
-    rel = str(path or "").strip().lstrip("/").replace("\\", "/")
-    if not rel:
-        raise ValueError("Snapshot path is required")
-    p = (base / rel).resolve()
-    if base.resolve() not in p.parents and p != base.resolve():
-        raise ValueError("Invalid snapshot path")
-    if not p.exists() or not p.is_file():
-        raise ValueError("Snapshot not found")
+    rel, p = _resolve_snapshot_file(path)
+    base = _snapshots_dir().resolve()
 
     deleted: list[str] = []
     errors: list[str] = []
@@ -780,6 +793,9 @@ def clear_provider_features(
         feat = _norm_feature(f)
         if not _feature_enabled(ops, feat):
             done["results"][feat] = {"ok": True, "skipped": True, "reason": "feature_disabled"}
+            continue
+        if pid == "PLEX" and feat == "progress":
+            done["results"][feat] = {"ok": True, "skipped": True, "reason": "unsupported_clear"}
             continue
 
         cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
@@ -1033,6 +1049,56 @@ def _history_items_by_base_key(items: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _snapshot_meta(s: Mapping[str, Any]) -> dict[str, Any]:
+    stats_raw = s.get("stats")
+    stats: Mapping[str, Any] = stats_raw if isinstance(stats_raw, Mapping) else {}
+    return {
+        "path": str(s.get("path") or ""),
+        "provider": str(s.get("provider") or ""),
+        "instance": str(s.get("instance") or s.get("instance_id") or s.get("profile") or "default"),
+        "feature": str(s.get("feature") or ""),
+        "label": str(s.get("label") or ""),
+        "created_at": str(s.get("created_at") or ""),
+        "count": int(stats.get("count") or 0),
+        "by_type": dict(stats.get("by_type") or {}) if isinstance(stats.get("by_type"), Mapping) else {},
+        "features": dict(stats.get("features") or {}) if isinstance(stats.get("features"), Mapping) else {},
+    }
+
+
+def _bundle_compare_setup(a: Mapping[str, Any], b: Mapping[str, Any], feature: str = "") -> tuple[dict[str, str], dict[str, str], list[str], str]:
+    def _child_paths(snap: Mapping[str, Any]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        children = snap.get("children")
+        if not isinstance(children, list):
+            return out
+        for child in children:
+            if not isinstance(child, Mapping):
+                continue
+            feat = str(child.get("feature") or "").strip().lower()
+            path = str(child.get("path") or "").strip()
+            if feat in SNAPSHOT_FEATURES and path:
+                out[feat] = path
+        return out
+
+    order = ("watchlist", "history", "ratings", "progress")
+    a_children = _child_paths(a)
+    b_children = _child_paths(b)
+    features = [feat for feat in order if feat in a_children and feat in b_children]
+    features += sorted(set(a_children) & set(b_children) - set(features))
+    if not features:
+        raise ValueError("No shared child captures found between these full captures.")
+    selected = str(feature or "").strip().lower() or features[0]
+    if selected != "all" and selected not in features:
+        raise ValueError(f"Feature not available in both full captures: {selected}")
+    return a_children, b_children, features, selected
+
+
+def _with_feature_tag(item: Any, feature: str) -> Any:
+    if not isinstance(item, Mapping):
+        return item
+    return {"feature": feature, **dict(item)}
+
+
 
 
 def diff_snapshots(
@@ -1051,23 +1117,72 @@ def diff_snapshots(
     feat_a = str(a.get("feature") or "").strip().lower()
     feat_b = str(b.get("feature") or "").strip().lower()
 
-    if kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all":
-        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history/progress capture.")
-    if kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all":
-        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history/progress capture.")
+    prov_a = str(a.get("provider") or "").strip().upper()
+    prov_b = str(b.get("provider") or "").strip().upper()
+    inst_a = str(a.get("instance") or a.get("instance_id") or a.get("profile") or "default").strip().lower()
+    inst_b = str(b.get("instance") or b.get("instance_id") or b.get("profile") or "default").strip().lower()
+    if prov_a != prov_b or inst_a != inst_b:
+        raise ValueError("Compare Captures only supports the same provider and instance.")
+
+    bundle_a = kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all"
+    bundle_b = kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all"
+    if bundle_a or bundle_b:
+        if bundle_a and bundle_b:
+            a_children, b_children, features, _ = _bundle_compare_setup(a, b, "all")
+            summary = {"total_a": 0, "total_b": 0, "raw_total_a": 0, "raw_total_b": 0, "added": 0, "removed": 0, "updated": 0, "unchanged": 0}
+            grouped: dict[str, list[dict[str, Any]]] = {"added": [], "removed": [], "updated": []}
+            lim = max(1, min(int(limit or 200), 2000))
+
+            for feat in features:
+                child = diff_snapshots(a_children[feat], b_children[feat], limit=lim, max_depth=max_depth, max_changes=max_changes)
+                child_summary = child.get("summary")
+                if isinstance(child_summary, Mapping):
+                    for key in summary:
+                        summary[key] += int(child_summary.get(key) or 0)
+                for status, payload_key in (("added", "item"), ("removed", "item"), ("updated", None)):
+                    for row in child.get(status) or []:
+                        if not isinstance(row, Mapping):
+                            continue
+                        item = row.get(payload_key) if payload_key else None
+                        if isinstance(item, Mapping):
+                            item = _with_feature_tag(item, feat)
+                        grouped[status].append(
+                            {"key": f"{feat}:{row.get('key')}", payload_key: item}
+                            if payload_key
+                            else {
+                                "key": f"{feat}:{row.get('key')}",
+                                "old": _with_feature_tag(row.get("old"), feat),
+                                "new": _with_feature_tag(row.get("new"), feat),
+                                "changes": row.get("changes") if isinstance(row.get("changes"), list) else [],
+                            }
+                        )
+
+            meta_a = _snapshot_meta(a)
+            meta_b = _snapshot_meta(b)
+            meta_a.update({"feature": "all", "compared_features": features})
+            meta_b.update({"feature": "all", "compared_features": features})
+            return {
+                "ok": True,
+                "a": meta_a,
+                "b": meta_b,
+                "summary": summary,
+                "added": grouped["added"][:lim],
+                "removed": grouped["removed"][:lim],
+                "updated": grouped["updated"][:lim],
+                "truncated": {k: len(v) > lim for k, v in grouped.items()},
+                "limit": lim,
+                "available_features": features,
+                "selected_feature": "all",
+            }
+        raise ValueError("Compare Captures only supports two full captures or two matching feature captures.")
 
     items_a_raw = a.get("items") or {}
     items_b_raw = b.get("items") or {}
     if not isinstance(items_a_raw, Mapping) or not isinstance(items_b_raw, Mapping):
         raise ValueError("Invalid capture contents")
 
-    prov_a = str(a.get("provider") or "").strip().upper()
-    prov_b = str(b.get("provider") or "").strip().upper()
-    inst_a = str(a.get("instance") or a.get("instance_id") or a.get("profile") or "default").strip().lower()
-    inst_b = str(b.get("instance") or b.get("instance_id") or b.get("profile") or "default").strip().lower()
-    same_scope = prov_a == prov_b and inst_a == inst_b and feat_a == feat_b
-    if not same_scope:
-        raise ValueError("Compare Captures only supports the same provider and feature.")
+    if feat_a != feat_b:
+        raise ValueError("Compare Captures only supports the same feature.")
 
     items_a_raw = _canonicalize_index(prov_a, _norm_feature(feat_a), items_a_raw)
     items_b_raw = _canonicalize_index(prov_a, _norm_feature(feat_a), items_b_raw)
@@ -1116,20 +1231,6 @@ def diff_snapshots(
 
     unchanged = len(common) - len(updated_keys)
 
-    def meta(s: Mapping[str, Any]) -> dict[str, Any]:
-        stats_raw = s.get("stats")
-        stats: Mapping[str, Any] = stats_raw if isinstance(stats_raw, Mapping) else {}
-        return {
-            "path": str(s.get("path") or ""),
-            "provider": str(s.get("provider") or ""),
-            "instance": str(s.get("instance") or s.get("instance_id") or s.get("profile") or "default"),
-            "feature": str(s.get("feature") or ""),
-            "label": str(s.get("label") or ""),
-            "created_at": str(s.get("created_at") or ""),
-            "count": int(stats.get("count") or 0),
-            "by_type": dict(stats.get("by_type") or {}) if isinstance(stats.get("by_type"), Mapping) else {},
-        }
-
     lim = max(1, min(int(limit or 200), 2000))
 
     added = [{"key": k, "item": _brief_item(items_b.get(k))} for k in added_keys[:lim]]
@@ -1176,8 +1277,8 @@ def diff_snapshots(
 
     return {
         "ok": True,
-        "a": meta(a),
-        "b": meta(b),
+        "a": _snapshot_meta(a),
+        "b": _snapshot_meta(b),
         "summary": {
             "total_a": len(keys_a),
             "total_b": len(keys_b),
@@ -1204,6 +1305,7 @@ def diff_snapshots_extended(
     a_path: str,
     b_path: str,
     *,
+    feature: str = "",
     kind: str = "all",
     q: str = "",
     offset: int = 0,
@@ -1220,23 +1322,53 @@ def diff_snapshots_extended(
     feat_a = str(a.get("feature") or "").strip().lower()
     feat_b = str(b.get("feature") or "").strip().lower()
 
-    if kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all":
-        raise ValueError("Capture A is a bundle. Pick a watchlist/ratings/history/progress capture.")
-    if kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all":
-        raise ValueError("Capture B is a bundle. Pick a watchlist/ratings/history/progress capture.")
+    prov_a = str(a.get("provider") or "").strip().upper()
+    prov_b = str(b.get("provider") or "").strip().upper()
+    inst_a = str(a.get("instance") or a.get("instance_id") or a.get("profile") or "default").strip().lower()
+    inst_b = str(b.get("instance") or b.get("instance_id") or b.get("profile") or "default").strip().lower()
+    if prov_a != prov_b or inst_a != inst_b:
+        raise ValueError("Compare Captures only supports the same provider and instance.")
+
+    bundle_a = kind_a == SNAPSHOT_BUNDLE_KIND or feat_a == "all"
+    bundle_b = kind_b == SNAPSHOT_BUNDLE_KIND or feat_b == "all"
+    selected_feature = str(feature or "").strip().lower()
+    if bundle_a or bundle_b:
+        if not (bundle_a and bundle_b):
+            raise ValueError("Advanced compare supports either two full captures or two matching feature captures.")
+        a_children, b_children, available_features, selected_feature = _bundle_compare_setup(a, b, selected_feature)
+        a_child = a_children.get(selected_feature)
+        b_child = b_children.get(selected_feature)
+        if not a_child or not b_child:
+            raise ValueError(f"Feature not available in both full captures: {selected_feature}")
+
+        child_res = diff_snapshots_extended(
+            a_child,
+            b_child,
+            feature="",
+            kind=kind,
+            q=q,
+            offset=offset,
+            limit=limit,
+            max_depth=max_depth,
+            max_changes=max_changes,
+        )
+        meta_a = _snapshot_meta(a)
+        meta_b = _snapshot_meta(b)
+        meta_a.update({"feature": "all", "compared_features": available_features})
+        meta_b.update({"feature": "all", "compared_features": available_features})
+        child_res["a"] = meta_a
+        child_res["b"] = meta_b
+        child_res["available_features"] = available_features
+        child_res["selected_feature"] = selected_feature
+        return child_res
 
     items_a_raw = a.get("items") or {}
     items_b_raw = b.get("items") or {}
     if not isinstance(items_a_raw, Mapping) or not isinstance(items_b_raw, Mapping):
         raise ValueError("Invalid capture contents")
 
-    prov_a = str(a.get("provider") or "").strip().upper()
-    prov_b = str(b.get("provider") or "").strip().upper()
-    inst_a = str(a.get("instance") or a.get("instance_id") or a.get("profile") or "default").strip().lower()
-    inst_b = str(b.get("instance") or b.get("instance_id") or b.get("profile") or "default").strip().lower()
-    same_scope = prov_a == prov_b and inst_a == inst_b and feat_a == feat_b
-    if not same_scope:
-        raise ValueError("Compare Captures only supports the same provider and feature.")
+    if feat_a != feat_b:
+        raise ValueError("Compare Captures only supports the same feature.")
 
     feat = _norm_feature(feat_a)
     items_a_raw = _canonicalize_index(prov_a, feat, items_a_raw)
@@ -1288,20 +1420,6 @@ def diff_snapshots_extended(
             updated_keys.append(k)
         else:
             unchanged_keys.append(k)
-
-    def meta(s: Mapping[str, Any]) -> dict[str, Any]:
-        stats_raw = s.get("stats")
-        stats: Mapping[str, Any] = stats_raw if isinstance(stats_raw, Mapping) else {}
-        return {
-            "path": str(s.get("path") or ""),
-            "provider": str(s.get("provider") or ""),
-            "instance": str(s.get("instance") or s.get("instance_id") or s.get("profile") or "default"),
-            "feature": str(s.get("feature") or ""),
-            "label": str(s.get("label") or ""),
-            "created_at": str(s.get("created_at") or ""),
-            "count": int(stats.get("count") or 0),
-            "by_type": dict(stats.get("by_type") or {}) if isinstance(stats.get("by_type"), Mapping) else {},
-        }
 
     # Filter helpers
     want = str(kind or "all").strip().lower()
@@ -1409,8 +1527,8 @@ def diff_snapshots_extended(
 
     return {
         "ok": True,
-        "a": meta(a),
-        "b": meta(b),
+        "a": _snapshot_meta(a),
+        "b": _snapshot_meta(b),
         "summary": {
             "total_a": len(keys_a),
             "total_b": len(keys_b),
@@ -1424,4 +1542,6 @@ def diff_snapshots_extended(
         "query": {"kind": want, "q": needle, "offset": off, "limit": lim},
         "total": len(rows_all),
         "items": page_rows,
+        "available_features": [feat],
+        "selected_feature": feat,
     }
