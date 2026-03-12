@@ -21,6 +21,24 @@ from services.watchlist import (
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
 
+def _public_error(message: str = "operation_failed") -> str:
+    return str(message or "operation_failed")
+
+
+def _sanitize_response_errors(value: Any, default_error: str = "operation_failed") -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if str(k) == "error" and v:
+                out[str(k)] = _public_error(default_error)
+            else:
+                out[str(k)] = _sanitize_response_errors(v, default_error)
+        return out
+    if isinstance(value, list):
+        return [_sanitize_response_errors(v, default_error) for v in value]
+    return value
+
+
 def _norm_key(x: Any) -> str:
     s = str((x.get("key") if isinstance(x, dict) else x) or "").strip()
     return urllib.parse.unquote(s) if "%" in s else s
@@ -171,7 +189,7 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
             )
             deleted_sum += deleted
         except Exception as e:
-            results.append({"provider": p, "ok": False, "error": str(e)})
+            results.append({"provider": p, "ok": False, "error": _public_error("delete_failed")})
             _append_log("SYNC", f"[WL] delete on {p} failed: {e}")
 
     try:
@@ -256,7 +274,7 @@ def remove_across_providers_by_ids(
                 f"[WL] auto-remove by ids: {kind} '{safe_label}' on {prov}: {'OK' if ok else 'NOOP'}",
             )
         except Exception as e:
-            results.append({"provider": prov, "ok": False, "error": str(e)})
+            results.append({"provider": prov, "ok": False, "error": _public_error("delete_failed")})
             _append_log("SYNC", f"[WL] auto-remove on {prov} failed: {e}")
 
     any_ok = any(r.get("ok") for r in results)
@@ -309,7 +327,7 @@ def remove_from_provider_by_ids(
         return {"ok": ok, "deleted": deleted, "provider": prov, "key": found_key}
     except Exception as e:
         _append_log("SYNC", f"[WL] remove_by_ids on {prov} failed: {e}")
-        return {"ok": False, "error": str(e), "provider": prov}
+        return {"ok": False, "error": _public_error("delete_failed"), "provider": prov}
 
 
 def remove_from_plex_by_ids(
@@ -350,8 +368,8 @@ def api_watchlist(
         from crosswatch import CACHE_DIR
         from .metaAPI import _shorten, get_meta
         from .syncAPI import _load_state
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": f"server import failed: {e}"}, status_code=200)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "server import failed"}, status_code=200)
 
     cfg = load_config()
     st = _load_state()
@@ -366,9 +384,9 @@ def api_watchlist(
 
     try:
         items = build_watchlist(st, tmdb_ok=has_key) or []
-    except Exception as e:
+    except Exception:
         return JSONResponse(
-            {"ok": False, "error": f"{e.__class__.__name__}: {e}", "missing_tmdb_key": not has_key},
+            {"ok": False, "error": "watchlist build failed", "missing_tmdb_key": not has_key},
             status_code=200,
         )
 
@@ -479,6 +497,7 @@ def api_watchlist_delete(
 
     res.setdefault("provider", prov)
     
+    res = _sanitize_response_errors(res, "delete_failed")
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
 @router.post("/delete")
