@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from cw_platform.config_base import load_config
-from cw_platform.id_map import canonical_key, minimal
+from cw_platform.id_map import canonical_key, merge_ids, minimal
 from cw_platform.modules_registry import load_sync_ops
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
@@ -183,6 +183,7 @@ def _save_policy_manual(
     blocks: list[str],
     provider_instance: str | None = None,
 ) -> None:
+    adds_items = _canonicalize_manual_items(adds_items)
     raw = _load_policy()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -343,8 +344,9 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
                 items_out = adds_out.get("items")
                 if not isinstance(items_out, dict):
                     items_out = {}
-                merged = dict(items_out)
-                merged.update({str(k): v for k, v in items_in.items()})
+                merged = _canonicalize_manual_items(dict(items_out))
+                for mk, mv in _canonicalize_manual_items({str(k): v for k, v in items_in.items()}).items():
+                    merged[mk] = _merge_manual_item(merged.get(mk), mv)
                 adds_out["items"] = merged
 
     for p, node in prov_in.items():
@@ -447,9 +449,11 @@ def _mirror_policy_into_state() -> None:
             items_out = adds.get("items")
             if not isinstance(items_out, dict):
                 items_out = {}
-            merged_items = dict(items_out)
-            merged_items.update(adds_state)
-            merged_items.update(adds_in)
+            merged_items = _canonicalize_manual_items(dict(items_out))
+            for mk, mv in _canonicalize_manual_items(adds_state).items():
+                merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
+            for mk, mv in _canonicalize_manual_items(adds_in).items():
+                merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
             if items_out != merged_items:
                 adds["items"] = merged_items
                 changed = True
@@ -498,9 +502,11 @@ def _mirror_policy_into_state() -> None:
                 items_out = adds.get("items")
                 if not isinstance(items_out, dict):
                     items_out = {}
-                merged_items = dict(items_out)
-                merged_items.update(adds_state)
-                merged_items.update(adds_in)
+                merged_items = _canonicalize_manual_items(dict(items_out))
+                for mk, mv in _canonicalize_manual_items(adds_state).items():
+                    merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
+                for mk, mv in _canonicalize_manual_items(adds_in).items():
+                    merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
                 if items_out != merged_items:
                     adds["items"] = merged_items
                     changed = True
@@ -698,6 +704,7 @@ def _save_state_manual(
     blocks: list[str],
     provider_instance: str | None = None,
 ) -> None:
+    adds_items = _canonicalize_manual_items(adds_items)
     raw = _load_current_state()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -919,6 +926,42 @@ def _normalize_items(items: Any) -> dict[str, Any]:
     return {}
 
 
+def _merge_manual_item(existing: Any, incoming: Any) -> dict[str, Any]:
+    base = dict(existing) if isinstance(existing, dict) else {}
+    nxt = dict(incoming) if isinstance(incoming, dict) else {}
+    out = dict(base)
+    for k, v in nxt.items():
+        if k == "ids":
+            continue
+        if k not in out or out[k] in (None, "", [], {}):
+            out[k] = v
+    ids_existing = base.get("ids") if isinstance(base.get("ids"), dict) else {}
+    ids_incoming = nxt.get("ids") if isinstance(nxt.get("ids"), dict) else {}
+    ids_merged = merge_ids(ids_existing, ids_incoming)
+    if ids_merged:
+        out["ids"] = ids_merged
+    return out
+
+
+def _canonicalize_manual_items(items: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for raw_key, raw_item in (items or {}).items():
+        key = str(raw_key or "").strip()
+        item = dict(raw_item) if isinstance(raw_item, dict) else {}
+        try:
+            ckey = canonical_key(item)
+        except Exception:
+            ckey = ""
+        final_key = str(ckey or key).strip().lower()
+        if not final_key:
+            continue
+        if final_key in out:
+            out[final_key] = _merge_manual_item(out[final_key], item)
+        else:
+            out[final_key] = item
+    return out
+
+
 @router.post("")
 def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     kind = _normalize_kind(str(payload.get("kind") or "watchlist"))
@@ -955,6 +998,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
         provider = str(payload.get("provider") or "").strip()
         if not provider:
             raise HTTPException(status_code=400, detail="Missing provider for source=state")
+        items = _canonicalize_manual_items(items)
 
         inst = normalize_instance_id(payload.get("provider_instance"))
 
@@ -1330,4 +1374,3 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         store.save_state(state)
 
     return {"ok": True, **imported}
-
