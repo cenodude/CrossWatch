@@ -27,6 +27,7 @@ from cw_platform.config_base import load_config
 
 router = APIRouter(tags=["metadata"])
 LOG = logging.getLogger(__name__)
+_SAFE_CACHE_PART_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 try:
     from providers.metadata.registry import (
@@ -88,12 +89,19 @@ def _meta_cache_dir() -> Path:
     return d
 
 
+def _safe_cache_part(value: Any, *, default: str = "x") -> str:
+    txt = _SAFE_CACHE_PART_RE.sub("_", str(value or "").strip())
+    txt = txt.strip("._-")
+    return txt or default
+
+
 def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Path:
     t = "movie" if str(entity).lower() == "movie" else "show"
-    loc = (locale or "en-US").replace("/", "_")
+    safe_id = _safe_cache_part(tmdb_id)
+    loc = _safe_cache_part(locale or "en-US", default="en-US")
     sub = _meta_cache_dir() / t
     sub.mkdir(parents=True, exist_ok=True)
-    return sub / f"{tmdb_id}.{loc}.json"
+    return sub / f"{safe_id}.{loc}.json"
 
 
 def _cfg_ui_locale() -> str | None:
@@ -200,6 +208,13 @@ def _ensure_under_root(root: Path, p: Path) -> Path:
     except Exception:
         raise ValueError("Invalid path")
     return p_r
+
+
+def _cache_subdir(cache_dir: Path | str, name: str) -> Path:
+    base = Path(cache_dir).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+    child = (base / _safe_cache_part(name, default="cache")).resolve()
+    return _ensure_under_root(base, child)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -491,7 +506,7 @@ def get_art_file(
     *,
     kind: str = "poster",
 ) -> tuple[str, str]:
-    cache_root = Path(cache_dir) / "art"
+    cache_root = _cache_subdir(cache_dir, "art")
     cache_root.mkdir(parents=True, exist_ok=True)
 
     art_kind = "backdrop" if str(kind).strip().lower() == "backdrop" else "poster"
@@ -515,11 +530,17 @@ def get_art_file(
     if not src_url:
         return str(_placeholder_poster()), "image/svg+xml"
 
-    loc_tag = _locale_tag(eff_locale)
-    base = cache_root / f"{typ}_{tmdb_id}_{art_kind}_{loc_tag}_{size_tag}"
+    loc_tag = _safe_cache_part(_locale_tag(eff_locale), default="any")
+    safe_typ = _safe_cache_part(typ, default="media")
+    safe_tmdb_id = _safe_cache_part(tmdb_id)
+    safe_kind = _safe_cache_part(art_kind, default="poster")
+    safe_size = _safe_cache_part(size_tag, default="w342")
+    base = cache_root / f"{safe_typ}_{safe_tmdb_id}_{safe_kind}_{loc_tag}_{safe_size}"
     meta_path = base.with_suffix(".json")
 
-    ext = Path(src_url.split("?", 1)[0]).suffix or ".jpg"
+    ext = Path(src_url.split("?", 1)[0]).suffix.lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        ext = ".jpg"
     dest = base.with_suffix(ext)
 
     # Enforce cache paths stay inside the cache root
@@ -755,9 +776,10 @@ def api_metadata_resolve(payload: MetadataResolveIn = Body(...)) -> JSONResponse
         res["ids"] = ids
 
         return JSONResponse({"ok": True, "result": res})
-    except Exception as e:
+    except Exception:
+        LOG.exception("Metadata resolve failed")
         return JSONResponse(
-            {"ok": False, "error": str(e)},
+            {"ok": False, "error": "metadata_resolve_failed"},
             status_code=500,
         )
 
