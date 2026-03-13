@@ -34,8 +34,7 @@ config.json
 .DS_Store
 Thumbs.db
 
-# Tests / Coverage
-**/tests/
+# Test config / local test artifacts
 **/pytest.ini
 pytest.ini
 .pytest_cache/
