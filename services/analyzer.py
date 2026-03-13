@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from typing import Any, Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import json
 import re
 import threading
@@ -136,6 +136,22 @@ def _parse_pairs_raw(pairs_raw: str | None) -> list[str]:
     return out
 
 
+def _legacy_state_token(value: Any) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    posix = PurePosixPath(raw)
+    win = PureWindowsPath(raw)
+    if posix.name != raw or win.name != raw:
+        return None
+    if posix.is_absolute() or win.is_absolute() or win.drive or win.root:
+        return None
+    if raw in (".", ".."):
+        return None
+    return raw
+
+
 def _resolve_analyzer_path(path: Path) -> Path:
     candidate = path.resolve()
     roots = [CONFIG_DIR.resolve(), CWS_DIR.resolve()]
@@ -157,8 +173,12 @@ def _state_candidates(token: str) -> list[Path]:
 
 def _pick_existing(paths: list[Path]) -> Path | None:
     for p in paths:
-        if p.exists():
-            return p
+        try:
+            candidate = _resolve_analyzer_path(p)
+        except HTTPException:
+            continue
+        if candidate.exists():
+            return candidate
     return None
 
 
@@ -178,8 +198,9 @@ def _load_state_handles(pairs_raw: str | None) -> list[dict[str, Any]]:
         for pid in pairs:
             safe = _safe_scope(pid)
             cand = _state_candidates(safe)
-            if safe != str(pid):
-                cand += _state_candidates(str(pid))
+            legacy = _legacy_state_token(pid)
+            if legacy and legacy != safe:
+                cand += _state_candidates(legacy)
             path = _pick_existing(cand)
             if path is None:
                 continue
