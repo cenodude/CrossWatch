@@ -14,7 +14,7 @@ except Exception:
     BASE_LOG = None
 
 from cw_platform.config_base import load_config
-from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType
+from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 
 TRAKT_API = "https://api.trakt.tv"
@@ -786,7 +786,7 @@ class JellyfinWatchService:
         sk = str(ev.session_key or "")
         if not self._passes_filters(ev, cfg):
             if sk and sk not in self._filtered_sessions:
-                self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}")
+                self._dbg(f"event filtered: user={_mask_account(ev.account)} server={ev.server_uuid}")
                 self._filtered_sessions.add(sk)
             return
 
@@ -809,11 +809,11 @@ class JellyfinWatchService:
 
         act = "playing" if ev.action == "start" else ("paused" if ev.action == "pause" else "stop")
         self._log(
-            f"incoming '{act}' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
+            f"incoming '{act}' user='{_mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
             "DEBUG",
         )
         self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
-        self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={sk}")
+        self._log(f"event {ev.action} {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={sk}")
         self._dispatch.dispatch(ev)
 
         if sk:

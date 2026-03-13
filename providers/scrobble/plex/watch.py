@@ -26,6 +26,7 @@ from providers.scrobble.scrobble import (
     ScrobbleEvent,
     from_plex_pssn,
     from_plex_flat_playing,
+    mask_account as _mask_account,
 )
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 
@@ -992,7 +993,7 @@ class WatchService:
         now = time.time()
         last = self._filtered_ts.get(key, 0.0)
         if now - last >= 30.0:
-            self._dbg(f"event filtered: user={ev.account} server={ev.server_uuid}")
+            self._dbg(f"event filtered: user={_mask_account(ev.account)} server={ev.server_uuid}")
             self._filtered_ts[key] = now
 
     def _handle_alert(self, alert: dict[str, Any]) -> None:
@@ -1088,7 +1089,7 @@ class WatchService:
                 cfg_user = (str(inst.get("username") or "").strip() if str(self._instance_id) != "default" else str(px.get("username") or "").strip())
                 if cfg_user:
                     self._dbg(
-                        f"no sessions access; assume token user '{cfg_user}' inst={self._instance_id} sess={ev.session_key}"
+                        f"no sessions access; assume token user '{_mask_account(cfg_user)}' inst={self._instance_id} sess={ev.session_key}"
                     )
                     ev = ScrobbleEvent(**{**ev.__dict__, "account": cfg_user})
 
@@ -1130,7 +1131,7 @@ class WatchService:
                     ev = ScrobbleEvent(**{**ev.__dict__, "progress": pct})
 
             self._log(
-                f"incoming 'playing' user='{ev.account}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
+                f"incoming 'playing' user='{_mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
                 "DEBUG",
             )
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
@@ -1217,7 +1218,7 @@ class WatchService:
                 pass
             if sk and ev.action == "start":
                 self._last_event[sk] = ev
-            self._log(f"event {ev.action} {ev.media_type} user={ev.account} p={ev.progress} sess={ev.session_key}")
+            self._log(f"event {ev.action} {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={ev.session_key}")
             self._dispatch.dispatch(ev)
         except Exception as e:
             self._log(f"_handle_alert failure: {e}", "ERROR")

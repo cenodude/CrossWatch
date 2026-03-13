@@ -25,10 +25,18 @@ except ImportError:
     _rm_across_api = None  # type: ignore
 
 try:
-    from providers.scrobble.scrobble import ScrobbleSink  # type: ignore
+    from providers.scrobble.scrobble import ScrobbleSink, mask_account as _mask_account  # type: ignore
 except ImportError:
     class ScrobbleSink:
         def send(self, event: Any) -> None: ...
+
+    def _mask_account(value: Any) -> str:
+        s = str(value or "").strip()
+        if not s:
+            return "unknown"
+        if len(s) <= 2:
+            return s[0] + "*"
+        return s[:2] + "***"
 
 
 SIMKL_API = "https://api.simkl.com"
@@ -646,7 +654,7 @@ class SimklSink(ScrobbleSink):
                 try:
                     acc = getattr(ev, "account", None)
                     prog_val = float(body.get("progress") or p_send)
-                    _log(f"user='{acc}' {act} {prog_val:.1f}% • {name}", "INFO")
+                    _log(f"user='{_mask_account(acc)}' {act} {prog_val:.1f}% • {name}", "INFO")
                 except Exception:
                     pass
                 if action == "stop" and p_send >= comp_thr:

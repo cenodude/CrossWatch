@@ -21,13 +21,21 @@ except Exception:
 
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
-    from providers.scrobble.scrobble import ScrobbleSink, ScrobbleEvent  # type: ignore
+    from providers.scrobble.scrobble import ScrobbleSink, ScrobbleEvent, mask_account as _mask_account  # type: ignore
 except ImportError:
     class ScrobbleSink:
         def send(self, event: Any) -> None: ...
 
     class ScrobbleEvent:  # pragma: no cover
         ...
+
+    def _mask_account(value: Any) -> str:
+        s = str(value or "").strip()
+        if not s:
+            return "unknown"
+        if len(s) <= 2:
+            return s[0] + "*"
+        return s[:2] + "***"
 
 
 MDBLIST_API = "https://api.mdblist.com"
@@ -735,7 +743,7 @@ class MDBListSink(ScrobbleSink):
             try:
                 acc = getattr(ev, "account", None)
                 prog_val = float(body.get("progress") or p_send)
-                _log(f"user='{acc}' {act} {prog_val:.1f}% • {name}", "INFO")
+                _log(f"user='{_mask_account(acc)}' {act} {prog_val:.1f}% • {name}", "INFO")
             except Exception:
                 pass
 
