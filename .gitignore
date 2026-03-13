@@ -50,6 +50,7 @@ pytestdebug.log
 .ruff_cache/
 .tox/
 .nox/
+*.sarif
 .hypothesis/
 
 # CrossWatch runtime state

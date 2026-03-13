@@ -55,6 +55,7 @@ build/
 **/tests/**
 *.egg
 *.whl
+*.sarif
 images/
 docs/
 .github/
