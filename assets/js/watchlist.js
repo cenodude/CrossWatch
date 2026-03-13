@@ -856,9 +856,15 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   }
 
   let snackTimer = null;
-  function snackbar(html){
+  function setSnackContent(parts){
+    snack.replaceChildren(...parts.map(part =>
+      typeof part === "string" ? document.createTextNode(part) : part
+    ));
+  }
+
+  function snackbar(message){
     clearTimeout(snackTimer); snackTimer = null;
-    snack.textContent = ""; snack.innerHTML = html;
+    setSnackContent([String(message ?? "")]);
     snack.classList.remove("wl-hidden");
     snackTimer = setTimeout(() => (snack.classList.add("wl-hidden"), snackTimer = null), 1800);
   }
@@ -908,7 +914,16 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     const total = keys.length, CHUNK = 50;
 
     delBtn.disabled = delProv.disabled = true;
-    const progress = d => { snack.innerHTML = `Deleting <b>${d}/${total}</b> ${PROV_UP==="ALL"?"across providers":"from "+PROV_UP}...`; snack.classList.remove("wl-hidden"); };
+    const progress = d => {
+      const count = document.createElement("b");
+      count.textContent = `${d}/${total}`;
+      setSnackContent([
+        "Deleting ",
+        count,
+        ` ${PROV_UP==="ALL" ? "across providers" : "from " + PROV_UP}...`,
+      ]);
+      snack.classList.remove("wl-hidden");
+    };
     progress(0);
 
     let done = 0, ok = 0;
