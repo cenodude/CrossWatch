@@ -72,6 +72,15 @@ def _norm_user(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
 
+def mask_account(value: Any) -> str:
+    s = str(value or "").strip()
+    if not s:
+        return "unknown"
+    if len(s) <= 2:
+        return s[0] + "*"
+    return s[:2] + "***"
+
+
 def _normalize_units(offset: int, duration: int) -> tuple[int, int]:
     # Plex notifications sometimes mix seconds/milliseconds depending on the shape.
     o = int(offset or 0)

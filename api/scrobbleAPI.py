@@ -20,6 +20,8 @@ from urllib.parse import parse_qs
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.scrobble.currently_watching import state_file as _cw_state_file
+from providers.scrobble.routes import normalize_routes
+from providers.scrobble.scrobble import mask_account as _mask_account
 
 import providers.sync.plex._utils as plex_utils
 
@@ -116,6 +118,67 @@ def _require_webhook_token(request: Request, which: str) -> None:
         raise HTTPException(status_code=401, detail="invalid_webhook_token")
 
 
+def _event_trigger_route_label(route: dict[str, Any]) -> str:
+    prov = str((route or {}).get("provider") or "").strip().lower()
+    prov_inst = str((route or {}).get("provider_instance") or "default").strip() or "default"
+    sink = str((route or {}).get("sink") or "").strip().lower()
+    sink_inst = str((route or {}).get("sink_instance") or "default").strip() or "default"
+    prov_name = prov.capitalize() if prov else "Watcher"
+    sink_name = sink.upper() if sink else "Sink"
+    prov_part = f"{prov_name} ({prov_inst})" if prov_inst != "default" else prov_name
+    sink_part = f"{sink_name} ({sink_inst})" if sink_inst != "default" else sink_name
+    return f"{prov_part} -> {sink_part}"
+
+
+@router.get("/api/scrobble/event_routes")
+def api_scrobble_event_routes() -> dict[str, Any]:
+    cfg = load_config() or {}
+    sc = (cfg.get("scrobble") or {}) if isinstance(cfg.get("scrobble"), dict) else {}
+    enabled = bool(sc.get("enabled"))
+    mode = str(sc.get("mode") or "").strip().lower()
+
+    watcher_routes: list[dict[str, Any]] = []
+    if enabled and mode == "watch":
+        for raw in normalize_routes(cfg):
+            if not isinstance(raw, dict) or not bool(raw.get("enabled")):
+                continue
+            provider = str(raw.get("provider") or "").strip().lower()
+            sink = str(raw.get("sink") or "").strip().lower()
+            if not provider or not sink:
+                continue
+            route = {
+                "id": str(raw.get("id") or "").strip(),
+                "source": "watcher",
+                "provider": provider,
+                "provider_instance": str(raw.get("provider_instance") or "default").strip() or "default",
+                "sink": sink,
+                "sink_instance": str(raw.get("sink_instance") or "default").strip() or "default",
+            }
+            route["label"] = _event_trigger_route_label(route)
+            watcher_routes.append(route)
+
+    webhook_routes: list[dict[str, Any]] = []
+    if enabled and mode == "webhook":
+        for provider in ("plex", "jellyfin", "emby"):
+            webhook_routes.append({
+                "id": provider,
+                "source": "webhook",
+                "provider": provider,
+                "provider_instance": "default",
+                "label": f"{provider.capitalize()} webhook",
+            })
+
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "mode": mode,
+        "watcher_enabled": enabled and mode == "watch",
+        "webhook_enabled": enabled and mode == "webhook",
+        "watcher_routes": watcher_routes,
+        "webhook_routes": webhook_routes,
+    }
+
+
 @router.get("/api/webhooks/urls")
 async def api_webhook_urls() -> JSONResponse:
     cfg = load_config() or {}
@@ -161,6 +224,114 @@ def _debug_on() -> bool:
         return bool(rt.get("debug") or rt.get("debug_mods"))
     except Exception:
         return False
+
+
+def _scheduler_event_webhook_payload(provider: str, payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    def _dig(obj: Any, *path: str) -> Any:
+        cur = obj
+        for key in path:
+            if not isinstance(cur, dict):
+                return None
+            cur = cur.get(key)
+        return cur
+
+    def _pct_from_ratio(offset: Any, duration: Any) -> int | None:
+        try:
+            off = float(offset or 0)
+            dur = float(duration or 0)
+            if dur <= 0:
+                return None
+            pct = int(round(max(0.0, min(100.0, (off / dur) * 100.0))))
+            return pct
+        except Exception:
+            return None
+
+    provider_lc = str(provider or "").strip().lower()
+    action_raw = str((result or {}).get("action") or "").strip().lower()
+    event_name = action_raw.rsplit("/", 1)[-1] if action_raw.startswith("/scrobble/") else action_raw
+    if not event_name:
+        event_name = str(payload.get("event") or payload.get("NotificationType") or payload.get("Event") or "").strip().lower()
+
+    progress = None
+    for val in (
+        payload.get("progress"),
+        payload.get("Progress"),
+        payload.get("Position"),
+        _dig(payload, "PlaybackInfo", "PositionPercentage"),
+        _dig(payload, "Item", "UserData", "PlayedPercentage"),
+    ):
+        if val not in (None, ""):
+            try:
+                progress = max(0, min(100, int(float(val))))
+                break
+            except Exception:
+                pass
+    if progress is None:
+        progress = _pct_from_ratio(
+            _dig(payload, "Metadata", "viewOffset") or _dig(payload, "PlayState", "PositionTicks"),
+            _dig(payload, "Metadata", "duration") or _dig(payload, "NowPlayingItem", "RunTimeTicks"),
+        )
+
+    media_type = str(
+        _dig(payload, "Metadata", "type")
+        or _dig(payload, "Item", "Type")
+        or payload.get("itemType")
+        or ""
+    ).strip().lower()
+    if media_type not in {"movie", "episode"}:
+        media_type = ""
+
+    account = str(
+        _dig(payload, "Account", "title")
+        or _dig(payload, "User", "Name")
+        or payload.get("UserName")
+        or ""
+    ).strip()
+
+    title = str(
+        _dig(payload, "Metadata", "title")
+        or _dig(payload, "Metadata", "grandparentTitle")
+        or _dig(payload, "Item", "Name")
+        or _dig(payload, "Item", "SeriesName")
+        or payload.get("Name")
+        or ""
+    ).strip()
+
+    ids = {}
+    for key in ("imdb", "tmdb", "tvdb", "trakt"):
+        val = payload.get(key)
+        if val:
+            ids[key] = val
+
+    finished = bool(event_name == "stop" and isinstance(progress, int) and progress >= 95)
+    return {
+        "source": "webhook",
+        "route_id": provider_lc,
+        "provider": provider_lc,
+        "provider_instance": "default",
+        "event": event_name,
+        "account": account,
+        "media_type": media_type,
+        "progress": progress,
+        "finished": finished,
+        "session_key": str(payload.get("sessionKey") or payload.get("SessionId") or "").strip(),
+        "title": title,
+        "ids": ids,
+        "ts": int(time.time()),
+    }
+
+
+def _emit_scheduler_webhook_event(provider: str, payload: dict[str, Any], result: dict[str, Any]) -> None:
+    if not isinstance(result, dict):
+        return
+    if result.get("error") or result.get("ignored") or result.get("debounced") or result.get("suppressed") or result.get("dedup"):
+        return
+    try:
+        import crosswatch as CW
+
+        CW.scheduler_handle_event(_scheduler_event_webhook_payload(provider, payload or {}, result))
+    except Exception:
+        pass
 
 def _stop_watch_blocking(w: Any, timeout: float = 6.0) -> bool:
     try:
@@ -1013,7 +1184,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
         )
 
     log(
-        f"jf-webhook: payload summary event='{event}' user='{user}' media='{title}'",
+        f"jf-webhook: payload summary event='{event}' user='{_mask_account(user)}' media='{title}'",
         "DEBUG",
     )
 
@@ -1043,6 +1214,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
         f"jf-webhook: done action={res.get('action')} status={res.get('status')}",
         "DEBUG",
     )
+    _emit_scheduler_webhook_event("jellyfin", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
@@ -1164,7 +1336,7 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
         )
 
     log(
-        f"emby-webhook: payload summary event='{event}' user='{user}' media='{title}'",
+        f"emby-webhook: payload summary event='{event}' user='{_mask_account(user)}' media='{title}'",
         "DEBUG",
     )
 
@@ -1194,6 +1366,7 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
         f"emby-webhook: done action={res.get('action')} status={res.get('status')}",
         "DEBUG",
     )
+    _emit_scheduler_webhook_event("emby", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
@@ -1287,7 +1460,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
     md = payload.get("Metadata") or {}
     title = md.get("title") or md.get("grandparentTitle") or "?"
     log(
-        f"plex-webhook: payload summary user='{acc}' server='{srv}' media='{title}'",
+        f"plex-webhook: payload summary user='{_mask_account(acc)}' server='{srv}' media='{title}'",
         "DEBUG",
     )
 
@@ -1317,6 +1490,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
         f"plex-webhook: done action={res.get('action')} status={res.get('status')}",
         "DEBUG",
     )
+    _emit_scheduler_webhook_event("plex", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,

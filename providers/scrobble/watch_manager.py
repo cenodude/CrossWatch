@@ -72,6 +72,28 @@ class MultiDispatcher:
                 _log(f"Route dispatcher error: {e}", "ERROR")
 
 
+class _SchedulerEventSink:
+    def __init__(self, route: dict[str, Any]) -> None:
+        self._route_id = str((route or {}).get("id") or "").strip()
+        self._provider = str((route or {}).get("provider") or "").strip().lower()
+        self._provider_instance = str((route or {}).get("provider_instance") or "").strip()
+
+    def send(self, event: ScrobbleEvent, *args: Any, **kwargs: Any) -> None:
+        try:
+            import crosswatch as CW
+
+            payload = CW.scheduler_event_from_scrobble(
+                event,
+                source="watcher",
+                route_id=self._route_id,
+                provider=self._provider,
+                provider_instance=self._provider_instance,
+            )
+            CW.scheduler_handle_event(payload)
+        except Exception as e:
+            _log(f"Scheduler event dispatch failed: {e}", "ERROR")
+
+
 class _DispatchSink:
     def __init__(self, dispatcher: MultiDispatcher) -> None:
         self._dispatcher = dispatcher
@@ -208,7 +230,7 @@ class WatchManager:
                     except Exception as e:
                         _log(f"Skipping route with invalid sink '{sink_name}': {e}", "WARNING")
                         continue
-                    disp = Dispatcher([sink], cfg_provider=route_cfg_provider)
+                    disp = Dispatcher([sink, _SchedulerEventSink(route)], cfg_provider=route_cfg_provider)
                     runners.append(RouteRunner(route=route, sink=sink, dispatcher=disp))
 
                 if not runners:
