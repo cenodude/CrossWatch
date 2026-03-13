@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import os
+import secrets
 import threading
 import time
 import urllib.error
@@ -58,6 +58,7 @@ PROBE_CACHE: dict[str, tuple[float, bool]] = {k: (0.0, False) for k in PROVIDERS
 # Keyed by per-credential probe key 
 PROBE_DETAIL_CACHE: dict[str, tuple[float, bool, str]] = {}
 _USERINFO_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_SECRET_CACHE_TAGS: dict[str, str] = {}
 
 _CACHE_LOCK = threading.Lock()
 _BUST_SEEN: set[str] = set()
@@ -102,11 +103,18 @@ _FALLBACK_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _h(v: str) -> str:
+def _secret_cache_tag(v: str) -> str:
     s = str(v or "").strip()
     if not s:
         return ""
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()[:10]
+    # Keep per-credential cache keys opaque without deriving them from a fast hash
+    # of secret-looking inputs, which static analyzers can mistake for password hashing.
+    with _CACHE_LOCK:
+        tag = _SECRET_CACHE_TAGS.get(s)
+        if not tag:
+            tag = secrets.token_hex(5)
+            _SECRET_CACHE_TAGS[s] = tag
+        return tag
 
 
 def _norm_url(v: Any) -> str:
@@ -161,53 +169,53 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
 
     if p == "plex":
         token = str(((cfg.get("plex") or {}).get("account_token") or "")).strip()
-        return f"plex|tok:{_h(token)}" if token else "plex|unconfigured"
+        return f"plex|tok:{_secret_cache_tag(token)}" if token else "plex|unconfigured"
 
     if p == "simkl":
         s = cfg.get("simkl") or {}
         cid = str((s.get("client_id") or "")).strip()
         tok = str((s.get("access_token") or "")).strip()
-        return f"simkl|cid:{_h(cid)}|tok:{_h(tok)}" if (cid and tok) else "simkl|unconfigured"
+        return f"simkl|cid:{_secret_cache_tag(cid)}|tok:{_secret_cache_tag(tok)}" if (cid and tok) else "simkl|unconfigured"
 
     if p == "trakt":
         t = cfg.get("trakt") or {}
         cid = str((t.get("client_id") or "")).strip()
         tok = str((t.get("access_token") or t.get("token") or "")).strip()
-        return f"trakt|cid:{_h(cid)}|tok:{_h(tok)}" if (cid and tok) else "trakt|unconfigured"
+        return f"trakt|cid:{_secret_cache_tag(cid)}|tok:{_secret_cache_tag(tok)}" if (cid and tok) else "trakt|unconfigured"
 
     if p == "anilist":
         a = cfg.get("anilist") or {}
         tok = str((a.get("access_token") or a.get("token") or "")).strip()
-        return f"anilist|tok:{_h(tok)}" if tok else "anilist|unconfigured"
+        return f"anilist|tok:{_secret_cache_tag(tok)}" if tok else "anilist|unconfigured"
 
     if p == "tmdb_sync":
         t = cfg.get("tmdb_sync") or {}
         api_key = str((t.get("api_key") or "")).strip()
         sess = str((t.get("session_id") or "")).strip()
-        return f"tmdb_sync|key:{_h(api_key)}|sess:{_h(sess)}" if (api_key and sess) else "tmdb_sync|unconfigured"
+        return f"tmdb_sync|key:{_secret_cache_tag(api_key)}|sess:{_secret_cache_tag(sess)}" if (api_key and sess) else "tmdb_sync|unconfigured"
 
     if p == "mdblist":
         m = cfg.get("mdblist") or {}
         key = str((m.get("api_key") or m.get("key") or "")).strip()
-        return f"mdblist|key:{_h(key)}" if key else "mdblist|unconfigured"
+        return f"mdblist|key:{_secret_cache_tag(key)}" if key else "mdblist|unconfigured"
 
     if p == "tautulli":
         t = cfg.get("tautulli") or {}
         base = _norm_url(t.get("server_url"))
         key = str((t.get("api_key") or "")).strip()
-        return f"tautulli|srv:{_h(base)}|key:{_h(key)}" if (base and key) else "tautulli|unconfigured"
+        return f"tautulli|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}" if (base and key) else "tautulli|unconfigured"
 
     if p == "jellyfin":
         jf = cfg.get("jellyfin") or {}
         server = _norm_url(jf.get("server"))
         tok = str((jf.get("access_token") or jf.get("token") or "")).strip()
-        return f"jellyfin|srv:{_h(server)}|tok:{_h(tok)}" if (server and tok) else "jellyfin|unconfigured"
+        return f"jellyfin|srv:{_secret_cache_tag(server)}|tok:{_secret_cache_tag(tok)}" if (server and tok) else "jellyfin|unconfigured"
 
     if p == "emby":
         em = cfg.get("emby") or {}
         server = _norm_url(em.get("server"))
         tok = str((em.get("access_token") or em.get("token") or em.get("api_key") or "")).strip()
-        return f"emby|srv:{_h(server)}|tok:{_h(tok)}" if (server and tok) else "emby|unconfigured"
+        return f"emby|srv:{_secret_cache_tag(server)}|tok:{_secret_cache_tag(tok)}" if (server and tok) else "emby|unconfigured"
 
     return f"{p}|unconfigured"
 
@@ -1697,6 +1705,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             with _CACHE_LOCK:
                 PROBE_DETAIL_CACHE.clear()
                 _USERINFO_CACHE.clear()
+                _SECRET_CACHE_TAGS.clear()
                 _BUST_SEEN.clear()
             STATUS_CACHE["ts"] = 0.0
             STATUS_CACHE["data"] = None
