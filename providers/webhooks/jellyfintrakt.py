@@ -16,6 +16,7 @@ except Exception:
 
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+from providers.scrobble.scrobble import mask_account as _mask_account
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
@@ -1104,10 +1105,10 @@ def process_webhook(
             except Exception:
                 pass
 
-        _emit(logger, f"incoming '{event}' user='{acc_title}' media='{media_name_dbg}'", "DEBUG")
+        _emit(logger, f"incoming '{event}' user='{_mask_account(acc_title)}' media='{media_name_dbg}'", "DEBUG")
 
         if allow_users and acc_title and acc_title not in allow_users:
-            _emit(logger, f"ignored user '{acc_title}'", "DEBUG")
+            _emit(logger, f"ignored user '{_mask_account(acc_title)}'", "DEBUG")
             return {"ok": True, "ignored": True}
 
         if not md or media_type not in ("movie", "episode"):
@@ -1542,7 +1543,7 @@ def process_webhook(
                     action_name = intended.rsplit("/", 1)[-1]
                 except Exception:
                     action_name = intended
-                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
+                _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
             except Exception:
                 pass
 

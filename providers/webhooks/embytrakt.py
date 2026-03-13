@@ -18,6 +18,7 @@ except Exception:
 
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+from providers.scrobble.scrobble import mask_account as _mask_account
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
@@ -914,7 +915,7 @@ def process_webhook(
         ).strip()
 
         if allow_users and acc_title and acc_title not in allow_users:
-            _emit(logger, f"user '{acc_title}' blocked by filters_emby", "DEBUG")
+            _emit(logger, f"user '{_mask_account(acc_title)}' blocked by filters_emby", "DEBUG")
             return {"ok": True, "ignored": True}
 
         media_type = (md.get("Type") or md.get("type") or "").strip().lower()
@@ -1151,7 +1152,7 @@ def process_webhook(
                     s_num, e_num = _episode_numbers(md, payload)
                     if isinstance(s_num, int) and isinstance(e_num, int):
                         name_dbg = f"{name_dbg} S{s_num:02d}E{e_num:02d}"
-                _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {name_dbg}", "INFO")
+                _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {name_dbg}", "INFO")
             except Exception:
                 pass
 

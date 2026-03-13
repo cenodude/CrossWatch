@@ -22,6 +22,7 @@ except Exception:
 
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+from providers.scrobble.scrobble import mask_account as _mask_account
 
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -1133,14 +1134,14 @@ def process_webhook(
         except Exception:
             pass
 
-    _emit(logger, f"incoming '{event}' user='{acc_title}' server='{srv_uuid_evt}' media='{media_name_dbg}'", "DEBUG")
+    _emit(logger, f"incoming '{event}' user='{_mask_account(acc_title)}' server='{srv_uuid_evt}' media='{media_name_dbg}'", "DEBUG")
 
     if srv_uuid_cfg and srv_uuid_evt and srv_uuid_evt != srv_uuid_cfg:
         _emit(logger, f"ignored server '{srv_uuid_evt}' (expect '{srv_uuid_cfg}')", "DEBUG")
         return {"ok": True, "ignored": True}
 
     if not _account_matches(allow_users, payload, logger=logger):
-        _emit(logger, f"ignored user '{acc_title}'", "DEBUG")
+        _emit(logger, f"ignored user '{_mask_account(acc_title)}'", "DEBUG")
         return {"ok": True, "ignored": True}
 
     if not md:
@@ -1213,9 +1214,9 @@ def process_webhook(
         if r.status_code < 400:
             try:
                 if rating_val == 0:
-                    _emit(logger, f"user='{acc_title}' unrated • {media_name_dbg}", "INFO")
+                    _emit(logger, f"user='{_mask_account(acc_title)}' unrated • {media_name_dbg}", "INFO")
                 else:
-                    _emit(logger, f"user='{acc_title}' rated {int(rating_val)} • {media_name_dbg}", "INFO")
+                    _emit(logger, f"user='{_mask_account(acc_title)}' rated {int(rating_val)} • {media_name_dbg}", "INFO")
             except Exception:
                 pass
             return {"ok": True, "status": r.status_code, "action": "rating", "trakt": rj_r}
@@ -1516,7 +1517,7 @@ def process_webhook(
             _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
         try:
             action_name = intended.rsplit("/", 1)[-1]
-            _emit(logger, f"user='{acc_title}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
+            _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
         except Exception:
             pass
         return {"ok": True, "status": 200, "action": intended, "trakt": rj}
