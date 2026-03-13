@@ -258,6 +258,26 @@ def test_status_reports_not_authenticated_while_reset_is_pending(monkeypatch) ->
     assert data["authenticated"] is False
 
 
+def test_setup_lock_required_for_upgrade_without_auth(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["version"] = "0.9.11"
+    monkeypatch.setattr(auth, "_current_version_text", lambda: "0.9.14")
+
+    assert auth.setup_lock_required(cfg) is True
+
+
+def test_setup_lock_not_required_when_up_to_date_without_auth(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["version"] = "0.9.14"
+    monkeypatch.setattr(auth, "_current_version_text", lambda: "0.9.14")
+
+    assert auth.setup_lock_required(cfg) is False
+
+
 def test_credentials_reject_too_short_password(monkeypatch) -> None:
     from api import appAuthAPI as auth
 
