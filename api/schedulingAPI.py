@@ -135,7 +135,7 @@ def trigger_now(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
             log("SYNC", "SCHED")(f"trigger_now failed: {e}", level="ERROR")
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "trigger_failed"}
 
     try:
         st = scheduler.status()  # type: ignore[union-attr]
@@ -143,6 +143,7 @@ def trigger_now(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
         st = {}
 
     return {"ok": True, "triggered": ok, **st}
+
 
 @router.post("/stop")
 def sched_stop() -> dict[str, Any]:
@@ -160,7 +161,7 @@ def sched_stop() -> dict[str, Any]:
             log("SYNC", "SCHED")(f"stop failed: {e}", level="ERROR")
         except Exception:
             pass
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": "stop_failed"}
 
     try:
         if isinstance(hint, dict):
