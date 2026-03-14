@@ -7,6 +7,7 @@ import random
 import threading
 import time
 import os
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -30,6 +31,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
     "advanced": {
         "enabled": False,
         "jobs": [],
+        "event_rules": [],
     },
 }
 
@@ -76,6 +78,53 @@ def _parse_hhmm(val: str) -> tuple[int, int] | None:
         pass
     return None
 
+
+def _as_int(value: Any, default: int = 0, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    try:
+        out = int(value)
+    except Exception:
+        out = int(default)
+    if minimum is not None:
+        out = max(int(minimum), out)
+    if maximum is not None:
+        out = min(int(maximum), out)
+    return out
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    s = str(value).strip().lower()
+    if s in {"1", "true", "yes", "on"}:
+        return True
+    if s in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _normalize_event_name(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw.startswith("/scrobble/"):
+        raw = raw.rsplit("/", 1)[-1]
+    if raw.startswith("media."):
+        raw = raw.split(".", 1)[-1]
+    aliases = {
+        "playing": "start",
+        "play": "start",
+        "resume": "start",
+        "paused": "pause",
+        "pause": "pause",
+        "stopped": "stop",
+        "stop": "stop",
+        "scrobble": "stop",
+        "finished": "stop",
+    }
+    return aliases.get(raw, raw)
+
 def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
     out = dict(DEFAULT_SCHEDULING)
     if isinstance(s, dict):
@@ -95,6 +144,8 @@ def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
                 out_adv[k] = v
             if not isinstance(out_adv.get("jobs"), list):
                 out_adv["jobs"] = []
+            if not isinstance(out_adv.get("event_rules"), list):
+                out_adv["event_rules"] = []
             out["advanced"] = out_adv
     if not isinstance(out.get("advanced"), dict):
         out["advanced"] = dict(DEFAULT_SCHEDULING["advanced"])
@@ -166,6 +217,45 @@ def _normalize_job(j: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_event_rule(rule: dict[str, Any]) -> dict[str, Any]:
+    source = str(rule.get("source") or "").strip().lower()
+    if source not in {"watcher", "webhook"}:
+        source = ""
+    event_name = _normalize_event_name(rule.get("event"))
+    if event_name not in {"start", "pause", "stop"}:
+        event_name = ""
+    filters_raw = rule.get("filters")
+    filters: dict[str, Any] = filters_raw if isinstance(filters_raw, dict) else {}
+    action_raw = rule.get("action")
+    action: dict[str, Any] = action_raw if isinstance(action_raw, dict) else {}
+    guards_raw = rule.get("guardrails")
+    guards: dict[str, Any] = guards_raw if isinstance(guards_raw, dict) else {}
+    media_type = str(filters.get("media_type") or "").strip().lower()
+    return {
+        "id": str(rule.get("id") or "").strip() or f"event_rule_{_now_ts()}",
+        "source": source,
+        "event": event_name,
+        "filters": {
+            "route_id": str(filters.get("route_id") or filters.get("routeId") or "").strip(),
+            "provider": str(filters.get("provider") or "").strip().lower(),
+            "provider_instance": str(filters.get("provider_instance") or filters.get("providerInstance") or "").strip(),
+            "account": str(filters.get("account") or "").strip(),
+            "media_type": media_type if media_type in {"movie", "episode"} else "",
+            "min_progress": None if filters.get("min_progress") in (None, "") else _as_int(filters.get("min_progress"), 0, minimum=0, maximum=100),
+        },
+        "action": {
+            "kind": "sync_pair",
+            "pair_id": str(action.get("pair_id") or action.get("pairId") or rule.get("pair_id") or "").strip() or None,
+        },
+        "guardrails": {
+            "cooldown_minutes": _as_int(guards.get("cooldown_minutes"), 0, minimum=0, maximum=24 * 60),
+            "dedupe_window_seconds": _as_int(guards.get("dedupe_window_seconds"), 0, minimum=0, maximum=24 * 3600),
+            "max_runs_per_hour": _as_int(guards.get("max_runs_per_hour"), 0, minimum=0, maximum=500),
+        },
+        "active": _as_bool(rule.get("active"), True),
+    }
+
+
 def _iter_adv_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
     adv = sch.get("advanced") or {}
     if not isinstance(adv, dict) or not adv.get("enabled"):
@@ -185,6 +275,82 @@ def _iter_adv_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
         if not j["at"] or _parse_hhmm(j["at"]) is None:
             continue
         out.append(j)
+    return out
+
+
+def _iter_event_rules(sch: dict[str, Any]) -> list[dict[str, Any]]:
+    adv = sch.get("advanced") or {}
+    if not isinstance(adv, dict) or not adv.get("enabled"):
+        return []
+    rules = adv.get("event_rules") or adv.get("eventRules") or []
+    if not isinstance(rules, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in rules:
+        if not isinstance(raw, dict):
+            continue
+        rule = _normalize_event_rule(raw)
+        action = rule.get("action") or {}
+        if not rule.get("active"):
+            continue
+        if str(rule.get("source") or "") not in {"watcher", "webhook"}:
+            continue
+        if str(rule.get("event") or "") not in {"start", "pause", "stop"}:
+            continue
+        if str(action.get("kind") or "") != "sync_pair":
+            continue
+        if not action.get("pair_id"):
+            continue
+        if not str(((rule.get("filters") or {}).get("route_id") or "")).strip():
+            continue
+        out.append(rule)
+    return out
+
+
+def normalize_scheduler_event(event: dict[str, Any] | None) -> dict[str, Any]:
+    src = event if isinstance(event, dict) else {}
+    progress_raw = src.get("progress")
+    progress: int | None = None
+    if progress_raw not in (None, ""):
+        progress = _as_int(progress_raw, 0, minimum=0, maximum=100)
+
+    media_type = str(src.get("media_type") or src.get("mediaType") or "").strip().lower()
+    if media_type not in {"movie", "episode"}:
+        media_type = ""
+
+    ids = src.get("ids")
+    if not isinstance(ids, dict):
+        ids = {}
+
+    title = str(src.get("title") or "").strip()
+    session_key = str(src.get("session_key") or src.get("sessionKey") or "").strip()
+    route_id = str(src.get("route_id") or src.get("routeId") or "").strip()
+    provider = str(src.get("provider") or "").strip().lower()
+    provider_instance = str(src.get("provider_instance") or src.get("providerInstance") or "").strip()
+    source = str(src.get("source") or "").strip().lower()
+    if source not in {"watcher", "webhook"}:
+        source = ""
+
+    event_name = _normalize_event_name(src.get("event"))
+    finished = _as_bool(src.get("finished"), False)
+    if not finished and event_name == "stop" and isinstance(progress, int) and progress >= 95:
+        finished = True
+
+    out = {
+        "source": source,
+        "route_id": route_id,
+        "provider": provider,
+        "provider_instance": provider_instance,
+        "event": event_name,
+        "account": str(src.get("account") or "").strip(),
+        "media_type": media_type,
+        "progress": progress,
+        "finished": finished,
+        "session_key": session_key,
+        "title": title,
+        "ids": ids,
+        "ts": _as_int(src.get("ts"), _now_ts(), minimum=0),
+    }
     return out
 
 
@@ -274,11 +440,17 @@ class SyncScheduler:
             "last_error": "",
             "last_job_id": "",
             "last_pair_id": "",
+            "last_rule_id": "",
+            "last_event_source": "",
+            "last_event_name": "",
             "effective_mode": "",
         }
 
         self._adv_last_key: dict[str, str] = {}
         self._last_logged_next: int = 0
+        self._event_last_run_at: dict[str, int] = {}
+        self._event_last_fingerprint: dict[str, tuple[int, str]] = {}
+        self._event_run_history: dict[str, list[int]] = {}
 
         self._std_next_ts: int = 0
         self._std_cfg_key: str = ""
@@ -354,6 +526,91 @@ class SyncScheduler:
         st["effective"] = self._effective(cfg)
         return st
 
+    def _event_match(self, rule: dict[str, Any], event: dict[str, Any]) -> bool:
+        source = str(rule.get("source") or "")
+        event_name = str(rule.get("event") or "")
+        if source and source != str(event.get("source") or ""):
+            return False
+        if event_name and event_name != str(event.get("event") or ""):
+            return False
+
+        filters = rule.get("filters") or {}
+        if str(filters.get("route_id") or "").strip() and str(filters.get("route_id") or "").strip() != str(event.get("route_id") or "").strip():
+            return False
+        if str(filters.get("provider") or "") and str(filters.get("provider") or "") != str(event.get("provider") or ""):
+            return False
+        if str(filters.get("provider_instance") or "") and str(filters.get("provider_instance") or "") != str(event.get("provider_instance") or ""):
+            return False
+        if str(filters.get("account") or "").strip().lower() and str(filters.get("account") or "").strip().lower() != str(event.get("account") or "").strip().lower():
+            return False
+        if str(filters.get("media_type") or "") and str(filters.get("media_type") or "") != str(event.get("media_type") or ""):
+            return False
+
+        min_progress = filters.get("min_progress")
+        if isinstance(min_progress, int):
+            prog = event.get("progress")
+            if not isinstance(prog, int) or prog < min_progress:
+                return False
+
+        return True
+
+    def _event_fingerprint(self, rule: dict[str, Any], event: dict[str, Any]) -> str:
+        payload = {
+            "rule_id": str(rule.get("id") or ""),
+            "source": str(event.get("source") or ""),
+            "route_id": str(event.get("route_id") or ""),
+            "provider": str(event.get("provider") or ""),
+            "provider_instance": str(event.get("provider_instance") or ""),
+            "event": str(event.get("event") or ""),
+            "account": str(event.get("account") or "").strip().lower(),
+            "media_type": str(event.get("media_type") or ""),
+            "session_key": str(event.get("session_key") or ""),
+            "title": str(event.get("title") or ""),
+            "ids": event.get("ids") or {},
+        }
+        try:
+            return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            return str(payload)
+
+    def _event_guard_reason(self, rule: dict[str, Any], event: dict[str, Any]) -> str:
+        guards = rule.get("guardrails") or {}
+        rule_id = str(rule.get("id") or "")
+        now_ts = _now_ts()
+
+        cooldown_minutes = _as_int(guards.get("cooldown_minutes"), 0, minimum=0)
+        if cooldown_minutes > 0:
+            last_run = int(self._event_last_run_at.get(rule_id) or 0)
+            if last_run and (now_ts - last_run) < (cooldown_minutes * 60):
+                return "cooldown"
+
+        dedupe_window = _as_int(guards.get("dedupe_window_seconds"), 0, minimum=0)
+        if dedupe_window > 0:
+            prev = self._event_last_fingerprint.get(rule_id)
+            fp = self._event_fingerprint(rule, event)
+            if prev and prev[1] == fp and (now_ts - int(prev[0] or 0)) < dedupe_window:
+                return "dedupe"
+
+        max_runs_per_hour = _as_int(guards.get("max_runs_per_hour"), 0, minimum=0)
+        if max_runs_per_hour > 0:
+            hist = [ts for ts in (self._event_run_history.get(rule_id) or []) if (now_ts - int(ts or 0)) < 3600]
+            self._event_run_history[rule_id] = hist
+            if len(hist) >= max_runs_per_hour:
+                return "rate_limit"
+
+        if self.is_sync_running_fn():
+            return "busy"
+        return ""
+
+    def _record_event_fire(self, rule: dict[str, Any], event: dict[str, Any]) -> None:
+        rule_id = str(rule.get("id") or "")
+        now_ts = _now_ts()
+        self._event_last_run_at[rule_id] = now_ts
+        self._event_last_fingerprint[rule_id] = (now_ts, self._event_fingerprint(rule, event))
+        hist = [ts for ts in (self._event_run_history.get(rule_id) or []) if (now_ts - int(ts or 0)) < 3600]
+        hist.append(now_ts)
+        self._event_run_history[rule_id] = hist
+
     def start(self) -> None:
         with self._lock:
             if self._thread and self._thread.is_alive():
@@ -393,13 +650,105 @@ class SyncScheduler:
             else:
                 ok = bool(self._run_sync(None))
         except Exception as e:
-            ok, err = False, str(e)
+            self._log(f"trigger_payload failed: {e}", level="ERROR")
+            ok, err = False, "trigger_failed"
         finally:
             with self._lock:
                 self._status["last_run_ok"] = ok
                 self._status["last_run_at"] = _now_ts()
                 self._status["last_error"] = err
         return ok
+
+    def handle_event(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        event = normalize_scheduler_event(payload)
+        sch = self._get_sched_cfg()
+        rules = _iter_event_rules(sch)
+        if not rules:
+            return {"ok": False, "matched": 0, "triggered": 0, "reason": "no_rules"}
+        if not bool(((sch.get("advanced") or {}).get("enabled"))):
+            return {"ok": False, "matched": 0, "triggered": 0, "reason": "advanced_disabled"}
+        if not event.get("source") or not event.get("event"):
+            return {"ok": False, "matched": 0, "triggered": 0, "reason": "invalid_event"}
+
+        matched = 0
+        triggered = 0
+        skipped: list[dict[str, str]] = []
+
+        for rule in rules:
+            if not self._event_match(rule, event):
+                continue
+            matched += 1
+
+            reason = self._event_guard_reason(rule, event)
+            if reason:
+                skipped.append({"rule_id": str(rule.get("id") or ""), "reason": reason})
+                self._log(
+                    f"event rule {rule.get('id')} skipped ({reason}) for {event.get('source')}:{event.get('event')}",
+                    level="INFO",
+                )
+                continue
+
+            action = rule.get("action") or {}
+            pair_id = str(action.get("pair_id") or "").strip()
+            if not pair_id:
+                skipped.append({"rule_id": str(rule.get("id") or ""), "reason": "missing_pair"})
+                continue
+
+            sync_payload = {
+                "source": "scheduler_event",
+                "scheduler_mode": "event",
+                "scheduler_rule_id": str(rule.get("id") or ""),
+                "scheduler_event_source": str(event.get("source") or ""),
+                "scheduler_event_name": str(event.get("event") or ""),
+                "scheduler_event_route_id": str(event.get("route_id") or ""),
+                "pair_id": pair_id,
+                "trigger_event": {
+                    "source": event.get("source"),
+                    "route_id": event.get("route_id"),
+                    "provider": event.get("provider"),
+                    "provider_instance": event.get("provider_instance"),
+                    "event": event.get("event"),
+                    "account": event.get("account"),
+                    "media_type": event.get("media_type"),
+                    "progress": event.get("progress"),
+                    "finished": event.get("finished"),
+                    "title": event.get("title"),
+                    "ids": event.get("ids") or {},
+                },
+            }
+
+            self._log(
+                f"event rule {rule.get('id')} triggering pair {pair_id} from {event.get('source')}:{event.get('event')}",
+                level="INFO",
+            )
+            ok = False
+            err = ""
+            try:
+                ok = bool(self._run_sync(sync_payload))
+            except Exception as e:
+                self._log(f"event rule {rule.get('id')} run failed: {e}", level="ERROR")
+                err = "event_rule_failed"
+                ok = False
+
+            with self._lock:
+                self._status["last_run_ok"] = ok
+                self._status["last_run_at"] = _now_ts()
+                self._status["last_error"] = err if err else ("" if ok else "event rule failed")
+                self._status["last_job_id"] = ""
+                self._status["last_pair_id"] = pair_id
+                self._status["last_rule_id"] = str(rule.get("id") or "")
+                self._status["last_event_source"] = str(event.get("source") or "")
+                self._status["last_event_name"] = str(event.get("event") or "")
+
+            if not ok:
+                skipped.append({"rule_id": str(rule.get("id") or ""), "reason": "run_failed"})
+                self._log(f"event rule {rule.get('id')} failed", level="ERROR")
+                continue
+
+            self._record_event_fire(rule, event)
+            triggered += 1
+
+        return {"ok": True, "matched": matched, "triggered": triggered, "skipped": skipped}
 
     def _run_sync(self, payload: dict[str, Any] | None) -> bool:
         if payload is None:
@@ -528,6 +877,9 @@ class SyncScheduler:
                 self._status["last_error"] = "" if ok else "advanced job failed"
                 self._status["last_job_id"] = j["id"]
                 self._status["last_pair_id"] = j["pair_id"] or ""
+                self._status["last_rule_id"] = ""
+                self._status["last_event_source"] = ""
+                self._status["last_event_name"] = ""
 
             self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
             executed.add(j["id"])
@@ -543,6 +895,9 @@ class SyncScheduler:
             self._status["last_error"] = "" if ok else "standard run failed"
             self._status["last_job_id"] = ""
             self._status["last_pair_id"] = ""
+            self._status["last_rule_id"] = ""
+            self._status["last_event_source"] = ""
+            self._status["last_event_name"] = ""
         self._log("standard: run ok" if ok else "standard: run failed", level="INFO" if ok else "ERROR")
         return ok
 
