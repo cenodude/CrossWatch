@@ -3,6 +3,7 @@
 /* Scrobbler configuration UI and logic. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
+  const authSetupPending = () => w.cwIsAuthSetupPending?.() === true;
   const $ = (s, r) => (r || d).querySelector(s);
   const $all = (s, r) => [...(r || d).querySelectorAll(s)];
   const el = (t, a) => Object.assign(d.createElement(t), a || {});
@@ -19,6 +20,7 @@
   };
 
   const j = async (u, o) => {
+    if (authSetupPending()) throw new Error("auth setup pending");
     const r = await fetch(u, { cache: "no-store", ...(o || {}) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json();
