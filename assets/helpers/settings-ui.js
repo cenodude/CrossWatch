@@ -147,16 +147,18 @@ function cwUiSettingsHubUpdate() {
   const proto = document.getElementById("ui_protocol");
   if (proto) set("hub_ui_proto", `Proto: ${String(proto.value || "http").toUpperCase()}`);
 
-  const aaEnabled = (document.getElementById("app_auth_enabled")?.value || "").toString() === "true";
+  const aaEnabled = true;
+  const aaRememberEnabled = (document.getElementById("app_auth_remember_enabled")?.value || "").toString() === "true";
   const st = window._appAuthStatus || null;
 
-  if (!aaEnabled) {
-    set("hub_sec_auth", "Auth: Off");
-    set("hub_sec_session", "Session: —");
-  } else if (st && st.enabled && st.configured && st.authenticated) {
+  if (st && st.configured && st.authenticated) {
     set("hub_sec_auth", "Auth: On");
-    const days = _uiDaysLeftFromEpochSeconds(st.session_expires_at);
-    set("hub_sec_session", days == null ? "Session: active" : `Session: ${days}d`);
+    if (!aaRememberEnabled) {
+      set("hub_sec_session", "Session: browser");
+    } else {
+      const days = _uiDaysLeftFromEpochSeconds(st.session_expires_at);
+      set("hub_sec_session", days == null ? "Session: active" : `Session: ${days}d`);
+    }
   } else if (st && st.enabled && !st.configured) {
     set("hub_sec_auth", "Auth: On");
     set("hub_sec_session", "Set password");
@@ -190,7 +192,14 @@ function cwUiSettingsHubUpdate() {
   else set("hub_cw_retention", `Retention: ${ret}d`);
 
   const authFields = document.getElementById("app_auth_fields");
-  if (authFields) authFields.classList.toggle("cw-disabled", !aaEnabled);
+  if (authFields) authFields.classList.remove("cw-disabled");
+  const authSessionFields = document.getElementById("app_auth_session_fields");
+  if (authSessionFields) authSessionFields.classList.remove("cw-disabled");
+  const rememberDaysWrap = document.getElementById("app_auth_remember_days_wrap");
+  if (rememberDaysWrap) rememberDaysWrap.classList.toggle("cw-disabled", !aaRememberEnabled);
+  const rememberDays = document.getElementById("app_auth_remember_days");
+  if (rememberDays) rememberDays.disabled = !aaRememberEnabled;
+  try { cwValidateAppAuthRememberDays(); } catch {}
 
   const trackerFields = document.getElementById("cw_restore_fields");
   if (trackerFields) trackerFields.classList.toggle("cw-disabled", !cwEnabled);
@@ -204,6 +213,49 @@ function _cwTrustedProxiesEl() {
   );
 }
 
+function _cwSanitizeAppAuthRememberDays(value) {
+  return String(value || "").replace(/\D+/g, "").slice(0, 3);
+}
+
+function _cwAppAuthRememberDaysErrorEl() {
+  return document.getElementById("app_auth_remember_days_error");
+}
+
+function _cwSetAppAuthRememberDaysError(message) {
+  const el = _cwAppAuthRememberDaysErrorEl();
+  if (!el) return;
+  const text = String(message || "").trim();
+  el.textContent = text;
+  el.classList.toggle("hidden", !text);
+}
+
+function cwValidateAppAuthRememberDays(opts = {}) {
+  const el = document.getElementById("app_auth_remember_days");
+  if (!el) return true;
+
+  if (el.disabled) {
+    el.classList.remove("cw-invalid");
+    el.removeAttribute("aria-invalid");
+    _cwSetAppAuthRememberDaysError("");
+    return true;
+  }
+
+  const sanitized = _cwSanitizeAppAuthRememberDays(el.value);
+  if (el.value !== sanitized) el.value = sanitized;
+
+  const blank = sanitized === "";
+  const days = blank ? NaN : parseInt(sanitized, 10);
+  const valid = blank || (Number.isFinite(days) && days >= 1 && days <= 365);
+  const message = valid ? "" : "Session cache days must be between 1 and 365";
+
+  el.classList.toggle("cw-invalid", !valid);
+  if (valid) el.removeAttribute("aria-invalid");
+  else el.setAttribute("aria-invalid", "true");
+  _cwSetAppAuthRememberDaysError(message);
+
+  return valid;
+}
+
 function cwUiSettingsHubInit() {
   if (window.__cwUiSettingsHubInit) return;
   window.__cwUiSettingsHubInit = true;
@@ -213,10 +265,11 @@ function cwUiSettingsHubInit() {
     "ui_show_playingcard",
     "ui_show_AI",
     "ui_protocol",
-    "app_auth_enabled",
     "app_auth_username",
     "app_auth_password",
     "app_auth_password2",
+    "app_auth_remember_enabled",
+    "app_auth_remember_days",
     "trusted_proxies",
     "cw_enabled",
     "cw_retention_days",
@@ -236,6 +289,13 @@ function cwUiSettingsHubInit() {
     el.__hubWired = true;
   });
 
+  const rememberDays = document.getElementById("app_auth_remember_days");
+  if (rememberDays && !rememberDays.__rememberDaysWired) {
+    rememberDays.addEventListener("input", () => { try { cwValidateAppAuthRememberDays(); } catch {} });
+    rememberDays.addEventListener("blur", () => { try { cwValidateAppAuthRememberDays({ report: true }); } catch {} });
+    rememberDays.__rememberDaysWired = true;
+  }
+
   let tab = "ui";
   try {
     const saved = (localStorage.getItem(UI_SETTINGS_TAB_KEY) || "").toLowerCase();
@@ -243,6 +303,7 @@ function cwUiSettingsHubInit() {
   } catch {}
 
   cwUiSettingsSelect(tab, { persist: false });
+  try { cwValidateAppAuthRememberDays(); } catch {}
   try { cwUiSettingsHubUpdate(); } catch {}
 }
 
@@ -250,6 +311,7 @@ try {
   window.cwUiSettingsSelect = cwUiSettingsSelect;
   window.cwUiSettingsHubInit = cwUiSettingsHubInit;
   window.cwUiSettingsHubUpdate = cwUiSettingsHubUpdate;
+  window.cwValidateAppAuthRememberDays = cwValidateAppAuthRememberDays;
 } catch {}
 
 /* Settings Hub: Scheduling */
@@ -963,10 +1025,16 @@ async function loadConfig() {
       protoSel.value = (p === "https") ? "https" : "http";
     }
 
-    const aaEnabledEl = document.getElementById("app_auth_enabled");
-    if (aaEnabledEl) aaEnabledEl.value = (aa.enabled === true) ? "true" : "false";
     const aaUserEl = document.getElementById("app_auth_username");
     if (aaUserEl) aaUserEl.value = (typeof aa.username === "string") ? aa.username : "";
+    const aaRememberEnabledEl = document.getElementById("app_auth_remember_enabled");
+    if (aaRememberEnabledEl) aaRememberEnabledEl.value = (aa.remember_session_enabled === true) ? "true" : "false";
+    const aaRememberDaysEl = document.getElementById("app_auth_remember_days");
+    if (aaRememberDaysEl) {
+      const days = Number.isFinite(aa.remember_session_days) ? aa.remember_session_days : 30;
+      aaRememberDaysEl.value = String(Math.max(1, Math.min(365, Number(days) || 30)));
+      try { cwValidateAppAuthRememberDays(); } catch {}
+    }
     const aaP1 = document.getElementById("app_auth_password");
     if (aaP1) aaP1.value = "";
     const aaP2 = document.getElementById("app_auth_password2");
@@ -1068,26 +1136,28 @@ async function loadConfig() {
     const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
     const st = r.ok ? await r.json() : null;
     window._appAuthStatus = st;
+    const rememberEnabled = st
+      ? !!st.remember_session_enabled
+      : ((document.getElementById("app_auth_remember_enabled")?.value || "").toString() === "true");
 
     try {
-      const aaEnabledEl = document.getElementById("app_auth_enabled");
-      if (aaEnabledEl && st && typeof st.enabled === "boolean") aaEnabledEl.value = st.enabled ? "true" : "false";
       const aaUserEl = document.getElementById("app_auth_username");
-      if (aaUserEl && st && st.enabled) aaUserEl.value = (st.username || "").toString();
+      if (aaUserEl && st && st.configured) aaUserEl.value = (st.username || "").toString();
     } catch {}
 
     const el = document.getElementById("app_auth_state");
     if (el) {
       if (!st) el.textContent = "—";
-      else if (!st.enabled) el.textContent = "Auth: disabled";
-      else if (!st.configured) el.textContent = "Auth: enabled (set password)";
+      else if (!st.configured || st.reset_required) el.textContent = "Auth: set password";
       else if (st.authenticated) {
         const exp = (st.session_expires_at && st.session_expires_at > 0) ? new Date(st.session_expires_at * 1000) : null;
-        el.textContent = exp ? `Auth: signed in (until ${exp.toISOString().replace('T',' ').slice(0,16)}Z)` : "Auth: signed in";
+        el.textContent = !rememberEnabled
+          ? "Auth: signed in (browser session)"
+          : (exp ? `Auth: signed in (until ${exp.toISOString().replace('T',' ').slice(0,16)}Z)` : "Auth: signed in");
       } else el.textContent = "Auth: locked";
     }
     const btn = document.getElementById("btn-auth-logout");
-    if (btn) btn.disabled = !(st && st.enabled && st.authenticated);
+    if (btn) btn.disabled = !(st && st.authenticated);
   } catch {}
 
   try { cwUiSettingsHubUpdate?.(); } catch {}
