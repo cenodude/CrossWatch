@@ -283,14 +283,30 @@ function _cwReadSecret(id, previousValue) {
 }
 
 async function _cwSaveAppAuth(serverCfg) {
-  const wantEnabled = String(_cwEl("app_auth_enabled")?.value || "") === "true";
+  const MIN_PASSWORD_LENGTH = 8;
+  const wantEnabled = true;
   const wantUser = _getVal("app_auth_username");
   const pass1 = String(_cwEl("app_auth_password")?.value || "");
   const pass2 = String(_cwEl("app_auth_password2")?.value || "");
+  const rememberEnabled = String(_cwEl("app_auth_remember_enabled")?.value || "") === "true";
+  const rememberDaysEl = _cwEl("app_auth_remember_days");
+  const rememberDaysRaw = String(rememberDaysEl?.value || "").trim();
   const prevEnabled = !!serverCfg?.app_auth?.enabled;
   const prevUser = _cwNorm(serverCfg?.app_auth?.username);
+  const prevRememberEnabled = !!serverCfg?.app_auth?.remember_session_enabled;
+  const prevRememberDays = Number.isFinite(serverCfg?.app_auth?.remember_session_days)
+    ? Number(serverCfg.app_auth.remember_session_days)
+    : 30;
   const wantsPwd = !!(_cwNorm(pass1) || _cwNorm(pass2));
-  const needsCall = wantEnabled !== prevEnabled || wantUser !== prevUser || wantsPwd;
+  const rememberDaysParsed = rememberDaysRaw === "" ? NaN : parseInt(rememberDaysRaw, 10);
+  const rememberDaysValid = Number.isFinite(rememberDaysParsed) && rememberDaysParsed >= 1 && rememberDaysParsed <= 365;
+  const rememberDays = rememberDaysValid ? rememberDaysParsed : prevRememberDays;
+  const needsCall =
+    wantEnabled !== prevEnabled ||
+    wantUser !== prevUser ||
+    wantsPwd ||
+    rememberEnabled !== prevRememberEnabled ||
+    rememberDays !== prevRememberDays;
 
   let status = null;
   try {
@@ -308,15 +324,28 @@ async function _cwSaveAppAuth(serverCfg) {
     try { _cwEl("app_auth_password2")?.focus?.(); } catch {}
     _cwAbortSave("Password mismatch");
   }
+  if (wantsPwd && pass1.length < MIN_PASSWORD_LENGTH) {
+    _cwSetAuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    _cwShowToast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, false);
+    try { _cwEl("app_auth_password")?.focus?.(); } catch {}
+    _cwAbortSave("Password too short");
+  }
   if (wantEnabled && !wantUser) {
     _cwShowToast("Auth username required", false);
     try { _cwEl("app_auth_username")?.classList.add("cw-invalid"); } catch {}
     _cwAbortSave("Auth username required");
   }
-  if (wantEnabled && !status?.configured && !_cwNorm(pass1)) {
-    _cwSetAuthError("Password required to enable auth");
-    _cwShowToast("Set a password to enable auth", false);
+  if (wantEnabled && (!status?.configured || status?.reset_required) && !_cwNorm(pass1)) {
+    _cwSetAuthError("Password required to save sign-in");
+    _cwShowToast("Set a password to save sign-in", false);
     _cwAbortSave("Password required");
+  }
+  if (rememberEnabled && (!rememberDaysValid || !rememberDaysRaw)) {
+    _cwSetAuthError("Session cache days must be between 1 and 365");
+    _cwShowToast("Session cache days must be between 1 and 365", false);
+    try { window.cwValidateAppAuthRememberDays?.(); } catch {}
+    try { rememberDaysEl?.focus?.(); } catch {}
+    _cwAbortSave("Invalid session cache days");
   }
   if (!needsCall) return true;
 
@@ -324,7 +353,13 @@ async function _cwSaveAppAuth(serverCfg) {
     method: "POST",
     headers: _cwJSONHeaders,
     credentials: "same-origin",
-    body: JSON.stringify({ enabled: wantEnabled, username: wantUser, password: pass1 || "" })
+    body: JSON.stringify({
+      enabled: wantEnabled,
+      username: wantUser,
+      password: pass1 || "",
+      remember_session_enabled: rememberEnabled,
+      remember_session_days: rememberDays
+    })
   });
   const body = await _cwReadBody(resp);
   if (!resp.ok || !body?.ok) {
@@ -657,6 +692,10 @@ async function saveSettings() {
     } catch {}
   } catch (err) {
     console.error("saveSettings failed", err);
+    if (err && typeof err === "object" && typeof err.message === "string" && err.message.trim()) {
+      _cwShowToast(err.message.trim(), false);
+      throw err;
+    }
     _cwShowToast("Save failed — see console", false);
     throw err;
   }
