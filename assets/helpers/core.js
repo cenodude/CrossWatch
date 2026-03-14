@@ -95,6 +95,7 @@
   const PAIRS_TTL_MS = 15_000;
   const STATUS_CACHE_KEY = "cw.status.v1";
   const DETAILS_MAX_LINES = 2500;
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
 
   function pickCase(obj, key) {
     return obj?.[key] ?? obj?.[String(key).toLowerCase()] ?? obj?.[String(key).toUpperCase()];
@@ -142,6 +143,7 @@
   }
 
   function requestWithTimeout(url, options = {}, ms = 15000) {
+    if (authSetupPending()) return Promise.reject(new Error("auth setup pending"));
     if (typeof API.f === "function") return API.f(url, options, ms);
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort("timeout"), ms);
@@ -661,6 +663,7 @@
   }
 
   async function refreshStatus(force = false) {
+    if (authSetupPending()) return UI.status;
     const now = Date.now();
     if (!force && state.lastStatusMs && (now - state.lastStatusMs) < STATUS_MIN_INTERVAL) return UI.status;
     state.lastStatusMs = now;
@@ -679,6 +682,7 @@
       applyStatusSideEffects();
       return UI.status;
     } catch (e) {
+      if (String(e?.message || e || "").includes("auth setup pending")) return UI.status;
       console.warn("refreshStatus failed", e);
       return UI.status;
     }
@@ -796,6 +800,7 @@
   }
 
   async function softRefreshMain() {
+    if (authSetupPending()) return;
     if (state.softMainBusy) return;
     state.softMainBusy = true;
     enforceMainLayout();
@@ -812,6 +817,7 @@
   }
 
   async function hardRefreshMain() {
+    if (authSetupPending()) return;
     enforceMainLayout();
     state.lastStatusMs = 0;
     await refreshStatus(true);
