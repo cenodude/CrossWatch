@@ -299,7 +299,7 @@ function _cwHasConfiguredValue(v) {
   return false;
 }
 
-function _cwConfigLooksLikeFirstRun(cfg) {
+  function _cwConfigLooksLikeFirstRun(cfg) {
   try {
     if (!cfg || typeof cfg !== "object") return false;
 
@@ -362,6 +362,10 @@ function _cwConfigLooksLikeFirstRun(cfg) {
 async function _cwShouldOpenSetupWizard(meta) {
   try {
     if ((!meta?.exists) || !!meta?.first_run || !!meta?.autogen) return true;
+    if (!!meta?.needs_upgrade) return false;
+    if (typeof meta?.setup_wizard_required === "boolean") return meta.setup_wizard_required;
+    if (!!meta?.auth_reset_required) return true;
+    if (!!meta?.auth_configured) return false;
 
     const r = await fetch('/api/config?ts=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return false;
@@ -373,6 +377,33 @@ async function _cwShouldOpenSetupWizard(meta) {
     return false;
   }
 }
+
+async function _cwFetchBootstrapAuthState() {
+  try {
+    const [metaResp, statusResp] = await Promise.all([
+      fetch('/api/config/meta?ts=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' }),
+      fetch('/api/app-auth/status?ts=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' }),
+    ]);
+    const meta = metaResp.ok ? await metaResp.json() : null;
+    const status = statusResp.ok ? await statusResp.json() : null;
+    const blocked = !!(
+      status
+      && !status.authenticated
+      && (status.reset_required || !status.configured || meta?.auth_reset_required || meta?.first_run || meta?.autogen)
+    );
+    window.__cwAuthSetupPending = blocked;
+    window.__cwAuthBootstrapState = { meta, status, blocked };
+    return window.__cwAuthBootstrapState;
+  } catch (e) {
+    window.__cwAuthBootstrapState = { meta: null, status: null, blocked: false, error: String(e?.message || e || "") };
+    window.__cwAuthSetupPending = false;
+    return window.__cwAuthBootstrapState;
+  }
+}
+
+if (typeof window.__cwAuthSetupPending === "undefined") window.__cwAuthSetupPending = true;
+window.__cwAuthBootstrapPromise ||= _cwFetchBootstrapAuthState();
+window.cwIsAuthSetupPending = () => window.__cwAuthSetupPending === true;
 
   // Bootstrap
   window.addEventListener("DOMContentLoaded", () => {
@@ -387,9 +418,8 @@ async function _cwShouldOpenSetupWizard(meta) {
     // Setup 
     (async () => {
       try {
-        const r = await fetch('/api/config/meta?ts=' + Date.now(), { cache: 'no-store' });
-        if (!r.ok) return;
-        const meta = await r.json();
+        const boot = await (window.__cwAuthBootstrapPromise || Promise.resolve(null));
+        const meta = boot?.meta || null;
         if (!meta) return;
 
         async function ensureModals() {
