@@ -11,6 +11,7 @@ import secrets
 import hmac
 import urllib.parse
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request, HTTPException
@@ -19,9 +20,22 @@ from urllib.parse import parse_qs
 
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
-from providers.scrobble.currently_watching import state_file as _cw_state_file
 from providers.scrobble.routes import normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
+
+try:
+    from providers.scrobble.currently_watching import state_file as _cw_state_file
+except Exception:
+    try:
+        from providers.scrobble.currently_watching import _state_file as _cw_state_file  # type: ignore[attr-defined]
+    except Exception:
+        def _cw_state_file() -> Path:
+            base = Path("/config/.cw_state") if Path("/config/config.json").exists() else Path(".cw_state")
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            return base / "currently_watching.json"
 
 import providers.sync.plex._utils as plex_utils
 
