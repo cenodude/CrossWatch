@@ -14,6 +14,7 @@ export class ModalHost {
     this.backdrop = null;
     this.shell = null;
     this.api = null;
+    this.options = { dismissible: true };
     this._drag = { active: false };
     this._foreign = null;
     this._pmove = null;
@@ -22,11 +23,17 @@ export class ModalHost {
     this._esc = null;
   }
 
+  setOptions(next = {}) {
+    this.options = Object.assign({}, this.options || {}, next || {});
+  }
+
   _ensure() {
     if (this.backdrop) return;
     const b = document.createElement('div');
     b.className = 'cx-backdrop';
-    b.addEventListener('click', (e) => { if (e.target === b) this.unmount(); });
+    b.addEventListener('click', (e) => {
+      if (e.target === b && this.options.dismissible !== false) this.unmount();
+    });
 
     const s = document.createElement('div');
     s.className = 'cx-modal-shell';
@@ -49,11 +56,21 @@ export class ModalHost {
     window.addEventListener('pointerup', this._pup, true);
     window.addEventListener('resize', this._resize, { passive: true });
 
-    this._esc = (e) => { if (e.key === 'Escape') this.unmount(); };
-    document.addEventListener('keydown', this._esc);
+    this._esc = (e) => {
+      if (e.key !== 'Escape') return;
+      if (this.options.dismissible === false) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation?.();
+        return;
+      }
+      this.unmount();
+    };
+    document.addEventListener('keydown', this._esc, true);
 
     // global close helper for modal content
     window.cxCloseModal = () => this.unmount();
+    window.cxSetModalDismissible = (flag) => this.setOptions({ dismissible: flag !== false });
   }
 
   _hideForeign() {
@@ -86,6 +103,7 @@ export class ModalHost {
   }
 
   async mount(api, props = {}) {
+    this.setOptions({ dismissible: props?.dismissible !== false });
     this._ensure();
     this.api = api;
     this.shell.innerHTML = '';
@@ -118,11 +136,12 @@ export class ModalHost {
     if (this._pmove) window.removeEventListener('pointermove', this._pmove, true);
     if (this._pup) window.removeEventListener('pointerup', this._pup, true);
     if (this._resize) window.removeEventListener('resize', this._resize);
-    if (this._esc) document.removeEventListener('keydown', this._esc);
+    if (this._esc) document.removeEventListener('keydown', this._esc, true);
     this._pmove = this._pup = this._resize = this._esc = null;
 
     // cleanup globals
     if (window.cxCloseModal) delete window.cxCloseModal;
+    if (window.cxSetModalDismissible) delete window.cxSetModalDismissible;
 
     this._restoreForeign();
     this.backdrop?.remove();
