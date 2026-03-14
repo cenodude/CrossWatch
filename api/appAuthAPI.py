@@ -13,6 +13,7 @@ import os
 import secrets
 import threading
 import time
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -23,14 +24,21 @@ __all__ = [
     "router",
     "COOKIE_NAME",
     "AUTH_TTL_SEC",
+    "MIN_PASSWORD_LENGTH",
     "auth_required",
     "is_authenticated",
+    "reset_pending",
+    "setup_lock_required",
     "register_app_auth",
 ]
 
 COOKIE_NAME = "cw_auth"
 AUTH_TTL_SEC = 30 * 24 * 60 * 60
 MAX_SESSIONS = 10
+MAX_REMEMBER_SESSION_DAYS = 365
+DEFAULT_REMEMBER_ME_DAYS = 60
+MIN_PASSWORD_LENGTH = 8
+FORGOT_HELP_URL = "https://wiki.crosswatch.app/"
 
 _LOGIN_FAILS: dict[str, dict[str, Any]] = {}
 _TRUSTED_PROXY_CACHE: dict[str, Any] = {"at": 0.0, "nets": []}
@@ -181,13 +189,33 @@ def _cfg_sessions(a: dict[str, Any]) -> list[dict[str, Any]]:
     return [x for x in s if isinstance(x, dict)]
 
 
+def _cfg_remember_session_enabled(a: dict[str, Any]) -> bool:
+    return bool(a.get("remember_session_enabled"))
+
+
+def _cfg_remember_session_days(a: dict[str, Any]) -> int:
+    try:
+        days = int(a.get("remember_session_days") or 30)
+    except Exception:
+        days = 30
+    if days < 1:
+        days = 1
+    if days > MAX_REMEMBER_SESSION_DAYS:
+        days = MAX_REMEMBER_SESSION_DAYS
+    return days
+
+
+def _session_ttl_sec(a: dict[str, Any]) -> int:
+    return _cfg_remember_session_days(a) * 24 * 60 * 60
+
+
 def _legacy_session_as_entry(a: dict[str, Any]) -> dict[str, Any] | None:
     s = _cfg_session(a)
     token_hash = str(s.get("token_hash") or "").strip()
     exp = int(s.get("expires_at") or 0)
     if not token_hash or not _is_sha256_hex(token_hash) or exp <= 0:
         return None
-    created_at = int(a.get("last_login_at") or 0) or max(1, exp - AUTH_TTL_SEC)
+    created_at = int(a.get("last_login_at") or 0) or max(1, exp - _session_ttl_sec(a))
     return {
         "id": "legacy",
         "token_hash": token_hash,
@@ -248,6 +276,50 @@ def auth_required(cfg: dict[str, Any]) -> bool:
     return True
 
 
+def reset_pending(cfg: dict[str, Any]) -> bool:
+    a = _cfg_auth(cfg)
+    return bool(a.get("reset_required"))
+
+
+def _norm_version_text(v: Any) -> str:
+    raw = str(v or "").strip()
+    if raw.lower().startswith("v"):
+        raw = raw[1:]
+    return raw
+
+
+def _version_key(v: Any) -> tuple[int, ...]:
+    raw = _norm_version_text(v)
+    if not raw:
+        return (0,)
+    out: list[int] = []
+    for part in raw.split("."):
+        try:
+            out.append(int(part))
+        except Exception:
+            out.append(0)
+    return tuple(out or [0])
+
+
+def _current_version_text() -> str:
+    try:
+        from api.versionAPI import CURRENT_VERSION as _CURRENT_VERSION
+
+        return _norm_version_text(_CURRENT_VERSION)
+    except Exception:
+        return _norm_version_text(os.getenv("APP_VERSION") or "0.0.0")
+
+
+def _config_needs_upgrade(cfg: dict[str, Any]) -> bool:
+    return _version_key(_current_version_text()) > _version_key(cfg.get("version"))
+
+
+def setup_lock_required(cfg: dict[str, Any]) -> bool:
+    if reset_pending(cfg):
+        return True
+    return (not auth_required(cfg)) and _config_needs_upgrade(cfg)
+
+
 def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None:
     t = (token or "").strip()
     if not t:
@@ -282,21 +354,57 @@ def _rate_limit_ok(request: Request) -> tuple[bool, int]:
     return True, 0
 
 
-def _rate_limit_fail(request: Request) -> None:
+def _login_lockout_seconds(n: int) -> int:
+    if n >= 10:
+        return 10 * 60
+    if n >= 6:
+        return 5 * 60
+    if n >= 3:
+        return 60
+    return 0
+
+
+def _rate_limit_fail(request: Request) -> dict[str, int]:
     ip = _effective_client_ip(request)
     rec = _LOGIN_FAILS.get(ip) or {"n": 0, "until": 0}
     n = int(rec.get("n") or 0) + 1
-    backoff = min(60, 2 ** min(5, n))
-    _LOGIN_FAILS[ip] = {"n": n, "until": _now() + backoff}
+    backoff = _login_lockout_seconds(n)
+    until = (_now() + backoff) if backoff > 0 else 0
+    _LOGIN_FAILS[ip] = {"n": n, "until": until}
+    return {"n": n, "retry_after": backoff}
+
+
+def _rate_limit_state(request: Request) -> dict[str, int]:
+    ip = _effective_client_ip(request)
+    rec = _LOGIN_FAILS.get(ip) or {"n": 0, "until": 0}
+    until = int(rec.get("until") or 0)
+    retry_after = max(0, until - _now()) if until > 0 else 0
+    return {"n": int(rec.get("n") or 0), "retry_after": retry_after}
+
+
+def _rate_limit_reset(request: Request) -> None:
+    ip = _effective_client_ip(request)
+    _LOGIN_FAILS.pop(ip, None)
+
+
+def _login_error_payload(*, error: str, attempts: int, retry_after: int = 0) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": error,
+        "attempts": attempts,
+        "retry_after": max(0, int(retry_after or 0)),
+        "show_help_banner": attempts >= 3,
+        "forgot_help_url": FORGOT_HELP_URL if attempts >= 3 else "",
+    }
 
 
 def _issue_session(cfg: dict[str, Any], request: Request) -> tuple[str, int]:
     token = secrets.token_urlsafe(32)
-    exp = _now() + AUTH_TTL_SEC
     a = cfg.setdefault("app_auth", {})
     if not isinstance(a, dict):
         a = {}
         cfg["app_auth"] = a
+    exp = _now() + _session_ttl_sec(a)
 
     sessions = _prune_sessions(_iter_sessions(a))
     ip = getattr(getattr(request, "client", None), "host", "") or ""
@@ -341,76 +449,391 @@ def _clear_sessions(cfg: dict[str, Any]) -> None:
     _sync_legacy_session(a, [])
 
 
-def _set_cookie(resp: Response, token: str, exp: int, request: Request) -> None:
+def _clear_setup_autogen_flag(cfg: dict[str, Any]) -> None:
+    try:
+        ui = cfg.get("ui")
+        if isinstance(ui, dict):
+            ui.pop("_autogen", None)
+    except Exception:
+        pass
+
+
+def _mark_upgrade_pending_if_needed(cfg: dict[str, Any]) -> None:
+    try:
+        if not _config_needs_upgrade(cfg):
+            return
+        ui = cfg.get("ui")
+        if not isinstance(ui, dict):
+            ui = {}
+            cfg["ui"] = ui
+        ui["_pending_upgrade_from_version"] = str(cfg.get("version") or "").strip()
+    except Exception:
+        pass
+
+
+def _effective_host(request: Request) -> str:
+    if _is_trusted_proxy_request(request):
+        xfh = str(request.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip()
+        if xfh:
+            return xfh
+    return str(request.headers.get("host") or request.url.netloc or "").strip()
+
+
+def _forwarded_header_param(request: Request, name: str) -> str:
+    raw = str(request.headers.get("forwarded") or "").strip()
+    if not raw:
+        return ""
+    first = raw.split(",", 1)[0].strip()
+    if not first:
+        return ""
+    want = str(name or "").strip().lower()
+    if not want:
+        return ""
+    for part in first.split(";"):
+        key, sep, value = part.partition("=")
+        if not sep or key.strip().lower() != want:
+            continue
+        return value.strip().strip('"').strip()
+    return ""
+
+
+def _forwarded_proto_hint(request: Request) -> str:
+    xf = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    if xf in {"http", "https"}:
+        return xf
+    forwarded = _forwarded_header_param(request, "proto").lower()
+    return forwarded if forwarded in {"http", "https"} else ""
+
+
+def _origin_host_candidates(request: Request) -> list[str]:
+    raw_hosts = [
+        request.headers.get("host"),
+        request.url.netloc,
+        str(request.headers.get("x-forwarded-host") or "").split(",", 1)[0].strip(),
+        _forwarded_header_param(request, "host"),
+    ]
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_hosts:
+        host = str(raw or "").strip().lower()
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        out.append(host)
+    return out
+
+
+def _normalize_origin(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlsplit(text)
+    except Exception:
+        return ""
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def _expected_origin(request: Request) -> str:
+    host = _effective_host(request)
+    if not host:
+        return ""
+    scheme = "https" if _effective_scheme_is_https(request) else "http"
+    return _normalize_origin(f"{scheme}://{host}")
+
+
+def _origin_allowed(request: Request) -> bool:
+    got = _normalize_origin(request.headers.get("origin"))
+    if not got:
+        return True
+    want = _expected_origin(request)
+    if not want:
+        return False
+    if hmac.compare_digest(got.encode("utf-8"), want.encode("utf-8")):
+        return True
+
+    try:
+        parsed = urlsplit(got)
+        origin_host = str(parsed.netloc or "").strip().lower()
+        origin_scheme = str(parsed.scheme or "").strip().lower()
+        if (
+            origin_host
+            and origin_host in _origin_host_candidates(request)
+            and origin_scheme
+            and origin_scheme == _forwarded_proto_hint(request)
+        ):
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _origin_blocked_response() -> JSONResponse:
+    return JSONResponse(
+        {"ok": False, "error": "Origin mismatch"},
+        status_code=403,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _set_cookie(resp: Response, token: str, exp: int, request: Request, *, persistent: bool) -> None:
     # Secure cookie only when CW itself is running on HTTPS.
     secure = _effective_scheme_is_https(request)
-    resp.set_cookie(
-        COOKIE_NAME,
-        token,
-        max_age=max(1, exp - _now()),
-        expires=exp,
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=secure,
-    )
+    kwargs: dict[str, Any] = {
+        "path": "/",
+        "httponly": True,
+        "samesite": "lax",
+        "secure": secure,
+    }
+    if persistent:
+        kwargs["max_age"] = max(1, exp - _now())
+        kwargs["expires"] = exp
+    resp.set_cookie(COOKIE_NAME, token, **kwargs)
 
 def _del_cookie(resp: Response, request: Request) -> None:
     secure = _effective_scheme_is_https(request)
     resp.delete_cookie(COOKIE_NAME, path="/", samesite="lax", secure=secure)
+
+
+_LOGIN_PAGE_CSS = """
+:root{
+  --cw-bg:#06111d;--cw-panel:rgba(7,16,28,.82);--cw-panel-strong:rgba(8,17,30,.94);
+  --cw-border:rgba(177,146,255,.16);--cw-border-strong:rgba(165,126,255,.30);
+  --cw-text:#edf6ff;--cw-soft:rgba(214,231,249,.72);--cw-accent:#8c6dff;--cw-accent-2:#c08cff;
+  --cw-warn-bg:rgba(255,178,102,.10);--cw-warn-border:rgba(255,192,120,.24);
+  --cw-danger-bg:rgba(255,98,114,.12);--cw-danger-border:rgba(255,133,146,.22);
+  --cw-shadow:0 32px 80px rgba(0,0,0,.42);
+}
+*{box-sizing:border-box}
+html,body{min-height:100%}
+body{
+  margin:0;display:grid;place-items:center;min-height:100vh;color:var(--cw-text);
+  font-family:"Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;
+  background:
+    radial-gradient(900px circle at 8% 10%, rgba(140,109,255,.18), transparent 42%),
+    radial-gradient(780px circle at 92% 18%, rgba(192,140,255,.18), transparent 40%),
+    radial-gradient(760px circle at 50% 110%, rgba(112,92,214,.16), transparent 42%),
+    linear-gradient(180deg,#07111b 0%,#03070c 100%);
+  overflow:hidden;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;background-size:44px 44px;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+  mask-image:radial-gradient(circle at center, rgba(0,0,0,.85), transparent 82%);
+}
+.cw-login-shell{
+  width:min(1040px,calc(100vw - 32px));display:grid;
+  grid-template-columns:minmax(0,1.05fr) minmax(360px,.95fr);
+  border:1px solid var(--cw-border);border-radius:28px;overflow:hidden;
+  background:linear-gradient(135deg, rgba(7,15,27,.90), rgba(4,10,20,.78));
+  box-shadow:var(--cw-shadow);backdrop-filter:blur(16px) saturate(135%);
+  -webkit-backdrop-filter:blur(16px) saturate(135%);
+}
+.cw-hero{
+  position:relative;display:flex;flex-direction:column;padding:34px 34px 30px;
+  background:
+    radial-gradient(420px circle at 14% 10%, rgba(140,109,255,.22), transparent 42%),
+    radial-gradient(460px circle at 80% 28%, rgba(192,140,255,.16), transparent 38%),
+    linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01));
+  border-right:1px solid rgba(255,255,255,.06);
+}
+.cw-hero::after{
+  content:"";position:absolute;right:26px;bottom:26px;width:188px;height:188px;border-radius:36px;
+  background:url("/assets/img/CROSSWATCH.svg") center/62% no-repeat, linear-gradient(135deg, rgba(140,109,255,.18), rgba(192,140,255,.05));
+  border:1px solid rgba(255,255,255,.06);opacity:.96;transform:rotate(14deg);pointer-events:none;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.04);filter:drop-shadow(0 20px 40px rgba(0,0,0,.22));
+}
+.cw-mark{display:flex;align-items:center;margin-top:6px}
+.cw-mark img{width:min(360px,100%);height:auto;display:block;filter:drop-shadow(0 18px 30px rgba(0,0,0,.34))}
+.cw-hero h1{margin:28px 0 12px;max-width:12ch;font-size:clamp(34px,4.6vw,56px);line-height:.98;letter-spacing:-.04em;font-weight:900}
+.cw-hero p{margin:0;max-width:44ch;color:var(--cw-soft);font-size:15px;line-height:1.65}
+.cw-metrics{display:grid;grid-template-columns:1fr;gap:12px;max-width:320px;margin-top:auto;padding-top:32px}
+.cw-login{
+  display:grid;align-content:center;gap:18px;padding:34px;
+  background:linear-gradient(180deg, rgba(6,12,22,.94), rgba(5,10,18,.98));
+}
+.cw-login-head,.cw-form,.cw-field,.cw-help-copy{display:grid}
+.cw-login-head{gap:8px}.cw-form{gap:14px}.cw-field{gap:7px}.cw-help-copy{gap:3px;min-width:0}
+.cw-login-kicker,.cw-field label,.cw-help-kicker{
+  font-weight:800;text-transform:uppercase;letter-spacing:.08em
+}
+.cw-login-kicker{font-size:12px;letter-spacing:.12em;color:rgba(210,231,251,.64)}
+.cw-login h2{margin:0;font-size:30px;line-height:1.05;letter-spacing:-.03em;font-weight:900}
+.cw-login .sub{margin:0;color:var(--cw-soft);font-size:14px;line-height:1.55}
+.cw-banner,.cw-msg{
+  display:none;padding:13px 14px;border:1px solid transparent;border-radius:18px;
+  font-size:13px;line-height:1.55;
+}
+.cw-banner.show,.cw-msg.show{display:block}
+.cw-banner{background:linear-gradient(180deg, var(--cw-warn-bg), rgba(255,255,255,.02));border-color:var(--cw-warn-border);color:#ffe9cf}
+.cw-banner a{color:#fff3de;font-weight:800}
+.cw-msg{background:linear-gradient(180deg, var(--cw-danger-bg), rgba(255,255,255,.02));border-color:var(--cw-danger-border);color:#ffd9dd}
+.cw-field label{font-size:12px;color:rgba(231,242,255,.86)}
+.cw-field input{
+  width:100%;min-height:52px;padding:0 16px;border:1px solid rgba(255,255,255,.10);border-radius:18px;
+  background:rgba(2,8,19,.76);color:var(--cw-text);font:inherit;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+  transition:border-color .18s ease, box-shadow .18s ease, background .18s ease, transform .18s ease;
+}
+.cw-field input:focus{
+  outline:none;transform:translateY(-1px);border-color:var(--cw-border-strong);background:rgba(4,10,22,.94);
+  box-shadow:0 0 0 4px rgba(140,109,255,.14), inset 0 1px 0 rgba(255,255,255,.04);
+}
+.cw-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cw-remember{
+  display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:16px;
+  background:rgba(255,255,255,.03);color:var(--cw-soft);
+}
+.cw-remember input{width:18px;height:18px;margin-top:2px;flex:0 0 auto;accent-color:var(--cw-accent)}
+.cw-remember b{display:block;color:var(--cw-text);font-size:13px}
+.cw-remember span{display:block;margin-top:3px;font-size:12px;line-height:1.45}
+.cw-login .btn{
+  min-width:144px;min-height:52px;border:1px solid rgba(166,126,255,.30);border-radius:18px;
+  background:linear-gradient(135deg, rgba(123,95,255,.96), rgba(186,96,255,.88));color:#f5f9ff;
+  font-weight:900;font-size:16px;letter-spacing:.01em;
+  box-shadow:0 18px 36px rgba(106,66,255,.30), inset 0 1px 0 rgba(255,255,255,.14);
+  transition:transform .14s ease, box-shadow .18s ease, filter .18s ease;
+}
+.cw-login .btn:hover{transform:translateY(-1px);filter:brightness(1.04)}
+.cw-login .btn:disabled{opacity:.72;cursor:progress;transform:none;box-shadow:none}
+.cw-help-link{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;
+  padding:14px 16px;border:1px solid rgba(255,255,255,.08);border-radius:18px;
+  background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));
+  color:rgba(236,244,255,.92);text-decoration:none;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+  transition:border-color .16s ease, transform .16s ease, filter .16s ease;
+}
+.cw-help-link:hover{transform:translateY(-1px);filter:brightness(1.04);border-color:rgba(146,118,255,.24)}
+.cw-help-kicker{font-size:11px;letter-spacing:.14em;color:rgba(228,234,255,.54)}
+.cw-help-sub{font-size:12.5px;line-height:1.5;font-weight:600;color:var(--cw-soft)}
+.cw-help-icon{
+  width:34px;height:34px;display:grid;place-items:center;flex:0 0 auto;border:1px solid rgba(166,126,255,.18);border-radius:12px;
+  background:linear-gradient(135deg,rgba(123,95,255,.18),rgba(186,96,255,.12));color:#eef3ff;
+}
+.cw-help-icon svg{width:18px;height:18px;display:block}
+@media (max-width:860px){
+  .cw-login-shell{grid-template-columns:1fr}
+  .cw-hero{padding:28px 24px 22px;border-right:0;border-bottom:1px solid rgba(255,255,255,.06)}
+  .cw-hero h1{max-width:none}
+  .cw-metrics{margin-top:28px;padding-top:0}
+  .cw-login{padding:24px}
+}
+@media (max-width:560px){
+  .cw-login-shell{width:min(100vw - 18px,1040px);border-radius:24px}
+  .cw-hero,.cw-login{padding:20px}
+  .cw-actions{align-items:stretch}
+  .cw-login .btn{width:100%}
+}
+"""
+
 
 def _login_html(username: str) -> str:
     u = (username or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f"""<!doctype html>
 <html lang=\"en\"><head>
   <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-  <title>CrossWatch | Sign in</title>
+  <title>Sign in | CrossWatch</title>
   <link rel=\"icon\" type=\"image/svg+xml\" href=\"/favicon.svg\">
   <link rel=\"stylesheet\" href=\"/assets/crosswatch.css\">
-  <style>
-    body{{display:flex;align-items:center;justify-content:center;min-height:100vh}}
-    .cw-login{{width:min(520px,92vw);padding:18px 18px 14px;border-radius:18px;background:rgba(13,15,22,.92);border:1px solid rgba(120,128,160,.14);box-shadow:0 10px 28px rgba(0,0,0,.45)}}
-    .cw-login h1{{margin:0 0 10px;font-size:18px;letter-spacing:.2px}}
-    .cw-login .sub{{opacity:.8;margin:0 0 14px;font-size:13px}}
-    .cw-login .grid{{display:grid;grid-template-columns:1fr;gap:10px}}
-    .cw-login input{{width:100%}}
-    .cw-login .row{{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:10px}}
-    .cw-login .err{{margin-top:10px;display:none}}
-  </style>
+  <style>{_LOGIN_PAGE_CSS}</style>
 </head><body>
-  <div class=\"cw-login\">
-    <h1>CrossWatch Authentication</h1>
-    <p class=\"sub\">Sign-in</p>
-    <div class=\"grid\">
-      <div><label for=\"u\">Username</label><input id=\"u\" name=\"username\" autocomplete=\"username\" value=\"{u}\"></div>
-      <div><label for=\"p\">Password</label><input id=\"p\" name=\"password\" type=\"password\" autocomplete=\"current-password\"></div>
-      <div class=\"row\">
-        <button class=\"btn acc\" id=\"go\">Sign in</button>
-        <span id=\"msg\" class=\"msg warn err\"></span>
+  <div class=\"cw-login-shell\">
+    <section class=\"cw-hero\" aria-hidden=\"true\">
+      <div class=\"cw-mark\">
+        <img src=\"/assets/img/CrossWatch.png\" alt=\"CrossWatch\">
       </div>
-    </div>
+      <h1>Sign in to your sync hub</h1>
+      <p>CrossWatch keeps your media world synced, simple and self hosted.</p>
+      <div class=\"cw-metrics\">
+        <a class=\"cw-help-link\" href=\"https://wiki.crosswatch.app/\" target=\"_blank\" rel=\"noopener noreferrer\">
+          <span class=\"cw-help-copy\">
+            <span class=\"cw-help-kicker\">Documentation</span>
+            <span class=\"cw-help-sub\">Setup guides and troubleshooting help.</span>
+          </span>
+          <span class=\"cw-help-icon\" aria-hidden=\"true\">
+            <svg viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">
+              <path d=\"M6 5.75C6 4.78 6.78 4 7.75 4H18a1 1 0 0 1 1 1v12.25A2.75 2.75 0 0 1 16.25 20H8.75A2.75 2.75 0 0 1 6 17.25V5.75Z\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linejoin=\"round\"/>
+              <path d=\"M9 8h6M9 11h6M9 14h4\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>
+              <path d=\"M6.25 17.5H16\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>
+            </svg>
+          </span>
+        </a>
+      </div>
+    </section>
+    <section class=\"cw-login\">
+      <div class=\"cw-login-head\">
+        <div class=\"cw-login-kicker\">Authentication</div>
+        <h2>Welcome back</h2>
+        <p class=\"sub\">Use your local CrossWatch admin credentials to continue.</p>
+      </div>
+      <div id=\"help\" class=\"cw-banner\" role=\"status\" aria-live=\"polite\"></div>
+      <div id=\"msg\" class=\"cw-msg\" role=\"alert\" aria-live=\"assertive\"></div>
+      <div class=\"cw-form\">
+        <div class=\"cw-field\">
+          <label for=\"u\">Username</label>
+          <input id=\"u\" name=\"username\" autocomplete=\"username\" value=\"{u}\">
+        </div>
+        <div class=\"cw-field\">
+          <label for=\"p\">Password</label>
+          <input id=\"p\" name=\"password\" type=\"password\" autocomplete=\"current-password\">
+        </div>
+        <label class=\"cw-remember\" for=\"remember\">
+          <input id=\"remember\" name=\"remember\" type=\"checkbox\">
+          <span><b>Remember me</b><span>Keep this browser signed in for up to {DEFAULT_REMEMBER_ME_DAYS} days.</span></span>
+        </label>
+        <div class=\"cw-actions\">
+          <button class=\"btn acc\" id=\"go\">Sign in</button>
+        </div>
+      </div>
+    </section>
   </div>
   <script>
     const $=(id)=>document.getElementById(id);
     const msg=$('msg');
+    const help=$('help');
+    const btn=$('go');
+    function setMsg(text){{
+      msg.textContent=text||'';
+      msg.classList.toggle('show',!!text);
+    }}
+    function setHelp(data){{
+      const url=(data&&data.forgot_help_url)||'https://wiki.crosswatch.app/';
+      const on=!!(data&&data.show_help_banner);
+      help.innerHTML=on?`Forget username/password? Visit <a href="${{url}}" target="_blank" rel="noopener noreferrer">${{url}}</a>`:'';
+      help.classList.toggle('show',on);
+    }}
     async function login(){{
-      msg.style.display='none';
+      setMsg('');
       const u=$('u').value.trim();
       const p=$('p').value;
+      const remember=$('remember')?.checked===true;
+      btn.disabled=true;
+      btn.textContent='Signing in...';
       try{{
-        const r=await fetch('/api/app-auth/login',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{username:u,password:p}})}});
+        const r=await fetch('/api/app-auth/login',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{username:u,password:p,remember_me:remember}})}});
         const data=await r.json().catch(()=>null);
         if(!r.ok || !data || !data.ok){{
-          msg.textContent=(data && data.error) ? data.error : ('Login failed ('+r.status+')');
-          msg.style.display='inline-flex';
+          setHelp(data);
+          const base=(data && data.error) ? data.error : ('Login failed ('+r.status+')');
+          const retry=(data && Number.isFinite(data.retry_after) && data.retry_after>0) ? ` Login paused for ${{data.retry_after}}s.` : '';
+          setMsg(base + retry);
           return;
         }}
+        setHelp(null);
         const next = (new URLSearchParams(location.search)).get('next') || '/';
-          const safe = (next.startsWith('/') && !next.startsWith('//')) ? next : '/';
-          location.href = safe;
+        const safe = (next.startsWith('/') && !next.startsWith('//')) ? next : '/';
+        location.href = safe;
       }}catch(e){{
-        msg.textContent='Login failed';
-        msg.style.display='inline-flex';
+        setMsg('Login failed');
+      }}finally{{
+        btn.disabled=false;
+        btn.textContent='Sign in';
       }}
     }}
     $('go').addEventListener('click', login);
@@ -430,6 +853,7 @@ def api_status(request: Request) -> JSONResponse:
     p = _cfg_pwd(a)
     configured = bool(str(a.get("username") or "").strip() and str(p.get("hash") or "").strip() and str(p.get("salt") or "").strip())
     enabled = bool(a.get("enabled"))
+    pending_setup = setup_lock_required(cfg)
     token = request.cookies.get(COOKIE_NAME)
     s = _find_session(a, token)
     return JSONResponse(
@@ -437,8 +861,11 @@ def api_status(request: Request) -> JSONResponse:
             "enabled": enabled,
             "configured": configured,
             "username": str(a.get("username") or "") if (enabled and s is not None) else "",
-            "authenticated": (s is not None) if auth_required(cfg) else True,
+            "authenticated": (s is not None) if auth_required(cfg) else (not pending_setup),
             "session_expires_at": int((s or {}).get("expires_at") or 0),
+            "reset_required": reset_pending(cfg),
+            "remember_session_enabled": _cfg_remember_session_enabled(a),
+            "remember_session_days": _cfg_remember_session_days(a),
         },
         headers={"Cache-Control": "no-store"},
     )
@@ -449,18 +876,30 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
     req = request
     cfg = load_config()
     a = _cfg_auth(cfg)
+    remember_me = bool(payload.get("remember_me"))
     if not auth_required(cfg):
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=400)
 
     ok_rl, retry = _rate_limit_ok(req)
     if not ok_rl:
-        return JSONResponse({"ok": False, "error": f"Try again in {retry}s"}, status_code=429)
+        st = _rate_limit_state(req)
+        return JSONResponse(
+            _login_error_payload(error=f"Try again in {retry}s", attempts=st["n"], retry_after=retry),
+            status_code=429,
+            headers={"Cache-Control": "no-store"},
+        )
 
     u = str(payload.get("username") or "").strip()
     ptxt = str(payload.get("password") or "")
     if u != str(a.get("username") or ""):
-        _rate_limit_fail(req)
-        return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
+        st = _rate_limit_fail(req)
+        status = 429 if st["retry_after"] > 0 else 401
+        msg = f"Too many failed attempts. Try again in {st['retry_after']}s" if st["retry_after"] > 0 else "Invalid credentials"
+        return JSONResponse(
+            _login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"]),
+            status_code=status,
+            headers={"Cache-Control": "no-store"},
+        )
 
     pwd = _cfg_pwd(a)
     try:
@@ -469,15 +908,27 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
         want = str(pwd.get("hash") or "")
         got = _b64e(_pbkdf2_hash(ptxt, salt, iterations=iters))
         if not hmac.compare_digest(got, want):
-            _rate_limit_fail(req)
-            return JSONResponse({"ok": False, "error": "Invalid credentials"}, status_code=401)
+            st = _rate_limit_fail(req)
+            status = 429 if st["retry_after"] > 0 else 401
+            msg = f"Too many failed attempts. Try again in {st['retry_after']}s" if st["retry_after"] > 0 else "Invalid credentials"
+            return JSONResponse(
+                _login_error_payload(error=msg, attempts=st["n"], retry_after=st["retry_after"]),
+                status_code=status,
+                headers={"Cache-Control": "no-store"},
+            )
     except Exception:
         return JSONResponse({"ok": False, "error": "Authentication is not configured"}, status_code=400)
 
+    if remember_me:
+        a["remember_session_enabled"] = True
+        if _cfg_remember_session_days(a) == 30:
+            a["remember_session_days"] = DEFAULT_REMEMBER_ME_DAYS
+
+    _rate_limit_reset(req)
     token, exp = _issue_session(cfg, req)
     save_config(cfg)
     resp = JSONResponse({"ok": True, "expires_at": exp}, headers={"Cache-Control": "no-store"})
-    _set_cookie(resp, token, exp, req)
+    _set_cookie(resp, token, exp, req, persistent=remember_me)
     return resp
 
 
@@ -485,6 +936,8 @@ def api_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResp
 def api_logout(request: Request) -> JSONResponse:
     cfg = load_config()
     token = request.cookies.get(COOKIE_NAME)
+    if auth_required(cfg) and token and not _origin_allowed(request):
+        return _origin_blocked_response()
     _drop_session(cfg, token)
     save_config(cfg)
     resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
@@ -495,6 +948,12 @@ def api_logout(request: Request) -> JSONResponse:
 @router.post("/logout-all")
 def api_logout_all(request: Request) -> JSONResponse:
     cfg = load_config()
+    token = request.cookies.get(COOKIE_NAME)
+    if auth_required(cfg):
+        if not is_authenticated(cfg, token):
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+        if not _origin_allowed(request):
+            return _origin_blocked_response()
     _clear_sessions(cfg)
     save_config(cfg)
     resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
@@ -509,6 +968,8 @@ def api_apply_now(request: Request, payload: dict[str, Any] | None = Body(None))
 
     if auth_required(cfg) and not is_authenticated(cfg, token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+    if auth_required(cfg) and token and not _origin_allowed(request):
+        return _origin_blocked_response()
 
     _clear_sessions(cfg)
     save_config(cfg)
@@ -528,10 +989,13 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
     req = request
     cfg = load_config()
     configured0 = auth_required(cfg)
+    recovery_mode = reset_pending(cfg)
     token = req.cookies.get(COOKIE_NAME)
 
-    if configured0 and not is_authenticated(cfg, token):
+    if configured0 and not recovery_mode and not is_authenticated(cfg, token):
         return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+    if configured0 and token and not _origin_allowed(req):
+        return _origin_blocked_response()
 
     enabled = bool(payload.get("enabled"))
     username = str(payload.get("username") or "").strip()
@@ -542,8 +1006,21 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
         a = {}
         cfg["app_auth"] = a
 
+    a["remember_session_enabled"] = bool(payload.get("remember_session_enabled", a.get("remember_session_enabled", False)))
+    try:
+        remember_days_raw = payload.get("remember_session_days", a.get("remember_session_days", 30))
+        remember_days = int(remember_days_raw or 30)
+    except Exception:
+        remember_days = 30
+    if remember_days < 1:
+        remember_days = 1
+    if remember_days > MAX_REMEMBER_SESSION_DAYS:
+        remember_days = MAX_REMEMBER_SESSION_DAYS
+    a["remember_session_days"] = remember_days
+
     if not enabled:
         a["enabled"] = False
+        a["reset_required"] = False
         a["username"] = username or str(a.get("username") or "")
         _clear_sessions(cfg)
         save_config(cfg)
@@ -562,6 +1039,11 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
     has_existing = bool(str(pwd.get("hash") or "").strip() and str(pwd.get("salt") or "").strip())
     if not password and not has_existing:
         return JSONResponse({"ok": False, "error": "Password is required"}, status_code=400)
+    if password and len(password) < MIN_PASSWORD_LENGTH:
+        return JSONResponse(
+            {"ok": False, "error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters"},
+            status_code=400,
+        )
 
     if password:
         salt = secrets.token_bytes(16)
@@ -577,13 +1059,16 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
 
     a["enabled"] = True
     a["username"] = username
+    a["reset_required"] = False
     _clear_sessions(cfg)
+    _clear_setup_autogen_flag(cfg)
+    _mark_upgrade_pending_if_needed(cfg)
 
     token2, exp2 = _issue_session(cfg, req)
     save_config(cfg)
 
     resp = JSONResponse({"ok": True, "enabled": True, "expires_at": exp2}, headers={"Cache-Control": "no-store"})
-    _set_cookie(resp, token2, exp2, req)
+    _set_cookie(resp, token2, exp2, req, persistent=_cfg_remember_session_enabled(a))
     return resp
 
 
