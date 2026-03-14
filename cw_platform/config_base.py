@@ -597,6 +597,9 @@ DEFAULT_CFG: dict[str, Any] = {
     "app_auth": {
         "enabled": False,
         "username": "",
+        "reset_required": False,
+        "remember_session_enabled": False,
+        "remember_session_days": 30,
         "password": {
             "scheme": "pbkdf2_sha256",
             "iterations": 260000,
@@ -1163,6 +1166,63 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
     tls["key_file"] = str(tls.get("key_file", "") or "").strip()
 
 
+def _normalize_app_auth(cfg: dict[str, Any]) -> None:
+    a = _ensure_dict(cfg, "app_auth")
+    raw_enabled = bool(a.get("enabled", False))
+    a["username"] = str(a.get("username", "") or "").strip()
+    a["reset_required"] = bool(a.get("reset_required", False))
+    a["remember_session_enabled"] = bool(a.get("remember_session_enabled", False))
+
+    try:
+        remember_days = int(a.get("remember_session_days", 30) or 30)
+    except Exception:
+        remember_days = 30
+    if remember_days < 1:
+        remember_days = 1
+    if remember_days > 365:
+        remember_days = 365
+    a["remember_session_days"] = remember_days
+
+    pwd = _ensure_dict(a, "password")
+    pwd["scheme"] = str(pwd.get("scheme", "pbkdf2_sha256") or "pbkdf2_sha256").strip() or "pbkdf2_sha256"
+    try:
+        pwd["iterations"] = int(pwd.get("iterations", 260_000) or 260_000)
+    except Exception:
+        pwd["iterations"] = 260_000
+    pwd["salt"] = str(pwd.get("salt", "") or "").strip()
+    pwd["hash"] = str(pwd.get("hash", "") or "").strip()
+
+    has_configured_credentials = bool(a["username"] and pwd["salt"] and pwd["hash"])
+
+    # Auth is mandatory
+    if not raw_enabled and has_configured_credentials:
+        a["reset_required"] = True
+        a["remember_session_enabled"] = bool(a.get("remember_session_enabled", False))
+
+    a["enabled"] = True
+
+    sess = _ensure_dict(a, "session")
+    sess["token_hash"] = str(sess.get("token_hash", "") or "").strip()
+    try:
+        sess["expires_at"] = int(sess.get("expires_at", 0) or 0)
+    except Exception:
+        sess["expires_at"] = 0
+
+    sessions = a.get("sessions")
+    a["sessions"] = sessions if isinstance(sessions, list) else []
+    try:
+        a["last_login_at"] = int(a.get("last_login_at", 0) or 0)
+    except Exception:
+        a["last_login_at"] = 0
+
+    if a["reset_required"]:
+        sess = _ensure_dict(a, "session")
+        sess["token_hash"] = ""
+        sess["expires_at"] = 0
+        a["sessions"] = []
+        a["last_login_at"] = 0
+
+
 # Public API
 def _new_webhook_id() -> str:
     return secrets.token_urlsafe(24)
@@ -1204,6 +1264,7 @@ def load_config() -> dict[str, Any]:
     _normalize_simkl(cfg)
     _normalize_mdblist(cfg)
     _normalize_scheduling(cfg)
+    _normalize_app_auth(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -1305,6 +1366,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_simkl(data)
     _normalize_mdblist(data)
     _normalize_scheduling(data)
+    _normalize_app_auth(data)
     _normalize_ui(data)
     pairs = data.get("pairs")
     if isinstance(pairs, list):
