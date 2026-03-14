@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 from itertools import chain
@@ -15,6 +15,7 @@ from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
+    START_OF_TIME_ISO,
     build_headers,
     coalesce_date_from,
     fetch_activities,
@@ -233,11 +234,26 @@ def _as_epoch(value: Any) -> int | None:
 
 
 def _as_iso(ts: int) -> str:
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
     return (
-        datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        (epoch + timedelta(seconds=int(ts)))
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def _rewind_iso(value: str | None, *, seconds: int = 2) -> str | None:
+    ts = _as_epoch(value)
+    if ts is None:
+        return value
+    return _as_iso(max(ts - max(0, int(seconds)), _as_epoch(START_OF_TIME_ISO) or ts))
+
+
+def _history_activity_markers(acts: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
+    movie_latest = extract_latest_ts(acts, (("movies", "all"), ("movies", "completed")))
+    show_latest = extract_latest_ts(acts, (("tv_shows", "all"), ("shows", "all"), ("tv_shows", "watching"), ("shows", "watching"), ("tv_shows", "completed"), ("shows", "completed")))
+    anime_latest = extract_latest_ts(acts, (("anime", "all"), ("anime", "watching"), ("anime", "completed")))
+    return movie_latest, show_latest, anime_latest
 
 
 def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
@@ -727,6 +743,7 @@ def _fetch_kind(
     headers: Mapping[str, str],
     *,
     kind: str,
+    status: str | None = None,
     since_iso: str,
     timeout: float,
 ) -> list[dict[str, Any]]:
@@ -734,9 +751,12 @@ def _fetch_kind(
     params = {"extended": ext, "episode_watched_at": "yes", "date_from": since_iso}
     if kind in {"shows", "anime"}:
         params["include_all_episodes"] = "yes"
-    resp = session.get(f"{URL_ALL_ITEMS}/{kind}", headers=headers, params=params, timeout=timeout)
+    url = f"{URL_ALL_ITEMS}/{kind}"
+    if status:
+        url = f"{url}/{status}"
+    resp = session.get(url, headers=headers, params=params, timeout=timeout)
     if not resp.ok:
-        _log(f"GET {URL_ALL_ITEMS}/{kind} -> {resp.status_code}")
+        _log(f"GET {url} -> {resp.status_code}")
         return []
     try:
         body = resp.json() or []
@@ -796,13 +816,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
     if isinstance(acts, Mapping):
         wm = get_watermark("history") or ""
-        lm = extract_latest_ts(acts, (("movies", "playback"), ("movies", "all")))
-        ls = extract_latest_ts(acts, (("tv_shows", "playback"), ("shows", "playback"), ("tv_shows", "all"), ("shows", "all")))
-        la = extract_latest_ts(acts, (("anime", "playback"), ("anime", "all")))
+        lm, ls, la = _history_activity_markers(acts)
         candidates = [t for t in (lm, ls, la) if isinstance(t, str) and t]
         act_latest = max(candidates) if candidates else None
 
-        unchanged = (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
+        unchanged = bool(wm) and (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
         if unchanged:
             _log(f"activities unchanged; history from shadow (m={lm} s={ls} a={la})", level="info")
             _shadow_merge_into(out, thaw)
@@ -823,17 +841,21 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     latest_ts_anime: int | None = None
     cfg_iso = _as_iso(since) if since else None
     df_iso = coalesce_date_from("history", cfg_date_from=cfg_iso)
+    fetch_from_iso = _rewind_iso(df_iso) or df_iso
     if since:
         since_iso = _as_iso(int(since))
         try:
-            sm = max(_as_epoch(df_iso) or 0, _as_epoch(since_iso) or 0)
-            ss = max(_as_epoch(df_iso) or 0, _as_epoch(since_iso) or 0)
-            df_iso = _as_iso(sm)
-            df_iso = _as_iso(ss)
+            sm = max(_as_epoch(fetch_from_iso) or 0, _as_epoch(since_iso) or 0)
+            fetch_from_iso = _as_iso(sm)
         except Exception:
             pass
 
-    movie_rows = _fetch_kind(session, headers, kind="movies", since_iso=df_iso, timeout=timeout)
+    movie_rows = _fetch_kind(session, headers, kind="movies", since_iso=fetch_from_iso, timeout=timeout)
+    show_rows = _fetch_kind(session, headers, kind="shows", status="watching", since_iso=fetch_from_iso, timeout=timeout)
+    show_rows.extend(_fetch_kind(session, headers, kind="shows", status="completed", since_iso=fetch_from_iso, timeout=timeout))
+    anime_rows = _fetch_kind(session, headers, kind="anime", status="watching", since_iso=fetch_from_iso, timeout=timeout)
+    anime_rows.extend(_fetch_kind(session, headers, kind="anime", status="completed", since_iso=fetch_from_iso, timeout=timeout))
+
     movies_cnt = 0
     for row in movie_rows:
         if not isinstance(row, Mapping):
@@ -842,7 +864,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         ts = _as_epoch(watched_at)
         if not ts:
             continue
-        movie_norm = simkl_normalize(row)
+        movie_media = {"movie": row.get("movie")} if isinstance(row.get("movie"), Mapping) else row
+        movie_norm = simkl_normalize(cast(Mapping[str, Any], movie_media))
         if not movie_norm or str(movie_norm.get("type") or "").lower() != "movie":
             continue
         movie_norm["watched"] = True
@@ -861,8 +884,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             break
 
     if not limit or added < limit:
-        show_rows = _fetch_kind(session, headers, kind="shows", since_iso=df_iso, timeout=timeout)
-        anime_rows = _fetch_kind(session, headers, kind="anime", since_iso=df_iso, timeout=timeout)
         eps_cnt = 0
         for row, row_kind in chain(((r, "shows") for r in show_rows), ((r, "anime") for r in anime_rows)):
             if not isinstance(row, Mapping):
@@ -929,6 +950,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                                 break
                     continue
 
+            row_added = False
             for season in row.get("seasons") or []:
                 season = season if isinstance(season, Mapping) else {}
                 s_num_internal = int((season.get("number") or season.get("season") or 0))
@@ -968,6 +990,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     if event_key in out:
                         continue
                     out[event_key] = ep
+                    row_added = True
                     thaw.add(bucket_key)
                     eps_cnt += 1
                     added += 1
@@ -982,23 +1005,26 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
-            f"movies={movies_cnt} episodes={eps_cnt} from={df_iso}",
+            f"movies={movies_cnt} episodes={eps_cnt} from={fetch_from_iso}",
             level="info",
         )
     else:
         _shadow_merge_into(out, thaw)
         _dedupe_history_movies(out)
         _log(
-            f"movies={movies_cnt} episodes=0 from={df_iso}",
+            f"movies={movies_cnt} episodes=0 from={fetch_from_iso}",
             level="info",
         )
-
-    if act_latest:
-        update_watermark_if_new("history", act_latest)
 
     latest_any = max([t for t in (latest_ts_movies, latest_ts_shows, latest_ts_anime) if isinstance(t, int)], default=None)
     if latest_any is not None:
         update_watermark_if_new("history", _as_iso(latest_any))
+    elif act_latest:
+        _log(
+            "activity advanced without fetched watched rows; history watermark unchanged",
+            activity=act_latest,
+            watermark=get_watermark("history") or "",
+        )
 
     _unfreeze(thaw)
     try:
