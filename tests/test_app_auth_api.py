@@ -188,7 +188,7 @@ def test_login_sets_persistent_cookie_when_remember_enabled(monkeypatch) -> None
     monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
 
     req = _request("/api/app-auth/login")
-    resp = auth.api_login(req, {"username": "admin", "password": "secrett1"})
+    resp = auth.api_login(req, {"username": "admin", "password": "secrett1", "remember_me": True})
 
     assert resp.status_code == 200
     set_cookie = resp.headers.get("set-cookie", "")
@@ -240,6 +240,29 @@ def test_credentials_clear_reset_required_flag(monkeypatch) -> None:
 
     assert resp.status_code == 200
     assert cfg["app_auth"]["reset_required"] is False
+
+
+def test_credentials_mark_upgrade_pending_when_config_outdated(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg(enabled=False)
+    cfg["version"] = "0.9.13"
+    monkeypatch.setattr(auth, "_current_version_text", lambda: "0.9.14")
+    monkeypatch.setattr(auth, "load_config", lambda: cfg)
+    monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+
+    req = _request("/api/app-auth/credentials")
+    resp = auth.api_set_credentials(
+        req,
+        {
+            "enabled": True,
+            "username": "admin",
+            "password": "secrett1",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert cfg["ui"]["_pending_upgrade_from_version"] == "0.9.13"
 
 
 def test_status_reports_not_authenticated_while_reset_is_pending(monkeypatch) -> None:
