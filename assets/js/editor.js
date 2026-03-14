@@ -2020,6 +2020,7 @@
 const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
 
 async function fetchJSON(url, opts) {
+  if (window.cwIsAuthSetupPending?.() === true) throw new Error("auth setup pending");
   const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
   if (!res.ok) throw new Error(`Request failed: ${res.status}`);
   return await res.json();
@@ -2669,6 +2670,7 @@ if (importProviderSel) {
 
   function bootWhenReady() {
     if (cwEditorBooted) return;
+    if (window.cwIsAuthSetupPending?.() === true) return;
     if (document.getElementById("page-editor")) {
       bootEditor();
       return;
