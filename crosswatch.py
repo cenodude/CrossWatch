@@ -51,6 +51,7 @@ from api.appAuthAPI import (
     COOKIE_NAME as APP_AUTH_COOKIE,
     auth_required as app_auth_required,
     is_authenticated as app_is_authenticated,
+    setup_lock_required as app_auth_setup_lock_required,
     register_app_auth,
 )
 
@@ -152,6 +153,7 @@ _METADATA: Any = None
 WATCH: Optional[Any] = None
 DISPATCHER: Optional[Dispatcher] = None
 scheduler: Optional[SyncScheduler] = None
+_AUTH_RESET_ENV_APPLIED = False
 
 STATS = Stats()
 
@@ -202,6 +204,56 @@ def _resolve_config_scoped_path(raw_path: str) -> Path:
         raise ValueError("Invalid path") from e
     return candidate
 
+
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _apply_auth_reset_env_once() -> None:
+    global _AUTH_RESET_ENV_APPLIED
+    if _AUTH_RESET_ENV_APPLIED:
+        return
+    _AUTH_RESET_ENV_APPLIED = True
+
+    if not _env_truthy("CW_RESET_AUTH_ONCE"):
+        return
+
+    cfg_path = CONFIG_DIR / "config.json"
+    if not cfg_path.exists():
+        print("[BOOT] CW_RESET_AUTH_ONCE ignored: no existing config.json found.")
+        return
+
+    try:
+        cfg = load_config() or {}
+        a = cfg.setdefault("app_auth", {})
+        if not isinstance(a, dict):
+            a = {}
+            cfg["app_auth"] = a
+
+        pwd = a.setdefault("password", {})
+        if not isinstance(pwd, dict):
+            pwd = {}
+            a["password"] = pwd
+
+        sess = a.setdefault("session", {})
+        if not isinstance(sess, dict):
+            sess = {}
+            a["session"] = sess
+
+        a["enabled"] = False
+        a["username"] = ""
+        a["reset_required"] = True
+        pwd["salt"] = ""
+        pwd["hash"] = ""
+        sess["token_hash"] = ""
+        sess["expires_at"] = 0
+        a["sessions"] = []
+        a["last_login_at"] = 0
+        save_config(cfg)
+        print("[BOOT] CW_RESET_AUTH_ONCE detected: app authentication was reset. Remove the env var and set a new username/password in the UI.")
+    except Exception as exc:
+        print(f"[BOOT] CW_RESET_AUTH_ONCE failed: {exc}")
+
 def _is_static_noise(path: str, status: int) -> bool:
     if path.startswith("/assets/") or path.startswith("/favicon"):
         return True
@@ -230,6 +282,15 @@ _SENSITIVE_QUERY_KEYS = {
     "token", "access_token", "refresh_token", "client_secret",
     "api_key", "apikey", "code", "state", "password", "secret",
     "session_id", "x-plex-token",
+}
+
+_APP_AUTH_SETUP_ALLOWED_PATHS = {
+    "/",
+    "/login",
+    "/logout",
+    "/api/config/meta",
+    "/api/app-auth/status",
+    "/api/app-auth/credentials",
 }
 
 def _redact_query_string(query: str) -> str:
@@ -412,6 +473,7 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
     return now + 3600
 
 # API
+_apply_auth_reset_env_once()
 app = FastAPI()
 
 @app.middleware("http")
@@ -459,9 +521,6 @@ async def app_auth_gate(request: Request, call_next):
             return JSONResponse({"ok": False, "error": "Service unavailable"}, status_code=503, headers={"Cache-Control": "no-store"})
         return PlainTextResponse("Service unavailable", status_code=503, headers={"Cache-Control": "no-store"})
 
-    if not app_auth_required(cfg):
-        return await call_next(request)
-
     path = request.url.path or "/"
     if path.startswith("/assets/"):
         return await call_next(request)
@@ -481,6 +540,20 @@ async def app_auth_gate(request: Request, call_next):
 
     # exclude callback paths
     if path == "/callback" or path.startswith("/callback/"):
+        return await call_next(request)
+
+    if app_auth_setup_lock_required(cfg):
+        if path in _APP_AUTH_SETUP_ALLOWED_PATHS:
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse(
+                {"ok": False, "error": "Authentication setup required"},
+                status_code=403,
+                headers={"Cache-Control": "no-store"},
+            )
+        return RedirectResponse(url="/", status_code=302)
+
+    if not app_auth_required(cfg):
         return await call_next(request)
 
     token = request.cookies.get(APP_AUTH_COOKIE)
@@ -1054,6 +1127,52 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
         return False
 
     return True
+
+
+def scheduler_handle_event(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    try:
+        if scheduler is None or not hasattr(scheduler, "handle_event"):
+            return {"ok": False, "reason": "scheduler_unavailable"}
+        return scheduler.handle_event(payload or None)  # type: ignore[union-attr]
+    except Exception as e:
+        try:
+            _append_log("SYNC", f"[!] Scheduler event bridge failed: {e}")
+        except Exception:
+            pass
+        return {"ok": False, "reason": "bridge_error"}
+
+
+def scheduler_event_from_scrobble(
+    ev: Any,
+    *,
+    source: str = "watcher",
+    route_id: str = "",
+    provider: str = "",
+    provider_instance: str = "",
+) -> dict[str, Any]:
+    ids = {}
+    try:
+        ids = dict(getattr(ev, "ids", {}) or {})
+    except Exception:
+        ids = {}
+    progress = getattr(ev, "progress", None)
+    event_name = str(getattr(ev, "action", "") or "").strip().lower()
+    finished = bool(event_name == "stop" and isinstance(progress, int) and progress >= 95)
+    return {
+        "source": str(source or "").strip().lower(),
+        "route_id": str(route_id or "").strip(),
+        "provider": str(provider or "").strip().lower(),
+        "provider_instance": str(provider_instance or "").strip(),
+        "event": event_name,
+        "account": str(getattr(ev, "account", "") or "").strip(),
+        "media_type": str(getattr(ev, "media_type", "") or "").strip().lower(),
+        "progress": progress if isinstance(progress, int) else None,
+        "finished": finished,
+        "session_key": str(getattr(ev, "session_key", "") or "").strip(),
+        "title": str(getattr(ev, "title", "") or "").strip(),
+        "ids": ids,
+        "ts": int(time.time()),
+    }
 
 scheduler = SyncScheduler(
     load_config, save_config,
