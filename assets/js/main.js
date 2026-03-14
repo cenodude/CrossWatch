@@ -92,6 +92,8 @@
     }
   };
 
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
+
   const ensureOpsStatusDock = () => {
     const row = document.querySelector("#ops-card .action-row");
     if (!row || row.querySelector(".cw-status-dock")) return;
@@ -547,6 +549,7 @@
   }
 
   const pullSummary = async () => {
+    if (authSetupPending()) return;
     if (sumBusy) return;
     sumBusy = true;
     try {
@@ -561,6 +564,12 @@
 
   window.openSummaryStream = function openSummaryStream() {
     try {
+      if (authSetupPending()) {
+        safe(esSummary?.close?.bind(esSummary));
+        esSummary = null;
+        window.esSum = null;
+        return;
+      }
       safe(esSummary?.close?.bind(esSummary));
       esSummary = new EventSource("/api/run/summary/stream");
       window.esSum = esSummary;
@@ -588,7 +597,9 @@
       });
       esSummary.onerror = () => {
         safe(esSummary?.close?.bind(esSummary));
+        esSummary = null;
         window.esSum = null;
+        if (authSetupPending()) return;
         setTimeout(openSummaryStream, 2000);
       };
     } catch {}
@@ -610,12 +621,36 @@
 
   window.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") {
+      if (authSetupPending()) return;
       openSummaryStream();
       openLogStream();
     }
   });
 
+  window.addEventListener("auth-changed", () => {
+    if (authSetupPending()) return;
+    openSummaryStream();
+    openLogStream();
+    pullSummary().then(renderAll);
+  });
+
+  window.addEventListener("cw-auth-setup-pending", (ev) => {
+    if (ev?.detail?.pending) {
+      try { esSummary?.close?.(); } catch {}
+      esSummary = null;
+      window.esSum = null;
+    }
+  });
+
   async function tick() {
+    if (authSetupPending()) {
+      try { esSummary?.close?.(); } catch {}
+      esSummary = null;
+      window.esSum = null;
+      clearTimeout(tick._t);
+      tick._t = setTimeout(tick, 4000);
+      return;
+    }
     const now = nowTs();
     const running = sync.isRunning();
     const sseUp = esSummary?.readyState === 1;
