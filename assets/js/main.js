@@ -571,7 +571,9 @@
         return;
       }
       safe(esSummary?.close?.bind(esSummary));
-      esSummary = new EventSource("/api/run/summary/stream");
+      const url = new URL("/api/run/summary/stream", document.baseURI);
+      url.searchParams.set("_ts", String(nowTs()));
+      esSummary = new EventSource(url.toString());
       window.esSum = esSummary;
       esSummary.onmessage = (ev) => {
         try { applySummarySnapshot(JSON.parse(ev.data || "{}"), "sse"); } catch {}
@@ -697,7 +699,6 @@
     const ret = typeof showTab === "function" ? showTab.apply(this, arguments) : undefined;
     try {
       DOC.dataset.tab = name || "main";
-      document.dispatchEvent(new CustomEvent("tab-changed", { detail: { tab: name } }));
     } catch {}
     return ret;
   };
