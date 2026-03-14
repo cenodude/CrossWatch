@@ -196,8 +196,10 @@
   let cacheVal = null;
   const countByKey = new Map();
   const CACHE_TTL_MS = 30000;
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
 
   const fetchCurrentlyWatching = async (wantKey) => {
+    if (authSetupPending()) return null;
     const now = Date.now();
     const wk = String(wantKey || "");
     if (wk && cacheVal && cacheKey === wk && now - cacheAt < CACHE_TTL_MS) return cacheVal;
