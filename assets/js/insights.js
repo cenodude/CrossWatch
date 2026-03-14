@@ -117,7 +117,15 @@
 
   const getConfiguredProviders = async force => {
     try {
-      const out = typeof w.getConfiguredProviders === "function" ? await w.getConfiguredProviders(force) : ["crosswatch"];
+      let cfg = w._cfgCache;
+      const needsConfigLoad = force || !cfg || typeof cfg !== "object" || !Object.keys(cfg).length;
+      if (needsConfigLoad && typeof w.CW?.API?.Config?.load === "function") {
+        try {
+          cfg = await w.CW.API.Config.load(!!force);
+          if (cfg && typeof cfg === "object") w._cfgCache = cfg;
+        } catch {}
+      }
+      const out = typeof w.getConfiguredProviders === "function" ? await w.getConfiguredProviders(cfg || {}) : ["crosswatch"];
       return out instanceof Set ? out : new Set([...(out || [])]);
     } catch (e) {
       console.error("[Insights] Failed to resolve configured providers", e);
@@ -453,7 +461,7 @@
     if (note) note.textContent = wt.method || "estimate";
   }
 
-  async function renderFromData(data, statsOnly = false) {
+  async function renderFromData(data, statsOnly = false, forceConfigured = false) {
     const blk = hydrateBlock(data);
     footWrap();
     ensureSwitch();
@@ -463,7 +471,7 @@
       if (data?.watchtime) renderWatchtime(data.watchtime);
     }
     renderTopStats(blk);
-    const configured = await getConfiguredProviders();
+    const configured = await getConfiguredProviders(forceConfigured);
     renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
     renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
     footWrap.reserve();
@@ -472,7 +480,7 @@
 
   async function refreshInsights(force = false) {
     if (authSetupPending()) return;
-    try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`)); }
+    try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`), false, force); }
     catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights", e);
@@ -484,7 +492,7 @@
     const now = Date.now();
     if (!force && now - _lastStatsFetch < 900) return;
     _lastStatsFetch = now;
-    try { await renderFromData(await fetchJSON("/api/insights?limit_samples=0&history=60"), true); }
+    try { await renderFromData(await fetchJSON("/api/insights?limit_samples=0&history=60"), true, force); }
     catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights (stats)", e);
@@ -517,7 +525,8 @@
   d.addEventListener("DOMContentLoaded", () => { if (!authSetupPending()) w.scheduleInsights(); });
   d.addEventListener("tab-changed", ev => {
     if (authSetupPending()) return;
-    if (ev?.detail?.id === "main") refreshInsights(true);
+    const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();
+    if (tab === "main") refreshInsights(true);
   });
 
   const snapLabel = name => {
