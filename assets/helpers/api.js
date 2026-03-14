@@ -4,6 +4,7 @@
 (function(){
   const JSON_HDR = { "Content-Type": "application/json" };
   const NS = (window.CW ||= {});
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
 
   function withTimeout(ms = 9000){
     const ac = new AbortController();
@@ -12,6 +13,7 @@
   }
 
   async function f(url, opt = {}, ms = 9000){
+    if (authSetupPending()) throw new Error("auth setup pending");
     const t = withTimeout(ms);
     try { return await fetch(url, { cache: 'no-store', ...opt, signal: t.signal }); }
     finally { t.done(); }
