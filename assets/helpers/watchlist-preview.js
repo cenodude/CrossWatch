@@ -2,6 +2,7 @@
 /* Extracted watchlist preview/wall UI from core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const isTV = window.isTV || ((v) => /^(tv|show|shows|series|season|episode|anime)$/i.test(String(v || "")));
   let wallReqSeq = 0;
   let previewBusy = false;
@@ -12,6 +13,7 @@
   window.__wallRenderSignature = window.__wallRenderSignature || "";
 
   const json = async (url, opt) => {
+    if (authSetupPending()) throw new Error("auth setup pending");
     if (window.CW?.API?.j && !opt) return window.CW.API.j(url);
     const res = await fetch(url, { cache: "no-store", ...(opt || {}) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -332,6 +334,7 @@
       const ui = cfg?.ui || cfg?.user_interface || {};
       return typeof ui.show_watchlist_preview === "boolean" ? !!ui.show_watchlist_preview : true;
     } catch (e) {
+      if (String(e?.message || e || "").includes("auth setup pending")) return true;
       console.warn("isWatchlistPreviewAllowed failed, falling back to true", e);
       return true;
     }
@@ -349,6 +352,7 @@
       await loadWall();
       window.wallLoaded = true;
     } catch (e) {
+      if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("Failed to update watchlist preview:", e);
     }
   }
