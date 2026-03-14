@@ -125,9 +125,52 @@ def api_config_meta() -> JSONResponse:
     except Exception:
         autogen = False
 
+    auth_reset_required = False
+    try:
+        app_auth = raw.get("app_auth") if isinstance(raw, dict) else None
+        password = app_auth.get("password") if isinstance(app_auth, dict) else None
+        manual_disable_with_existing_credentials = bool(
+            isinstance(app_auth, dict)
+            and not bool(app_auth.get("enabled"))
+            and str(app_auth.get("username") or "").strip()
+            and isinstance(password, dict)
+            and str(password.get("hash") or "").strip()
+            and str(password.get("salt") or "").strip()
+        )
+        if isinstance(app_auth, dict):
+            auth_reset_required = bool(app_auth.get("reset_required")) or manual_disable_with_existing_credentials
+    except Exception:
+        auth_reset_required = False
+
+    auth_configured = False
+    try:
+        app_auth = raw.get("app_auth") if isinstance(raw, dict) else None
+        password = app_auth.get("password") if isinstance(app_auth, dict) else None
+        auth_configured = bool(
+            isinstance(app_auth, dict)
+            and not auth_reset_required
+            and str(app_auth.get("username") or "").strip()
+            and isinstance(password, dict)
+            and str(password.get("hash") or "").strip()
+            and str(password.get("salt") or "").strip()
+        )
+    except Exception:
+        auth_configured = False
+
+    if auth_configured:
+        autogen = False
+
     first_run = (not exists) or autogen
 
     cfg_ver = _norm_ver(raw.get("version") if isinstance(raw, dict) else None) or None
+    pending_upgrade_from_ver = None
+    try:
+        ui = raw.get("ui") if isinstance(raw, dict) else None
+        if isinstance(ui, dict):
+            pending_upgrade_from_ver = _norm_ver(ui.get("_pending_upgrade_from_version")) or None
+    except Exception:
+        pending_upgrade_from_ver = None
+    effective_cfg_ver = pending_upgrade_from_ver or cfg_ver
     try:
         from api.versionAPI import CURRENT_VERSION as _V
         cur_ver = _norm_ver(str(_V))
@@ -137,11 +180,14 @@ def api_config_meta() -> JSONResponse:
     needs_upgrade = False
     is_legacy_pre_070 = False
     try:
-        needs_upgrade = _safe_ver(cur_ver) > _safe_ver(cfg_ver)
-        is_legacy_pre_070 = _safe_ver(cfg_ver) < Version("0.7.0")
+        needs_upgrade = _safe_ver(cur_ver) > _safe_ver(effective_cfg_ver)
+        is_legacy_pre_070 = _safe_ver(effective_cfg_ver) < Version("0.7.0")
     except Exception:
         needs_upgrade = False
         is_legacy_pre_070 = False
+
+    auth_reset_deferred_to_upgrade = bool(needs_upgrade and auth_reset_required)
+    setup_wizard_required = bool(auth_reset_required and not needs_upgrade)
 
     mtime = None
     size = None
@@ -159,11 +205,17 @@ def api_config_meta() -> JSONResponse:
                 "exists": exists,
                 "first_run": first_run,
                 "autogen": autogen,
+                "auth_configured": auth_configured,
+                "auth_reset_required": auth_reset_required,
+                "auth_reset_deferred_to_upgrade": auth_reset_deferred_to_upgrade,
+                "setup_wizard_required": setup_wizard_required,
                 "path": str(p) if p is not None else None,
                 "size": size,
                 "mtime": mtime,
                 "current_version": cur_ver,
-                "config_version": cfg_ver,
+                "config_version": effective_cfg_ver,
+                "stored_config_version": cfg_ver,
+                "pending_upgrade_from_version": pending_upgrade_from_ver,
                 "needs_upgrade": needs_upgrade,
                 "legacy_pre_070": is_legacy_pre_070,
             }
@@ -318,6 +370,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         ui = cfg.get("ui")
         if isinstance(ui, dict):
             ui.pop("_autogen", None)
+            ui.pop("_pending_upgrade_from_version", None)
     except Exception:
         pass
 
@@ -401,6 +454,7 @@ def api_config_migrate() -> dict[str, Any]:
         ui = cfg.get("ui")
         if isinstance(ui, dict):
             ui.pop("_autogen", None)
+            ui.pop("_pending_upgrade_from_version", None)
     except Exception:
         pass
 
