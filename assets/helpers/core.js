@@ -88,6 +88,7 @@
     pairedFetchAt: 0,
     softMainBusy: false,
   };
+  let mainBootLoadRefreshDone = false;
   const AUTO_STATUS = false;
   const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000;
   const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -823,6 +824,7 @@
     await refreshStatus(true);
     await refreshStats(true);
     await Promise.resolve(window.refreshInsights?.(true));
+    await Promise.resolve(window.manualRefreshStatus?.());
 
     if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
     if (!window.esLogs) queueSafe(() => window.openLogStream?.());
@@ -851,6 +853,7 @@
 
     byId("page-watchlist")?.classList.toggle("hidden", tab !== "watchlist");
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
+    byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
 
     document.documentElement.dataset.tab = tab;
@@ -902,10 +905,9 @@
 
   async function showTab(name) {
     const tab = String(name || "main").toLowerCase();
-    document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab } }));
-
     setTabHeaderState(tab);
     setPageVisibility(tab);
+    document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab, tab } }));
 
     const layout = byId("layout");
     const logPanel = byId("log-panel");
@@ -962,7 +964,8 @@
   }
 
   document.addEventListener("tab-changed", (ev) => {
-    if (String(ev?.detail?.id || "").toLowerCase() !== "main") return;
+    const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();
+    if (tab !== "main") return;
     enforceMainLayout();
     setTimeout(() => {
       try { window.openSummaryStream?.(); } catch {}
@@ -971,6 +974,26 @@
       try { recomputeRunDisabled(); } catch {}
     }, 0);
   });
+
+  window.addEventListener("cw-auth-setup-pending", (ev) => {
+    if (ev?.detail?.pending !== false) return;
+    const tab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
+    if (tab !== "main") return;
+    queueSafe(() => {
+      hardRefreshMain().catch(() => {});
+    });
+  });
+
+  window.addEventListener("load", () => {
+    if (mainBootLoadRefreshDone) return;
+    mainBootLoadRefreshDone = true;
+    if (authSetupPending()) return;
+    const tab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
+    if (tab !== "main") return;
+    queueSafe(() => {
+      hardRefreshMain().catch(() => {});
+    });
+  }, { once: true });
 
   let scrobblerInit = false;
   function ensureScrobbler() {
@@ -1750,6 +1773,7 @@ Object.assign(window, {
 });
 
   onReady(() => {
+    const authPendingAtReady = authSetupPending();
     try { fixFormLabels(); } catch {}
     try { wireDetailsToStats(); } catch {}
     try { scheduleInsights(); } catch {}
@@ -1762,5 +1786,18 @@ Object.assign(window, {
     try { bindSyncVisibilityObservers(); } catch {}
     try { window.cwInitPendingProtoBanner?.(); } catch {}
     bootstrapStatusFromCache();
+
+    if (authPendingAtReady) {
+      Promise.resolve(window.__cwAuthBootstrapPromise)
+        .catch(() => null)
+        .finally(() => {
+          if (authSetupPending()) return;
+          const tab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
+          if (tab !== "main") return;
+          queueSafe(() => {
+            hardRefreshMain().catch(() => {});
+          });
+        });
+    }
   });
 })();
