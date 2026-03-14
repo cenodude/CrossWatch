@@ -24,6 +24,13 @@
   const has = (v) => typeof v === 'string' ? v.trim().length > 0 : !!v;
   const uniq = (arr) => [...new Set((Array.isArray(arr) ? arr : []).map((v) => String(v || '').trim().toLowerCase()).filter(Boolean))];
   const scheduleEnabled = (s) => !!(s?.enabled || s?.advanced?.enabled);
+  const activeEventTriggers = (s) => (((s?.advanced?.event_rules) || (s?.advanced?.eventRules) || []).filter((r) =>
+    r && typeof r === 'object' &&
+    r.active !== false &&
+    String(r?.action?.kind || 'sync_pair') === 'sync_pair' &&
+    String(r?.action?.pair_id || r?.action?.pairId || r?.pair_id || '').trim() &&
+    String(r?.filters?.route_id || r?.filters?.routeId || '').trim()
+  ).length);
   const isVisible = () => { const p = $('#page-settings'); return !!(p && !p.classList.contains('hidden') && p.offsetParent !== null); };
   const toLocal = (v) => {
     if (v === undefined || v === null || v === '') return '—';
@@ -125,9 +132,21 @@
     const fallback = cfg?.scheduling || {};
     try {
       const st = await API()?.Scheduling?.status(force), sc = st?.config || fallback;
-      return { enabled: scheduleEnabled(sc), advanced: !!sc?.advanced?.enabled, running: !!st?.running, nextRun: st?.next_run_at ?? st?.next_run ?? sc?.next_run_at ?? sc?.next_run ?? null };
+      return {
+        enabled: scheduleEnabled(sc),
+        advanced: !!sc?.advanced?.enabled,
+        running: !!st?.running,
+        nextRun: st?.next_run_at ?? st?.next_run ?? sc?.next_run_at ?? sc?.next_run ?? null,
+        eventTriggers: activeEventTriggers(sc)
+      };
     } catch {
-      return { enabled: scheduleEnabled(fallback), advanced: !!fallback?.advanced?.enabled, running: false, nextRun: fallback?.next_run_at ?? fallback?.next_run ?? null };
+      return {
+        enabled: scheduleEnabled(fallback),
+        advanced: !!fallback?.advanced?.enabled,
+        running: false,
+        nextRun: fallback?.next_run_at ?? fallback?.next_run ?? null,
+        eventTriggers: activeEventTriggers(fallback)
+      };
     }
   }
 
@@ -154,7 +173,14 @@
   };
 
   const metadataHTML = (meta) => meta?.configured ? line(kv('Detected:', meta.detected), sep(), kv('Configured:', meta.configured)) : `You're missing out on some great stuff.<br><strong>Configure a Metadata Provider</strong> ✨`;
-  const schedulingHTML = (sched) => !sched?.enabled ? 'Disabled' : line(`<span class="si-status">${sched.advanced ? 'Enabled (Advanced)' : 'Enabled'}</span>`, sched.running && `${sep('|')}<span class="si-text">Running</span>`, sched.nextRun && `${sep('|')}<span class="si-text">Next run: ${esc(toLocal(sched.nextRun))}</span>`);
+  const schedulingHTML = (sched) => !sched?.enabled
+    ? 'Disabled'
+    : line(
+      `<span class="si-status">${sched.advanced ? 'Enabled (Advanced)' : 'Enabled'}</span>`,
+      typeof sched.eventTriggers === 'number' && `${sep('|')}<span class="si-text">Event triggers: ${sched.eventTriggers}</span>`,
+      sched.running && `${sep('|')}<span class="si-text">Running</span>`,
+      sched.nextRun && `${sep('|')}<span class="si-text">Next run: ${esc(toLocal(sched.nextRun))}</span>`
+    );
   function scrobblerHTML(scrob) {
     if (!scrob?.enabled) return 'Disabled';
     const mode = scrob.mode === 'watch' ? 'Watcher' : 'Webhook';
