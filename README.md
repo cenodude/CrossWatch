@@ -73,7 +73,6 @@ And much more...such as:
 
 
 ### Download
-[![Guide: Container Installation](https://img.shields.io/badge/Guide-Container%20Installation-2ea44f?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/container-installation)
 [![Guide: Docker Setup](https://img.shields.io/badge/Guide-Docker%20Setup-0d6efd?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/docker-setup)
 
 
