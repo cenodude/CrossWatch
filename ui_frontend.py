@@ -133,6 +133,38 @@ def _get_index_html_static() -> str:
     return r"""<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>CrossWatch</title>
+<script>
+(() => {
+  const APP_NAME = "CrossWatch";
+  const TITLES = {
+    main: "Main",
+    watchlist: "Watchlist",
+    snapshots: "Captures",
+    editor: "Editor",
+    settings: "Settings",
+  };
+
+  const normalize = (value) => String(value || "").trim().toLowerCase();
+
+  const setTitle = (page) => {
+    const label = TITLES[normalize(page)];
+    document.title = label ? `${label} | ${APP_NAME}` : APP_NAME;
+  };
+
+  const currentPage = () => {
+    const dataTab = normalize(document.body?.dataset?.tab || document.documentElement?.dataset?.tab);
+    if (dataTab) return dataTab;
+
+    const activeTab = document.querySelector('.tabs .tab.active[id^="tab-"]')?.id || "";
+    return normalize(activeTab.replace(/^tab-/, "")) || "main";
+  };
+
+  window.cwSetDocumentTitle = setTitle;
+  document.addEventListener("DOMContentLoaded", () => setTitle(currentPage()), { once: true });
+  document.addEventListener("tab-changed", (event) => setTitle(event?.detail?.id || event?.detail?.tab));
+  document.addEventListener("cw-settings-pane-changed", () => setTitle("settings"));
+})();
+</script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="alternate icon" href="/favicon.ico">
 <meta name="theme-color" content="#0b0b0f">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -170,7 +202,11 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #cw-settings-menu.cw-menu{right:-18px}
 #cw-settings-menu .cw-menu-item,#cw-about-menu .cw-menu-item{display:flex;align-items:center;min-height:32px;padding:0 10px;border-radius:10px;border:1px solid transparent;background:rgba(255,255,255,.03);color:var(--fg);font-weight:700;font-size:13px}
 #cw-settings-menu .cw-menu-item:hover,#cw-about-menu .cw-menu-item:hover{background:rgba(255,255,255,.07);border-color:rgba(124,92,255,.28)}
+#cw-settings-menu .cw-menu-item.danger{color:rgba(255,186,194,.96);background:rgba(255,92,112,.08);border-color:rgba(255,92,112,.12)}
+#cw-settings-menu .cw-menu-item.danger:hover{color:#fff1f4;background:rgba(255,92,112,.14);border-color:rgba(255,120,138,.28)}
 #cw-settings-menu .cw-menu-sep{height:1px;margin:4px 2px;border:0;background:rgba(255,255,255,.08)}
+.cw-field-inline-error{margin-top:8px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(7,9,13,.98),rgba(3,5,8,.99));color:rgba(245,247,255,.96);font-size:12px;line-height:1.45;box-shadow:0 14px 28px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}
+.cw-field-inline-error.hidden{display:none}
 </style>
 <script>
 (() => {
@@ -222,6 +258,8 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')">Sync pairs</button>
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')">Scrobbler</button>
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')">UI settings</button>
+        <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
+        <button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()">Log out</button>
       </div>
     </div>
     <div class="cw-tabmenu" id="tab-about-menu">
@@ -714,23 +752,20 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                     <div>
                       <div class="cw-panel-title">Security</div>
                       <div class="sub" style="margin-top:0.25rem">
-                        Sign-in authentication. Sessions are cached for 30 days.
+                        Manage your sign-in username, password, and optional session caching.
                       </div>
                     </div>
                   </div>
 
                   <div class="grid2">
                     <div>
-                      <label for="app_auth_enabled">Enabled</label>
-                      <select id="app_auth_enabled" name="app_auth_enabled">
-                        <option value="false">Disabled</option>
-                        <option value="true">Enabled</option>
-                      </select>
+                      <label for="app_auth_username">Username</label>
+                      <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
                     </div>
 
                     <div>
-                      <label for="app_auth_username">Username</label>
-                      <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
+                      <label for="app_auth_password2">Confirm password</label>
+                      <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
                     </div>
                   </div>
 
@@ -738,12 +773,25 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                     <div>
                       <label for="app_auth_password">New password</label>
                       <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
-                      <div class="sub" style="margin-top:0.25rem">Leave blank to keep the current password</div>
+                      <div class="sub" style="margin-top:0.25rem">Leave blank to keep the current password.</div>
+                    </div>
+                  </div>
+
+                  <div id="app_auth_session_fields" class="grid2" style="margin-top:12px">
+                    <div>
+                      <label for="app_auth_remember_enabled">Session caching</label>
+                      <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
+                        <option value="true">Enabled</option>
+                        <option value="false">Browser session only</option>
+                      </select>
+                      <div class="sub" style="margin-top:0.25rem">Browser session only means sign-in is required again after closing the browser.</div>
                     </div>
 
-                    <div>
-                      <label for="app_auth_password2">Confirm password</label>
-                      <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
+                    <div id="app_auth_remember_days_wrap">
+                      <label for="app_auth_remember_days">Cached for days</label>
+                      <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
+                      <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
+                      <div class="sub" style="margin-top:0.25rem">Used only when session caching is enabled. Maximum 365 days.</div>
                     </div>
                   </div>
 
@@ -874,7 +922,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 </div>
 
 
-<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)};window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs")return(window.showTab?.("settings"),window.cwProvidersJump?.("sec-sync"));if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)},logout=()=>{closeMenu("settings");if(typeof window.cwAppLogout==="function")return window.cwAppLogout();window.location.href="/logout"};window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuLogout=logout;window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs")return(window.showTab?.("settings"),window.cwProvidersJump?.("sec-sync"));if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
 
 __CW_ASSET_BLOCK__
 
@@ -892,6 +940,7 @@ __CW_ASSET_BLOCK__
 <script>(()=>{window.cwScrobblerJump=sectionId=>(window.cwSettingsSelect?.('scrobbler'),setTimeout(()=>{window.openSection?.(sectionId);document.getElementById(sectionId)?.scrollIntoView({behavior:'smooth',block:'start'})},0));window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{window.cwUiSettingsSelect?.(tab);document.querySelector(`#ui_settings_hub .cw-hub-tile[data-tab="${String(tab||'').trim().toLowerCase()}"]`)?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'})},0))})();</script>
 
 <script>(()=>{const $=id=>document.getElementById(id),txt=v=>String(v??'').trim(),up=v=>txt(v).toUpperCase(),mask=v=>v==='*****'||/^[•]+$/.test(v),pretty=v=>txt(v).toLowerCase()==='default'?'Default':txt(v),CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>',LABELS={PLEX:'Plex',TRAKT:'Trakt',SIMKL:'SIMKL',ANILIST:'AniList',JELLYFIN:'Jellyfin',EMBY:'Emby',MDBLIST:'MDBlist',TMDB:'TMDb',TAUTULLI:'Tautulli'},AUTH_MAP=[['sec-plex','PLEX'],['sec-emby','EMBY'],['sec-jellyfin','JELLYFIN'],['sec-trakt','TRAKT'],['sec-simkl','SIMKL'],['sec-anilist','ANILIST'],['sec-mdblist','MDBLIST'],['sec-tmdb-sync','TMDB'],['sec-tautulli','TAUTULLI']];let cfg=null,lastCfg=null,authMo=null,metaMo=null;async function getConfig(force=false){if(cfg&&!force)return cfg;const prev=lastCfg||cfg;try{const r=await fetch('/api/config?ts='+Date.now(),{cache:'no-store'});if(r?.ok){const j=await r.json();return lastCfg=cfg=j&&typeof j==='object'?j:{}}}catch{}return cfg=prev||{}}window.invalidateConfigCache=()=>{cfg=null};function isProviderConfigured(key,c=cfg||{}){switch(up(key)){case'PLEX':return!!c?.plex?.account_token;case'TRAKT':return!!(c?.trakt?.access_token||c?.auth?.trakt?.access_token);case'SIMKL':return!!c?.simkl?.access_token;case'ANILIST':return!!(c?.anilist?.access_token||c?.auth?.anilist?.access_token);case'JELLYFIN':return!!c?.jellyfin?.access_token;case'EMBY':return!!(c?.emby?.access_token||c?.auth?.emby?.access_token);case'MDBLIST':return!!c?.mdblist?.api_key;case'TMDB':{const tm=c?.tmdb_sync||c?.auth?.tmdb_sync||{};return!!(tm?.account_id||tm?.session_id)}case'TAUTULLI':return!!((c?.tautulli?.server_url||c?.auth?.tautulli?.server_url)&&(c?.tautulli?.api_key||c?.auth?.tautulli?.api_key));default:return false}}const setDot=(id,on)=>{const sec=$(id),head=sec?.querySelector('.head')||sec?.firstElementChild;if(!head)return false;if(getComputedStyle(head).display!=='flex')Object.assign(head.style,{display:'flex',alignItems:'center'});const dot=head.querySelector('.auth-dot')||head.appendChild(Object.assign(document.createElement('span'),{className:'auth-dot'}));dot.classList.toggle('on',!!on);dot.title=on?'Configured':'Not configured';dot.setAttribute('aria-label',dot.title);return true};async function refreshAuthDots(force=false){const c=await getConfig(force),host=$('auth-providers-icons');host?.querySelectorAll('img[data-prov]').forEach(img=>img.style.display=isProviderConfigured(img.dataset.prov,c)?'inline-block':'none');return AUTH_MAP.reduce((any,[id,key])=>setDot(id,isProviderConfigured(key,c))||any,false)}window.refreshAuthDots=refreshAuthDots;function syncMetadataProviderDot(){const chip=$('hub_tmdb_key'),dot=$('meta-tmdb-dot'),tile=dot?.closest?.('.cw-hub-tile.tmdb');if(!chip||!dot||!tile)return false;const cfgKey=txt(cfg?.tmdb?.api_key),cfgHas=cfgKey.length>0||mask(cfgKey),keyEl=$('tmdb_api_key');let uiHas=false,touched=false;if(keyEl){const v=txt(keyEl.value);touched=keyEl.dataset?.touched==='1';uiHas=v.length>0||mask(v)||keyEl.dataset?.masked==='1';if(touched)uiHas=v.length>0||mask(v)}const raw=txt(chip.textContent).toLowerCase(),chipHas=/\bset\b/.test(raw)&&!/\bmissing\b|\bnot set\b|\bunset\b|\bempty\b|—/.test(raw),on=uiHas||(!touched&&(cfgHas||chipHas));dot.classList.toggle('on',on);dot.title=on?'Configured':'Not configured';dot.setAttribute('aria-label',dot.title);tile.classList.toggle('is-configured',on);return true}window.syncMetadataProviderDot=syncMetadataProviderDot;const observe=(hostId,slot,delay,fn,opts)=>{const host=$(hostId);if(!host)return slot==='meta'?setTimeout(()=>observe(hostId,slot,delay,fn,opts),150):undefined;fn();if((slot==='auth'&&authMo)||(slot==='meta'&&metaMo))return;const mo=new MutationObserver(()=>{clearTimeout(mo._t);mo._t=setTimeout(fn,delay)});mo.observe(host,opts);if(slot==='auth')authMo=mo;else metaMo=mo};document.addEventListener('settings-collect',()=>{refreshAuthDots(true).catch(()=>{});syncMetadataProviderDot()},true);document.addEventListener('tab-changed',()=>{refreshAuthDots(false).catch(()=>{});syncMetadataProviderDot()},true);document.addEventListener('DOMContentLoaded',()=>observe('hub_tmdb_key','meta',0,syncMetadataProviderDot,{childList:true,characterData:true,subtree:true}),{once:true});const titleCase=v=>{v=txt(v);return v?v[0]+v.slice(1).toLowerCase():v},instancesDetail=d=>{const inst=d&&typeof d==='object'?d.instances:null,sum=d&&typeof d==='object'?d.instances_summary:null;if(!inst||typeof inst!=='object')return'';const total=Number(sum?.total);if(!Number.isFinite(total)||total<=1)return'';const lines=[Number.isFinite(Number(sum?.ok))?`Profiles: ${Number(sum.ok)}/${total} connected`:`Profiles: ${total}`],used=Array.isArray(sum?.used)?sum.used:[];if(used.length){const labs=used.slice(0,4).map(pretty);lines.push(`Used: ${labs.join(', ')}${used.length>4?'…':''}`)}const entries=Object.entries(inst).slice(0,6).map(([id,v])=>`${pretty(id)}=${!!(v&&typeof v==='object'?v.connected:v)?'OK':'NO'}`);if(entries.length)lines.push(entries.join(' · '));const rep=txt(sum?.rep);if(rep&&rep.toLowerCase()!=='default')lines.push(`Rep: ${rep}`);return lines.join('\n')},usageDetail=d=>{const hint=txt(d?.usage_hint).replace(/\s*\+\s*/g,' and ');if(hint)return hint;const usedBy=Array.isArray(d?.used_by)?d.used_by:[];return usedBy.length?`Used by: ${usedBy.map(x=>txt(x).toLowerCase()==='pair'?'Sync':'Watcher').join(' and ')}`:''};function providerMeta(K,d){switch(up(K)){case'PLEX':{const vip=!!(d.plexpass||d.subscription?.plan);return{vip,detail:vip?`Plex Pass - ${d.subscription?.plan||'Active'}`:''}}case'TRAKT':{const vip=!!d.vip,wl=d?.limits?.watchlist||{},col=d?.limits?.collection||{},parts=[vip?'VIP status':'Free account'],add=(label,obj)=>{const used=Number(obj.used),max=Number(obj.item_count);if(Number.isFinite(used)&&Number.isFinite(max)&&max>0)parts.push(`${label}: ${used}/${max}`)};add('Watchlist',wl);add('Collection',col);if(d?.last_limit_error?.feature&&d?.last_limit_error?.ts)parts.push(`Last limit: ${d.last_limit_error.feature} @ ${d.last_limit_error.ts}`);return{vip,detail:parts.join(' · ')}}case'EMBY':return{vip:!!d.premiere,detail:d.premiere?'Premiere — Active':''};case'MDBLIST':{const vip=!!d.vip,lim=d?.limits||{},used=Number(lim.api_requests_count),max=Number(lim.api_requests),pat=txt(d.patron_status);return{vip,detail:`API requests: ${Number.isFinite(used)?used.toLocaleString():'-'}/${Number.isFinite(max)?max.toLocaleString():'-'}${pat?` - Status: ${pat}`:''}`}}case'ANILIST':{const nm=d?.user?.name||d?.user?.username||d?.user?.id;return{vip:false,detail:nm?`User: ${nm}`:''}}default:return{vip:false,detail:''}}}const makeConn=({name,connected,vip,detail,key})=>{const wrap=document.createElement('div'),pill=document.createElement('div');wrap.className='conn-item';pill.className=`conn-pill ${connected?'ok':'no'}${vip?' has-vip':''}`;if(key)pill.dataset.prov=up(key||name);pill.role='status';pill.ariaLabel=`${name} ${connected?'connected':'disconnected'}`;if(detail)pill.title=detail;pill.innerHTML=`<div class="conn-brand"><span class="conn-logo"></span>${vip?`<span class="conn-slot">${CROWN}</span>`:''}</div><span class="conn-text"></span><span class="dot ${connected?'ok':'no'}" aria-hidden="true"></span>`;pill.querySelector('.conn-text').textContent=name;wrap.appendChild(pill);return wrap};function render(payload){const host=$('conn-badges'),btn=$('btn-status-refresh');if(!host)return;host.classList.add('vip-badges');if(btn&&host.contains(btn))host.removeChild(btn);host.querySelectorAll('.conn-item').forEach(n=>n.remove());const providers=payload?.providers||{},keys=Object.keys(providers).filter(k=>isProviderConfigured(k,cfg||{})).sort(),none=!keys.length;host.classList.toggle('hidden',none);if(none){const hdr=document.querySelector('.cw-main-card-head-actions')||document.querySelector('.ops-header');if(btn&&hdr)hdr.appendChild(btn);return}keys.map(K=>{const d=providers[K]||{},name=LABELS[K]||titleCase(K),connected=!!d.connected,meta=providerMeta(K,d),detail=connected?[instancesDetail(d),meta.detail,usageDetail(d)].filter(Boolean).join('\n'):(d.reason||`${name} not connected`),el=makeConn({name,connected,vip:meta.vip,detail,key:K});el.style.margin='0';return el}).forEach(el=>host.appendChild(el))}async function fetchAndRender(e,opts){e?.preventDefault?.();const btn=e?.currentTarget||$('btn-status-refresh');if(!btn||btn.dataset.busy==='1')return;btn.dataset.busy='1';btn.classList.remove('spinning');void btn.offsetWidth;btn.classList.add('spinning');btn.setAttribute('aria-busy','true');btn.disabled=true;const minSpin=new Promise(r=>setTimeout(r,600)),ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),4500);try{await getConfig(true);refreshAuthDots(false).catch(()=>{});const r=await fetch(`/api/status${opts?.fresh===true?'?fresh=1':''}`,{cache:'no-store',signal:ctl.signal}),d=r.ok?await r.json():null;render(d?.providers?d:{providers:{}})}catch(err){console.error('Status refresh failed:',err);render({providers:{}})}finally{clearTimeout(t);await minSpin;btn.classList.remove('spinning');btn.removeAttribute('aria-busy');btn.disabled=false;delete btn.dataset.busy}}window.manualRefreshStatus=e=>fetchAndRender(e,{fresh:true});function init(){getConfig().catch(()=>{});const btn=$('btn-status-refresh');if(btn&&btn.dataset.boundClick!=='1'){btn.dataset.boundClick='1';btn.addEventListener('click',window.manualRefreshStatus)}observe('auth-providers','auth',200,()=>refreshAuthDots(false).catch(()=>{}),{childList:true,subtree:false});let tries=0;(function retry(){refreshAuthDots(false).then(ok=>ok||++tries>=50||setTimeout(retry,200)).catch(()=>++tries<50&&setTimeout(retry,200))})();fetchAndRender(null,{fresh:false})}document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init,{once:true}):init()})();</script>
+<script>(()=>{const origFetch=window.fetch;if(typeof origFetch!=='function'||origFetch.__cwAuthPendingWrapped)return;const pending=()=>window.cwIsAuthSetupPending?.()===true,allowPath=p=>p.startsWith('/api/app-auth/')||p==='/api/config/meta'||p.startsWith('/api/config/meta?')||p.startsWith('/assets/')||p==='/favicon.svg';const emptyJson=(body='{}')=>new Response(body,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});window.fetch=Object.assign(async function(resource,init){try{if(!pending())return await origFetch(resource,init);const url=typeof resource==='string'?resource:String(resource?.url||'');const u=new URL(url,location.origin);if(u.origin!==location.origin||!u.pathname.startsWith('/api/')||allowPath(u.pathname)||allowPath(u.pathname+u.search))return await origFetch(resource,init);const method=String(init?.method||resource?.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD')return await origFetch(resource,init);if(u.pathname.startsWith('/api/config'))return emptyJson('{}');if(u.pathname.startsWith('/api/status'))return emptyJson('{"providers":{}}');if(u.pathname.startsWith('/api/pairs'))return emptyJson('[]');if(u.pathname.startsWith('/api/scheduling'))return emptyJson('{}');if(u.pathname.startsWith('/api/insights'))return emptyJson('{}');if(u.pathname.startsWith('/api/watch/'))return emptyJson('{}');if(u.pathname.startsWith('/api/webhooks/'))return emptyJson('{}');return emptyJson('{}')}catch{return await origFetch(resource,init)}},{__cwAuthPendingWrapped:true})})();</script>
 
 <script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),visible=()=>{if(!page)return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
 
