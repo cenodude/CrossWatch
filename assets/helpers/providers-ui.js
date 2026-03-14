@@ -2,7 +2,9 @@
 /* Extracted provider/auth/metadata UI from core.js */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const apiText = async (url) => {
+    if (authSetupPending()) throw new Error("auth setup pending");
     if (window.CW?.API?.j) return window.CW.API.j(url);
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -10,6 +12,7 @@
   };
 
   const listProviders = async (force = false) => {
+    if (authSetupPending()) return [];
     if (window.CW?.API?.Providers?.list) return window.CW.API.Providers.list(!!force);
     return fetch("/api/sync/providers", { cache: "no-store" }).then((r) => r.json()).catch(() => []);
   };
@@ -93,6 +96,7 @@
   let authHtml = "";
   let authInflight = null;
   async function mountAuthProviders(force = false) {
+    if (authSetupPending()) return;
     if (authInflight) return authInflight;
     authInflight = (async () => {
       try {
@@ -121,6 +125,7 @@
         setTimeout(() => window.updateTraktHint?.(), 0);
         requestAnimationFrame(() => window.updateTraktHint?.());
       } catch (e) {
+        if (String(e?.message || e || "").includes("auth setup pending")) return;
         console.warn("mountAuthProviders failed", e);
       } finally {
         authInflight = null;
@@ -132,6 +137,7 @@
   let metadataHtml = "";
   let metadataInflight = null;
   async function mountMetadataProviders(force = false) {
+    if (authSetupPending()) return;
     if (metadataInflight) return metadataInflight;
     metadataInflight = (async () => {
       try {
@@ -164,6 +170,7 @@
         try { window.updateTmdbHint?.(); } catch {}
         try { window.cwMetaProviderUpdateChips?.(); } catch {}
       } catch (e) {
+        if (String(e?.message || e || "").includes("auth setup pending")) return;
         console.warn("mountMetadataProviders failed", e);
       } finally {
         metadataInflight = null;
@@ -239,6 +246,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
+    if (authSetupPending()) return;
     wireCopyButtons();
     updateFlowRailLogos();
     ["cx-src", "cx-dst"].forEach((id) => document.getElementById(id)?.addEventListener("change", updateFlowRailLogos));

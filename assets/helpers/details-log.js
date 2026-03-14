@@ -273,6 +273,7 @@ async function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
   if (!el) return;
+  const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const tabSync = document.getElementById("det-tab-sync");
   try { initDetailsTabs(); } catch {}
 
@@ -337,6 +338,7 @@ async function openDetailsLog() {
   const STALE_MS = 20000;
 
   const connect = () => {
+    if (authSetupPending()) return;
     try { window.esDet?.close(); } catch (_) {}
     window.esDet = new EventSource("/api/logs/stream?tag=SYNC");
     window.esDet.onopen = () => { tabSync?.classList.add("connected"); tabSync?.classList.remove("stale"); };
@@ -382,6 +384,7 @@ async function openDetailsLog() {
       }
 
       if (!window._detRetryTO) {
+        if (authSetupPending()) return;
         window._detRetryTO = setTimeout(() => {
           window._detRetryTO = null;
           connect();
@@ -412,28 +415,30 @@ async function openDetailsLog() {
 
   if (!window.appDebug) {
     try { window.esDetSummary?.close(); } catch (_) {}
-    window.esDetSummary = new EventSource("/api/run/summary/stream");
-    window.esDetSummary.onmessage = (ev) => {
-      try {
-        if (!ev?.data) return;
-        const obj = JSON.parse(ev.data);
-        if (!obj || obj.event === "debug") return;
-        const line = JSON.stringify(obj) + "\n";
-        if (useFormatter) {
-          const { tokens } = CF.processChunk("", line);
-          for (const tok of tokens) CF.renderInto(el, tok, false);
-        } else {
-          appendRaw(line);
-        }
-        _pruneDetailsLog(el);
-        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-        updateSlider();
-      } catch (_) {}
-    };
-    window.esDetSummary.onerror = () => {
-      try { window.esDetSummary?.close(); } catch (_) {}
-      window.esDetSummary = null;
-    };
+    if (!authSetupPending()) {
+      window.esDetSummary = new EventSource("/api/run/summary/stream");
+      window.esDetSummary.onmessage = (ev) => {
+        try {
+          if (!ev?.data) return;
+          const obj = JSON.parse(ev.data);
+          if (!obj || obj.event === "debug") return;
+          const line = JSON.stringify(obj) + "\n";
+          if (useFormatter) {
+            const { tokens } = CF.processChunk("", line);
+            for (const tok of tokens) CF.renderInto(el, tok, false);
+          } else {
+            appendRaw(line);
+          }
+          _pruneDetailsLog(el);
+          if (window.detStickBottom) el.scrollTop = el.scrollHeight;
+          updateSlider();
+        } catch (_) {}
+      };
+      window.esDetSummary.onerror = () => {
+        try { window.esDetSummary?.close(); } catch (_) {}
+        window.esDetSummary = null;
+      };
+    }
   }
 
   requestAnimationFrame(() => {
