@@ -11,8 +11,10 @@
     clear=n=>S.timers[n]&&(clearTimeout(S.timers[n]),S.timers[n]=null),
     scrobMode=()=>String(S.cfg?.scrobble?.mode||'webhook').toLowerCase(),
     schedulingOn=c=>!!((c?.scheduling||c||{}).enabled||(c?.scheduling||c||{})?.advanced?.enabled),
-    chipText={sched:'Scheduler',watch:'Watcher',hook:'Webhook'},
-    S={cfg:null,sched:{enabled:false,running:false,next:0,advanced:false},watch:{...blank(),alive:false},hook:blank(),timers:{sched:null,scrob:null,wait:null},debounce:null,last:{watcher:'',webhook:''}};
+    activeEventRules=c=>(((c?.scheduling||c||{})?.advanced?.event_rules)||((c?.scheduling||c||{})?.advanced?.eventRules)||[])
+      .filter(r=>r&&typeof r==='object'&&r.active!==false&&String(r?.action?.kind||'sync_pair')==='sync_pair'&&String(r?.action?.pair_id||r?.action?.pairId||r?.pair_id||'').trim()&&String(r?.filters?.route_id||r?.filters?.routeId||'').trim()).length,
+    chipText={sched:'Scheduler',evt:'Events',watch:'Watcher',hook:'Webhook'},
+    S={cfg:null,sched:{enabled:false,running:false,next:0,advanced:false},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),timers:{sched:null,scrob:null,wait:null},debounce:null,last:{watcher:'',webhook:''}};
 
   if (!$('#sched-banner-css')) {
     const st=document.createElement('style');
@@ -39,6 +41,14 @@
       wrap.id='sched-inline-log';
       wrap.innerHTML=['sched','watch','hook'].map(k=>`<div class="sched idle" id="chip-${k}"><span class="ic dot"></span><span class="copy"><span class="label">${chipText[k]}</span><span class="value" id="${k}-value">—</span><span class="meta" id="${k}-meta"></span></span></div>`).join('');
       host.appendChild(wrap);
+    }
+    if (!$('#chip-evt', wrap)) {
+      const chip=document.createElement('div');
+      chip.className='sched idle';
+      chip.id='chip-evt';
+      chip.innerHTML=`<span class="ic dot"></span><span class="copy"><span class="label">${chipText.evt}</span><span class="value" id="evt-value">-</span><span class="meta" id="evt-meta"></span></span>`;
+      const watchChip=$('#chip-watch', wrap);
+      watchChip ? wrap.insertBefore(chip, watchChip) : wrap.appendChild(chip);
     }
     return wrap;
   }
@@ -78,7 +88,7 @@
     const host=ensureBanner();
     if (!host) return;
     const E=k=>({chip:$(`#chip-${k}`,host),value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host)}),
-      sched=E('sched'), watch=E('watch'), hook=E('hook'),
+      sched=E('sched'), evt=E('evt'), watch=E('watch'), hook=E('hook'),
       watchLive=!!(S.watch.alive&&S.watch.state==='playing'&&S.watch.title),
       hookLive=!!(S.hook.state==='playing'&&S.hook.title),
       watchStreams=watchLive&&S.watch.streams>1?`${S.watch.streams} streams`:'',
@@ -90,6 +100,12 @@
       tip:`Scheduler ${S.sched.running?'running':(S.sched.advanced?'advanced':'scheduled')}${S.sched.next?` • next ${clock(S.sched.next,true)}`:''}${S.sched.advanced?' • advanced mode':''}`
     });
 
+    paint(evt,!S.evt.enabled?{show:false}:{
+      value:`${S.evt.count}`,
+      meta:S.evt.count===1?'trigger':'triggers',
+      idle:!S.evt.count,
+      tip:`${S.evt.count} enabled event trigger${S.evt.count===1?'':'s'}`
+    });
     paint(watch,!S.watch.enabled?{show:false}:{
       value:watchLive?S.watch.title:(S.watch.alive?'running':'idle'), meta:watchStreams,
       live:watchLive, ok:S.watch.alive, idle:!S.watch.alive,
@@ -104,7 +120,7 @@
     });
     emit('webhook',hookLive?{title:S.hook.title,progress:0,state:S.hook.state||'playing',_streams_count:S.hook.streams}:{state:'stopped'});
 
-    host.style.display=S.sched.enabled||S.watch.enabled||S.hook.enabled?'flex':'none';
+    host.style.display=S.sched.enabled||S.evt.enabled||S.watch.enabled||S.hook.enabled?'flex':'none';
   }
 
   async function readConfig(force=false){
@@ -117,7 +133,8 @@
     try {
       const st=await API().Scheduling.status(force), sc=st?.config||S.cfg?.scheduling||{};
       S.sched={enabled:schedulingOn(sc),advanced:!!sc?.advanced?.enabled,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0};
-    } catch { S.sched={enabled:false,running:false,next:0,advanced:false}; }
+      S.evt={enabled:!!sc?.advanced?.enabled&&activeEventRules(sc)>0,count:activeEventRules(sc)};
+    } catch { S.sched={enabled:false,running:false,next:0,advanced:false}; S.evt={enabled:false,count:0}; }
     render();
     scheduleSched();
   }
@@ -150,11 +167,12 @@
     S.cfg=await readConfig(forceCfg);
     if (!schedulingOn(S.cfg?.scheduling) && !S.cfg?.scrobble?.enabled) {
       S.sched={enabled:false,running:false,next:0,advanced:false};
+      S.evt={enabled:false,count:0};
       S.watch={...blank(),alive:false};
       S.hook=blank();
       return render();
     }
-    schedulingOn(S.cfg?.scheduling)?await pollSched(true):(S.sched={enabled:false,running:false,next:0,advanced:false});
+    schedulingOn(S.cfg?.scheduling)?await pollSched(true):(S.sched={enabled:false,running:false,next:0,advanced:false},S.evt={enabled:false,count:0});
     S.cfg?.scrobble?.enabled?await pollScrob(true):(S.watch.enabled=S.hook.enabled=false,render());
   }
 
