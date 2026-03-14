@@ -1,5 +1,30 @@
-// assets/js/modals/upgrade-warning/index.js
+  /* assets/js/modals/upgrade-warning/index.js */
+  /* CrossWatch - upgrade warning modal component */
+  /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 const NOTES_ENDPOINT = "/api/update";
+const _cwV = (() => {
+  try { return new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || Date.now(); }
+  catch { return window.__CW_VERSION__ || Date.now(); }
+})();
+
+const _cwVer = (u) => u + (u.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(String(_cwV));
+
+const { getJson, postJson } = await import(_cwVer("../core/net.js"));
+const { renderNotesMarkup } = await import(_cwVer("./notes.js"));
+const {
+  appAuthFormCss,
+  escapeHtml,
+  fetchAppAuthStatus,
+  hasEnabledAppAuth,
+  renderAppAuthFields,
+  saveRequiredAppAuth,
+  setModalDismissible,
+  setModalShellInline,
+  syncAppAuthState,
+  validateAppAuthState,
+  wireLiveAppAuthValidation,
+} = await import(_cwVer("../core/app-auth-setup.js"));
+
 function _norm(v) {
   return String(v || "").replace(/^v/i, "").trim();
 }
@@ -7,7 +32,7 @@ function _norm(v) {
 function _cmp(a, b) {
   const pa = _norm(a).split(".").map((n) => parseInt(n, 10) || 0);
   const pb = _norm(b).split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
     const da = pa[i] || 0;
     const db = pb[i] || 0;
     if (da !== db) return da > db ? 1 : -1;
@@ -15,288 +40,14 @@ function _cmp(a, b) {
   return 0;
 }
 
-function _escapeHtml(s) {
-  return String(s || "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function _guessGithubRepo(s) {
-  const m = String(s || "").match(/https?:\/\/github\.com\/([^\/\s]+\/[^\/\s]+)\//i);
-  return m ? m[1] : "";
-}
-
-function _splitUrlTail(u) {
-  let clean = String(u || "");
-  let tail = "";
-  while (clean && /[\]\)\}\.,;:!?]+$/.test(clean)) {
-    tail = clean.slice(-1) + tail;
-    clean = clean.slice(0, -1);
-  }
-  return { clean, tail };
-}
-
-function _sanitizeHtml(html, ctx = {}) {
-  try {
-    const tpl = document.createElement("template");
-    tpl.innerHTML = String(html || "");
-    const githubRepo = String(ctx.githubRepo || "").trim();
-    const blocked = new Set(["SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "LINK", "META"]);
-    const kill = [];
-
-    try {
-      const isSkippableText = (node) => {
-        let p = node && node.parentNode;
-        while (p && p.nodeType === 1) {
-          const tag = String(p.tagName || "").toUpperCase();
-          if (tag === "A" || tag === "CODE" || tag === "PRE" || tag === "SCRIPT" || tag === "STYLE") return true;
-          p = p.parentNode;
-        }
-        return false;
-      };
-
-      const re = /(https?:\/\/[^\s<>"']+)|(^|[\s([{,;:])#(\d{1,7})\b/g;
-      const tw = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
-      const nodes = [];
-      while (tw.nextNode()) nodes.push(tw.currentNode);
-
-      for (const node of nodes) {
-        if (!node || !node.nodeValue) continue;
-        if (isSkippableText(node)) continue;
-
-        const s = node.nodeValue;
-        if (!/https?:\/\//i.test(s) && (githubRepo ? !/#\d+\b/.test(s) : true)) continue;
-
-        let m;
-        let idx = 0;
-        let changed = false;
-        const frag = document.createDocumentFragment();
-        re.lastIndex = 0;
-
-        while ((m = re.exec(s))) {
-          // URL match
-          if (m[1]) {
-            const start = m.index;
-            const rawUrl = m[1];
-            const { clean, tail } = _splitUrlTail(rawUrl);
-            if (!clean) continue;
-
-            frag.append(document.createTextNode(s.slice(idx, start)));
-
-            const a = document.createElement("a");
-            a.href = clean;
-
-            const gh = clean.match(/^https?:\/\/github\.com\/[^\/\s]+\/[^\/\s]+\/(issues|pull)\/(\d+)(?:\/|$)/i);
-            a.textContent = gh ? `#${gh[2]}` : clean;
-            frag.append(a);
-            if (tail) frag.append(document.createTextNode(tail));
-
-            idx = start + rawUrl.length;
-            changed = true;
-            continue;
-          }
-
-          // Issue ref match (#123)
-          const prefix = m[2] || "";
-          const num = m[3];
-          const issueStart = m.index + prefix.length;
-          frag.append(document.createTextNode(s.slice(idx, issueStart)));
-
-          if (githubRepo) {
-            const a = document.createElement("a");
-            a.href = `https://github.com/${githubRepo}/issues/${num}`;
-            a.textContent = `#${num}`;
-            frag.append(a);
-            changed = true;
-          } else {
-            frag.append(document.createTextNode(`#${num}`));
-          }
-
-          idx = m.index + m[0].length;
-        }
-
-        if (!changed) continue;
-        frag.append(document.createTextNode(s.slice(idx)));
-        node.parentNode?.replaceChild(frag, node);
-      }
-    } catch {}
-
-    const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_ELEMENT);
-    while (walker.nextNode()) {
-      const el = walker.currentNode;
-      if (blocked.has(el.tagName)) kill.push(el);
-
-      // Strip unsafe attributes
-      for (const attr of Array.from(el.attributes || [])) {
-        const k = String(attr.name || "").toLowerCase();
-        const v = String(attr.value || "");
-        if (k.startsWith("on")) el.removeAttribute(attr.name);
-        if ((k === "href" || k === "src") && /^\s*javascript:/i.test(v)) el.removeAttribute(attr.name);
-      }
-
-      // Force safe link behavior
-      if (el.tagName === "A") {
-        el.setAttribute("target", "_blank");
-        el.setAttribute("rel", "noopener noreferrer");
-      }
-    }
-
-    for (const el of kill) el.remove();
-    return tpl.innerHTML;
-  } catch {
-    return String(html || "");
-  }
-}
-
-function _mdInline(s) {
-  let x = String(s || "");
-
-  // Code spans, links, bold, italics
-  x = x.replace(/`([^`]+)`/g, (_, c) => `<code>${_escapeHtml(c)}</code>`);
-  x = x.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, href) => `<a href="${href}">${t}</a>`);
-  x = x.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  x = x.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<i>$2</i>");
-
-  return x;
-}
-
-function _mdToHtml(md) {
-  const src = String(md || "").replace(/\r\n/g, "\n");
-  const blocks = [];
-  let tmp = src.replace(/```([\s\S]*?)```/g, (_, inner) => {
-    let code = String(inner || "");
-    let lang = "";
-    const lines = code.split("\n");
-    const first = (lines[0] || "").trim();
-    if (first && /^[a-z0-9_-]+$/i.test(first) && lines.length > 1) {
-      lang = first;
-      lines.shift();
-      code = lines.join("\n");
-    }
-    const html = `<pre><code${lang ? ` class="lang-${lang}"` : ""}>${_escapeHtml(code.replace(/\n$/, ""))}</code></pre>`;
-    const id = blocks.length;
-    blocks.push(html);
-    return `@@CW_CODE_${id}@@`;
-  });
-
-  const out = [];
-  const lines = tmp.split("\n");
-  let i = 0;
-  let inUl = false;
-  let inOl = false;
-
-  const closeLists = () => {
-    if (inUl) out.push("</ul>");
-    if (inOl) out.push("</ol>");
-    inUl = false;
-    inOl = false;
-  };
-
-  while (i < lines.length) {
-    const line = lines[i];
-    const t = line.trim();
-
-    if (!t) {
-      closeLists();
-      i += 1;
-      continue;
-    }
-
-    // Headings
-    const hm = line.match(/^(#{1,6})\s+(.*)$/);
-    if (hm) {
-      closeLists();
-      const lvl = hm[1].length;
-      out.push(`<h${lvl}>${_mdInline(hm[2])}</h${lvl}>`);
-      i += 1;
-      continue;
-    }
-
-    // Unordered list
-    const ulm = line.match(/^\s*[-*]\s+(.*)$/);
-    if (ulm) {
-      if (!inUl) {
-        closeLists();
-        out.push("<ul>");
-        inUl = true;
-      }
-      out.push(`<li>${_mdInline(ulm[1])}</li>`);
-      i += 1;
-      continue;
-    }
-
-    // Ordered list
-    const olm = line.match(/^\s*\d+\.\s+(.*)$/);
-    if (olm) {
-      if (!inOl) {
-        closeLists();
-        out.push("<ol>");
-        inOl = true;
-      }
-      out.push(`<li>${_mdInline(olm[1])}</li>`);
-      i += 1;
-      continue;
-    }
-
-    // Paragraph
-    closeLists();
-    const buf = [t];
-    i += 1;
-    while (i < lines.length) {
-      const n = lines[i];
-      const nt = n.trim();
-      if (!nt) break;
-      if (/^(#{1,6})\s+/.test(n)) break;
-      if (/^\s*[-*]\s+/.test(n)) break;
-      if (/^\s*\d+\.\s+/.test(n)) break;
-      buf.push(nt);
-      i += 1;
-    }
-    out.push(`<p>${_mdInline(buf.join(" "))}</p>`);
-  }
-
-  closeLists();
-
-  let html = out.join("\n");
-  html = html.replace(/@@CW_CODE_(\d+)@@/g, (_, n) => blocks[Number(n)] || "");
-  return html;
-}
-
-
-async function _getJson(url, opts = {}) {
-  const res = await fetch(url, { method: "GET", ...opts });
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {}
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status} ${res.statusText}`);
-  return data || {};
-}
-
-async function _postJson(url, opts = {}) {
-  const res = await fetch(url, { method: "POST", ...opts });
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {}
-  if (!res.ok || (data && data.ok === false)) {
-    const msg = (data && (data.error || data.message)) || `HTTP ${res.status} ${res.statusText}`;
-    throw new Error(`${url}: ${msg}`);
-  }
-  return data;
-}
-
 async function _runConfigMigration() {
-  return _postJson("/api/config/migrate");
+  return postJson("/api/config/migrate");
 }
 
 async function _restartAfterMigration() {
   try {
     window.cxCloseModal?.();
-  } catch (_) {}
+  } catch {}
 
   setTimeout(() => {
     try {
@@ -304,7 +55,7 @@ async function _restartAfterMigration() {
         window.cwRestartCrossWatchWithOverlay();
         return;
       }
-    } catch (_) {}
+    } catch {}
 
     fetch("/api/maintenance/restart", { method: "POST", cache: "no-store" }).finally(() => {
       window.location.reload();
@@ -313,13 +64,11 @@ async function _restartAfterMigration() {
 }
 
 async function _pauseSchedulerOnce() {
-  // Stop scheduler once when migration is required (<0.9.11) to avoid running on mixed ID systems.
   const notify = window.notify || ((m) => console.log("[notify]", m));
   const KEY = "cw_stop_scheduler_pre_0911";
 
   try {
-    if (window.__CW_STOP_SCHED_0911_DONE__) return;
-    if (window.__CW_STOP_SCHED_0911_INFLIGHT__) return;
+    if (window.__CW_STOP_SCHED_0911_DONE__ || window.__CW_STOP_SCHED_0911_INFLIGHT__) return;
   } catch {}
 
   try {
@@ -332,7 +81,7 @@ async function _pauseSchedulerOnce() {
   try { window.__CW_STOP_SCHED_0911_INFLIGHT__ = true; } catch {}
 
   try {
-    await _postJson("/api/scheduling/stop");
+    await postJson("/api/scheduling/stop");
     notify("Scheduler stopped until you complete migration.");
     try {
       localStorage.setItem(KEY, "1");
@@ -345,13 +94,10 @@ async function _pauseSchedulerOnce() {
   }
 }
 
-
 async function saveNow(btn) {
   const notify = window.notify || ((m) => console.log("[notify]", m));
   try {
     if (btn && btn.dataset && btn.dataset.done === "1") return;
-  } catch {}
-  try {
     if (btn) {
       btn.disabled = true;
       btn.classList.add("busy");
@@ -378,14 +124,11 @@ async function saveNow(btn) {
   } catch (e) {
     console.warn("[upgrade-warning] save failed", e);
     notify("Save failed. Check logs.");
-  } finally {
     try {
-      if (btn) {
-        if (!btn.dataset || btn.dataset.done !== "1") {
-          btn.disabled = false;
-          btn.classList.remove("busy");
-          btn.textContent = "MIGRATE";
-        }
+      if (btn && (!btn.dataset || btn.dataset.done !== "1")) {
+        btn.disabled = false;
+        btn.classList.remove("busy");
+        btn.textContent = "MIGRATE";
       }
     } catch {}
   }
@@ -414,10 +157,7 @@ async function migrateNow(btn, fullClean = false) {
           url: "/api/maintenance/crosswatch-tracker/clear",
           opts: {
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              clear_state: true,
-              clear_snapshots: true,
-            }),
+            body: JSON.stringify({ clear_state: true, clear_snapshots: true }),
           },
         },
         {
@@ -432,11 +172,10 @@ async function migrateNow(btn, fullClean = false) {
     }
 
     for (const op of ops) {
-      await _postJson(op.url, op.opts);
+      await postJson(op.url, op.opts);
     }
 
     const res = await _runConfigMigration();
-
     notify(fullClean
       ? (res && res.backup
           ? `Migration completed. Legacy state/cache cleared. Config backup created: ${res.backup}`
@@ -458,7 +197,6 @@ async function migrateNow(btn, fullClean = false) {
   } catch (e) {
     console.warn("[upgrade-warning] migrate failed", e);
     notify("Migration failed. Check logs.");
-
     try {
       if (btn) {
         btn.disabled = false;
@@ -469,248 +207,292 @@ async function migrateNow(btn, fullClean = false) {
   }
 }
 
-
-
 export default {
   async mount(hostEl, props = {}) {
     if (!hostEl) return;
 
+    const notify = window.notify || ((m) => console.log("[notify]", m));
     const cur = _norm(props.current_version || window.__CW_VERSION__ || "0.0.0");
-
     const rawCfgVer = props.config_version;
     const hasCfgVer = rawCfgVer != null && String(rawCfgVer).trim() !== "";
     const cfg = hasCfgVer ? _norm(rawCfgVer) : "";
-
-    // Legacy if config has no version, or version < 0.7.0
     const legacy = !hasCfgVer || _cmp(cfg, "0.7.0") < 0;
-
-    // v0.9.11 introduced IMDb -> TMDb primary ID change. Anything before that needs a full cleanup.
     const needs0911Cleanup = !hasCfgVer || _cmp(cfg, "0.9.11") < 0;
 
-    if (needs0911Cleanup) {
-      // Stop scheduler early for safety until migration is completed.
-      _pauseSchedulerOnce();
+    if (needs0911Cleanup) _pauseSchedulerOnce();
+
+    const shell = hostEl.closest(".cx-modal-shell");
+    const state = {
+      authReady: false,
+      step: "intro",
+      username: "admin",
+      password: "",
+      password2: "",
+      error: "",
+      saving: false,
+      notesLoaded: false,
+      notesVisible: false,
+      notesBody: "",
+      notesMeta: "",
+      notesUrl: "https://github.com/cenodude/CrossWatch/releases",
+    };
+
+    try {
+      const authStatus = await fetchAppAuthStatus();
+      state.authReady = !!(
+        authStatus
+        && !authStatus.reset_required
+        && hasEnabledAppAuth(authStatus)
+      );
+      state.step = state.authReady ? "migrate" : "intro";
+    } catch {
+      state.authReady = false;
+      state.step = "intro";
     }
 
-    hostEl.innerHTML = `
+    async function ensureNotesLoaded() {
+      if (state.step !== "migrate" || state.notesLoaded) return;
+      state.notesLoaded = true;
+      try {
+        const j = await getJson(NOTES_ENDPOINT, { cache: "no-store" });
+        const body = String(j.body || "").trim();
+        state.notesUrl = String(j.html_url || j.url || state.notesUrl || "").trim() || state.notesUrl;
+        if (!body) return;
+        const latest = _norm(j.latest_version || j.latest || "");
+        const published = String(j.published_at || "").trim();
+        state.notesBody = renderNotesMarkup(body);
+        state.notesMeta = `Latest${latest ? ` v${latest}` : ""}${published ? ` - ${published}` : ""}`;
+        state.notesVisible = true;
+        render();
+      } catch {}
+    }
+
+    async function submitCredentials() {
+      syncAppAuthState(hostEl, state);
+      state.error = validateAppAuthState(state);
+      if (state.error) {
+        render();
+        return;
+      }
+
+      state.saving = true;
+      render();
+
+      try {
+        await saveRequiredAppAuth({
+          username: state.username,
+          password: state.password,
+        });
+        state.authReady = true;
+        state.saving = false;
+        state.error = "";
+        state.password = "";
+        state.password2 = "";
+        state.step = "migrate";
+        notify("Sign-in saved. Continue with migration.");
+        render();
+        return;
+      } catch (err) {
+        state.saving = false;
+        state.error = String(err?.message || "Failed to save sign-in settings.");
+        render();
+      }
+    }
+
+    function layout(body, foot) {
+      return `
         <style>
-      #upg-host{--w:820px;position:relative;overflow:hidden;min-width:min(var(--w),94vw);max-width:94vw;color:#eaf0ff;border-radius:18px;
-        border:1px solid rgba(255,255,255,.08);
-        background:
-          radial-gradient(900px circle at 18% 18%, rgba(150,70,255,.22), transparent 55%),
-          radial-gradient(900px circle at 92% 10%, rgba(60,140,255,.18), transparent 55%),
-          radial-gradient(800px circle at 55% 110%, rgba(60,255,215,.08), transparent 60%),
-          rgba(7,8,11,.92);
-        box-shadow:0 30px 90px rgba(0,0,0,.70), inset 0 1px 0 rgba(255,255,255,.04);
-        backdrop-filter:saturate(135%) blur(10px)
-      }
-      #upg-host:before{content:"";position:absolute;inset:-120px;pointer-events:none;
-        background:conic-gradient(from 180deg at 50% 50%, rgba(150,70,255,.0), rgba(150,70,255,.30), rgba(60,140,255,.24), rgba(60,255,215,.10), rgba(150,70,255,.0));
-        filter:blur(90px);opacity:.35;transform:translate3d(0,0,0);
-        animation:upgGlow 16s ease-in-out infinite alternate
-      }
-      @keyframes upgGlow{from{transform:translate(-16px,-10px) scale(1)}to{transform:translate(16px,12px) scale(1.03)}}
-      @media (prefers-reduced-motion: reduce){#upg-host:before{animation:none}}
-
-      #upg-host .head{position:relative;display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);
-        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))
-      }
-      #upg-host .icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
-        background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
-        box-shadow:0 12px 30px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,.04)
-      }
-      #upg-host .icon span{font-size:26px;opacity:.95;filter:drop-shadow(0 10px 16px rgba(0,0,0,.45))}
-      #upg-host .t{font-weight:950;letter-spacing:.2px;font-size:15px;line-height:1.1;text-transform:uppercase;opacity:.90}
-      #upg-host .sub{opacity:.72;font-size:12px;margin-top:2px}
-      #upg-host .pill{margin-left:auto;display:flex;gap:8px;align-items:center;font-weight:900;font-size:12px;opacity:.85}
-      #upg-host .pill .b{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
-
-      #upg-host .body{position:relative;padding:16px 16px 8px 16px;max-height:72vh;overflow:auto}
-      #upg-host .card{display:block;padding:12px 12px;border-radius:14px;
-        background:rgba(255,255,255,.03);
-        border:1px solid rgba(255,255,255,.08);
-        box-shadow:0 10px 30px rgba(0,0,0,.32);
-        margin-bottom:10px
-      }
-      #upg-host .card .h{font-weight:950}
-      #upg-host .card .p{opacity:.84;margin-top:6px;line-height:1.45}
-      #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
-      #upg-host ul{margin:.6em 0 0 1.15em}
-      #upg-host code{opacity:.95}
-      #upg-host .notes{margin-top:8px;overflow:auto;max-height:340px;
-        padding:12px 12px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);opacity:.92}
-      #upg-host .notes.md{white-space:normal;font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial}
-      #upg-host .notes.md h1{font-size:16px;margin:0 0 10px 0}
-      #upg-host .notes.md h2{font-size:14px;margin:14px 0 8px 0}
-      #upg-host .notes.md h3{font-size:13px;margin:12px 0 6px 0}
-      #upg-host .notes.md p{margin:0 0 10px 0}
-      #upg-host .notes.md ul,#upg-host .notes.md ol{margin:0 0 10px 1.25em}
-      #upg-host .notes.md li{margin:4px 0}
-      #upg-host .notes.md code{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
-        background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);padding:1px 6px;border-radius:8px}
-      #upg-host .notes.md pre{margin:10px 0;padding:10px 10px;border-radius:12px;overflow:auto;white-space:pre;
-        background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.10)}
-      #upg-host .notes.md pre code{background:transparent;border:0;padding:0}
-      #upg-host .notes.md a{color:inherit;text-decoration:underline;opacity:.9}
-      #upg-host .notes.md img{max-width:100%;height:auto;border-radius:12px;display:block;margin:10px 0;opacity:.96}
-      #upg-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;
-        background:rgba(255,255,255,.04);color:#eaf0ff
-      }
-      #upg-host .btn:hover{filter:brightness(1.06)}
-      #upg-host .btn.primary{border-color:rgba(150,70,255,.35);
-        background:linear-gradient(135deg,rgba(150,70,255,.92),rgba(60,140,255,.82));
-        box-shadow:0 16px 50px rgba(0,0,0,.48)
-      }
-      #upg-host .btn.primary:active{transform:translateY(1px)}
-      #upg-host .btn.ghost{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.10);box-shadow:none}
-      #upg-host .btn.danger{border-color:rgba(255,120,120,.28);background:linear-gradient(135deg,rgba(255,77,79,.92),rgba(255,122,122,.82));color:#fff;box-shadow:0 16px 50px rgba(0,0,0,.48)}
-      #upg-host .btn.busy{opacity:.82;cursor:progress}
-
-      #upg-host .foot{position:relative;display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid rgba(255,255,255,.08);
-        background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))
-      }
-    </style>
-
-    <div id="upg-host">
-      <div class="head">
-        <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
-        <div>
-          <div class="t">${needs0911Cleanup ? "Migration required" : (legacy ? "Legacy config detected" : "Config version notice")}</div>
-          <div class="sub">${needs0911Cleanup ? "Pre-v0.9.11 data cleanup" : (legacy ? "This release introduced config versioning (0.7.0+)." : "Migrate to new save format.")}</div>
+          #upg-host{--w:820px;position:relative;overflow:hidden;min-width:min(var(--w),94vw);max-width:94vw;color:#eaf0ff;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:radial-gradient(900px circle at 18% 18%, rgba(150,70,255,.22), transparent 55%),radial-gradient(900px circle at 92% 10%, rgba(60,140,255,.18), transparent 55%),radial-gradient(800px circle at 55% 110%, rgba(60,255,215,.08), transparent 60%),rgba(7,8,11,.92);box-shadow:0 30px 90px rgba(0,0,0,.70), inset 0 1px 0 rgba(255,255,255,.04);backdrop-filter:saturate(135%) blur(10px)}
+          #upg-host .head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))}
+          #upg-host .icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
+          #upg-host .icon span{font-size:26px}
+          #upg-host .t{font-weight:950;font-size:15px;line-height:1.1;text-transform:uppercase;opacity:.90}
+          #upg-host .sub{opacity:.72;font-size:12px;margin-top:2px}
+          #upg-host .pill{margin-left:auto;display:flex;gap:8px;align-items:center;font-weight:900;font-size:12px;opacity:.85}
+          #upg-host .pill .b{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
+          #upg-host .body{padding:16px 16px 8px 16px;max-height:72vh;overflow:auto}
+          #upg-host .card{display:block;padding:12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 30px rgba(0,0,0,.32);margin-bottom:10px}
+          #upg-host .card .h{font-weight:950}
+          #upg-host .card .p{opacity:.84;margin-top:6px;line-height:1.45}
+          #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
+          #upg-host .notes{margin-top:8px;max-height:320px;overflow:auto;padding:16px 18px;border-radius:16px;background:linear-gradient(180deg,rgba(7,9,16,.72),rgba(4,6,10,.88));border:1px solid rgba(255,255,255,.08);font:14px/1.65 "Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;color:rgba(236,241,255,.94)}
+          #upg-host .notes h2,#upg-host .notes h3,#upg-host .notes h4{margin:0 0 10px;line-height:1.15;letter-spacing:-.02em;color:#f5f7ff}
+          #upg-host .notes h2{font-size:24px;font-weight:950}
+          #upg-host .notes h3{margin-top:20px;font-size:18px;font-weight:900}
+          #upg-host .notes h4{margin-top:16px;font-size:15px;font-weight:900}
+          #upg-host .notes p{margin:0 0 12px;color:rgba(225,232,247,.82)}
+          #upg-host .notes .notes-list{margin:0 0 14px;padding-left:20px;display:grid;gap:8px}
+          #upg-host .notes li{color:rgba(231,237,250,.88)}
+          #upg-host .notes li.indent-1{margin-left:14px;opacity:.92}
+          #upg-host .notes li.indent-2{margin-left:28px;opacity:.88}
+          #upg-host .notes strong{color:#f7f9ff}
+          #upg-host .notes em{color:rgba(230,214,255,.92)}
+          #upg-host .notes code{padding:2px 6px;border-radius:8px;background:rgba(140,109,255,.14);border:1px solid rgba(140,109,255,.18);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;color:#f6ebff}
+          #upg-host .notes a{color:#caa7ff;text-decoration:none;word-break:break-word}
+          #upg-host .notes a:hover{text-decoration:underline}
+          #upg-host .helpLink{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px;padding:14px 16px;border-radius:14px;text-decoration:none;color:#eef3ff;background:linear-gradient(135deg,rgba(150,70,255,.18),rgba(60,140,255,.14));border:1px solid rgba(150,70,255,.22);box-shadow:0 14px 34px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.04);transition:transform .16s ease, filter .16s ease, border-color .16s ease}
+          #upg-host .helpLink:hover{transform:translateY(-1px);filter:brightness(1.06);border-color:rgba(150,70,255,.32)}
+          #upg-host .helpCopy{display:grid;gap:4px}
+          #upg-host .helpEyebrow{font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;opacity:.72}
+          #upg-host .helpTitle{font-size:16px;font-weight:950;line-height:1.15}
+          #upg-host .helpSub{font-size:12.5px;line-height:1.4;opacity:.8}
+          #upg-host .helpIcon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
+          #upg-host .helpIcon .material-symbols-rounded{font-size:22px}
+          ${appAuthFormCss("#upg-host")}
+          #upg-host .foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))}
+          #upg-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;background:rgba(255,255,255,.04);color:#eaf0ff}
+          #upg-host .btn:hover{filter:brightness(1.06)}
+          #upg-host .btn[disabled]{opacity:.62;cursor:progress}
+          #upg-host .btn.primary{border-color:rgba(150,70,255,.35);background:linear-gradient(135deg,rgba(150,70,255,.92),rgba(60,140,255,.82))}
+          #upg-host .btn.danger{border-color:rgba(255,120,120,.28);background:linear-gradient(135deg,rgba(255,77,79,.92),rgba(255,122,122,.82))}
+        </style>
+        <div id="upg-host">
+          <div class="head">
+            <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
+            <div>
+              <div class="t">${needs0911Cleanup ? "Migration required" : (legacy ? "Legacy config detected" : "Config version notice")}</div>
+              <div class="sub">${needs0911Cleanup ? "Pre-v0.9.11 data cleanup" : (legacy ? "This release introduced config versioning (0.7.0+)." : "Migrate to new save format.")}</div>
+            </div>
+            <div class="pill">
+              <span class="b">Engine v${cur}</span>
+              ${legacy ? `<span class="b">Config: Legacy</span>` : `<span class="b">Config v${cfg}</span>`}
+            </div>
+          </div>
+          <div class="body">${body}</div>
+          <div class="foot">${foot}</div>
         </div>
-        <div class="pill">
-          <span class="b">Engine v${cur}</span>
-          ${legacy ? `<span class="b">Config: Legacy</span>` : `<span class="b">Config v${cfg}</span>`}
-        </div>
-      </div>
+      `;
+    }
 
-      <div class="body">
+    function migrationBody() {
+      return `
         ${needs0911Cleanup ? `
         <div class="card warn">
           <div class="h">IMPORTANT</div>
-          <div class="p">Starting with <b>v0.9.11</b>, we switched the primary ID from <b>IMDb</b> to <b>TMDb</b>. This change affects all existing states and caches created before <b>v0.9.11</b>. Click <b>MIGRATE</b> to remove the old IMDb-based state/cache data.</div>
+          <div class="p">Starting with <b>v0.9.11</b>, CrossWatch switched the primary ID from <b>IMDb</b> to <b>TMDb</b>. Click <b>MIGRATE</b> to remove the old IMDb-based state and cache data.</div>
         </div>
+        ` : ``}
         ${legacy ? `
         <div class="card warn">
           <div class="h">IMPORTANT</div>
-          <div class="p">CrossWatch now clearly separates <b>global orchestration state</b> from <b>pair-specific provider caches</b>.</div>
-          <ul>
-            <li>Multiple pairs can run without overwriting each other’s cached snapshots/watermarks.</li>
-            <li>Providers can safely reuse cached “present” indexes (when activities timestamps match) without risking cross-pair contamination.</li>
-          </ul>
-          <div class="p" style="margin-top:8px">For a smooth transition, the current caches need to be removed/migrated.</div>
-        </div>
-
-        <div class="card">
-          <div class="h">What to do</div>
-          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, creates a backup of <code>config.json</code>, force-applies the migration config updates, and restarts CrossWatch.</div>
-        </div>
-
-        <div class="card">
-          <div class="h">Tip</div>
-          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
+          <div class="p">CrossWatch now separates <b>global orchestration state</b> from <b>pair-specific provider caches</b>.</div>
+          <div class="p">For a smooth transition, the current caches need to be removed or migrated.</div>
         </div>
         ` : ``}
-
         <div class="card">
           <div class="h">What to do</div>
-          <div class="p">Click <b>MIGRATE</b> below. It runs <b>Clean Everything</b> (state, caches, tracker, stats, currently watching), backs up <code>config.json</code>, applies the migration config updates, and restarts CrossWatch.</div>
+          <div class="p">${needs0911Cleanup ? "Click <b>MIGRATE</b> below. It runs the cleanup flow, backs up <code>config.json</code>, applies migration updates, and restarts CrossWatch." : (legacy ? "Click <b>MIGRATE</b> below. It clears legacy state/cache, backs up <code>config.json</code>, applies migration updates, and restarts CrossWatch." : "Nothing is broken. Click <b>MIGRATE</b> once so CrossWatch backs up your current config, applies the updated config structure, and restarts.")}</div>
         </div>
-
         <div class="card">
           <div class="h">Tip</div>
           <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
         </div>
-        ` : (legacy ? `
-        <div class="card warn">
-          <div class="h">IMPORTANT</div>
-          <div class="p">CrossWatch now clearly separates <b>global orchestration state</b> from <b>pair-specific provider caches</b>.</div>
-          <ul>
-            <li>Multiple pairs can run without overwriting each other’s cached snapshots/watermarks.</li>
-            <li>Providers can safely reuse cached “present” indexes (when activities timestamps match) without risking cross-pair contamination.</li>
-          </ul>
-          <div class="p" style="margin-top:8px">For a smooth transition, the current caches need to be removed/migrated.</div>
-        </div>
-
         <div class="card">
-          <div class="h">What to do</div>
-          <div class="p">Click <b>MIGRATE</b> below. It clears state/cache, creates a backup of <code>config.json</code>, force-applies the migration config updates, and restarts CrossWatch.</div>
-        </div>
-
-        <div class="card">
-          <div class="h">Tip</div>
-          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
-        </div>
-        ` : `
-        <div class="card">
-          <div class="h">What this means</div>
-          <div class="p">Nothing is broken. Click <b>MIGRATE</b> once so CrossWatch backs up your current config, applies the updated config structure, and restarts.</div>
-        </div>
-
-        <div class="card">
-          <div class="h">Tip</div>
-          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
-        </div>
-        `)}
-
-        <div class="card" id="upg-release-notes" style="display:none">
           <div class="h">Release notes</div>
-          <div class="p" id="upg-release-notes-meta" style="opacity:.72">&nbsp;</div>
-          <div class="notes md" id="upg-release-notes-body"></div>
+          <div class="p" style="opacity:.72">${state.notesVisible ? escapeHtml(state.notesMeta) : "Open the full release notes if inline notes are unavailable."}</div>
+          ${state.notesVisible
+            ? `<div class="notes">${state.notesBody}</div>`
+            : `<div class="p">Release notes could not be loaded in-app right now. <a href="${escapeHtml(state.notesUrl)}" target="_blank" rel="noopener noreferrer">Open release notes</a>.</div>`}
         </div>
-      </div>
+        <div class="card">
+          <div class="h">Need help?</div>
+          <a class="helpLink" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
+            <span class="helpCopy">
+              <span class="helpEyebrow">Documentation</span>
+              <span class="helpTitle">Open the CrossWatch Wiki</span>
+              <span class="helpSub">Setup guides, upgrade notes, and troubleshooting in one place.</span>
+            </span>
+            <span class="helpIcon" aria-hidden="true"><span class="material-symbols-rounded">menu_book</span></span>
+          </a>
+        </div>
+      `;
+    }
 
-      <div class="foot">
-        <button class="btn ghost" type="button" data-x="close">Close</button>
+    function renderIntro() {
+      setModalDismissible(false);
+      hostEl.innerHTML = layout(`
+        <div class="card warn">
+          <div class="h">Migration now requires admin credentials</div>
+          <div class="p">Before you migrate this installation, CrossWatch now requires a local admin username and password to be configured.</div>
+        </div>
+        <div class="card">
+          <div class="h">What happens next</div>
+          <div class="p">Click <b>Next</b>, create the admin credentials, and then continue with the normal migration flow.</div>
+        </div>
+      `, `<button class="btn primary" type="button" data-x="next">Next</button>`);
+      setModalShellInline(shell);
+      hostEl.querySelector('[data-x="next"]')?.addEventListener("click", () => {
+        state.step = "credentials";
+        render();
+      });
+    }
+
+    function renderCredentials() {
+      setModalDismissible(false);
+      hostEl.innerHTML = layout(`
+        <div class="card">
+          <div class="h">Create admin credentials</div>
+          <div class="p">You must finish this step before migration can continue.</div>
+        </div>
+        <div class="card">
+          <div class="h">Background activity is paused</div>
+          <div class="p">Sync summary and log streams stay paused until sign-in is configured.</div>
+        </div>
+        <div class="card">
+          ${renderAppAuthFields({
+            idPrefix: "upg-auth",
+            state,
+            wrap: false,
+          })}
+        </div>
+      `, `
+        <button class="btn" type="button" data-x="back">Back</button>
+        <button class="btn primary" type="button" data-x="save"${state.saving ? " disabled" : ""}>${state.saving ? "Saving..." : "Enable Sign-in"}</button>
+      `);
+      setModalShellInline(shell);
+      hostEl.querySelector('[data-x="back"]')?.addEventListener("click", () => {
+        syncAppAuthState(hostEl, state);
+        state.step = "intro";
+        render();
+      });
+      const saveBtn = hostEl.querySelector('[data-x="save"]');
+      wireLiveAppAuthValidation(hostEl, state, "", saveBtn);
+      saveBtn?.addEventListener("click", () => submitCredentials());
+      hostEl.querySelector("#upg-auth-pass2")?.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !state.saving) submitCredentials();
+      });
+    }
+
+    function renderMigrate() {
+      setModalDismissible(true);
+      hostEl.innerHTML = layout(migrationBody(), `
+        <button class="btn" type="button" data-x="close">Close</button>
         ${needs0911Cleanup || legacy
           ? `<button class="btn danger" type="button" data-x="migrate">MIGRATE</button>`
-          : `<button class="btn primary" type="button" data-x="save">MIGRATE</button>`
-        }
-      </div>
-    </div>
-    `;
-
-    const shell = hostEl.closest(".cx-modal-shell");
-    if (shell) {
-      shell.style.width = "auto";
-      shell.style.maxWidth = "none";
-      shell.style.height = "auto";
-      shell.style.maxHeight = "none";
-      shell.style.display = "inline-block";
+          : `<button class="btn primary" type="button" data-x="save">MIGRATE</button>`}
+      `);
+      setModalShellInline(shell);
+      hostEl.querySelector('[data-x="close"]')?.addEventListener("click", () => {
+        try { window.cxCloseModal?.(); } catch {}
+      });
+      if (needs0911Cleanup || legacy) {
+        hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget, needs0911Cleanup));
+      } else {
+        hostEl.querySelector('[data-x="save"]')?.addEventListener("click", (e) => saveNow(e.currentTarget));
+      }
+      ensureNotesLoaded();
     }
 
-    hostEl.querySelector('[data-x="close"]')?.addEventListener("click", () => {
-      try {
-        window.cxCloseModal?.();
-      } catch {}
-    });
-
-    if (needs0911Cleanup || legacy) {
-      hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget, needs0911Cleanup));
-    } else {
-      hostEl.querySelector('[data-x="save"]')?.addEventListener("click", (e) => saveNow(e.currentTarget));
+    function render() {
+      if (state.step === "credentials") return renderCredentials();
+      if (state.step === "migrate") return renderMigrate();
+      return renderIntro();
     }
 
-    try {
-      const j = await _getJson(NOTES_ENDPOINT, { cache: "no-store" });
-      const body = String(j.body || "").trim();
-      if (!body) return;
-      const card = hostEl.querySelector("#upg-release-notes");
-      const pre = hostEl.querySelector("#upg-release-notes-body");
-      if (!card || !pre) return;
-
-      // Enable linkification of plain URLs
-      const githubRepo = _guessGithubRepo(body) || _guessGithubRepo(j.html_url || j.url || "");
-      pre.innerHTML = _sanitizeHtml(_mdToHtml(body), { githubRepo });
-      const lat = _norm(j.latest_version || j.latest || "");
-      const pub = String(j.published_at || "").trim();
-      const meta = hostEl.querySelector("#upg-release-notes-meta");
-      if (meta) meta.textContent = `Latest${lat ? ` v${lat}` : ""}${pub ? ` • ${pub}` : ""}`;
-
-      card.style.display = "block";
-    } catch {
-    }
+    render();
   },
 
-  unmount() {}
+  unmount() {
+    setModalDismissible(true);
+  }
 };
