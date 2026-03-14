@@ -4,6 +4,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (function (w, d) {
+  const authSetupPending = () => w.cwIsAuthSetupPending?.() === true;
   const featureMeta = w.CW?.FeatureMeta || {};
   const providerMeta = w.CW?.ProviderMeta || {};
   const FEAT_LABEL = featureMeta.labels || { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
@@ -24,6 +25,7 @@
   const asNum = (v, fb = 0) => Number.isFinite(+v) ? +v : fb;
   const tickUrl = url => `${url}${url.includes("?") ? "&" : "?"}_ts=${Date.now()}`;
   const fetchJSON = async url => {
+    if (authSetupPending()) throw new Error("auth setup pending");
     const res = await fetch(tickUrl(url), { credentials: "same-origin", cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
     return res.json();
@@ -469,16 +471,24 @@
   }
 
   async function refreshInsights(force = false) {
+    if (authSetupPending()) return;
     try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`)); }
-    catch (e) { console.error("[Insights] Failed to load /api/insights", e); }
+    catch (e) {
+      if (String(e?.message || e || "").includes("auth setup pending")) return;
+      console.error("[Insights] Failed to load /api/insights", e);
+    }
   }
 
   async function refreshStats(force = false) {
+    if (authSetupPending()) return;
     const now = Date.now();
     if (!force && now - _lastStatsFetch < 900) return;
     _lastStatsFetch = now;
     try { await renderFromData(await fetchJSON("/api/insights?limit_samples=0&history=60"), true); }
-    catch (e) { console.error("[Insights] Failed to load /api/insights (stats)", e); }
+    catch (e) {
+      if (String(e?.message || e || "").includes("auth setup pending")) return;
+      console.error("[Insights] Failed to load /api/insights (stats)", e);
+    }
   }
 
   w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsights(true); });
@@ -495,15 +505,20 @@
   w.titleOf = titleOf;
   w.subtitleOf = subtitleOf;
   w.scheduleInsights = function scheduleInsights(max) {
+    if (authSetupPending()) return;
     let tries = 0, limit = max || 20;
     (function tick() {
+      if (authSetupPending()) return;
       if ($("#sync-history") || $("#stat-now") || $("#sparkline")) return refreshInsights();
       if (++tries < limit) setTimeout(tick, 250);
     })();
   };
 
-  d.addEventListener("DOMContentLoaded", () => w.scheduleInsights());
-  d.addEventListener("tab-changed", ev => ev?.detail?.id === "main" && refreshInsights(true));
+  d.addEventListener("DOMContentLoaded", () => { if (!authSetupPending()) w.scheduleInsights(); });
+  d.addEventListener("tab-changed", ev => {
+    if (authSetupPending()) return;
+    if (ev?.detail?.id === "main") refreshInsights(true);
+  });
 
   const snapLabel = name => {
     const base = String(name || "").replace(/\.json$/, ""), stem = base.split("-", 1)[0], m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stem);
