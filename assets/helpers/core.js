@@ -1265,11 +1265,16 @@
   }
 
   function clearDetailsLogBeforeRun() {
-    const detailLog = byId("det-log");
-    if (detailLog) detailLog.textContent = "";
-    try { window.esDet?.close(); } catch {}
-    window.esDet = null;
-    try { window.openDetailsLog?.(); } catch {}
+    try { window.resetDetailsSyncLog?.(); } catch {}
+    const details = byId("details");
+    const isVisible = !!(details && !details.classList.contains("hidden"));
+    if (!isVisible) {
+      try { window.closeDetailsLog?.(); } catch {}
+      return;
+    }
+    if (!window.esDet) {
+      try { window.openDetailsLog?.(); } catch {}
+    }
   }
 
   async function runSync(opts) {
