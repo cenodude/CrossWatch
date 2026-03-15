@@ -5,10 +5,10 @@
   "use strict";
 
   if (!d.getElementById("cf-styles")) d.head.insertAdjacentHTML("beforeend", `<style id="cf-styles">
-    .cf-log{font:500 13px/1.45 "Segoe UI",system-ui,sans-serif;color:#e7ebff}
-    .cf-line,.cf-event{display:block;margin:3px 0}
-    .cf-line{padding:2px 0;color:rgba(226,231,255,.78)}
-    .cf-event{padding:3px 0;border:0;border-radius:0;background:transparent;box-shadow:none}
+    .cf-log{white-space:normal!important;overflow-wrap:anywhere;word-break:break-word;font:500 13px/1.25 "Segoe UI",system-ui,sans-serif;color:#e7ebff}
+    .cf-line,.cf-event{display:block;margin:1px 0}
+    .cf-line{padding:1px 0;color:rgba(226,231,255,.78)}
+    .cf-event{padding:1px 0;border:0;border-radius:0;background:transparent;box-shadow:none}
     .cf-head{display:inline-flex;align-items:center;gap:8px;flex-wrap:nowrap;vertical-align:middle}
     .cf-tag,.cf-badge,.cf-stat{display:inline-flex;align-items:center;border-radius:999px}
     .cf-tag{justify-content:center;min-width:54px;padding:3px 8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#d7defc;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
@@ -25,7 +25,7 @@
     .cf-prog-fill{position:absolute;inset:0 100% 0 0;background:linear-gradient(90deg,#4f5ff0,#5b93ff);transition:inset .25s ease}
     .cf-prog-done .cf-prog-fill{background:linear-gradient(90deg,#189c68,#38c98d)}
     .cf-prog-text{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:700;color:#eef3ff}
-    .cf-prog-stats{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;justify-content:flex-end}
+    .cf-prog-stats{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;justify-content:flex-end}
     .cf-stat.stat-ok{color:#25a05f;border-color:rgba(37,160,95,.35);background:rgba(37,160,95,.08)}
     .cf-stat.stat-warn{color:#f59e0b;border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.08)}
     .cf-stat.stat-err{color:#ef5350;border-color:rgba(239,83,80,.35);background:rgba(239,83,80,.08)}
@@ -51,6 +51,17 @@
   const dstNameFrom=(ev)=>ev?.dst ? String(ev.dst).toUpperCase() : String(ev?.event || "").includes(":A:") ? pair.A : pair.B;
 
   const progMap=Object.create(null), progPendingTick=Object.create(null), progActiveKeyByBase=Object.create(null), progRunCounterByBase=Object.create(null);
+  const clearObj=(obj)=>{ for(const key of Object.keys(obj)) delete obj[key]; };
+  function resetState(){
+    pendingRunId=null;
+    pair={A:"A",B:"B"};
+    counts={add:{},remove:{}};
+    squelchPlain=0;
+    clearObj(progMap);
+    clearObj(progPendingTick);
+    clearObj(progActiveKeyByBase);
+    clearObj(progRunCounterByBase);
+  }
   const progKey=(ev)=>{
     const name=String(ev.event || ""), dst=String(ev.dst || ev.provider || "DST").toUpperCase(), feat=String(ev.feature || "watchlist").toLowerCase();
     const base=name==="snapshot:progress" ? `snap|${dst}|${feat}` : /^apply:/.test(name) ? `apply|${dst}|${feat}|${(name.split(":")[1] || "add").toLowerCase()}` : null;
@@ -255,5 +266,5 @@
     trimRows(el);
   }
 
-  w.ClientFormatter={formatFriendlyLog,filterPlainLine,splitHost,processChunk,renderInto};
+  w.ClientFormatter={formatFriendlyLog,filterPlainLine,splitHost,processChunk,renderInto,reset:resetState};
 })(window, document);
