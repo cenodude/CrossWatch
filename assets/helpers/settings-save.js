@@ -262,10 +262,18 @@ function _cwWireTouched(ids = _cwSecretIds) {
 function _cwWireAuthPair() {
   const p1 = _cwEl("app_auth_password"), p2 = _cwEl("app_auth_password2");
   if (!p1 || !p2 || p1.__cwAuthPwWired) return;
+  const MIN_PASSWORD_LENGTH = 8;
   const onInput = () => {
     const a = String(p1.value || ""), b = String(p2.value || "");
-    if (!_cwNorm(a) && !_cwNorm(b)) return _cwSetAuthError("");
-    if (a === b) _cwSetAuthError("");
+    const hasA = !!_cwNorm(a), hasB = !!_cwNorm(b);
+    if (!hasA && !hasB) return _cwSetAuthError("");
+    if (hasA && a.length < MIN_PASSWORD_LENGTH) {
+      return _cwSetAuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
+    }
+    if (hasB && a !== b) {
+      return _cwSetAuthError("Passwords do not match");
+    }
+    _cwSetAuthError("");
   };
   p1.addEventListener("input", onInput);
   p2.addEventListener("input", onInput);
@@ -606,7 +614,7 @@ async function saveSettings() {
 
     try {
       const sched = _cwFn("getSchedulingPatch", window)
-        ? (window.getSchedulingPatch() || {})
+        ? (window.getSchedulingPatch({ strict: false }) || (serverCfg?.scheduling || {}))
         : {
             enabled: readToggle("schEnabled"),
             mode: _getVal("schMode"),
@@ -626,6 +634,17 @@ async function saveSettings() {
     if (changed) {
       await _cwSaveConfig(cfg);
       _cwSetConfigCache(cfg);
+      const nextAppDebug = !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
+      const prevAppDebugLive = !!window.appDebug;
+      window.appDebug = nextAppDebug;
+      if (prevAppDebugLive !== nextAppDebug) {
+        _cwLater(() => {
+          const details = document.getElementById("details");
+          if (details && !details.classList.contains("hidden")) {
+            try { window.openDetailsLog?.(); } catch {}
+          }
+        });
+      }
       try { _cwFn("_invalidatePairsCache")?.(); } catch {}
       _cwLater(() => _cwFn("loadConfig")?.());
 
