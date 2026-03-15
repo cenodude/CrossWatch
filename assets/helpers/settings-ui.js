@@ -377,15 +377,6 @@ function cwBuildSchedulerPanel() {
   wrap.className = "cw-meta-provider-panel active";
   wrap.dataset.provider = "scheduler";
 
-  const head = document.createElement("div");
-  head.className = "cw-panel-head";
-  head.innerHTML = `
-    <div class="cw-panel-head-main">
-      <div class="cw-panel-title">Scheduler</div>
-      <div class="muted">Run sync automatically on a timer.</div>
-    </div>
-  `;
-
   const subPanels = document.createElement("div");
   subPanels.className = "cw-subpanels";
 
@@ -406,6 +397,9 @@ function cwBuildSchedulerPanel() {
 
   const mkField = (labelText, ctrl, noteText) => {
     if (!ctrl) return null;
+    if (ctrl.classList?.contains("cw-icon-select-native")) {
+      ctrl.classList.remove("cw-icon-select-native");
+    }
     const f = document.createElement("div");
     f.className = "field";
     f.innerHTML = `<div class="muted" style="margin-bottom:6px;">${labelText}</div>`;
@@ -449,7 +443,6 @@ function cwBuildSchedulerPanel() {
   subPanels.appendChild(pBasic);
   subPanels.appendChild(pAdv);
 
-  wrap.appendChild(head);
   wrap.appendChild(subPanels);
 
   panelHost.appendChild(wrap);

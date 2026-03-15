@@ -78,6 +78,18 @@
     return spacer;
   }
 
+  function alignRowsToSameTrack(anchorRow, targetRow) {
+    if (!anchorRow || !targetRow) return;
+    const apply = () => {
+      targetRow.style.marginTop = "0";
+      const delta = Math.round(anchorRow.getBoundingClientRect().top - targetRow.getBoundingClientRect().top);
+      targetRow.style.marginTop = `${Math.max(0, delta)}px`;
+      targetRow.style.alignSelf = "end";
+    };
+    apply();
+    w.requestAnimationFrame(apply);
+  }
+
   function enhanceWatcherFiltersUI(root) {
     if (!root) return;
     const filtersBox = root.querySelector("#sc-filters");
@@ -211,6 +223,7 @@
 
     const endpointNote = root.querySelector("#sc-endpoint-note");
     if (endpointNote && !String(endpointNote.textContent || "").trim()) {
+      endpointNote.hidden = true;
       endpointNote.style.display = "none";
     }
 
@@ -240,6 +253,7 @@
       styleFilterActionRow(uuidRow, uuidInput);
       ensureRowSpacer(uuidRow);
       ensureCardSpacer(uuidCard, "sc-filter-grow", "1px", uuidRow);
+      alignRowsToSameTrack(userRow, uuidRow);
     }
   }
 
