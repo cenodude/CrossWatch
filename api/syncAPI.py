@@ -2524,4 +2524,14 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
 
             await asyncio.sleep(0.25)
 
-    return StreamingResponse(agen(), media_type="text/event-stream")
+    return StreamingResponse(
+        agen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
