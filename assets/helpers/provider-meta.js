@@ -3,7 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
   const providers = Object.freeze({
-    CROSSWATCH: { key: "CROSSWATCH", label: "CrossWatch", shortLabel: "CW", brandClass: "brand-crosswatch", badgeId: "badge-crosswatch", aliases: ["CROSSWATCH"], tone: { solid: "#7c5cff", rgb: "124,92,255" }, watchlist: true },
+    CROSSWATCH: { key: "CROSSWATCH", label: "CrossWatch", shortLabel: "CW", brandClass: "brand-crosswatch", badgeId: "badge-crosswatch", aliases: ["CROSSWATCH"], hasLogo: true, hasLogLogo: true, tone: { solid: "#7c5cff", rgb: "124,92,255" }, watchlist: true },
     PLEX: { key: "PLEX", label: "Plex", shortLabel: "Plex", brandClass: "brand-plex", badgeId: "badge-plex", authSectionId: "sec-plex", authGroupId: "sec-auth-media", aliases: ["PLEX"], statusLegacy: ["plex_connected", "plex"], hasLogo: true, hasLogLogo: true, tone: { solid: "#e5a000", rgb: "229,160,0" }, watchlist: true },
     SIMKL: { key: "SIMKL", label: "SIMKL", shortLabel: "SIMKL", brandClass: "brand-simkl", badgeId: "badge-simkl", authSectionId: "sec-simkl", authGroupId: "sec-auth-trackers", aliases: ["SIMKL"], statusLegacy: ["simkl_connected", "simkl"], hasLogo: true, hasLogLogo: true, tone: { solid: "#00b8f5", rgb: "0,184,245" }, watchlist: true, scrobblerSink: true },
     TRAKT: { key: "TRAKT", label: "Trakt", shortLabel: "Trakt", brandClass: "brand-trakt", badgeId: "badge-trakt", authSectionId: "sec-trakt", authGroupId: "sec-auth-trackers", aliases: ["TRAKT"], statusLegacy: ["trakt_connected", "trakt"], hasLogo: true, hasLogLogo: true, tone: { solid: "#ed1c24", rgb: "237,28,36" }, watchlist: true, scrobblerSink: true },

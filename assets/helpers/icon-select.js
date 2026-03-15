@@ -21,7 +21,10 @@
 .cw-icon-select-badge{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.05);color:#eef3ff;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
 .cw-icon-select-badges .cw-icon-select-badge:first-child{border-color:rgba(92,96,182,.24);background:rgba(92,96,182,.14);color:#eef1ff}
 .cw-icon-select-badges .cw-icon-select-badge:nth-child(2){border-color:rgba(91,160,255,.22);background:rgba(91,160,255,.12);color:#eef7ff}
-.cw-icon-select-caret{opacity:.62;flex:0 0 auto}
+.cw-icon-select-caret{position:relative;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:0 0 14px;opacity:.72;transition:transform .16s ease,opacity .16s ease}
+.cw-icon-select-caret::before{content:"";display:block;width:7px;height:7px;border-right:2px solid rgba(238,243,255,.92);border-bottom:2px solid rgba(238,243,255,.92);transform:translateY(-1px) rotate(45deg);border-radius:1px}
+.cw-icon-select:hover .cw-icon-select-caret{opacity:.9}
+.cw-icon-select.is-open .cw-icon-select-caret{transform:rotate(180deg)}
 .cw-icon-select-icons{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto}
 .cw-icon-select-sep{display:inline-flex;align-items:center;justify-content:center;min-width:16px;color:rgba(214,222,242,.68);font-size:15px;line-height:1;transform:translateY(-1px)}
 .cw-icon-select-icon{width:18px;height:18px;object-fit:contain;display:block;flex:0 0 18px}
@@ -217,12 +220,14 @@
     if (!select) return select;
     injectCss();
     bindAway();
+    select.__cwIconSelectCfg = cfg;
 
     let wrap = select.nextElementSibling;
-    if (!wrap || !wrap.classList || !wrap.classList.contains("cw-icon-select")) {
+    const wrapMatchesSelect = wrap && wrap.classList && wrap.classList.contains("cw-icon-select") && wrap.__cwNativeSelect === select;
+    if (!wrapMatchesSelect) {
       wrap = d.createElement("div");
       wrap.className = `cw-icon-select ${String(cfg.className || "").trim()}`.trim();
-      wrap.innerHTML = `<button type="button" class="cw-icon-select-btn" aria-haspopup="listbox" aria-expanded="false"><span class="cw-icon-select-main"></span><span class="cw-icon-select-caret" aria-hidden="true">v</span></button>`;
+      wrap.innerHTML = `<button type="button" class="cw-icon-select-btn" aria-haspopup="listbox" aria-expanded="false"><span class="cw-icon-select-main"></span><span class="cw-icon-select-caret" aria-hidden="true"></span></button>`;
       const menu = d.createElement("div");
       menu.className = "cw-icon-select-menu hidden";
       menu.setAttribute("role", "listbox");
@@ -237,9 +242,14 @@
       d.body.appendChild(menu);
       wrap.__cwMenu = menu;
     }
+    wrap.__cwNativeSelect = select;
+    wrap.className = `cw-icon-select ${String(select.__cwIconSelectCfg?.className || "").trim()}`.trim();
 
-    buildMenu(select, wrap, cfg);
-    sync(select, wrap, cfg);
+    const legacyChev = wrap.nextElementSibling;
+    if (legacyChev?.classList?.contains("chev")) legacyChev.style.display = "none";
+
+    buildMenu(select, wrap, select.__cwIconSelectCfg);
+    sync(select, wrap, select.__cwIconSelectCfg);
 
     const btn = wrap.querySelector(".cw-icon-select-btn");
     const menu = wrap.__cwMenu;
@@ -260,7 +270,24 @@
       menu.addEventListener("click", (ev) => ev.stopPropagation());
     }
 
-    select.addEventListener("change", () => sync(select, wrap, cfg));
+    if (!select.__cwSyncBound) {
+      select.__cwSyncBound = true;
+      select.addEventListener("change", () => sync(select, wrap, select.__cwIconSelectCfg));
+    }
+    if (!select.__cwOptionsObserver && typeof MutationObserver === "function") {
+      const obs = new MutationObserver(() => {
+        buildMenu(select, wrap, select.__cwIconSelectCfg);
+        sync(select, wrap, select.__cwIconSelectCfg);
+        if (OPEN?.wrap === wrap) positionMenu(wrap, btn, menu);
+      });
+      obs.observe(select, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["disabled", "label", "value", "selected"],
+      });
+      select.__cwOptionsObserver = obs;
+    }
     if (!wrap.dataset.cwPosBound) {
       wrap.dataset.cwPosBound = "1";
       window.addEventListener("resize", () => {
@@ -273,6 +300,58 @@
     return wrap;
   }
 
+  function isPlainEligible(select) {
+    if (!select || select.tagName !== "SELECT") return false;
+    if (select.multiple) return false;
+    if ((select.size | 0) > 1) return false;
+    if (select.hidden) return false;
+    if (select.style?.display === "none") return false;
+    if (select.classList.contains("cw-icon-select-native")) return false;
+    if (select.dataset.cwNativeSelect === "true") return false;
+    if (select.dataset.cwIconSelect === "off") return false;
+    if (select.classList.contains("lm-hidden")) return false;
+    if (select.closest(".cx-ico-select")) return false;
+    return true;
+  }
+
+  function enhancePlain(root = d) {
+    const scope = root?.querySelectorAll ? root : d;
+    scope.querySelectorAll('select').forEach((select) => {
+      if (!isPlainEligible(select)) return;
+      enhance(select, { className: "cw-plain-select" });
+    });
+  }
+
+  function bindPlainAuto() {
+    if (window[KEY]?.plainBound) return;
+    window[KEY] = window[KEY] || {};
+    window[KEY].plainBound = true;
+
+    const run = (root) => enhancePlain(root);
+    const boot = () => {
+      run(d);
+
+      if (typeof MutationObserver === "function") {
+        const obs = new MutationObserver((mutations) => {
+          for (const mutation of mutations) {
+            if (mutation.type !== "childList") continue;
+            mutation.addedNodes.forEach((node) => {
+              if (!node || node.nodeType !== 1) return;
+              run(node);
+            });
+          }
+        });
+        obs.observe(d.body || d.documentElement, { childList: true, subtree: true });
+      }
+    };
+
+    if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", boot, { once: true });
+    else boot();
+
+    d.addEventListener("tab-changed", () => run(d));
+  }
+
   window.CW = window.CW || {};
-  window.CW.IconSelect = { enhance, closeAll };
+  bindPlainAuto();
+  window.CW.IconSelect = { enhance, enhancePlain, closeAll };
 })();
