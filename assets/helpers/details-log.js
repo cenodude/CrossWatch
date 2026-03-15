@@ -20,6 +20,8 @@ if (typeof window.watchBuf === "undefined") window.watchBuf = [];
 if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
 if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
 if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 2500;
+if (typeof window._detOpenSeq === "undefined") window._detOpenSeq = 0;
+if (typeof window._detBuf === "undefined") window._detBuf = "";
 
 function _activeDetailsLogEl() {
   return window._detailsTab === "watcher"
@@ -30,6 +32,11 @@ function _activeDetailsLogEl() {
 function _pruneDetailsLog(el) {
   const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
   while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
+}
+
+function _detailsVisible() {
+  const details = document.getElementById("details");
+  return !!(details && !details.classList.contains("hidden"));
 }
 
 function _isAppDebugMode(cfg) {
@@ -284,12 +291,15 @@ async function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
   if (!el) return;
+  if (!_detailsVisible()) return;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const tabSync = document.getElementById("det-tab-sync");
+  const openSeq = ++window._detOpenSeq;
   try { initDetailsTabs(); } catch {}
 
   try {
     const cfg = window._cfgCache || await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+    if (openSeq !== window._detOpenSeq) return;
     window._cfgCache = cfg;
     window.appDebug = _isAppDebugMode(cfg);
   } catch (_) {}
@@ -302,6 +312,7 @@ async function openDetailsLog() {
   el.classList?.remove("cf-log-plain");
   if (!useFormatter) el.classList?.add("cf-log-plain");
   window.detStickBottom = true;
+  window._detBuf = "";
   try { CF?.reset?.(); } catch {}
 
   try { window.esDet?.close(); } catch {}
@@ -349,7 +360,6 @@ async function openDetailsLog() {
     }
   };
 
-  let detBuf = "";
   let lastMsgAt = Date.now();
   let retryMs = 1000;
   const STALE_MS = 20000;
@@ -371,7 +381,7 @@ async function openDetailsLog() {
 
       if (ev.data === "::CLEAR::") {
         el.textContent = "";
-        detBuf = "";
+        window._detBuf = "";
         try { CF?.reset?.(); } catch {}
         updateSlider();
         return;
@@ -380,8 +390,8 @@ async function openDetailsLog() {
       if (!useFormatter) {
         appendRaw(ev.data);
       } else {
-        const { tokens, buf } = CF.processChunk(detBuf, ev.data);
-        detBuf = buf;
+        const { tokens, buf } = CF.processChunk(window._detBuf, ev.data);
+        window._detBuf = buf;
         for (const tok of tokens) CF.renderInto(el, tok, false);
       }
       _pruneDetailsLog(el);
@@ -396,9 +406,9 @@ async function openDetailsLog() {
       try { window.esDet?.close(); } catch (_) {}
       window.esDet = null;
 
-      if (useFormatter && detBuf && detBuf.trim()) {
-        const { tokens } = CF.processChunk("", detBuf);
-        detBuf = "";
+      if (useFormatter && window._detBuf && window._detBuf.trim()) {
+        const { tokens } = CF.processChunk("", window._detBuf);
+        window._detBuf = "";
         for (const tok of tokens) CF.renderInto(el, tok, false);
         if (window.detStickBottom) el.scrollTop = el.scrollHeight;
         updateSlider();
@@ -444,10 +454,12 @@ async function openDetailsLog() {
 }
 
 function closeDetailsLog() {
+  window._detOpenSeq += 1;
   try { window.esDet?.close(); } catch (_) {}
   try { window.esDetSummary?.close(); } catch (_) {}
   window.esDet = null;
   window.esDetSummary = null;
+  window._detBuf = "";
   if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
   if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
   if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
@@ -472,6 +484,14 @@ function toggleDetails() {
   }
 }
 
+function resetDetailsSyncLog() {
+  const el = document.getElementById("det-log");
+  if (el) el.textContent = "";
+  window._detBuf = "";
+  window.detStickBottom = true;
+  try { window.ClientFormatter?.reset?.(); } catch {}
+}
+
 window.addEventListener("beforeunload", () => {
   try { closeDetailsLog(); } catch {}
   try { closeWatcherLog(); } catch {}
@@ -485,6 +505,7 @@ window.addEventListener("beforeunload", () => {
     openWatcherLog,
     openDetailsLog,
     closeDetailsLog,
+    resetDetailsSyncLog,
     toggleDetails,
   };
 
