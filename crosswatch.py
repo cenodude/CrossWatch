@@ -980,7 +980,17 @@ async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
                 last = time.time()
             await asyncio.sleep(0.25)
 
-    return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+    return StreamingResponse(
+        agen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 @app.get("/api/logs/watcher", tags=["logging"])
 async def api_logs_watcher(
@@ -1051,7 +1061,17 @@ async def api_logs_watcher(
 
             await asyncio.sleep(0.25)
 
-    return StreamingResponse(agen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+    return StreamingResponse(
+        agen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 # Sync runner (orchestrator)
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
