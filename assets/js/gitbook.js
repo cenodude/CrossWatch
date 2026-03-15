@@ -38,18 +38,8 @@
   }
 
   function providerToSectionId(provider) {
-    const p = String(provider || "").trim().toLowerCase();
-    const map = {
-      plex: "sec-plex",
-      trakt: "sec-trakt",
-      simkl: "sec-simkl",
-      anilist: "sec-anilist",
-      jellyfin: "sec-jellyfin",
-      emby: "sec-emby",
-      mdblist: "sec-mdblist",
-      tautulli: "sec-tautulli"
-    };
-    return map[p] || "";
+    try { return window.CW?.ProviderMeta?.sectionId?.(provider) || ""; } catch (_) {}
+    return "";
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, ms | 0)));
@@ -85,10 +75,7 @@
     await ensureAuthMounted();
     await sleep(20);
 
-    const group =
-      ["plex", "jellyfin", "emby"].includes(p) ? "sec-auth-media" :
-      ["trakt", "simkl", "mdblist", "anilist"].includes(p) ? "sec-auth-trackers" :
-      "sec-auth-others";
+    const group = window.CW?.ProviderMeta?.authGroupId?.(p) || "sec-auth-others";
 
     ensureSectionOpen(group);
     await sleep(20);
