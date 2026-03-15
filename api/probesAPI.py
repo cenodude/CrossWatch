@@ -1455,37 +1455,60 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 ok, rsn = results_by_key.get(pkey, (False, ""))
                 per.setdefault(prov, {})[inst] = (ok, rsn, _cfg_view_for(cfg, prov, inst))
 
-            def _default_tuple(prov: str) -> tuple[bool, str, dict[str, Any]]:
-                items = per.get(prov) or {}
-                if "default" in items:
-                    return items["default"]
-                return False, "not configured", _cfg_view_for(cfg, prov, "default")
-
             def _rep_instance(prov: str) -> str:
+                items = per.get(prov) or {}
                 used = used_instances.get(prov) or set()
-                non_default = sorted([i for i in used if i != "default"])
-                if non_default:
-                    return non_default[0]
+                used_non_default = sorted([i for i in used if i != "default"])
+
+                for inst in used_non_default:
+                    if inst in items and items[inst][0]:
+                        return inst
+
+                if "default" in used and "default" in items and items["default"][0]:
+                    return "default"
+
+                if used_non_default:
+                    return used_non_default[0]
+
                 if "default" in used:
                     return "default"
-                # Fallback: first connected instance if any
-                items = per.get(prov) or {}
+
                 if "default" in items and items["default"][0]:
                     return "default"
+
                 for inst, tup in items.items():
                     if tup[0]:
                         return inst
+
+                if "default" in items:
+                    return "default"
+
+                for inst in items.keys():
+                    return inst
+
                 return "default"
 
-            plex_ok, plex_reason, cfg_plex = _default_tuple("PLEX")
-            simkl_ok, simkl_reason, cfg_simkl = _default_tuple("SIMKL")
-            trakt_ok, trakt_reason, cfg_trakt = _default_tuple("TRAKT")
-            jelly_ok, jelly_reason, cfg_jelly = _default_tuple("JELLYFIN")
-            emby_ok, emby_reason, cfg_emby = _default_tuple("EMBY")
-            tmdb_ok, tmdb_reason, cfg_tmdb = _default_tuple("TMDB")
-            mdbl_ok, mdbl_reason, cfg_mdbl = _default_tuple("MDBLIST")
-            taut_ok, taut_reason, cfg_taut = _default_tuple("TAUTULLI")
-            anilist_ok, anilist_reason, cfg_anilist = _default_tuple("ANILIST")
+            def _provider_tuple(prov: str) -> tuple[bool, str, dict[str, Any]]:
+                items = per.get(prov) or {}
+                if not items:
+                    return False, "not configured", _cfg_view_for(cfg, prov, "default")
+                rep_inst = _rep_instance(prov)
+                if rep_inst in items:
+                    return items[rep_inst]
+                if "default" in items:
+                    return items["default"]
+                inst = next(iter(items.keys()), "default")
+                return items.get(inst) or (False, "not configured", _cfg_view_for(cfg, prov, inst))
+
+            plex_ok, plex_reason, cfg_plex = _provider_tuple("PLEX")
+            simkl_ok, simkl_reason, cfg_simkl = _provider_tuple("SIMKL")
+            trakt_ok, trakt_reason, cfg_trakt = _provider_tuple("TRAKT")
+            jelly_ok, jelly_reason, cfg_jelly = _provider_tuple("JELLYFIN")
+            emby_ok, emby_reason, cfg_emby = _provider_tuple("EMBY")
+            tmdb_ok, tmdb_reason, cfg_tmdb = _provider_tuple("TMDB")
+            mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
+            taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
+            anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
             info_plex = _safe_userinfo(plex_user_info, cfg_plex, max_age_sec=user_age) if plex_ok else {}
             info_trakt = _safe_userinfo(trakt_user_info, cfg_trakt, max_age_sec=user_age) if trakt_ok else {}
