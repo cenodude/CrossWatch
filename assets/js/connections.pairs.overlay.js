@@ -11,22 +11,10 @@
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt", JELLYFIN: "jellyfin", CROSSWATCH: "crosswatch", EMBY: "emby" }[key(k)] || "x");
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-  const BRAND_COLORS = {
-    CROSSWATCH: { solid: "#7c5cff", rgb: "124,92,255" },
-    PLEX: { solid: "#e5a000", rgb: "229,160,0" },
-    SIMKL: { solid: "#00b8f5", rgb: "0,184,245" },
-    TRAKT: { solid: "#ed1c24", rgb: "237,28,36" },
-    JELLYFIN: { solid: "#7b61ff", rgb: "123,97,255" },
-    EMBY: { solid: "#3bb273", rgb: "59,178,115" },
-    MDBLIST: { solid: "#2d74da", rgb: "45,116,218" },
-    ANILIST: { solid: "#02a9ff", rgb: "2,169,255" },
-    TMDB: { solid: "#01b4e4", rgb: "1,180,228" },
-    TAUTULLI: { solid: "#f59e0b", rgb: "245,158,11" },
-  };
   const providerMeta = () => window.CW?.ProviderMeta || null;
   const providerLabel = (provider) => providerMeta()?.label?.(provider) || key(provider) || "Provider";
   const providerLogo = (provider) => providerMeta()?.logoPath?.(provider) || "";
-  const brandTone = (provider) => BRAND_COLORS[key(provider)] || BRAND_COLORS.CROSSWATCH;
+  const brandTone = (provider) => providerMeta()?.tone?.(provider) || { solid: "#7c5cff", rgb: "124,92,255" };
   const truthy = (v) => {
     if (v && typeof v === "object") v = v.enable;
     if (typeof v === "string") v = v.toLowerCase().trim();
