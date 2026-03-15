@@ -40,7 +40,7 @@
   const PROVIDER_ORDER = META.order || [
     "CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"
   ];
-  const STATUS_PROVIDERS = [
+  const STATUS_PROVIDERS = typeof META.statusProviders === "function" ? META.statusProviders() : [
     { key: "PLEX", badgeId: "badge-plex", legacy: ["plex_connected", "plex"] },
     { key: "SIMKL", badgeId: "badge-simkl", legacy: ["simkl_connected", "simkl"] },
     { key: "TRAKT", badgeId: "badge-trakt", legacy: ["trakt_connected", "trakt"] },
@@ -53,10 +53,10 @@
   ];
   const BADGE_IDS = Object.fromEntries([
     ...STATUS_PROVIDERS.map((p) => [p.key, p.badgeId]),
-    ["CROSSWATCH", "badge-crosswatch"],
+    ["CROSSWATCH", typeof META.badgeId === "function" ? (META.badgeId("CROSSWATCH") || "badge-crosswatch") : "badge-crosswatch"],
   ]);
   const PAIR_ACTIVE_KEYS = ["PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI", "CROSSWATCH"];
-  const PROVIDER_ALIASES = {
+  const PROVIDER_ALIASES = typeof META.aliasesMap === "function" ? META.aliasesMap() : {
     CROSSWATCH: ["CROSSWATCH"],
     PLEX: ["PLEX"],
     SIMKL: ["SIMKL"],
