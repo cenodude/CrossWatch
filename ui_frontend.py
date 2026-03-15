@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, Response
@@ -13,6 +14,8 @@ from api.versionAPI import CURRENT_VERSION
 from cw_platform.config_base import load_config
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
+
+_ASSET_VERSION_CACHE: dict[str, float | str] = {"ts": 0.0, "val": CURRENT_VERSION}
 
 # Static favicon
 FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
@@ -102,14 +105,25 @@ def _is_https_request(request: Request) -> bool:
 
 
 _HELPER_SCRIPTS = (
-    "provider-meta.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
+    "provider-meta.js", "icon-select.js", "scrobbler-ui.js", "scrobbler-user-picker.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
     "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js",
     "restart_apply.js", "legacy-bridge.js",
 )
 _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "settings-insight.js", "scrobbler.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "main-status.js", "settings-insight.js", "scrobbler.js",
     "editor.js", "snapshots.js",
+)
+_AUTH_HEADER_ICONS = (
+    {"prov": "PLEX", "label": "Plex"},
+    {"prov": "JELLYFIN", "label": "Jellyfin"},
+    {"prov": "SIMKL", "label": "SIMKL"},
+    {"prov": "TRAKT", "label": "Trakt"},
+    {"prov": "MDBLIST", "label": "MDBList"},
+    {"prov": "TMDB", "label": "TMDb", "extra_class": "cw-provider-head-icon--tmdb"},
+    {"prov": "TAUTULLI", "label": "TAUTULLI"},
+    {"prov": "ANILIST", "label": "AniList"},
+    {"prov": "EMBY", "label": "Emby", "extra_class": "cw-provider-head-icon--emby"},
 )
 
 
@@ -127,6 +141,50 @@ def _asset_block() -> str:
         '<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
     ))
+
+
+def _auth_header_icons_html() -> str:
+    lines: list[str] = []
+    for item in _AUTH_HEADER_ICONS:
+        prov = str(item["prov"])
+        label = str(item["label"])
+        extra = str(item.get("extra_class", "")).strip()
+        cls = "cw-provider-head-icon"
+        if extra:
+            cls = f"{cls} {extra}"
+        lines.append(
+            f'<img data-prov="{prov}" src="/assets/img/{prov}-log.svg" alt="{label}" class="{cls}">'
+        )
+    return "\n".join(lines)
+
+
+def _asset_version_token() -> str:
+    now = time.time()
+    cached_at = float(_ASSET_VERSION_CACHE.get("ts") or 0.0)
+    cached_val = str(_ASSET_VERSION_CACHE.get("val") or CURRENT_VERSION)
+    if now - cached_at < 2.0:
+        return cached_val
+
+    root = Path(__file__).resolve().parent
+    latest_mtime = 0
+    try:
+        candidates = [root / "assets", root / "ui_frontend.py"]
+        for candidate in candidates:
+            if candidate.is_file():
+                latest_mtime = max(latest_mtime, int(candidate.stat().st_mtime))
+                continue
+            if not candidate.exists():
+                continue
+            for path in candidate.rglob("*"):
+                if path.is_file():
+                    latest_mtime = max(latest_mtime, int(path.stat().st_mtime))
+    except Exception:
+        latest_mtime = 0
+
+    token = f"{CURRENT_VERSION}.{latest_mtime}" if latest_mtime > 0 else CURRENT_VERSION
+    _ASSET_VERSION_CACHE["ts"] = now
+    _ASSET_VERSION_CACHE["val"] = token
+    return token
 
 
 def _get_index_html_static() -> str:
@@ -207,6 +265,50 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #cw-settings-menu .cw-menu-sep{height:1px;margin:4px 2px;border:0;background:rgba(255,255,255,.08)}
 .cw-field-inline-error{margin-top:8px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(7,9,13,.98),rgba(3,5,8,.99));color:rgba(245,247,255,.96);font-size:12px;line-height:1.45;box-shadow:0 14px 28px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}
 .cw-field-inline-error.hidden{display:none}
+#page-settings .cw-settings-panel.cw-settings-shell{padding:18px;border-radius:26px;background:radial-gradient(120% 140% at 0% 0%,rgba(92,96,182,.12),transparent 38%),radial-gradient(90% 120% at 100% 100%,rgba(54,120,210,.08),transparent 48%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important;border:1px solid rgba(255,255,255,.08)!important;box-shadow:0 24px 46px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)!important}
+#page-settings .cw-settings-panel.cw-settings-shell.active{display:grid}
+#page-settings .cw-settings-shell .cw-panel-head{margin-bottom:0}
+#page-settings .cw-settings-head{padding-bottom:2px}
+#page-settings .cw-settings-kicker{display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;padding:6px 12px;border-radius:999px;border:1px solid rgba(138,144,206,.18);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:rgba(226,232,248,.76)}
+#page-settings .cw-settings-kicker::before{content:"";width:8px;height:8px;border-radius:999px;background:linear-gradient(135deg,#7c5cff,#2de2ff);box-shadow:0 0 14px rgba(124,92,255,.48)}
+#page-settings .cw-settings-copy{margin-top:10px;max-width:72ch}
+#page-settings .cw-settings-layout{display:grid;gap:14px}
+#page-settings .cw-settings-block{padding:16px 16px 14px;border-radius:22px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+#page-settings .cw-settings-block-title{margin:0 0 12px;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)}
+#page-settings .cw-settings-stack{display:grid;gap:10px}
+#page-settings .cw-settings-2col{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#page-settings .cw-settings-split{display:grid;grid-template-columns:1.15fr .85fr;gap:12px}
+#page-settings .cw-settings-statusrow{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 16px;border-radius:20px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}
+#page-settings .cw-settings-status{display:grid;gap:3px;min-width:220px}
+#page-settings .cw-settings-status strong{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:rgba(228,234,248,.72)}
+#page-settings .cw-settings-status .sub{margin:0!important}
+#page-settings .cw-settings-shell label{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,248,.74)!important}
+#page-settings .cw-settings-shell input,#page-settings .cw-settings-shell select,#page-settings .cw-settings-shell textarea{min-height:54px;border-radius:18px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important}
+#page-settings .cw-settings-shell input::placeholder,#page-settings .cw-settings-shell textarea::placeholder{color:rgba(196,204,222,.42)}
+#page-settings .cw-settings-shell .sub{line-height:1.5}
+#page-settings .cw-settings-shell .btn{min-height:46px;border-radius:16px}
+#page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout{min-width:144px;background:linear-gradient(135deg,rgba(86,60,180,.42),rgba(56,106,208,.42))!important;border-color:rgba(124,92,255,.24)!important;box-shadow:0 14px 28px rgba(22,24,40,.24)}
+#page-settings .cw-settings-shell .btn.primary:hover,#page-settings .cw-settings-shell #btn-auth-logout:hover{filter:brightness(1.05)}
+#page-settings .cw-settings-inline-action{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#page-settings .cw-settings-panel.cw-settings-shell[data-tab="security"]{background:radial-gradient(120% 140% at 0% 0%,rgba(124,92,255,.16),transparent 38%),radial-gradient(90% 120% at 100% 100%,rgba(54,120,210,.08),transparent 48%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-settings-panel.cw-settings-shell[data-tab="tracker"]{background:radial-gradient(120% 140% at 0% 0%,rgba(45,161,255,.14),transparent 38%),radial-gradient(90% 120% at 100% 100%,rgba(95,105,214,.08),transparent 48%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-settings-hub{gap:14px}
+#page-settings .cw-hub-tile{position:relative;overflow:hidden;min-height:148px;padding:18px;border-radius:24px}
+#page-settings .cw-hub-tile::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.05),transparent 42%),radial-gradient(90% 110% at 100% 100%,rgba(124,92,255,.10),transparent 56%)}
+#page-settings .cw-hub-tile>*{position:relative;z-index:1}
+#page-settings .cw-hub-tile[data-tab="ui"]{background:radial-gradient(125% 145% at 0% 0%,rgba(92,96,182,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-hub-tile[data-tab="security"]{background:radial-gradient(125% 145% at 0% 0%,rgba(124,92,255,.18),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-hub-tile[data-tab="tracker"]{background:radial-gradient(125% 145% at 0% 0%,rgba(45,161,255,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-hub-top{display:flex;align-items:flex-start;gap:14px}
+#page-settings .cw-hub-icon{width:44px;height:44px;flex:0 0 44px;display:grid;place-items:center;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+#page-settings .cw-hub-icon .material-symbols-rounded{font-size:21px;line-height:1;color:#f1f5ff}
+#page-settings .cw-hub-copy{min-width:0;display:grid;gap:2px}
+#page-settings .cw-hub-title{font-size:15px;font-weight:850;letter-spacing:-.01em}
+#page-settings .cw-hub-desc{margin-top:0;font-size:12px;line-height:1.45}
+#page-settings .cw-hub-tile .chips{margin-top:16px}
+#page-settings .cw-hub-tile .chip{padding:6px 10px;border-radius:999px;border-color:rgba(255,255,255,.09);background:rgba(0,0,0,.24);font-size:12px}
+@media (max-width:900px){#page-settings .cw-settings-2col,#page-settings .cw-settings-split{grid-template-columns:1fr}}
+@media (max-width:640px){#page-settings .cw-settings-statusrow{align-items:stretch}#page-settings .cw-settings-status{min-width:0}#page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout,#page-settings .cw-settings-inline-action .btn{width:100%}}
 </style>
 <script>
 (() => {
@@ -234,7 +336,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
     </svg>
     <span class="brand-text">
       <span class="name">CrossWatch</span>
-      <span class="version">__CW_VERSION__</span>
+      <span class="version">__CW_CURRENT_VERSION__</span>
     </span>
   </div>
 
@@ -535,17 +637,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
             <div class="section cw-settings-section cw-settings-provider-section" id="sec-auth">
               <div class="head" onclick="toggleSection('sec-auth')">
                 <span class="chev">▶</span><strong>Authentication Providers</strong>
-                <span id="auth-providers-icons" class="cw-provider-head-icons">
-                  <img data-prov="PLEX" src="/assets/img/PLEX-log.svg" alt="Plex" class="cw-provider-head-icon">
-                  <img data-prov="JELLYFIN" src="/assets/img/JELLYFIN-log.svg" alt="Jellyfin" class="cw-provider-head-icon">
-                  <img data-prov="SIMKL" src="/assets/img/SIMKL-log.svg" alt="SIMKL" class="cw-provider-head-icon">
-                  <img data-prov="TRAKT" src="/assets/img/TRAKT-log.svg" alt="Trakt" class="cw-provider-head-icon">
-                  <img data-prov="MDBLIST" src="/assets/img/MDBLIST-log.svg" alt="MDBList" class="cw-provider-head-icon">
-                  <img data-prov="TMDB" src="/assets/img/TMDB-log.svg" alt="TMDb" class="cw-provider-head-icon cw-provider-head-icon--tmdb">
-                  <img data-prov="TAUTULLI" src="/assets/img/TAUTULLI-log.svg" alt="TAUTULLI" class="cw-provider-head-icon">
-                  <img data-prov="ANILIST" src="/assets/img/ANILIST-log.svg" alt="AniList" class="cw-provider-head-icon">
-                  <img data-prov="EMBY" src="/assets/img/EMBY-log.svg" alt="Emby" class="cw-provider-head-icon cw-provider-head-icon--emby">
-                </span>
+                <span id="auth-providers-icons" class="cw-provider-head-icons">__CW_AUTH_HEADER_ICONS__</span>
               </div>
               <div class="body"><div id="auth-providers"></div></div>
             </div>
@@ -664,8 +756,13 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 
               <div class="cw-settings-hub" id="ui_settings_hub">
                 <button type="button" class="cw-hub-tile active" data-tab="ui" onclick="cwUiSettingsSelect?.('ui')">
-                  <div class="cw-hub-title">User Interface</div>
-                  <div class="cw-hub-desc">Dashboard visuals</div>
+                  <div class="cw-hub-top">
+                    <div class="cw-hub-icon" aria-hidden="true"><span class="material-symbols-rounded">palette</span></div>
+                    <div class="cw-hub-copy">
+                      <div class="cw-hub-title">User Interface</div>
+                      <div class="cw-hub-desc">Dashboard visuals</div>
+                    </div>
+                  </div>
                   <div class="chips">
                     <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
                     <span class="chip" id="hub_ui_playing">Playing: -</span>
@@ -675,8 +772,13 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 </button>
 
                 <button type="button" class="cw-hub-tile" data-tab="security" onclick="cwUiSettingsSelect?.('security')">
-                  <div class="cw-hub-title">Security</div>
-                  <div class="cw-hub-desc">Protect CrossWatch</div>
+                  <div class="cw-hub-top">
+                    <div class="cw-hub-icon" aria-hidden="true"><span class="material-symbols-rounded">shield_lock</span></div>
+                    <div class="cw-hub-copy">
+                      <div class="cw-hub-title">Security</div>
+                      <div class="cw-hub-desc">Protect CrossWatch</div>
+                    </div>
+                  </div>
                   <div class="chips">
                     <span class="chip" id="hub_sec_auth">Auth: -</span>
                     <span class="chip" id="hub_sec_session">Session: -</span>
@@ -685,8 +787,13 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 </button>
 
                 <button type="button" class="cw-hub-tile" data-tab="tracker" onclick="cwUiSettingsSelect?.('tracker')">
-                  <div class="cw-hub-title">CW Tracker</div>
-                  <div class="cw-hub-desc">Local snapshots</div>
+                  <div class="cw-hub-top">
+                    <div class="cw-hub-icon" aria-hidden="true"><span class="material-symbols-rounded">inventory_2</span></div>
+                    <div class="cw-hub-copy">
+                      <div class="cw-hub-title">CW Tracker</div>
+                      <div class="cw-hub-desc">Local snapshots</div>
+                    </div>
+                  </div>
                   <div class="chips">
                     <span class="chip" id="hub_cw_enabled">Tracker: -</span>
                     <span class="chip" id="hub_cw_retention">Retention: -</span>
@@ -697,180 +804,210 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               <div class="cw-settings-panels" id="ui_settings_panels">
 
                 <!-- Panel: User Interface -->
-                <div class="cw-settings-panel active" data-tab="ui">
-                  <div class="cw-panel-head">
+                <div class="cw-settings-panel cw-settings-shell active" data-tab="ui">
+                  <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-panel-title">User Interface</div>
-                      <div class="sub" style="margin-top:0.25rem">Dashboard visuals.</div>
+                      <div class="cw-settings-kicker">Interface</div>
+                      <div class="cw-panel-title" style="margin-top:10px">User Interface</div>
+                      <div class="sub cw-settings-copy">Choose which dashboard elements stay visible and how CrossWatch serves the UI.</div>
                     </div>
                   </div>
 
-                  <div class="grid2">
-                    <div>
-                      <label for="ui_show_watchlist">Watchlist</label>
-                      <select id="ui_show_watchlist" name="ui_show_watchlist">
-                        <option value="true">Show</option>
-                        <option value="false">Hide</option>
-                      </select>
-                    </div>
+                  <div class="cw-settings-layout">
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Visibility</div>
+                      <div class="cw-settings-2col">
+                        <div>
+                          <label for="ui_show_watchlist">Watchlist</label>
+                          <select id="ui_show_watchlist" name="ui_show_watchlist">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
 
-                    <div>
-                      <label for="ui_show_playing">Playing card</label>
-                      <select id="ui_show_playing" name="ui_show_playing">
-                        <option value="true">Show</option>
-                        <option value="false">Hide</option>
-                      </select>
-                    </div>
+                        <div>
+                          <label for="ui_show_playing">Playing card</label>
+                          <select id="ui_show_playing" name="ui_show_playing">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
 
-                    <div>
-                      <label for="ui_show_AI">Help ASK AI</label>
-                      <select id="ui_show_AI" name="ui_show_AI">
-                        <option value="true">Show</option>
-                        <option value="false">Hide</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label for="ui_protocol">Protocol</label>
-                      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                        <select id="ui_protocol" name="ui_protocol" style="min-width:220px;flex:1">
-                          <option value="http">HTTP</option>
-                          <option value="https">HTTPS (self-signed)</option>
-                        </select>
-                        <button type="button" class="btn" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
+                        <div>
+                          <label for="ui_show_AI">Help ASK AI</label>
+                          <select id="ui_show_AI" name="ui_show_AI">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
                       </div>
-                      <div class="sub" style="margin-top:0.25rem">
-                        HTTPS uses a self-signed certificate, so your browser will warn unless you trust it.
+                    </div>
+
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Protocol</div>
+                      <div>
+                        <label for="ui_protocol">UI protocol</label>
+                        <div class="cw-settings-inline-action">
+                          <select id="ui_protocol" name="ui_protocol" style="min-width:220px;flex:1">
+                            <option value="http">HTTP</option>
+                            <option value="https">HTTPS (self-signed)</option>
+                          </select>
+                          <button type="button" class="btn primary" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
+                        </div>
+                        <div class="sub" style="margin-top:0.35rem">
+                          HTTPS uses a self-signed certificate, so your browser will warn unless you trust it.
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 <!-- Panel: Security -->
-                <div class="cw-settings-panel" data-tab="security">
-                  <div class="cw-panel-head">
+                <div class="cw-settings-panel cw-settings-shell" data-tab="security">
+                  <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-panel-title">Security</div>
-                      <div class="sub" style="margin-top:0.25rem">
-                        Manage your sign-in username, password, and optional session caching.
+                      <div class="cw-settings-kicker">Authentication</div>
+                      <div class="cw-panel-title" style="margin-top:10px">Security</div>
+                      <div class="sub cw-settings-copy">
+                        Manage your sign-in details, session persistence, and reverse-proxy trust settings from one place.
                       </div>
                     </div>
                   </div>
 
-                  <div class="grid2">
-                    <div>
-                      <label for="app_auth_username">Username</label>
-                      <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
+                  <div class="cw-settings-layout">
+                    <div id="app_auth_fields" class="cw-settings-block">
+                      <div class="cw-settings-block-title">Sign-in</div>
+                      <div class="cw-settings-stack">
+                        <div>
+                          <label for="app_auth_username">Username</label>
+                          <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
+                        </div>
+
+                        <div class="cw-settings-2col">
+                          <div>
+                            <label for="app_auth_password">New password</label>
+                            <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
+                            <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
+                          </div>
+
+                          <div>
+                            <label for="app_auth_password2">Confirm password</label>
+                            <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
+                            <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
 
-                    <div>
-                      <label for="app_auth_password2">Confirm password</label>
-                      <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
-                    </div>
-                  </div>
+                    <div id="app_auth_session_fields" class="cw-settings-block">
+                      <div class="cw-settings-block-title">Session</div>
+                      <div class="cw-settings-split">
+                        <div>
+                          <label for="app_auth_remember_enabled">Session caching</label>
+                          <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
+                            <option value="true">Enabled</option>
+                            <option value="false">Browser session only</option>
+                          </select>
+                          <div class="sub" style="margin-top:0.35rem">Browser session only means sign-in is required again after closing the browser.</div>
+                        </div>
 
-                  <div id="app_auth_fields" class="grid2" style="margin-top:12px">
-                    <div>
-                      <label for="app_auth_password">New password</label>
-                      <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
-                      <div class="sub" style="margin-top:0.25rem">Leave blank to keep the current password.</div>
-                    </div>
-                  </div>
-
-                  <div id="app_auth_session_fields" class="grid2" style="margin-top:12px">
-                    <div>
-                      <label for="app_auth_remember_enabled">Session caching</label>
-                      <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
-                        <option value="true">Enabled</option>
-                        <option value="false">Browser session only</option>
-                      </select>
-                      <div class="sub" style="margin-top:0.25rem">Browser session only means sign-in is required again after closing the browser.</div>
+                        <div id="app_auth_remember_days_wrap">
+                          <label for="app_auth_remember_days">Cached for days</label>
+                          <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
+                          <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
+                          <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                        </div>
+                      </div>
                     </div>
 
-                    <div id="app_auth_remember_days_wrap">
-                      <label for="app_auth_remember_days">Cached for days</label>
-                      <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
-                      <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
-                      <div class="sub" style="margin-top:0.25rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                    <div class="cw-settings-statusrow">
+                      <div class="cw-settings-status">
+                        <strong>Current session</strong>
+                        <div class="sub" id="app_auth_state">&mdash;</div>
+                      </div>
+                      <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
                     </div>
-                  </div>
 
-                  <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                    <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
-                    <div class="sub" id="app_auth_state" style="margin:0">—</div>
-                  </div>
-
-                  <div style="margin-top:14px">
-                    <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
-                    <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
-                    <div class="sub" style="margin-top:0.25rem">
-                      Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
-                      Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Reverse proxy</div>
+                      <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
+                      <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
+                      <div class="sub" style="margin-top:0.35rem">
+                        Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
+                        Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <!-- Panel: CW Tracker -->
-                <div class="cw-settings-panel" data-tab="tracker">
-                  <div class="cw-panel-head">
+                <div class="cw-settings-panel cw-settings-shell" data-tab="tracker">
+                  <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-panel-title">CW Tracker</div>
-                      <div class="sub" style="margin-top:0.25rem">
-                        Local backup tracker for Watchlist, Ratings and History snapshots (stored under <code>/config/.cw_provider</code>).
+                      <div class="cw-settings-kicker">Snapshots</div>
+                      <div class="cw-panel-title" style="margin-top:10px">CW Tracker</div>
+                      <div class="sub cw-settings-copy">
+                        Local backup tracker for Watchlist, Ratings and History snapshots stored under <code>/config/.cw_provider</code>.
                       </div>
                     </div>
                   </div>
 
-                  <div class="grid2">
-                    <div>
-                      <label for="cw_enabled">Enabled</label>
-                      <select id="cw_enabled" name="cw_enabled">
-                        <option value="true">Enabled</option>
-                        <option value="false">Disabled</option>
-                      </select>
+                  <div class="cw-settings-layout">
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Retention and capture</div>
+                      <div class="cw-settings-2col">
+                        <div>
+                          <label for="cw_enabled">Enabled</label>
+                          <select id="cw_enabled" name="cw_enabled">
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label for="cw_retention_days">Retention (days)</label>
+                          <input id="cw_retention_days" name="cw_retention_days" type="number" min="0" step="1" placeholder="30">
+                          <div class="sub" style="margin-top:0.35rem">0 = keep snapshots forever.</div>
+                        </div>
+
+                        <div>
+                          <label for="cw_auto_snapshot">Auto snapshot</label>
+                          <select id="cw_auto_snapshot" name="cw_auto_snapshot">
+                            <option value="true">On (before writes)</option>
+                            <option value="false">Off</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label for="cw_max_snapshots">Max snapshots per feature</label>
+                          <input id="cw_max_snapshots" name="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
+                          <div class="sub" style="margin-top:0.35rem">0 = unlimited.</div>
+                        </div>
+                      </div>
                     </div>
 
-                    <div>
-                      <label for="cw_retention_days">Retention (days)</label>
-                      <input id="cw_retention_days" name="cw_retention_days" type="number" min="0" step="1" placeholder="30">
-                      <div class="sub" style="margin-top:0.25rem">0 = keep snapshots forever</div>
-                    </div>
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Restore snapshots</div>
+                      <div class="cw-settings-2col" id="cw_restore_fields">
+                        <div>
+                          <label for="cw_restore_watchlist">Watchlist snapshot</label>
+                          <select id="cw_restore_watchlist" name="cw_restore_watchlist"></select>
+                        </div>
 
-                    <div>
-                      <label for="cw_auto_snapshot">Auto snapshot</label>
-                      <select id="cw_auto_snapshot" name="cw_auto_snapshot">
-                        <option value="true">On (before writes)</option>
-                        <option value="false">Off</option>
-                      </select>
-                    </div>
+                        <div>
+                          <label for="cw_restore_history">History snapshot</label>
+                          <select id="cw_restore_history" name="cw_restore_history"></select>
+                        </div>
 
-                    <div>
-                      <label for="cw_max_snapshots">Max snapshots per feature</label>
-                      <input id="cw_max_snapshots" name="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
-                      <div class="sub" style="margin-top:0.25rem">0 = unlimited</div>
+                        <div>
+                          <label for="cw_restore_ratings">Ratings snapshot</label>
+                          <select id="cw_restore_ratings" name="cw_restore_ratings"></select>
+                        </div>
+                      </div>
+                      <div class="sub" style="margin-top:0.75rem">
+                        Select <code>latest</code> to use the most recent snapshot, or choose a specific file name for each feature.
+                      </div>
                     </div>
-                  </div>
-
-                  <div class="sub" style="margin-top:1.25rem">Restore snapshots</div>
-                  <div class="grid2" id="cw_restore_fields">
-                    <div>
-                      <label for="cw_restore_watchlist">Watchlist snapshot</label>
-                      <select id="cw_restore_watchlist" name="cw_restore_watchlist"></select>
-                    </div>
-
-                    <div>
-                      <label for="cw_restore_history">History snapshot</label>
-                      <select id="cw_restore_history" name="cw_restore_history"></select>
-                    </div>
-
-                    <div>
-                      <label for="cw_restore_ratings">Ratings snapshot</label>
-                      <select id="cw_restore_ratings" name="cw_restore_ratings"></select>
-                    </div>
-                  </div>
-
-                  <div class="sub" style="margin-top:0.5rem">
-                    Select <code>latest</code> to use the most recent snapshot, or choose a specific file name for each feature.
                   </div>
                 </div>
 
@@ -939,22 +1076,25 @@ __CW_ASSET_BLOCK__
 <script>(()=>{const scrollTo=id=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});window.cwProvidersJump=sectionId=>(window.cwSettingsSelect?.('providers'),setTimeout(()=>{window.openSection?.(sectionId);scrollTo(sectionId)},0));window.cwOverviewJump=(sectionId,authGroupId='')=>(window.cwSettingsSelect?.('providers'),setTimeout(async()=>{if(sectionId==='sec-auth'){window.openSection?.('sec-auth');try{await window.mountAuthProviders?.()}catch{}if(authGroupId){window.openSection?.(authGroupId);scrollTo(authGroupId)}else scrollTo('sec-auth');return}window.openSection?.(sectionId);scrollTo(sectionId)},0))})();</script>
 <script>(()=>{window.cwScrobblerJump=sectionId=>(window.cwSettingsSelect?.('scrobbler'),setTimeout(()=>{window.openSection?.(sectionId);document.getElementById(sectionId)?.scrollIntoView({behavior:'smooth',block:'start'})},0));window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{window.cwUiSettingsSelect?.(tab);document.querySelector(`#ui_settings_hub .cw-hub-tile[data-tab="${String(tab||'').trim().toLowerCase()}"]`)?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'})},0))})();</script>
 
-<script>(()=>{const $=id=>document.getElementById(id),txt=v=>String(v??'').trim(),up=v=>txt(v).toUpperCase(),mask=v=>v==='*****'||/^[•]+$/.test(v),pretty=v=>txt(v).toLowerCase()==='default'?'Default':txt(v),CROWN='<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M8 20l10 8 10-14 10 14 10-8 4 26H4l4-26zM10 52h44v4H10z"/></svg>',LABELS={PLEX:'Plex',TRAKT:'Trakt',SIMKL:'SIMKL',ANILIST:'AniList',JELLYFIN:'Jellyfin',EMBY:'Emby',MDBLIST:'MDBlist',TMDB:'TMDb',TAUTULLI:'Tautulli'},AUTH_MAP=[['sec-plex','PLEX'],['sec-emby','EMBY'],['sec-jellyfin','JELLYFIN'],['sec-trakt','TRAKT'],['sec-simkl','SIMKL'],['sec-anilist','ANILIST'],['sec-mdblist','MDBLIST'],['sec-tmdb-sync','TMDB'],['sec-tautulli','TAUTULLI']];let cfg=null,lastCfg=null,authMo=null,metaMo=null;async function getConfig(force=false){if(cfg&&!force)return cfg;const prev=lastCfg||cfg;try{const r=await fetch('/api/config?ts='+Date.now(),{cache:'no-store'});if(r?.ok){const j=await r.json();return lastCfg=cfg=j&&typeof j==='object'?j:{}}}catch{}return cfg=prev||{}}window.invalidateConfigCache=()=>{cfg=null};function isProviderConfigured(key,c=cfg||{}){switch(up(key)){case'PLEX':return!!c?.plex?.account_token;case'TRAKT':return!!(c?.trakt?.access_token||c?.auth?.trakt?.access_token);case'SIMKL':return!!c?.simkl?.access_token;case'ANILIST':return!!(c?.anilist?.access_token||c?.auth?.anilist?.access_token);case'JELLYFIN':return!!c?.jellyfin?.access_token;case'EMBY':return!!(c?.emby?.access_token||c?.auth?.emby?.access_token);case'MDBLIST':return!!c?.mdblist?.api_key;case'TMDB':{const tm=c?.tmdb_sync||c?.auth?.tmdb_sync||{};return!!(tm?.account_id||tm?.session_id)}case'TAUTULLI':return!!((c?.tautulli?.server_url||c?.auth?.tautulli?.server_url)&&(c?.tautulli?.api_key||c?.auth?.tautulli?.api_key));default:return false}}const setDot=(id,on)=>{const sec=$(id),head=sec?.querySelector('.head')||sec?.firstElementChild;if(!head)return false;if(getComputedStyle(head).display!=='flex')Object.assign(head.style,{display:'flex',alignItems:'center'});const dot=head.querySelector('.auth-dot')||head.appendChild(Object.assign(document.createElement('span'),{className:'auth-dot'}));dot.classList.toggle('on',!!on);dot.title=on?'Configured':'Not configured';dot.setAttribute('aria-label',dot.title);return true};async function refreshAuthDots(force=false){const c=await getConfig(force),host=$('auth-providers-icons');host?.querySelectorAll('img[data-prov]').forEach(img=>img.style.display=isProviderConfigured(img.dataset.prov,c)?'inline-block':'none');return AUTH_MAP.reduce((any,[id,key])=>setDot(id,isProviderConfigured(key,c))||any,false)}window.refreshAuthDots=refreshAuthDots;function syncMetadataProviderDot(){const chip=$('hub_tmdb_key'),dot=$('meta-tmdb-dot'),tile=dot?.closest?.('.cw-hub-tile.tmdb');if(!chip||!dot||!tile)return false;const cfgKey=txt(cfg?.tmdb?.api_key),cfgHas=cfgKey.length>0||mask(cfgKey),keyEl=$('tmdb_api_key');let uiHas=false,touched=false;if(keyEl){const v=txt(keyEl.value);touched=keyEl.dataset?.touched==='1';uiHas=v.length>0||mask(v)||keyEl.dataset?.masked==='1';if(touched)uiHas=v.length>0||mask(v)}const raw=txt(chip.textContent).toLowerCase(),chipHas=/\bset\b/.test(raw)&&!/\bmissing\b|\bnot set\b|\bunset\b|\bempty\b|—/.test(raw),on=uiHas||(!touched&&(cfgHas||chipHas));dot.classList.toggle('on',on);dot.title=on?'Configured':'Not configured';dot.setAttribute('aria-label',dot.title);tile.classList.toggle('is-configured',on);return true}window.syncMetadataProviderDot=syncMetadataProviderDot;const observe=(hostId,slot,delay,fn,opts)=>{const host=$(hostId);if(!host)return slot==='meta'?setTimeout(()=>observe(hostId,slot,delay,fn,opts),150):undefined;fn();if((slot==='auth'&&authMo)||(slot==='meta'&&metaMo))return;const mo=new MutationObserver(()=>{clearTimeout(mo._t);mo._t=setTimeout(fn,delay)});mo.observe(host,opts);if(slot==='auth')authMo=mo;else metaMo=mo};document.addEventListener('settings-collect',()=>{refreshAuthDots(true).catch(()=>{});syncMetadataProviderDot()},true);document.addEventListener('tab-changed',()=>{refreshAuthDots(false).catch(()=>{});syncMetadataProviderDot()},true);document.addEventListener('DOMContentLoaded',()=>observe('hub_tmdb_key','meta',0,syncMetadataProviderDot,{childList:true,characterData:true,subtree:true}),{once:true});const titleCase=v=>{v=txt(v);return v?v[0]+v.slice(1).toLowerCase():v},instancesDetail=d=>{const inst=d&&typeof d==='object'?d.instances:null,sum=d&&typeof d==='object'?d.instances_summary:null;if(!inst||typeof inst!=='object')return'';const total=Number(sum?.total);if(!Number.isFinite(total)||total<=1)return'';const lines=[Number.isFinite(Number(sum?.ok))?`Profiles: ${Number(sum.ok)}/${total} connected`:`Profiles: ${total}`],used=Array.isArray(sum?.used)?sum.used:[];if(used.length){const labs=used.slice(0,4).map(pretty);lines.push(`Used: ${labs.join(', ')}${used.length>4?'…':''}`)}const entries=Object.entries(inst).slice(0,6).map(([id,v])=>`${pretty(id)}=${!!(v&&typeof v==='object'?v.connected:v)?'OK':'NO'}`);if(entries.length)lines.push(entries.join(' · '));const rep=txt(sum?.rep);if(rep&&rep.toLowerCase()!=='default')lines.push(`Rep: ${rep}`);return lines.join('\n')},usageDetail=d=>{const hint=txt(d?.usage_hint).replace(/\s*\+\s*/g,' and ');if(hint)return hint;const usedBy=Array.isArray(d?.used_by)?d.used_by:[];return usedBy.length?`Used by: ${usedBy.map(x=>txt(x).toLowerCase()==='pair'?'Sync':'Watcher').join(' and ')}`:''};function providerMeta(K,d){switch(up(K)){case'PLEX':{const vip=!!(d.plexpass||d.subscription?.plan);return{vip,detail:vip?`Plex Pass - ${d.subscription?.plan||'Active'}`:''}}case'TRAKT':{const vip=!!d.vip,wl=d?.limits?.watchlist||{},col=d?.limits?.collection||{},parts=[vip?'VIP status':'Free account'],add=(label,obj)=>{const used=Number(obj.used),max=Number(obj.item_count);if(Number.isFinite(used)&&Number.isFinite(max)&&max>0)parts.push(`${label}: ${used}/${max}`)};add('Watchlist',wl);add('Collection',col);if(d?.last_limit_error?.feature&&d?.last_limit_error?.ts)parts.push(`Last limit: ${d.last_limit_error.feature} @ ${d.last_limit_error.ts}`);return{vip,detail:parts.join(' · ')}}case'EMBY':return{vip:!!d.premiere,detail:d.premiere?'Premiere — Active':''};case'MDBLIST':{const vip=!!d.vip,lim=d?.limits||{},used=Number(lim.api_requests_count),max=Number(lim.api_requests),pat=txt(d.patron_status);return{vip,detail:`API requests: ${Number.isFinite(used)?used.toLocaleString():'-'}/${Number.isFinite(max)?max.toLocaleString():'-'}${pat?` - Status: ${pat}`:''}`}}case'ANILIST':{const nm=d?.user?.name||d?.user?.username||d?.user?.id;return{vip:false,detail:nm?`User: ${nm}`:''}}default:return{vip:false,detail:''}}}const makeConn=({name,connected,vip,detail,key})=>{const wrap=document.createElement('div'),pill=document.createElement('div');wrap.className='conn-item';pill.className=`conn-pill ${connected?'ok':'no'}${vip?' has-vip':''}`;if(key)pill.dataset.prov=up(key||name);pill.role='status';pill.ariaLabel=`${name} ${connected?'connected':'disconnected'}`;if(detail)pill.title=detail;pill.innerHTML=`<div class="conn-brand"><span class="conn-logo"></span>${vip?`<span class="conn-slot">${CROWN}</span>`:''}</div><span class="conn-text"></span><span class="dot ${connected?'ok':'no'}" aria-hidden="true"></span>`;pill.querySelector('.conn-text').textContent=name;wrap.appendChild(pill);return wrap};function render(payload){const host=$('conn-badges'),btn=$('btn-status-refresh');if(!host)return;host.classList.add('vip-badges');if(btn&&host.contains(btn))host.removeChild(btn);host.querySelectorAll('.conn-item').forEach(n=>n.remove());const providers=payload?.providers||{},keys=Object.keys(providers).filter(k=>isProviderConfigured(k,cfg||{})).sort(),none=!keys.length;host.classList.toggle('hidden',none);if(none){const hdr=document.querySelector('.cw-main-card-head-actions')||document.querySelector('.ops-header');if(btn&&hdr)hdr.appendChild(btn);return}keys.map(K=>{const d=providers[K]||{},name=LABELS[K]||titleCase(K),connected=!!d.connected,meta=providerMeta(K,d),detail=connected?[instancesDetail(d),meta.detail,usageDetail(d)].filter(Boolean).join('\n'):(d.reason||`${name} not connected`),el=makeConn({name,connected,vip:meta.vip,detail,key:K});el.style.margin='0';return el}).forEach(el=>host.appendChild(el))}async function fetchAndRender(e,opts){e?.preventDefault?.();const btn=e?.currentTarget||$('btn-status-refresh');if(!btn||btn.dataset.busy==='1')return;btn.dataset.busy='1';btn.classList.remove('spinning');void btn.offsetWidth;btn.classList.add('spinning');btn.setAttribute('aria-busy','true');btn.disabled=true;const minSpin=new Promise(r=>setTimeout(r,600)),ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),4500);try{await getConfig(true);refreshAuthDots(false).catch(()=>{});const r=await fetch(`/api/status${opts?.fresh===true?'?fresh=1':''}`,{cache:'no-store',signal:ctl.signal}),d=r.ok?await r.json():null;render(d?.providers?d:{providers:{}})}catch(err){console.error('Status refresh failed:',err);render({providers:{}})}finally{clearTimeout(t);await minSpin;btn.classList.remove('spinning');btn.removeAttribute('aria-busy');btn.disabled=false;delete btn.dataset.busy}}window.manualRefreshStatus=e=>fetchAndRender(e,{fresh:true});function init(){getConfig().catch(()=>{});const btn=$('btn-status-refresh');if(btn&&btn.dataset.boundClick!=='1'){btn.dataset.boundClick='1';btn.addEventListener('click',window.manualRefreshStatus)}observe('auth-providers','auth',200,()=>refreshAuthDots(false).catch(()=>{}),{childList:true,subtree:false});let tries=0;(function retry(){refreshAuthDots(false).then(ok=>ok||++tries>=50||setTimeout(retry,200)).catch(()=>++tries<50&&setTimeout(retry,200))})();fetchAndRender(null,{fresh:false})}document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init,{once:true}):init()})();</script>
 <script>(()=>{const origFetch=window.fetch;if(typeof origFetch!=='function'||origFetch.__cwAuthPendingWrapped)return;const pending=()=>window.cwIsAuthSetupPending?.()===true,allowPath=p=>p.startsWith('/api/app-auth/')||p==='/api/config/meta'||p.startsWith('/api/config/meta?')||p.startsWith('/assets/')||p==='/favicon.svg';const emptyJson=(body='{}')=>new Response(body,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});window.fetch=Object.assign(async function(resource,init){try{if(!pending())return await origFetch(resource,init);const url=typeof resource==='string'?resource:String(resource?.url||'');const u=new URL(url,location.origin);if(u.origin!==location.origin||!u.pathname.startsWith('/api/')||allowPath(u.pathname)||allowPath(u.pathname+u.search))return await origFetch(resource,init);const method=String(init?.method||resource?.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD')return await origFetch(resource,init);if(u.pathname.startsWith('/api/config'))return emptyJson('{}');if(u.pathname.startsWith('/api/status'))return emptyJson('{"providers":{}}');if(u.pathname.startsWith('/api/pairs'))return emptyJson('[]');if(u.pathname.startsWith('/api/scheduling'))return emptyJson('{}');if(u.pathname.startsWith('/api/insights'))return emptyJson('{}');if(u.pathname.startsWith('/api/watch/'))return emptyJson('{}');if(u.pathname.startsWith('/api/webhooks/'))return emptyJson('{}');return emptyJson('{}')}catch{return await origFetch(resource,init)}},{__cwAuthPendingWrapped:true})})();</script>
 
 <script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),visible=()=>{if(!page)return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
 
 <script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved ✓';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
-<script>(()=>{const origShowTab=window.showTab,toggle=(id,on)=>document.getElementById(id)?.classList.toggle('hidden',!on),active=(id,on)=>document.getElementById(id)?.classList.toggle('active',!!on);window.showTab=name=>{if(typeof origShowTab==='function')try{origShowTab(name)}catch{}const tab=String(name||'main'),flags={main:tab==='main',watchlist:tab==='watchlist',snapshots:tab==='snapshots',editor:tab==='editor',settings:tab==='settings'};toggle('ops-card',flags.main);toggle('stats-card',flags.main);toggle('placeholder-card',flags.main);toggle('page-watchlist',flags.watchlist);toggle('page-snapshots',flags.snapshots);toggle('page-editor',flags.editor);toggle('page-settings',flags.settings);Object.entries(flags).forEach(([k,on])=>active(`tab-${k}`,on));try{document.dispatchEvent(new CustomEvent('tab-changed',{detail:{tab}}))}catch{}}})();</script>
 </body></html>
 
 """
 
 def get_index_html(include_gitbook_embed: bool = True, ui_show_ai: bool = True) -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block())
+    html = html.replace("__CW_AUTH_HEADER_ICONS__", _auth_header_icons_html())
     core_script = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
     if core_script in html and "__cwUiShowAI" not in html:
         html = html.replace(core_script, f'<script>window.__cwUiShowAI={"true" if ui_show_ai else "false"};</script>\n{core_script}', 1)
     if include_gitbook_embed and "gitbook/embed/script.js" not in html:
         html = html.replace(core_script, f"{GITBOOK_EMBED_BLOCK}\n\n{core_script}", 1) if core_script in html else f"{html}\n\n{GITBOOK_EMBED_BLOCK}\n"
-    return html.replace("__CW_VERSION__", CURRENT_VERSION)
+    return (
+        html
+        .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)
+        .replace("__CW_VERSION__", _asset_version_token())
+    )
