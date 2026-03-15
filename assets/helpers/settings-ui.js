@@ -1081,7 +1081,7 @@ async function loadConfig() {
   try { cwUiSettingsHubInit?.(); } catch {}
 
   await loadCrossWatchSnapshots(cfg);
-  window.appDebug = !!(cfg.runtime && cfg.runtime.debug);
+  window.appDebug = !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
 
 
 (function hydrateSecretsRaw(cfg){
