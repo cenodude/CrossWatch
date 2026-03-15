@@ -59,7 +59,7 @@
 .sch-adv .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:18px;line-height:1}
 .sch-adv .sch-help:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(101,107,255,.12),inset 0 1px 0 rgba(255,255,255,.03)}
 .sch-adv tbody tr{background:var(--sch-card-bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
-.sch-adv tbody td{padding:12px 10px;vertical-align:middle;border-top:1px solid var(--sch-border-soft);border-bottom:1px solid var(--sch-border-soft)}
+.sch-adv tbody td{position:relative;overflow:visible;padding:12px 10px;vertical-align:middle;border-top:1px solid var(--sch-border-soft);border-bottom:1px solid var(--sch-border-soft)}
 .sch-adv tbody td:first-child{border-left:1px solid var(--sch-border-soft);border-radius:18px 0 0 18px}
 .sch-adv tbody td:last-child{border-right:1px solid var(--sch-border-soft);border-radius:0 18px 18px 0}
 .sch-adv .chipdays{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:center}
@@ -78,8 +78,8 @@
 .sch-adv td[data-label="Source"] .stack,.sch-adv td[data-label="Action"] .stack{width:100%}
 .sch-adv td[data-label="Source"] select,.sch-adv td[data-label="Action"] select{width:100%!important;min-width:0!important}
 .sch-adv td[data-label="Source"] select,.sch-adv td[data-label="Event"] select{min-width:146px}
-.sch-adv .event-filter-grid{grid-template-columns:minmax(220px,1.18fr) minmax(132px,.82fr);column-gap:12px}
-.sch-adv .event-filter-grid input,.sch-adv .event-filter-grid select{min-width:0}
+.sch-adv .event-filter-stack{width:100%}
+.sch-adv .event-filter-stack select,.sch-adv .event-filter-stack input{width:100%!important;min-width:0!important}
 .sch-adv .checkline{display:flex;align-items:center;gap:8px;min-height:18px;font-size:12px;color:var(--sch-fg-soft)}
 .sch-adv .checkline input{width:16px;height:16px;accent-color:#7c76ff}
 .sch-adv .row-disabled{opacity:.5;filter:grayscale(.24)}
@@ -92,6 +92,49 @@
 .sch-std-toggle{margin-top:0}
 @media (max-width:980px){#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td[data-label]::before{content:attr(data-label);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56)}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .stack.two,.sch-adv .stack.three,.sch-adv .event-filter-grid{grid-template-columns:1fr}}
+` }));
+  document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:0}
+#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;gap:6px;padding:18px 18px 6px}
+#sec-scheduling .sch-std-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
+#sec-scheduling .sch-std-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
+#sec-scheduling .sch-std-copy{max-width:64ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{padding-top:12px}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field{min-width:0}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field select,
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field input[type=time],
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field input[type=number]{min-height:44px}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{display:grid;grid-template-columns:minmax(0,1fr);align-content:start}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child .cx-toggle{display:inline-flex;align-items:center;align-self:start;min-height:44px;padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}
+.sch-adv{display:grid;gap:14px}
+.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;padding:18px;border-radius:22px;background:linear-gradient(180deg,rgba(10,13,21,.94),rgba(4,6,11,.97));box-shadow:0 18px 34px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.03)}
+.sch-adv .cw-panel-head::before{top:18px;left:18px}
+.sch-adv-head-copy{display:grid;gap:6px;padding-top:16px}
+.sch-adv-head-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
+.sch-adv-head-title{font-size:24px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
+.sch-adv-head-copy p{margin:0;max-width:60ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
+.sch-adv .cw-panel-head .cx-toggle{margin-top:16px;justify-self:end}
+.sch-adv-section{gap:12px;padding:16px}
+.sch-adv-section-head{align-items:center}
+.sch-adv-section-copy{font-size:12px;line-height:1.5}
+.sch-adv table{border-spacing:0 8px}
+.sch-adv thead th{padding:0 8px 6px}
+.sch-adv tbody td{padding:10px 8px}
+.sch-adv tbody td:first-child{border-radius:16px 0 0 16px}
+.sch-adv tbody td:last-child{border-radius:0 16px 16px 0}
+.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text]{min-height:42px;padding:0 12px;border-radius:14px}
+.sch-adv .stack{gap:7px}
+.sch-adv .stack.two{grid-template-columns:minmax(0,1fr) minmax(118px,.92fr)}
+.sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+.sch-adv .field-mini{gap:5px}
+.sch-adv .field-mini .subnote{font-size:10px;letter-spacing:.09em}
+.sch-adv .chipdays{gap:7px}
+.sch-adv .chipdays label{min-height:36px;padding:0 9px}
+.sch-adv-actions{gap:8px}
+.sch-adv .btn,.sch-adv .btn.ghost{min-height:38px;padding:0 13px}
+@media (max-width:1180px){.sch-adv .stack.two{grid-template-columns:1fr}}
+@media (max-width:980px){#sec-scheduling .sch-std-head{padding-bottom:4px}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
+@media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}}
 ` }));
 
   // state
@@ -197,7 +240,15 @@ const ensureStdEnabledToggle = () => {
 
   const decorateStandardPanel = () => {
     const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
-    if (!basic) return;
+    if (!basic || basic.dataset.schDecorated === "1") return;
+    const head = el("div", "sch-std-head");
+    head.innerHTML = `
+      <div class="sch-std-kicker">Standard plan</div>
+      <div class="sch-std-title">Quick scheduler</div>
+      <div class="sch-std-copy">Use a simple timer for recurring syncs. Switch to Advanced when you need chained steps or watcher and webhook triggers.</div>
+    `;
+    basic.prepend(head);
+    basic.dataset.schDecorated = "1";
   };
 
   const applyModeLocks = () => {
@@ -248,7 +299,12 @@ const ensureStdEnabledToggle = () => {
       _pairs = Array.isArray(arr) ? arr.map(p => ({
         id: String(p.id),
         label: `${String(p.source || "").toUpperCase()} -> ${String(p.target || "").toUpperCase()} ${String(p.mode || "")}`.trim(),
-        enabled: !!p.enabled
+        enabled: !!p.enabled,
+        source: String(p.source || "").trim().toLowerCase(),
+        target: String(p.target || "").trim().toLowerCase(),
+        source_instance: String(p.source_instance || "default").trim() || "default",
+        target_instance: String(p.target_instance || "default").trim() || "default",
+        mode: String(p.mode || "").trim(),
       })) : [];
     } catch (e) { console.warn("[scheduler] /api/pairs failed", e); _pairs = []; }
   };
@@ -316,23 +372,6 @@ const ensureStdEnabledToggle = () => {
   const syncRuleRoute = rule => {
     if (!rule?.filters) rule.filters = {};
     if (findEventRoute(rule.source, rule.filters.route_id || "")) return;
-    const routes = eventRoutesFor(rule.source);
-    if (!routes.length) {
-      rule.filters.route_id = "";
-      return;
-    }
-    const provider = String(rule.filters.provider || "").trim().toLowerCase();
-    const providerInstance = String(rule.filters.provider_instance || "").trim();
-    let matches = routes.filter(route => !provider || String(route?.provider || "").trim().toLowerCase() === provider);
-    if (providerInstance) matches = matches.filter(route => String(route?.provider_instance || "default").trim() === providerInstance);
-    if (matches.length === 1) {
-      rule.filters.route_id = String(matches[0].id || "");
-      return;
-    }
-    if (!provider && routes.length === 1) {
-      rule.filters.route_id = String(routes[0].id || "");
-      return;
-    }
     rule.filters.route_id = "";
   };
   const isEnabled = pid => !!_pairs.find(p => String(p.id) === String(pid) && p.enabled);
@@ -410,6 +449,74 @@ const ensureStdEnabledToggle = () => {
     if (title) input.title = title;
     return input;
   };
+  const providerMeta = () => window.CW?.ProviderMeta || {};
+  const providerIcon = (value) => {
+    const meta = providerMeta();
+    return meta.logLogoPath?.(value) || meta.logoPath?.(value) || "";
+  };
+  const providerLabel = (value) => providerMeta().label?.(value) || String(value || "");
+  const instanceLabel = (value) => {
+    const raw = String(value || "").trim();
+    return !raw || raw.toLowerCase() === "default" ? "Default" : raw;
+  };
+  const instanceBadge = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw.toLowerCase() === "default") return "D";
+    const upper = raw.toUpperCase();
+    const prof = upper.match(/(^|[^A-Z0-9])(P\d{1,3})(?=[^A-Z0-9]|$)/);
+    if (prof?.[2]) return prof[2];
+    const parts = upper.split(/[^A-Z0-9]+/).filter(Boolean);
+    if (parts.length) {
+      const last = parts[parts.length - 1];
+      if (last.length <= 4) return last;
+    }
+    return upper.slice(0, 4);
+  };
+  const iconMeta = (value) => {
+    const key = String(value || "").trim();
+    const src = providerIcon(key);
+    return src ? { src, alt: providerLabel(key) } : null;
+  };
+  const routeOptionData = (value, fallbackLabel = "") => {
+    const route = [...eventRoutesFor("watcher"), ...eventRoutesFor("webhook")]
+      .find((item) => String(item?.id || "") === String(value || ""));
+    if (!route) return null;
+    const icons = [iconMeta(route.provider), iconMeta(route.sink)].filter(Boolean);
+    return {
+      label: "",
+      badges: route.sink
+        ? [instanceBadge(route.provider_instance), instanceBadge(route.sink_instance)]
+        : [instanceBadge(route.provider_instance)],
+      note: "",
+      showNote: false,
+      icons,
+      separator: icons.length > 1 ? "arrow" : "",
+    };
+  };
+  const pairOptionData = (value, fallbackLabel = "") => {
+    const pair = _pairs.find((item) => String(item?.id || "") === String(value || ""));
+    if (!pair) return null;
+    const icons = [iconMeta(pair.source), iconMeta(pair.target)].filter(Boolean);
+    return {
+      label: "",
+      badges: [instanceBadge(pair.source_instance), instanceBadge(pair.target_instance)],
+      note: "",
+      showNote: false,
+      icons,
+      separator: icons.length > 1 ? "arrow" : "",
+    };
+  };
+  const enhanceIconSelect = (select, getOptionData) => {
+    const helper = window.CW?.IconSelect?.enhance;
+    if (typeof helper !== "function") return select;
+    return helper(select, {
+      getOptionData: (value, option, nativeSelect) =>
+        getOptionData?.(value, option, nativeSelect) || {
+          label: String(option?.textContent || "").trim() || "-",
+          disabled: !!option?.disabled,
+        },
+    });
+  };
   const pairOptions = (selected, includeNoneText = "Select pair") => [
     ["", includeNoneText],
     ..._pairs.map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
@@ -462,7 +569,10 @@ const ensureStdEnabledToggle = () => {
 
     const tdDays = tdCell("Days", wrap);
     tr.append(
-      tdCell("Pair", sel),
+      tdCell("Pair", enhanceIconSelect(sel, (value, option) => {
+        const data = pairOptionData(value, String(option?.textContent || "").trim());
+        return data ? { ...data, disabled: !!option?.disabled } : null;
+      })),
       tdCell("Time", t),
       tdDays,
       tdCell("After", sa),
@@ -559,17 +669,20 @@ const ensureStdEnabledToggle = () => {
     del.onclick = () => { _eventRules = _eventRules.filter(x => x !== r); renderEventRules(); };
 
     tr.append(
-      tdCell("Source", stackWrap("stack", sourceSel, routeSel)),
+      tdCell("Source", stackWrap("stack", sourceSel, enhanceIconSelect(routeSel, (value, option) => {
+        const data = routeOptionData(value, String(option?.textContent || "").trim());
+        return data ? { ...data, disabled: !!option?.disabled } : null;
+      }))),
       tdCell("Event", eventSel),
-      tdCell("Filters", stackWrap(
+      tdCell("Filters", stackWrap("stack event-filter-stack", mediaSel, minProgressInput)),
+      tdCell("Action", stackWrap(
         "stack",
-        stackWrap(
-          "stack two event-filter-grid",
-          mediaSel,
-          minProgressInput
-        )
+        Object.assign(el("div", "subnote"), { textContent: "Sync pair" }),
+        enhanceIconSelect(pairSel, (value, option) => {
+          const data = pairOptionData(value, String(option?.textContent || "").trim());
+          return data ? { ...data, disabled: !!option?.disabled } : null;
+        })
       )),
-      tdCell("Action", stackWrap("stack", Object.assign(el("div", "subnote"), { textContent: "Sync pair" }), pairSel)),
       tdCell("Guardrails", stackWrap(
         "stack",
         stackWrap(
@@ -593,6 +706,11 @@ const ensureStdEnabledToggle = () => {
     const adv = Object.assign(el("div", "sch-adv"), { id: "schAdv" });
     adv.innerHTML = `
 <div class="cw-panel-head">
+  <div class="sch-adv-head-copy">
+    <div class="sch-adv-head-kicker">Advanced plan</div>
+    <div class="sch-adv-head-title">Step and event scheduler</div>
+    <p>Combine timed steps with watcher and webhook triggers while keeping route filters and guardrails close at hand.</p>
+  </div>
   <label class="cx-toggle">
     <input type="checkbox" id="schAdvEnabled">
     <span class="cx-toggle-ui" aria-hidden="true"></span>
@@ -833,12 +951,16 @@ const ensureStdEnabledToggle = () => {
   });
 
   // public getter for current scheduling patch
-  window.getSchedulingPatch = () => {
+  window.getSchedulingPatch = (opts = {}) => {
+    const strict = opts?.strict !== false;
     const mode = $("#schMode")?.value || "hourly";
     const every_n_hours = parseInt($("#schN")?.value || "2", 10);
     const daily_time = $("#schTime")?.value || "03:30";
     const ruleState = serializableEventRules();
-    if (ruleState.issues.length) throw new Error(ruleState.issues[0]);
+    if (ruleState.issues.length) {
+      if (strict) throw new Error(ruleState.issues[0]);
+      return null;
+    }
     const advanced = serializeAdvanced();
 
     // Advanced plan disables standard scheduling
