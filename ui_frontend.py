@@ -253,6 +253,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-overview-duo .cw-settings-overview-card{background:radial-gradient(115% 130% at 100% 100%,rgba(70,80,138,.08),transparent 42%),linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.012))!important}
 #page-settings input,#page-settings select,#page-settings textarea{background:rgba(4,6,10,.94)!important;border:1px solid rgba(255,255,255,.08)!important;color:var(--cw-ov-fg)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)!important}
 #page-settings input:focus,#page-settings select:focus,#page-settings textarea:focus{outline:none;box-shadow:0 0 0 3px rgba(112,122,170,.14),inset 0 1px 0 rgba(255,255,255,.03)!important;border-color:rgba(160,168,202,.18)!important;background:rgba(6,8,12,.98)!important}
+#page-settings select option,#page-settings select optgroup{background:#06080c!important;color:#eef3ff!important}
 #page-settings .sub,#page-settings p,#page-settings small,#page-settings label,#page-settings .cw-settings-pane-kicker,#page-settings .cw-settings-overview-kicker,#page-settings .cw-settings-jumpbar,#page-settings .cw-hub-desc{color:var(--cw-ov-soft)!important}
 #page-settings h3,#page-settings h4,#page-settings strong,#page-settings .cw-panel-title,#page-settings .cw-settings-nav-title{color:var(--cw-ov-fg)!important}
 #page-settings .chip,#page-settings .pill,#page-settings .cw-provider-head-icon,#page-settings .auth-dot{filter:saturate(.88)}
@@ -269,8 +270,6 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-panel.cw-settings-shell.active{display:grid}
 #page-settings .cw-settings-shell .cw-panel-head{margin-bottom:0}
 #page-settings .cw-settings-head{padding-bottom:2px}
-#page-settings .cw-settings-kicker{display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;padding:6px 12px;border-radius:999px;border:1px solid rgba(138,144,206,.18);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.025));font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase;color:rgba(226,232,248,.76)}
-#page-settings .cw-settings-kicker::before{content:"";width:8px;height:8px;border-radius:999px;background:linear-gradient(135deg,#7c5cff,#2de2ff);box-shadow:0 0 14px rgba(124,92,255,.48)}
 #page-settings .cw-settings-copy{margin-top:10px;max-width:72ch}
 #page-settings .cw-settings-layout{display:grid;gap:14px}
 #page-settings .cw-settings-block{padding:16px 16px 14px;border-radius:22px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
@@ -283,18 +282,18 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-status strong{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:rgba(228,234,248,.72)}
 #page-settings .cw-settings-status .sub{margin:0!important}
 #page-settings .cw-settings-shell label{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,248,.74)!important}
-#page-settings .cw-settings-shell input,#page-settings .cw-settings-shell select,#page-settings .cw-settings-shell textarea{min-height:54px;border-radius:18px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important}
+#page-settings .cw-settings-shell input,#page-settings .cw-settings-shell select,#page-settings .cw-settings-shell textarea{min-height:54px;border-radius:18px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important;color:#eef3ff!important}
 #page-settings .cw-settings-shell input::placeholder,#page-settings .cw-settings-shell textarea::placeholder{color:rgba(196,204,222,.42)}
 #page-settings .cw-settings-shell .sub{line-height:1.5}
 #page-settings .cw-settings-shell .btn{min-height:46px;border-radius:16px}
 #page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout{min-width:144px;background:linear-gradient(135deg,rgba(86,60,180,.42),rgba(56,106,208,.42))!important;border-color:rgba(124,92,255,.24)!important;box-shadow:0 14px 28px rgba(22,24,40,.24)}
 #page-settings .cw-settings-shell .btn.primary:hover,#page-settings .cw-settings-shell #btn-auth-logout:hover{filter:brightness(1.05)}
 #page-settings .cw-settings-inline-action{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-#page-settings .cw-settings-panel.cw-settings-shell[data-tab="security"]{background:radial-gradient(120% 140% at 0% 0%,rgba(124,92,255,.16),transparent 38%),radial-gradient(90% 120% at 100% 100%,rgba(54,120,210,.08),transparent 48%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
-#page-settings .cw-settings-panel.cw-settings-shell[data-tab="tracker"]{background:radial-gradient(120% 140% at 0% 0%,rgba(45,161,255,.14),transparent 38%),radial-gradient(90% 120% at 100% 100%,rgba(95,105,214,.08),transparent 48%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
-#page-settings .cw-settings-hub{gap:14px}
-#page-settings .cw-hub-tile{position:relative;overflow:hidden;min-height:148px;padding:18px;border-radius:24px}
-#page-settings .cw-hub-tile::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.05),transparent 42%),radial-gradient(90% 110% at 100% 100%,rgba(124,92,255,.10),transparent 56%)}
+#page-settings .cw-settings-panel.cw-settings-shell[data-tab="security"]{background:radial-gradient(120% 140% at 0% 0%,rgba(124,92,255,.16),transparent 38%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-settings-panel.cw-settings-shell[data-tab="tracker"]{background:radial-gradient(120% 140% at 0% 0%,rgba(45,161,255,.14),transparent 38%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
+#page-settings .cw-settings-hub{gap:14px;align-items:start}
+#page-settings .cw-hub-tile{position:relative;overflow:hidden;min-height:148px;padding:18px;border-radius:24px;display:grid;align-content:start}
+#page-settings .cw-hub-tile::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.05),transparent 42%)}
 #page-settings .cw-hub-tile>*{position:relative;z-index:1}
 #page-settings .cw-hub-tile[data-tab="ui"]{background:radial-gradient(125% 145% at 0% 0%,rgba(92,96,182,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
 #page-settings .cw-hub-tile[data-tab="security"]{background:radial-gradient(125% 145% at 0% 0%,rgba(124,92,255,.18),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
@@ -302,10 +301,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-hub-top{display:flex;align-items:flex-start;gap:14px}
 #page-settings .cw-hub-icon{width:44px;height:44px;flex:0 0 44px;display:grid;place-items:center;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 #page-settings .cw-hub-icon .material-symbols-rounded{font-size:21px;line-height:1;color:#f1f5ff}
-#page-settings .cw-hub-copy{min-width:0;display:grid;gap:2px}
+#page-settings .cw-hub-copy{min-width:0;display:grid;align-content:start;gap:4px;padding-top:1px}
 #page-settings .cw-hub-title{font-size:15px;font-weight:850;letter-spacing:-.01em}
-#page-settings .cw-hub-desc{margin-top:0;font-size:12px;line-height:1.45}
-#page-settings .cw-hub-tile .chips{margin-top:16px}
+#page-settings .cw-hub-desc{margin-top:0;font-size:12px;line-height:1.3}
+#page-settings .cw-hub-tile .chips{margin-top:14px;align-self:start}
 #page-settings .cw-hub-tile .chip{padding:6px 10px;border-radius:999px;border-color:rgba(255,255,255,.09);background:rgba(0,0,0,.24);font-size:12px}
 @media (max-width:900px){#page-settings .cw-settings-2col,#page-settings .cw-settings-split{grid-template-columns:1fr}}
 @media (max-width:640px){#page-settings .cw-settings-statusrow{align-items:stretch}#page-settings .cw-settings-status{min-width:0}#page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout,#page-settings .cw-settings-inline-action .btn{width:100%}}
@@ -807,7 +806,6 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <div class="cw-settings-panel cw-settings-shell active" data-tab="ui">
                   <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-settings-kicker">Interface</div>
                       <div class="cw-panel-title" style="margin-top:10px">User Interface</div>
                       <div class="sub cw-settings-copy">Choose which dashboard elements stay visible and how CrossWatch serves the UI.</div>
                     </div>
@@ -866,7 +864,6 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <div class="cw-settings-panel cw-settings-shell" data-tab="security">
                   <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-settings-kicker">Authentication</div>
                       <div class="cw-panel-title" style="margin-top:10px">Security</div>
                       <div class="sub cw-settings-copy">
                         Manage your sign-in details, session persistence, and reverse-proxy trust settings from one place.
@@ -944,7 +941,6 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <div class="cw-settings-panel cw-settings-shell" data-tab="tracker">
                   <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-settings-kicker">Snapshots</div>
                       <div class="cw-panel-title" style="margin-top:10px">CW Tracker</div>
                       <div class="sub cw-settings-copy">
                         Local backup tracker for Watchlist, Ratings and History snapshots stored under <code>/config/.cw_provider</code>.
