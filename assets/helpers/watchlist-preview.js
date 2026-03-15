@@ -28,6 +28,26 @@
     return cfg;
   };
 
+  const providerMeta = () => window.CW?.ProviderMeta || {};
+  const providerKey = (value) => providerMeta().keyOf?.(value) || String(value || "").trim().toUpperCase();
+  const providerLabel = (value) => providerMeta().label?.(value) || providerKey(value) || String(value || "");
+  const providerShortLabel = (value) => providerMeta().shortLabel?.(value) || providerLabel(value);
+  const providerFromStatus = (status) => {
+    const raw = String(status || "").toLowerCase().trim();
+    if (!raw || raw === "both" || raw === "deleted") return "";
+    if (raw === "crosswatch_only" || raw === "cw_only") return "CROSSWATCH";
+    if (raw.endsWith("_only")) return providerKey(raw.slice(0, -5));
+    return "";
+  };
+  const PILL_CLASS_BY_PROVIDER = {
+    PLEX: "p-px",
+    SIMKL: "p-sk",
+    TRAKT: "p-tr",
+    ANILIST: "p-al",
+    JELLYFIN: "p-sk",
+    CROSSWATCH: "p-sk",
+  };
+
   const readHidden = () => {
     try { return new Set(JSON.parse(localStorage.getItem("wl_hidden") || "[]") || []); }
     catch { return new Set(); }
@@ -102,49 +122,36 @@
   };
 
   function pillFor(status) {
-    switch (String(status || "").toLowerCase()) {
-      case "deleted": return { text: "DELETED", cls: "p-del" };
-      case "both": return { text: "SYNCED", cls: "p-syn" };
-      case "plex_only": return { text: "PLEX", cls: "p-px" };
-      case "simkl_only": return { text: "SIMKL", cls: "p-sk" };
-      case "trakt_only": return { text: "TRAKT", cls: "p-tr" };
-      case "anilist_only": return { text: "ANILIST", cls: "p-al" };
-      case "jellyfin_only": return { text: "JELLYFIN", cls: "p-sk" };
-      case "crosswatch_only":
-      case "cw_only": return { text: "CW", cls: "p-sk" };
-      default: return { text: "-", cls: "p-sk" };
-    }
+    const raw = String(status || "").toLowerCase().trim();
+    if (raw === "deleted") return { text: "DELETED", cls: "p-del" };
+    if (raw === "both") return { text: "SYNCED", cls: "p-syn" };
+    const provider = providerFromStatus(raw);
+    if (provider) return { text: providerShortLabel(provider).toUpperCase(), cls: PILL_CLASS_BY_PROVIDER[provider] || "p-sk" };
+    return { text: "-", cls: "p-sk" };
   }
 
   function providersForItem(item) {
     const direct = Array.isArray(item?.sources)
-      ? item.sources.map((v) => String(v || "").toUpperCase()).filter(Boolean)
+      ? item.sources.map(providerKey).filter(Boolean)
       : [];
     if (direct.length) return [...new Set(direct)];
 
     const sbp = item?.sources_by_provider || item?.sourcesByProvider || {};
-    const byProvider = Object.keys(sbp || {}).map((v) => String(v || "").toUpperCase()).filter(Boolean);
+    const byProvider = Object.keys(sbp || {}).map(providerKey).filter(Boolean);
     if (byProvider.length) return [...new Set(byProvider)];
 
-    switch (String(item?.status || "").toLowerCase()) {
-      case "plex_only": return ["PLEX"];
-      case "simkl_only": return ["SIMKL"];
-      case "trakt_only": return ["TRAKT"];
-      case "anilist_only": return ["ANILIST"];
-      case "jellyfin_only": return ["JELLYFIN"];
-      case "crosswatch_only":
-      case "cw_only": return ["CROSSWATCH"];
-      default: return [];
-    }
+    const provider = providerFromStatus(item?.status);
+    return provider ? [provider] : [];
   }
 
   function providerIconMarkup(name) {
     const src = providerLogoPath(name);
-    const label = String(name || "").toUpperCase();
+    const label = providerLabel(name);
+    const shortLabel = providerShortLabel(name);
     const shell = `display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);`;
     return src
       ? `<span title="${label}" style="${shell}width:26px;height:26px;padding:0 6px;"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:14px;max-width:16px;object-fit:contain;filter:brightness(1.02)"></span>`
-      : `<span title="${label}" style="${shell}min-width:26px;height:26px;padding:0 8px;font-size:10px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${label}</span>`;
+      : `<span title="${label}" style="${shell}min-width:26px;height:26px;padding:0 8px;font-size:10px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${shortLabel}</span>`;
   }
 
   function wallSignature(items, epoch) {
