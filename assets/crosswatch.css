@@ -477,6 +477,7 @@ input.err,.input.err{border-color:#ff4d4f!important;box-shadow:0 0 0 2px rgba(25
 .app-logo{font-size:22px;line-height:1}.conn-logo{height:var(--crown-size)}
 .cw-snap-dialog{background:#0b0f19;border:1px solid rgba(255,255,255,.15);border-radius:14px;padding:18px 20px;width:340px;box-shadow:0 0 28px rgba(124,92,255,.45)}
 #det-log,#det-watch-log{height:25vh;min-height:180px;max-height:25vh;scrollbar-width:thin;scrollbar-color:#6a67ff #0b0b16}
+#det-log.cf-log-plain{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.2;white-space:normal}
 #det-watch-log{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;line-height:1.2}
 #details .wlog-line{display:flex;gap:8px;align-items:flex-start;padding:1px 6px;border-bottom:1px solid rgba(255,255,255,.05)}
 #details .wlog-tag{flex:0 0 auto;font-size:9px;font-weight:800;padding:0 6px;line-height:16px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);opacity:.9}
