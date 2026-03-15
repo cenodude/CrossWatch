@@ -32,6 +32,16 @@ function _pruneDetailsLog(el) {
   while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
 }
 
+function _isAppDebugMode(cfg) {
+  return !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
+}
+
+function _decodeLogLine(line) {
+  const host = document.createElement("textarea");
+  host.innerHTML = String(line ?? "").replace(/<br\s*\/?>/gi, "\n");
+  return host.value;
+}
+
 async function _copyDetailsLog(btn) {
   const el = _activeDetailsLogEl();
   const text = (el?.innerText || el?.textContent || "").trim();
@@ -228,6 +238,7 @@ async function openWatcherLog() {
     if (window._watchFlushIV) clearInterval(window._watchFlushIV);
     window._watchFlushIV = setInterval(flush, 120);
 
+    url.searchParams.set("_ts", String(Date.now()));
     const es = new EventSource(url.toString());
     window.esWatch = es;
     tabWatch?.classList.add("connected");
@@ -278,16 +289,20 @@ async function openDetailsLog() {
   try { initDetailsTabs(); } catch {}
 
   try {
-    if (typeof window.appDebug === "undefined") {
-      const cfg = window._cfgCache || await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
-      window._cfgCache = cfg;
-      window.appDebug = !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
-    }
+    const cfg = window._cfgCache || await fetch("/api/config", { cache: "no-store" }).then(r => r.json());
+    window._cfgCache = cfg;
+    window.appDebug = _isAppDebugMode(cfg);
   } catch (_) {}
 
+  const CF = window.ClientFormatter;
+  const useFormatter = !window.appDebug && CF && CF.processChunk && CF.renderInto;
+
   el.innerHTML = "";
-  el.classList?.add("cf-log");
+  el.classList?.toggle("cf-log", !!useFormatter);
+  el.classList?.remove("cf-log-plain");
+  if (!useFormatter) el.classList?.add("cf-log-plain");
   window.detStickBottom = true;
+  try { CF?.reset?.(); } catch {}
 
   try { window.esDet?.close(); } catch {}
   try { window.esDetSummary?.close(); } catch {}
@@ -318,17 +333,19 @@ async function openDetailsLog() {
     });
   }
 
-  const CF = window.ClientFormatter;
-  const useFormatter = !window.appDebug && CF && CF.processChunk && CF.renderInto;
-
   const appendRaw = (s) => {
     const lines = String(s).replace(/\r\n/g, "\n").split("\n");
     for (const line of lines) {
       if (!line) continue;
-      const div = document.createElement("div");
-      div.className = "cf-line";
-      div.textContent = line;
-      el.appendChild(div);
+      const row = document.createElement("div");
+      row.className = "wlog-line det-plain-line";
+
+      const msg = document.createElement("span");
+      msg.className = "wlog-msg";
+      msg.textContent = _decodeLogLine(line);
+
+      row.appendChild(msg);
+      el.appendChild(row);
     }
   };
 
@@ -340,7 +357,10 @@ async function openDetailsLog() {
   const connect = () => {
     if (authSetupPending()) return;
     try { window.esDet?.close(); } catch (_) {}
-    window.esDet = new EventSource("/api/logs/stream?tag=SYNC");
+    const url = new URL("/api/logs/stream", document.baseURI);
+    url.searchParams.set("tag", "SYNC");
+    url.searchParams.set("_ts", String(Date.now()));
+    window.esDet = new EventSource(url.toString());
     window.esDet.onopen = () => { tabSync?.classList.add("connected"); tabSync?.classList.remove("stale"); };
 
     window.esDet.onmessage = (ev) => {
@@ -352,6 +372,7 @@ async function openDetailsLog() {
       if (ev.data === "::CLEAR::") {
         el.textContent = "";
         detBuf = "";
+        try { CF?.reset?.(); } catch {}
         updateSlider();
         return;
       }
@@ -413,33 +434,8 @@ async function openDetailsLog() {
   };
   document.addEventListener("visibilitychange", window._detVisibilityHandler);
 
-  if (!window.appDebug) {
-    try { window.esDetSummary?.close(); } catch (_) {}
-    if (!authSetupPending()) {
-      window.esDetSummary = new EventSource("/api/run/summary/stream");
-      window.esDetSummary.onmessage = (ev) => {
-        try {
-          if (!ev?.data) return;
-          const obj = JSON.parse(ev.data);
-          if (!obj || obj.event === "debug") return;
-          const line = JSON.stringify(obj) + "\n";
-          if (useFormatter) {
-            const { tokens } = CF.processChunk("", line);
-            for (const tok of tokens) CF.renderInto(el, tok, false);
-          } else {
-            appendRaw(line);
-          }
-          _pruneDetailsLog(el);
-          if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-          updateSlider();
-        } catch (_) {}
-      };
-      window.esDetSummary.onerror = () => {
-        try { window.esDetSummary?.close(); } catch (_) {}
-        window.esDetSummary = null;
-      };
-    }
-  }
+  try { window.esDetSummary?.close(); } catch (_) {}
+  window.esDetSummary = null;
 
   requestAnimationFrame(() => {
     el.scrollTop = el.scrollHeight;
