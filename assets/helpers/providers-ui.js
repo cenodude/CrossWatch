@@ -180,6 +180,8 @@
   }
 
   function normProviderKey(v = "") {
+    const meta = window.CW?.ProviderMeta;
+    if (typeof meta?.matchKey === "function") return meta.matchKey(v);
     const s = String(v).toUpperCase();
     if (/\bPLEX\b/.test(s)) return "PLEX";
     if (/\bSIMKL\b/.test(s)) return "SIMKL";
