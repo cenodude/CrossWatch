@@ -35,13 +35,16 @@
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field{display:grid;gap:8px;padding:14px 16px;border:1px solid var(--sch-border-soft);border-radius:18px;background:var(--sch-card-bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{grid-column:1 / -1}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field>.muted{margin:0!important;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field>.muted .th-help{display:inline-flex;align-items:center;gap:8px}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.025));color:#edf4ff;cursor:help;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:18px;line-height:1}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(101,107,255,.12),inset 0 1px 0 rgba(255,255,255,.03)}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-notes{margin-top:0;color:var(--sch-fg-soft);font-size:12px;line-height:1.45}
 #sec-scheduling .cw-subpanel[data-sub="basic"] select,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time],#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number],.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text]{width:100%;min-height:46px;padding:0 14px;border:1px solid rgba(255,255,255,.08);border-radius:16px;background:linear-gradient(180deg,rgba(4,6,11,.94),rgba(2,4,8,.98));color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.02);transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
 #sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover,.sch-adv input[type=number]:hover,.sch-adv input[type=text]:hover{border-color:rgba(255,255,255,.13);background:linear-gradient(180deg,rgba(7,10,18,.96),rgba(3,5,10,.985))}
 #sec-scheduling .cw-subpanel[data-sub="basic"] select:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:focus,.sch-adv select:focus,.sch-adv input[type=time]:focus,.sch-adv input[type=number]:focus,.sch-adv input[type=text]:focus{outline:none;border-color:rgba(122,120,255,.42);box-shadow:0 0 0 3px rgba(101,107,255,.12),inset 0 1px 0 rgba(255,255,255,.025)}
 .sch-adv{padding:16px}
-.sch-adv .cw-panel-head{position:relative;z-index:1;display:flex;align-items:center;min-height:104px;margin:0 0 14px;padding:14px 16px;border:1px solid var(--sch-border-soft);border-radius:18px;background:var(--sch-card-bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
-.sch-adv .cw-panel-head::before{content:"Enable";position:absolute;top:14px;left:16px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
+.sch-adv .cw-panel-head{position:relative;z-index:1;display:flex;align-items:center;min-height:104px;margin:0 0 14px;padding:14px 16px;border:none;border-radius:0;background:transparent;box-shadow:none}
 .sch-adv .cw-panel-head .cx-toggle{margin-top:20px}
 .sch-adv .mini,.sch-adv .status{position:relative;z-index:1}
 .sch-adv .mini{font-size:12px;color:var(--sch-fg-soft)}
@@ -88,6 +91,11 @@
 .sch-adv .btn,.sch-adv .btn.ghost{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03));color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:transform .18s ease,background .18s ease,border-color .18s ease}
 .sch-adv .btn:hover,.sch-adv .btn.ghost:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(110,112,255,.16),rgba(255,255,255,.04))}
 .sch-adv tbody .btn.ghost{min-width:38px;padding:0 12px}
+.sch-adv td[data-label="Remove"]{width:52px;min-width:52px;text-align:left;padding-left:2px;padding-right:12px}
+.sch-adv td[data-label="Remove"] .sch-remove-btn{margin-left:-2px}
+.sch-adv .btn.ghost.sch-remove-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;min-width:26px;height:26px;min-height:26px;padding:0;border-radius:50%;aspect-ratio:1 / 1;border:1px solid rgba(255,92,92,.32);background:rgba(255,72,72,.14);color:#ffb3b3;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.sch-adv .btn.ghost.sch-remove-btn:hover{border-color:rgba(255,112,112,.48);background:rgba(255,72,72,.22);color:#ffd7d7}
+.sch-adv .btn.ghost.sch-remove-btn .material-symbols-rounded{font-size:14px;line-height:1;font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 20}
 .sch-adv.adv-disabled{opacity:.55;filter:saturate(.75)}
 .sch-std-toggle{margin-top:0}
 @media (max-width:980px){#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -95,7 +103,8 @@
 ` }));
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:0}
-#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;gap:6px;padding:18px 18px 6px}
+#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 6px}
+#sec-scheduling .sch-std-head-copy{display:grid;gap:6px}
 #sec-scheduling .sch-std-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
 #sec-scheduling .sch-std-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
 #sec-scheduling .sch-std-copy{max-width:64ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
@@ -105,14 +114,14 @@
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field input[type=time],
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field input[type=number]{min-height:44px}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{display:grid;grid-template-columns:minmax(0,1fr);align-content:start}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child .cx-toggle{display:inline-flex;align-items:center;align-self:start;min-height:44px;padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-enable-field{display:none}
+#sec-scheduling .sch-std-head .cx-toggle{margin-top:16px;justify-self:end}
 .sch-adv{display:grid;gap:14px}
-.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;padding:18px;border-radius:22px;background:linear-gradient(180deg,rgba(10,13,21,.94),rgba(4,6,11,.97));box-shadow:0 18px 34px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.03)}
-.sch-adv .cw-panel-head::before{top:18px;left:18px}
-.sch-adv-head-copy{display:grid;gap:6px;padding-top:16px}
+.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;padding:18px;border:none;border-radius:0;background:transparent;box-shadow:none}
+.sch-adv-head-copy{display:grid;gap:6px}
 .sch-adv-head-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
-.sch-adv-head-title{font-size:24px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
-.sch-adv-head-copy p{margin:0;max-width:60ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
+.sch-adv-head-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
+.sch-adv-head-copy p{margin:0;max-width:64ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
 .sch-adv .cw-panel-head .cx-toggle{margin-top:16px;justify-self:end}
 .sch-adv-section{gap:12px;padding:16px}
 .sch-adv-section-head{align-items:center}
@@ -133,7 +142,7 @@
 .sch-adv-actions{gap:8px}
 .sch-adv .btn,.sch-adv .btn.ghost{min-height:38px;padding:0 13px}
 @media (max-width:1180px){.sch-adv .stack.two{grid-template-columns:1fr}}
-@media (max-width:980px){#sec-scheduling .sch-std-head{padding-bottom:4px}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
+@media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
 @media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}}
 ` }));
 
@@ -145,6 +154,10 @@
   const EVENT_NAME_OPTIONS = [["start", "Start"], ["pause", "Pause"], ["stop", "Stop"]];
   const EVENT_MEDIA_OPTIONS = [["", "Any"], ["movie", "Movie"], ["episode", "Episode"]];
   const HELP_TIPS = {
+    std_enabled: "Use standard plan:\nTurn on the standard timer-based scheduler.\nWhen enabled, the advanced plan is turned off.",
+    std_frequency: "Frequency:\nChoose how often the standard plan runs.\nUse Every hour, Every N hours, or Daily at a fixed time.",
+    std_every_n_hours: "Every N hours:\nSet how many hours to wait between runs when Frequency is set to Every N hours.",
+    std_time: "Time:\nChoose the local time to run each day when Frequency is set to Daily at a fixed time.",
     time_pair: "Pair:\nChoose which enabled sync pair this timed step should run.",
     time_time: "Time:\nChoose the local time when this step becomes due.",
     time_days: "Days:\nSelect which weekdays this step may run on.\nLeave all days unchecked to allow every day.",
@@ -195,16 +208,18 @@ const ensureStdEnabledToggle = () => {
   if (!sel || sel.__toggleEnhanced) return;
   const box = sel.parentElement;
   if (!box) return;
+  box.classList.add("sch-std-enable-field");
 
   const lab = box.querySelector("label");
   if (lab) lab.remove();
   sel.style.display = "none";
 
   const t = el("label", "cx-toggle sch-std-toggle");
-  t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text"></span><span class="cx-toggle-state" aria-hidden="true"></span>`;
-  box.appendChild(t);
+  t.innerHTML = `<input type="checkbox" id="schEnabledToggle"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Use standard plan</span><span class="cx-toggle-state" aria-hidden="true"></span>`;
+  const head = $("#sec-scheduling .sch-std-head");
+  (head || box).appendChild(t);
 
-  const cb = $("#schEnabledToggle", box);
+  const cb = $("#schEnabledToggle", head || box);
   const syncFromSel = () => { cb.checked = String(sel.value || "").trim().toLowerCase() === "true"; };
   sel.__toggleSync = syncFromSel;
   syncFromSel();
@@ -241,14 +256,50 @@ const ensureStdEnabledToggle = () => {
   const decorateStandardPanel = () => {
     const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
     if (!basic || basic.dataset.schDecorated === "1") return;
-    const head = el("div", "sch-std-head");
-    head.innerHTML = `
-      <div class="sch-std-kicker">Standard plan</div>
-      <div class="sch-std-title">Quick scheduler</div>
-      <div class="sch-std-copy">Use a simple timer for recurring syncs. Switch to Advanced when you need chained steps or watcher and webhook triggers.</div>
+  const head = el("div", "sch-std-head");
+  head.innerHTML = `
+      <div class="sch-std-head-copy">
+        <div class="sch-std-kicker">Standard plan</div>
+        <div class="sch-std-title">Quick scheduler</div>
+        <div class="sch-std-copy">Use a simple timer for recurring syncs. Switch to Advanced for chained steps.</div>
+      </div>
     `;
     basic.prepend(head);
     basic.dataset.schDecorated = "1";
+  };
+
+  const decorateStandardFieldHelp = () => {
+    const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
+    if (!basic) return;
+    const tipsByLabel = {
+      Enable: "std_enabled",
+      Frequency: "std_frequency",
+      "Every N hours": "std_every_n_hours",
+      Time: "std_time"
+    };
+    basic.querySelectorAll(".field > .muted").forEach((label) => {
+      if (!label || label.dataset.helpDecorated === "1") return;
+      const text = String(label.textContent || "").trim();
+      const helpKey = tipsByLabel[text];
+      if (!helpKey) return;
+      const tip = HELP_TIPS[helpKey] || "";
+      const wrap = el("span", "th-help");
+      const textNode = document.createElement("span");
+      textNode.textContent = text;
+      wrap.appendChild(textNode);
+      const btn = el("button", "sch-help");
+      btn.type = "button";
+      btn.setAttribute("aria-label", `${text} help`);
+      if (tip) btn.title = tip;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      wrap.appendChild(btn);
+      label.textContent = "";
+      label.appendChild(wrap);
+      label.dataset.helpDecorated = "1";
+    });
   };
 
   const applyModeLocks = () => {
@@ -564,7 +615,8 @@ const ensureStdEnabledToggle = () => {
     c.name = c.id;
     c.onchange = () => { j.active = !!c.checked; renderJobs(); };
 
-    const del = Object.assign(el("button"), { className: "btn ghost", textContent: "x" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove step" });
+    del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { _jobs = _jobs.filter(x => x !== j); renderJobs(); };
 
     const tdDays = tdCell("Days", wrap);
@@ -665,7 +717,8 @@ const ensureStdEnabledToggle = () => {
     rateInput.style.minWidth = "8ch";
     const activeChk = Object.assign(el("input"), { id: `sched_evt_active_${rowKey}`, name: `sched_evt_active_${rowKey}`, type: "checkbox", checked: r.active !== false });
     activeChk.onchange = () => { r.active = !!activeChk.checked; renderEventRules(); };
-    const del = Object.assign(el("button"), { className: "btn ghost", textContent: "x" });
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove event trigger" });
+    del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
     del.onclick = () => { _eventRules = _eventRules.filter(x => x !== r); renderEventRules(); };
 
     tr.append(
@@ -709,7 +762,7 @@ const ensureStdEnabledToggle = () => {
   <div class="sch-adv-head-copy">
     <div class="sch-adv-head-kicker">Advanced plan</div>
     <div class="sch-adv-head-title">Step and event scheduler</div>
-    <p>Combine timed steps with watcher and webhook triggers while keeping route filters and guardrails close at hand.</p>
+    <p>Set up a Time Plan, Event Triggers, or both in one advanced schedule.</p>
   </div>
   <label class="cx-toggle">
     <input type="checkbox" id="schAdvEnabled">
@@ -733,7 +786,7 @@ const ensureStdEnabledToggle = () => {
       <th style="width:30%"><span class="th-help">Days<button type="button" class="sch-help" aria-label="Days help" title="Days help" data-help-key="time_days"></button></span></th>
       <th style="width:14%"><span class="th-help">After<button type="button" class="sch-help" aria-label="After help" title="After help" data-help-key="time_after"></button></span></th>
       <th style="width:6%">Active</th>
-      <th style="width:4%"></th>
+      <th style="width:6%"></th>
     </tr></thead>
     <tbody id="schJobsBody"></tbody>
   </table>
@@ -758,7 +811,7 @@ const ensureStdEnabledToggle = () => {
       <th style="width:22%"><span class="th-help">Action<button type="button" class="sch-help" aria-label="Action help" title="Action help" data-help-key="action"></button></span></th>
       <th style="width:18%"><span class="th-help">Guardrails<button type="button" class="sch-help" aria-label="Guardrails help" title="Guardrails help" data-help-key="guardrails"></button></span></th>
       <th style="width:5%">Active</th>
-      <th style="width:4%"></th>
+      <th style="width:6%"></th>
     </tr></thead>
     <tbody id="schEventRulesBody"></tbody>
   </table>
@@ -878,6 +931,7 @@ const ensureStdEnabledToggle = () => {
     try {
       ensureUI();
       decorateStandardPanel();
+      decorateStandardFieldHelp();
       await fetchPairs();
       await fetchEventRoutes();
 
