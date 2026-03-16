@@ -582,6 +582,7 @@ class SyncScheduler:
     def _adv_seed_past_due_today(self, sch: dict[str, Any], tz: Any | None) -> None:
         now = _as_now_in_tz(tz)
         base = now.replace(second=0, microsecond=0)
+        current = now.replace(microsecond=0)
         today = base.date().isoformat()
         sig = self._adv_signature(sch)
         if self._adv_seed_key == sig and self._adv_seed_day == today:
@@ -589,13 +590,13 @@ class SyncScheduler:
 
         for job in _iter_adv_jobs(sch):
             dt = _job_due_today(base, job)
-            if dt is None or dt >= base:
+            if dt is None or dt >= current:
                 continue
             self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
 
         for job in _iter_adv_capture_jobs(sch):
             dt = _job_due_today(base, job)
-            if dt is None or dt >= base:
+            if dt is None or dt >= current:
                 continue
             self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
 
