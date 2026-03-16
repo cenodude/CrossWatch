@@ -142,8 +142,8 @@ html.cw-compact #page-settings,html.cw-compact #stats-card #stat-providers .tile
 .flow-rail .arrow .dot.flow{position:absolute;top:50%;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);opacity:0}
 .flow-rail .arrow .dot.flow.a{background:#7c5cff;box-shadow:0 0 10px #7c5cffaa}
 .flow-rail .arrow .dot.flow.b{background:#2de2ff;box-shadow:0 0 10px #2de2ffaa}
-.flow-rail.mode-one.dir-add .arrow .dot.flow.a,.flow-rail.mode-two.active .arrow .dot.flow.a{opacity:1;animation:flowRight 1.6s linear infinite}
-.flow-rail.mode-one.dir-remove .arrow .dot.flow.a,.flow-rail.mode-two.active .arrow .dot.flow.b{opacity:1;animation:flowLeft 1.6s linear infinite}
+.flow-rail.mode-one.dir-add .arrow .dot.flow.a,.flow-rail.mode-two.active .arrow .dot.flow.a{opacity:1;animation:flowRight 2.6s linear infinite}
+.flow-rail.mode-one.dir-remove .arrow .dot.flow.a,.flow-rail.mode-two.active .arrow .dot.flow.b{opacity:1;animation:flowLeft 2.6s linear infinite}
 .flow-rail.pretty .arrow .dot.flow{top:50%!important}
 header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,rgba(10,10,14,.88),rgba(10,10,14,.68),transparent);backdrop-filter:blur(8px);padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .tabs{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
@@ -850,12 +850,13 @@ html.cw-compact main#layout{padding-bottom:24px}
 @media (max-width:760px){.cw-settings-nav-list{grid-template-columns:1fr} .cw-settings-nav-btn{grid-template-columns:20px minmax(0,1fr)}}
 
 /* Shared scrollbars */
-:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu){scrollbar-width:thin;scrollbar-color:#8b5cf6 #10131a}
-:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu)::-webkit-scrollbar{width:10px;height:10px}
-:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu)::-webkit-scrollbar-corner{background:transparent}
-:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu)::-webkit-scrollbar-track{background:rgba(255,255,255,.04);border-radius:12px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}
-:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu)::-webkit-scrollbar-thumb{border-radius:12px;background:linear-gradient(180deg,#8b5cf6 0%,#3b82f6 100%);border:2px solid #14161c;box-shadow:inset 0 0 0 1px rgba(139,92,246,.35),0 0 10px rgba(139,92,246,.55),0 0 18px rgba(59,130,246,.40)}
-:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu)::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#a78bfa 0%,#60a5fa 100%);box-shadow:inset 0 0 0 1px rgba(139,92,246,.45),0 0 14px rgba(139,92,246,.7),0 0 26px rgba(59,130,246,.55)}
+:root{--cw-scrollbar-track:#10131a;--cw-scrollbar-track-soft:rgba(255,255,255,.04);--cw-scrollbar-track-ring:rgba(255,255,255,.08);--cw-scrollbar-thumb:linear-gradient(180deg,#8b5cf6 0%,#3b82f6 100%);--cw-scrollbar-thumb-hover:linear-gradient(180deg,#a78bfa 0%,#60a5fa 100%);--cw-scrollbar-thumb-border:#14161c;--cw-scrollbar-thumb-shadow:inset 0 0 0 1px rgba(139,92,246,.35),0 0 10px rgba(139,92,246,.55),0 0 18px rgba(59,130,246,.40);--cw-scrollbar-thumb-hover-shadow:inset 0 0 0 1px rgba(139,92,246,.45),0 0 14px rgba(139,92,246,.7),0 0 26px rgba(59,130,246,.55)}
+:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu,.cw-icon-select-menu,.cw-scrollbars){scrollbar-width:thin;scrollbar-color:#8b5cf6 var(--cw-scrollbar-track)}
+:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu,.cw-icon-select-menu,.cw-scrollbars)::-webkit-scrollbar{width:10px;height:10px}
+:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu,.cw-icon-select-menu,.cw-scrollbars)::-webkit-scrollbar-corner{background:transparent}
+:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu,.cw-icon-select-menu,.cw-scrollbars)::-webkit-scrollbar-track{background:var(--cw-scrollbar-track-soft);border-radius:12px;box-shadow:inset 0 0 0 1px var(--cw-scrollbar-track-ring)}
+:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu,.cw-icon-select-menu,.cw-scrollbars)::-webkit-scrollbar-thumb{border-radius:12px;background:var(--cw-scrollbar-thumb);border:2px solid var(--cw-scrollbar-thumb-border);box-shadow:var(--cw-scrollbar-thumb-shadow)}
+:is(.section.open>.body,#sc-routes,.log,#det-log,#det-watch-log,#scrobble-logs,.cw-snap-body,.cw-sync-menu,.cw-icon-select-menu,.cw-scrollbars)::-webkit-scrollbar-thumb:hover{background:var(--cw-scrollbar-thumb-hover);box-shadow:var(--cw-scrollbar-thumb-hover-shadow)}
 
 /* Settings section */
 #page-settings .cw-settings-pane-stack > .cw-settings-section{border:1px solid rgba(255,255,255,.08);border-radius:24px;background:radial-gradient(900px 260px at 0% 0%, rgba(124,92,255,.12), transparent 48%),
@@ -872,6 +873,12 @@ html.cw-compact main#layout{padding-bottom:24px}
 #page-settings .cw-settings-pane-stack > .cw-settings-section:not(.cw-settings-provider-section) > .body,
 #page-settings .cw-settings-pane-stack > .cw-settings-section:not(.cw-settings-provider-section).open > .body{padding:14px 22px 22px 22px;max-height:none;overflow:visible}
 #page-settings .cw-settings-pane-stack > .cw-settings-section .sub{color:rgba(185,193,230,.74)}
+#page-settings .cw-settings-shell input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+#page-settings .cw-settings-shell select{height:38px!important;min-height:38px!important;padding:0 14px!important;border-radius:12px!important;font-size:14px!important;line-height:1.15!important}
+#page-settings .cw-settings-shell textarea{min-height:96px!important;padding:10px 12px!important;border-radius:12px!important;font-size:14px!important;line-height:1.4!important}
+#page-settings .cw-settings-shell label{display:block;margin-bottom:8px!important}
+#page-settings .cw-settings-shell .sub{margin-top:8px!important}
+#page-settings .cw-settings-shell .cw-field-inline-error{margin-top:10px!important}
 
 /* Authentication nested buckets */
 #page-settings #auth-providers{display:grid;gap:10px}
