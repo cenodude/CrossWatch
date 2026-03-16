@@ -31,6 +31,13 @@
     String(r?.action?.pair_id || r?.action?.pairId || r?.pair_id || '').trim() &&
     String(r?.filters?.route_id || r?.filters?.routeId || '').trim()
   ).length);
+  const activeCaptureSchedules = (s) => (((s?.advanced?.capture_jobs) || (s?.advanced?.captureJobs) || []).filter((r) =>
+    r && typeof r === 'object' &&
+    r.active !== false &&
+    String(r?.provider || '').trim() &&
+    String(r?.feature || '').trim() &&
+    String(r?.at || '').trim()
+  ).length);
   const isVisible = () => { const p = $('#page-settings'); return !!(p && !p.classList.contains('hidden') && p.offsetParent !== null); };
   const toLocal = (v) => {
     if (v === undefined || v === null || v === '') return '—';
@@ -137,7 +144,8 @@
         advanced: !!sc?.advanced?.enabled,
         running: !!st?.running,
         nextRun: st?.next_run_at ?? st?.next_run ?? sc?.next_run_at ?? sc?.next_run ?? null,
-        eventTriggers: activeEventTriggers(sc)
+        eventTriggers: activeEventTriggers(sc),
+        captureSchedules: activeCaptureSchedules(sc)
       };
     } catch {
       return {
@@ -145,7 +153,8 @@
         advanced: !!fallback?.advanced?.enabled,
         running: false,
         nextRun: fallback?.next_run_at ?? fallback?.next_run ?? null,
-        eventTriggers: activeEventTriggers(fallback)
+        eventTriggers: activeEventTriggers(fallback),
+        captureSchedules: activeCaptureSchedules(fallback)
       };
     }
   }
@@ -178,6 +187,7 @@
     : line(
       `<span class="si-status">${sched.advanced ? 'Enabled (Advanced)' : 'Enabled'}</span>`,
       typeof sched.eventTriggers === 'number' && `${sep('|')}<span class="si-text">Event triggers: ${sched.eventTriggers}</span>`,
+      typeof sched.captureSchedules === 'number' && `${sep('|')}<span class="si-text">Capture schedules: ${sched.captureSchedules}</span>`,
       sched.running && `${sep('|')}<span class="si-text">Running</span>`,
       sched.nextRun && `${sep('|')}<span class="si-text">Next run: ${esc(toLocal(sched.nextRun))}</span>`
     );
