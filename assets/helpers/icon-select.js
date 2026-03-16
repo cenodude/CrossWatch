@@ -11,7 +11,7 @@
 .cw-icon-select{position:relative;display:block;min-width:0}
 .cw-icon-select-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:42px;padding:0 12px;border:1px solid rgba(255,255,255,.09);border-radius:14px;background:linear-gradient(180deg,rgba(8,10,18,.82),rgba(7,8,15,.92));color:#eef3ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.02);cursor:pointer}
 .cw-icon-select-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(101,107,255,.12),inset 0 1px 0 rgba(255,255,255,.03)}
-.cw-icon-select.is-open{z-index:520}
+.cw-icon-select.is-open{z-index:10060}
 .cw-icon-select-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
 .cw-icon-select-text{display:grid;gap:2px;min-width:0;flex:1 1 auto}
 .cw-icon-select-text:empty{display:none}
@@ -29,7 +29,7 @@
 .cw-icon-select-sep{display:inline-flex;align-items:center;justify-content:center;min-width:16px;color:rgba(214,222,242,.68);font-size:15px;line-height:1;transform:translateY(-1px)}
 .cw-icon-select-icon{width:18px;height:18px;object-fit:contain;display:block;flex:0 0 18px}
 .cw-icon-select-icon.empty{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:rgba(255,255,255,.05);color:rgba(236,241,255,.7);font-size:10px;font-weight:900}
-.cw-icon-select-menu{position:fixed;left:0;top:0;z-index:640;display:grid;gap:6px;padding:6px;border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#171a29;box-shadow:0 18px 44px rgba(0,0,0,.52);backdrop-filter:blur(14px) saturate(115%);-webkit-backdrop-filter:blur(14px) saturate(115%);max-height:320px;overflow:auto;pointer-events:auto}
+.cw-icon-select-menu{position:fixed;left:0;top:0;z-index:10061;display:grid;gap:6px;padding:6px;border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#171a29;box-shadow:0 18px 44px rgba(0,0,0,.52);backdrop-filter:blur(14px) saturate(115%);-webkit-backdrop-filter:blur(14px) saturate(115%);max-height:320px;overflow:auto;pointer-events:auto}
 .cw-icon-select-menu.hidden{display:none}
 .cw-icon-select-item{width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:1px solid transparent;border-radius:12px;background:transparent;color:#eef3ff;text-align:left;cursor:pointer}
 .cw-icon-select-item:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.10)}
@@ -306,6 +306,7 @@
     if ((select.size | 0) > 1) return false;
     if (select.hidden) return false;
     if (select.style?.display === "none") return false;
+    if (select.classList.contains("hidden")) return false;
     if (select.classList.contains("cw-icon-select-native")) return false;
     if (select.dataset.cwNativeSelect === "true") return false;
     if (select.dataset.cwIconSelect === "off") return false;
