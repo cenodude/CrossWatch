@@ -2,6 +2,13 @@
 /* Modal for configuring sync pairs, including provider selection, features, and advanced options. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import { createFlowController } from "./flow.js";
+import { injectHelpIcons as applyHelpIcons } from "./help.js";
+import { createLibraryController } from "./libraries.js";
+import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
+import { ensurePairConfigStyles } from "./styles.js";
+import { createTabsController } from "./tabs.js";
+
 // Helpers
 const ID=(x,r=document)=>(r.getElementById?r.getElementById(x):r.querySelector("#"+x));
 const Q=(s,r=document)=>r.querySelector(s);
@@ -11,47 +18,6 @@ const jclone=(o)=>JSON.parse(JSON.stringify(o||{}));
 
 const isEmby = v => same(v, "emby");
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
-
-// Help
-const HELP_TEXT = {
-  "gl-dry": "Dry run\nPlan and log only; no writes. Reset states after testing (in maintenance).",
-  "gl-verify": "Verify after write\nRe-check the destination after writes (when supported).",
-  "gl-drop": "Drop guard\nProtects against sudden inventory drops by pausing delete plans.",
-  "gl-mass": "Allow mass delete\nIf off, blocks large delete plans (roughly >10%). Enable for first runs.\n It's either mass-delete or drop-guard or none; not both.",
-  "gl-oneway-remove": "Deletions based on Source\nWhen enabled there should always be a match between source and destination before deletion.\nWhen disabled it acts in mirror mode, meaning it will always follow source (destructive; use with care)",
-  "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
-  "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
-  "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
-
-  "cx-wl-enable": "Watchlist: Enable\nCompare watchlists and write missing items to the target.",
-  "cx-wl-add": "Watchlist: Add\nAdds missing items to the target watchlist.",
-  "cx-wl-remove": "Watchlist: Remove\nRemoves items from the target.",
-
-  "cx-rt-enable": "Ratings: Enable\nCompare and write ratings to the target.",
-  "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
-  "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",
-
-  "cx-hs-enable": "History: Enable\nCompare and write watch history to the target.",
-  "cx-hs-add": "History: Add\nAdds plays/watched items to the target history.",
-  "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
-  "cx-tr-hs-col": "Trakt: Add collections\nAlso add items to Trakt collections when writing history (if enabled).",
-
-  "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between media servers.",
-  "cx-pr-add": "Progress: Add / Update\nWrite resume position to the target.",
-  "cx-pr-remove": "Progress: Remove\nClear resume position on the target (rare; Plex may not support).",
-  "cx-pr-min": "Progress: Minimum seconds\nIgnore tiny offsets (scrubbing).",
-  "cx-pr-delta": "Progress: Change threshold\nOnly write when the difference is large enough.",
-  "cx-pr-maxp": "Progress: Ignore near complete (%)\nWhen near completion, history sync should handle watched state.",
-
-  "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
-  "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
-
-  "plx-fallback-guid": "Plex: Fallback GUID\nAlso searches Plex’s database beyond your visible libraries (including hidden/old items) to recover older matches.\nWarning: enable only for a single run, it increases duration and resource usage.",
-  "plx-marked-watched": "Plex: Marked watched\nInclude items you manually marked as watched in Plex when syncing history.\nDisable if you only want actual play history.",
-  "plx-strict-ids": "Plex: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Plex IDs + external IDs). Title/year searches are disabled.",
-  "jf-strict-ids": "Jellyfin: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Jellyfin IDs + external IDs). Title/year searches are disabled.",
-  "em-strict-ids": "Emby: Strict ID matching\nWhen enabled, CrossWatch only matches by IDs (Emby IDs + external IDs). Title/year searches are disabled.",
-};
 
 // Provider helpers
 const same=(a,b)=>String(a||"").trim().toLowerCase()===String(b||"").trim().toLowerCase();
@@ -65,8 +31,6 @@ function isProgressPair(state){ return isMedia(state?.src) && isMedia(state?.dst
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
-function iconPath(n){const key=String(n||"").trim().toUpperCase();return `/assets/img/${key}.svg`}
-function logoHTML(n,l){const src=iconPath(n),alt=(l||n||"Provider")+" logo";return `<span class="prov-wrap"><img class="prov-logo" src="${src}" alt="${alt}" width="36" height="36" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline-block'"/><span class="prov-fallback" style="display:none">${l||n||"—"}</span></span>`}
 
 const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]}};
 function ratingsDisabledFor(state){
@@ -94,105 +58,6 @@ function applyRatingsTypeRules(state){
   const allOn=all.filter(t=>!dis.has(t)).every(t=>ID("cx-rt-type-"+t)?.checked);
   const allCb=ID("cx-rt-type-all");if(allCb)allCb.checked=!!allOn;
   try{updateRtSummary()}catch{}
-}
-
-function flowAnimCSSOnce(){
-  const id = "cx-pair-config-css";
-  let el = document.getElementById(id);
-  if(el) return;
-  el = document.createElement("style");
-  el.id = id;
-  el.textContent = `
-    .cx-modal-shell.pair-config-modal{width:var(--cxModalW,min(var(--cxModalMaxW,1280px),calc(100vw - 64px)))!important;max-width:min(var(--cxModalMaxW,1280px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 48px))!important}
-    .cx-modal-shell.pair-config-modal #cx-modal.cx-card{background:
-      radial-gradient(95% 140% at 0% 0%,rgba(90,72,193,.2) 0%,rgba(90,72,193,0) 38%),
-      radial-gradient(85% 120% at 100% 100%,rgba(31,89,173,.14) 0%,rgba(31,89,173,0) 42%),
-      linear-gradient(180deg,rgba(7,10,18,.992),rgba(3,5,11,.992));
-      border:1px solid rgba(255,255,255,.06);border-radius:24px;
-      box-shadow:0 36px 110px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.03),0 0 0 1px rgba(108,92,213,.08);
-      overflow:hidden!important}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:16px 20px 15px;border-bottom:1px solid rgba(255,255,255,.05);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.006));backdrop-filter:blur(12px)}
-    .cx-modal-shell.pair-config-modal #cx-modal .title-wrap{display:flex;align-items:flex-start;gap:12px;min-width:0}
-    .cx-modal-shell.pair-config-modal #cx-modal .app-logo{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:linear-gradient(180deg,rgba(89,79,192,.34),rgba(58,87,178,.18));border:1px solid rgba(255,255,255,.07);box-shadow:0 14px 28px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.08);color:#eef2ff}
-    .cx-modal-shell.pair-config-modal #cx-modal .app-name{font-size:18px;line-height:1.1;letter-spacing:-.01em}
-    .cx-modal-shell.pair-config-modal #cx-modal .app-sub{margin-top:4px;color:rgba(205,214,231,.56)}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-body{padding:14px 20px 8px}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-top{grid-template-columns:minmax(520px,1.02fr) minmax(320px,.98fr);gap:12px 18px;align-items:start}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-main{grid-template-columns:minmax(0,1.02fr) minmax(320px,.98fr);gap:14px 18px}
-    .cx-modal-shell.pair-config-modal #cx-modal .top-left{display:grid;gap:8px}
-    .cx-modal-shell.pair-config-modal #cx-modal .top-right{display:grid;gap:8px}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;margin:0}
-    .cx-modal-shell.pair-config-modal #cx-modal .field label{margin-bottom:4px;color:rgba(209,218,235,.64);letter-spacing:.08em}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-row .input,
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select{background:linear-gradient(180deg,rgba(2,6,17,.98),rgba(3,7,18,.995));border-color:rgba(255,255,255,.06);border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 0 0 1px rgba(255,255,255,.015)}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-row .input:hover,
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-row select:hover{border-color:rgba(122,108,228,.28)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-card{min-width:0;padding:12px 14px;border-radius:22px;border:1px solid rgba(255,255,255,.06);background:
-      radial-gradient(90% 120% at 10% 0%,rgba(108,86,218,.13) 0%,rgba(108,86,218,0) 44%),
-      radial-gradient(90% 120% at 100% 100%,rgba(39,100,190,.1) 0%,rgba(39,100,190,0) 44%),
-      linear-gradient(180deg,rgba(16,21,36,.72),rgba(8,11,20,.9));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-title{margin-bottom:10px;font-size:12px;color:rgba(206,214,229,.62);text-transform:uppercase;letter-spacing:.06em}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-title span{color:#fff;text-transform:none;letter-spacing:0}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty{min-height:62px!important;padding:10px 14px!important;border-radius:18px!important;border-color:rgba(255,255,255,.06)!important;background:linear-gradient(180deg,rgba(18,23,38,.78),rgba(8,11,19,.94))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 0 0 1px rgba(255,255,255,.015)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .token{width:40px!important;height:40px!important;border-radius:13px!important;box-shadow:0 10px 26px rgba(0,0,0,.34),inset 0 0 0 1px rgba(255,255,255,.04)!important}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .arrow{height:6px!important;box-shadow:0 0 0 1px rgba(255,255,255,.03) inset,0 0 18px rgba(94,108,233,.16)!important}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-rail.pretty .dot{transform:scale(.9)}
-    .cx-modal-shell.pair-config-modal #cx-modal .flow-warn-area:empty{display:none}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow{gap:12px 16px;margin-top:2px}
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs{gap:10px!important}
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab{padding:9px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(25,29,44,.88),rgba(11,15,26,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.025);font-weight:750;color:rgba(235,240,251,.92)}
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab:hover,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button:hover,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a:hover,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab:hover{transform:translateY(-1px);border-color:rgba(111,95,223,.24);box-shadow:0 10px 24px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .ftab.active,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs button.active,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs a.active,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .tab.active,
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs [aria-selected="true"],
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs [data-active="1"],
-    .cx-modal-shell.pair-config-modal #cx-modal .feature-tabs .selected{border-color:rgba(109,93,223,.42);background:linear-gradient(135deg,rgba(89,72,203,.5),rgba(61,118,220,.34));box-shadow:0 16px 34px rgba(0,0,0,.28),0 0 0 1px rgba(255,255,255,.03) inset}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg{padding:4px;border-radius:16px;border-color:rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(24,29,43,.86),rgba(9,12,22,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
-    .cx-modal-shell.pair-config-modal #cx-modal .cx-mode-inline .seg label{padding:9px 13px;border-radius:12px;color:rgba(203,212,229,.68)}
-    .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-one:checked + label,
-    .cx-modal-shell.pair-config-modal #cx-modal #cx-mode-two:checked + label{background:linear-gradient(135deg,rgba(91,99,231,.92),rgba(75,138,230,.9));box-shadow:0 12px 30px rgba(49,82,197,.28)}
-    .cx-modal-shell.pair-config-modal #cx-modal .panel{padding:14px;border-radius:22px;border:1px solid rgba(255,255,255,.055);background:
-      radial-gradient(90% 130% at 0% 0%,rgba(80,65,172,.08) 0%,rgba(80,65,172,0) 38%),
-      radial-gradient(90% 130% at 100% 100%,rgba(24,82,158,.07) 0%,rgba(24,82,158,0) 42%),
-      linear-gradient(180deg,rgba(12,16,27,.9),rgba(4,7,14,.975));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-    .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title{margin-bottom:12px;font-size:13px;letter-spacing:.01em}
-    .cx-modal-shell.pair-config-modal #cx-modal .panel .panel-title.small{margin-bottom:6px;color:rgba(203,212,228,.58)}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row{padding:8px 12px;border-radius:18px;border:1px solid rgba(255,255,255,.05);background:linear-gradient(180deg,rgba(16,20,34,.84),rgba(5,8,16,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.02);margin-bottom:8px;min-height:56px}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .t,.cx-modal-shell.pair-config-modal #cx-modal .opt-row strong{font-weight:700}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .s{color:rgba(203,211,226,.52)}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch .slider{border-color:rgba(255,255,255,.1);background:linear-gradient(180deg,rgba(8,11,21,.98),rgba(5,8,16,.98))}
-    .cx-modal-shell.pair-config-modal #cx-modal .opt-row .switch input:checked + .slider{background:linear-gradient(135deg,#6d61ff,#4ca0ff);border-color:rgba(110,141,255,.34);box-shadow:0 0 0 1px rgba(255,255,255,.02) inset,0 0 24px rgba(73,122,255,.16)}
-    .cx-modal-shell.pair-config-modal #cx-modal #gl-drop-adv{border-radius:18px;background:linear-gradient(180deg,rgba(14,18,31,.82),rgba(5,8,15,.95));border:1px solid rgba(255,255,255,.045)}
-    .cx-modal-shell.pair-config-modal #cx-modal .rules .r{border-radius:16px;border-color:rgba(255,255,255,.055);background:linear-gradient(180deg,rgba(16,20,34,.82),rgba(5,8,16,.96))}
-    .cx-modal-shell.pair-config-modal .cx-actions{padding:12px 20px 16px!important;border-top:1px solid rgba(255,255,255,.05)!important;background:linear-gradient(180deg,rgba(9,12,22,.34),rgba(8,11,20,.92) 32%,rgba(6,8,15,.985))!important;backdrop-filter:blur(14px)!important}
-    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn{border-radius:18px;padding:12px 18px;background:linear-gradient(180deg,rgba(28,33,46,.88),rgba(10,13,23,.96));border-color:rgba(255,255,255,.09);color:#f1f5ff;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
-    .cx-modal-shell.pair-config-modal .cx-actions .cx-btn.primary{background:linear-gradient(135deg,#685dff,#6d72ff 38%,#4ba4ff 100%);box-shadow:0 18px 40px rgba(55,91,255,.28),0 0 0 1px rgba(255,255,255,.04) inset}
-    @media (max-width:1180px){
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-top,
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-main{grid-template-columns:1fr}
-    }
-    @media (max-width:980px){
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{grid-template-columns:repeat(2,minmax(0,1fr))}
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow{grid-template-columns:1fr}
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-tabsrow .cx-mode-inline{grid-column:auto;justify-self:start}
-    }
-    @media (max-width:720px){
-      .cx-modal-shell.pair-config-modal{width:min(var(--cxModalMaxW,1280px),calc(100vw - 32px))!important;max-width:min(var(--cxModalMaxW,1280px),calc(100vw - 32px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 24px))!important}
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-head{padding:14px 16px}
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-body{padding:12px 16px 6px}
-      .cx-modal-shell.pair-config-modal #cx-modal .cx-st-row{grid-template-columns:1fr}
-      .cx-modal-shell.pair-config-modal .cx-actions{padding:10px 16px 14px!important}
-    }
-  `;
-  document.head.appendChild(el);
 }
 
 // Inline footer
@@ -225,17 +90,54 @@ const tpl=()=>`
       <div class="cx-top grid2">
         <div class="top-left">
           <div class="cx-row cx-st-row">
-            <div class="field"><label for="cx-src">Source</label><div id="cx-src-display" class="input static" data-value=""></div><select id="cx-src" name="cx-src" class="input hidden"></select></div>
-            <div class="field"><label for="cx-dst">Target</label><div id="cx-dst-display" class="input static" data-value=""></div><select id="cx-dst" name="cx-dst" class="input hidden"></select></div>
-          </div>
-          <div class="cx-row cx-st-row cx-inst-row">
-            <div class="field"><label for="cx-src-inst">Source profile</label><div id="cx-src-inst-display" class="input static hidden" data-value=""></div><select id="cx-src-inst" name="cx-src-inst" class="input"></select></div>
-            <div class="field"><label for="cx-dst-inst">Target profile</label><div id="cx-dst-inst-display" class="input static hidden" data-value=""></div><select id="cx-dst-inst" name="cx-dst-inst" class="input"></select></div>
+            <div class="field endpoint-field endpoint-source">
+              <div class="endpoint-card" id="cx-src-card">
+                <div class="endpoint-top" id="cx-src-trigger" role="button" tabindex="0" aria-label="Choose source provider">
+                  <div class="endpoint-identity">
+                    <span class="endpoint-logo" id="cx-src-logo"></span>
+                    <div class="endpoint-copy">
+                      <div class="endpoint-name" id="cx-src-name">Select source</div>
+                      <div class="endpoint-meta" id="cx-src-meta">Choose the system CrossWatch reads from.</div>
+                    </div>
+                  </div>
+                  <div class="endpoint-role">From</div>
+                </div>
+                <select id="cx-src-inst" name="cx-src-inst" class="input endpoint-profile-select"></select>
+              </div>
+              <select id="cx-src" name="cx-src" class="input hidden" data-cw-icon-select="off" aria-hidden="true" tabindex="-1"></select>
+            </div>
+            <div class="field endpoint-field endpoint-target">
+              <div class="endpoint-card" id="cx-dst-card">
+                <div class="endpoint-top" id="cx-dst-trigger" role="button" tabindex="0" aria-label="Choose target provider">
+                  <div class="endpoint-identity">
+                    <span class="endpoint-logo" id="cx-dst-logo"></span>
+                    <div class="endpoint-copy">
+                      <div class="endpoint-name" id="cx-dst-name">Select target</div>
+                      <div class="endpoint-meta" id="cx-dst-meta">Choose the system CrossWatch writes to.</div>
+                    </div>
+                  </div>
+                  <div class="endpoint-role">To</div>
+                </div>
+                <select id="cx-dst-inst" name="cx-dst-inst" class="input endpoint-profile-select"></select>
+              </div>
+              <select id="cx-dst" name="cx-dst" class="input hidden" data-cw-icon-select="off" aria-hidden="true" tabindex="-1"></select>
+            </div>
           </div>
         </div>
         <div class="top-right">
           <div class="flow-card">
-            <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
+            <div class="flow-head">
+              <div class="flow-copy">
+                <div class="flow-title">Sync flow: <span id="cx-flow-title">One-way</span></div>
+                <div id="cx-flow-features" class="flow-feature-dots" aria-label="Enabled connection features"></div>
+              </div>
+              <div class="flow-mode-inline">
+                <div class="seg">
+                  <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
+                  <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two">Two-way</label>
+                </div>
+              </div>
+            </div>
             <div class="flow-rail pretty" id="cx-flow-rail">
               <span class="token" id="cx-flow-src"></span>
               <span class="arrow"><span class="dot flow a"></span><span class="dot flow b"></span></span>
@@ -246,16 +148,10 @@ const tpl=()=>`
         </div>
       </div>
       <div class="cx-tabsrow grid2">
-        <div id="cx-feat-tabs" class="feature-tabs"></div>
-        <div class="cx-mode-inline">
-          <div class="seg">
-            <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
-            <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two">Two-way</label>
-          </div>
-        </div>
+        <div id="cx-feat-tabs" class="feature-tabs" role="tablist" aria-label="Connection sections"></div>
       </div>
       <div class="cx-main grid2">
-        <div class="left"><div class="panel" id="cx-feat-panel"></div></div>
+        <div class="left"><div class="panel" id="cx-feat-panel" role="tabpanel" aria-live="polite"></div></div>
         <div class="right"><div class="panel" id="cx-adv-panel"></div></div>
       </div>
     </div>
@@ -427,117 +323,9 @@ function getOpts(state,key){
   return state.options[key];
 }
 
-function getFeatureLibraries(state,feature,provider){
-  const f=getOpts(state,feature);
-  const libs=f.libraries&&typeof f.libraries==="object"?f.libraries:{};
-  if(!f.libraries) f.libraries=libs;
-  const cur=libs[provider];
-  const arr=Array.isArray(cur)?cur.map(x=>String(x)):[];
-  return {config:f,libraries:libs,selected:arr};
-}
+ 
 
-function setFeatureLibraries(state,feature,provider,values){
-  const f=getOpts(state,feature);
-  const libs=f.libraries&&typeof f.libraries==="object"?f.libraries:{};
-  libs[provider]=Array.isArray(values)?values.map(x=>String(x)):[];
-  f.libraries=libs;
-  state.options[feature]=f;
-  state.visited.add(feature);
-}
-
-let pairServerCfgPromise=null;
-let pairServerCfgAt=0;
-const PAIR_CFG_TTL_MS=30000;
-
-function invalidatePairServerCfg(){
-  pairServerCfgPromise=null;
-  pairServerCfgAt=0;
-}
-
-function fetchServerLibraries(kind){
-  let url=null;
-  if(kind==="PLEX") url="/api/plex/libraries";
-  else if(kind==="JELLYFIN") url="/api/jellyfin/libraries";
-  else if(kind==="EMBY") url="/api/emby/libraries";
-  if(!url) return Promise.resolve([]);
-  return fetch(url+"?cb="+Date.now(),{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{
-    const list=j&&Array.isArray(j.libraries)?j.libraries:[];
-    return list;
-  }).catch(()=>[]);
-}
-
-function fetchPairServerConfig(){
-  const now=Date.now();
-  if(pairServerCfgPromise && (now-pairServerCfgAt)<PAIR_CFG_TTL_MS) return pairServerCfgPromise;
-  pairServerCfgAt=now;
-  pairServerCfgPromise=fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{}).catch(()=>({}));
-  return pairServerCfgPromise;
-}
-
-function filterLibsByServerConfig(libs,kind,feature,cfg){
-  try{
-    let prov="";
-    if(kind==="PLEX") prov="plex";
-    else if(kind==="JELLYFIN") prov="jellyfin";
-    else if(kind==="EMBY") prov="emby";
-    if(!prov) return libs;
-    const f=feature==="history"?"history":feature==="ratings"?"ratings":feature;
-    const serverLibs=cfg?.[prov]?.[f]?.libraries;
-    const ids=Array.isArray(serverLibs)?serverLibs.map(x=>String(x)):[];
-    if(!ids.length) return libs;
-    const S=new Set(ids);
-    return (libs||[]).filter(lib=>S.has(String(lib.key)));
-  }catch(e){
-    return libs;
-  }
-}
-
-function fetchPairLibraries(kind,feature){
-  return Promise.all([
-    fetchServerLibraries(kind),
-    fetchPairServerConfig()
-  ]).then(([libs,cfg])=>filterLibsByServerConfig(libs,kind,feature,cfg));
-}
-
-function renderPairLibChips(state,kind,feature,libs){
-  let hostId="";
-  if(kind==="PLEX"&&feature==="history") hostId="plx-hist-libs";
-  else if(kind==="PLEX"&&feature==="ratings") hostId="plx-rate-libs";
-  else if(kind==="JELLYFIN"&&feature==="history") hostId="jf-hist-libs";
-  else if(kind==="JELLYFIN"&&feature==="ratings") hostId="jf-rate-libs";
-  else if(kind==="EMBY"&&feature==="history") hostId="em-hist-libs";
-  else if(kind==="EMBY"&&feature==="ratings") hostId="em-rate-libs";
-  const host=ID(hostId);
-  if(!host) return;
-  const info=getFeatureLibraries(state,feature,kind);
-  const sel=new Set(info.selected);
-  const list=Array.isArray(libs)&&libs.length?libs:info.selected.map(id=>({key:id,title:id}));
-  host.innerHTML="";
-  list.forEach(lib=>{
-    const key=String(lib.key);
-    const title=lib.title||key;
-    const btn=document.createElement("button");
-    btn.type="button";
-    btn.className="chip"+(sel.has(key)?" on":"");
-    btn.textContent=title;
-    btn.dataset.key=key;
-    btn.addEventListener("click",()=>{
-      const cur=getFeatureLibraries(state,feature,kind);
-      const next=new Set(cur.selected);
-      if(next.has(key)) next.delete(key); else next.add(key);
-      setFeatureLibraries(state,feature,kind,Array.from(next));
-      renderPairLibChips(state,kind,feature,list);
-    });
-    host.appendChild(btn);
-  });
-  if(!list.length){
-    const empty=document.createElement("div");
-    empty.className="muted";
-    empty.textContent="No libraries";
-    host.appendChild(empty);
-  }
-}
-
+/* Legacy library UI moved to ./libraries.js
 function initPairLibraryUI(state){
   if(!state._libsAutoload) state._libsAutoload = {};
   const hasPL=hasPlex(state);
@@ -628,13 +416,7 @@ function initPairLibraryUI(state){
     if(btn) btn.disabled=true;
   }
 }
-
-function restartFlowAnimation(mode){
-  const rail=ID("cx-flow-rail");if(!rail)return;
-  const arrow=rail.querySelector(".arrow"),dots=[...rail.querySelectorAll(".dot.flow")];
-  ["anim-one","anim-two"].forEach(c=>{rail.classList.remove(c);arrow?.classList.remove(c);dots.forEach(d=>d.classList.remove(c))});
-  void rail.offsetWidth;const cls=mode==="two"?"anim-two":"anim-one";[rail,arrow,...dots].forEach(n=>n?.classList.add(cls))
-}
+*/
 
 function renderWarnings(state){
   const flowBox=ID("cx-flow-warn"),main=Q(".cx-main");
@@ -656,12 +438,84 @@ function renderWarnings(state){
   }
 }
 
+const {
+  restartFlowAnimation,
+  applyFlowTheme,
+  updateFlow,
+  updateFlowClasses,
+} = createFlowController({ ID, Q, byName, renderWarnings });
+
+const { refreshTabs } = createTabsController({
+  ID,
+  sharedFeatureOrder,
+  sharedFeatureLabel,
+  commonFeatures,
+  renderFeaturePanel,
+  applyFlowTheme,
+  renderWarnings,
+  restartFlowAnimation,
+  injectHelpIcons: (root) => applyHelpIcons(root, { QA }),
+});
+
+const {
+  initPairLibraryUI: initPairLibraryUIController,
+  invalidatePairServerCfg: invalidatePairServerCfgController,
+} = createLibraryController({
+  ID,
+  hasPlex,
+  hasJelly,
+  hasEmby,
+  getOpts,
+  onLibrariesChanged: (state) => refreshProviderCardSummaries(state),
+});
+
 function renderProviderSelects(state){
-  const srcSel=ID("cx-src"),dstSel=ID("cx-dst"),srcLab=ID("cx-src-display"),dstLab=ID("cx-dst-display");
+  const srcSel=ID("cx-src"),dstSel=ID("cx-dst");
   const opts=state.providers.map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
   srcSel.innerHTML=`<option value="">Select…</option>${opts}`;dstSel.innerHTML=`<option value="">Select…</option>${opts}`;
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
-  const upd=()=>{const s=byName(state,srcSel.value),d=byName(state,dstSel.value);if(srcLab){srcLab.textContent=s?.label||"—";srcLab.dataset.value=srcSel.value||""}if(dstLab){dstLab.textContent=d?.label||"—";dstLab.dataset.value=dstSel.value||""}};
+  const providerKind=(name)=>{
+    if(isMedia(name)) return "Media server";
+    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"tautulli")) return "Tracker";
+    if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
+    return "Provider";
+  };
+  const openPicker=(sel)=>{
+    if(!sel) return;
+    try{
+      sel.focus({preventScroll:true});
+      if(typeof sel.showPicker==="function") sel.showPicker();
+      else{
+        try{sel.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}))}catch{}
+        sel.click();
+      }
+    }catch{}
+  };
+  const bindCardTrigger=(trigger,sel)=>{
+    if(!trigger||!sel) return;
+    trigger.onclick=(e)=>{e.preventDefault();openPicker(sel)};
+    trigger.onkeydown=(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openPicker(sel)}};
+  };
+  const setEndpointCard=(side,prov)=>{
+    const card=ID(`cx-${side}-card`),logo=ID(`cx-${side}-logo`),name=ID(`cx-${side}-name`),meta=ID(`cx-${side}-meta`),trigger=ID(`cx-${side}-trigger`);
+    if(!card)return;
+    const key=String(prov?.name||"").trim().toUpperCase();
+    const rgb=providerToneRgb(key,side==="src"?"87,160,255":"167,139,250");
+    card.style.setProperty("--endpoint-rgb",rgb);
+    card.style.setProperty("--endpoint-watermark", prov ? `url("${window.CW?.ProviderMeta?.logoPath?.(key) || `/assets/img/${key}.svg`}")` : "none");
+    card.classList.toggle("is-selected",!!prov);
+    if(logo) logo.innerHTML=prov?providerLogoHTML(prov.name,prov.label):`<span class="prov-wrap"><span class="prov-fallback">?</span></span>`;
+    if(name) name.textContent=prov?.label||(side==="src"?"Select source":"Select target");
+    if(meta) meta.innerHTML=prov?`<span class="endpoint-meta-type">${providerKind(prov.name)}</span><span class="endpoint-meta-cap">${prov.capabilities?.bidirectional?"Bidirectional capable":"Single direction"}</span>`:(side==="src"?"Choose the system CrossWatch reads from.":"Choose the system CrossWatch writes to.");
+    if(trigger) trigger.setAttribute("aria-label", `${side==="src"?"Choose source":"Choose target"} provider${prov?.label?`: ${prov.label}`:""}`);
+  };
+  const upd=()=>{
+    const s=byName(state,srcSel.value),d=byName(state,dstSel.value);
+    setEndpointCard("src",s);
+    setEndpointCard("dst",d);
+  };
+  bindCardTrigger(ID("cx-src-trigger"),srcSel);
+  bindCardTrigger(ID("cx-dst-trigger"),dstSel);
   srcSel.onchange=()=>{state.src=srcSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
   dstSel.onchange=()=>{state.dst=dstSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
   upd();renderInstanceSelects(state);ID("cx-mode-two").checked=state.mode==="two-way";ID("cx-mode-one").checked=!ID("cx-mode-two").checked;ID("cx-enabled").checked=!!state.enabled;
@@ -669,11 +523,9 @@ function renderProviderSelects(state){
 
 function renderInstanceSelects(state){
   const srcInstSel=ID("cx-src-inst"),dstInstSel=ID("cx-dst-inst");
-  const srcLab=ID("cx-src-inst-display"),dstLab=ID("cx-dst-inst-display");
   if(!srcInstSel||!dstInstSel) return;
   const map=state.instanceMap||{};
   const norm=(v)=>{const s=String(v||"default").trim();return (!s||s.toLowerCase()==="default")?"default":s};
-  const setLab=(lab,val)=>{if(!lab) return;const v=norm(val);lab.textContent=v==="default"?"Default":v;lab.dataset.value=v};
   const optsFor=(prov)=>{
     const key=String(prov||"").toUpperCase();
     const raw=map[key]||map[String(prov||"").toLowerCase()]||[];
@@ -691,25 +543,7 @@ function renderInstanceSelects(state){
     sel.innerHTML=ids.map(id=>`<option value="${id}">${id==="default"?"Default":id}</option>`).join("");
     const want=norm(cur);
     sel.value=ids.includes(want)?want:"default";
-  };
-  const openPicker=(sel)=>{
-    if(!sel) return;
-    try{
-      sel.focus({preventScroll:true});
-      if(typeof sel.showPicker==="function") sel.showPicker();
-      else{
-        try{sel.dispatchEvent(new MouseEvent("mousedown",{bubbles:true}))}catch{}
-        sel.click();
-      }
-    }catch{}
-  };
-  const bindPicker=(lab,sel)=>{
-    if(!lab||!sel) return;
-    lab.tabIndex=0;
-    lab.setAttribute("role","button");
-    lab.style.cursor="pointer";
-    lab.onclick=(e)=>{e.preventDefault();openPicker(sel)};
-    lab.onkeydown=(e)=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openPicker(sel)}};
+    sel.disabled=!prov;
   };
 
   fill(srcInstSel, state.src, state.src_instance);
@@ -717,46 +551,8 @@ function renderInstanceSelects(state){
   state.src_instance=norm(srcInstSel.value);
   state.dst_instance=norm(dstInstSel.value);
 
-  setLab(srcLab, state.src_instance);
-  setLab(dstLab, state.dst_instance);
-
-  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);setLab(srcLab, state.src_instance)};
-  dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);setLab(dstLab, state.dst_instance)};
-
-  bindPicker(srcLab, srcInstSel);
-  bindPicker(dstLab, dstInstSel);
-}
-
-
-function updateFlow(state,animate=false){
-  const s=byName(state,state.src),d=byName(state,state.dst);
-  Q("#cx-flow-src").innerHTML=s?logoHTML(s.name,s.label):"";Q("#cx-flow-dst").innerHTML=d?logoHTML(d.name,d.label):"";
-  const two=ID("cx-mode-two"),ok=byName(state,state.src)?.capabilities?.bidirectional&&byName(state,state.dst)?.capabilities?.bidirectional;
-  two.disabled=!ok;if(!ok&&two.checked)ID("cx-mode-one").checked=true;two.nextElementSibling?.classList.toggle("disabled",!ok);
-  const t=ID("cx-flow-title");if(t)t.textContent=ID("cx-mode-two")?.checked?"Two-way (bidirectional)":"One-way";
-  updateFlowClasses(state);if(animate)restartFlowAnimation(ID("cx-mode-two")?.checked?"two":"one");renderWarnings(state)
-}
-function updateFlowClasses(state){
-  const rail=ID("cx-flow-rail"); if(!rail) return;
-  const two=ID("cx-mode-two")?.checked;
-  const enabled=!!ID("cx-enabled")?.checked;
-  const wl=state.options.watchlist||{enable:false,add:false,remove:false};
-
-  rail.className="flow-rail pretty";
-  rail.classList.toggle("mode-two",!!two);
-  rail.classList.toggle("mode-one",!two);
-
-  const flowOn=enabled&&wl.enable&&(two?(wl.add||wl.remove):(wl.add||wl.remove));
-  rail.classList.toggle("off",!flowOn);
-  if(two) rail.classList.toggle("active",flowOn);
-  else{
-    rail.classList.toggle("dir-add",flowOn&&wl.add);
-    rail.classList.toggle("dir-remove",flowOn&&!wl.add&&wl.remove);
-  }
-
-  const need=two?"anim-two":"anim-one";
-  const parts=[rail,rail.querySelector(".arrow"),...rail.querySelectorAll(".dot.flow")];
-  parts.forEach(n=>{if(!n)return;if(!n.classList.contains(need)){n.classList.remove("anim-one","anim-two");n.classList.add(need)}});
+  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value)};
+  dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value)};
 }
 
 // Fold toggles (works with draggable modals)
@@ -806,6 +602,74 @@ function applySubDisable(feature){
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
 }
 
+function countProviderLibraries(state, providerName){
+  const historyLibs = state.options?.history?.libraries?.[providerName];
+  const ratingsLibs = state.options?.ratings?.libraries?.[providerName];
+  const historyCount = Array.isArray(historyLibs) ? historyLibs.length : 0;
+  const ratingsCount = Array.isArray(ratingsLibs) ? ratingsLibs.length : 0;
+  return historyCount + ratingsCount;
+}
+
+function getProviderOverrideCount(state, providerKey){
+  const cfg = state.cfgRaw || {};
+  const pp = state.pairProviders || {};
+  const num = (id, fallback, min = 0) => {
+    const el = ID(id);
+    if (!el) return fallback;
+    const v = parseInt(String(el.value || "").trim(), 10);
+    return Number.isFinite(v) ? Math.max(min, v) : fallback;
+  };
+  const checked = (id, fallback = false) => {
+    const el = ID(id);
+    return el ? !!el.checked : fallback;
+  };
+
+  if (providerKey === "plex") {
+    const plex = cfg.plex || {};
+    const hist = plex.history || {};
+    let count = 0;
+    if (num("plx-rating-workers", plex.rating_workers ?? 12, 1) !== 12) count++;
+    if (num("plx-history-workers", plex.history_workers ?? 12, 1) !== 12) count++;
+    if (num("plx-timeout", Number.isFinite(plex.timeout) ? plex.timeout : 10, 1) !== 10) count++;
+    if (num("plx-retries", Number.isFinite(plex.max_retries) ? plex.max_retries : 3, 0) !== 3) count++;
+    if (checked("plx-fallback-guid", !!plex.fallback_GUID)) count++;
+    if (checked("plx-strict-ids", !!pp.plex?.strict_id_matching)) count++;
+    if (checked("plx-marked-watched", hist.include_marked_watched ?? true) !== true) count++;
+    return count + countProviderLibraries(state, "PLEX");
+  }
+  if (providerKey === "jellyfin") {
+    const jf = cfg.jellyfin || {};
+    let count = 0;
+    if (num("jf-timeout", Number.isFinite(jf.timeout) ? jf.timeout : 15, 1) !== 15) count++;
+    if (num("jf-retries", Number.isFinite(jf.max_retries) ? jf.max_retries : 3, 0) !== 3) count++;
+    if (checked("jf-strict-ids", !!pp.jellyfin?.strict_id_matching)) count++;
+    return count + countProviderLibraries(state, "JELLYFIN");
+  }
+  if (providerKey === "emby") {
+    const em = cfg.emby || {};
+    let count = 0;
+    if (num("em-timeout", Number.isFinite(em.timeout) ? em.timeout : 15, 1) !== 15) count++;
+    if (num("em-retries", Number.isFinite(em.max_retries) ? em.max_retries : 3, 0) !== 3) count++;
+    if (checked("em-strict-ids", !!pp.emby?.strict_id_matching)) count++;
+    return count + countProviderLibraries(state, "EMBY");
+  }
+  return 0;
+}
+
+function getProviderSummaryText(state, providerKey){
+  const overrides = getProviderOverrideCount(state, providerKey);
+  return overrides
+    ? `${overrides} custom ${overrides === 1 ? "override" : "overrides"} active`
+    : "Defaults are good for most users";
+}
+
+function refreshProviderCardSummaries(state){
+  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"]].forEach(([key, id]) => {
+    const el = ID(id);
+    if (el) el.textContent = getProviderSummaryText(state, key);
+  });
+}
+
 function renderFeaturePanel(state){
   if(state.feature!=="providers"){ ID("cx-prov-warn")?.remove(); }
   const left=ID("cx-feat-panel"),right=ID("cx-adv-panel");if(!left||!right)return;
@@ -829,33 +693,68 @@ function renderFeaturePanel(state){
     if (leftWrap) leftWrap.style.gridColumn = "1 / -1";
     if (rightWrap) rightWrap.style.display = "none";
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Media Servers</div>
-      <details class="mods fold" id="prov-plex"><summary class="fold-head"><span>Plex</span><span class="chev">expand_more</span></summary><div class="fold-body">
-        <div class="grid2 compact" style="padding:8px 0 2px">
-          <div class="opt-row"><label for="plx-rating-workers">Rating workers</label><input id="plx-rating-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.rating_workers??12}"></div>
-          <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
-          <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
-          <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
-          <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-strict-ids">Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${plexPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
-       </div>
-        <div class="prov-box" id="plx-pair-libs">
-          <div class="panel-title small">Pair library whitelist</div>
-          <div class="muted">Empty = use server-level whitelist.</div>
-          <div class="opt-row">
-            <div class="field-label">History</div>
-            <div class="chip-row" id="plx-hist-libs"></div>
-          </div>
-          <div class="opt-row">
-            <div class="field-label">Ratings</div>
-            <div class="chip-row" id="plx-rate-libs"></div>
-          </div>
-          <button type="button" class="cx-btn small" id="plx-libs-load">Load libraries</button>
-        </div>
-      </div></details>
+    const providerHintText = (providerKey) => {
+      if (providerKey === "plex") return "Tune Plex matching, retries, workers, and pair library scope";
+      if (providerKey === "jellyfin") return "Tune Jellyfin matching, longer timeouts and pair library scope.";
+      return "Tune Emby matching, longer timeouts and pair-level library scope.";
+    };
 
-      <details class="mods fold" id="prov-jelly">
-        <summary class="fold-head"><span>Jellyfin</span><span class="chev">expand_more</span></summary>
-        <div class="fold-body">
+    const providerCards = [];
+    if (hasPlex(state)) providerCards.push(`
+      <details class="mods fold provider-card provider-plex" id="prov-plex">
+        <summary class="fold-head provider-card-head">
+          <span class="provider-card-main">
+            <span class="provider-card-badge">Plex</span>
+            <span class="provider-card-copy">
+              <span class="provider-card-title">Plex</span>
+              <span class="provider-card-sub" id="prov-plex-summary">${getProviderSummaryText(state, "plex")}</span>
+            </span>
+          </span>
+          <span class="provider-card-meta">
+            <span class="provider-card-hint">${providerHintText("plex")}</span>
+            <span class="chev">expand_more</span>
+          </span>
+        </summary>
+        <div class="fold-body provider-card-body">
+          <div class="grid2 compact" style="padding:8px 0 2px">
+            <div class="opt-row"><label for="plx-rating-workers">Rating workers</label><input id="plx-rating-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.rating_workers??12}"></div>
+            <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
+            <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
+            <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
+            <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-strict-ids">Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${plexPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
+          </div>
+          <div class="prov-box" id="plx-pair-libs">
+            <div class="panel-title small">Pair library whitelist</div>
+            <div class="muted">Empty = use server-level whitelist.</div>
+            <div class="opt-row">
+              <div class="field-label">History</div>
+              <div class="chip-row" id="plx-hist-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Ratings</div>
+              <div class="chip-row" id="plx-rate-libs"></div>
+            </div>
+            <button type="button" class="cx-btn small" id="plx-libs-load">Load libraries</button>
+          </div>
+        </div>
+      </details>`);
+
+    if (hasJelly(state)) providerCards.push(`
+      <details class="mods fold provider-card provider-jellyfin" id="prov-jelly">
+        <summary class="fold-head provider-card-head">
+          <span class="provider-card-main">
+            <span class="provider-card-badge">Jellyfin</span>
+            <span class="provider-card-copy">
+              <span class="provider-card-title">Jellyfin</span>
+              <span class="provider-card-sub" id="prov-jelly-summary">${getProviderSummaryText(state, "jellyfin")}</span>
+            </span>
+          </span>
+          <span class="provider-card-meta">
+            <span class="provider-card-hint">${providerHintText("jellyfin")}</span>
+            <span class="chev">expand_more</span>
+          </span>
+        </summary>
+        <div class="fold-body provider-card-body">
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
             <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
@@ -875,11 +774,24 @@ function renderFeaturePanel(state){
             <button type="button" class="cx-btn small" id="jf-libs-load">Load libraries</button>
           </div>
         </div>
-      </details>
+      </details>`);
 
-      <details class="mods fold" id="prov-emby">
-        <summary class="fold-head"><span>Emby</span><span class="chev">expand_more</span></summary>
-        <div class="fold-body">
+    if (hasEmby(state)) providerCards.push(`
+      <details class="mods fold provider-card provider-emby" id="prov-emby">
+        <summary class="fold-head provider-card-head">
+          <span class="provider-card-main">
+            <span class="provider-card-badge">Emby</span>
+            <span class="provider-card-copy">
+              <span class="provider-card-title">Emby</span>
+              <span class="provider-card-sub" id="prov-emby-summary">${getProviderSummaryText(state, "emby")}</span>
+            </span>
+          </span>
+          <span class="provider-card-meta">
+            <span class="provider-card-hint">${providerHintText("emby")}</span>
+            <span class="chev">expand_more</span>
+          </span>
+        </summary>
+        <div class="fold-body provider-card-body">
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
             <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
@@ -899,42 +811,24 @@ function renderFeaturePanel(state){
             <button type="button" class="cx-btn small" id="em-libs-load">Load libraries</button>
           </div>
         </div>
-      </details>
-    `;
+      </details>`);
+
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Media Servers</div>
+      <div class="providers-intro">
+        <div class="providers-intro-copy">
+          <div class="providers-intro-title">Advanced provider tuning</div>
+          <div class="providers-intro-sub">Open a provider only if you want stricter matching, different retry behavior, or pair-specific library scope.</div>
+        </div>
+        <div class="providers-intro-badge">${providerCards.length} ${providerCards.length === 1 ? "provider" : "providers"} in this pair</div>
+      </div>
+      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">This connection does not include a media server with provider-specific controls.</div>`}</div>
+      <div class="providers-note" role="note" aria-live="polite">
+        <div class="providers-note-title"><span class="material-symbols-rounded">info</span>Optional advanced controls</div>
+        <div class="providers-note-body">Library whitelists only appear for media servers that are actually part of this pair.</div>
+      </div>`;
 
     right.innerHTML = "";
-
-    {
-      const grid = left.querySelector('#prov-plex .fold-body .grid2');
-      if (grid && !ID('plx-fallback-guid')) {
-        const row = document.createElement('div');
-        row.className = 'opt-row';
-        row.innerHTML =
-          '<label for="plx-fallback-guid">Fallback GUID</label>' +
-          '<label class="switch"><input id="plx-fallback-guid" type="checkbox" ' +
-          ((cfg.plex || {}).fallback_GUID ? 'checked' : '') +
-          '><span class="slider"></span></label>';
-        const before = ID('plx-wl-guid')?.closest('.opt-row');
-        grid.insertBefore(row, before || null); 
-      }
-    }
-
-    initPairLibraryUI(state);
-
-    const main = Q(".cx-main");
-    let warn = ID("cx-prov-warn");
-    if (!warn) {
-      warn = document.createElement("div");
-      warn.id = "cx-prov-warn";
-      main.appendChild(warn);
-    }
-    warn.className = "simkl-alert";
-    warn.setAttribute("role","note");
-    warn.setAttribute("aria-live","polite");
-    warn.innerHTML = `<div class="title"><span class="ic">⚠</span> Provider specific settings</div>
-      <div class="body">
-        <div class="mini">Whitelist libraries are shown above (Plex, Jellyfin, Emby) but only if that provider is part of this pair.</div>
-      </div>`;
+    initPairLibraryUIController(state);
     QA(".fold").forEach(f=>{f.classList.remove("open")});
     return;
   }
@@ -944,7 +838,7 @@ function renderFeaturePanel(state){
     const pct = Math.round((Number.isFinite(rt.suspect_shrink_ratio)?rt.suspect_shrink_ratio:0.1)*100);
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>Globals</div>
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>Globals <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
       <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-drop">Drop guard</label><label class="switch"><input id="gl-drop" type="checkbox" ${g.drop_guard?"checked":""}><span class="slider"></span></label></div>
@@ -971,9 +865,9 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="gl-mass">Allow mass delete</label><label class="switch"><input id="gl-mass" type="checkbox" ${g.allow_mass_delete?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="gl-oneway-remove">One-Way Remove mode Source</label><label class="switch"><input id="gl-oneway-remove" type="checkbox" ${((String(g.one_way_remove_mode||"source_deletes").trim().toLowerCase()==="mirror")?"":"checked")}><span class="slider"></span></label></div>
       </div>`;
-    right.innerHTML=`<div class="panel-title">Advanced</div>
+    right.innerHTML=`<div class="panel-title">Advanced <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
-      <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div><div class="muted"></div>
+      <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
       <div class="panel-title small" style="margin-top:10px">Blackbox</div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="gl-bb-enable">Enabled</label><label class="switch"><input id="gl-bb-enable" type="checkbox" ${bb.enabled?"checked":""}><span class="slider"></span></label></div>
@@ -981,8 +875,7 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="gl-bb-promote">Promote after (days)</label><input id="gl-bb-promote" class="input small" type="number" min="0" max="365" step="1" value="${bb.promote_after??1}"></div>
         <div class="opt-row"><label for="gl-bb-unresolved">Unresolved days</label><input id="gl-bb-unresolved" class="input small" type="number" min="0" max="365" step="1" value="${bb.unresolved_days??0}"></div>
         <div class="opt-row"><label for="gl-bb-cooldown">Cooldown days</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
-      </div>
-      <div class="muted"></div>`;
+      </div>`;
     return;
   }
 
@@ -992,7 +885,7 @@ function renderFeaturePanel(state){
     const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
 
     left.innerHTML = `
-      <div class="panel-title">Watchlist — basics</div>
+      <div class="panel-title">Watchlist | Basics</div>
       <div class="opt-row">
         <label for="cx-wl-enable">Enable</label>
         <label class="switch"><input id="cx-wl-enable" type="checkbox" ${wl.enable?"checked":""}><span class="slider"></span></label>
@@ -1147,7 +1040,7 @@ function renderFeaturePanel(state){
   if(state.feature==="ratings"){
     const rt=getOpts(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
 
-    left.innerHTML=`<div class="panel-title">Ratings — basics</div>
+    left.innerHTML=`<div class="panel-title">Ratings | Basics</div>
       <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
       <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>
@@ -1252,7 +1145,7 @@ function renderFeaturePanel(state){
         </div>`
       : "";
 left.innerHTML = `
-      <div class="panel-title">History — basics</div>
+      <div class="panel-title">History | Basics</div>
       <div class="opt-row">
         <label for="cx-hs-enable">Enable</label>
         <label class="switch">
@@ -1351,7 +1244,7 @@ left.innerHTML = `
     const deltaS = Number.isFinite(pr.delta_seconds) ? pr.delta_seconds : 30;
     const maxP = Number.isFinite(pr.max_percent) ? pr.max_percent : 80;
 
-    left.innerHTML = `<div class="panel-title">Progress</div>
+    left.innerHTML = `<div class="panel-title">Progress | Basics</div>
       <div class="grid2">
         <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">Enable</label>
           <label class="switch"><input id="cx-pr-enable" type="checkbox" ${pr.enable ? "checked" : ""}><span class="slider"></span></label></div>
@@ -1375,47 +1268,6 @@ left.innerHTML = `
     applySubDisable("progress");
     return;
   }
-}
-
-// Tabs
-function refreshTabs(state){
-  const tabs = ID('cx-feat-tabs'); if(!tabs) return;
-  const LABELS = {globals:'Globals',providers:'Providers',watchlist:'Watchlist',ratings:'Ratings',history:'History',progress:'Progress',playlists:'Playlists'};
-  const ORDER  = ['globals','providers','watchlist','ratings','history','progress','playlists'];
-  const COMMON = new Set(commonFeatures(state));
-  const isValid = k => k==='globals' || k==='providers' || (ORDER.includes(k) && COMMON.has(k));
-  if(!isValid(state.feature)) state.feature = 'globals';
-
-  tabs.innerHTML = '';
-  ORDER.forEach(k=>{
-    if(!['globals','providers'].includes(k) && !COMMON.has(k)) return;
-    const b = document.createElement('button');
-    b.className = 'ftab'; b.dataset.key = k;
-    const icon = k==='globals' ? 'tune' : k==='providers' ? 'dns' : '';
-    b.innerHTML = icon
-      ? `<span class="material-symbols-rounded" style="font-size:16px;vertical-align:-3px;margin-right:6px;">${icon}</span>${LABELS[k]||k}`
-      : (LABELS[k]||k);
-    b.onclick = ()=>{
-      state.feature = k;
-      renderFeaturePanel(state);
-      renderWarnings(state);
-      queueMicrotask(() => injectHelpIcons(ID("cx-modal")));
-      [...tabs.children].forEach(c=>c.classList.toggle('active', c.dataset.key===k));
-      restartFlowAnimation(ID("cx-mode-two")?.checked ? "two" : "one");
-    };
-    if(state.feature===k) b.classList.add('active');
-    tabs.appendChild(b);
-  });
-
-  renderFeaturePanel(state);
-  renderWarnings(state);
-
-  queueMicrotask(()=>{
-    renderFeaturePanel(state);
-    renderWarnings(state);
-    queueMicrotask(() => injectHelpIcons(ID("cx-modal")));
-    restartFlowAnimation(ID("cx-mode-two")?.checked ? "two" : "one");
-  });
 }
 
 function bindChangeHandlers(state,root){
@@ -1715,8 +1567,13 @@ function bindChangeHandlers(state,root){
       em.watchlist={mode,playlist_name:name,watchlist_query_limit:q,watchlist_write_delay_ms:d,watchlist_guid_priority:gp.length?gp:undefined};
     }
 
-    if(id==="cx-enabled"||id==="cx-mode-one"||id==="cx-mode-two") updateFlow(state,true);
-    updateFlowClasses(state);renderWarnings(state);
+    if (/^(plx-|jf-|em-)/.test(id)) {
+      refreshProviderCardSummaries(state);
+    }
+
+    const flowRelevant=/^(cx-(wl|rt|hs|pr|pl)-|cx-enabled|cx-mode-one|cx-mode-two)/.test(id);
+    if(flowRelevant) updateFlow(state,id==="cx-enabled"||id==="cx-mode-one"||id==="cx-mode-two");
+    else{ updateFlowClasses(state); renderWarnings(state); }
   });
 }
 
@@ -1905,54 +1762,6 @@ async function saveConfigBits(state){
   }catch(e){console.warn("[cx] saving config bits failed",e)}
 }
 
-function injectHelpIcons(root) {
-  if (!root) return;
-
-  for (const [inputId, text] of Object.entries(HELP_TEXT)) {
-    const input = root.querySelector(`#${CSS.escape(inputId)}`);
-    if (!input) continue;
-
-    const sw = input.closest("label.switch");
-    if (!sw) continue;
-
-    let wrap = sw.parentElement;
-    if (!wrap || !wrap.classList.contains("cx-switch-wrap")) {
-      wrap = document.createElement("span");
-      wrap.className = "cx-switch-wrap";
-      sw.parentNode.insertBefore(wrap, sw);
-      wrap.appendChild(sw);
-    }
-
-    if (wrap.querySelector(`.cx-help[data-for="${inputId}"]`)) continue;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "cx-help material-symbols-rounded";
-    btn.textContent = "help";
-    btn.dataset.for = inputId;
-    btn.dataset.tip = String(text || "").trim();
-    btn.title = btn.dataset.tip;
-    btn.setAttribute("aria-label", "Help");
-    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
-    btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
-
-    wrap.insertBefore(btn, sw);
-  }
-
-  QA(".cx-help[data-tip-id]", root).forEach(btn => {
-    if (btn.__wired) return;
-    btn.__wired = true;
-    const key = btn.dataset.tipId;
-    const tip = String(HELP_TEXT[key] || "").trim();
-    if (!tip) return;
-    btn.dataset.tip = tip;
-    btn.title = tip;
-    btn.setAttribute("aria-label", "Help");
-    btn.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
-    btn.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
-  });
-}
-
 function buildPayload(state,wrap){
   const src=state.src||ID("cx-src")?.value||ID("cx-src-display")?.dataset.value||"";
   const dst=state.dst||ID("cx-dst")?.value||ID("cx-dst-display")?.dataset.value||"";
@@ -2000,7 +1809,7 @@ async function savePair(payload){
 
 export default{
   async mount(hostEl,props){
-    flowAnimCSSOnce();
+    ensurePairConfigStyles();
     hostEl.classList.add("pair-config-modal");
     hostEl.style.setProperty("--cxModalMaxW", "1280px");
     hostEl.style.setProperty("--cxModalMaxH", "92vh");
@@ -2050,7 +1859,7 @@ export default{
     ID("cx-enabled").addEventListener("change",()=>updateFlow(state,true));
     QA('input[name="cx-mode"]').forEach(el=>el.addEventListener("change",()=>updateFlow(state,true)));
     bindChangeHandlers(state,wrap);
-    queueMicrotask(() => injectHelpIcons(wrap));
+    queueMicrotask(() => applyHelpIcons(wrap, { QA }));
     ensureInlineFoot(hostEl);
     hostEl.__doSave=async()=>{
       await saveConfigBits(state);
