@@ -4,6 +4,7 @@
 (function () {
   const PAGE_SIZE = 50;
   const STORAGE_KEY = "cw-editor-ui";
+  let cwTrackerEnabled = true;
 
 
   const ensureStyle = (id, txt) => {
@@ -94,6 +95,17 @@
       if (saved.sortKey && sortKeys.includes(saved.sortKey)) state.sortKey = saved.sortKey;
       if (saved.sortDir === "asc" || saved.sortDir === "desc") state.sortDir = saved.sortDir;
     } catch (_) {}
+  }
+
+  async function loadTrackerAvailability() {
+    try {
+      const res = await fetch(`/api/config?cb=${Date.now()}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(String(res.status));
+      const cfg = await res.json().catch(() => ({}));
+      cwTrackerEnabled = ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false);
+    } catch (_) {
+      cwTrackerEnabled = true;
+    }
   }
 
   restoreUIState();
@@ -673,6 +685,14 @@
   }
 
   function syncSourceUI() {
+    if (!cwTrackerEnabled && state.source === "tracker") state.source = "state";
+    if (sourceSel) {
+      const trackerOption = sourceSel.querySelector('option[value="tracker"]');
+      if (trackerOption) trackerOption.remove();
+      if (cwTrackerEnabled && !sourceSel.querySelector('option[value="tracker"]')) {
+        sourceSel.insertAdjacentHTML("afterbegin", '<option value="tracker">CW Tracker</option>');
+      }
+    }
     const isState = state.source === "state";
     const isPair = state.source === "pair";
     if (sourceSel) sourceSel.value = state.source;
@@ -2661,6 +2681,13 @@ if (importProviderSel) {
   });
 
   (async () => {
+    await loadTrackerAvailability();
+    if (!cwTrackerEnabled && state.source === "tracker") {
+      state.source = "state";
+      state.snapshot = "";
+      state.instance = "default";
+      persistUIState();
+    }
     syncSourceUI();
     await loadImportProviders();
     setTag("warn", state.source === "state" ? "Loading current state…" : state.source === "pair" ? "Loading pair cache…" : "Loading tracker state…");
