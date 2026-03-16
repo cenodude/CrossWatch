@@ -48,8 +48,8 @@
 .sch-adv .cw-panel-head .cx-toggle{margin-top:20px}
 .sch-adv .mini,.sch-adv .status{position:relative;z-index:1}
 .sch-adv .mini{font-size:12px;color:var(--sch-fg-soft)}
-.sch-adv .status{display:flex;align-items:center;min-height:22px;font-size:12px;font-weight:700;color:rgba(255,214,128,.88)}
-.sch-adv .status:empty{display:none}
+.sch-adv .status{display:flex;align-items:center;min-height:22px;font-size:12px;font-weight:700;color:rgba(214,223,238,.82)}
+.sch-adv .status:empty,.sch-adv .status.is-empty{display:none!important}
 .sch-adv-section{position:relative;z-index:1;display:grid;gap:10px;margin-top:14px;padding:14px;border:1px solid var(--sch-border-soft);border-radius:18px;background:var(--sch-card-bg-soft);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
 .sch-adv-section:first-of-type{margin-top:0}
 .sch-adv-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
@@ -65,6 +65,15 @@
 .sch-adv tbody td{position:relative;overflow:visible;padding:12px 10px;vertical-align:middle;border-top:1px solid var(--sch-border-soft);border-bottom:1px solid var(--sch-border-soft)}
 .sch-adv tbody td:first-child{border-left:1px solid var(--sch-border-soft);border-radius:18px 0 0 18px}
 .sch-adv tbody td:last-child{border-right:1px solid var(--sch-border-soft);border-radius:0 18px 18px 0}
+.sch-adv tbody tr.capture-detail-row{background:transparent;box-shadow:none}
+.sch-adv tbody tr.capture-detail-row td{padding:0 8px 10px;border:none}
+.sch-adv tbody tr.capture-detail-row td:first-child,.sch-adv tbody tr.capture-detail-row td:last-child{border:none;border-radius:0}
+.sch-adv .capture-detail-card{display:grid;gap:12px;padding:14px 16px 16px;margin:0 0 2px;border:1px solid var(--sch-border-soft);border-top:none;border-radius:0 0 16px 16px;background:linear-gradient(180deg,rgba(12,15,25,.86),rgba(5,7,13,.94));box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+.sch-adv .capture-detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.sch-adv .capture-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
+.sch-adv .btn.ghost.capture-adv-toggle{display:inline-flex;align-items:center;justify-content:center;width:26px;min-width:26px;height:26px;min-height:26px;padding:0;border-radius:50%;aspect-ratio:1 / 1;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.025));color:#d7deef;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.sch-adv .btn.ghost.capture-adv-toggle:hover{border-color:rgba(255,255,255,.18);background:linear-gradient(180deg,rgba(110,112,255,.16),rgba(255,255,255,.04));color:#f2f6ff}
+.sch-adv .capture-adv-toggle .material-symbols-rounded{font-size:14px;line-height:1;font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 20}
 .sch-adv .chipdays{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:center}
 .sch-adv .chipdays label{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:0 10px;border:1px solid var(--sch-border-soft);border-radius:999px;cursor:pointer;width:100%;background:var(--sch-card-bg-soft);color:rgba(236,241,251,.78);font-size:12px;font-weight:700;transition:border-color .18s ease,background .18s ease,transform .18s ease,color .18s ease}
 .sch-adv .chipdays label:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.13);background:linear-gradient(180deg,rgba(16,20,33,.92),rgba(7,9,15,.96))}
@@ -76,10 +85,17 @@
 .sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .sch-adv .subnote{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:rgba(214,223,238,.5)}
 .sch-adv .field-mini{display:grid;gap:6px;min-width:0}
+.sch-adv .capture-provider-stack{grid-template-columns:minmax(190px,1.4fr) minmax(150px,1fr)}
+.sch-adv td[data-label="Feature"]{min-width:150px}
+.sch-adv td[data-label="Days"]{min-width:330px}
+.sch-adv td[data-label="Label template"]{min-width:170px}
+.sch-adv td[data-label="Label template"] input{min-width:0;width:100%}
 .sch-adv td[data-label="Source"]{min-width:260px}
 .sch-adv td[data-label="Action"]{min-width:240px}
 .sch-adv td[data-label="Source"] .stack,.sch-adv td[data-label="Action"] .stack{width:100%}
 .sch-adv td[data-label="Source"] select,.sch-adv td[data-label="Action"] select{width:100%!important;min-width:0!important}
+.sch-adv td[data-label="Action"] .cw-icon-select-text{display:flex;align-items:center;min-width:0}
+.sch-adv td[data-label="Action"] .cw-icon-select-badges{flex-wrap:nowrap;white-space:nowrap}
 .sch-adv td[data-label="Source"] select,.sch-adv td[data-label="Event"] select{min-width:146px}
 .sch-adv .event-filter-stack{width:100%}
 .sch-adv .event-filter-stack select,.sch-adv .event-filter-stack input{width:100%!important;min-width:0!important}
@@ -87,7 +103,10 @@
 .sch-adv .checkline input{width:16px;height:16px;accent-color:#7c76ff}
 .sch-adv .row-disabled{opacity:.5;filter:grayscale(.24)}
 .sch-adv option[disabled]{color:#666}
-.sch-adv-actions{position:relative;z-index:1;display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.sch-adv-actions{position:relative;z-index:1;display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.sch-adv-actions .status{margin-left:auto;justify-content:flex-end;text-align:right;max-width:100%}
+.sch-adv-actions .status.inline{display:inline-flex;align-items:center;justify-content:flex-end;gap:8px;min-height:36px;padding:6px 12px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);flex:0 0 auto;max-width:min(100%,fit-content);white-space:nowrap;color:rgba(231,238,250,.86)}
+.sch-adv-actions .status.inline::before{content:"info";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:16px;line-height:1;color:rgba(198,210,236,.74)}
 .sch-adv .btn,.sch-adv .btn.ghost{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03));color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:transform .18s ease,background .18s ease,border-color .18s ease}
 .sch-adv .btn:hover,.sch-adv .btn.ghost:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(110,112,255,.16),rgba(255,255,255,.04))}
 .sch-adv tbody .btn.ghost{min-width:38px;padding:0 12px}
@@ -99,7 +118,7 @@
 .sch-adv.adv-disabled{opacity:.55;filter:saturate(.75)}
 .sch-std-toggle{margin-top:0}
 @media (max-width:980px){#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td[data-label]::before{content:attr(data-label);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56)}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .stack.two,.sch-adv .stack.three,.sch-adv .event-filter-grid{grid-template-columns:1fr}}
+@media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody tr.capture-detail-row{border:none;border-radius:0;overflow:visible}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td[data-label]::before{content:attr(data-label);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56)}.sch-adv .capture-detail-row td[data-label]::before{content:none}.sch-adv .capture-detail-card{margin-top:-10px;border-top:1px solid var(--sch-border-soft);border-radius:0 0 18px 18px}.sch-adv .capture-detail-grid{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .stack.two,.sch-adv .stack.three,.sch-adv .event-filter-grid{grid-template-columns:1fr}}
 ` }));
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:0}
@@ -137,6 +156,9 @@
 .sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .sch-adv .field-mini{gap:5px}
 .sch-adv .field-mini .subnote{font-size:10px;letter-spacing:.09em}
+.sch-adv .field-mini.control-align .subnote{visibility:hidden;user-select:none}
+.sch-adv .capture-detail-card .checkline{min-height:42px;padding:0 12px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:linear-gradient(180deg,rgba(4,6,11,.94),rgba(2,4,8,.98))}
+.sch-adv .capture-provider-stack{grid-template-columns:minmax(220px,1.45fr) minmax(160px,1fr)}
 .sch-adv .chipdays{gap:7px}
 .sch-adv .chipdays label{min-height:36px;padding:0 9px}
 .sch-adv-actions{gap:8px}
@@ -147,7 +169,8 @@
 ` }));
 
   // state
-  let _pairs = [], _jobs = [], _eventRules = [], _advEnabled = false, _loading = false;
+  let _pairs = [], _jobs = [], _captureJobs = [], _eventRules = [], _advEnabled = false, _loading = false;
+  let _captureProviders = [];
   let _eventRoutes = { watcher: [], webhook: [] }, _eventRouteError = "";
   const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
   const EVENT_SOURCE_OPTIONS = [["watcher", "Watcher"], ["webhook", "Webhook"]];
@@ -162,6 +185,12 @@
     time_time: "Time:\nChoose the local time when this step becomes due.",
     time_days: "Days:\nSelect which weekdays this step may run on.\nLeave all days unchecked to allow every day.",
     time_after: "After:\nOptional dependency.\nUse this to run the step only after another earlier step has completed.",
+    capture_target: "Provider:\nChoose the provider profile to capture from.\nOnly configured snapshot-capable profiles are listed.",
+    capture_feature: "Feature:\nPick one feature or All to store a full provider capture bundle.",
+    capture_label: "Label template:\nOptional template for automated capture labels.\nUse placeholders like {provider}, {instance}, {feature}, {date}, {time}, {datetime}, or {stamp}.",
+    capture_retention_days: "Keep captures for days:\nDelete scheduled captures older than this many days.\nLeave empty or 0 to keep by age forever.",
+    capture_max_captures: "Max captures to keep:\nKeep only the newest scheduled captures up to this count.\nLeave empty or 0 for no count limit.",
+    capture_cleanup: "Cleanup:\nWhen enabled, older scheduled captures are pruned after each successful scheduled capture using the limits above.",
     source: "Source:\nChoose where the trigger comes from.\nThen choose the exact watcher or webhook route under it.",
     event: "Event:\nChoose which playback activity should trigger the rule.\nStart: playback begins or resumes.\nPause: playback is paused.\nStop: playback ends or stops.",
     filters: "Filters:\nMedia: only movies or episodes.\nMin %: require minimum playback progress.",
@@ -169,6 +198,19 @@
     guardrails: "Mute (min):\nIgnore new triggers for this rule after it runs.\nDedupe (sec):\nSuppress identical repeated events for a short window.\nMax / hour:\nHard safety cap for this rule in one hour."
   };
   const defaultJob = () => ({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
+  const defaultCaptureJob = () => ({
+    id: genId(),
+    provider: "",
+    instance: "default",
+    feature: "",
+    at: null,
+    days: [],
+    label_template: "",
+    retention_days: 0,
+    max_captures: 0,
+    auto_delete_old: false,
+    active: true
+  });
   const defaultEventRule = () => ({
     id: genId(),
     source: _eventRoutes.watcher?.length ? "watcher" : _eventRoutes.webhook?.length ? "webhook" : "watcher",
@@ -359,6 +401,33 @@ const ensureStdEnabledToggle = () => {
       })) : [];
     } catch (e) { console.warn("[scheduler] /api/pairs failed", e); _pairs = []; }
   };
+  const fetchCaptureProviders = async () => {
+    _captureProviders = [];
+    if (authSetupPending()) return;
+    try {
+      const res = await fetch("/api/snapshots/manifest", { cache: "no-store" });
+      const data = await res.json();
+      const rows = Array.isArray(data?.providers) ? data.providers : [];
+      _captureProviders = rows.map((row) => {
+        const features = row && typeof row.features === "object" ? row.features : {};
+        const supported = ["watchlist", "ratings", "history", "progress"].filter((feature) => !!features?.[feature]);
+        return {
+          id: String(row?.id || "").trim().toUpperCase(),
+          label: String(row?.label || row?.id || "").trim() || String(row?.id || "").trim().toUpperCase(),
+          configured: !!row?.configured,
+          features: supported,
+          instances: Array.isArray(row?.instances) ? row.instances.map((inst) => ({
+            id: String(inst?.id || "default").trim() || "default",
+            label: String(inst?.label || inst?.id || "Default").trim() || "Default",
+            configured: inst?.configured !== false
+          })) : []
+        };
+      }).filter((row) => row.id);
+    } catch (e) {
+      console.warn("[scheduler] /api/snapshots/manifest failed", e);
+      _captureProviders = [];
+    }
+  };
   const eventRoutesFor = source => Array.isArray(_eventRoutes?.[source]) ? _eventRoutes[source] : [];
   const eventSourceReady = source => eventRoutesFor(source).length > 0;
   const eventSourceLabel = source => String(source || "").trim().toLowerCase() === "webhook" ? "Webhook" : "Watcher";
@@ -477,24 +546,57 @@ const ensureStdEnabledToggle = () => {
         ...(extra || {})
       }));
     });
-    if (onChange) sel.onchange = () => onChange(sel.value);
+    if (onChange) sel.onchange = () => {
+      onChange(sel.value);
+      try { updateAdvancedStatus(); } catch {}
+    };
     return sel;
   };
   const buildInput = ({ id, type = "text", value = "", min = null, max = null, placeholder = "", onChange }) => {
     const input = Object.assign(el("input"), { id, name: id, type, value, placeholder });
     if (min != null) input.min = String(min);
     if (max != null) input.max = String(max);
-    if (onChange) input.onchange = () => onChange(input.value, input);
+    if (onChange) input.oninput = () => {
+      onChange(input.value, input);
+      try { updateAdvancedStatus(); } catch {}
+    };
+    if (onChange) input.onchange = () => {
+      onChange(input.value, input);
+      try { updateAdvancedStatus(); } catch {}
+    };
     return input;
   };
   const buildCheck = ({ id, checked, label, onChange }) => {
     const line = el("label", "checkline");
     const chk = Object.assign(el("input"), { id, name: id, type: "checkbox", checked: !!checked });
-    if (onChange) chk.onchange = () => onChange(chk.checked);
+    if (onChange) chk.onchange = () => {
+      onChange(chk.checked);
+      try { updateAdvancedStatus(); } catch {}
+    };
     line.append(chk, Object.assign(el("span"), { textContent: label }));
     return line;
   };
   const fieldMini = (label, control) => stackWrap("field-mini", Object.assign(el("div", "subnote"), { textContent: label }), control);
+  const fieldMiniHelp = (label, control, helpKey) => {
+    const head = el("div", "subnote");
+    const wrap = el("span", "th-help");
+    wrap.appendChild(Object.assign(el("span"), { textContent: label }));
+    const btn = Object.assign(el("button"), {
+      className: "sch-help",
+      type: "button",
+      ariaLabel: `${label} help`,
+      title: HELP_TIPS[helpKey] || ""
+    });
+    btn.dataset.helpKey = helpKey;
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    wrap.appendChild(btn);
+    head.appendChild(wrap);
+    return stackWrap("field-mini", head, control);
+  };
+  const alignedField = (control) => stackWrap("field-mini control-align", Object.assign(el("div", "subnote"), { textContent: "Label" }), control);
   const guardInput = ({ id, value, placeholder, title, onChange }) => {
     const input = buildInput({ id, type: "number", min: 0, value, placeholder, onChange });
     if (title) input.title = title;
@@ -572,6 +674,203 @@ const ensureStdEnabledToggle = () => {
     ["", includeNoneText],
     ..._pairs.map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
   ];
+  const softenStatus = (value = "") => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return text
+      .replace(/^Step (\d+): select a pair\.$/i, "Next: choose a pair for Step $1")
+      .replace(/^Step (\d+): select a time\.$/i, "Next: set a time for Step $1")
+      .replace(/^Capture schedule (\d+): select a provider\.$/i, "Next: choose a provider for Capture schedule $1")
+      .replace(/^Capture schedule (\d+): choose a configured provider\.$/i, "Pick a configured provider for Capture schedule $1")
+      .replace(/^Capture schedule (\d+): choose a configured provider profile\.$/i, "Pick a configured profile for Capture schedule $1")
+      .replace(/^Capture schedule (\d+): select a feature\.$/i, "Next: choose a feature for Capture schedule $1")
+      .replace(/^Capture schedule (\d+): feature (.+) is not supported for (.+)\.$/i, "Capture schedule $1: $2 is not available for $3")
+      .replace(/^Capture schedule (\d+): select a time\.$/i, "Next: set a time for Capture schedule $1")
+      .replace(/^Select a sync pair for each event trigger\.$/i, "Next: choose a sync pair for each event trigger")
+      .replace(/^Select a (.+) route for each event trigger\.$/i, "Next: choose a $1 route for each event trigger")
+      .replace(/^Select an enabled source for event trigger (.+)\.$/i, "Pick an enabled source for event trigger $1")
+      .replace(/^Some timed steps reference disabled pairs\.$/i, "Update the disabled pair used in one of the timed steps")
+      .replace(/^Some event triggers reference disabled pairs\.$/i, "Update the disabled pair used in one of the event triggers")
+      .replace(/^Some event triggers need a valid configured watcher or webhook route\.$/i, "Choose a valid watcher or webhook route for the event trigger")
+      .replace(/^No enabled watcher or webhook routes configured for event triggers\.$/i, "Add or enable a watcher/webhook route to use event triggers")
+      .replace(/^Unable to load watcher or webhook routes for event triggers\.$/i, "Routes could not be loaded for event triggers");
+  };
+  const statusText = (node, value = "") => {
+    if (!node) return;
+    const text = softenStatus(value);
+    node.textContent = text;
+    node.classList.toggle("is-empty", !text);
+  };
+  const jobLabel = (job) => {
+    const index = Math.max(0, _jobs.indexOf(job)) + 1;
+    return `Step ${index}`;
+  };
+  const isBlankJob = (job) => {
+    const pairId = String(job?.pair_id || "").trim();
+    const time = String(job?.at || "").trim();
+    const after = String(job?.after || "").trim();
+    const days = Array.isArray(job?.days) ? job.days : [];
+    return !pairId && !time && !after && days.length === 0;
+  };
+  const jobIssue = (job) => {
+    if (isBlankJob(job)) return "";
+    const pairId = String(job?.pair_id || "").trim();
+    const time = String(job?.at || "").trim();
+    const rowName = jobLabel(job);
+    if (!pairId) return `${rowName}: select a pair.`;
+    if (!time) return `${rowName}: select a time.`;
+    return "";
+  };
+  const serializableJobs = () => {
+    const jobs = [];
+    const issues = [];
+    _jobs.forEach((job) => {
+      if (isBlankJob(job)) return;
+      const issue = jobIssue(job);
+      if (issue) {
+        issues.push(issue);
+        return;
+      }
+      jobs.push(job);
+    });
+    return { jobs, issues };
+  };
+  const captureProviderById = (provider) => _captureProviders.find((row) => String(row?.id || "") === String(provider || "").trim().toUpperCase()) || null;
+  const captureInstanceOptions = (provider, current = "") => {
+    const meta = captureProviderById(provider);
+    const rows = Array.isArray(meta?.instances) ? meta.instances : [];
+    const seen = new Set();
+    const out = [];
+    rows.forEach((row) => {
+      const id = String(row?.id || "default").trim() || "default";
+      if (seen.has(id)) return;
+      seen.add(id);
+      out.push([id, row?.label || instanceLabel(id), row?.configured === false ? { disabled: true } : null]);
+    });
+    const want = String(current || "").trim() || "default";
+    if (want && !seen.has(want)) out.unshift([want, instanceLabel(want), { selected: true }]);
+    if (!out.length) out.push(["default", "Default"]);
+    return out;
+  };
+  const captureFeatureOptions = (provider, current = "") => {
+    const meta = captureProviderById(provider);
+    const feats = Array.isArray(meta?.features) ? meta.features : [];
+    const out = [["", "Feature"]];
+    if (feats.length) out.push(["all", "All features"]);
+    feats.forEach((feature) => out.push([feature, feature === "all" ? "All features" : feature.charAt(0).toUpperCase() + feature.slice(1)]));
+    const want = String(current || "").trim().toLowerCase();
+    if (want && !out.some(([value]) => String(value) === want)) out.push([want, want === "all" ? "All features" : want]);
+    return out;
+  };
+  const captureProviderOptions = (current = "") => {
+    const rows = [["", "Select provider"]];
+    _captureProviders.forEach((provider) => {
+      rows.push([
+        provider.id,
+        provider.label + (provider.configured ? "" : " (not configured)"),
+        provider.configured ? null : { disabled: true, selected: String(current || "").trim().toUpperCase() === provider.id }
+      ]);
+    });
+    return rows;
+  };
+  const normalizeCaptureJob = (job = {}) => {
+    const days = Array.isArray(job.days) ? [...new Set(job.days.map((n) => parseInt(n, 10)).filter((n) => n >= 1 && n <= 7))].sort((a, b) => a - b) : [];
+    return {
+      id: job.id || genId(),
+      provider: String(job.provider || "").trim().toUpperCase(),
+      instance: String(job.instance || job.instance_id || job.profile || "default").trim() || "default",
+      feature: String(job.feature || "").trim().toLowerCase(),
+      at: String(job.at || "").trim() || null,
+      days,
+      label_template: String(job.label_template || job.labelTemplate || "").trim() || "auto-{provider}-{feature}-{date}",
+      retention_days: Math.max(0, parseInt(job.retention_days ?? job.retentionDays ?? job.keep_days ?? 0, 10) || 0),
+      max_captures: Math.max(0, parseInt(job.max_captures ?? job.maxCaptures ?? job.keep_count ?? 0, 10) || 0),
+      auto_delete_old: job.auto_delete_old === true || job.autoDeleteOld === true,
+      active: job.active !== false
+    };
+  };
+  const isBlankCaptureJob = (job) => {
+    const provider = String(job?.provider || "").trim().toUpperCase();
+    const feature = String(job?.feature || "").trim().toLowerCase();
+    const time = String(job?.at || "").trim();
+    const instance = String(job?.instance || "default").trim() || "default";
+    const label = String(job?.label_template || "").trim();
+    const defaultLabel = "auto-{provider}-{feature}-{date}";
+    const retentionDays = Math.max(0, parseInt(job?.retention_days ?? 0, 10) || 0);
+    const maxCaptures = Math.max(0, parseInt(job?.max_captures ?? 0, 10) || 0);
+    const autoDeleteOld = job?.auto_delete_old === true;
+    return !provider
+      && !feature
+      && !time
+      && instance === "default"
+      && retentionDays === 0
+      && maxCaptures === 0
+      && !autoDeleteOld
+      && (!label || label === defaultLabel);
+  };
+  const captureJobLabel = (job) => {
+    const index = Math.max(0, _captureJobs.indexOf(job)) + 1;
+    return `Capture schedule ${index}`;
+  };
+  const captureLabelValue = (job) => {
+    const label = String(job?.label_template || "").trim();
+    return label === "auto-{provider}-{feature}-{date}" ? "" : label;
+  };
+  const captureJobIssue = (job) => {
+    if (isBlankCaptureJob(job)) return "";
+    const provider = String(job?.provider || "").trim().toUpperCase();
+    const feature = String(job?.feature || "").trim().toLowerCase();
+    const time = String(job?.at || "").trim();
+    const instance = String(job?.instance || "default").trim() || "default";
+    const label = String(job?.label_template || "").trim();
+    const retentionDays = Math.max(0, parseInt(job?.retention_days ?? 0, 10) || 0);
+    const maxCaptures = Math.max(0, parseInt(job?.max_captures ?? 0, 10) || 0);
+    const autoDeleteOld = job?.auto_delete_old === true;
+    const hasContent = !!provider || !!feature || !!time || !!label || retentionDays > 0 || maxCaptures > 0 || autoDeleteOld;
+    const rowName = captureJobLabel(job);
+    if (!hasContent) return "";
+    const meta = captureProviderById(provider);
+    if (!provider) return `${rowName}: select a provider.`;
+    if (!meta || !meta.configured) return `${rowName}: choose a configured provider.`;
+    const instMeta = Array.isArray(meta.instances) ? meta.instances.find((row) => String(row?.id || "") === instance) : null;
+    if (instMeta && instMeta.configured === false) return `${rowName}: choose a configured provider profile.`;
+    if (!feature) return `${rowName}: select a feature.`;
+    if (feature !== "all" && !(meta.features || []).includes(feature)) return `${rowName}: feature ${feature} is not supported for ${provider}.`;
+    if (!time) return `${rowName}: select a time.`;
+    return "";
+  };
+  const serializableCaptureJobs = () => {
+    const jobs = [];
+    const issues = [];
+    _captureJobs.forEach((job) => {
+      if (isBlankCaptureJob(job)) return;
+      const issue = captureJobIssue(job);
+      if (issue) {
+        issues.push(issue);
+        return;
+      }
+      const provider = String(job?.provider || "").trim().toUpperCase();
+      const feature = String(job?.feature || "").trim().toLowerCase();
+      const at = String(job?.at || "").trim();
+      const label = String(job?.label_template || "").trim();
+      if (!provider && !feature && !at && !label) return;
+      jobs.push(normalizeCaptureJob(job));
+    });
+    return { jobs, issues };
+  };
+  const sameCaptureJob = (a, b) => {
+    const daysA = Array.isArray(a?.days) ? a.days.join(",") : "";
+    const daysB = Array.isArray(b?.days) ? b.days.join(",") : "";
+    return String(a?.provider || "") === String(b?.provider || "")
+      && String(a?.instance || "default") === String(b?.instance || "default")
+      && String(a?.feature || "") === String(b?.feature || "")
+      && String(a?.label_template || "") === String(b?.label_template || "")
+      && Math.max(0, parseInt(a?.retention_days ?? 0, 10) || 0) === Math.max(0, parseInt(b?.retention_days ?? 0, 10) || 0)
+      && Math.max(0, parseInt(a?.max_captures ?? 0, 10) || 0) === Math.max(0, parseInt(b?.max_captures ?? 0, 10) || 0)
+      && (a?.auto_delete_old === true) === (b?.auto_delete_old === true)
+      && String(a?.at || "") === String(b?.at || "")
+      && daysA === daysB;
+  };
 
   // row builder
   const jobRow = j => {
@@ -597,7 +896,12 @@ const ensureStdEnabledToggle = () => {
       const lab = el("label"), chk = Object.assign(el("input"), { type: "checkbox", checked: cur.has(i+1) }), txt = el("span");
       chk.id = `sched_days_${rowKey}_${i+1}`;
       chk.name = `sched_days_${rowKey}[]`;
-      chk.onchange = () => { const S = new Set(Array.isArray(j.days) ? j.days : []); chk.checked ? S.add(i+1) : S.delete(i+1); j.days = [...S].sort((a,b)=>a-b); };
+      chk.onchange = () => {
+        const S = new Set(Array.isArray(j.days) ? j.days : []);
+        chk.checked ? S.add(i+1) : S.delete(i+1);
+        j.days = [...S].sort((a,b)=>a-b);
+        try { updateAdvancedStatus(); } catch {}
+      };
       txt.textContent = d;
       lab.append(chk, txt); wrap.appendChild(lab);
     if(i===2){ wrap.appendChild(el("span","chipspacer")); }
@@ -632,6 +936,168 @@ const ensureStdEnabledToggle = () => {
       tdCell("Remove", del)
     );
     return tr;
+  };
+
+  const captureJobRow = (job) => {
+    const frag = document.createDocumentFragment();
+    const tr = el("tr");
+    const rowKey = fieldKey(job?.id, `capture_${_captureJobs.indexOf(job) + 1}`);
+    const providerSel = buildSelect({
+      id: `sched_cap_provider_${rowKey}`,
+      value: job.provider || "",
+      options: captureProviderOptions(job.provider || ""),
+      onChange: (value) => {
+        job.provider = String(value || "").trim().toUpperCase();
+        const providerMeta = captureProviderById(job.provider);
+        const instances = Array.isArray(providerMeta?.instances) ? providerMeta.instances : [];
+        if (!instances.some((row) => String(row?.id || "") === String(job.instance || "default"))) {
+          const next = instances.find((row) => row?.configured !== false)?.id || instances[0]?.id || "default";
+          job.instance = String(next || "default");
+        }
+        const features = Array.isArray(providerMeta?.features) ? providerMeta.features : [];
+        if (job.feature && job.feature !== "all" && !features.includes(job.feature)) job.feature = "";
+        syncCaptureDraftJobs();
+        renderCaptureJobs();
+      }
+    });
+    const instanceSel = buildSelect({
+      id: `sched_cap_instance_${rowKey}`,
+      value: job.instance || "default",
+      options: captureInstanceOptions(job.provider || "", job.instance || "default"),
+      onChange: (value) => { job.instance = String(value || "default").trim() || "default"; syncCaptureDraftJobs(); }
+    });
+    const featureSel = buildSelect({
+      id: `sched_cap_feature_${rowKey}`,
+      value: job.feature || "",
+      options: captureFeatureOptions(job.provider || "", job.feature || ""),
+      onChange: (value) => { job.feature = String(value || "").trim().toLowerCase(); syncCaptureDraftJobs(); }
+    });
+    const timeInput = buildInput({
+      id: `sched_cap_time_${rowKey}`,
+      type: "time",
+      value: job.at || "",
+      onChange: (value) => { job.at = String(value || "").trim() || null; syncCaptureDraftJobs(); }
+    });
+    const daysWrap = el("div", "chipdays");
+    const curDays = new Set(Array.isArray(job.days) ? job.days : []);
+    DAY.forEach((d, i) => {
+      const lab = el("label");
+      const chk = Object.assign(el("input"), { type: "checkbox", checked: curDays.has(i + 1) });
+      const txt = el("span");
+      chk.id = `sched_cap_days_${rowKey}_${i + 1}`;
+      chk.name = `sched_cap_days_${rowKey}[]`;
+      chk.onchange = () => {
+        const next = new Set(Array.isArray(job.days) ? job.days : []);
+        chk.checked ? next.add(i + 1) : next.delete(i + 1);
+        job.days = [...next].sort((a, b) => a - b);
+        syncCaptureDraftJobs();
+        try { updateAdvancedStatus(); } catch {}
+      };
+      txt.textContent = d;
+      lab.append(chk, txt);
+      daysWrap.appendChild(lab);
+      if (i === 2) daysWrap.appendChild(el("span", "chipspacer"));
+    });
+    const labelInput = buildInput({
+      id: `sched_cap_label_${rowKey}`,
+      type: "text",
+      value: captureLabelValue(job),
+      placeholder: "",
+      onChange: (value, input) => {
+        job.label_template = String(value || "").trim();
+        input.value = job.label_template;
+        syncCaptureDraftJobs();
+      }
+    });
+    labelInput.title = HELP_TIPS.capture_label;
+    const retentionDaysInput = buildInput({
+      id: `sched_cap_retention_days_${rowKey}`,
+      type: "number",
+      min: 0,
+      value: job.retention_days || "",
+      placeholder: "Forever",
+      onChange: (value, input) => {
+        job.retention_days = Math.max(0, parseInt(value || "0", 10) || 0);
+        input.value = job.retention_days ? String(job.retention_days) : "";
+        syncCaptureDraftJobs();
+      }
+    });
+    const maxCapturesInput = buildInput({
+      id: `sched_cap_max_captures_${rowKey}`,
+      type: "number",
+      min: 0,
+      value: job.max_captures || "",
+      placeholder: "Unlimited",
+      onChange: (value, input) => {
+        job.max_captures = Math.max(0, parseInt(value || "0", 10) || 0);
+        input.value = job.max_captures ? String(job.max_captures) : "";
+        syncCaptureDraftJobs();
+      }
+    });
+    const autoDeleteCheck = buildCheck({
+      id: `sched_cap_auto_delete_${rowKey}`,
+      checked: job.auto_delete_old === true,
+      label: "Auto-delete older captures after each scheduled run",
+      onChange: (checked) => {
+        job.auto_delete_old = !!checked;
+        syncCaptureDraftJobs();
+      }
+    });
+    const activeChk = Object.assign(el("input"), { id: `sched_cap_active_${rowKey}`, name: `sched_cap_active_${rowKey}`, type: "checkbox", checked: job.active !== false });
+    activeChk.onchange = () => {
+      job.active = !!activeChk.checked;
+      syncCaptureDraftJobs();
+      try { updateAdvancedStatus(); } catch {}
+    };
+    const toggleAdv = Object.assign(el("button"), { className: "btn ghost capture-adv-toggle", type: "button", ariaLabel: "Toggle advanced capture schedule options", title: "Show advanced options" });
+    toggleAdv.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_down</span>`;
+    const del = Object.assign(el("button"), { className: "btn ghost sch-remove-btn", type: "button", ariaLabel: "Remove capture schedule" });
+    del.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">close</span>`;
+    del.onclick = () => { _captureJobs = _captureJobs.filter((row) => row !== job); syncCaptureDraftJobs(); renderCaptureJobs(); };
+    const detailRow = el("tr");
+    detailRow.className = "capture-detail-row";
+    const detailCell = Object.assign(el("td"), { colSpan: 6 });
+    const detailCard = el("div", "capture-detail-card");
+    const detailGrid = el("div", "capture-detail-grid");
+    detailGrid.append(
+      fieldMiniHelp("Label template", labelInput, "capture_label"),
+      fieldMiniHelp("Keep captures for days", retentionDaysInput, "capture_retention_days"),
+      fieldMiniHelp("Max captures to keep", maxCapturesInput, "capture_max_captures"),
+      fieldMiniHelp("Cleanup", autoDeleteCheck, "capture_cleanup")
+    );
+    detailCard.appendChild(detailGrid);
+    detailCell.appendChild(detailCard);
+    detailRow.appendChild(detailCell);
+    const syncAdvancedState = () => {
+      const open = job._advanced_open === true;
+      detailRow.style.display = open ? "" : "none";
+      toggleAdv.title = open ? "Hide advanced options" : "Show advanced options";
+      toggleAdv.setAttribute("aria-expanded", open ? "true" : "false");
+      const icon = toggleAdv.querySelector(".material-symbols-rounded");
+      if (icon) icon.textContent = open ? "keyboard_arrow_up" : "keyboard_arrow_down";
+    };
+    toggleAdv.onclick = () => {
+      job._advanced_open = !(job._advanced_open === true);
+      syncAdvancedState();
+    };
+
+    tr.append(
+      tdCell("Provider", stackWrap("stack two capture-provider-stack",
+        fieldMini("Provider", enhanceIconSelect(providerSel, (value) => {
+          const meta = captureProviderById(value);
+          return meta ? { label: meta.label || meta.id, icons: [iconMeta(String(meta.id || "").toLowerCase())].filter(Boolean) } : null;
+        })),
+        fieldMini("Profile", instanceSel)
+      )),
+      tdCell("Feature", alignedField(featureSel)),
+      tdCell("Time", alignedField(timeInput)),
+      tdCell("Days", daysWrap),
+      tdCell("Active", activeChk),
+      tdCell("Actions", stackWrap("capture-row-actions", toggleAdv, del))
+    );
+    syncAdvancedState();
+    frag.append(tr, detailRow);
+    return frag;
   };
 
   const eventRuleRow = r => {
@@ -793,6 +1259,31 @@ const ensureStdEnabledToggle = () => {
   <div class="sch-adv-actions">
     <button class="btn" id="btnAddStep">Add step</button>
     <button class="btn" id="btnAutoFromPairs">Auto-create from enabled pairs</button>
+    <div class="status inline" id="schJobsStatus"></div>
+  </div>
+</section>
+
+<section class="sch-adv-section">
+  <div class="sch-adv-section-head">
+    <div>
+      <div class="sch-adv-section-title">Capture schedules</div>
+      <div class="sch-adv-section-copy">Run automated provider captures on a schedule.</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th style="width:37%"><span class="th-help">Provider<button type="button" class="sch-help" aria-label="Provider help" title="Provider help" data-help-key="capture_target"></button></span></th>
+      <th style="width:14%"><span class="th-help">Feature<button type="button" class="sch-help" aria-label="Feature help" title="Feature help" data-help-key="capture_feature"></button></span></th>
+      <th style="width:11%"><span class="th-help">Time<button type="button" class="sch-help" aria-label="Time help" title="Time help" data-help-key="time_time"></button></span></th>
+      <th style="width:26%"><span class="th-help">Days<button type="button" class="sch-help" aria-label="Days help" title="Days help" data-help-key="time_days"></button></span></th>
+      <th style="width:4%">Active</th>
+      <th style="width:8%"></th>
+    </tr></thead>
+    <tbody id="schCaptureJobsBody"></tbody>
+  </table>
+  <div class="sch-adv-actions">
+    <button class="btn" id="btnAddCaptureJob">Add capture schedule</button>
+    <div class="status inline" id="schCaptureStatus"></div>
   </div>
 </section>
 
@@ -817,10 +1308,10 @@ const ensureStdEnabledToggle = () => {
   </table>
   <div class="sch-adv-actions">
     <button class="btn" id="btnAddEventRule">Add event trigger</button>
+    <div class="status inline" id="schEventStatus"></div>
   </div>
 </section>
 
-<div class="status" id="schAdvStatus"></div>
 `;
     host.appendChild(adv);
     adv.querySelectorAll(".sch-help").forEach((btn) => {
@@ -843,6 +1334,7 @@ const ensureStdEnabledToggle = () => {
       if (!_jobs.length) _jobs.push(defaultJob());
       renderJobs();
     };
+    $("#btnAddCaptureJob").onclick = () => { _captureJobs.push(defaultCaptureJob()); renderCaptureJobs(); };
     $("#btnAddEventRule").onclick = () => { _eventRules.push(defaultEventRule()); renderEventRules(); };
     $("#schAdvEnabled").onchange = () => {
       _advEnabled = !!$("#schAdvEnabled").checked;
@@ -862,37 +1354,32 @@ const ensureStdEnabledToggle = () => {
 
   // render
   const updateAdvancedStatus = () => {
-    const st = $("#schAdvStatus");
-    if (!st) return;
-    if (_eventRouteError) {
-      st.textContent = _eventRouteError;
-      return;
-    }
+    const jobsSt = $("#schJobsStatus");
+    const captureSt = $("#schCaptureStatus");
+    const eventSt = $("#schEventStatus");
+    statusText(jobsSt);
+    statusText(captureSt);
+    statusText(eventSt);
+
+    const invalidJobs = serializableJobs().issues;
     const blockedJobs = _jobs.some(j => j._blocked);
+    const invalidCaptureJobs = serializableCaptureJobs().issues;
     const blockedRules = _eventRules.some(r => r._blocked);
     const blockedRuleRoutes = _eventRules.some(r => r._route_blocked);
     const invalidRules = _eventRules.map(eventRuleIssue).filter(Boolean);
-    if (invalidRules.length) {
-      st.textContent = invalidRules[0];
-      return;
-    }
-    if (blockedRuleRoutes) {
-      st.textContent = "Some event triggers need a valid configured watcher or webhook route.";
-      return;
-    }
-    if (blockedJobs && blockedRules) {
-      st.textContent = "Some timed steps and event triggers reference disabled pairs.";
-      return;
-    }
-    if (blockedJobs) {
-      st.textContent = "Some timed steps reference disabled pairs.";
-      return;
-    }
-    if (blockedRules) {
-      st.textContent = "Some event triggers reference disabled pairs.";
-      return;
-    }
-    st.textContent = "";
+
+    statusText(
+      jobsSt,
+      invalidJobs[0] || (blockedJobs ? "Some timed steps reference disabled pairs." : "")
+    );
+    statusText(captureSt, invalidCaptureJobs[0] || "");
+    statusText(
+      eventSt,
+      _eventRouteError
+        || invalidRules[0]
+        || (blockedRuleRoutes ? "Some event triggers need a valid configured watcher or webhook route." : "")
+        || (blockedRules ? "Some event triggers reference disabled pairs." : "")
+    );
   };
 
   const renderJobs = () => {
@@ -901,6 +1388,16 @@ const ensureStdEnabledToggle = () => {
     if (!_jobs.length) _jobs.push(defaultJob());
     _jobs.forEach(j => j._blocked = j.active !== false && j.pair_id && !isEnabled(j.pair_id));
     _jobs.forEach(j => tbody.appendChild(jobRow(j)));
+    updateAdvancedStatus();
+    try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+  };
+
+  const renderCaptureJobs = () => {
+    const tbody = $("#schCaptureJobsBody"); if (!tbody) return;
+    tbody.innerHTML = "";
+    if (!_captureJobs.length) _captureJobs.push(defaultCaptureJob());
+    syncCaptureDraftJobs();
+    _captureJobs.forEach((job) => tbody.appendChild(captureJobRow(job)));
     updateAdvancedStatus();
     try { window.cwSchedSettingsHubUpdate?.(); } catch {}
   };
@@ -933,6 +1430,7 @@ const ensureStdEnabledToggle = () => {
       decorateStandardPanel();
       decorateStandardFieldHelp();
       await fetchPairs();
+      await fetchCaptureProviders();
       await fetchEventRoutes();
 
       let saved = {};
@@ -956,10 +1454,18 @@ const ensureStdEnabledToggle = () => {
         after: j.after || null,
         active: j.active !== false
       })) : [];
+      _captureJobs = Array.isArray(adv.capture_jobs || adv.captureJobs) ? (adv.capture_jobs || adv.captureJobs).map(normalizeCaptureJob) : [];
+      _captureJobs = mergeCaptureJobs(_captureJobs, getCaptureDraftJobs());
       _eventRules = Array.isArray(adv.event_rules || adv.eventRules) ? (adv.event_rules || adv.eventRules).map(normalizeEventRule) : [];
       _eventRules.forEach(syncRuleRoute);
       renderJobs();
+      renderCaptureJobs();
       renderEventRules();
+      const pendingCapturePrefills = getPendingCapturePrefills();
+      if (pendingCapturePrefills.length) {
+        setPendingCapturePrefills([]);
+        queueCapturePrefills(pendingCapturePrefills);
+      }
 
       applyModeLocks();
 
@@ -982,6 +1488,19 @@ const ensureStdEnabledToggle = () => {
       after: j.after || null,
       active: j.active !== false
     })),
+    capture_jobs: serializableCaptureJobs().jobs.map((job) => ({
+      id: job.id,
+      provider: job.provider || "",
+      instance: job.instance || "default",
+      feature: job.feature || "",
+      at: job.at || null,
+      days: Array.isArray(job.days) ? job.days.slice() : [],
+      label_template: job.label_template || "",
+      retention_days: Math.max(0, parseInt(job.retention_days || 0, 10) || 0),
+      max_captures: Math.max(0, parseInt(job.max_captures || 0, 10) || 0),
+      auto_delete_old: job.auto_delete_old === true,
+      active: job.active !== false
+    })),
     event_rules: serializableEventRules().rules.map(r => ({
       id: r.id,
       source: r.source || "watcher",
@@ -1003,6 +1522,16 @@ const ensureStdEnabledToggle = () => {
       active: r.active !== false
     }))
   });
+  const schedulingValidation = () => {
+    const captureState = serializableCaptureJobs();
+    const ruleState = serializableEventRules();
+    return {
+      captureIssues: captureState.issues.slice(),
+      eventIssues: ruleState.issues.slice(),
+      issues: [...captureState.issues, ...ruleState.issues]
+    };
+  };
+  window.getSchedulingValidation = schedulingValidation;
 
   // public getter for current scheduling patch
   window.getSchedulingPatch = (opts = {}) => {
@@ -1010,9 +1539,13 @@ const ensureStdEnabledToggle = () => {
     const mode = $("#schMode")?.value || "hourly";
     const every_n_hours = parseInt($("#schN")?.value || "2", 10);
     const daily_time = $("#schTime")?.value || "03:30";
-    const ruleState = serializableEventRules();
-    if (ruleState.issues.length) {
-      if (strict) throw new Error(ruleState.issues[0]);
+    const validation = schedulingValidation();
+    if (validation.captureIssues.length) {
+      if (strict) throw new Error(validation.captureIssues[0]);
+      return null;
+    }
+    if (validation.eventIssues.length) {
+      if (strict) throw new Error(validation.eventIssues[0]);
       return null;
     }
     const advanced = serializeAdvanced();
@@ -1035,6 +1568,94 @@ const ensureStdEnabledToggle = () => {
     if (authSetupPending()) return;
     const section = e?.detail?.section;
     if (section && section !== "scheduling") return;
+    setCaptureDraftJobs([]);
     loadScheduling().catch(err => console.warn("scheduler reload failed", err));
   });
+
+  const getPendingCapturePrefills = () => {
+    const raw = window.__cwCaptureSchedulerPrefillQueue;
+    return Array.isArray(raw) ? raw.filter((row) => row && typeof row === "object") : [];
+  };
+  const setPendingCapturePrefills = (items) => {
+    const queue = Array.isArray(items) ? items.filter((row) => row && typeof row === "object") : [];
+    window.__cwCaptureSchedulerPrefillQueue = queue;
+  };
+  const appendPendingCapturePrefills = (items) => {
+    const queue = getPendingCapturePrefills();
+    const next = Array.isArray(items) ? items : [items];
+    setPendingCapturePrefills(queue.concat(next.filter((row) => row && typeof row === "object")));
+  };
+  const canApplyCapturePrefills = () => !!$("#schAdv") && _captureProviders.length > 0;
+  const getCaptureDraftJobs = () => {
+    const raw = window.__cwCaptureSchedulerDraftJobs;
+    return Array.isArray(raw) ? raw.filter((row) => row && typeof row === "object").map(normalizeCaptureJob) : [];
+  };
+  const setCaptureDraftJobs = (items) => {
+    window.__cwCaptureSchedulerDraftJobs = (Array.isArray(items) ? items : [])
+      .filter((row) => row && typeof row === "object")
+      .map(normalizeCaptureJob)
+      .filter((row) => !isBlankCaptureJob(row));
+  };
+  const syncCaptureDraftJobs = () => {
+    setCaptureDraftJobs(_captureJobs);
+  };
+  const mergeCaptureJobs = (baseJobs = [], draftJobs = []) => {
+    const merged = [];
+    [...(Array.isArray(baseJobs) ? baseJobs : []), ...(Array.isArray(draftJobs) ? draftJobs : [])].forEach((job) => {
+      const next = normalizeCaptureJob(job);
+      if (isBlankCaptureJob(next)) return;
+      const existingIx = merged.findIndex((row) => sameCaptureJob(row, next) || row.id === next.id);
+      if (existingIx >= 0) merged[existingIx] = { ...merged[existingIx], ...next };
+      else merged.push(next);
+    });
+    return merged;
+  };
+
+  const queueCapturePrefill = (payload = {}) => {
+    const job = normalizeCaptureJob({
+      provider: payload.provider,
+      instance: payload.instance || payload.instance_id || payload.profile || "default",
+      feature: payload.feature,
+      label_template: payload.label_template || payload.labelTemplate || payload.label || "auto-{provider}-{feature}-{date}",
+      retention_days: payload.retention_days ?? payload.retentionDays ?? payload.keep_days ?? 0,
+      max_captures: payload.max_captures ?? payload.maxCaptures ?? payload.keep_count ?? 0,
+      auto_delete_old: payload.auto_delete_old === true || payload.autoDeleteOld === true,
+      at: payload.at || null,
+      days: Array.isArray(payload.days) ? payload.days : [],
+      active: payload.active !== false,
+    });
+    if (!job.provider || !job.feature) return false;
+    if (_captureJobs.some((row) => sameCaptureJob(normalizeCaptureJob(row), job))) {
+      syncCaptureDraftJobs();
+      renderCaptureJobs();
+      return true;
+    }
+    const blankIx = _captureJobs.findIndex((row) => {
+      return isBlankCaptureJob(row);
+    });
+    if (blankIx >= 0) _captureJobs.splice(blankIx, 1);
+    _captureJobs.push(job);
+    syncCaptureDraftJobs();
+    renderCaptureJobs();
+    const host = $("#schCaptureJobsBody");
+    try { host?.lastElementChild?.scrollIntoView({ behavior: "smooth", block: "nearest" }); } catch {}
+    return true;
+  };
+  const queueCapturePrefills = (payloads = []) => {
+    const rows = Array.isArray(payloads) ? payloads : [payloads];
+    let added = 0;
+    rows.forEach((payload) => {
+      if (queueCapturePrefill(payload)) added += 1;
+    });
+    return added;
+  };
+  window.prefillCaptureSchedules = (payloads = []) => {
+    appendPendingCapturePrefills(payloads);
+    if (canApplyCapturePrefills()) {
+      const pending = getPendingCapturePrefills();
+      setPendingCapturePrefills([]);
+      return queueCapturePrefills(pending) > 0;
+    }
+    return false;
+  };
 })();
