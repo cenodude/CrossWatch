@@ -31,6 +31,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
     "advanced": {
         "enabled": False,
         "jobs": [],
+        "capture_jobs": [],
         "event_rules": [],
     },
 }
@@ -144,6 +145,8 @@ def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
                 out_adv[k] = v
             if not isinstance(out_adv.get("jobs"), list):
                 out_adv["jobs"] = []
+            if not isinstance(out_adv.get("capture_jobs"), list):
+                out_adv["capture_jobs"] = []
             if not isinstance(out_adv.get("event_rules"), list):
                 out_adv["event_rules"] = []
             out["advanced"] = out_adv
@@ -214,6 +217,38 @@ def _normalize_job(j: dict[str, Any]) -> dict[str, Any]:
         "days": days2,
         "after": (str(j.get("after") or "").strip() or None),
         "active": bool(j.get("active", True)),
+    }
+
+
+def _normalize_capture_job(j: dict[str, Any]) -> dict[str, Any]:
+    days = j.get("days")
+    if not isinstance(days, list):
+        days = []
+    days2: list[int] = []
+    for d in days:
+        try:
+            n = int(d)
+            if 1 <= n <= 7 and n not in days2:
+                days2.append(n)
+        except Exception:
+            continue
+    days2.sort()
+    feature = str(j.get("feature") or "").strip().lower()
+    if feature not in {"watchlist", "ratings", "history", "progress", "all"}:
+        feature = ""
+    instance = str(j.get("instance") or j.get("instance_id") or j.get("profile") or "default").strip() or "default"
+    return {
+        "id": str(j.get("id") or "").strip() or f"capture_job_{_now_ts()}",
+        "provider": str(j.get("provider") or "").strip().upper(),
+        "instance": instance,
+        "feature": feature,
+        "label_template": str(j.get("label_template") or j.get("labelTemplate") or "").strip(),
+        "retention_days": _as_int(j.get("retention_days", j.get("retentionDays", j.get("keep_days", 0))), 0, minimum=0),
+        "max_captures": _as_int(j.get("max_captures", j.get("maxCaptures", j.get("keep_count", 0))), 0, minimum=0),
+        "auto_delete_old": _as_bool(j.get("auto_delete_old", j.get("autoDeleteOld")), False),
+        "at": (str(j.get("at") or "").strip() or None),
+        "days": days2,
+        "active": _as_bool(j.get("active"), True),
     }
 
 
@@ -304,6 +339,28 @@ def _iter_event_rules(sch: dict[str, Any]) -> list[dict[str, Any]]:
         if not str(((rule.get("filters") or {}).get("route_id") or "")).strip():
             continue
         out.append(rule)
+    return out
+
+
+def _iter_adv_capture_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
+    adv = sch.get("advanced") or {}
+    if not isinstance(adv, dict) or not adv.get("enabled"):
+        return []
+    jobs = adv.get("capture_jobs") or adv.get("captureJobs") or []
+    if not isinstance(jobs, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in jobs:
+        if not isinstance(raw, dict):
+            continue
+        job = _normalize_capture_job(raw)
+        if not job["active"]:
+            continue
+        if not job["provider"] or not job["feature"]:
+            continue
+        if not job["at"] or _parse_hhmm(job["at"]) is None:
+            continue
+        out.append(job)
     return out
 
 
@@ -440,6 +497,9 @@ class SyncScheduler:
             "last_error": "",
             "last_job_id": "",
             "last_pair_id": "",
+            "last_capture_job_id": "",
+            "last_capture_provider": "",
+            "last_capture_feature": "",
             "last_rule_id": "",
             "last_event_source": "",
             "last_event_name": "",
@@ -447,6 +507,8 @@ class SyncScheduler:
         }
 
         self._adv_last_key: dict[str, str] = {}
+        self._adv_seed_key: str = ""
+        self._adv_seed_day: str = ""
         self._last_logged_next: int = 0
         self._event_last_run_at: dict[str, int] = {}
         self._event_last_fingerprint: dict[str, tuple[int, str]] = {}
@@ -492,6 +554,53 @@ class SyncScheduler:
         if std_enabled and (sch.get("mode") or "").lower() != "disabled":
             return {"enabled": True, "mode": (sch.get("mode") or "every_n_hours").lower()}
         return {"enabled": False, "mode": "disabled"}
+
+    def _adv_signature(self, sch: dict[str, Any]) -> str:
+        jobs = _iter_adv_jobs(sch)
+        capture_jobs = _iter_adv_capture_jobs(sch)
+        pairs = [
+            ("sync", str(j.get("id") or ""), str(j.get("pair_id") or ""), str(j.get("at") or ""), tuple(j.get("days") or []))
+            for j in jobs
+        ]
+        pairs += [
+            (
+                "capture",
+                str(j.get("id") or ""),
+                str(j.get("provider") or ""),
+                str(j.get("instance") or "default"),
+                str(j.get("feature") or ""),
+                str(j.get("at") or ""),
+                tuple(j.get("days") or []),
+                int(j.get("retention_days") or 0),
+                int(j.get("max_captures") or 0),
+                bool(j.get("auto_delete_old")),
+            )
+            for j in capture_jobs
+        ]
+        return repr(sorted(pairs))
+
+    def _adv_seed_past_due_today(self, sch: dict[str, Any], tz: Any | None) -> None:
+        now = _as_now_in_tz(tz)
+        base = now.replace(second=0, microsecond=0)
+        today = base.date().isoformat()
+        sig = self._adv_signature(sch)
+        if self._adv_seed_key == sig and self._adv_seed_day == today:
+            return
+
+        for job in _iter_adv_jobs(sch):
+            dt = _job_due_today(base, job)
+            if dt is None or dt >= base:
+                continue
+            self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
+
+        for job in _iter_adv_capture_jobs(sch):
+            dt = _job_due_today(base, job)
+            if dt is None or dt >= base:
+                continue
+            self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
+
+        self._adv_seed_key = sig
+        self._adv_seed_day = today
 
     def set_enabled(self, enabled: bool) -> None:
         s = self._get_sched_cfg()
@@ -736,6 +845,9 @@ class SyncScheduler:
                 self._status["last_error"] = err if err else ("" if ok else "event rule failed")
                 self._status["last_job_id"] = ""
                 self._status["last_pair_id"] = pair_id
+                self._status["last_capture_job_id"] = ""
+                self._status["last_capture_provider"] = ""
+                self._status["last_capture_feature"] = ""
                 self._status["last_rule_id"] = str(rule.get("id") or "")
                 self._status["last_event_source"] = str(event.get("source") or "")
                 self._status["last_event_name"] = str(event.get("event") or "")
@@ -779,7 +891,8 @@ class SyncScheduler:
 
     def _adv_next(self, sch: dict[str, Any], now_local: datetime, tz: Any | None) -> datetime | None:
         jobs = _iter_adv_jobs(sch)
-        if not jobs:
+        capture_jobs = _iter_adv_capture_jobs(sch)
+        if not jobs and not capture_jobs:
             return None
 
         now = _as_now_in_tz(tz)
@@ -796,6 +909,12 @@ class SyncScheduler:
                 if not dep_key.startswith(today):
                     cand2 = _next_job_time(base + timedelta(days=1), j)
                     cand = cand2 or cand
+            if best is None or cand < best:
+                best = cand
+        for j in capture_jobs:
+            cand = _next_job_time(base, j)
+            if cand is None:
+                continue
             if best is None or cand < best:
                 best = cand
         return _apply_jitter(best, sch) if best else None
@@ -824,9 +943,34 @@ class SyncScheduler:
         due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
         return due
 
+    def _adv_due_capture_jobs(self, sch: dict[str, Any], tz: Any | None) -> list[tuple[datetime, dict[str, Any]]]:
+        jobs = _iter_adv_capture_jobs(sch)
+        if not jobs:
+            return []
+
+        now = _as_now_in_tz(tz)
+        base = now.replace(second=0, microsecond=0)
+        today = base.date().isoformat()
+
+        due: list[tuple[datetime, dict[str, Any]]] = []
+        for j in jobs:
+            dt = _job_due_today(base, j)
+            if dt is None:
+                continue
+            if dt > base:
+                continue
+            key = f"{today}@{j.get('at')}"
+            if self._adv_last_key.get(j["id"]) == key:
+                continue
+            due.append((dt, j))
+
+        due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
+        return due
+
     def _adv_run_due(self, sch: dict[str, Any], tz: Any | None) -> bool:
         due = self._adv_due_jobs(sch, tz)
-        if not due:
+        due_capture = self._adv_due_capture_jobs(sch, tz)
+        if not due and not due_capture:
             return False
 
         now = _as_now_in_tz(tz)
@@ -877,12 +1021,70 @@ class SyncScheduler:
                 self._status["last_error"] = "" if ok else "advanced job failed"
                 self._status["last_job_id"] = j["id"]
                 self._status["last_pair_id"] = j["pair_id"] or ""
+                self._status["last_capture_job_id"] = ""
+                self._status["last_capture_provider"] = ""
+                self._status["last_capture_feature"] = ""
                 self._status["last_rule_id"] = ""
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
 
             self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
             executed.add(j["id"])
+
+        for _, j in due_capture:
+            if self._stop.is_set():
+                break
+
+            waited = 0
+            while self.is_sync_running_fn() and not self._stop.is_set():
+                if waited == 0:
+                    self._log("advanced capture: sync is busy; waiting to run due capture job(s)", level="INFO")
+                waited += 1
+                self._sleep_or_poke(2.0)
+                if self._poke.is_set():
+                    self._poke.clear()
+                    return True
+
+            payload = {
+                "source": "scheduler",
+                "scheduler_mode": "advanced_capture",
+                "capture_job_id": j["id"],
+                "capture": {
+                    "provider": j["provider"],
+                    "instance": j.get("instance") or "default",
+                    "feature": j["feature"],
+                    "label_template": j.get("label_template") or "",
+                    "retention_days": int(j.get("retention_days") or 0),
+                    "max_captures": int(j.get("max_captures") or 0),
+                    "auto_delete_old": bool(j.get("auto_delete_old")),
+                },
+            }
+
+            self._log(
+                f"advanced capture: running job {j['id']} for {j['provider']}:{j['feature']}",
+                level="INFO",
+            )
+            ok = self._run_sync(payload)
+            if not ok:
+                ok_all = False
+                self._log(f"advanced capture: job {j['id']} failed", level="ERROR")
+            else:
+                self._log(f"advanced capture: job {j['id']} ok", level="INFO")
+
+            with self._lock:
+                self._status["last_run_ok"] = ok
+                self._status["last_run_at"] = _now_ts()
+                self._status["last_error"] = "" if ok else "advanced capture job failed"
+                self._status["last_job_id"] = ""
+                self._status["last_pair_id"] = ""
+                self._status["last_capture_job_id"] = j["id"]
+                self._status["last_capture_provider"] = j["provider"] or ""
+                self._status["last_capture_feature"] = j["feature"] or ""
+                self._status["last_rule_id"] = ""
+                self._status["last_event_source"] = ""
+                self._status["last_event_name"] = ""
+
+            self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
         return ok_all
 
     def _std_run_due(self) -> bool:
@@ -895,6 +1097,9 @@ class SyncScheduler:
             self._status["last_error"] = "" if ok else "standard run failed"
             self._status["last_job_id"] = ""
             self._status["last_pair_id"] = ""
+            self._status["last_capture_job_id"] = ""
+            self._status["last_capture_provider"] = ""
+            self._status["last_capture_feature"] = ""
             self._status["last_rule_id"] = ""
             self._status["last_event_source"] = ""
             self._status["last_event_name"] = ""
@@ -918,6 +1123,8 @@ class SyncScheduler:
                     with self._lock:
                         self._std_next_ts = 0
                         self._std_cfg_key = ""
+                        self._adv_seed_key = ""
+                        self._adv_seed_day = ""
                     self._sleep_or_poke(1.0)
                     continue
 
@@ -927,6 +1134,7 @@ class SyncScheduler:
                         self._std_next_ts = 0
                         self._std_cfg_key = ""
 
+                    self._adv_seed_past_due_today(sch, tz)
                     ran = self._adv_run_due(sch, tz)
                     now_local = _as_now_in_tz(tz)
                     nxt = self._adv_next(sch, now_local, tz)
@@ -942,6 +1150,9 @@ class SyncScheduler:
                     continue
 
                 # standard
+                with self._lock:
+                    self._adv_seed_key = ""
+                    self._adv_seed_day = ""
                 std_key = "|".join([
                     str(eff.get("mode") or ""),
                     str(sch.get("enabled") or ""),
