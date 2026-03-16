@@ -1,5 +1,4 @@
 # ui_frontend.py
-# Refactored
 # CrossWatch - UI Frontend Registration
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -282,7 +281,8 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-status strong{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:rgba(228,234,248,.72)}
 #page-settings .cw-settings-status .sub{margin:0!important}
 #page-settings .cw-settings-shell label{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,248,.74)!important}
-#page-settings .cw-settings-shell input,#page-settings .cw-settings-shell select,#page-settings .cw-settings-shell textarea{min-height:54px;border-radius:18px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important;color:#eef3ff!important}
+#page-settings .cw-settings-shell input,#page-settings .cw-settings-shell select{height:34px;min-height:34px;padding:0 12px;border-radius:12px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important;color:#eef3ff!important;line-height:1.1;font-size:14px}
+#page-settings .cw-settings-shell textarea{min-height:96px;padding:10px 12px;border-radius:12px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important;color:#eef3ff!important;line-height:1.4;font-size:14px}
 #page-settings .cw-settings-shell input::placeholder,#page-settings .cw-settings-shell textarea::placeholder{color:rgba(196,204,222,.42)}
 #page-settings .cw-settings-shell .sub{line-height:1.5}
 #page-settings .cw-settings-shell .btn{min-height:46px;border-radius:16px}
