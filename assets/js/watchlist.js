@@ -803,7 +803,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       const card=document.createElement("div");
       card.className=`wl-card ${selected.has(key)?"selected":""}`;
 
-      const provHtml = providersOf(it).slice(0, 3).map(p => posterProviderIcon(p)).join("");
+      const provHtml = providersOf(it).map(p => posterProviderIcon(p)).join("");
       const eager=i<24?`loading="eager" fetchpriority="high"`:`loading="lazy"`;
       card.innerHTML=`
         <div class="wl-card-top">
