@@ -24,6 +24,7 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
   const providerKey = (value) => providerMeta().keyOf?.(value) || String(value || "").trim().toUpperCase();
   const providerLabel = (value) => providerMeta().label?.(value) || providerKey(value) || String(value || "");
   const providerShortLabel = (value) => providerMeta().shortLabel?.(value) || providerLabel(value);
+  let activeProviders = new Set();
   const watchlistProviderKeys = () => {
     const keys = providerMeta().watchlistProviders?.();
     return Array.isArray(keys) && keys.length
@@ -31,8 +32,9 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
       : ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","JELLYFIN","EMBY","MDBLIST","CROSSWATCH"];
   };
   const PROVIDERS = watchlistProviderKeys();
-  const providerOptions=(empty="All")=>`<option value="">${empty}</option>${PROVIDERS.map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
-  const deleteProviderOptions=pick=>`<option value="ALL">ALL (default)</option>${PROVIDERS.filter(p=>!pick||pick.has(p)).map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
+  const visibleProviders = () => PROVIDERS.filter((p) => p !== "CROSSWATCH" || activeProviders.has("CROSSWATCH"));
+  const providerOptions=(empty="All")=>`<option value="">${empty}</option>${visibleProviders().map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
+  const deleteProviderOptions=pick=>`<option value="ALL">ALL (default)</option>${(pick ? PROVIDERS.filter(p=>pick.has(p)) : visibleProviders()).map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
   host.innerHTML=`<div class="wl-topline"><div class="wl-title-stack"><div class="wl-title-row"><div class="wl-title">Watchlist</div><div class="wl-head-pills"><span id="wl-stat-total" class="wl-chip is-accent">0 items</span><span id="wl-stat-visible" class="wl-chip">0 visible</span><span id="wl-stat-sync" class="wl-chip is-muted">Awaiting sync</span></div></div><div class="wl-sub">Browse and manage your unified watchlist</div></div></div><div class="wl-wrap" id="watchlist-root"><div class="wl-main-shell"><div class="wl-toolbar"><div class="wl-toolbar-left"><label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"><span>Select all</span></label><span id="wl-count" class="wl-chip is-filter">0 selected</span></div><div class="wl-toolbar-right"><span id="wl-filter-state" class="wl-chip is-filter">All items</span></div></div><div id="wl-posters" class="wl-grid" style="display:none"></div><div id="wl-list" class="wl-table-wrap" style="display:none"><table class="wl-table"><colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup><thead><tr><th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th><th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th><th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th><th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th><th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th><th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th><th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th></tr></thead><tbody id="wl-tbody"></tbody></table></div><div id="wl-pagination" class="wl-pagination" style="display:none"><button id="wl-page-prev" class="wl-btn">Previous</button><span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span><button id="wl-page-next" class="wl-btn">Next</button></div><div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items match the current filters.</div></div><aside class="wl-side"><div class="ins-card"><div class="ins-row wl-ref-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title" style="margin-right:auto">Filters</div><button id="wl-refresh" class="wl-refresh-btn" title="Sync watchlist" aria-label="Sync watchlist"><span class="material-symbol ss-refresh-icon">sync</span></button></div><div class="ins-row"><div class="ins-kv"><label for="wl-view">View</label><select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select><label for="wl-q">Search</label><input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title..."><label for="wl-type">Type</label><select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select><label for="wl-provider">Provider</label><select id="wl-provider" name="wl-provider" class="wl-input">${providerOptions()}</select><label id="wl-size-label" for="wl-size">Size</label><input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0"></div></div><div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv"><label for="wl-released">Released</label><select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Released</option><option value="unreleased">Upcoming</option></select><label id="wl-overlays-label" for="wl-overlays">Overlays</label><select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">On</option><option value="no">Off</option></select><label for="wl-genre">Genre</label><select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select><label for="wl-show-hidden">Hidden</label><label class="wl-chip" style="justify-content:flex-start"><input id="wl-show-hidden" type="checkbox"><span>Include local hidden</span></label><div id="wl-cols-label" class="field-label">Columns</div><div id="wl-cols" class="wl-cols"><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label></div></div></div><div class="ins-row" style="justify-content:flex-end;gap:8px"><button id="wl-more" class="wl-btn" aria-expanded="false">More</button><button id="wl-clear" class="wl-btn">Reset</button></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div><div class="ins-row"><div class="ins-kv"><div class="field-label">Delete</div><div class="wl-actions" style="display:flex;gap:10px;flex-wrap:wrap"><select id="wl-delete-provider" name="wl-delete-provider" class="wl-input" style="flex:1;min-width:180px">${deleteProviderOptions()}</select><button id="wl-delete" class="wl-btn danger" disabled>Delete</button></div><div class="field-label">Visibility</div><div class="wl-actions" style="display:flex;gap:10px;flex-wrap:wrap"><button id="wl-hide" class="wl-btn" disabled>Hide local</button><button id="wl-unhide" class="wl-btn">Unhide all</button></div></div></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">monitoring</span></div><div class="ins-title">Coverage Pulse</div></div><div class="ins-row"><div id="wl-metrics" class="ins-metrics"></div></div></div></aside></div><div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div><div id="wl-detail" class="wl-detail" aria-live="polite"></div><div id="wl-trailer" class="wl-modal" aria-modal="true" role="dialog"><div class="box"><button class="wl-btn x" id="wl-trailer-close" title="Close"><span class="material-symbol">close</span></button></div></div>`;
 
   /* References to elements */
@@ -167,7 +169,19 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
 
   const metaCache = new Map();
   const derivedCache = new Map();
-  let activeProviders = new Set();
+
+  function rebuildProviderOptions() {
+    if (providerSel) {
+      const current = String(providerSel.value || "");
+      providerSel.innerHTML = providerOptions();
+      providerSel.value = Array.from(providerSel.options).some((o) => o.value === current) ? current : "";
+    }
+    if (delProv) {
+      const current = String(delProv.value || "ALL");
+      delProv.innerHTML = deleteProviderOptions();
+      delProv.value = Array.from(delProv.options).some((o) => o.value === current) ? current : "ALL";
+    }
+  }
 
   let TMDB_OK = true;
 
@@ -1065,11 +1079,12 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
     const cfg = await fetchConfig();
     window.__CW_LOCALE = (cfg?.metadata?.locale || cfg?.ui?.locale || window.__CW_LOCALE || navigator.language || "en-US");
-    const active = new Set(["CROSSWATCH"]);
+    const active = new Set();
     try {
       if (typeof window.getConfiguredProviders === "function") {
         for (const key of window.getConfiguredProviders(cfg || {})) active.add(providerKey(key));
       } else {
+        if ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false) active.add("CROSSWATCH");
         if (cfg?.plex?.account_token) active.add("PLEX");
         if (cfg?.simkl?.access_token) active.add("SIMKL");
         const anTok = cfg?.anilist?.access_token || cfg?.anilist?.token || cfg?.auth?.anilist?.access_token || cfg?.auth?.anilist?.token;
@@ -1083,6 +1098,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     } catch {}
 
     activeProviders = active;
+    rebuildProviderOptions();
     items = await fetchWatchlist();
     populateGenreOptions(buildGenreIndex(items));
     applyOverlayPrefUI(); applyFilters(); rebuildDeleteProviderOptions(); wireSortableHeaders(); updateHeaderSummary();
