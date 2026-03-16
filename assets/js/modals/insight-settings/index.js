@@ -120,12 +120,13 @@ const getAllowedProviders = (cfg = window._cfgCache || {}) => {
   for (const def of checks) if (def.paths.some((path) => hasAnyConfigValue(pathGet(cfg, path), def.keys))) set.add(def.key);
   if ([cfg?.tmdb_sync, cfg?.tmdb, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
   if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
+  if ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false) set.add("CROSSWATCH");
   return set;
 };
 
 const buildProviders = async () => {
   const labels = {}, byProvider = {}, [instApi, cfg] = await Promise.all([jget(`/api/provider-instances?cb=${Date.now()}`), jget(`/api/config?cb=${Date.now()}`)]);
-  const instMap = instApi || {}, allowed = getAllowedProviders(cfg || window._cfgCache || {}), relevant = new Set(["PLEX", "SIMKL", "TRAKT", "ANILIST", "MDBLIST", "JELLYFIN", "EMBY", "TAUTULLI", "TMDB"]);
+  const instMap = instApi || {}, allowed = getAllowedProviders(cfg || window._cfgCache || {}), relevant = new Set(["CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "MDBLIST", "JELLYFIN", "EMBY", "TAUTULLI", "TMDB"]);
   const getRaw = async (key) => {
     const up = canonProv(key), candidates = [up, key, up.toLowerCase(), ...(up === "TMDB" ? ["TMDB_SYNC", "tmdb_sync"] : [])];
     for (const k of candidates) if (k && Object.prototype.hasOwnProperty.call(instMap, k)) return instMap[k];
