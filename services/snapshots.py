@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -37,7 +37,40 @@ def _registry_sync_providers() -> list[str]:
 def _safe_label(label: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9._ -]+", "", str(label or "").strip())
     s = re.sub(r"\s+", " ", s).strip()
-    return s[:60] if s else "snapshot"
+    return s[:60] if s else "capture"
+
+
+def render_capture_label_template(
+    template: str,
+    *,
+    provider: str,
+    instance: Any | None = None,
+    feature: str,
+    ts: datetime | None = None,
+) -> str:
+    stamp = ts if isinstance(ts, datetime) else _utc_now()
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    inst = normalize_instance_id(instance)
+    raw = str(template or "").strip()
+    if not raw:
+        raw = "auto-{provider}-{feature}-{date}"
+
+    values = {
+        "provider": str(provider or "").strip().upper(),
+        "provider_lower": str(provider or "").strip().lower(),
+        "instance": inst,
+        "feature": str(feature or "").strip().lower(),
+        "date": stamp.strftime("%Y-%m-%d"),
+        "time": stamp.strftime("%H-%M"),
+        "datetime": stamp.strftime("%Y-%m-%d_%H-%M"),
+        "stamp": stamp.strftime("%Y%m%dT%H%M%SZ"),
+    }
+    try:
+        rendered = raw.format_map(values)
+    except Exception:
+        rendered = raw
+    return _safe_label(rendered)
 
 
 def _snapshots_dir() -> Path:
@@ -538,6 +571,86 @@ def list_snapshots() -> list[dict[str, Any]]:
     return out
 
 
+def _snapshot_sort_stamp(meta: Mapping[str, Any]) -> datetime:
+    stamp = str(meta.get("stamp") or "").strip()
+    if stamp:
+        try:
+            return datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except Exception:
+            pass
+    mtime = int(meta.get("mtime") or 0)
+    if mtime > 0:
+        try:
+            return datetime.fromtimestamp(mtime, tz=timezone.utc)
+        except Exception:
+            pass
+    return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def enforce_capture_retention(
+    provider: str,
+    feature: CreateFeature | str,
+    *,
+    instance_id: Any | None = None,
+    retention_days: int = 0,
+    max_captures: int = 0,
+    auto_delete_old: bool = False,
+) -> dict[str, Any]:
+    pid = _norm_provider(provider)
+    feat_any = _norm_create_feature(str(feature or ""))
+    inst = normalize_instance_id(instance_id)
+    keep_days = max(0, int(retention_days or 0))
+    keep_count = max(0, int(max_captures or 0))
+
+    if not auto_delete_old:
+        return {"ok": True, "matched": 0, "deleted": [], "errors": [], "applied": False}
+
+    rows = [
+        row for row in list_snapshots()
+        if str(row.get("provider") or "").strip().upper() == pid
+        and normalize_instance_id(row.get("instance") or "default") == inst
+        and str(row.get("feature") or "").strip().lower() == feat_any
+    ]
+    rows.sort(key=_snapshot_sort_stamp, reverse=True)
+
+    cutoff = _utc_now() - timedelta(days=keep_days) if keep_days > 0 else None
+    to_delete: list[str] = []
+    kept: list[dict[str, Any]] = []
+
+    for row in rows:
+        created = _snapshot_sort_stamp(row)
+        if cutoff is not None and created < cutoff:
+            to_delete.append(str(row.get("path") or ""))
+            continue
+        kept.append(row)
+
+    if keep_count > 0 and len(kept) > keep_count:
+        to_delete.extend(str(row.get("path") or "") for row in kept[keep_count:])
+
+    deleted: list[str] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for path in to_delete:
+        rel = str(path or "").strip()
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        try:
+            res = delete_snapshot(rel)
+            deleted.extend([str(x) for x in (res.get("deleted") or [])])
+            errors.extend([str(x) for x in (res.get("errors") or [])])
+        except Exception as e:
+            errors.append(str(e))
+
+    return {
+        "ok": len(errors) == 0,
+        "matched": len(rows),
+        "deleted": deleted,
+        "errors": errors,
+        "applied": True,
+    }
+
+
 def read_snapshot(path: str) -> dict[str, Any]:
     rel, p = _resolve_snapshot_file(path)
 
@@ -633,6 +746,7 @@ def _restore_single_snapshot(
 
     if mode == "clear_restore":
         to_remove_keys = sorted(cur_keys)
+        to_add_keys = sorted(snap_keys)
 
     add_items = [dict(snap_items[k]) for k in to_add_keys if isinstance(snap_items.get(k), Mapping)]
     rem_items = [dict(cur[k]) for k in to_remove_keys if isinstance(cur.get(k), Mapping)]
