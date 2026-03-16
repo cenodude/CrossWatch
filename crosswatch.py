@@ -87,7 +87,6 @@ except Exception:
     _load_wall_snapshot = lambda: []
     refresh_wall = lambda: None
 
-from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel
 
 from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
@@ -102,7 +101,7 @@ try:
 except Exception:
     process_webhook = None
 
-# JelWEbhook: Jellyfin
+# Webhook: Jellyfin
 try:
     from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
 except Exception:
@@ -1132,8 +1131,63 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
 
 # Scheduler sync starter
 def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
+    p = dict(payload or {})
+    raw_capture = p.get("capture")
+    capture: dict[str, Any] = raw_capture if isinstance(raw_capture, dict) else {}
+    capture_job_id = str(p.get("capture_job_id") or "").strip()
+    scheduler_mode = str(p.get("scheduler_mode") or "").strip().lower()
+    if capture_job_id or scheduler_mode == "advanced_capture" or capture:
+        try:
+            from services.snapshots import create_snapshot, enforce_capture_retention, render_capture_label_template
+
+            provider = str(capture.get("provider") or "").strip().upper()
+            instance = str(capture.get("instance") or capture.get("instance_id") or "default").strip() or "default"
+            feature = str(capture.get("feature") or "").strip().lower()
+            label_template = str(capture.get("label_template") or capture.get("labelTemplate") or "").strip()
+            try:
+                retention_days = max(0, int(capture.get("retention_days") or 0))
+            except Exception:
+                retention_days = 0
+            try:
+                max_captures = max(0, int(capture.get("max_captures") or 0))
+            except Exception:
+                max_captures = 0
+            auto_delete_old = capture.get("auto_delete_old") is True
+            if not provider or not feature:
+                _append_log("SYNC", "[!] Scheduler capture: missing provider or feature")
+                return False
+
+            label = render_capture_label_template(
+                label_template,
+                provider=provider,
+                instance=instance,
+                feature=feature,
+            )
+            res = create_snapshot(provider, feature, label=label, instance_id=instance) or {}
+            _append_log(
+                "SYNC",
+                f"[i] Scheduler capture: saved {provider} {feature} ({instance}) -> {res.get('path') or 'capture created'}",
+            )
+            if auto_delete_old:
+                cleanup = enforce_capture_retention(
+                    provider,
+                    feature,
+                    instance_id=instance,
+                    retention_days=retention_days,
+                    max_captures=max_captures,
+                    auto_delete_old=True,
+                ) or {}
+                deleted = cleanup.get("deleted") or []
+                if deleted:
+                    _append_log("SYNC", f"[i] Scheduler capture cleanup: removed {len(deleted)} older capture(s)")
+                if cleanup.get("errors"):
+                    _append_log("SYNC", f"[!] Scheduler capture cleanup issues: {', '.join(map(str, cleanup.get('errors') or []))}")
+            return True
+        except Exception as e:
+            _append_log("SYNC", f"[!] Scheduler capture failed: {e}")
+            return False
+
     try:
-        p = dict(payload or {})
         p.setdefault("source", "scheduler")
         res = api_run_sync(p) or {}
     except Exception as e:
