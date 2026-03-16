@@ -55,11 +55,8 @@ def _active_providers(cfg: dict[str, Any]) -> list[str]:
         if not isinstance(it, dict):
             continue
         pid = str(it.get("id") or "").strip().upper()
-        if pid and pid != "ALL" and (bool(it.get("configured")) or pid == "CROSSWATCH") and pid not in out:
+        if pid and pid != "ALL" and bool(it.get("configured")) and pid not in out:
             out.append(pid)
-
-    if "CROSSWATCH" not in out:
-        out.insert(0, "CROSSWATCH")
     return out
 
 
