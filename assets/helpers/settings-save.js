@@ -384,6 +384,20 @@ async function saveSettings() {
   const fromFab = !!document.activeElement?.closest?.("#save-fab");
   const readToggle = (id) => _cwTruthy(_cwEl(id)?.value || "");
   let schedChanged = false;
+  const schedulingSaveError = (message) => {
+    const msg = _cwNorm(message) || "Fix the scheduling errors before saving.";
+    try {
+      window.cwSettingsSelect?.("scheduling");
+      window.cwSchedSettingsSelect?.("advanced");
+      const sec = document.getElementById("sec-scheduling");
+      if (sec && !sec.classList.contains("open")) window.toggleSection?.("sec-scheduling");
+      sec?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    } catch {}
+    _cwShowToast(msg, false);
+    const err = new Error(msg);
+    err.__cwAbortSave = true;
+    throw err;
+  };
 
   _cwWireTouched();
   _cwWireAuthPair();
@@ -613,21 +627,26 @@ async function saveSettings() {
     }
 
     try {
-      const sched = _cwFn("getSchedulingPatch", window)
-        ? (window.getSchedulingPatch({ strict: false }) || (serverCfg?.scheduling || {}))
-        : {
+      let sched = {
             enabled: readToggle("schEnabled"),
             mode: _getVal("schMode"),
             every_n_hours: parseInt(_getVal("schN") || "2", 10),
             daily_time: _getVal("schTime") || "03:30",
             advanced: { enabled: false, jobs: [] }
           };
+      if (_cwFn("getSchedulingPatch", window)) {
+        const validation = _cwFn("getSchedulingValidation", window)?.() || {};
+        const issues = Array.isArray(validation.issues) ? validation.issues.filter(Boolean) : [];
+        if (issues.length) schedulingSaveError(issues[0]);
+        sched = window.getSchedulingPatch({ strict: true }) || sched;
+      }
       if (!same(sched, serverCfg?.scheduling || {})) {
         cfg.scheduling = sched;
         schedChanged = true;
         mark();
       }
     } catch (e) {
+      if (e?.__cwAbortSave) throw e;
       console.warn("saveSettings: scheduling merge failed", e);
     }
 
@@ -711,6 +730,7 @@ async function saveSettings() {
     } catch {}
   } catch (err) {
     console.error("saveSettings failed", err);
+    if (err?.__cwAbortSave) throw err;
     if (err && typeof err === "object" && typeof err.message === "string" && err.message.trim()) {
       _cwShowToast(err.message.trim(), false);
       throw err;
