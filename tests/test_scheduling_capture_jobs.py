@@ -42,6 +42,9 @@ def test_due_capture_job_payload(monkeypatch) -> None:
                         "at": "08:00",
                         "days": [7],
                         "label_template": "auto-{provider}-{feature}-{date}",
+                        "retention_days": 30,
+                        "max_captures": 10,
+                        "auto_delete_old": True,
                         "active": True,
                     }
                 ],
@@ -70,6 +73,9 @@ def test_due_capture_job_payload(monkeypatch) -> None:
                 "instance": "default",
                 "feature": "watchlist",
                 "label_template": "auto-{provider}-{feature}-{date}",
+                "retention_days": 30,
+                "max_captures": 10,
+                "auto_delete_old": True,
             },
         }
     ]
@@ -105,6 +111,9 @@ def test_capture_job_no_backfill_on_start(monkeypatch) -> None:
                         "at": "01:00",
                         "days": [7],
                         "label_template": "auto-{provider}-{feature}-{date}",
+                        "retention_days": 0,
+                        "max_captures": 0,
+                        "auto_delete_old": False,
                         "active": True,
                     }
                 ],

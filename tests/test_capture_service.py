@@ -97,3 +97,43 @@ def test_full_capture_bundle(tmp_path: Path, monkeypatch) -> None:
     listed_paths = {row["path"] for row in snapshots.list_snapshots()}
     assert created["path"] in listed_paths
     assert set(child_paths.values()).issubset(listed_paths)
+
+
+def test_capture_retention_keeps_newest(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ops = FakeSyncOps({"watchlist": [{"id": "m1", "type": "movie", "title": "Heat"}]})
+    _patch_snapshot_env(
+        monkeypatch,
+        snapshots,
+        tmp_path,
+        ops,
+        datetime(2026, 3, 16, 10, 0, 0, tzinfo=timezone.utc),
+    )
+
+    stamps = [
+        datetime(2026, 3, 14, 10, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 3, 15, 10, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 3, 16, 10, 0, 0, tzinfo=timezone.utc),
+    ]
+    paths: list[str] = []
+    for ts in stamps:
+        monkeypatch.setattr(snapshots, "_utc_now", lambda ts=ts: ts)
+        created = snapshots.create_snapshot("PLEX", "watchlist", label=ts.strftime("%Y-%m-%d"), cfg={"version": "test"})
+        paths.append(created["path"])
+
+    monkeypatch.setattr(snapshots, "_utc_now", lambda: datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc))
+    cleaned = snapshots.enforce_capture_retention(
+        "PLEX",
+        "watchlist",
+        instance_id="default",
+        max_captures=2,
+        auto_delete_old=True,
+    )
+
+    assert cleaned["ok"] is True
+    assert paths[0] in cleaned["deleted"]
+
+    remaining = {row["path"] for row in snapshots.list_snapshots()}
+    assert paths[0] not in remaining
+    assert {paths[1], paths[2]}.issubset(remaining)
