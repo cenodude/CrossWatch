@@ -918,6 +918,23 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       </div>
                     </div>
 
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Plex sign-in</div>
+                      <div class="cw-settings-stack">
+                        <div>
+                          <strong>Linked Plex account</strong>
+                          <div class="sub" id="app_auth_plex_state">Not linked</div>
+                        </div>
+                        <div class="cw-settings-inline-action">
+                          <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">Link Plex account</button>
+                          <button class="btn" type="button" id="btn-app-auth-plex-unlink" onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
+                        </div>
+                        <div class="sub" style="margin-top:0.35rem">
+                          Optional. This adds a <code>Sign in with Plex</code> button to the login screen while keeping local CrossWatch password sign-in as your fallback.
+                        </div>
+                      </div>
+                    </div>
+
                     <div class="cw-settings-statusrow">
                       <div class="cw-settings-status">
                         <strong>Current session</strong>
