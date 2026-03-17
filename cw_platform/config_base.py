@@ -1183,6 +1183,24 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
         remember_days = 365
     a["remember_session_days"] = remember_days
 
+    plex_sso = _ensure_dict(a, "plex_sso")
+    plex_sso["enabled"] = bool(plex_sso.get("enabled", False))
+    plex_sso["client_id"] = str(plex_sso.get("client_id", "") or "").strip()
+    plex_sso["linked_plex_account_id"] = str(plex_sso.get("linked_plex_account_id", "") or "").strip()
+    plex_sso["linked_username"] = str(plex_sso.get("linked_username", "") or "").strip()
+    plex_sso["linked_email"] = str(plex_sso.get("linked_email", "") or "").strip()
+    plex_sso["linked_thumb"] = str(plex_sso.get("linked_thumb", "") or "").strip()
+    try:
+        plex_sso["linked_at"] = int(plex_sso.get("linked_at", 0) or 0)
+    except Exception:
+        plex_sso["linked_at"] = 0
+    if not plex_sso["linked_plex_account_id"]:
+        plex_sso["enabled"] = False
+        plex_sso["linked_username"] = ""
+        plex_sso["linked_email"] = ""
+        plex_sso["linked_thumb"] = ""
+        plex_sso["linked_at"] = 0
+
     pwd = _ensure_dict(a, "password")
     pwd["scheme"] = str(pwd.get("scheme", "pbkdf2_sha256") or "pbkdf2_sha256").strip() or "pbkdf2_sha256"
     try:
