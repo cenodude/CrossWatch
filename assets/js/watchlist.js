@@ -78,6 +78,16 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
   const topSyncEl   = $("wl-stat-sync");
   const filterStateEl = $("wl-filter-state");
   const showHiddenChk = $("wl-show-hidden");
+  const enhancedControlWrap = el => {
+    const wrap = el?.nextElementSibling;
+    return wrap?.classList?.contains("cw-icon-select") && wrap.__cwNativeSelect === el ? wrap : null;
+  };
+  const setControlVisible = (el, on) => {
+    if (!el) return;
+    el.style.display = on ? "" : "none";
+    const wrap = enhancedControlWrap(el);
+    if (wrap) wrap.style.display = on ? "" : "none";
+  };
 
   /* Column sizing */
   const colSel = { title: ".c-title", rel: ".c-rel", genre: ".c-genre", type: ".c-type", sync: ".c-sync", poster: ".c-poster" };
@@ -557,7 +567,8 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
     postersEl.classList.toggle("wl-hide-overlays", off);
     if (off) forceHideDetail();
     const show = viewMode === "posters";
-    [overlaysLabel, overlaysSel].forEach(el => el.style.display = show ? "" : "none");
+    if (overlaysLabel) overlaysLabel.style.display = show ? "" : "none";
+    setControlVisible(overlaysSel, show);
   };
 
 
@@ -758,7 +769,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   }
 
 
-  const _show = (el, on) => el && (el.style.display = on ? "" : "none");
+  const _show = (el, on) => setControlVisible(el, on);
 
   function render() {
     const posters = viewMode === "posters";
