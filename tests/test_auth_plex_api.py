@@ -70,6 +70,14 @@ def _json_body(resp) -> dict:
     return json.loads(resp.body.decode("utf-8"))
 
 
+def _all_set_cookie_headers(resp) -> str:
+    return "\n".join(
+        value.decode("latin-1")
+        for key, value in getattr(resp, "raw_headers", [])
+        if key.decode("latin-1").lower() == "set-cookie"
+    )
+
+
 def test_plex_login_check_issues_cookie_for_linked_identity(monkeypatch) -> None:
     from api import authPlexAPI as plex_api
 
@@ -84,17 +92,18 @@ def test_plex_login_check_issues_cookie_for_linked_identity(monkeypatch) -> None
             "ok": True,
             "pending": False,
             "remember_me": True,
+            "flow_nonce_hash": plex_api.authPlex._sha256_hex("flow-nonce"),
             "identity": {"id": "plex-123", "username": "plexadmin", "email": "plex@example.com", "thumb": ""},
         },
     )
 
-    req = _request("/api/app-auth/plex/check")
+    req = _request("/api/app-auth/plex/check", headers={"cookie": f"{plex_api.FLOW_COOKIE_NAME}=flow-nonce"})
     resp = plex_api.api_plex_check(req, {"state": "ok"})
 
     assert resp.status_code == 200
     assert _json_body(resp)["ok"] is True
     assert len(cfg["app_auth"]["sessions"]) == 1
-    set_cookie = resp.headers.get("set-cookie", "")
+    set_cookie = _all_set_cookie_headers(resp)
     assert "cw_auth=" in set_cookie
     assert "Max-Age=" in set_cookie
 
@@ -113,11 +122,12 @@ def test_plex_login_check_rejects_wrong_identity(monkeypatch) -> None:
             "ok": True,
             "pending": False,
             "remember_me": False,
+            "flow_nonce_hash": plex_api.authPlex._sha256_hex("flow-nonce"),
             "identity": {"id": "plex-999", "username": "stranger", "email": "", "thumb": ""},
         },
     )
 
-    req = _request("/api/app-auth/plex/check")
+    req = _request("/api/app-auth/plex/check", headers={"cookie": f"{plex_api.FLOW_COOKIE_NAME}=flow-nonce"})
     resp = plex_api.api_plex_check(req, {"state": "bad"})
 
     assert resp.status_code == 403
@@ -151,6 +161,7 @@ def test_plex_link_check_persists_linked_identity(monkeypatch) -> None:
         lambda *_args, **_kwargs: {
             "ok": True,
             "pending": False,
+            "flow_nonce_hash": plex_api.authPlex._sha256_hex("flow-nonce"),
             "identity": {"id": "plex-abc", "username": "plexowner", "email": "owner@example.com", "thumb": "https://img"},
         },
     )
@@ -160,7 +171,7 @@ def test_plex_link_check_persists_linked_identity(monkeypatch) -> None:
 
     req = _request(
         "/api/app-auth/plex/link/check",
-        headers={"cookie": f"{auth.COOKIE_NAME}={token}"},
+        headers={"cookie": f"{auth.COOKIE_NAME}={token}; {plex_api.FLOW_COOKIE_NAME}=flow-nonce"},
     )
     resp = plex_api.api_plex_link_check(req, {"state": "ok"})
 
@@ -183,3 +194,50 @@ def test_plex_start_requires_linked_account_for_login(monkeypatch) -> None:
 
     assert resp.status_code == 400
     assert _json_body(resp)["error"] == "Plex sign-in is not linked yet"
+
+
+def test_plex_start_sets_flow_cookie(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
+    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
+    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plex_api.authPlex,
+        "start_flow",
+        lambda *_args, **_kwargs: {"ok": True, "state": "abc", "pin_id": "pin1", "auth_url": "https://app.plex.tv/auth", "expires_at": 123},
+    )
+
+    req = _request("/api/app-auth/plex/start")
+    resp = plex_api.api_plex_start(req, {})
+
+    assert resp.status_code == 200
+    assert f"{plex_api.FLOW_COOKIE_NAME}=" in _all_set_cookie_headers(resp)
+
+
+def test_plex_login_check_requires_matching_flow_cookie(monkeypatch) -> None:
+    from api import authPlexAPI as plex_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["plex_sso"].update({"enabled": True, "linked_plex_account_id": "plex-123", "linked_username": "plexadmin"})
+    monkeypatch.setattr(plex_api, "load_config", lambda: cfg)
+    monkeypatch.setattr(plex_api, "save_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        plex_api.authPlex,
+        "check_flow",
+        lambda *_args, **_kwargs: {
+            "ok": True,
+            "pending": False,
+            "remember_me": False,
+            "flow_nonce_hash": plex_api.authPlex._sha256_hex("expected-nonce"),
+            "identity": {"id": "plex-123", "username": "plexadmin", "email": "", "thumb": ""},
+        },
+    )
+
+    req = _request("/api/app-auth/plex/check")
+    resp = plex_api.api_plex_check(req, {"state": "ok"})
+
+    assert resp.status_code == 400
+    assert _json_body(resp)["error"] == "Plex sign-in expired. Start again."
+    assert cfg["app_auth"]["sessions"] == []
