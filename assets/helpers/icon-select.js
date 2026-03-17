@@ -29,7 +29,7 @@
 .cw-icon-select-sep{display:inline-flex;align-items:center;justify-content:center;min-width:16px;color:rgba(214,222,242,.68);font-size:15px;line-height:1;transform:translateY(-1px)}
 .cw-icon-select-icon{width:18px;height:18px;object-fit:contain;display:block;flex:0 0 18px}
 .cw-icon-select-icon.empty{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:rgba(255,255,255,.05);color:rgba(236,241,255,.7);font-size:10px;font-weight:900}
-.cw-icon-select-menu{position:fixed;left:0;top:0;z-index:10061;display:grid;gap:6px;padding:6px;border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#171a29;box-shadow:0 18px 44px rgba(0,0,0,.52);backdrop-filter:blur(14px) saturate(115%);-webkit-backdrop-filter:blur(14px) saturate(115%);max-height:320px;overflow:auto;pointer-events:auto}
+.cw-icon-select-menu{position:fixed;left:0;top:0;z-index:10061;display:grid;gap:6px;padding:6px;border:1px solid rgba(255,255,255,.10);border-radius:16px;background:#171a29;box-shadow:0 18px 44px rgba(0,0,0,.52);backdrop-filter:blur(14px) saturate(115%);-webkit-backdrop-filter:blur(14px) saturate(115%);max-height:320px;overflow:auto;overscroll-behavior:contain;pointer-events:auto}
 .cw-icon-select-menu.hidden{display:none}
 .cw-icon-select-item{width:100%;display:flex;align-items:center;gap:10px;padding:10px 11px;border:1px solid transparent;border-radius:12px;background:transparent;color:#eef3ff;text-align:left;cursor:pointer}
 .cw-icon-select-item:hover{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.10)}
@@ -211,9 +211,32 @@
   function positionMenu(wrap, btn, menu) {
     if (!wrap || !btn || !menu || menu.classList.contains("hidden")) return;
     const rect = btn.getBoundingClientRect();
-    menu.style.left = `${Math.round(rect.left)}px`;
-    menu.style.top = `${Math.round(rect.bottom + 8)}px`;
-    menu.style.width = `${Math.round(rect.width)}px`;
+    const viewportWidth = window.innerWidth || d.documentElement.clientWidth || 0;
+    const viewportHeight = window.innerHeight || d.documentElement.clientHeight || 0;
+    const margin = 12;
+    const gap = 8;
+    const width = Math.max(0, Math.round(rect.width));
+    const left = Math.max(margin, Math.min(Math.round(rect.left), Math.max(margin, viewportWidth - width - margin)));
+    const spaceBelow = Math.max(0, viewportHeight - rect.bottom - gap - margin);
+    const spaceAbove = Math.max(0, rect.top - gap - margin);
+
+    menu.style.width = `${width}px`;
+    menu.style.left = `${left}px`;
+    menu.style.top = "0px";
+    menu.style.maxHeight = "320px";
+
+    const naturalHeight = Math.max(menu.scrollHeight || 0, menu.offsetHeight || 0);
+    const preferredHeight = Math.min(320, naturalHeight || 320);
+    const openAbove = spaceAbove > spaceBelow && (spaceBelow < 180 || preferredHeight > spaceBelow);
+    const availableSpace = openAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(120, Math.min(320, availableSpace || 320));
+    const renderedHeight = Math.min(preferredHeight, maxHeight);
+    const top = openAbove
+      ? Math.max(margin, Math.round(rect.top - gap - renderedHeight))
+      : Math.min(Math.max(margin, Math.round(rect.bottom + gap)), Math.max(margin, viewportHeight - renderedHeight - margin));
+
+    menu.style.top = `${top}px`;
+    menu.style.maxHeight = `${maxHeight}px`;
   }
 
   function enhance(select, cfg = {}) {
