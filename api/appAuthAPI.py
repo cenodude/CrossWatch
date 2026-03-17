@@ -701,6 +701,39 @@ body::before{
 }
 .cw-login .btn:hover{transform:translateY(-1px);filter:brightness(1.04)}
 .cw-login .btn:disabled{opacity:.72;cursor:progress;transform:none;box-shadow:none}
+.cw-plex-cta{margin-top:6px}
+.cw-plex-kicker{
+  display:flex;align-items:center;gap:10px;margin-bottom:12px;
+  font-size:11px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,225,170,.74);
+}
+.cw-plex-kicker::before{
+  content:"";width:10px;height:10px;border-radius:999px;flex:0 0 auto;
+  background:linear-gradient(180deg,#ffcf67,#e58d0d);
+  box-shadow:0 0 16px rgba(229,141,13,.55);
+}
+.cw-plex-btn{
+  position:relative;overflow:hidden;width:100%;min-height:58px;
+  border:1px solid rgba(255,203,103,.32)!important;border-radius:28px!important;
+  background:
+    linear-gradient(135deg, rgba(255,187,24,.98), rgba(206,132,0,.94))!important;
+  color:#fff7eb!important;
+  box-shadow:0 16px 34px rgba(156,97,0,.28), inset 0 1px 0 rgba(255,255,255,.18)!important;
+}
+.cw-plex-btn::before{
+  content:"";position:absolute;inset:-16% -2% -16% auto;width:170px;pointer-events:none;opacity:.22;
+  background:
+    linear-gradient(135deg, transparent 0 38%, rgba(111,68,0,.46) 38% 53%, transparent 53% 60%, rgba(111,68,0,.36) 60% 75%, transparent 75%);
+  transform:skewX(-10deg);
+}
+.cw-plex-btn::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  background:linear-gradient(180deg, rgba(255,255,255,.12), transparent 34%, transparent 72%, rgba(93,57,0,.10));
+}
+.cw-plex-btn span{position:relative;z-index:1}
+.cw-plex-btn:hover{filter:brightness(1.05)!important}
+.cw-plex-copy{
+  margin:12px 2px 0;color:rgba(245,225,191,.82);font-size:13px;line-height:1.5;
+}
 .cw-help-link{
   display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;
   padding:14px 16px;border:1px solid rgba(255,255,255,.08);border-radius:18px;
@@ -733,8 +766,17 @@ body::before{
 """
 
 
-def _login_html(username: str) -> str:
+def _login_html(username: str, *, plex_sso_available: bool = False) -> str:
     u = (username or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    plex_html = ""
+    if plex_sso_available:
+        plex_html = """
+        <div class="cw-plex-cta">
+          <div class="cw-plex-kicker">Plex SSO</div>
+          <button class="btn cw-plex-btn" id="go-plex" type="button"><span>Sign in with Plex</span></button>
+          <p class="cw-plex-copy">Use your linked Plex account, then return here to finish sign-in.</p>
+        </div>
+        """
     return f"""<!doctype html>
 <html lang=\"en\"><head>
   <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
@@ -790,6 +832,7 @@ def _login_html(username: str) -> str:
         <div class=\"cw-actions\">
           <button class=\"btn acc\" id=\"go\">Sign in</button>
         </div>
+        {plex_html}
       </div>
     </section>
   </div>
@@ -798,9 +841,15 @@ def _login_html(username: str) -> str:
     const msg=$('msg');
     const help=$('help');
     const btn=$('go');
+    const plexBtn=$('go-plex');
+    let plexPolling=false;
     function setMsg(text){{
       msg.textContent=text||'';
       msg.classList.toggle('show',!!text);
+    }}
+    function nextUrl(){{
+      const next = (new URLSearchParams(location.search)).get('next') || '/';
+      return (next.startsWith('/') && !next.startsWith('//')) ? next : '/';
     }}
     function setHelp(data){{
       const url=(data&&data.forgot_help_url)||'https://wiki.crosswatch.app/';
@@ -826,9 +875,7 @@ def _login_html(username: str) -> str:
           return;
         }}
         setHelp(null);
-        const next = (new URLSearchParams(location.search)).get('next') || '/';
-        const safe = (next.startsWith('/') && !next.startsWith('//')) ? next : '/';
-        location.href = safe;
+        location.href = nextUrl();
       }}catch(e){{
         setMsg('Login failed');
       }}finally{{
@@ -836,9 +883,56 @@ def _login_html(username: str) -> str:
         btn.textContent='Sign in';
       }}
     }}
+    async function startPlex(){{
+      if(plexPolling) return;
+      setMsg('');
+      setHelp(null);
+      plexPolling=true;
+      const remember=$('remember')?.checked===true;
+      const popup=window.open('about:blank','cw_plex_auth','width=620,height=760,popup=yes');
+      if(plexBtn){{
+        plexBtn.disabled=true;
+        plexBtn.textContent='Waiting for Plex...';
+      }}
+      try{{
+        const r=await fetch('/api/app-auth/plex/start',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{remember_me:remember}})}});
+        const data=await r.json().catch(()=>null);
+        if(!r.ok || !data || !data.ok || !data.state || !data.auth_url){{
+          if(popup && !popup.closed) popup.close();
+          setMsg((data&&data.error)||('Plex sign-in failed ('+r.status+')'));
+          return;
+        }}
+        if(popup && !popup.closed) popup.location.href=data.auth_url;
+        else window.open(data.auth_url,'_blank','noopener,noreferrer');
+        for(;;){{
+          await new Promise(resolve=>setTimeout(resolve, 2000));
+          const pr=await fetch('/api/app-auth/plex/check',{{method:'POST',headers:{{'Content-Type':'application/json'}},credentials:'same-origin',body:JSON.stringify({{state:data.state}})}});
+          const pd=await pr.json().catch(()=>null);
+          if(pr.ok && pd && pd.ok && pd.pending===true) continue;
+          if(!pr.ok || !pd || !pd.ok){{
+            if(popup && !popup.closed) popup.close();
+            setMsg((pd&&pd.error)||('Plex sign-in failed ('+pr.status+')'));
+            return;
+          }}
+          if(popup && !popup.closed) popup.close();
+          location.href = nextUrl();
+          return;
+        }}
+      }}catch(e){{
+        if(popup && !popup.closed) popup.close();
+        setMsg('Plex sign-in failed');
+      }}finally{{
+        plexPolling=false;
+        if(plexBtn){{
+          plexBtn.disabled=false;
+          plexBtn.textContent='Sign in with Plex';
+        }}
+      }}
+    }}
     $('go').addEventListener('click', login);
     $('p').addEventListener('keydown', (e)=>{{ if(e.key==='Enter') login(); }});
     $('u').addEventListener('keydown', (e)=>{{ if(e.key==='Enter') login(); }});
+    plexBtn?.addEventListener('click', startPlex);
   </script>
 </body></html>"""
 
@@ -851,6 +945,12 @@ def api_status(request: Request) -> JSONResponse:
     cfg = load_config()
     a = _cfg_auth(cfg)
     p = _cfg_pwd(a)
+    try:
+        from services import authPlex
+
+        plex_st = authPlex.get_status(cfg)
+    except Exception:
+        plex_st = {"enabled": False, "linked": False}
     configured = bool(str(a.get("username") or "").strip() and str(p.get("hash") or "").strip() and str(p.get("salt") or "").strip())
     enabled = bool(a.get("enabled"))
     pending_setup = setup_lock_required(cfg)
@@ -866,6 +966,8 @@ def api_status(request: Request) -> JSONResponse:
             "reset_required": reset_pending(cfg),
             "remember_session_enabled": _cfg_remember_session_enabled(a),
             "remember_session_days": _cfg_remember_session_days(a),
+            "plex_sso_enabled": bool(plex_st.get("enabled")),
+            "plex_sso_linked": bool(plex_st.get("linked")),
         },
         headers={"Cache-Control": "no-store"},
     )
@@ -1074,6 +1176,12 @@ def api_set_credentials(request: Request, payload: dict[str, Any] = Body(...)) -
 
 def register_app_auth(app) -> None:
     app.include_router(router)
+    try:
+        from .authPlexAPI import register_auth_plex
+
+        register_auth_plex(app)
+    except Exception:
+        pass
 
     @app.get("/login", include_in_schema=False, tags=["ui"])
     def ui_login() -> Response:
@@ -1082,7 +1190,13 @@ def register_app_auth(app) -> None:
             return RedirectResponse(url="/", status_code=302)
         a = _cfg_auth(cfg)
         username = str(a.get("username") or "")
-        return HTMLResponse(_login_html(username), headers={"Cache-Control": "no-store"})
+        try:
+            from services import authPlex
+
+            plex_sso_available = authPlex.login_available(cfg)
+        except Exception:
+            plex_sso_available = False
+        return HTMLResponse(_login_html(username, plex_sso_available=plex_sso_available), headers={"Cache-Control": "no-store"})
 
     @app.get("/logout", include_in_schema=False, tags=["ui"])
     def ui_logout(request: Request) -> Response:
