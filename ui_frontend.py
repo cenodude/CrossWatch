@@ -817,16 +817,16 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Visibility</div>
                       <div class="cw-settings-2col">
                         <div>
-                          <label for="ui_show_watchlist">Watchlist</label>
-                          <select id="ui_show_watchlist" name="ui_show_watchlist">
+                          <label for="ui_show_watchlist_preview">Watchlist</label>
+                          <select id="ui_show_watchlist_preview" name="ui_show_watchlist_preview">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
                           </select>
                         </div>
 
                         <div>
-                          <label for="ui_show_playing">Playing card</label>
-                          <select id="ui_show_playing" name="ui_show_playing">
+                          <label for="ui_show_playingcard">Playing card</label>
+                          <select id="ui_show_playingcard" name="ui_show_playingcard">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
                           </select>
