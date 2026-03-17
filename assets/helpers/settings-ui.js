@@ -1072,6 +1072,19 @@ async function loadConfig() {
   _setVal("metadata_locale", cfg.metadata?.locale || "");
   _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
 
+  const _refreshSelectUi = (el) => {
+    if (!el) return;
+    try { el.dispatchEvent(new Event("change")); } catch {}
+    try { window.CW?.IconSelect?.enhance?.(el, el.__cwIconSelectCfg || { className: "cw-plain-select" }); } catch {}
+  };
+  const _setSelectValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (!el) return null;
+    el.value = value;
+    _refreshSelectUi(el);
+    return el;
+  };
+
   
   (function () {
     const ui = cfg.ui || cfg.user_interface || {};
@@ -1079,41 +1092,35 @@ async function loadConfig() {
     const aa = cfg.app_auth || {};
 
     
-    const sel = document.getElementById("ui_show_watchlist_preview");
-    if (sel) {
+    {
       const on = (typeof ui.show_watchlist_preview === "boolean")
         ? !!ui.show_watchlist_preview
         : true;
-      sel.value = on ? "true" : "false";
+      _setSelectValue("ui_show_watchlist_preview", on ? "true" : "false");
     }
 
-    
-    const playSel = document.getElementById("ui_show_playingcard");
-    if (playSel) {
+    {
       const on = (typeof ui.show_playingcard === "boolean")
         ? !!ui.show_playingcard
         : true;
-      playSel.value = on ? "true" : "false";
+      _setSelectValue("ui_show_playingcard", on ? "true" : "false");
     }
 
-    const aiSel = document.getElementById("ui_show_AI");
-    if (aiSel) {
+    {
       const on = (typeof ui.show_AI === "boolean")
         ? !!ui.show_AI
         : true;
-      aiSel.value = on ? "true" : "false";
+      _setSelectValue("ui_show_AI", on ? "true" : "false");
     }
 
-    const protoSel = document.getElementById("ui_protocol");
-    if (protoSel) {
+    {
       const p = String(ui.protocol || "http").trim().toLowerCase();
-      protoSel.value = (p === "https") ? "https" : "http";
+      _setSelectValue("ui_protocol", (p === "https") ? "https" : "http");
     }
 
     const aaUserEl = document.getElementById("app_auth_username");
     if (aaUserEl) aaUserEl.value = (typeof aa.username === "string") ? aa.username : "";
-    const aaRememberEnabledEl = document.getElementById("app_auth_remember_enabled");
-    if (aaRememberEnabledEl) aaRememberEnabledEl.value = (aa.remember_session_enabled === true) ? "true" : "false";
+    _setSelectValue("app_auth_remember_enabled", (aa.remember_session_enabled === true) ? "true" : "false");
     const aaRememberDaysEl = document.getElementById("app_auth_remember_days");
     if (aaRememberDaysEl) {
       const days = Number.isFinite(aa.remember_session_days) ? aa.remember_session_days : 30;
@@ -1134,20 +1141,18 @@ async function loadConfig() {
 
 
     
-    const cwEnabledEl = document.getElementById("cw_enabled");
-    if (cwEnabledEl) {
+    {
       const enabled = (cw.enabled === false) ? "false" : "true";
-      cwEnabledEl.value = enabled;
+      _setSelectValue("cw_enabled", enabled);
     }
     const cwRetEl = document.getElementById("cw_retention_days");
     if (cwRetEl) {
       const v = Number.isFinite(cw.retention_days) ? cw.retention_days : 30;
       cwRetEl.value = String(v);
     }
-    const cwAutoEl = document.getElementById("cw_auto_snapshot");
-    if (cwAutoEl) {
+    {
       const on = (cw.auto_snapshot === false) ? "false" : "true";
-      cwAutoEl.value = on;
+      _setSelectValue("cw_auto_snapshot", on);
     }
     const cwMaxEl = document.getElementById("cw_max_snapshots");
     if (cwMaxEl) {
@@ -1156,7 +1161,9 @@ async function loadConfig() {
     }
     const setVal = (id, val) => {
       const el = document.getElementById(id);
-      if (el) el.value = val || "latest";
+      if (!el) return;
+      el.value = val || "latest";
+      _refreshSelectUi(el);
     };
     setVal("cw_restore_watchlist", cw.restore_watchlist || "latest");
     setVal("cw_restore_history", cw.restore_history || "latest");
