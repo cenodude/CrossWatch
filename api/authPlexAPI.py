@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any
+import secrets
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,11 +14,57 @@ from services import authPlex
 
 from . import appAuthAPI as app_auth
 
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
+
 router = APIRouter(prefix="/api/app-auth/plex", tags=["app-auth"])
+FLOW_COOKIE_NAME = "cw_plex_flow"
 
 
 def _identity_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _log(msg: str, *, level: str = "INFO") -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module="AUTH")
+        else:
+            print(f"[AUTH] {level}: {msg}")
+    except Exception:
+        pass
+
+
+def _set_flow_cookie(resp: JSONResponse, nonce: str, request: Request) -> None:
+    resp.set_cookie(
+        FLOW_COOKIE_NAME,
+        nonce,
+        path="/api/app-auth/plex",
+        httponly=True,
+        samesite="lax",
+        secure=app_auth._effective_scheme_is_https(request),
+        max_age=10 * 60,
+    )
+
+
+def _del_flow_cookie(resp: JSONResponse, request: Request) -> None:
+    resp.delete_cookie(
+        FLOW_COOKIE_NAME,
+        path="/api/app-auth/plex",
+        httponly=True,
+        samesite="lax",
+        secure=app_auth._effective_scheme_is_https(request),
+    )
+
+
+def _flow_nonce_matches(request: Request, res: dict[str, Any]) -> bool:
+    nonce = str(request.cookies.get(FLOW_COOKIE_NAME) or "").strip()
+    want = str(res.get("flow_nonce_hash") or "").strip()
+    if not nonce or not want:
+        return False
+    return app_auth._digest_eq(authPlex._sha256_hex(nonce), want)
 
 
 def _callback_url(request: Request) -> str:
@@ -64,11 +111,21 @@ def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)
 
     remember_me = bool((payload or {}).get("remember_me"))
     try:
-        data = authPlex.start_flow(cfg, intent="login", callback_url=_callback_url(request), remember_me=remember_me)
+        flow_nonce = secrets.token_urlsafe(24)
+        data = authPlex.start_flow(
+            cfg,
+            intent="login",
+            callback_url=_callback_url(request),
+            flow_nonce_hash=authPlex._sha256_hex(flow_nonce),
+            remember_me=remember_me,
+        )
         save_config(cfg)
-        return JSONResponse(data, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse(data, headers={"Cache-Control": "no-store"})
+        _set_flow_cookie(resp, flow_nonce, request)
+        return resp
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"Plex sign-in could not start: {exc}"}, status_code=502, headers={"Cache-Control": "no-store"})
+        _log(f"Plex sign-in could not start: {exc}", level="ERROR")
+        return JSONResponse({"ok": False, "error": "Plex sign-in could not start. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/check")
@@ -80,7 +137,8 @@ def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
     try:
         res = authPlex.check_flow(cfg, state=str(payload.get("state") or "").strip(), intent="login")
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"Plex sign-in failed: {exc}"}, status_code=502, headers={"Cache-Control": "no-store"})
+        _log(f"Plex sign-in failed: {exc}", level="ERROR")
+        return JSONResponse({"ok": False, "error": "Plex sign-in failed. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
 
     if not res.get("ok"):
         return JSONResponse({"ok": False, "error": str(res.get("error") or "Plex sign-in failed")}, status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
@@ -88,9 +146,16 @@ def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
     if res.get("pending"):
         return JSONResponse({"ok": True, "pending": True}, headers={"Cache-Control": "no-store"})
 
+    if not _flow_nonce_matches(request, res):
+        resp = JSONResponse({"ok": False, "error": "Plex sign-in expired. Start again."}, status_code=400, headers={"Cache-Control": "no-store"})
+        _del_flow_cookie(resp, request)
+        return resp
+
     identity = _identity_dict(res.get("identity"))
     if not authPlex.identity_matches(cfg, identity):
-        return JSONResponse({"ok": False, "error": "This Plex account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse({"ok": False, "error": "This Plex account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
+        _del_flow_cookie(resp, request)
+        return resp
 
     token, exp = app_auth._issue_session(cfg, request)
     save_config(cfg)
@@ -103,6 +168,7 @@ def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
         },
         headers={"Cache-Control": "no-store"},
     )
+    _del_flow_cookie(resp, request)
     app_auth._set_cookie(resp, token, exp, request, persistent=bool(res.get("remember_me")))
     return resp
 
@@ -117,11 +183,21 @@ def api_plex_link_start(request: Request) -> JSONResponse:
         return app_auth._origin_blocked_response()
 
     try:
-        data = authPlex.start_flow(cfg, intent="link", callback_url=_callback_url(request), remember_me=False)
+        flow_nonce = secrets.token_urlsafe(24)
+        data = authPlex.start_flow(
+            cfg,
+            intent="link",
+            callback_url=_callback_url(request),
+            flow_nonce_hash=authPlex._sha256_hex(flow_nonce),
+            remember_me=False,
+        )
         save_config(cfg)
-        return JSONResponse(data, headers={"Cache-Control": "no-store"})
+        resp = JSONResponse(data, headers={"Cache-Control": "no-store"})
+        _set_flow_cookie(resp, flow_nonce, request)
+        return resp
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"Plex link could not start: {exc}"}, status_code=502, headers={"Cache-Control": "no-store"})
+        _log(f"Plex link could not start: {exc}", level="ERROR")
+        return JSONResponse({"ok": False, "error": "Plex link could not start. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/link/check")
@@ -136,7 +212,8 @@ def api_plex_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
     try:
         res = authPlex.check_flow(cfg, state=str(payload.get("state") or "").strip(), intent="link")
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": f"Plex link failed: {exc}"}, status_code=502, headers={"Cache-Control": "no-store"})
+        _log(f"Plex link failed: {exc}", level="ERROR")
+        return JSONResponse({"ok": False, "error": "Plex link failed. Please try again."}, status_code=502, headers={"Cache-Control": "no-store"})
 
     if not res.get("ok"):
         return JSONResponse({"ok": False, "error": str(res.get("error") or "Plex link failed")}, status_code=int(res.get("status_code") or 400), headers={"Cache-Control": "no-store"})
@@ -144,10 +221,17 @@ def api_plex_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
     if res.get("pending"):
         return JSONResponse({"ok": True, "pending": True}, headers={"Cache-Control": "no-store"})
 
+    if not _flow_nonce_matches(request, res):
+        resp = JSONResponse({"ok": False, "error": "Plex sign-in expired. Start again."}, status_code=400, headers={"Cache-Control": "no-store"})
+        _del_flow_cookie(resp, request)
+        return resp
+
     identity = _identity_dict(res.get("identity"))
     st = authPlex.link_identity(cfg, identity)
     save_config(cfg)
-    return JSONResponse({"ok": True, "pending": False, **st}, headers={"Cache-Control": "no-store"})
+    resp = JSONResponse({"ok": True, "pending": False, **st}, headers={"Cache-Control": "no-store"})
+    _del_flow_cookie(resp, request)
+    return resp
 
 
 @router.post("/unlink")
