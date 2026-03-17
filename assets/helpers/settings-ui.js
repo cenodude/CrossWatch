@@ -314,6 +314,98 @@ try {
   window.cwValidateAppAuthRememberDays = cwValidateAppAuthRememberDays;
 } catch {}
 
+async function cwAppAuthPlexRefreshStatus() {
+  try {
+    const r = await fetch("/api/app-auth/plex/status", { cache: "no-store", credentials: "same-origin" });
+    const st = r.ok ? await r.json() : null;
+    const label = document.getElementById("app_auth_plex_state");
+    if (label) {
+      if (!st || !st.linked) label.textContent = "Not linked";
+      else {
+        const who = [st.linked_username, st.linked_email].filter(Boolean).join(" · ");
+        label.textContent = who || "Linked";
+      }
+    }
+    const unlinkBtn = document.getElementById("btn-app-auth-plex-unlink");
+    if (unlinkBtn) unlinkBtn.disabled = !(st && st.linked);
+    return st;
+  } catch {
+    const label = document.getElementById("app_auth_plex_state");
+    if (label) label.textContent = "Unavailable";
+    return null;
+  }
+}
+
+window.cwAppAuthPlexLink = async function cwAppAuthPlexLink() {
+  const btn = document.getElementById("btn-app-auth-plex-link");
+  const original = btn?.textContent || "Link Plex account";
+  const popup = window.open("about:blank", "cw_plex_link", "width=620,height=760,popup=yes");
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Waiting for Plex...";
+    }
+    const r = await fetch("/api/app-auth/plex/link/start", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok || !data?.state || !data?.auth_url) {
+      if (popup && !popup.closed) popup.close();
+      throw new Error(data?.error || `Plex link failed (${r.status})`);
+    }
+    if (popup && !popup.closed) popup.location.href = data.auth_url;
+    else window.open(data.auth_url, "_blank", "noopener,noreferrer");
+
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const pr = await fetch("/api/app-auth/plex/link/check", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: data.state }),
+      });
+      const pd = await pr.json().catch(() => null);
+      if (pr.ok && pd?.ok && pd.pending === true) continue;
+      if (!pr.ok || !pd?.ok) throw new Error(pd?.error || `Plex link failed (${pr.status})`);
+      if (popup && !popup.closed) popup.close();
+      await cwAppAuthPlexRefreshStatus();
+      try { window._appAuthStatus && (window._appAuthStatus.plex_sso_enabled = true); } catch {}
+      try { _cwShowToast?.("Plex sign-in linked", true); } catch {}
+      return;
+    }
+  } catch (e) {
+    if (popup && !popup.closed) popup.close();
+    try { _cwShowToast?.(String(e?.message || e || "Plex link failed"), false); } catch {}
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+};
+
+window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
+  const ok = window.confirm("Unlink Plex sign-in from this CrossWatch admin?");
+  if (!ok) return;
+  try {
+    const r = await fetch("/api/app-auth/plex/unlink", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const data = await r.json().catch(() => null);
+    if (!r.ok || !data?.ok) throw new Error(data?.error || `Plex unlink failed (${r.status})`);
+    await cwAppAuthPlexRefreshStatus();
+    try { _cwShowToast?.("Plex sign-in unlinked", true); } catch {}
+  } catch (e) {
+    try { _cwShowToast?.(String(e?.message || e || "Plex unlink failed"), false); } catch {}
+  }
+};
+
+
 /* Settings Hub: Scheduling */
 const SCHED_SETTINGS_TAB_KEY = "cw.ui.scheduling.tab.v1";
 const SCHED_PROVIDER_OPEN_KEY = "cw.ui.scheduling.open.v1";
@@ -1153,6 +1245,7 @@ async function loadConfig() {
     if (btn) btn.disabled = !(st && st.authenticated);
   } catch {}
 
+  try { await cwAppAuthPlexRefreshStatus(); } catch {}
   try { cwUiSettingsHubUpdate?.(); } catch {}
 
   try { window.updateSimklButtonState?.(); } catch {}
