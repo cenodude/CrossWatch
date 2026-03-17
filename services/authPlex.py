@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import hashlib
 import secrets
 import time
 from urllib.parse import urlencode
@@ -21,6 +22,10 @@ _PENDING_FLOWS: dict[str, dict[str, Any]] = {}
 
 def _now() -> int:
     return int(time.time())
+
+
+def _sha256_hex(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
 
 
 def _plex_sso(cfg: dict[str, Any], *, create: bool = False) -> dict[str, Any]:
@@ -125,6 +130,7 @@ def start_flow(
     *,
     intent: str,
     callback_url: str,
+    flow_nonce_hash: str,
     remember_me: bool = False,
 ) -> dict[str, Any]:
     _prune_pending()
@@ -150,6 +156,7 @@ def start_flow(
         "intent": str(intent or "").strip(),
         "client_id": client_id,
         "pin_id": pin_id,
+        "flow_nonce_hash": str(flow_nonce_hash or "").strip(),
         "remember_me": bool(remember_me),
         "expires_at": expires_at,
     }
@@ -201,6 +208,7 @@ def check_flow(cfg: dict[str, Any], *, state: str, intent: str) -> dict[str, Any
         "ok": True,
         "pending": False,
         "remember_me": bool(rec.get("remember_me")),
+        "flow_nonce_hash": str(rec.get("flow_nonce_hash") or "").strip(),
         "identity": {
             "id": str(user.get("id") or "").strip(),
             "username": str(user.get("username") or "").strip(),
