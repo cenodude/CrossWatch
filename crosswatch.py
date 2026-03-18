@@ -445,9 +445,22 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
 
     mode = str(scfg.get("mode") or "every_n_hours").lower()
 
+    if mode in {"hourly", "every_hour"}:
+        base = datetime.fromtimestamp(now)
+        target = base.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        return int(target.timestamp())
+
     if mode == "every_n_hours":
         n = max(1, int(scfg.get("every_n_hours") or 1))
+        if n <= 1:
+            base = datetime.fromtimestamp(now)
+            target = base.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            return int(target.timestamp())
         return now + n * 3600
+
+    if mode in {"custom", "custom_interval", "custom_minutes", "interval"}:
+        minutes = max(15, int(scfg.get("custom_interval_minutes", scfg.get("custom_minutes", 60)) or 60))
+        return now + minutes * 60
 
     if mode == "daily_time":
         hh, mm = ("03", "30")
