@@ -122,7 +122,7 @@
 ` }));
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:0}
-#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 6px}
+#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 12px!important}
 #sec-scheduling .sch-std-head-copy{display:grid;gap:6px}
 #sec-scheduling .sch-std-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
 #sec-scheduling .sch-std-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
@@ -135,13 +135,37 @@
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{display:grid;grid-template-columns:minmax(0,1fr);align-content:start}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-enable-field{display:none}
 #sec-scheduling .sch-std-head .cx-toggle{margin-top:16px;justify-self:end}
-.sch-adv{display:grid;gap:14px}
-.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;padding:18px;border:none;border-radius:0;background:transparent;box-shadow:none}
+#sec-scheduling .sch-std-wizard{position:relative;z-index:1;display:grid;gap:18px;padding:0 18px 18px!important}
+#sec-scheduling .sch-plan-summary,#sec-scheduling .sch-std-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid rgba(255,255,255,.08);border-radius:18px;background:linear-gradient(180deg,rgba(13,18,31,.82),rgba(6,8,14,.92));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+#sec-scheduling .sch-std-summary{margin-top:6px!important}
+#sec-scheduling .sch-plan-summary-copy,#sec-scheduling .sch-std-summary-copy{display:grid;gap:4px}
+#sec-scheduling .sch-plan-summary-kicker,#sec-scheduling .sch-std-summary-kicker{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.54)}
+#sec-scheduling .sch-plan-summary-text,#sec-scheduling .sch-std-summary-text{font-size:14px;font-weight:800;color:#f4f7ff}
+#sec-scheduling .sch-plan-summary-note,#sec-scheduling .sch-std-summary-note{font-size:12px;line-height:1.45;color:rgba(208,217,233,.7)}
+#sec-scheduling .sch-plan-summary-state,#sec-scheduling .sch-std-summary-state{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid rgba(122,120,255,.2);background:rgba(94,89,205,.12);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#ebefff}
+#sec-scheduling .sch-plan-summary-state.attention,#sec-scheduling .sch-std-summary-state.attention{border-color:rgba(255,176,32,.26);background:rgba(77,49,0,.26);color:#ffe6b2}
+#sec-scheduling .sch-std-step{display:grid;gap:10px;padding:16px;border:1px solid var(--sch-border-soft);border-radius:18px;background:var(--sch-card-bg-soft);box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}
+#sec-scheduling .sch-std-step-head{display:grid;gap:4px}
+#sec-scheduling .sch-std-step-kicker{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.54)}
+#sec-scheduling .sch-std-step-title{font-size:18px;font-weight:900;letter-spacing:-.01em;color:#f5f8ff}
+#sec-scheduling .sch-std-step-copy{font-size:12px;line-height:1.5;color:rgba(208,217,233,.7)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-field-hidden{display:none!important}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-primary{border-color:rgba(122,120,255,.24);background:linear-gradient(180deg,rgba(20,24,40,.9),rgba(7,10,18,.96))}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-active{border-color:rgba(122,120,255,.3);box-shadow:0 0 0 1px rgba(122,120,255,.08),inset 0 1px 0 rgba(255,255,255,.02)}
+#sec-scheduling .sch-std-inline{display:grid;grid-template-columns:minmax(0,.9fr) minmax(140px,.7fr);gap:10px}
+#sec-scheduling .sch-std-inline > *{min-width:0}
+#sec-scheduling .sch-std-warning{display:none;gap:8px;padding:14px 16px;border:1px solid rgba(255,176,32,.26);border-radius:18px;background:linear-gradient(180deg,rgba(77,49,0,.26),rgba(30,18,0,.3));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+#sec-scheduling .sch-std-warning.is-visible{display:grid}
+#sec-scheduling .sch-std-warning-title{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#ffd780}
+#sec-scheduling .sch-std-warning-copy{font-size:12px;line-height:1.5;color:rgba(255,232,196,.84)}
+.sch-adv{display:grid;gap:10px}
+.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;padding:18px 18px 8px;border:none;border-radius:0;background:transparent;box-shadow:none}
 .sch-adv-head-copy{display:grid;gap:6px}
 .sch-adv-head-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
 .sch-adv-head-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
 .sch-adv-head-copy p{margin:0;max-width:64ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
 .sch-adv .cw-panel-head .cx-toggle{margin-top:16px;justify-self:end}
+.sch-adv-summary{margin:0 18px 4px}
 .sch-adv-section{gap:12px;padding:16px}
 .sch-adv-section-head{align-items:center}
 .sch-adv-section-copy{font-size:12px;line-height:1.5}
@@ -164,8 +188,8 @@
 .sch-adv-actions{gap:8px}
 .sch-adv .btn,.sch-adv .btn.ghost{min-height:38px;padding:0 13px}
 @media (max-width:1180px){.sch-adv .stack.two{grid-template-columns:1fr}}
-@media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
-@media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}}
+@media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}#sec-scheduling .sch-std-inline{grid-template-columns:1fr}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
+@media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}#sec-scheduling .sch-std-wizard{padding:0 16px 16px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}}
 ` }));
 
   // state
@@ -178,9 +202,10 @@
   const EVENT_MEDIA_OPTIONS = [["", "Any"], ["movie", "Movie"], ["episode", "Episode"]];
   const HELP_TIPS = {
     std_enabled: "Use standard plan:\nTurn on the standard timer-based scheduler.\nWhen enabled, the advanced plan is turned off.",
-    std_frequency: "Frequency:\nChoose how often the standard plan runs.\nUse Every hour, Every N hours, or Daily at a fixed time.",
+    std_frequency: "Frequency:\nChoose how often the standard plan runs.\nUse Every hour, Every N hours, Daily at a fixed time, or a Custom interval.",
     std_every_n_hours: "Every N hours:\nSet how many hours to wait between runs when Frequency is set to Every N hours.",
     std_time: "Time:\nChoose the local time to run each day when Frequency is set to Daily at a fixed time.",
+    std_custom_interval: "Custom interval:\nSet a custom repeat interval in minutes or hours.\nCustom schedules are clamped to a minimum of 15 minutes.",
     time_pair: "Pair:\nChoose which enabled sync pair this timed step should run.",
     time_time: "Time:\nChoose the local time when this step becomes due.",
     time_days: "Days:\nSelect which weekdays this step may run on.\nLeave all days unchecked to allow every day.",
@@ -245,6 +270,214 @@
     if (hit) sel.value = hit.value;
   };
 
+  const asInt = (value, fallback, minimum = null) => {
+    let out = parseInt(value, 10);
+    if (!Number.isFinite(out)) out = fallback;
+    if (minimum != null && out < minimum) out = minimum;
+    return out;
+  };
+  const refreshSelectUi = (node) => {
+    if (!node) return;
+    try { window.CW?.IconSelect?.enhance?.(node, node.__cwIconSelectCfg || { className: "cw-plain-select" }); } catch {}
+  };
+  const setSelectValue = (node, value) => {
+    if (!node) return;
+    node.value = value;
+    refreshSelectUi(node);
+  };
+
+  const normalizeStandardMode = (mode) => {
+    const raw = String(mode || "").trim().toLowerCase();
+    if (raw === "hourly" || raw === "every_hour") return "hourly";
+    if (raw === "daily" || raw === "daily_at" || raw === "daily_time") return "daily_time";
+    if (raw === "custom" || raw === "custom_interval" || raw === "custom_minutes" || raw === "interval") return "custom_interval";
+    if (raw === "every_n_hours") return "every_n_hours";
+    return "hourly";
+  };
+
+  const getStandardField = (id) => $("#" + id)?.closest(".field") || null;
+  const describeMinutes = (minutes) => {
+    const safe = Math.max(15, asInt(minutes, 60, 15));
+    if (safe % 60 === 0) return `${safe / 60} hour${safe === 60 ? "" : "s"}`;
+    return `${safe} minutes`;
+  };
+  const describeHours = (hours) => {
+    const safe = Math.max(2, asInt(hours, 12, 1));
+    return `${safe} hour${safe === 1 ? "" : "s"}`;
+  };
+  const getCustomIntervalMinutes = () => {
+    const value = asInt($("#schCustomValue")?.value || "60", 60, 1);
+    const unit = String($("#schCustomUnit")?.value || "minutes").trim().toLowerCase();
+    return Math.max(15, unit === "hours" ? value * 60 : value);
+  };
+  const setCustomIntervalFromMinutes = (minutes) => {
+    const safe = Math.max(15, asInt(minutes, 60, 15));
+    const valueEl = $("#schCustomValue");
+    const unitEl = $("#schCustomUnit");
+    if (!valueEl || !unitEl) return;
+    setSelectValue(unitEl, "minutes");
+    valueEl.min = "15";
+    valueEl.step = "15";
+    valueEl.value = String(safe);
+  };
+  const ensureStandardWizard = () => {
+    const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
+    if (!basic) return null;
+    let wizard = $("#schStdWizard", basic);
+    if (!wizard) {
+      wizard = el("div", "sch-std-wizard");
+      wizard.id = "schStdWizard";
+      wizard.innerHTML = `
+        <section class="sch-std-summary" id="schStdSummary">
+          <div class="sch-std-summary-copy">
+            <div class="sch-std-summary-kicker">Current plan</div>
+            <div class="sch-std-summary-text" id="schStdSummaryText"></div>
+            <div class="sch-std-summary-note" id="schStdSummaryNote"></div>
+          </div>
+          <div class="sch-std-summary-state" id="schStdSummaryState">Idle</div>
+        </section>
+        <section class="sch-std-step" id="schStdStep1">
+          <div class="sch-std-step-head">
+            <div class="sch-std-step-kicker">Step 1</div>
+            <div class="sch-std-step-title">Choose a frequency</div>
+            <div class="sch-std-step-copy">Start with the type of cadence you want. We only show the next input that matters for that choice.</div>
+          </div>
+        </section>
+        <section class="sch-std-step" id="schStdStep2">
+          <div class="sch-std-step-head">
+            <div class="sch-std-step-kicker">Step 2</div>
+            <div class="sch-std-step-title" id="schStdDetailTitle">Review the schedule</div>
+            <div class="sch-std-step-copy" id="schStdDetailCopy">Choose the additional timing details for the selected frequency.</div>
+          </div>
+        </section>
+        <section class="sch-std-warning" id="schStdWarning" aria-live="polite">
+          <div class="sch-std-warning-title">CAUTION</div>
+          <div class="sch-std-warning-copy" id="schStdWarningCopy"></div>
+        </section>
+      `;
+      const fieldsWrap = basic.querySelector(".auth-card-fields");
+      if (fieldsWrap) {
+        fieldsWrap.style.padding = "0";
+        fieldsWrap.style.gap = "0";
+        fieldsWrap.after(wizard);
+      }
+      else basic.appendChild(wizard);
+    }
+
+    const step1 = $("#schStdStep1", wizard);
+    const step2 = $("#schStdStep2", wizard);
+    const modeField = getStandardField("schMode");
+    const everyField = getStandardField("schN");
+    const timeField = getStandardField("schTime");
+    const customField = getStandardField("schCustomValue");
+    if (modeField && step1 && !step1.contains(modeField)) step1.appendChild(modeField);
+    [everyField, timeField, customField].forEach((field) => {
+      if (field && step2 && !step2.contains(field)) step2.appendChild(field);
+    });
+    const customRow = $("#schCustomValue")?.parentElement;
+    if (customRow) customRow.classList.add("sch-std-inline");
+    return wizard;
+  };
+  const updateStandardWizard = () => {
+    const wizard = ensureStandardWizard();
+    if (!wizard) return;
+    const mode = normalizeStandardMode($("#schMode")?.value || "hourly");
+    const everyField = getStandardField("schN");
+    const timeField = getStandardField("schTime");
+    const customField = getStandardField("schCustomValue");
+    const summaryText = $("#schStdSummaryText", wizard);
+    const summaryNote = $("#schStdSummaryNote", wizard);
+    const summaryState = $("#schStdSummaryState", wizard);
+    const detailTitle = $("#schStdDetailTitle", wizard);
+    const detailCopy = $("#schStdDetailCopy", wizard);
+    const warning = $("#schStdWarning", wizard);
+    const warningCopy = $("#schStdWarningCopy", wizard);
+    const stdOn = String($("#schEnabled")?.value || "").trim().toLowerCase() === "true";
+    const advOn = !!$("#schAdvEnabled")?.checked;
+
+    if ($("#schMode")) setSelectValue($("#schMode"), mode);
+    if ($("#schCustomUnit")?.value === "hours") {
+      const val = asInt($("#schCustomValue")?.value || "1", 1, 1);
+      $("#schCustomValue").min = "1";
+      $("#schCustomValue").step = "1";
+      $("#schCustomValue").value = String(val);
+    } else if ($("#schCustomValue")) {
+      const val = asInt($("#schCustomValue")?.value || "60", 60, 15);
+      $("#schCustomValue").min = "15";
+      $("#schCustomValue").step = "15";
+      $("#schCustomValue").value = String(val);
+    }
+    if ($("#schN")) {
+      $("#schN").min = "2";
+      $("#schN").step = "1";
+      $("#schN").value = String(asInt($("#schN")?.value || "12", 12, 2));
+    }
+    if ($("#schCustomUnit")) refreshSelectUi($("#schCustomUnit"));
+
+    [everyField, timeField, customField].forEach((field) => field?.classList.add("sch-std-field-hidden"));
+    getStandardField("schMode")?.classList.add("sch-std-primary");
+    [getStandardField("schMode"), everyField, timeField, customField].forEach((field) => field?.classList.remove("sch-std-active"));
+
+    let summary = "Runs at the top of every hour";
+    let note = "Good for frequent syncs without extra setup.";
+    let detailHeading = "Hourly schedule";
+    let detailBody = "No extra timing fields are needed. CrossWatch will queue the sync at the start of each hour.";
+
+    if (mode === "every_n_hours") {
+      const hours = Math.max(2, asInt($("#schN")?.value || "12", 12, 1));
+      if ($("#schN")) $("#schN").value = String(hours);
+      everyField?.classList.remove("sch-std-field-hidden");
+      everyField?.classList.add("sch-std-active");
+      summary = `Runs every ${describeHours(hours)}`;
+      note = "Use this when hourly is too aggressive but you still want a repeating interval.";
+      detailHeading = "Set the hour gap";
+      detailBody = "Choose how many hours to wait between syncs. Use Every hour instead when you want a 60 minute cadence.";
+    } else if (mode === "daily_time") {
+      const time = $("#schTime")?.value || "03:30";
+      timeField?.classList.remove("sch-std-field-hidden");
+      timeField?.classList.add("sch-std-active");
+      summary = `Runs daily at ${time}`;
+      note = "Best when you want one predictable sync window each day.";
+      detailHeading = "Pick the daily run time";
+      detailBody = "Choose the local time when the daily sync should become due.";
+    } else if (mode === "custom_interval") {
+      const minutes = getCustomIntervalMinutes();
+      customField?.classList.remove("sch-std-field-hidden");
+      customField?.classList.add("sch-std-active");
+      summary = `Runs every ${describeMinutes(minutes)}`;
+      note = minutes < 60
+        ? "Short custom intervals can look like aggressive polling to provider APIs."
+        : "Use custom timing when you need something between the built-in hourly and daily options.";
+      detailHeading = "Define the custom interval";
+      detailBody = "Pick minutes or hours. CrossWatch enforces a 15 minute minimum for custom schedules.";
+      if (warning && warningCopy) {
+        warning.classList.toggle("is-visible", minutes < 60);
+        warningCopy.textContent = "Custom schedules shorter than 1 hour can be seen as abusing trackers API's and may result in a ban. Use them carefully.";
+      }
+    }
+
+    if (mode !== "custom_interval" && warning) warning.classList.remove("is-visible");
+    if (summaryText) summaryText.textContent = summary;
+    if (summaryNote) summaryNote.textContent = note;
+    if (summaryState) summaryState.textContent = advOn ? "Advanced plan active" : stdOn ? "Standard plan active" : "Saved but off";
+    if (detailTitle) detailTitle.textContent = detailHeading;
+    if (detailCopy) detailCopy.textContent = detailBody;
+  };
+  const wireStandardWizard = () => {
+    const ids = ["schMode", "schN", "schTime", "schCustomValue", "schCustomUnit"];
+    ids.forEach((id) => {
+      const node = $("#" + id);
+      if (!node || node.dataset.stdWizardWired === "1") return;
+      const handler = () => {
+        updateStandardWizard();
+        try { window.cwSchedSettingsHubUpdate?.(); } catch {}
+      };
+      node.addEventListener("change", handler);
+      node.addEventListener("input", handler);
+      node.dataset.stdWizardWired = "1";
+    });
+  };
+
 const ensureStdEnabledToggle = () => {
   const sel = $("#schEnabled");
   if (!sel || sel.__toggleEnhanced) return;
@@ -298,15 +531,16 @@ const ensureStdEnabledToggle = () => {
   const decorateStandardPanel = () => {
     const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
     if (!basic || basic.dataset.schDecorated === "1") return;
-  const head = el("div", "sch-std-head");
-  head.innerHTML = `
+    const head = el("div", "sch-std-head");
+    head.innerHTML = `
       <div class="sch-std-head-copy">
         <div class="sch-std-kicker">Standard plan</div>
-        <div class="sch-std-title">Quick scheduler</div>
-        <div class="sch-std-copy">Use a simple timer for recurring syncs. Switch to Advanced for chained steps.</div>
+        <div class="sch-std-title">Scheduler setup wizard</div>
+        <div class="sch-std-copy">Pick a cadence, fill in the matching timing field, and leave the rest out of the way. Switch to Advanced for chained steps.</div>
       </div>
     `;
     basic.prepend(head);
+    ensureStandardWizard();
     basic.dataset.schDecorated = "1";
   };
 
@@ -317,7 +551,8 @@ const ensureStdEnabledToggle = () => {
       Enable: "std_enabled",
       Frequency: "std_frequency",
       "Every N hours": "std_every_n_hours",
-      Time: "std_time"
+      Time: "std_time",
+      "Custom interval": "std_custom_interval"
     };
     basic.querySelectorAll(".field > .muted").forEach((label) => {
       if (!label || label.dataset.helpDecorated === "1") return;
@@ -371,13 +606,16 @@ const ensureStdEnabledToggle = () => {
 
     // Lock standard fields when advanced is on
     const lockStdFields = advOn;
-    ["schMode", "schN", "schTime"].forEach((id) => {
+    ["schMode", "schN", "schTime", "schCustomValue", "schCustomUnit"].forEach((id) => {
       const n = $("#" + id);
       if (n) n.disabled = lockStdFields;
     });
 
     // Lock advanced fields when standard is on 
     setAdvDisabled(stdOn);
+
+    updateStandardWizard();
+    try { updateAdvancedStatus(); } catch {}
 
     try { window.refreshSchedulingBanner?.(); } catch {}
     try { window.cwSchedSettingsHubUpdate?.(); } catch {}
@@ -700,6 +938,15 @@ const ensureStdEnabledToggle = () => {
     const text = softenStatus(value);
     node.textContent = text;
     node.classList.toggle("is-empty", !text);
+  };
+  const eventRuleHasContent = (rule) => {
+    const pairId = String(rule?.action?.pair_id || "").trim();
+    const routeId = String(rule?.filters?.route_id || "").trim();
+    return !!pairId || !!routeId;
+  };
+  const issueLabel = (section, text) => {
+    const body = softenStatus(text);
+    return body ? `${section}: ${body}` : "";
   };
   const jobLabel = (job) => {
     const index = Math.max(0, _jobs.indexOf(job)) + 1;
@@ -1238,6 +1485,15 @@ const ensureStdEnabledToggle = () => {
   </label>
 </div>
 
+<section class="sch-plan-summary sch-adv-summary" id="schAdvSummary">
+  <div class="sch-plan-summary-copy">
+    <div class="sch-plan-summary-kicker">Current plan</div>
+    <div class="sch-plan-summary-text" id="schAdvSummaryText"></div>
+    <div class="sch-plan-summary-note" id="schAdvSummaryNote"></div>
+  </div>
+  <div class="sch-plan-summary-state" id="schAdvSummaryState">Advanced plan ready</div>
+</section>
+
 <section class="sch-adv-section">
   <div class="sch-adv-section-head">
     <div>
@@ -1357,6 +1613,9 @@ const ensureStdEnabledToggle = () => {
     const jobsSt = $("#schJobsStatus");
     const captureSt = $("#schCaptureStatus");
     const eventSt = $("#schEventStatus");
+    const summaryText = $("#schAdvSummaryText");
+    const summaryNote = $("#schAdvSummaryNote");
+    const summaryState = $("#schAdvSummaryState");
     statusText(jobsSt);
     statusText(captureSt);
     statusText(eventSt);
@@ -1367,19 +1626,65 @@ const ensureStdEnabledToggle = () => {
     const blockedRules = _eventRules.some(r => r._blocked);
     const blockedRuleRoutes = _eventRules.some(r => r._route_blocked);
     const invalidRules = _eventRules.map(eventRuleIssue).filter(Boolean);
+    const timedJobs = _jobs.filter(j => !isBlankJob(j));
+    const activeTimedJobs = timedJobs.filter(j => j.active !== false);
+    const captureJobs = _captureJobs.filter(j => !isBlankCaptureJob(j));
+    const activeCaptureJobs = captureJobs.filter(j => j.active !== false);
+    const eventRules = _eventRules.filter(eventRuleHasContent);
+    const activeEventRules = eventRules.filter(r => r.active !== false);
+    const totalConfigured = timedJobs.length + captureJobs.length + eventRules.length;
+    const timedIssue = invalidJobs[0] || (blockedJobs ? "Some timed steps reference disabled pairs." : "");
+    const captureIssue = invalidCaptureJobs[0] || "";
+    const eventIssue = (
+      (eventRules.length ? _eventRouteError : "")
+      || invalidRules[0]
+      || (blockedRuleRoutes ? "Some event triggers need a valid configured watcher or webhook route." : "")
+      || (blockedRules ? "Some event triggers reference disabled pairs." : "")
+      || ""
+    );
+    const summaryIssue = issueLabel("Timed steps", timedIssue)
+      || issueLabel("Capture schedules", captureIssue)
+      || issueLabel("Event triggers", eventIssue);
 
     statusText(
       jobsSt,
-      invalidJobs[0] || (blockedJobs ? "Some timed steps reference disabled pairs." : "")
+      timedIssue
     );
-    statusText(captureSt, invalidCaptureJobs[0] || "");
+    statusText(captureSt, captureIssue);
     statusText(
       eventSt,
-      _eventRouteError
-        || invalidRules[0]
-        || (blockedRuleRoutes ? "Some event triggers need a valid configured watcher or webhook route." : "")
-        || (blockedRules ? "Some event triggers reference disabled pairs." : "")
+      eventIssue
     );
+
+    if (summaryText) {
+      if (!totalConfigured) summaryText.textContent = "No advanced rules configured yet";
+      else {
+        const parts = [];
+        if (timedJobs.length) parts.push(`${activeTimedJobs.length}/${timedJobs.length} timed step${timedJobs.length === 1 ? "" : "s"}`);
+        if (captureJobs.length) parts.push(`${activeCaptureJobs.length}/${captureJobs.length} capture schedule${captureJobs.length === 1 ? "" : "s"}`);
+        if (eventRules.length) parts.push(`${activeEventRules.length}/${eventRules.length} event trigger${eventRules.length === 1 ? "" : "s"}`);
+        summaryText.textContent = parts.join(" • ");
+      }
+    }
+    if (summaryNote) {
+      summaryNote.textContent = summaryIssue || (
+        totalConfigured
+          ? "Combine timed steps, automated captures, and event triggers in one advanced plan."
+          : "Add timed steps, capture schedules, or event triggers to build an advanced automation flow."
+      );
+    }
+    if (summaryState) {
+      summaryState.textContent = summaryIssue
+        ? (
+          summaryIssue.startsWith("Timed steps:")
+            ? "Timed steps need attention"
+            : summaryIssue.startsWith("Capture schedules:")
+              ? "Capture schedules need attention"
+              : "Event triggers need attention"
+        )
+        : (_advEnabled ? "Advanced plan active" : "Advanced plan ready");
+      summaryState.classList.toggle("attention", !!summaryIssue);
+    }
   };
 
   const renderJobs = () => {
@@ -1429,6 +1734,7 @@ const ensureStdEnabledToggle = () => {
       ensureUI();
       decorateStandardPanel();
       decorateStandardFieldHelp();
+      wireStandardWizard();
       await fetchPairs();
       await fetchCaptureProviders();
       await fetchEventRoutes();
@@ -1439,9 +1745,11 @@ const ensureStdEnabledToggle = () => {
       setBooleanSelect($("#schEnabled"), !!saved.enabled);
       ensureStdEnabledToggle();
       try { $("#schEnabled")?.__toggleSync?.(); } catch {}
-      $("#schMode") && ($("#schMode").value = saved.mode || "hourly");
-      $("#schN")    && ($("#schN").value = String(saved.every_n_hours || 2));
+      const mode = normalizeStandardMode(saved.mode || "hourly");
+      $("#schMode") && ($("#schMode").value = mode);
+      $("#schN")    && ($("#schN").value = String(Math.max(2, parseInt(saved.every_n_hours || 12, 10) || 12)));
       $("#schTime") && ($("#schTime").value = saved.daily_time || "03:30");
+      setCustomIntervalFromMinutes(saved.custom_interval_minutes || saved.custom_minutes || 60);
 
       const adv = saved?.advanced || {};
       _advEnabled = !!adv.enabled;
@@ -1468,6 +1776,7 @@ const ensureStdEnabledToggle = () => {
       }
 
       applyModeLocks();
+      updateStandardWizard();
 
       try { window.cwSchedSettingsHubInit?.(); } catch {}
       try { window.cwSchedSettingsHubUpdate?.(); } catch {}
@@ -1536,9 +1845,10 @@ const ensureStdEnabledToggle = () => {
   // public getter for current scheduling patch
   window.getSchedulingPatch = (opts = {}) => {
     const strict = opts?.strict !== false;
-    const mode = $("#schMode")?.value || "hourly";
-    const every_n_hours = parseInt($("#schN")?.value || "2", 10);
+    const mode = normalizeStandardMode($("#schMode")?.value || "hourly");
+    const every_n_hours = mode === "every_n_hours" ? Math.max(2, parseInt($("#schN")?.value || "12", 10) || 12) : 1;
     const daily_time = $("#schTime")?.value || "03:30";
+    const custom_interval_minutes = getCustomIntervalMinutes();
     const validation = schedulingValidation();
     if (validation.captureIssues.length) {
       if (strict) throw new Error(validation.captureIssues[0]);
@@ -1554,7 +1864,7 @@ const ensureStdEnabledToggle = () => {
     const stdEnabled = ($("#schEnabled")?.value || "").trim() === "true";
     const enabled = advanced.enabled ? false : stdEnabled;
 
-    return { enabled, mode, every_n_hours, daily_time, advanced };
+    return { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, advanced };
   };
 
   // boot
