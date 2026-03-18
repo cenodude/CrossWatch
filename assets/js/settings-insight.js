@@ -24,6 +24,7 @@
   const has = (v) => typeof v === 'string' ? v.trim().length > 0 : !!v;
   const uniq = (arr) => [...new Set((Array.isArray(arr) ? arr : []).map((v) => String(v || '').trim().toLowerCase()).filter(Boolean))];
   const scheduleEnabled = (s) => !!(s?.enabled || s?.advanced?.enabled);
+  const scheduleAdvancedEnabled = (s) => !!s?.advanced?.enabled;
   const activeEventTriggers = (s) => (((s?.advanced?.event_rules) || (s?.advanced?.eventRules) || []).filter((r) =>
     r && typeof r === 'object' &&
     r.active !== false &&
@@ -139,22 +140,24 @@
     const fallback = cfg?.scheduling || {};
     try {
       const st = await API()?.Scheduling?.status(force), sc = st?.config || fallback;
+      const advanced = scheduleAdvancedEnabled(sc);
       return {
         enabled: scheduleEnabled(sc),
-        advanced: !!sc?.advanced?.enabled,
+        advanced,
         running: !!st?.running,
         nextRun: st?.next_run_at ?? st?.next_run ?? sc?.next_run_at ?? sc?.next_run ?? null,
-        eventTriggers: activeEventTriggers(sc),
-        captureSchedules: activeCaptureSchedules(sc)
+        eventTriggers: advanced ? activeEventTriggers(sc) : 0,
+        captureSchedules: advanced ? activeCaptureSchedules(sc) : 0
       };
     } catch {
+      const advanced = scheduleAdvancedEnabled(fallback);
       return {
         enabled: scheduleEnabled(fallback),
-        advanced: !!fallback?.advanced?.enabled,
+        advanced,
         running: false,
         nextRun: fallback?.next_run_at ?? fallback?.next_run ?? null,
-        eventTriggers: activeEventTriggers(fallback),
-        captureSchedules: activeCaptureSchedules(fallback)
+        eventTriggers: advanced ? activeEventTriggers(fallback) : 0,
+        captureSchedules: advanced ? activeCaptureSchedules(fallback) : 0
       };
     }
   }
@@ -186,8 +189,8 @@
     ? 'Disabled'
     : line(
       `<span class="si-status">${sched.advanced ? 'Enabled (Advanced)' : 'Enabled'}</span>`,
-      typeof sched.eventTriggers === 'number' && `${sep('|')}<span class="si-text">Event triggers: ${sched.eventTriggers}</span>`,
-      typeof sched.captureSchedules === 'number' && `${sep('|')}<span class="si-text">Capture schedules: ${sched.captureSchedules}</span>`,
+      sched.advanced && typeof sched.eventTriggers === 'number' && `${sep('|')}<span class="si-text">Event triggers: ${sched.eventTriggers}</span>`,
+      sched.advanced && typeof sched.captureSchedules === 'number' && `${sep('|')}<span class="si-text">Capture schedules: ${sched.captureSchedules}</span>`,
       sched.running && `${sep('|')}<span class="si-text">Running</span>`,
       sched.nextRun && `${sep('|')}<span class="si-text">Next run: ${esc(toLocal(sched.nextRun))}</span>`
     );
