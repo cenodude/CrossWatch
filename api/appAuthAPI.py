@@ -684,7 +684,9 @@ body::before{
   outline:none;transform:translateY(-1px);border-color:var(--cw-border-strong);background:rgba(4,10,22,.94);
   box-shadow:0 0 0 4px rgba(140,109,255,.14), inset 0 1px 0 rgba(255,255,255,.04);
 }
-.cw-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.cw-actions{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:14px}
+.cw-action-primary{min-width:0}
+.cw-action-plex{display:grid;gap:12px;min-width:0}
 .cw-remember{
   display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid rgba(255,255,255,.08);border-radius:16px;
   background:rgba(255,255,255,.03);color:var(--cw-soft);
@@ -701,16 +703,6 @@ body::before{
 }
 .cw-login .btn:hover{transform:translateY(-1px);filter:brightness(1.04)}
 .cw-login .btn:disabled{opacity:.72;cursor:progress;transform:none;box-shadow:none}
-.cw-plex-cta{margin-top:6px}
-.cw-plex-kicker{
-  display:flex;align-items:center;gap:10px;margin-bottom:12px;
-  font-size:11px;font-weight:900;letter-spacing:.16em;text-transform:uppercase;color:rgba(255,225,170,.74);
-}
-.cw-plex-kicker::before{
-  content:"";width:10px;height:10px;border-radius:999px;flex:0 0 auto;
-  background:linear-gradient(180deg,#ffcf67,#e58d0d);
-  box-shadow:0 0 16px rgba(229,141,13,.55);
-}
 .cw-plex-btn{
   position:relative;overflow:hidden;width:100%;min-height:58px;
   border:1px solid rgba(255,203,103,.32)!important;border-radius:28px!important;
@@ -760,7 +752,8 @@ body::before{
 @media (max-width:560px){
   .cw-login-shell{width:min(100vw - 18px,1040px);border-radius:24px}
   .cw-hero,.cw-login{padding:20px}
-  .cw-actions{align-items:stretch}
+  .cw-actions{grid-template-columns:1fr;align-items:stretch}
+  .cw-action-primary,.cw-action-plex{min-width:100%}
   .cw-login .btn{width:100%}
 }
 """
@@ -771,8 +764,7 @@ def _login_html(username: str, *, plex_sso_available: bool = False) -> str:
     plex_html = ""
     if plex_sso_available:
         plex_html = """
-        <div class="cw-plex-cta">
-          <div class="cw-plex-kicker">Plex SSO</div>
+        <div class="cw-action-plex">
           <button class="btn cw-plex-btn" id="go-plex" type="button"><span>Sign in with Plex</span></button>
           <p class="cw-plex-copy">Use your linked Plex account, then return here to finish sign-in.</p>
         </div>
@@ -830,9 +822,11 @@ def _login_html(username: str, *, plex_sso_available: bool = False) -> str:
           <span><b>Remember me</b><span>Keep this browser signed in for up to {DEFAULT_REMEMBER_ME_DAYS} days.</span></span>
         </label>
         <div class=\"cw-actions\">
-          <button class=\"btn acc\" id=\"go\">Sign in</button>
+          <div class=\"cw-action-primary\">
+            <button class=\"btn acc\" id=\"go\">Sign in</button>
+          </div>
+          {plex_html}
         </div>
-        {plex_html}
       </div>
     </section>
   </div>
