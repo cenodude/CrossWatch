@@ -630,8 +630,14 @@ async function saveSettings() {
       let sched = {
             enabled: readToggle("schEnabled"),
             mode: _getVal("schMode"),
-            every_n_hours: parseInt(_getVal("schN") || "2", 10),
+            every_n_hours: parseInt(_getVal("schN") || "12", 10),
             daily_time: _getVal("schTime") || "03:30",
+            custom_interval_minutes: Math.max(
+              15,
+              (_getVal("schCustomUnit") || "minutes") === "hours"
+                ? ((parseInt(_getVal("schCustomValue") || "1", 10) || 1) * 60)
+                : (parseInt(_getVal("schCustomValue") || "60", 10) || 60)
+            ),
             advanced: { enabled: false, jobs: [] }
           };
       if (_cwFn("getSchedulingPatch", window)) {
