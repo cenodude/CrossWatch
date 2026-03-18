@@ -219,7 +219,9 @@ def _get_index_html_static() -> str:
   window.cwSetDocumentTitle = setTitle;
   document.addEventListener("DOMContentLoaded", () => setTitle(currentPage()), { once: true });
   document.addEventListener("tab-changed", (event) => setTitle(event?.detail?.id || event?.detail?.tab));
-  document.addEventListener("cw-settings-pane-changed", () => setTitle("settings"));
+  document.addEventListener("cw-settings-pane-changed", () => {
+    if (currentPage() === "settings") setTitle("settings");
+  });
 })();
 </script>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="alternate icon" href="/favicon.ico">
@@ -694,9 +696,11 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               <div id="sched-provider-raw" class="hidden">
                 <div class="grid2">
                   <div><label for="schEnabled">Enable</label><select id="schEnabled" name="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
-                  <div><label for="schMode">Frequency</label><select id="schMode" name="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option></select></div>
-                  <div><label for="schN">Every N hours</label><input id="schN" name="schN" type="number" min="1" max="24" value="2"></div>
+                  <div><label for="schMode">Frequency</label><select id="schMode" name="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option><option value="custom_interval">Custom</option></select></div>
+                  <div><label for="schN">Every N hours</label><input id="schN" name="schN" type="number" min="2" value="12"></div>
                   <div><label for="schTime">Time</label><input id="schTime" name="schTime" type="time" value="03:30"></div>
+                  <div><label for="schCustomValue">Custom interval</label><input id="schCustomValue" name="schCustomValue" type="number" min="15" step="15" value="60"></div>
+                  <div><label for="schCustomUnit">Custom unit</label><select id="schCustomUnit" name="schCustomUnit"><option value="minutes">Minutes</option><option value="hours">Hours</option></select></div>
                 </div>
                 <div id="sched_advanced_mount"></div>
               </div>
