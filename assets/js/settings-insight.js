@@ -249,6 +249,7 @@
     const body = $('#cw-si-body'), key = JSON.stringify(data || {});
     if (!body || key === state.lastKey) return;
     state.lastKey = key;
+    try { d.dispatchEvent(new CustomEvent('cw-settings-overview-data', { detail: { data } })); } catch {}
     if (!data?.auth?.configured) return void (body.innerHTML = EMPTY.auth);
     if (!data?.pairs?.count && !data?.scrob?.enabled) return void (body.innerHTML = EMPTY.pairs);
     body.innerHTML = '';
