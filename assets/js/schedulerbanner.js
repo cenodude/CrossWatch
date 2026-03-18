@@ -11,6 +11,7 @@
     clear=n=>S.timers[n]&&(clearTimeout(S.timers[n]),S.timers[n]=null),
     scrobMode=()=>String(S.cfg?.scrobble?.mode||"webhook").toLowerCase(),
     schedulingOn=c=>!!((c?.scheduling||c||{}).enabled||(c?.scheduling||c||{})?.advanced?.enabled),
+    advancedOn=c=>!!((c?.scheduling||c||{})?.advanced?.enabled),
     activeCaptureJobs=c=>(((c?.scheduling||c||{})?.advanced?.capture_jobs)||((c?.scheduling||c||{})?.advanced?.captureJobs)||[])
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.provider||"").trim()&&String(r?.feature||"").trim()&&String(r?.at||"").trim()).length,
     activeEventRules=c=>(((c?.scheduling||c||{})?.advanced?.event_rules)||((c?.scheduling||c||{})?.advanced?.eventRules)||[])
@@ -138,8 +139,9 @@
     if (document.hidden) return scheduleSched();
     try {
       const st=await API().Scheduling.status(force), sc=st?.config||S.cfg?.scheduling||{};
-      S.sched={enabled:schedulingOn(sc),advanced:!!sc?.advanced?.enabled,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:activeCaptureJobs(sc)};
-      S.evt={enabled:!!sc?.advanced?.enabled&&activeEventRules(sc)>0,count:activeEventRules(sc)};
+      const adv=advancedOn(sc), captures=adv?activeCaptureJobs(sc):0, events=adv?activeEventRules(sc):0;
+      S.sched={enabled:schedulingOn(sc),advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures};
+      S.evt={enabled:adv&&events>0,count:events};
     } catch { S.sched={enabled:false,running:false,next:0,advanced:false,captures:0}; S.evt={enabled:false,count:0}; }
     render();
     scheduleSched();
