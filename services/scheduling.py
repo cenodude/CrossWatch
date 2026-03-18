@@ -17,7 +17,7 @@ except Exception:
     ZoneInfo = None  # type: ignore[assignment]
 
 def _env_timezone_name() -> str:
-    tz = os.environ.get("TZ", "").strip()
+    tz = os.environ.get("TZ", "").strip().lstrip("/")
     return tz
 
 # safety config defaults due to autostart and potential for misconfiguration
@@ -26,6 +26,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
     "mode": "disabled",
     "every_n_hours": 12,
     "daily_time": "03:30",
+    "custom_interval_minutes": 60,
     "timezone": "",
     "jitter_seconds": 0,
     "advanced": {
@@ -45,6 +46,16 @@ def _now_local_naive() -> datetime:
 
 def _tz_from_cfg(sch: dict[str, Any]) -> Any | None:
     name = (sch.get("timezone") or "").strip()
+    if not name or ZoneInfo is None:
+        return None
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return None
+
+
+def _display_tz_from_cfg(sch: dict[str, Any]) -> Any | None:
+    name = (sch.get("timezone") or _env_timezone_name() or "").strip().lstrip("/")
     if not name or ZoneInfo is None:
         return None
     try:
@@ -161,6 +172,22 @@ def _align_next_hour_in_tz(now_tz: datetime) -> datetime:
 def _to_local_naive(dt_tzaware: datetime) -> datetime:
     return dt_tzaware.astimezone().replace(tzinfo=None)
 
+
+def _format_display_datetime(ts: int, sch: dict[str, Any]) -> str:
+    try:
+        display_tz = _display_tz_from_cfg(sch)
+        if display_tz is not None:
+            dt = datetime.fromtimestamp(int(ts), tz=display_tz)
+        else:
+            dt = datetime.fromtimestamp(int(ts), tz=timezone.utc).astimezone()
+        text = dt.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+        return text or dt.isoformat(timespec="seconds")
+    except Exception:
+        try:
+            return datetime.fromtimestamp(int(ts), tz=timezone.utc).astimezone().isoformat(timespec="seconds")
+        except Exception:
+            return ""
+
 def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
     mode = (sch.get("mode") or "disabled").lower()
     if not sch.get("enabled") or mode == "disabled":
@@ -182,6 +209,14 @@ def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
             n = 2
         anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(second=0, microsecond=0)
         return _apply_jitter(anchor + timedelta(hours=n), sch)
+
+    if mode == "custom_interval":
+        try:
+            minutes = max(15, int(sch.get("custom_interval_minutes", sch.get("custom_minutes", 60)) or 60))
+        except Exception:
+            minutes = 60
+        anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(second=0, microsecond=0)
+        return _apply_jitter(anchor + timedelta(minutes=minutes), sch)
 
     if mode == "daily_time":
         hh, mm = (_parse_hhmm((sch.get("daily_time") or "").strip()) or (3, 30))
@@ -615,6 +650,7 @@ class SyncScheduler:
         mode: str,
         every_n_hours: int | None = None,
         daily_time: str | None = None,
+        custom_interval_minutes: int | None = None,
     ) -> None:
         s = self._get_sched_cfg()
         s["mode"] = str(mode or "disabled").lower()
@@ -625,6 +661,11 @@ class SyncScheduler:
                 pass
         if daily_time is not None:
             s["daily_time"] = str(daily_time).strip()
+        if custom_interval_minutes is not None:
+            try:
+                s["custom_interval_minutes"] = max(15, int(custom_interval_minutes))
+            except Exception:
+                pass
         self._set_sched_cfg(s)
         self.refresh()
 
@@ -872,6 +913,7 @@ class SyncScheduler:
             return bool(self.run_sync_fn())
 
     def _update_next(self, nxt: datetime | None, *, effective_mode: str) -> None:
+        sch = self._get_sched_cfg()
         with self._lock:
             self._status["effective_mode"] = effective_mode
             if nxt is None:
@@ -880,7 +922,7 @@ class SyncScheduler:
                 return
             self._status["next_run_at"] = int(nxt.timestamp())
             try:
-                iso = datetime.fromtimestamp(self._status["next_run_at"], tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                iso = _format_display_datetime(self._status["next_run_at"], sch)
             except Exception:
                 iso = ""
             self._status["next_run_iso"] = iso
@@ -1160,6 +1202,7 @@ class SyncScheduler:
                     str(sch.get("mode") or ""),
                     str(sch.get("every_n_hours") or ""),
                     str(sch.get("daily_time") or ""),
+                    str(sch.get("custom_interval_minutes") or ""),
                     str(sch.get("timezone") or ""),
                     str(sch.get("jitter_seconds") or ""),
                 ])
