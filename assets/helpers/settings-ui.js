@@ -509,6 +509,8 @@ function cwBuildSchedulerPanel() {
   const modeEl = detach("schMode");
   const nEl = detach("schN");
   const timeEl = detach("schTime");
+  const customValueEl = detach("schCustomValue");
+  const customUnitEl = detach("schCustomUnit");
 
   const basicCard = document.createElement("div");
   basicCard.className = "auth-card";
@@ -519,8 +521,13 @@ function cwBuildSchedulerPanel() {
   const f2 = mkField("Frequency", modeEl, "Choose the timer mode.");
   const f3 = mkField("Every N hours", nEl, "Only used when Frequency = Every N hours.");
   const f4 = mkField("Time", timeEl, "Only used when Frequency = Daily at…");
+  const customWrap = document.createElement("div");
+  customWrap.className = "cw-inline-row";
+  if (customValueEl) customWrap.appendChild(customValueEl);
+  if (customUnitEl) customWrap.appendChild(customUnitEl);
+  const f5 = mkField("Custom interval", customWrap.childNodes.length ? customWrap : null, "Only used when Frequency = Custom.");
 
-  [f1, f2, f3, f4].forEach((x) => x && basicFields.appendChild(x));
+  [f1, f2, f3, f4, f5].forEach((x) => x && basicFields.appendChild(x));
   if (basicFields.childNodes.length) basicCard.appendChild(basicFields);
   pBasic.appendChild(basicCard);
 
@@ -597,10 +604,13 @@ function cwSchedSettingsHubUpdate() {
   if (!patch) {
     const enabled = (document.getElementById("schEnabled")?.value || "").toString().trim() === "true";
     const mode = document.getElementById("schMode")?.value || "hourly";
-    const every_n_hours = parseInt(document.getElementById("schN")?.value || "2", 10);
+    const every_n_hours = parseInt(document.getElementById("schN")?.value || "12", 10);
     const daily_time = document.getElementById("schTime")?.value || "03:30";
+    const customValue = parseInt(document.getElementById("schCustomValue")?.value || "60", 10) || 60;
+    const customUnit = document.getElementById("schCustomUnit")?.value || "minutes";
+    const custom_interval_minutes = Math.max(15, customUnit === "hours" ? customValue * 60 : customValue);
     const advOn = !!document.getElementById("schAdvEnabled")?.checked;
-    patch = { enabled, mode, every_n_hours, daily_time, advanced: { enabled: advOn, jobs: [] } };
+    patch = { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, advanced: { enabled: advOn, jobs: [] } };
   }
 
   set("hub_sch_enabled", `Status: ${patch.enabled ? "Enabled" : "Disabled"}`);
@@ -609,6 +619,10 @@ function cwSchedSettingsHubUpdate() {
   if (patch.mode === "hourly") modeText = "Every hour";
   else if (patch.mode === "every_n_hours") modeText = `Every ${patch.every_n_hours || 2}h`;
   else if (patch.mode === "daily_time") modeText = `Daily ${patch.daily_time || "—"}`;
+  else if (patch.mode === "custom_interval") {
+    const minutes = Math.max(15, parseInt(patch.custom_interval_minutes || 60, 10) || 60);
+    modeText = minutes % 60 === 0 ? `Custom ${minutes / 60}h` : `Custom ${minutes} min`;
+  }
   set("hub_sch_mode", `Mode: ${modeText}`);
 
   const adv = patch.advanced || {};
@@ -634,7 +648,7 @@ function cwSchedSettingsHubInit() {
     el.__hubWired = true;
   };
 
-  ["schEnabled", "schMode", "schN", "schTime", "schAdvEnabled"].forEach(wire);
+  ["schEnabled", "schMode", "schN", "schTime", "schCustomValue", "schCustomUnit", "schAdvEnabled"].forEach(wire);
 
   const adv = document.getElementById("schAdv");
   if (adv && !adv.__hubWired) {
@@ -1220,8 +1234,16 @@ async function loadConfig() {
   const s = cfg.scheduling || {};
   _setVal("schEnabled", String(!!s.enabled));
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
-  _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "2");
+  _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "12");
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
+  const customMinutes = Math.max(15, parseInt(s.custom_interval_minutes ?? s.custom_minutes ?? 60, 10) || 60);
+  if (customMinutes % 60 === 0) {
+    _setVal("schCustomValue", String(Math.max(1, customMinutes / 60)));
+    _setVal("schCustomUnit", "hours");
+  } else {
+    _setVal("schCustomValue", String(customMinutes));
+    _setVal("schCustomUnit", "minutes");
+  }
   if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
 
   try {
