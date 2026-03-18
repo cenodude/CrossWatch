@@ -22,6 +22,10 @@ if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
 if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 2500;
 if (typeof window._detOpenSeq === "undefined") window._detOpenSeq = 0;
 if (typeof window._detBuf === "undefined") window._detBuf = "";
+if (typeof window._detSeenLines === "undefined") window._detSeenLines = [];
+if (typeof window._detReplayActive === "undefined") window._detReplayActive = false;
+if (typeof window._detReplayCursor === "undefined") window._detReplayCursor = 0;
+if (typeof window._detDidConnectOnce === "undefined") window._detDidConnectOnce = false;
 
 function _activeDetailsLogEl() {
   return window._detailsTab === "watcher"
@@ -32,6 +36,39 @@ function _activeDetailsLogEl() {
 function _pruneDetailsLog(el) {
   const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
   while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
+}
+
+function _pruneSeenDetailLines() {
+  const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+  const lines = Array.isArray(window._detSeenLines) ? window._detSeenLines : [];
+  if (lines.length > max) window._detSeenLines = lines.slice(lines.length - max);
+}
+
+function _rememberDetailLine(line) {
+  if (!Array.isArray(window._detSeenLines)) window._detSeenLines = [];
+  window._detSeenLines.push(String(line ?? ""));
+  _pruneSeenDetailLines();
+}
+
+function _beginDetailReplayFilter() {
+  const lines = Array.isArray(window._detSeenLines) ? window._detSeenLines : [];
+  window._detReplayActive = lines.length > 0;
+  window._detReplayCursor = 0;
+}
+
+function _shouldSkipReplayedDetailLine(line) {
+  if (!window._detReplayActive) return false;
+  const lines = Array.isArray(window._detSeenLines) ? window._detSeenLines : [];
+  if (window._detReplayCursor >= lines.length) {
+    window._detReplayActive = false;
+    return false;
+  }
+  if (String(lines[window._detReplayCursor] ?? "") === String(line ?? "")) {
+    window._detReplayCursor += 1;
+    return true;
+  }
+  window._detReplayActive = false;
+  return false;
 }
 
 function _detailsVisible() {
@@ -313,6 +350,10 @@ async function openDetailsLog() {
   if (!useFormatter) el.classList?.add("cf-log-plain");
   window.detStickBottom = true;
   window._detBuf = "";
+  window._detSeenLines = [];
+  window._detReplayActive = false;
+  window._detReplayCursor = 0;
+  window._detDidConnectOnce = false;
   try { CF?.reset?.(); } catch {}
 
   try { window.esDet?.close(); } catch {}
@@ -367,11 +408,16 @@ async function openDetailsLog() {
   const connect = () => {
     if (authSetupPending()) return;
     try { window.esDet?.close(); } catch (_) {}
+    if (window._detDidConnectOnce) _beginDetailReplayFilter();
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "SYNC");
     url.searchParams.set("_ts", String(Date.now()));
     window.esDet = new EventSource(url.toString());
-    window.esDet.onopen = () => { tabSync?.classList.add("connected"); tabSync?.classList.remove("stale"); };
+    window.esDet.onopen = () => {
+      window._detDidConnectOnce = true;
+      tabSync?.classList.add("connected");
+      tabSync?.classList.remove("stale");
+    };
 
     window.esDet.onmessage = (ev) => {
       lastMsgAt = Date.now();
@@ -382,8 +428,16 @@ async function openDetailsLog() {
       if (ev.data === "::CLEAR::") {
         el.textContent = "";
         window._detBuf = "";
+        window._detSeenLines = [];
+        window._detReplayActive = false;
+        window._detReplayCursor = 0;
         try { CF?.reset?.(); } catch {}
         updateSlider();
+        return;
+      }
+
+      if (_shouldSkipReplayedDetailLine(ev.data)) {
+        retryMs = 1000;
         return;
       }
 
@@ -394,6 +448,7 @@ async function openDetailsLog() {
         window._detBuf = buf;
         for (const tok of tokens) CF.renderInto(el, tok, false);
       }
+      _rememberDetailLine(ev.data);
       _pruneDetailsLog(el);
       if (window.detStickBottom) el.scrollTop = el.scrollHeight;
       updateSlider();
@@ -460,6 +515,8 @@ function closeDetailsLog() {
   window.esDet = null;
   window.esDetSummary = null;
   window._detBuf = "";
+  window._detReplayActive = false;
+  window._detReplayCursor = 0;
   if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
   if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
   if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
@@ -488,6 +545,10 @@ function resetDetailsSyncLog() {
   const el = document.getElementById("det-log");
   if (el) el.textContent = "";
   window._detBuf = "";
+  window._detSeenLines = [];
+  window._detReplayActive = false;
+  window._detReplayCursor = 0;
+  window._detDidConnectOnce = false;
   window.detStickBottom = true;
   try { window.ClientFormatter?.reset?.(); } catch {}
 }
