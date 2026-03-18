@@ -569,9 +569,10 @@ DEFAULT_CFG: dict[str, Any] = {
     # --- Scheduling ----------------------------------------------------------
     "scheduling": {
         "enabled": False,                               # Standard scheduler master toggle
-        "mode": "every_n_hours",                        # "every_n_hours" | "daily_time"
-        "every_n_hours": 12,                            # When mode=every_n_hours, run every N hours (1–12)
+        "mode": "every_n_hours",                        # "hourly" | "every_n_hours" | "daily_time" | "custom_interval"
+        "every_n_hours": 12,                            # When mode=every_n_hours, run every N hours (2+ recommended)
         "daily_time": "03:30",                          # When mode=daily_time, run at this time (HH:MM, 24h)
+        "custom_interval_minutes": 60,                  # When mode=custom_interval, run every N minutes (minimum 15)
         "advanced": {
             "enabled": False,                           # Advanced scheduler master toggle
             "jobs": [],
@@ -1055,6 +1056,8 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
         s["every_n_hours"] = 1
     elif mode_raw in {"daily", "daily_at", "daily_time"}:
         mode = "daily_time"
+    elif mode_raw in {"custom", "custom_interval", "custom_minutes", "interval"}:
+        mode = "custom_interval"
     elif mode_raw == "every_n_hours":
         mode = "every_n_hours"
     else:
@@ -1067,14 +1070,23 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
         n = 2
     if n < 1:
         n = 1
-    if n > 12:
-        n = 12
+    if mode == "every_n_hours" and n <= 1:
+        mode = "hourly"
+        s["mode"] = mode
     s["every_n_hours"] = n
 
     t = str(s.get("daily_time", "03:30") or "03:30").strip()
     if not _is_hhmm(t):
         t = "03:30"
     s["daily_time"] = t
+
+    try:
+        custom_minutes = int(s.get("custom_interval_minutes", s.get("custom_minutes", 60)) or 60)
+    except Exception:
+        custom_minutes = 60
+    if custom_minutes < 15:
+        custom_minutes = 15
+    s["custom_interval_minutes"] = custom_minutes
 
     adv = _ensure_dict(s, "advanced")
     adv["enabled"] = bool(adv.get("enabled", False))
