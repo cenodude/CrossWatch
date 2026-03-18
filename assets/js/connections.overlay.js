@@ -27,23 +27,23 @@
   function ensureStyles() {
     const css = `
 #providers_list{display:block!important;width:100%!important;scrollbar-gutter:stable;overscroll-behavior:contain}
-#providers_list .providers-board{display:grid!important;width:100%!important;grid-template-columns:repeat(auto-fit,minmax(300px,360px))!important;gap:14px!important;align-items:start!important;justify-content:start!important}
+#providers_list .providers-board{display:grid!important;width:100%!important;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))!important;gap:14px!important;align-items:start!important;justify-content:start!important}
 #providers_list .prov-card{position:relative;min-height:124px;padding:14px 14px 16px;border-radius:22px;background:linear-gradient(180deg,rgba(8,10,18,.96),rgba(5,7,14,.94));isolation:isolate;overflow:hidden}
 #providers_list .prov-card::before{content:"";position:absolute;inset:8px;pointer-events:none;border-radius:18px;border:1px solid rgba(255,255,255,.10);opacity:.7}
 #providers_list .prov-card::after{content:"";position:absolute;inset:-30% 20% auto -10%;height:70%;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.10),transparent 55%);opacity:.28;transform:rotate(-12deg)}
 #providers_list .prov-card > *{position:relative;z-index:1}
 #providers_list .prov-card .prov-watermark{position:absolute;inset:0;z-index:0;opacity:1}
-#providers_list .prov-card .prov-watermark::after{right:var(--wm-right,-7%);bottom:var(--wm-bottom,-12%);width:var(--wm-width,78%);height:var(--wm-height,92%);opacity:.16;transform:scale(1.42);transform-origin:108% 94%;filter:grayscale(.12) brightness(1.06) saturate(1.08);mix-blend-mode:screen}
-#providers_list .prov-card.brand-crosswatch .prov-watermark::after{width:84%;height:106%;right:-12%;bottom:-16%;transform:scale(1.48)}
-#providers_list .prov-card.brand-mdblist .prov-watermark::after{width:70%;height:98%;right:-4%;bottom:-10%;transform:scale(1.4)}
-#providers_list .prov-card.brand-plex .prov-watermark::after{width:72%;height:98%;right:-2%;bottom:-8%;transform:scale(1.46)}
-#providers_list .prov-card.brand-simkl .prov-watermark::after{width:74%;height:100%;right:-4%;bottom:-10%;transform:scale(1.48)}
-#providers_list .prov-card.brand-trakt .prov-watermark::after{width:72%;height:98%;right:-2%;bottom:-8%;transform:scale(1.46)}
-#providers_list .prov-card.brand-anilist .prov-watermark::after{width:74%;height:100%;right:-4%;bottom:-10%;transform:scale(1.46)}
-#providers_list .prov-card.brand-emby .prov-watermark::after{width:76%;height:102%;right:-5%;bottom:-11%;transform:scale(1.44)}
-#providers_list .prov-card.brand-jellyfin .prov-watermark::after{width:88%;height:112%;right:-14%;bottom:-18%;transform:scale(1.44)}
-#providers_list .prov-card.brand-tmdb-sync .prov-watermark::after{width:86%;height:58%;right:-10%;bottom:7%;transform:scale(1.32);transform-origin:104% 52%}
-#providers_list .prov-card.brand-tautulli .prov-watermark::after{width:76%;height:102%;right:-5%;bottom:-10%;transform:scale(1.46)}
+#providers_list .prov-card .prov-watermark::after{left:50%;top:50%;right:auto;bottom:auto;width:160%;height:188%;background-position:center center;opacity:.24;transform:translate(-50%,-50%) scale(1.24);transform-origin:center center;filter:grayscale(.04) brightness(1.12) saturate(1.1);mix-blend-mode:screen}
+#providers_list .prov-card.brand-crosswatch .prov-watermark::after{width:172%;height:198%;transform:translate(-50%,-50%) scale(1.22)}
+#providers_list .prov-card.brand-mdblist .prov-watermark::after{width:156%;height:184%;transform:translate(-50%,-50%) scale(1.2)}
+#providers_list .prov-card.brand-plex .prov-watermark::after{width:158%;height:186%;transform:translate(-50%,-50%) scale(1.2)}
+#providers_list .prov-card.brand-simkl .prov-watermark::after{width:164%;height:192%;transform:translate(-50%,-50%) scale(1.22)}
+#providers_list .prov-card.brand-trakt .prov-watermark::after{width:158%;height:186%;transform:translate(-50%,-50%) scale(1.2)}
+#providers_list .prov-card.brand-anilist .prov-watermark::after{width:164%;height:192%;transform:translate(-50%,-50%) scale(1.2)}
+#providers_list .prov-card.brand-emby .prov-watermark::after{width:164%;height:190%;transform:translate(-50%,-50%) scale(1.2)}
+#providers_list .prov-card.brand-jellyfin .prov-watermark::after{width:176%;height:206%;transform:translate(-50%,-50%) scale(1.18)}
+#providers_list .prov-card.brand-tmdb-sync .prov-watermark::after{width:174%;height:124%;transform:translate(-50%,-50%) scale(1.14)}
+#providers_list .prov-card.brand-tautulli .prov-watermark::after{width:160%;height:188%;transform:translate(-50%,-50%) scale(1.2)}
 #providers_list .prov-main{display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;min-height:92px;gap:10px}
 #providers_list .prov-title{font-size:1rem;font-weight:900;line-height:1.08;letter-spacing:.04em;text-transform:uppercase;color:#f6f7fb;text-shadow:0 1px 0 rgba(0,0,0,.35)}
 #providers_list .prov-features{display:inline-flex;align-items:center;gap:8px;padding:0;margin:0}
@@ -54,14 +54,14 @@
 #providers_list .prov-dot.hi.on{background:#2de2ff;box-shadow:0 0 8px rgba(45,226,255,.95),0 0 18px rgba(45,226,255,.42)}
 #providers_list .prov-dot.pr.on{background:#a78bfa;box-shadow:0 0 8px rgba(167,139,250,.95),0 0 18px rgba(167,139,250,.42)}
 #providers_list .prov-dot.pl.on{background:#ff00e5;box-shadow:0 0 8px rgba(255,0,229,.95),0 0 18px rgba(255,0,229,.42)}
-#providers_list .prov-actions{display:flex;gap:8px;flex-wrap:nowrap;align-items:center}
-#providers_list .prov-btn{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;justify-content:center;min-width:148px;min-height:44px;padding:10px 16px;white-space:nowrap;border-radius:16px;border:1px solid rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(12,14,30,.96),rgba(7,8,20,.96));color:#f3f5fb;font-size:.96rem;font-weight:850;letter-spacing:.01em;cursor:pointer;box-shadow:0 10px 22px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .14s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
+#providers_list .prov-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+#providers_list .prov-btn{appearance:none;-webkit-appearance:none;display:inline-flex;align-items:center;justify-content:center;min-width:118px;min-height:36px;padding:7px 12px;white-space:nowrap;border-radius:14px;border:1px solid rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(12,14,30,.96),rgba(7,8,20,.96));color:#f3f5fb;font-size:.86rem;font-weight:850;letter-spacing:.01em;cursor:pointer;box-shadow:0 8px 18px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.06);transition:transform .14s ease,box-shadow .18s ease,border-color .18s ease,background .18s ease}
 #providers_list .prov-btn:hover{transform:translateY(-1px);box-shadow:0 14px 28px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.10)}
 #providers_list .prov-btn:active{transform:translateY(0)}
 #providers_list .prov-btn.target{border-color:rgba(255,255,255,.22);background:linear-gradient(180deg,rgba(18,21,38,.98),rgba(8,10,22,.98))}
 #providers_list .prov-btn.selected{border-color:rgba(255,255,255,.24);background:linear-gradient(180deg,rgba(19,24,40,.98),rgba(10,13,26,.98))}
-#providers_list .prov-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 10px;white-space:nowrap;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);font-weight:800;font-size:.75rem;letter-spacing:.03em;text-transform:uppercase;color:#eef2ff}
-#providers_list .prov-badge::before{content:"";width:8px;height:8px;border-radius:999px;background:currentColor;opacity:.9}
+#providers_list .prov-badge{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 9px;max-width:100%;white-space:nowrap;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);font-weight:800;font-size:.64rem;letter-spacing:.08em;text-transform:uppercase;color:#eef2ff}
+#providers_list .prov-badge::before{content:"";width:7px;height:7px;border-radius:999px;background:currentColor;opacity:.9}
 #providers_list .prov-card.is-source .prov-badge{color:#7c5cff;box-shadow:0 0 16px rgba(124,92,255,.22)}
 #providers_list .prov-card.is-target .prov-badge{color:#19c37d;box-shadow:0 0 16px rgba(25,195,125,.18)}
 #providers_list .prov-empty{padding:14px 0;color:var(--muted,#9aa4b2)}
