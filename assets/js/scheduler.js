@@ -1475,7 +1475,7 @@ const ensureStdEnabledToggle = () => {
   <div class="sch-adv-head-copy">
     <div class="sch-adv-head-kicker">Advanced plan</div>
     <div class="sch-adv-head-title">Step and event scheduler</div>
-    <p>Set up a Time Plan, Event Triggers, or both in one advanced schedule.</p>
+    <p>Set up a Time Plan, Captures, Event Triggers in one advanced schedule.</p>
   </div>
   <label class="cx-toggle">
     <input type="checkbox" id="schAdvEnabled">
