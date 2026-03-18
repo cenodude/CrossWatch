@@ -22,49 +22,53 @@ function injectCSS() {
   const el = document.createElement("style");
   el.id = "cw-tls-css";
   el.textContent = `
-  .cw-tls{position:relative;display:flex;flex-direction:column;height:100%;color:#eaf1ff}
+  .cx-modal-shell.tls-modal-shell{width:min(var(--cxModalMaxW,980px),calc(100vw - 64px))!important;max-width:min(var(--cxModalMaxW,980px),calc(100vw - 64px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 56px))!important;background:linear-gradient(180deg,rgba(7,10,18,.96),rgba(5,8,15,.94))!important;border:1px solid rgba(103,128,255,.16)!important;box-shadow:0 34px 90px rgba(0,0,0,.58),0 0 0 1px rgba(255,255,255,.03) inset!important}
+  .cw-tls{position:relative;display:flex;flex-direction:column;height:100%;background:radial-gradient(120% 120% at 0% 0%,rgba(102,88,255,.06),transparent 32%),radial-gradient(110% 140% at 100% 100%,rgba(0,208,255,.05),transparent 30%),linear-gradient(180deg,rgba(6,9,16,.985),rgba(4,6,12,.985));color:#eaf1ff}
+  .cw-tls::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(255,255,255,.022),transparent 30%,transparent 70%,rgba(255,255,255,.018));opacity:.52}
   .cw-tls .cx-head{
-    display:flex;align-items:center;justify-content:space-between;gap:12px;
-    padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.10);
-    background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02))
+    position:relative;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:12px 14px 10px;border-bottom:1px solid rgba(255,255,255,.08);
+    background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.01));backdrop-filter:blur(10px)
   }
-  .cw-tls .head-left{display:flex;align-items:center;gap:10px;min-width:0}
+  .cw-tls .head-left{display:flex;align-items:center;gap:12px;min-width:0}
   .cw-tls .icon{
-    width:34px;height:34px;border-radius:999px;display:flex;align-items:center;justify-content:center;flex-shrink:0;
-    background:linear-gradient(135deg,#7c4dff,#39c2ff);border:1px solid rgba(124,77,255,.40);
-    box-shadow:0 0 18px rgba(57,194,255,.18),0 0 18px rgba(124,77,255,.18)
+    width:36px;height:36px;border-radius:12px;display:grid;place-items:center;flex-shrink:0;
+    background:linear-gradient(135deg,rgba(94,226,172,.18),rgba(56,189,248,.12));border:1px solid rgba(79,209,156,.22);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)
   }
-  .cw-tls .icon .material-symbols-rounded{font-variation-settings:"FILL" 0,"wght" 650,"GRAD" 0,"opsz" 24;font-size:20px}
+  .cw-tls .icon .material-symbols-rounded{font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24;font-size:18px;line-height:1;color:#f3f6ff}
   .cw-tls .titles{display:flex;flex-direction:column;gap:2px;min-width:0}
-  .cw-tls .title{font-weight:850;letter-spacing:.2px}
-  .cw-tls .sub{opacity:.78;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .cw-tls .title{font-weight:900;font-size:18px;letter-spacing:.08em;text-transform:uppercase;color:#f3f6ff;text-shadow:0 0 18px rgba(104,122,255,.16)}
+  .cw-tls .sub{color:rgba(205,215,235,.74);font-size:12px;line-height:1.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cw-tls .head-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .cw-tls .btn{
-    border:1px solid rgba(255,255,255,.18);background:#171b2a;color:#fff;border-radius:10px;padding:7px 10px;
+    appearance:none;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));color:#edf3ff;border-radius:14px;padding:8px 12px;font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;box-shadow:0 10px 24px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.04);transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease,background .14s ease
   }
-  .cw-tls .btn.primary{background:linear-gradient(135deg,#7c4dff,#39c2ff);border-color:rgba(124,77,255,.45);font-weight:750}
-  .cw-tls .btn.danger{background:linear-gradient(135deg,#ff5d76,#ff9f5d);border-color:rgba(255,93,118,.35);font-weight:750}
+  .cw-tls .btn:hover{transform:translateY(-1px);border-color:rgba(123,112,255,.4);box-shadow:0 14px 30px rgba(0,0,0,.24),0 0 0 1px rgba(123,112,255,.14) inset}
+  .cw-tls .btn:active{transform:none}
+  .cw-tls .btn.primary{background:linear-gradient(135deg,rgba(112,92,255,.92),rgba(72,144,255,.88));border-color:rgba(143,165,255,.38);box-shadow:0 16px 34px rgba(45,96,255,.26),0 0 18px rgba(116,97,255,.18)}
+  .cw-tls .btn.danger{background:linear-gradient(135deg,#ff5d76,#ff9f5d);border-color:rgba(255,93,118,.35);box-shadow:0 16px 34px rgba(255,93,118,.18),0 0 18px rgba(255,159,93,.14)}
   .cw-tls .btn:disabled{opacity:.55;cursor:not-allowed}
 
-  .cw-tls .cx-body{padding:12px 14px;overflow:auto;flex:1;min-height:0}
+  .cw-tls .cx-body{position:relative;z-index:1;padding:12px 14px;overflow:auto;flex:1;min-height:0}
   .cw-tls .section{
     border:1px solid rgba(255,255,255,.10);background:rgba(13,17,23,.35);
     border-radius:14px;box-shadow:inset 0 1px 0 rgba(255,255,255,.04);padding:12px 12px;margin-bottom:12px
   }
-  .cw-tls .section h3{margin:0 0 10px 0;font-size:13px;letter-spacing:.2px;opacity:.92}
-  .cw-tls .hint{opacity:.70;font-size:12px;margin-top:8px}
+  .cw-tls .section h3{margin:0 0 10px 0;font-size:14px;font-weight:800;letter-spacing:.01em;color:#f4f7ff}
+  .cw-tls .hint{color:rgba(205,215,235,.74);font-size:12px;line-height:1.45;margin-top:8px}
   .cw-tls .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
   .cw-tls .field{display:flex;flex-direction:column;gap:6px;min-width:0}
-  .cw-tls label{font-size:12px;opacity:.82}
+  .cw-tls label{font-size:12px;font-weight:800;letter-spacing:.01em;color:rgba(230,237,250,.72)}
   .cw-tls input,.cw-tls select,.cw-tls textarea{
     width:100%;box-sizing:border-box;
-    border-radius:10px;border:1px solid rgba(255,255,255,.14);
-    background:#0f1220;color:#eaf1ff;padding:10px 10px;outline:none
+    border-radius:14px;border:1px solid rgba(255,255,255,.12);
+    background:rgba(12,16,30,.82);color:#e6eeff;padding:12px 13px;outline:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02),0 8px 24px rgba(0,0,0,.12)
   }
-  .cw-tls input:focus,.cw-tls select:focus,.cw-tls textarea:focus{border-color:rgba(57,194,255,.55);box-shadow:0 0 0 3px rgba(57,194,255,.14)}
+  .cw-tls input:focus,.cw-tls select:focus,.cw-tls textarea:focus{border-color:rgba(120,136,255,.52);box-shadow:0 0 0 3px rgba(115,97,255,.14),inset 0 0 0 1px rgba(255,255,255,.02)}
   .cw-tls .kv{display:grid;grid-template-columns:160px 1fr;gap:8px 12px;align-items:center}
-  .cw-tls .k{opacity:.75;font-size:12px}
-  .cw-tls .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cw-tls .k{color:rgba(205,215,235,.74);font-size:12px}
+  .cw-tls .v{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cw-tls .pill{display:inline-flex;gap:6px;align-items:center;padding:4px 9px;border-radius:999px;
     border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);font-weight:750;font-size:12px
   }
@@ -76,14 +80,17 @@ function injectCSS() {
   }
   .cw-tls .notice.show{display:block}
   .cw-tls .foot{
-    padding:10px 14px;border-top:1px solid rgba(255,255,255,.10);
+    position:relative;z-index:1;padding:10px 14px;border-top:1px solid rgba(255,255,255,.10);
     background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.04));
     display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;flex-shrink:0
   }
 
   @media (max-width: 860px){
+    .cx-modal-shell.tls-modal-shell{width:min(var(--cxModalMaxW,980px),calc(100vw - 24px))!important;max-width:min(var(--cxModalMaxW,980px),calc(100vw - 24px))!important;height:min(var(--cxModalMaxH,92vh),calc(100vh - 24px))!important}
     .cw-tls .grid2{grid-template-columns:1fr}
     .cw-tls .kv{grid-template-columns:120px 1fr}
+    .cw-tls .cx-head{align-items:flex-start;flex-direction:column}
+    .cw-tls .head-actions{width:100%;justify-content:flex-start}
   }
   `;
   document.head.appendChild(el);
@@ -220,6 +227,7 @@ export default {
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
+      shell.classList.add("tls-modal-shell");
       shell.style.setProperty("--cxModalMaxW", "980px");
       shell.style.setProperty("--cxModalMaxH", "92vh");
     }
