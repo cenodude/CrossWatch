@@ -167,8 +167,20 @@ export default {
           username: state.username,
           password: state.password,
         });
+        state.saving = false;
+        state.error = "";
+        state.password = "";
+        state.password2 = "";
         try { window.notify?.("Sign-in enabled."); } catch {}
-        try { window.location.reload(); } catch { window.location.href = "/"; }
+        try {
+          const boot = window.__cwAuthBootstrapState || {};
+          window.__cwAuthBootstrapState = { ...boot, blocked: false };
+        } catch {}
+        try { window.cxCloseModal?.(); } catch {}
+        setTimeout(() => {
+          try { _openSettings(); } catch {}
+          try { window.cwSettingsSelect?.("overview"); } catch {}
+        }, 0);
         return;
       } catch (err) {
         state.error = String(err?.message || "Failed to save sign-in settings.");
