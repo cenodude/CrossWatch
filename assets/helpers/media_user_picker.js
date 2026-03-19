@@ -25,14 +25,18 @@
     if (d.getElementById(STYLE_ID)) return;
     const s = el("style", { id: STYLE_ID });
     s.textContent = `
-#${OVERLAY_ID}{position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,.45)}
+#${OVERLAY_ID}{position:fixed;inset:0;z-index:10055;background:rgba(0,0,0,.45)}
 #${OVERLAY_ID}.hidden{display:none}
-#${HOST_ID}{position:fixed;z-index:9999;width:min(380px,calc(100vw - 24px));max-height:min(460px,calc(100vh - 24px));border-radius:14px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+#${HOST_ID}{position:fixed;z-index:10060;width:min(380px,calc(100vw - 24px));max-height:min(460px,calc(100vh - 24px));border-radius:14px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden}
 #${HOST_ID}.hidden{display:none}
 #${HOST_ID} .head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06)}
 #${HOST_ID} .title{font-weight:800}
 #${HOST_ID} .body{padding:10px 12px;display:grid;gap:10px}
-#${HOST_ID} .list{overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:12px;max-height:300px}
+#${HOST_ID} .list{overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:12px;max-height:300px;scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.92) rgba(255,255,255,.06)}
+#${HOST_ID} .list::-webkit-scrollbar{width:12px}
+#${HOST_ID} .list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}
+#${HOST_ID} .list::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,92,255,.95),rgba(86,60,180,.92));border-radius:999px;border:2px solid rgba(7,9,14,.88)}
+#${HOST_ID} .list::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(145,116,255,.98),rgba(104,79,206,.95))}
 #${HOST_ID} .userrow{width:100%;text-align:left;background:transparent;border:0;color:inherit;padding:10px 10px;cursor:pointer}
 #${HOST_ID} .userrow:hover{background:rgba(255,255,255,.05)}
 #${HOST_ID} .row1{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -59,10 +63,10 @@
 
     const head = host.querySelector(".head");
     head.appendChild(el("div", { className: "title", id: `${HOST_ID}_title`, textContent: "Pick user" }));
-    head.appendChild(el("button", { className: "xbtn", type: "button", "aria-label": "Close", textContent: "×", onclick: () => api.close() }));
+    head.appendChild(el("button", { className: "xbtn", type: "button", "aria-label": "Close", textContent: "x", onclick: () => api.close() }));
 
     const body = el("div", { className: "body" });
-    body.appendChild(el("input", { id: `${HOST_ID}_filter`, placeholder: "Filter…", type: "text" }));
+    body.appendChild(el("input", { id: `${HOST_ID}_filter`, placeholder: "Filter...", type: "text" }));
     body.appendChild(el("div", { className: "list", id: `${HOST_ID}_list` }));
 
     host.appendChild(body);
@@ -239,7 +243,7 @@
     titleEl.textContent = STATE.title;
     filter.value = "";
     listEl.innerHTML = "";
-    listEl.appendChild(el("div", { className: "sub", textContent: "Loading…" }));
+    listEl.appendChild(el("div", { className: "sub", textContent: "Loading..." }));
 
     overlay.classList.remove("hidden");
     host.classList.remove("hidden");
@@ -257,7 +261,7 @@
     } catch (e) {
       STATE.all = [];
       listEl.innerHTML = "";
-      const msg = String(e?.message || e || "Couldn’t load users.");
+      const msg = String(e?.message || e || "Couldn't load users.");
       listEl.appendChild(el("div", { className: "sub", textContent: msg }));
       console.warn("[media_user_picker] users fetch failed:", e);
     }
