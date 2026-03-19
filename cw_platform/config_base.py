@@ -529,9 +529,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # Watcher settings
         "watch": {
             "autostart": False,                         # Start watcher on boot if enabled+mode=watch
-            "provider": "plex",                         # Active watcher either "plex|emby|Jellyfin" (default: "plex")
-            "sink": "",                                 # "trakt" | "simkl" | "mdblist"
-            "routes": [],                               # Route-based config (preferred); empty = migrate legacy keys
+            "routes": [],                               # Route-based config
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt
             "plex_mdblist_ratings": False,              # Watch mode: forward Plex ratings to MDblist
@@ -863,10 +861,6 @@ def _normalize_ratings_feature(val: dict[str, Any]) -> dict[str, Any]:
 def _normalize_features_map(features: dict[str, Any] | None) -> dict[str, Any]:
     f: dict[str, Any] = dict(features or {})
     for name, val in list(f.items()):
-        if isinstance(val, bool):
-            f[name] = {"enable": bool(val), "add": bool(val), "remove": False}
-            continue
-
         if isinstance(val, dict):
             v: dict[str, Any] = dict(val)
             v.setdefault("enable", True)
@@ -1049,14 +1043,14 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
     s["enabled"] = bool(s.get("enabled", False))
 
     mode_raw = str(s.get("mode", "every_n_hours") or "every_n_hours").strip().lower()
-    if mode_raw in {"disabled", "off", "none"}:
+    if mode_raw == "disabled":
         mode = "disabled"
-    elif mode_raw in {"hourly", "every_hour"}:
+    elif mode_raw == "hourly":
         mode = "hourly"
         s["every_n_hours"] = 1
-    elif mode_raw in {"daily", "daily_at", "daily_time"}:
+    elif mode_raw == "daily_time":
         mode = "daily_time"
-    elif mode_raw in {"custom", "custom_interval", "custom_minutes", "interval"}:
+    elif mode_raw == "custom_interval":
         mode = "custom_interval"
     elif mode_raw == "every_n_hours":
         mode = "every_n_hours"
@@ -1081,7 +1075,7 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
     s["daily_time"] = t
 
     try:
-        custom_minutes = int(s.get("custom_interval_minutes", s.get("custom_minutes", 60)) or 60)
+        custom_minutes = int(s.get("custom_interval_minutes", 60) or 60)
     except Exception:
         custom_minutes = 60
     if custom_minutes < 15:
@@ -1321,69 +1315,6 @@ def load_config() -> dict[str, Any]:
                 pass
     except Exception:
         pass
-
-    # Scrobble watcher: migrate legacy provider/sink into route mode when routes is empty.
-    try:
-        from providers.scrobble.routes import ensure_routes
-
-        cfg, migrated = ensure_routes(cfg)
-        if migrated:
-            try:
-                save_config(cfg)
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # Migrate legacy global Trakt history_collection into pair-scoped overrides (pairs > global).
-    migrated_trakt_collection = False
-    try:
-        t = cfg.get("trakt")
-        if isinstance(t, dict) and ("history_collection" in t or "history_collection_types" in t):
-            enabled = bool(t.pop("history_collection", False))
-            raw_types = t.pop("history_collection_types", None)
-            allowed = {"movies", "shows"}
-            types: list[str] = []
-            if isinstance(raw_types, str):
-                types = [x.strip().lower() for x in raw_types.split(",") if x and x.strip()]
-            elif isinstance(raw_types, list):
-                types = [str(x).strip().lower() for x in raw_types if str(x).strip()]
-            types = [x for x in types if x in allowed]
-            if enabled and not types:
-                types = ["movies"]
-
-            pairs = cfg.get("pairs")
-            if isinstance(pairs, list):
-                for p in pairs:
-                    if not isinstance(p, dict):
-                        continue
-                    src = str(p.get("source") or "").upper().strip()
-                    dst = str(p.get("target") or "").upper().strip()
-                    if "TRAKT" not in {src, dst}:
-                        continue
-                    prov = p.get("providers")
-                    if not isinstance(prov, dict):
-                        prov = {}
-                        p["providers"] = prov
-                    trp = prov.get("trakt")
-                    if not isinstance(trp, dict):
-                        trp = {}
-                        prov["trakt"] = trp
-                    if "history_collection" not in trp:
-                        trp["history_collection"] = enabled
-                        migrated_trakt_collection = True
-                    if enabled and types and "history_collection_types" not in trp:
-                        trp["history_collection_types"] = types
-                        migrated_trakt_collection = True
-            else:
-                migrated_trakt_collection = True
-    except Exception:
-        pass
-    if migrated_trakt_collection:
-        try:
-            save_config(cfg)
-        except Exception:
-            pass
 
     return cfg
 
