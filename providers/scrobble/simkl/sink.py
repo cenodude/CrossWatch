@@ -246,15 +246,17 @@ def _ar_seen(key: str) -> bool:
     return False
 
 
-def _ar_key(ids: dict[str, Any], media_type: str) -> str:
+def _ar_key(ids: dict[str, Any], media_type: str, scope: str = "") -> str:
     for k in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb"):
         v = ids.get(k)
         if v:
-            return f"{media_type}:{k}:{v}"
+            return f"{scope}|{media_type}:{k}:{v}" if scope else f"{media_type}:{k}:{v}"
     try:
-        return f"{media_type}:{json.dumps(ids, sort_keys=True)}"
+        base = f"{media_type}:{json.dumps(ids, sort_keys=True)}"
+        return f"{scope}|{base}" if scope else base
     except Exception:
-        return f"{media_type}:title/year"
+        base = f"{media_type}:title/year"
+        return f"{scope}|{base}" if scope else base
 
 
 def _norm_type(t: str) -> str:
@@ -268,8 +270,15 @@ def _norm_type(t: str) -> str:
 
 def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     s = cfg.get("scrobble") or {}
-    if not s.get("delete_plex"):
+    watch = s.get("watch") or {}
+    route_opts_raw = watch.get("route_options")
+    route_opts: dict[str, Any] = route_opts_raw if isinstance(route_opts_raw, dict) else {}
+    route_mode = str(route_opts.get("auto_remove_watchlist") or "inherit").strip().lower()
+    if route_mode == "off":
         return False
+    if not s.get("delete_plex"):
+        if route_mode != "on":
+            return False
     types = s.get("delete_plex_types") or []
     mt = _norm_type(media_type)
     if isinstance(types, str):
@@ -296,7 +305,7 @@ def _show_ids(ev: Any) -> dict[str, Any]:
     return m
 
 
-def _auto_remove_across(ev: Any, cfg: dict[str, Any]) -> None:
+def _auto_remove_across(ev: Any, cfg: dict[str, Any], scope: str = "") -> None:
     try:
         mt = _norm_type(str(getattr(ev, "media_type", "") or ""))
         if not _cfg_delete_enabled(cfg, mt):
@@ -306,11 +315,11 @@ def _auto_remove_across(ev: Any, cfg: dict[str, Any]) -> None:
             ids = _ids(ev)
         if not ids:
             return
-        key = _ar_key(ids, mt)
+        key = _ar_key(ids, mt, scope=scope)
         if _ar_seen(key):
             return
         try:
-            _rm_across(ids, mt)
+            _rm_across(ids, mt, scope=scope)
             return
         except Exception:
             pass
@@ -530,6 +539,7 @@ class SimklSink(ScrobbleSink):
 
         p_now = _clamp(getattr(ev, "progress", 0) or 0)
         force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
+        preserve_stop = bool((getattr(ev, 'raw', None) or {}).get('_cw_preserve_stop'))
         tol = _regress_tolerance_percent(cfg)
         p_sess = self._p_sess.get((sk, mk), -1)
         p_glob = self._p_glob.get(mk, -1)
@@ -585,7 +595,7 @@ class SimklSink(ScrobbleSink):
         if action_in == "stop":
             if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
                 action = "stop"
-            elif p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
+            elif (not preserve_stop) and p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
                 _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
                 action = "pause"
                 p_send = last_sess
@@ -630,7 +640,7 @@ class SimklSink(ScrobbleSink):
         if best_skel is not None:
             b0 = {"progress": float(p_payload), **best_skel, **_app_meta(cfg)}
             if self._should_log_intent(key, path, int(float(b0.get("progress") or p_send))):
-                _log(f"simkl intent {path} using cached {best_desc}, prog={b0.get('progress')}", "DEBUG")
+                _log(f"intent path={path} ids={best_desc} p={b0.get('progress')}", "DEBUG")
             bodies = [b0] + [b for b in bodies if _body_ids_desc(b) != best_desc]
 
         last_err: dict[str, Any] | None = None
@@ -638,14 +648,14 @@ class SimklSink(ScrobbleSink):
             if not (best_skel is not None and i == 0):
                 intent_prog = int(float(body.get("progress") or p_send))
                 if self._should_log_intent(key, path, intent_prog):
-                    _log(f"simkl intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
+                    _log(f"intent path={path} ids={_body_ids_desc(body)} p={body.get('progress')}", "DEBUG")
             res = self._send_http(path, body, cfg)
             if res.get("ok"):
                 try:
                     act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
                 except Exception:
                     act = path.rsplit("/", 1)[-1]
-                _log(f"simkl {path} -> {res['status']} action={act}", "DEBUG")
+                _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
                 self._best[key] = {
                     "skeleton": _extract_skeleton_from_body(body),
                     "ids_desc": _body_ids_desc(body),
@@ -654,11 +664,11 @@ class SimklSink(ScrobbleSink):
                 try:
                     acc = getattr(ev, "account", None)
                     prog_val = float(body.get("progress") or p_send)
-                    _log(f"user='{_mask_account(acc)}' {act} {prog_val:.1f}% • {name}", "INFO")
+                    _log(f"scrobble {act} user='{_mask_account(acc)}' p={prog_val:.1f}% media='{name}'", "INFO")
                 except Exception:
                     pass
                 if action == "stop" and p_send >= comp_thr:
-                    _auto_remove_across(ev, cfg)
+                    _auto_remove_across(ev, cfg, scope=f"simkl:{self._instance_id}")
                 self._a_sess[(sk, mk)] = action
                 if action == "start" and step > 1 and bucket is not None:
                     self._p_step[(sk, mk)] = int(bucket)
@@ -672,7 +682,7 @@ class SimklSink(ScrobbleSink):
         if last_err and last_err.get("status") == 409 and action == "stop":
             _log("Treating 409 (duplicate stop) as watched; proceeding to auto-remove", "WARN")
             if p_send >= comp_thr:
-                _auto_remove_across(ev, cfg)
+                _auto_remove_across(ev, cfg, scope=f"simkl:{self._instance_id}")
             return
 
         if last_err:

@@ -360,15 +360,17 @@ def _ar_seen(key: str) -> bool:
     return False
 
 
-def _ar_key(ids: dict[str, Any], media_type: str) -> str:
+def _ar_key(ids: dict[str, Any], media_type: str, scope: str = "") -> str:
     for k in ("tmdb", "imdb", "tvdb", "trakt", "simkl"):
         v = ids.get(k)
         if v:
-            return f"{media_type}:{k}:{v}"
+            return f"{scope}|{media_type}:{k}:{v}" if scope else f"{media_type}:{k}:{v}"
     try:
-        return f"{media_type}:{json.dumps(ids, sort_keys=True)}"
+        base = f"{media_type}:{json.dumps(ids, sort_keys=True)}"
+        return f"{scope}|{base}" if scope else base
     except Exception:
-        return f"{media_type}:title/year"
+        base = f"{media_type}:title/year"
+        return f"{scope}|{base}" if scope else base
 
 
 def _norm_type(t: str) -> str:
@@ -382,8 +384,15 @@ def _norm_type(t: str) -> str:
 
 def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     s = cfg.get("scrobble") or {}
-    if not s.get("delete_plex"):
+    watch = s.get("watch") or {}
+    route_opts_raw = watch.get("route_options")
+    route_opts: dict[str, Any] = route_opts_raw if isinstance(route_opts_raw, dict) else {}
+    route_mode = str(route_opts.get("auto_remove_watchlist") or "inherit").strip().lower()
+    if route_mode == "off":
         return False
+    if not s.get("delete_plex"):
+        if route_mode != "on":
+            return False
     types = s.get("delete_plex_types") or []
     mt = _norm_type(media_type)
     if isinstance(types, str):
@@ -395,7 +404,7 @@ def _cfg_delete_enabled(cfg: dict[str, Any], media_type: str) -> bool:
     return mt in allowed
 
 
-def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
+def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any], scope: str = "") -> None:
     mt = _norm_type(str(getattr(ev, "media_type", "") or ""))
     if not _cfg_delete_enabled(cfg, mt):
         _log(f"Auto-remove skipped: disabled by config for type={mt or 'unknown'}", "DEBUG")
@@ -406,13 +415,13 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:
     if not ids:
         _log("Auto-remove skipped: no provider IDs available", "DEBUG")
         return
-    key = _ar_key(ids, mt)
+    key = _ar_key(ids, mt, scope=scope)
     if _ar_seen(key):
         _log("Auto-remove deduped (already handled by another sink)", "DEBUG")
         return
     try:
         _log(f"Auto-remove across providers ids={ids} media={mt}", "INFO")
-        _rm_across(ids, mt)
+        _rm_across(ids, mt, scope=scope)
         return
     except Exception as e:
         _log(f"Auto-remove across (_auto_remove_watchlist) failed: {e}", "WARN")
@@ -666,6 +675,7 @@ class TraktSink(ScrobbleSink):
         mk = self._mkey(ev)
         p_now = _clamp(ev.progress)
         force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
+        preserve_stop = bool((getattr(ev, 'raw', None) or {}).get('_cw_preserve_stop'))
         tol = _regress_tol(cfg)
         p_sess = self._p_sess.get((sk, mk), -1)
         p_glob = self._p_glob.get(mk, -1)
@@ -711,7 +721,7 @@ class TraktSink(ScrobbleSink):
         stop_thr = float(thr)
 
         # Match PlexTraktSync behavior: STOP below the configured threshold is treated as pause
-        if action == "stop" and float(p_send) < stop_thr:
+        if action == "stop" and float(p_send) < stop_thr and not preserve_stop:
             if float(p_send) >= trakt_scrobble_cutoff and stop_thr > trakt_scrobble_cutoff:
                 _log(
                     f"STOP at {p_send}% (< {thr}%) is below configured completion threshold but >= Trakt cutoff; "
@@ -762,7 +772,7 @@ class TraktSink(ScrobbleSink):
         if ev.action == "stop":
             if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
                 action = "stop"
-            elif p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
+            elif (not preserve_stop) and p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
                 _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
                 action = "pause"
                 p_send = last_sess
@@ -820,11 +830,7 @@ class TraktSink(ScrobbleSink):
         if best and isinstance(best.get("skeleton"), dict):
             b0 = {"progress": p_payload, **best["skeleton"], **_app_meta(cfg)}
             if self._should_log_intent(key, path, int(b0.get("progress") or p_send)):
-                _log(
-                    f"trakt intent {path} using cached {best.get('ids_desc','title/year')}, "
-                    f"prog={b0.get('progress')}",
-                    "DEBUG",
-                )
+                _log(f"intent path={path} ids={best.get('ids_desc','title/year')} p={b0.get('progress')}", "DEBUG")
             bodies.append(b0)
         else:
             bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_payload)]
@@ -833,14 +839,14 @@ class TraktSink(ScrobbleSink):
             if not (best and i == 0):
                 prog_i = int(float(body.get("progress") or p_payload))
                 if self._should_log_intent(key, path, prog_i):
-                    _log(f"trakt intent {path} using {_body_ids_desc(body)}, prog={body.get('progress')}", "DEBUG")
+                    _log(f"intent path={path} ids={_body_ids_desc(body)} p={body.get('progress')}", "DEBUG")
             res = self._send_http(path, body, cfg)
             if res.get("ok"):
                 try:
                     act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
                 except Exception:
                     act = path.rsplit("/", 1)[-1]
-                _log(f"trakt {path} -> {res['status']} action={act}", "DEBUG")
+                _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
                 skeleton = _extract_skeleton_from_body(body)
                 self._best[key] = {
                     "skeleton": skeleton,
@@ -848,14 +854,14 @@ class TraktSink(ScrobbleSink):
                     "ts": time.time(),
                 }
                 if action == "stop" and p_send >= comp_thr:
-                    _auto_remove_across(ev, cfg)
+                    _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
                 self._a_sess[(sk, mk)] = action
                 if action == "start" and step > 1 and bucket is not None:
                     self._p_step[(sk, mk)] = int(bucket)
                 try:
                     account = _mask_account(ev.account)
                     prog = float(body.get("progress") or p_send)
-                    _log(f"user='{account}' {act} {prog:.1f}% - {name}", "INFO")
+                    _log(f"scrobble {act} user='{account}' p={prog:.1f}% media='{name}'", "INFO")
                 except Exception:
                     pass
                 return
@@ -874,18 +880,14 @@ class TraktSink(ScrobbleSink):
                     **_app_meta(cfg),
                 }
                 if self._should_log_intent(key, path, int(body.get("progress") or p_send)):
-                    _log(
-                        f"trakt intent {path} using {_ids_desc_map(epi_ids)}, "
-                        f"prog={body.get('progress')}",
-                        "DEBUG",
-                    )
+                    _log(f"intent path={path} ids={_ids_desc_map(epi_ids)} p={body.get('progress')}", "DEBUG")
                 res = self._send_http(path, body, cfg)
                 if res.get("ok"):
                     try:
                         act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
                     except Exception:
                         act = path.rsplit("/", 1)[-1]
-                    _log(f"trakt {path} -> {res['status']} action={act}", "DEBUG")
+                    _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
                     skeleton = _extract_skeleton_from_body(body)
                     self._best[key] = {
                         "skeleton": skeleton,
@@ -893,14 +895,14 @@ class TraktSink(ScrobbleSink):
                         "ts": time.time(),
                     }
                     if action == "stop" and p_send >= comp_thr:
-                        _auto_remove_across(ev, cfg)
+                        _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
                     self._a_sess[(sk, mk)] = action
                     if action == "start" and step > 1 and bucket is not None:
                         self._p_step[(sk, mk)] = int(bucket)
                     try:
                         account = _mask_account(ev.account)
                         prog = float(body.get("progress") or p_send)
-                        _log(f"user='{account}' {act} {prog:.1f}% - {name}", "INFO")
+                        _log(f"scrobble {act} user='{account}' p={prog:.1f}% media='{name}'", "INFO")
                     except Exception:
                         pass
                     return
@@ -911,7 +913,7 @@ class TraktSink(ScrobbleSink):
         ):
             _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
             if p_send >= comp_thr:
-                _auto_remove_across(ev, cfg)
+                _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
             return
 
         if last_err:
