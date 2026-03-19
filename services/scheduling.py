@@ -212,7 +212,7 @@ def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
 
     if mode == "custom_interval":
         try:
-            minutes = max(15, int(sch.get("custom_interval_minutes", sch.get("custom_minutes", 60)) or 60))
+            minutes = max(15, int(sch.get("custom_interval_minutes", 60) or 60))
         except Exception:
             minutes = 60
         anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(second=0, microsecond=0)
