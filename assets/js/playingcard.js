@@ -264,7 +264,7 @@
   #playing-detail .pc-poster{width:104px;border:1px solid rgba(255,255,255,.06);border-radius:14px;object-fit:cover;box-shadow:0 14px 30px rgba(0,0,0,.44),inset 0 1px 0 rgba(255,255,255,.04);background:#05070d}
   #playing-detail .pc-title-row{display:flex;align-items:flex-start;gap:8px}
   #playing-detail .pc-title{font-weight:700;font-size:17px;letter-spacing:.005em;line-height:1.2}
-  #playing-detail .pc-title-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+  #playing-detail .pc-title-actions{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:8px}
   #playing-detail .pc-nav{display:inline-flex;align-items:center;gap:6px;padding:3px 6px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018))}
   #playing-detail .pc-nav[hidden]{display:none!important}
   #playing-detail .pc-nav-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:999px;background:rgba(255,255,255,.04);color:#eef3ff;cursor:pointer;transition:background .18s ease,transform .18s ease,opacity .18s ease}
@@ -272,7 +272,7 @@
   #playing-detail .pc-nav-btn:hover{background:rgba(255,255,255,.09);transform:translateY(-1px)}
   #playing-detail .pc-nav-btn:disabled{opacity:.35;cursor:default;transform:none}
   #playing-detail .pc-nav-count{min-width:40px;text-align:center;font-size:11px;font-weight:800;letter-spacing:.08em;color:rgba(236,241,251,.88)}
-  #playing-detail .pc-close{margin-left:auto;display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;min-width:124px;padding:4px 12px 4px 10px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));color:rgba(232,238,252,.78);cursor:pointer;font-size:12px;line-height:1;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
+  #playing-detail .pc-close{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;flex:0 0 auto;width:auto;min-width:0;max-width:max-content;margin:0;padding:4px 10px 4px 8px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));color:rgba(232,238,252,.78);cursor:pointer;font-size:12px;line-height:1;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
   #playing-detail .pc-close .material-symbols-rounded{font-size:18px;line-height:1;font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 20}
   #playing-detail .pc-close-text{display:inline-flex;align-items:center;justify-content:flex-end;min-width:0;flex:0 0 auto}
   #playing-detail .pc-close:hover{color:#fff;border-color:rgba(255,255,255,.13);background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.03));transform:translateY(-1px)}
@@ -286,18 +286,19 @@
   #playing-detail .pc-progress::after{content:"";position:absolute;inset:0;border-radius:999px;box-shadow:0 0 18px rgba(84,124,255,.22);pointer-events:none}
   #playing-detail .pc-progress-labels{position:absolute;inset:0;display:flex;align-items:center;justify-content:space-between;padding:0 10px;pointer-events:none;font-size:11px;font-weight:700;color:rgba(236,241,251,.92);text-shadow:0 1px 2px rgba(0,0,0,.8);box-sizing:border-box}
   #playing-detail .pc-right{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;gap:8px}
+  #playing-detail .pc-right-top{display:flex;align-items:center;justify-content:flex-end;gap:10px}
   #playing-detail .pc-score-circle{--pc-score-deg:0deg;--pc-score-color:#16a34a;--pc-score-track:#111827;position:relative;align-self:flex-end;display:flex;align-items:center;justify-content:center;width:58px;height:58px;border-radius:50%;background:conic-gradient(var(--pc-score-color) var(--pc-score-deg),var(--pc-score-track) var(--pc-score-deg));color:#fff;font-weight:700;box-shadow:0 14px 28px rgba(0,0,0,.34)}
   #playing-detail .pc-score-circle::before{content:"";position:absolute;inset:4px;border-radius:50%;background:linear-gradient(180deg,rgba(8,11,20,.98),rgba(4,7,14,.98))}
   #playing-detail .pc-score-circle.is-empty{background:conic-gradient(#374151 0deg,#111827 0deg)}
   #playing-detail #pc-score{position:relative;font-size:18px}
-  #playing-detail .pc-score-label{font-size:11px;color:rgba(200,209,226,.56);text-align:right}
+  #playing-detail .pc-score-label{align-self:flex-end;font-size:11px;color:rgba(200,209,226,.56);text-align:right}
   #playing-detail .pc-link{display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 10px;border:1px solid rgba(255,255,255,.07);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));color:#dbe8ff;font-size:11px;font-weight:700;text-decoration:none;text-align:center;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
   #playing-detail .pc-link + .pc-link{margin-top:0}
   #playing-detail .pc-link:hover{border-color:rgba(122,138,255,.24);background:linear-gradient(180deg,rgba(96,104,242,.18),rgba(255,255,255,.03));color:#f3f7ff;transform:translateY(-1px)}
   #playing-detail .pc-status{position:static;display:inline-flex;align-items:center;justify-content:center;align-self:stretch;min-height:28px;margin-top:auto;padding:0 10px;border:1px solid rgba(255,255,255,.07);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(236,241,251,.88);opacity:.96;white-space:nowrap;text-align:center}
   @media (max-width:1024px){#playing-detail{width:calc(100vw - 40px)}}
   @media (max-width:768px){#playing-detail .pc-inner{grid-template-columns:80px 1fr;grid-template-rows:auto auto}#playing-detail .pc-right{grid-column:span 2;flex-direction:row;justify-content:space-between}}
-  @media (max-width:680px){#playing-detail{bottom:max(10px,env(safe-area-inset-bottom));width:calc(100vw - 20px);border-radius:18px}#playing-detail .pc-inner{grid-template-columns:64px 1fr;gap:12px;padding:12px}#playing-detail .pc-poster{width:64px;height:96px;border-radius:10px}#playing-detail .pc-title{font-size:15px;line-height:1.15}#playing-detail .pc-title-actions{gap:6px}#playing-detail .pc-nav{padding:2px 4px}#playing-detail .pc-nav-count{min-width:32px;font-size:10px}#playing-detail .pc-nav-btn{width:24px;height:24px}#playing-detail .pc-close{min-width:0;padding:2px 8px 2px 6px}#playing-detail .pc-close-text{display:none}#playing-detail .pc-meta{gap:4px;margin-top:4px}#playing-detail .pc-chip{font-size:10px;padding:3px 7px}#playing-detail .pc-overview{display:none}#playing-detail .pc-progress-bg{height:18px}#playing-detail .pc-progress-labels{font-size:11px;padding:0 8px}#playing-detail .pc-right{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}#playing-detail .pc-score-circle{width:46px;height:46px}#playing-detail .pc-score-label{display:none}#playing-detail .pc-link{font-size:11px;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);text-decoration:none}#playing-detail .pc-status{margin-top:0;flex:1 1 auto;text-align:right;white-space:normal;max-width:60%}}
+  @media (max-width:680px){#playing-detail{bottom:max(10px,env(safe-area-inset-bottom));width:calc(100vw - 20px);border-radius:18px}#playing-detail .pc-inner{grid-template-columns:64px 1fr;gap:12px;padding:12px}#playing-detail .pc-poster{width:64px;height:96px;border-radius:10px}#playing-detail .pc-title{font-size:15px;line-height:1.15}#playing-detail .pc-title-actions{gap:6px}#playing-detail .pc-nav{padding:2px 4px}#playing-detail .pc-nav-count{min-width:32px;font-size:10px}#playing-detail .pc-nav-btn{width:24px;height:24px}#playing-detail .pc-close{min-width:0;margin:0;padding:2px 8px 2px 6px}#playing-detail .pc-close-text{display:none}#playing-detail .pc-meta{gap:4px;margin-top:4px}#playing-detail .pc-chip{font-size:10px;padding:3px 7px}#playing-detail .pc-overview{display:none}#playing-detail .pc-progress-bg{height:18px}#playing-detail .pc-progress-labels{font-size:11px;padding:0 8px}#playing-detail .pc-right{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}#playing-detail .pc-right-top{order:0;display:flex;align-items:center;gap:8px}#playing-detail .pc-score-circle{width:46px;height:46px}#playing-detail .pc-score-label{display:none}#playing-detail .pc-link{font-size:11px;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);text-decoration:none}#playing-detail .pc-status{margin-top:0;flex:1 1 auto;text-align:right;white-space:normal;max-width:60%}}
   @media (hover:none){#playing-detail.show:hover{transform:translate(-50%,0);box-shadow:0 20px 48px rgba(0,0,0,.6)}}
   `;
 
@@ -320,9 +321,6 @@
               <span id="pc-nav-count" class="pc-nav-count">1 / 1</span>
               <button id="pc-next" class="pc-nav-btn" type="button" aria-label="Next stream"><span class="material-symbols-rounded">chevron_right</span></button>
             </div>
-            <button id="pc-close" class="pc-close" title="Hide">
-              <span class="material-symbols-rounded" aria-hidden="true">close</span><span class="pc-close-text">Hide</span>
-            </button>
           </div>
         </div>
         <div id="pc-meta" class="pc-meta"></div>
@@ -333,7 +331,12 @@
         </div>
       </div>
       <div class="pc-right">
-        <div id="pc-score-circle" class="pc-score-circle is-empty"><span id="pc-score">--</span></div>
+        <div class="pc-right-top">
+          <button id="pc-close" class="pc-close" title="Hide">
+            <span class="material-symbols-rounded" aria-hidden="true">close</span><span class="pc-close-text">Hide</span>
+          </button>
+          <div id="pc-score-circle" class="pc-score-circle is-empty"><span id="pc-score">--</span></div>
+        </div>
         <div class="pc-score-label">User Score</div>
         <a id="pc-tmdb" class="pc-link" href="#" target="_blank" rel="noopener noreferrer"></a>
         <a id="pc-imdb" class="pc-link" href="#" target="_blank" rel="noopener noreferrer"></a>
