@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import json
 import time
-import re
-import threading
 import secrets
 import hmac
 import urllib.parse
@@ -20,7 +18,7 @@ from urllib.parse import parse_qs
 
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
-from providers.scrobble.routes import normalize_routes
+from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
 
 try:
@@ -94,6 +92,51 @@ def _ensure_webhook_ids(cfg: dict[str, Any]) -> dict[str, str]:
     return {k: str(ids.get(k) or "").strip() for k in _WEBHOOK_KEYS}
 
 
+def _ensure_route_ratings_webhook_ids(cfg: dict[str, Any], regenerate: bool = False) -> list[dict[str, Any]]:
+    sc = cfg.setdefault("scrobble", {})
+    watch = sc.setdefault("watch", {})
+    routes = watch.get("routes")
+    if not isinstance(routes, list):
+        return []
+
+    changed = False
+    out: list[dict[str, Any]] = []
+    for idx, raw in enumerate(routes):
+        if not isinstance(raw, dict):
+            continue
+        route_id = str(raw.get("id") or f"R{idx + 1}").strip() or f"R{idx + 1}"
+        options = normalize_route_options(raw.get("options"))
+        ratings = dict(options.get("ratings") or {})
+        if regenerate or not str(ratings.get("webhook_id") or "").strip():
+            ratings["webhook_id"] = _gen_webhook_id()
+            changed = True
+        if regenerate or not str(ratings.get("webhook_token") or "").strip():
+            ratings["webhook_token"] = _gen_webhook_id()
+            changed = True
+        options["ratings"] = ratings
+        raw["options"] = options
+        out.append(
+            {
+                "route_id": route_id,
+                "provider": str(raw.get("provider") or "").strip().lower(),
+                "provider_instance": str(raw.get("provider_instance") or "default").strip() or "default",
+                "sink": str(raw.get("sink") or "").strip().lower(),
+                "sink_instance": str(raw.get("sink_instance") or "default").strip() or "default",
+                "mode": str(ratings.get("mode") or "inherit").strip().lower() or "inherit",
+                "targets": list(ratings.get("targets") or []),
+                "webhook_id": str(ratings.get("webhook_id") or "").strip(),
+                "webhook_token": str(ratings.get("webhook_token") or "").strip(),
+            }
+        )
+
+    if changed:
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
+    return out
+
+
 def _extract_url_token(request: Request) -> str:
     q = str(getattr(request.url, "query", "") or "").strip()
     if not q:
@@ -122,6 +165,21 @@ def _extract_url_token(request: Request) -> str:
     return ""
 
 
+def _extract_url_params(request: Request) -> dict[str, str]:
+    q = str(getattr(request.url, "query", "") or "").strip()
+    if not q:
+        return {}
+    try:
+        qs = urllib.parse.parse_qs(q, keep_blank_values=True)
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for key, values in qs.items():
+        value = (values or [""])[0]
+        out[str(key or "").strip().lower()] = str(value or "").strip()
+    return out
+
+
 def _require_webhook_token(request: Request, which: str) -> None:
     cfg = load_config() or {}
     ids = _ensure_webhook_ids(cfg)
@@ -130,6 +188,44 @@ def _require_webhook_token(request: Request, which: str) -> None:
     # Fail closed
     if not expected or not got or not hmac.compare_digest(expected, got):
         raise HTTPException(status_code=401, detail="invalid_webhook_token")
+
+
+def _resolve_plexwatcher_target(request: Request) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
+    cfg = load_config() or {}
+    ids = _ensure_webhook_ids(cfg)
+    route_hooks = _ensure_route_ratings_webhook_ids(cfg)
+    token = _extract_url_token(request)
+    params = _extract_url_params(request)
+
+    expected_global = str(ids.get("plexwatcher") or "").strip()
+    if expected_global and token and hmac.compare_digest(expected_global, token):
+        return "global", cfg, None
+
+    hook_id = str(
+        params.get("route")
+        or params.get("route_id")
+        or params.get("webhook_id")
+        or params.get("id")
+        or ""
+    ).strip()
+    hook_token = str(params.get("token") or token or "").strip()
+
+    for hook in route_hooks:
+        if str(hook.get("provider") or "").strip().lower() != "plex":
+            continue
+        if str(hook.get("mode") or "").strip().lower() != "custom":
+            continue
+        expected_id = str(hook.get("webhook_id") or "").strip()
+        expected_token = str(hook.get("webhook_token") or "").strip()
+        if not expected_id or not expected_token or not hook_id or not hook_token:
+            continue
+        if hmac.compare_digest(expected_id, hook_id) and hmac.compare_digest(expected_token, hook_token):
+            route_id = str(hook.get("route_id") or "").strip()
+            route_cfg = build_route_cfg_by_id(cfg, route_id)
+            if isinstance(route_cfg, dict):
+                return "route", route_cfg, hook
+
+    raise HTTPException(status_code=401, detail="invalid_webhook_token")
 
 
 def _event_trigger_route_label(route: dict[str, Any]) -> str:
@@ -197,7 +293,8 @@ def api_scrobble_event_routes() -> dict[str, Any]:
 async def api_webhook_urls() -> JSONResponse:
     cfg = load_config() or {}
     ids = _ensure_webhook_ids(cfg)
-    return JSONResponse({"ok": True, "ids": ids}, status_code=200)
+    route_hooks = _ensure_route_ratings_webhook_ids(cfg)
+    return JSONResponse({"ok": True, "ids": ids, "route_hooks": route_hooks}, status_code=200)
 
 
 @router.post("/api/webhooks/regenerate")
@@ -207,11 +304,19 @@ async def api_webhook_regenerate() -> JSONResponse:
     ids = sec.setdefault("webhook_ids", {})
     for k in _WEBHOOK_KEYS:
         ids[k] = _gen_webhook_id()
+    route_hooks = _ensure_route_ratings_webhook_ids(cfg, regenerate=True)
     try:
         save_config(cfg)
     except Exception:
         return JSONResponse({"ok": False, "error": "save_failed"}, status_code=500)
-    return JSONResponse({"ok": True, "ids": {k: str(ids.get(k) or '').strip() for k in _WEBHOOK_KEYS}}, status_code=200)
+    return JSONResponse(
+        {
+            "ok": True,
+            "ids": {k: str(ids.get(k) or '').strip() for k in _WEBHOOK_KEYS},
+            "route_hooks": route_hooks,
+        },
+        status_code=200,
+    )
 
 
 def _env_logs(request: Request | None = None) -> tuple[dict[str, list[str]], int]:
@@ -346,36 +451,6 @@ def _emit_scheduler_webhook_event(provider: str, payload: dict[str, Any], result
         CW.scheduler_handle_event(_scheduler_event_webhook_payload(provider, payload or {}, result))
     except Exception:
         pass
-
-def _stop_watch_blocking(w: Any, timeout: float = 6.0) -> bool:
-    try:
-        w.stop()
-    except Exception:
-        pass
-    end = time.monotonic() + max(0.2, float(timeout))
-    while time.monotonic() < end:
-        try:
-            if not bool(getattr(w, "is_alive", lambda: False)()):
-                return True
-        except Exception:
-            return True
-        time.sleep(0.05)
-    return False
-
-def _watch_kind(w: Any) -> str | None:
-    try:
-        name = getattr(getattr(w, "__class__", None), "__name__", "") or ""
-        n = name.lower()
-        if "emby" in n:
-            return "emby"
-        if "jellyfin" in n:
-            return "jellyfin"
-        if "plex" in n:
-            return "plex"
-    except Exception:
-        pass
-    return None
-
 
 def _plex_token(cfg: dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -795,35 +870,18 @@ def api_currently_watching() -> JSONResponse:
                     items.append(vv)
             items.sort(key=lambda x: int(x.get("updated") or 0), reverse=True)
 
-            # Apply global watch filters
-            try:
-                cfg0 = load_config() or {}
-                scrobble = (cfg0.get("scrobble") or {}) or {}
-                watch_cfg = (scrobble.get("watch") or {}) or {}
-                flt = (watch_cfg.get("filters") or {}) or {}
-
-                def _norm(v: Any) -> str:
-                    return str(v or "").strip().lower()
-
-                wl = flt.get("username_whitelist") or []
-                wl_norm = {_norm(u) for u in wl if str(u or "").strip()}
-                if wl_norm:
-                    items = [it for it in items if _norm(it.get("account")) in wl_norm]
-
-                srv = str(flt.get("server_uuid") or "").strip()
-                if srv:
-                    items = [it for it in items if str(it.get("server_uuid") or "").strip() == srv]
-            except Exception:
-                pass
-
-            streams = items
-
-
             def _is_active(st: Any) -> bool:
                 v = str(st or "").lower()
                 return v in ("playing", "paused", "buffering")
 
+            def _prio(it: dict[str, Any]) -> tuple[int, int]:
+                st = str(it.get("state") or "").lower()
+                active_rank = 0 if st == "playing" else 1 if st in ("buffering", "paused") else 2
+                return (active_rank, -int(it.get("updated") or 0))
+
             active_items = [it for it in items if _is_active(it.get("state"))]
+            active_items.sort(key=_prio)
+            streams = active_items or items
             streams_count = len(active_items)
 
             primary = active_items[0] if active_items else (items[0] if items else None)
@@ -879,12 +937,6 @@ def debug_watch_status(request: Request) -> dict[str, Any]:
         except Exception:
             wm = {"groups": [], "routes": []}
 
-    legacy_w = getattr(request.app.state, "watch", None)
-    try:
-        legacy_alive = bool(getattr(legacy_w, "is_alive", lambda: False)()) if legacy_w else False
-    except Exception:
-        legacy_alive = False
-
     groups = wm.get("groups") or []
     routes = wm.get("routes") or []
 
@@ -893,146 +945,27 @@ def debug_watch_status(request: Request) -> dict[str, Any]:
     except Exception:
         route_running = False
 
-    alive = bool(route_running or legacy_alive)
+    alive = bool(route_running)
 
     provider = ""
     if isinstance(groups, list) and len(groups) == 1:
         provider = str((groups[0] or {}).get("provider") or "").strip().lower()
     if not provider:
-        provider = _watch_kind(legacy_w) or ("multi" if groups else "")
+        provider = "multi" if groups else ""
 
     sinks = sorted({str((r or {}).get("sink") or "").strip().lower() for r in (routes if isinstance(routes, list) else []) if (r or {}).get("sink")})
 
     out: dict[str, Any] = dict(wm) if isinstance(wm, dict) else {"groups": [], "routes": []}
     out.update(
         {
-            "has_watch": bool(groups) or bool(legacy_w),
+            "has_watch": bool(groups),
             "alive": bool(alive),
             "stop_set": False,
             "provider": provider or None,
             "sinks": sinks,
         }
     )
-    if legacy_w and not groups:
-        out["legacy"] = {"provider": _watch_kind(legacy_w), "alive": bool(legacy_alive)}
     return out
-
-
-def _stop_legacy_watch(request: Request) -> bool:
-    w = getattr(request.app.state, "watch", None)
-    if not w:
-        return True
-    stopped = _stop_watch_blocking(w)
-    if stopped:
-        request.app.state.watch = None
-        request.app.state.watch_meta = None
-    return bool(stopped)
-
-
-
-
-
-def _ensure_watch_started(
-    request: Request,
-    provider: str | None = None,
-    sink: str | None = None,
-) -> Any:
-    w = getattr(request.app.state, "watch", None)
-    meta = getattr(request.app.state, "watch_meta", None) or {}
-
-    cfg = load_config() or {}
-    scrobble = (cfg.get("scrobble") or {}) or {}
-    watch_cfg = (scrobble.get("watch") or {}) or {}
-
-    prov = (provider or watch_cfg.get("provider") or "plex").lower().strip()
-
-    if sink is not None:
-        sink_cfg = str(sink or "").strip()
-        if not sink_cfg:
-            raise HTTPException(status_code=400, detail="No sinks configured")
-    else:
-        sink_cfg = str(watch_cfg.get("sink") or "").strip()
-
-    want_sinks: list[str] = []
-    if sink_cfg:
-        names = [s.strip().lower() for s in re.split(r"[,&+]", sink_cfg) if s and s.strip()]
-        want_sinks = sorted(set(names))
-
-    if w and getattr(w, "is_alive", lambda: False)():
-        cur_prov = str(meta.get("provider") or _watch_kind(w) or prov).lower().strip()
-        cur_sinks = sorted(set(meta.get("sinks") or []))
-
-        if cur_prov == prov and cur_sinks == want_sinks:
-            filters = dict((watch_cfg.get("filters") or {}) or {})
-            try:
-                if filters and hasattr(w, "set_filters"):
-                    w.set_filters(filters)
-            except Exception:
-                pass
-            return w
-
-        if not _stop_watch_blocking(w):
-            return w
-
-        request.app.state.watch = None
-        request.app.state.watch_meta = None
-        w = None
-
-    added: set[str] = set()
-    sinks: list[Any] = []
-
-    for name in want_sinks:
-        if name == "trakt" and "trakt" not in added:
-            from providers.scrobble.trakt.sink import TraktSink
-            sinks.append(TraktSink())
-            added.add("trakt")
-        elif name == "simkl" and "simkl" not in added:
-            from providers.scrobble.simkl.sink import SimklSink
-            sinks.append(SimklSink())
-            added.add("simkl")
-        elif name == "mdblist" and "mdblist" not in added:
-            from providers.scrobble.mdblist.sink import MDBListSink
-            sinks.append(MDBListSink())
-            added.add("mdblist")
-
-
-    make_watch: Any | None = None
-    if prov == "emby":
-        try:
-            from providers.scrobble.emby.watch import make_default_watch as _mk
-            make_watch = _mk
-        except Exception:
-            make_watch = None
-
-    elif prov == "jellyfin":
-        try:
-            from providers.scrobble.jellyfin.watch import make_default_watch as _mk
-            make_watch = _mk
-        except Exception:
-            make_watch = None
-
-    if make_watch is None:
-        from providers.scrobble.plex.watch import make_default_watch as _mk
-        make_watch = _mk
-        prov = "plex"
-
-    w = make_watch(sinks=sinks)
-
-    filters = dict((watch_cfg.get("filters") or {}) or {})
-    try:
-        if filters and hasattr(w, "set_filters"):
-            w.set_filters(filters)
-    except Exception:
-        pass
-
-    if hasattr(w, "start_async"):
-        w.start_async()
-    else:
-        threading.Thread(target=w.start, daemon=True).start()
-
-    request.app.state.watch = w
-    request.app.state.watch_meta = {"provider": prov, "sinks": sorted(added)}
-    return w
 
 @router.post("/api/watch/start")
 def debug_watch_start(
@@ -1046,32 +979,31 @@ def debug_watch_start(
         except Exception:
             pass
 
-    _stop_legacy_watch(request)
+    if provider is not None or sink is not None:
+        # Watcher startup is route-driven now; query overrides are ignored for backward compatibility.
+        pass
 
-    if HAVE_WATCH_MANAGER and callable(_wm_start_from_config):
-        try:
-            _wm_start_from_config(request.app)  # type: ignore[misc]
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"WatchManager start failed: {e}")
-        out = debug_watch_status(request)
-        out["ok"] = True
-        return out
+    if not (HAVE_WATCH_MANAGER and callable(_wm_start_from_config)):
+        raise HTTPException(status_code=500, detail="WatchManager unavailable")
 
-    w = _ensure_watch_started(request, provider, sink)
-    alive = bool(getattr(w, "is_alive", lambda: False)())
-    meta = getattr(request.app.state, "watch_meta", None) or {}
-    return {"ok": True, "alive": alive, "provider": _watch_kind(w), "sinks": meta.get("sinks") or []}
+    try:
+        _wm_start_from_config(request.app)  # type: ignore[misc]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WatchManager start failed: {e}")
+    out = debug_watch_status(request)
+    out["ok"] = True
+    return out
 
 @router.post("/api/watch/stop")
 def debug_watch_stop(request: Request) -> dict[str, Any]:
-    stopped = True
-    if HAVE_WATCH_MANAGER and callable(_wm_stop_all):
-        try:
-            _wm_stop_all(request.app)  # type: ignore[misc]
-        except Exception:
-            stopped = False
+    if not (HAVE_WATCH_MANAGER and callable(_wm_stop_all)):
+        raise HTTPException(status_code=500, detail="WatchManager unavailable")
 
-    legacy_stopped = _stop_legacy_watch(request)
+    stopped = True
+    try:
+        _wm_stop_all(request.app, wait=False)  # type: ignore[misc]
+    except Exception:
+        stopped = False
 
     if callable(_reset_currently_watching):
         try:
@@ -1080,7 +1012,21 @@ def debug_watch_stop(request: Request) -> dict[str, Any]:
             pass
 
     out = debug_watch_status(request)
-    out.update({"ok": True, "stopped": bool(stopped and legacy_stopped)})
+    out.update({"ok": True, "stopped": bool(stopped)})
+    return out
+
+
+@router.post("/api/watch/refresh")
+def debug_watch_refresh(request: Request) -> dict[str, Any]:
+    if not (HAVE_WATCH_MANAGER and callable(_wm_start_from_config)):
+        raise HTTPException(status_code=500, detail="WatchManager unavailable")
+    try:
+        _wm_start_from_config(request.app)  # type: ignore[misc]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"WatchManager refresh failed: {e}")
+    out = debug_watch_status(request)
+    out["ok"] = True
+    out["reloaded"] = True
     return out
 
 @router.post("/webhook/jellyfintrakt")
@@ -1512,7 +1458,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
 
 @router.post("/webhook/plexwatcher")
 async def webhook_plexwatcher(request: Request) -> JSONResponse:
-    _require_webhook_token(request, "plexwatcher")
+    target_mode, target_cfg, target_hook = _resolve_plexwatcher_target(request)
 
     from crosswatch import _UIHostLogger
 
@@ -1582,7 +1528,14 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
     if event and event != "media.rate":
         return JSONResponse({"ok": True, "ignored": True}, status_code=200)
 
-    res = pxw_process(payload, dict(request.headers), raw=raw, logger=log)
+    res = pxw_process(
+        payload,
+        dict(request.headers),
+        raw=raw,
+        logger=log,
+        cfg_override=target_cfg,
+        route_hook=target_hook,
+    )
 
     if res.get("invalid_signature"):
         log("plexwatcher-webhook: invalid signature", "WARN")
@@ -1595,8 +1548,11 @@ async def webhook_plexwatcher(request: Request) -> JSONResponse:
     elif res.get("simkl") and isinstance(res.get("simkl"), dict) and not res["simkl"].get("ok"):
         log(f"plexwatcher-webhook: simkl failure status={res['simkl'].get('status')}", "WARN")
     else:
+        route_msg = ""
+        if isinstance(target_hook, dict) and target_hook.get("route_id"):
+            route_msg = f" route={target_hook.get('route_id')}"
         log(
-            f"plexwatcher-webhook: processed media_type={res.get('media_type')} rating={res.get('rating')}",
+            f"plexwatcher-webhook: processed media_type={res.get('media_type')} rating={res.get('rating')}{route_msg}",
             "INFO",
         )
 
