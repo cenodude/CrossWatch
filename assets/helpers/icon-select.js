@@ -13,12 +13,14 @@
 .cw-icon-select-btn:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(101,107,255,.12),inset 0 1px 0 rgba(255,255,255,.03)}
 .cw-icon-select.is-open{z-index:10060}
 .cw-icon-select-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 auto}
+.cw-icon-select-leading-badges{display:flex;align-items:center;gap:6px;flex:0 0 auto;flex-wrap:wrap}
 .cw-icon-select-text{display:grid;gap:2px;min-width:0;flex:1 1 auto}
 .cw-icon-select-text:empty{display:none}
 .cw-icon-select-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
 .cw-icon-select-note{font-size:11px;color:rgba(197,206,224,.68);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cw-icon-select-badges{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .cw-icon-select-badge{display:inline-flex;align-items:center;justify-content:center;min-height:22px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.05);color:#eef3ff;font-size:11px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.cw-icon-select-leading-badges .cw-icon-select-badge:first-child{border-color:rgba(92,96,182,.24);background:rgba(92,96,182,.14);color:#eef1ff}
 .cw-icon-select-badges .cw-icon-select-badge:first-child{border-color:rgba(92,96,182,.24);background:rgba(92,96,182,.14);color:#eef1ff}
 .cw-icon-select-badges .cw-icon-select-badge:nth-child(2){border-color:rgba(91,160,255,.22);background:rgba(91,160,255,.12);color:#eef7ff}
 .cw-icon-select-caret{position:relative;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;flex:0 0 14px;opacity:.72;transition:transform .16s ease,opacity .16s ease}
@@ -26,6 +28,7 @@
 .cw-icon-select:hover .cw-icon-select-caret{opacity:.9}
 .cw-icon-select.is-open .cw-icon-select-caret{transform:rotate(180deg)}
 .cw-icon-select-icons{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto}
+.cw-icon-select-segment{display:inline-flex;align-items:center;gap:6px;flex:0 0 auto}
 .cw-icon-select-sep{display:inline-flex;align-items:center;justify-content:center;min-width:16px;color:rgba(214,222,242,.68);font-size:15px;line-height:1;transform:translateY(-1px)}
 .cw-icon-select-icon{width:18px;height:18px;object-fit:contain;display:block;flex:0 0 18px}
 .cw-icon-select-icon.empty{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:rgba(255,255,255,.05);color:rgba(236,241,255,.7);font-size:10px;font-weight:900}
@@ -99,22 +102,64 @@
     const main = d.createElement("span");
     main.className = "cw-icon-select-main";
 
-    const icons = Array.isArray(data.icons) ? data.icons.filter(Boolean) : [];
-    if (icons.length) {
+    if (Array.isArray(data.leadingBadges) && data.leadingBadges.length) {
+      const leadingBadges = d.createElement("span");
+      leadingBadges.className = "cw-icon-select-leading-badges";
+      data.leadingBadges.forEach((badgeText) => {
+        const badge = String(badgeText || "").trim();
+        if (!badge) return;
+        const badgeEl = d.createElement("span");
+        badgeEl.className = "cw-icon-select-badge";
+        badgeEl.textContent = badge;
+        leadingBadges.appendChild(badgeEl);
+      });
+      if (leadingBadges.childNodes.length) main.appendChild(leadingBadges);
+    }
+
+    const segments = Array.isArray(data.segments) ? data.segments.filter(Boolean) : [];
+    if (segments.length) {
       const iconWrap = d.createElement("span");
       iconWrap.className = "cw-icon-select-icons";
-      icons.forEach((icon, idx) => {
-        const node = iconNode(icon);
-        if (!node) return;
+      segments.forEach((segment, idx) => {
+        const seg = d.createElement("span");
+        seg.className = "cw-icon-select-segment";
+        const node = iconNode(segment.icon || segment);
         if (idx && data.separator === "arrow") {
           const sep = d.createElement("span");
           sep.className = "cw-icon-select-sep";
           sep.textContent = "→";
           iconWrap.appendChild(sep);
         }
-        iconWrap.appendChild(node);
+        if (node) seg.appendChild(node);
+        const badge = String(segment.badge || "").trim();
+        if (badge) {
+          const badgeEl = d.createElement("span");
+          badgeEl.className = "cw-icon-select-badge";
+          badgeEl.textContent = badge;
+          seg.appendChild(badgeEl);
+        }
+        if (!seg.childNodes.length) return;
+        iconWrap.appendChild(seg);
       });
       if (iconWrap.childNodes.length) main.appendChild(iconWrap);
+    } else {
+      const icons = Array.isArray(data.icons) ? data.icons.filter(Boolean) : [];
+      if (icons.length) {
+        const iconWrap = d.createElement("span");
+        iconWrap.className = "cw-icon-select-icons";
+        icons.forEach((icon, idx) => {
+          const node = iconNode(icon);
+          if (!node) return;
+          if (idx && data.separator === "arrow") {
+            const sep = d.createElement("span");
+            sep.className = "cw-icon-select-sep";
+            sep.textContent = "→";
+            iconWrap.appendChild(sep);
+          }
+          iconWrap.appendChild(node);
+        });
+        if (iconWrap.childNodes.length) main.appendChild(iconWrap);
+      }
     }
 
     const text = d.createElement("span");
