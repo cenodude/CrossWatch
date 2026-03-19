@@ -921,6 +921,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         timeout = float(em.get("timeout", 15) or 15)
         verify = bool(em.get("verify_ssl", False))
         device_id = str(em.get("device_id") or "crosswatch").strip() or "crosswatch"
+        stored_user_id = str(em.get("user_id") or "").strip()
         auth = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="1.0", Token="{token}"'
         headers = {
             "Accept": "application/json",
@@ -969,6 +970,28 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     me_mapped = _map_user(me) if isinstance(me, dict) else {}
                     me_out = [me_mapped] if me_mapped.get("username") else []
                     return {"users": me_out, "count": len(me_out), "instance": inst, "note": "Token cannot list users; showing current user only."}
+                if api_key:
+                    me_r2 = _get(f"{server}/Users/Me", params={"api_key": api_key}, use_headers=False)
+                    if me_r2.ok:
+                        me = me_r2.json() or {}
+                        me_mapped = _map_user(me) if isinstance(me, dict) else {}
+                        me_out = [me_mapped] if me_mapped.get("username") else []
+                        return {"users": me_out, "count": len(me_out), "instance": inst, "note": "Token cannot list users; showing current user only."}
+
+            if not raw and stored_user_id:
+                by_id = _get(f"{server}/Users/{stored_user_id}")
+                if by_id.ok:
+                    me = by_id.json() or {}
+                    me_mapped = _map_user(me) if isinstance(me, dict) else {}
+                    me_out = [me_mapped] if me_mapped.get("username") else []
+                    return {"users": me_out, "count": len(me_out), "instance": inst, "note": "Token cannot list users; showing configured user only."}
+                if api_key:
+                    by_id2 = _get(f"{server}/Users/{stored_user_id}", params={"api_key": api_key}, use_headers=False)
+                    if by_id2.ok:
+                        me = by_id2.json() or {}
+                        me_mapped = _map_user(me) if isinstance(me, dict) else {}
+                        me_out = [me_mapped] if me_mapped.get("username") else []
+                        return {"users": me_out, "count": len(me_out), "instance": inst, "note": "Token cannot list users; showing configured user only."}
 
             if not raw:
                 code = r.status_code if not r.ok else 502
