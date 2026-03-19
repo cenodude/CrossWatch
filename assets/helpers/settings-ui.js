@@ -1236,7 +1236,7 @@ async function loadConfig() {
   _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
   _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "12");
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
-  const customMinutes = Math.max(15, parseInt(s.custom_interval_minutes ?? s.custom_minutes ?? 60, 10) || 60);
+  const customMinutes = Math.max(15, parseInt(s.custom_interval_minutes ?? 60, 10) || 60);
   if (customMinutes % 60 === 0) {
     _setVal("schCustomValue", String(Math.max(1, customMinutes / 60)));
     _setVal("schCustomUnit", "hours");
