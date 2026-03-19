@@ -46,7 +46,7 @@ export const HELP_TEXT = {
 
 function normalizeHelpText(text) {
   return String(text || "")
-    .replace(/â€¢/g, "-")
+    .replace(/•/g, "-")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .trim();
