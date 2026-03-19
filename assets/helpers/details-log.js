@@ -76,6 +76,50 @@ function _detailsVisible() {
   return !!(details && !details.classList.contains("hidden"));
 }
 
+function _watchLogKnownTags() {
+  return ["WATCH", "SCROBBLE", "PLEX", "JELLYFIN", "EMBY", "TRAKT", "SIMKL", "MDBLIST", "TMDB", "TRBL"];
+}
+
+function _watchLogTagsFromConfig(cfg) {
+  const norm = (t) => {
+    const s = String(t || "").trim().toUpperCase();
+    if (!s) return "";
+    if (s === "JFIN" || s === "JELLY") return "JELLYFIN";
+    return s;
+  };
+
+  const sc = (cfg && typeof cfg === "object") ? (cfg.scrobble || {}) : {};
+  let watchCfg = (sc && typeof sc === "object" && sc.watch && typeof sc.watch === "object") ? sc.watch : null;
+  if (!watchCfg && cfg && typeof cfg.watch === "object") watchCfg = cfg.watch;
+  watchCfg = watchCfg || {};
+
+  const routes = Array.isArray(watchCfg.routes) ? watchCfg.routes : [];
+  const tags = [];
+  if (routes.length) {
+    for (const raw of routes) {
+      if (!raw || typeof raw !== "object") continue;
+      if (raw.enabled === false) continue;
+      const provider = norm(raw.provider);
+      const sink = norm(raw.sink);
+      if (provider && !tags.includes(provider)) tags.push(provider);
+      if (sink && !tags.includes(sink)) tags.push(sink);
+    }
+  } else {
+    const provider = norm(watchCfg.provider || "plex");
+    const sinksRaw = String(watchCfg.sink || "trakt");
+    const sinks = sinksRaw.split(/[,&+]/g).map(norm).filter(Boolean);
+    if (provider && !tags.includes(provider)) tags.push(provider);
+    for (const sink of sinks) {
+      if (sink && !tags.includes(sink)) tags.push(sink);
+    }
+  }
+
+  for (const extra of ["WATCH", "SCROBBLE"]) {
+    if (!tags.includes(extra)) tags.push(extra);
+  }
+  return tags;
+}
+
 function _isAppDebugMode(cfg) {
   return !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
 }
@@ -209,24 +253,7 @@ async function openWatcherLog() {
       } catch {}
     }
 
-    const sc = (cfg && typeof cfg === "object") ? (cfg.scrobble || {}) : {};
-    let watchCfg = (sc && typeof sc === "object" && sc.watch && typeof sc.watch === "object") ? sc.watch : null;
-    if (!watchCfg && cfg && typeof cfg.watch === "object") watchCfg = cfg.watch;
-    watchCfg = watchCfg || {};
-
-    const norm = (t) => {
-      const s = String(t || "").trim().toUpperCase();
-      if (!s) return "";
-      if (s === "JFIN" || s === "JELLY") return "JELLYFIN";
-      return s;
-    };
-
-    const provider = norm(watchCfg.provider || "plex");
-    const sinksRaw = String(watchCfg.sink || "trakt");
-    const sinks = sinksRaw.split(/[,&+]/g).map(norm).filter(Boolean);
-    const tags = [provider, ...sinks].filter(Boolean);
-    const uniq = [];
-    for (const t of tags) if (!uniq.includes(t)) uniq.push(t);
+    const uniq = _watchLogTagsFromConfig(cfg);
 
     const url = new URL("/api/logs/watcher", document.baseURI);
     url.searchParams.set("tail", "200");
@@ -288,7 +315,7 @@ async function openWatcherLog() {
     tabWatch?.classList.add("connected");
     tabWatch?.classList.remove("stale");
 
-    for (const t of (uniq.length ? uniq : ["PLEX","JELLYFIN","EMBY","TRAKT","SIMKL","TMDB","MDBLIST","TRBL"])) {
+    for (const t of (uniq.length ? uniq : _watchLogKnownTags())) {
       es.addEventListener(t, (ev) => enqueue(t, ev?.data));
     }
 
