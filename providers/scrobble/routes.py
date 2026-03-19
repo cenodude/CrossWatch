@@ -10,6 +10,8 @@ from cw_platform.provider_instances import normalize_instance_id
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin"}
 ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
+ROUTE_OPTION_STATES = {"inherit", "on", "off"}
+ROUTE_RATINGS_MODES = {"inherit", "off", "custom"}
 
 
 def _deep_clone(v: Any) -> Any:
@@ -37,11 +39,47 @@ def _watch_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     return sc.setdefault("watch", {})
 
 
-def legacy_watch_present(cfg: dict[str, Any]) -> bool:
-    w = (cfg.get("scrobble") or {}).get("watch") or {}
-    prov = str(w.get("provider") or "").strip()
-    sink = str(w.get("sink") or "").strip()
-    return bool(prov and sink)
+def normalize_route_options(options: Any) -> dict[str, Any]:
+    raw = options if isinstance(options, dict) else {}
+    auto_remove = str(raw.get("auto_remove_watchlist") or "inherit").strip().lower() or "inherit"
+    if auto_remove not in ROUTE_OPTION_STATES:
+        auto_remove = "inherit"
+
+    ratings_raw = raw.get("ratings")
+    ratings_src = ratings_raw if isinstance(ratings_raw, dict) else {}
+    ratings_mode = str(ratings_src.get("mode") or "inherit").strip().lower() or "inherit"
+    if ratings_mode not in ROUTE_RATINGS_MODES:
+        ratings_mode = "inherit"
+
+    targets_raw = ratings_src.get("targets")
+    if isinstance(targets_raw, str):
+        targets_in = [targets_raw]
+    elif isinstance(targets_raw, (list, tuple, set)):
+        targets_in = list(targets_raw)
+    else:
+        targets_in = []
+
+    targets: list[str] = []
+    seen: set[str] = set()
+    for item in targets_in:
+        target = str(item or "").strip().lower()
+        if not target or target not in ROUTE_SINKS or target in seen:
+            continue
+        seen.add(target)
+        targets.append(target)
+
+    webhook_id = str(ratings_src.get("webhook_id") or "").strip()
+    webhook_token = str(ratings_src.get("webhook_token") or "").strip()
+
+    return {
+        "auto_remove_watchlist": auto_remove,
+        "ratings": {
+            "mode": ratings_mode,
+            "targets": targets,
+            "webhook_id": webhook_id,
+            "webhook_token": webhook_token,
+        },
+    }
 
 
 def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
@@ -64,6 +102,7 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     filters = r.get("filters")
     if not isinstance(filters, dict):
         filters = {}
+    options = normalize_route_options(r.get("options"))
 
     return {
         "id": rid,
@@ -73,69 +112,31 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
         "sink": sink,
         "sink_instance": sink_inst,
         "filters": filters,
+        "options": options,
     }
 
 
 def normalize_routes(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     w = _watch_cfg(cfg)
     routes = w.get("routes")
-    if isinstance(routes, list):
-        out: list[dict[str, Any]] = []
-        for i, raw in enumerate(routes):
-            if not isinstance(raw, dict):
-                continue
-            out.append(normalize_route(raw, f"R{i + 1}"))
-        if out:
-            return out
-
-    # Legacy migration (only used when routes is missing/invalid)
-    prov = str(w.get("provider") or "").strip().lower()
-    sink_raw = str(w.get("sink") or "").strip().lower()
-    if not prov or not sink_raw:
+    if not isinstance(routes, list):
         return []
-
-    sinks = [s.strip() for s in sink_raw.split(",") if s.strip()]
-    filters = w.get("filters")
-    if not isinstance(filters, dict):
-        filters = {}
-
-    out = []
-    for i, s in enumerate(sinks):
-        out.append(normalize_route({
-            "id": f"R{i + 1}",
-            "enabled": True,
-            "provider": prov,
-            "provider_instance": DEFAULT_INSTANCE_ID,
-            "sink": s,
-            "sink_instance": DEFAULT_INSTANCE_ID,
-            "filters": _deep_clone(filters),
-        }, f"R{i + 1}"))
+    out: list[dict[str, Any]] = []
+    for i, raw in enumerate(routes):
+        if not isinstance(raw, dict):
+            continue
+        out.append(normalize_route(raw, f"R{i + 1}"))
     return out
 
 
-def ensure_routes(cfg: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    w = _watch_cfg(cfg)
-
-    # If routes key exists, normalize
-    if "routes" in w:
-        if isinstance(w.get("routes"), list):
-            before = w.get("routes")
-            out_routes = normalize_routes(cfg)
-            w["routes"] = out_routes
-            migrated = bool((not before) and out_routes and legacy_watch_present(cfg))
-            if migrated:
-                w["routes_migrated_from_legacy"] = True
-            return cfg, migrated
-        return cfg, False
-
-    routes = normalize_routes(cfg)
-    if routes:
-        w["routes"] = routes
-        w["routes_migrated_from_legacy"] = True
-        return cfg, True
-
-    w["routes"] = []
-    return cfg, False
+def find_route(cfg: dict[str, Any], route_id: str | None) -> dict[str, Any] | None:
+    rid = str(route_id or "").strip()
+    if not rid:
+        return None
+    for route in normalize_routes(cfg):
+        if str(route.get("id") or "").strip() == rid:
+            return route
+    return None
 
 
 def _provider_view(cfg: dict[str, Any], provider: str, instance_id: str) -> dict[str, Any]:
@@ -156,10 +157,23 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
     out: dict[str, Any] = _deep_clone(cfg) if isinstance(cfg, dict) else {}
     w = _watch_cfg(out)
 
-    out[r["provider"]] = _provider_view(out, r["provider"], r["provider_instance"])
-    out[r["sink"]] = _provider_view(out, r["sink"], r["sink_instance"])
+    if r["provider"]:
+        out[r["provider"]] = _provider_view(out, r["provider"], r["provider_instance"])
+    if r["sink"]:
+        out[r["sink"]] = _provider_view(out, r["sink"], r["sink_instance"])
 
     w["filters"] = _deep_clone(r.get("filters") or {})
-    w["provider"] = r["provider"]
-    w["sink"] = r["sink"]
+    w["route_id"] = r["id"]
+    w["route_provider"] = r["provider"]
+    w["route_provider_instance"] = r["provider_instance"]
+    w["route_sink"] = r["sink"]
+    w["route_sink_instance"] = r["sink_instance"]
+    w["route_options"] = _deep_clone(r.get("options") or {})
     return out
+
+
+def build_route_cfg_by_id(cfg: dict[str, Any], route_id: str | None) -> dict[str, Any] | None:
+    route = find_route(cfg, route_id)
+    if not isinstance(route, dict):
+        return None
+    return build_route_cfg(cfg, route)
