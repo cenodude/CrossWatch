@@ -28,7 +28,7 @@ from providers.scrobble.scrobble import (
     from_plex_flat_playing,
     mask_account as _mask_account,
 )
-from providers.scrobble.currently_watching import update_from_event as _cw_update
+from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
@@ -385,11 +385,7 @@ class WatchService:
     def _active_watch_filters(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         base = cfg if isinstance(cfg, dict) else self._active_cfg()
         filt = (((base.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
-        if isinstance(filt, dict) and filt:
-            return filt
-        g = _cfg() or {}
-        gf = (((g.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
-        return gf if isinstance(gf, dict) else {}
+        return filt if isinstance(filt, dict) else {}
 
     def sinks_count(self) -> int:
         try:
@@ -579,12 +575,16 @@ class WatchService:
         self._last_seen[sk] = now
         self._last_emit[sk] = ("start", pct_i)
         self._max_seen[sk] = max(pct_i, self._max_seen.get(sk, 0))
+        accepted = bool(self._dispatch.dispatch(ev2))
+        if not accepted:
+            self._dbg(f"seek update filtered by route dispatcher: user={_mask_account(ev2.account)} server={ev2.server_uuid} sess={ev2.session_key}")
+            self._clear_currently_watching(ev2)
+            return
         try:
-            _cw_update("plex", ev2)
+            _cw_update("plex", ev2, provider_instance=str(self._instance_id or "default"))
         except Exception:
             pass
         self._log(f"seek update p={pct_i}% sess={ev2.session_key}", "DEBUG")
-        self._dispatch.dispatch(ev2)
 
     # Ingest progress from PSN, TimelineEntry, and ProgressNotification alerts.
     def _ingest_progress_from_alert(self, alert: dict[str, Any], cfg: dict[str, Any] | None = None) -> None:
@@ -716,52 +716,11 @@ class WatchService:
                 return True
 
         cfg = self._active_cfg()
-        filt = self._active_watch_filters(cfg)
-        wl = filt.get("username_whitelist")
-        want = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
-        if not want:
-            g = _cfg() or {}
-            want = ((((g.get("scrobble") or {}).get("watch") or {}).get("filters") or {}).get("server_uuid") or (g.get("plex") or {}).get("server_uuid"))
-        if want and ev.server_uuid and str(ev.server_uuid) != str(want):
-            return False
 
         def _allow() -> bool:
             if cache_key:
                 self._allowed_sessions.add(cache_key)
             return True
-
-        if wl:
-            import re as _re
-
-            def norm(s: str) -> str:
-                return _re.sub(r"[^a-z0-9]+", "", (s or "").lower())
-
-            wl_list = wl if isinstance(wl, list) else [wl]
-            ident = self._resolve_session_identity(ev.session_key) or {}
-            seen_name = str(ident.get("name") or ev.account or "").strip()
-
-            if any(not str(x).lower().startswith(("id:", "uuid:", "userid:", "homeid:")) and norm(str(x)) == norm(seen_name) for x in wl_list):
-                pass
-            else:
-                n = self._best_psn_entry(self._find_psn(ev.raw or {}) or []) or {}
-                acc_id = str(n.get("accountID") or ident.get("account_id") or "").strip()
-                acc_uuid = str(n.get("accountUUID") or ident.get("account_uuid") or "").strip().lower()
-                user_id = str(ident.get("user_id") or n.get("userID") or "").strip()
-                ok = False
-                for e in wl_list:
-                    s = str(e).strip()
-                    sl = s.lower()
-                    if sl.startswith("id:") and acc_id and sl.split(":", 1)[1].strip() == acc_id:
-                        ok = True
-                        break
-                    if sl.startswith("uuid:") and acc_uuid and sl.split(":", 1)[1].strip() == acc_uuid:
-                        ok = True
-                        break
-                    if (sl.startswith("userid:") or sl.startswith("homeid:")) and user_id and sl.split(":", 1)[1].strip() == user_id:
-                        ok = True
-                        break
-                if not ok:
-                    return False
 
         libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
         if libs:
@@ -993,8 +952,28 @@ class WatchService:
         now = time.time()
         last = self._filtered_ts.get(key, 0.0)
         if now - last >= 30.0:
-            self._dbg(f"event filtered: user={_mask_account(ev.account)} server={ev.server_uuid}")
+            self._dbg(f"event filtered: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
             self._filtered_ts[key] = now
+
+    def _clear_currently_watching(self, ev: ScrobbleEvent) -> None:
+        try:
+            _cw_update_payload(
+                "plex",
+                ev.media_type,
+                ev.title or "",
+                ev.year,
+                ev.season,
+                ev.number,
+                ev.progress,
+                True,
+                state="stopped",
+                clear_on_stop=True,
+                ids=ev.ids,
+                session_key=ev.session_key,
+                provider_instance=str(self._instance_id or "default"),
+            )
+        except Exception:
+            pass
 
     def _handle_alert(self, alert: dict[str, Any]) -> None:
         try:
@@ -1127,14 +1106,7 @@ class WatchService:
                 if sk:
                     self._update_best_offset(sk, int(o), int(d))
                 if pct != ev.progress:
-                    self._dbg(f"progress normalized: {pct}%")
                     ev = ScrobbleEvent(**{**ev.__dict__, "progress": pct})
-
-            self._log(
-                f"incoming 'playing' user='{_mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
-                "DEBUG",
-            )
-            self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
 
             if sk and sk not in self._first_seen:
                 self._first_seen[sk] = time.time()
@@ -1168,7 +1140,7 @@ class WatchService:
                     best = prev
 
             if best != want:
-                self._dbg(f"progress normalized: {best}%")
+                normalized_progress_debug = best
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
@@ -1209,17 +1181,30 @@ class WatchService:
                         self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
                         return
                     if ev.action == last_action and ev.progress == last_prog:
-                        self._dbg(f"suppress duplicate {ev.action} sess={sk} p={ev.progress}")
+                        if ev.action == "stop":
+                            self._dbg(f"suppress duplicate stop sess={sk} p={ev.progress}")
                         return
-                self._last_emit[sk] = (ev.action, ev.progress)
+
+            accepted = bool(self._dispatch.dispatch(ev))
+            if not accepted:
+                self._dbg(f"event filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
+                self._clear_currently_watching(ev)
+                return
+
+            self._log(
+                f"incoming 'playing' user='{_mask_account(ev.account)}' server='{ev.server_uuid}' media='{_media_name(ev)}'",
+                "DEBUG",
+            )
+            self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
             try:
-                _cw_update("plex", ev)
+                _cw_update("plex", ev, provider_instance=str(self._instance_id or "default"))
             except Exception:
                 pass
             if sk and ev.action == "start":
                 self._last_event[sk] = ev
             self._log(f"event {ev.action} {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={ev.session_key}")
-            self._dispatch.dispatch(ev)
+            if sk:
+                self._last_emit[sk] = (ev.action, ev.progress)
         except Exception as e:
             self._log(f"_handle_alert failure: {e}", "ERROR")
             
@@ -1323,7 +1308,7 @@ _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
 _PAT_TMDB = re.compile(r"(?:com\.plexapp\.agents\.tmdb|tmdb)://(\d+)", re.I)
 _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)", re.I)
 
-_LAST_RATING_BY_ACC: dict[tuple[str, str, str], dict[str, Any]] = {}
+_LAST_RATING_BY_ACC: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 
 
 def _emit(logger: Callable[..., None] | None, msg: str, level: str = "INFO") -> None:
@@ -1605,19 +1590,45 @@ def process_rating_webhook(
     headers: Mapping[str, str],
     raw: bytes | None = None,
     logger: Callable[..., None] | None = None,
+    cfg_override: dict[str, Any] | None = None,
+    route_hook: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    cfg = _cfg() or {}
+    cfg = cfg_override or _cfg() or {}
     sc = (cfg.get("scrobble") or {})
     if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
         return {"ok": True, "ignored": True}
 
     watch_cfg = (sc.get("watch") or {})
-    if str(watch_cfg.get("provider", "plex")).lower().strip() != "plex":
+    provider_name = str(watch_cfg.get("route_provider") or watch_cfg.get("provider") or "plex").lower().strip()
+    if provider_name != "plex":
         return {"ok": True, "ignored": True}
 
-    enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
-    enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
-    enable_mdblist = bool(watch_cfg.get("plex_mdblist_ratings"))
+    route_opts_raw = watch_cfg.get("route_options")
+    route_opts: dict[str, Any] = route_opts_raw if isinstance(route_opts_raw, dict) else {}
+    ratings_opts_raw = route_opts.get("ratings")
+    ratings_opts: dict[str, Any] = ratings_opts_raw if isinstance(ratings_opts_raw, dict) else {}
+    ratings_mode = str(ratings_opts.get("mode") or "inherit").strip().lower() or "inherit"
+    route_sink = str(watch_cfg.get("route_sink") or "").strip().lower()
+    custom_targets = {
+        str(item or "").strip().lower()
+        for item in (ratings_opts.get("targets") or [])
+        if str(item or "").strip()
+    }
+    if ratings_mode == "custom" and route_sink in {"trakt", "simkl", "mdblist"}:
+        custom_targets = {route_sink} if route_sink in custom_targets or not custom_targets else {route_sink}
+
+    if ratings_mode == "off":
+        return {"ok": True, "ignored": True}
+
+    if ratings_mode == "custom":
+        enable_trakt = "trakt" in custom_targets
+        enable_simkl = "simkl" in custom_targets
+        enable_mdblist = "mdblist" in custom_targets
+    else:
+        enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
+        enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
+        enable_mdblist = bool(watch_cfg.get("plex_mdblist_ratings"))
+
     if not (enable_trakt or enable_simkl or enable_mdblist):
         return {"ok": True, "ignored": True}
 
@@ -1627,7 +1638,8 @@ def process_rating_webhook(
     if str(payload.get("event") or "") != "media.rate":
         return {"ok": True, "ignored": True}
 
-    filt = (watch_cfg.get("filters") or {})
+    filt_raw = watch_cfg.get("filters")
+    filt: dict[str, Any] = filt_raw if isinstance(filt_raw, dict) else {}
     wl = filt.get("username_whitelist")
     want_uuid = str((filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid") or "")).strip()
 
@@ -1661,7 +1673,8 @@ def process_rating_webhook(
 
     acc_key = _account_key(payload)
     rk = str(md.get("ratingKey") or md.get("ratingkey") or "").strip()
-    dedup_key = (acc_key, rk or "?", media_type)
+    route_scope = str((route_hook or {}).get("route_id") or watch_cfg.get("route_id") or "global").strip() or "global"
+    dedup_key = (route_scope, acc_key, rk or "?", media_type)
     prev = _LAST_RATING_BY_ACC.get(dedup_key) or {}
     if prev and prev.get("rating") == rating_val and (time.time() - float(prev.get("ts", 0))) < 10:
         return {"ok": True, "dedup": True}
@@ -1690,7 +1703,7 @@ def process_rating_webhook(
         _emit(logger, "rating event without usable external IDs; ignored", "DEBUG")
         return {"ok": True, "ignored": True}
 
-    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_val}
+    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_val, "route_id": route_scope}
     if enable_trakt:
         results["trakt"] = _trakt_send_rating(media_type, ids, rating_val, cfg, logger)
     if enable_simkl and media_type in ("movie", "show"):
