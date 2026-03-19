@@ -357,38 +357,12 @@ class Dispatcher:
         filt = (((cfg.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
         if not isinstance(filt, dict):
             filt = {}
-        if not filt:
-            cfg2 = _load_config() or {}
-            filt2 = (((cfg2.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
-            filt = filt2 if isinstance(filt2, dict) else {}
 
         wl = filt.get("username_whitelist")
-        want_server = (filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid"))
-        if not want_server:
-            cfg2 = _load_config() or {}
-            want_server = ((cfg2.get("scrobble") or {}).get("watch") or {}).get("filters", {}).get("server_uuid") or (cfg2.get("plex") or {}).get("server_uuid")
+        want_server = filt.get("server_uuid")
+        want_user = str(filt.get("user_id") or "").strip().lower()
         if want_server and ev.server_uuid and str(ev.server_uuid) != str(want_server):
             return False
-
-        def _allow() -> bool:
-            if cache_key:
-                self._session_ok.add(cache_key)
-            return True
-
-        if not wl:
-            return _allow()
-
-        def norm(s: str) -> str:
-            return _norm_user(s)
-
-        wl_list = wl if isinstance(wl, list) else [wl]
-
-        if any(
-            not str(x).lower().startswith(("id:", "uuid:"))
-            and norm(str(x)) == norm(ev.account or "")
-            for x in wl_list
-        ):
-            return _allow()
 
         def find_user_id(o: Any) -> str:
             if isinstance(o, dict):
@@ -426,6 +400,32 @@ class Dispatcher:
         acc_id = str(n.get("accountID") or "")
         acc_uuid = str(n.get("accountUUID") or "").lower()
         user_id = find_user_id(ev.raw or {})
+
+        def _allow() -> bool:
+            if cache_key:
+                self._session_ok.add(cache_key)
+            return True
+
+        if want_user:
+            if not user_id:
+                return False
+            if want_user != user_id:
+                return False
+
+        if not wl:
+            return _allow()
+
+        def norm(s: str) -> str:
+            return _norm_user(s)
+
+        wl_list = wl if isinstance(wl, list) else [wl]
+
+        if any(
+            not str(x).lower().startswith(("id:", "uuid:"))
+            and norm(str(x)) == norm(ev.account or "")
+            for x in wl_list
+        ):
+            return _allow()
 
         for e in wl_list:
             s = str(e).strip().lower()
@@ -467,17 +467,24 @@ class Dispatcher:
             return True
         return False
 
-    def dispatch(self, ev: ScrobbleEvent) -> None:
+    def accepts(self, ev: ScrobbleEvent) -> bool:
+        cfg = self._cfg_provider() or {}
+        return self._passes_filters(ev, cfg)
+
+    def dispatch(self, ev: ScrobbleEvent) -> bool:
         cfg = self._cfg_provider() or {}
         if not self._passes_filters(ev, cfg):
-            return
+            return False
         if not self._should_send(ev, cfg):
-            return
+            return False
+        sent = False
         for s in self._sinks:
             try:
                 self._send_sink(s, ev, cfg)
+                sent = True
             except Exception as e:
                 _log(f"Sink error: {e}", "ERROR")
+        return sent or not self._sinks
 
 
 __all__ = (
