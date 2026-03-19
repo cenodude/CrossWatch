@@ -238,25 +238,7 @@
     cfg.scrobble ||= {};
     cfg.scrobble.watch ||= {};
     const watch = cfg.scrobble.watch;
-    if (Array.isArray(watch.routes) && watch.routes.length) return cfg;
-
-    const provider = String(watch.provider || "").trim();
-    const sink = String(watch.sink || "").trim();
-    if (!provider || !sink) {
-      watch.routes = [];
-      return cfg;
-    }
-
-    const filters = watch.filters || {};
-    watch.routes = sink.split(",").map((item) => item.trim()).filter(Boolean).map((target, index) => ({
-      id: `R${index + 1}`,
-      enabled: true,
-      provider,
-      provider_instance: "default",
-      sink: target,
-      sink_instance: "default",
-      filters: JSON.parse(JSON.stringify(filters)),
-    }));
+    if (!Array.isArray(watch.routes)) watch.routes = [];
     return cfg;
   }
 
@@ -270,7 +252,7 @@
   function applyServerSecret(inputId, hasSecret) {
     const el = byId(inputId);
     if (!el) return;
-    el.value = hasSecret ? "••••••••" : "";
+    el.value = hasSecret ? "********" : "";
     el.dataset.masked = hasSecret ? "1" : "0";
     el.dataset.loaded = "1";
     el.dataset.touched = "";
