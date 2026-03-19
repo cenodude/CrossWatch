@@ -288,9 +288,9 @@
 
   const normalizeStandardMode = (mode) => {
     const raw = String(mode || "").trim().toLowerCase();
-    if (raw === "hourly" || raw === "every_hour") return "hourly";
-    if (raw === "daily" || raw === "daily_at" || raw === "daily_time") return "daily_time";
-    if (raw === "custom" || raw === "custom_interval" || raw === "custom_minutes" || raw === "interval") return "custom_interval";
+    if (raw === "hourly") return "hourly";
+    if (raw === "daily_time") return "daily_time";
+    if (raw === "custom_interval") return "custom_interval";
     if (raw === "every_n_hours") return "every_n_hours";
     return "hourly";
   };
@@ -1749,7 +1749,7 @@ const ensureStdEnabledToggle = () => {
       $("#schMode") && ($("#schMode").value = mode);
       $("#schN")    && ($("#schN").value = String(Math.max(2, parseInt(saved.every_n_hours || 12, 10) || 12)));
       $("#schTime") && ($("#schTime").value = saved.daily_time || "03:30");
-      setCustomIntervalFromMinutes(saved.custom_interval_minutes || saved.custom_minutes || 60);
+      setCustomIntervalFromMinutes(saved.custom_interval_minutes || 60);
 
       const adv = saved?.advanced || {};
       _advEnabled = !!adv.enabled;
