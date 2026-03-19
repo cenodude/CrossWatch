@@ -34,8 +34,9 @@
     if (k) return k;
     
     const sk = String(p?.session_key || "").trim();
-    if (p?.source && sk) return `${p.source}:${sk}`;
-    return [p?.source || "", p?.media_type || p?.type || "", p?.title || "", p?.year || "", p?.season || "", p?.episode || ""].join("|");
+    const inst = String(p?.provider_instance || "").trim();
+    if (p?.source && sk) return inst ? `${p.source}:${inst}:${sk}` : `${p.source}:${sk}`;
+    return [p?.source || "", inst, p?.media_type || p?.type || "", p?.title || "", p?.year || "", p?.season || "", p?.episode || ""].join("|");
   };
 
   const tmdbIdOf = (p) => {
@@ -126,6 +127,12 @@
     return "";
   };
 
+  const instanceLabel = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw.toLowerCase() === "default") return "Default";
+    return raw;
+  };
+
   const mediaTypeLabel = (p) => {
     const mediaType = String(p?.media_type || p?.type || "").toLowerCase();
     return mediaType === "movie" ? "Movie" : mediaType === "episode" ? "Episode" : mediaType ? mediaType.toUpperCase() : "TV";
@@ -190,55 +197,60 @@
     }
   };
 
-  let busy = null;
-  let cacheKey = "";
-  let cacheAt = 0;
-  let cacheVal = null;
   const countByKey = new Map();
-  const CACHE_TTL_MS = 30000;
+  const CACHE_TTL_MS = 10000;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
 
-  const fetchCurrentlyWatching = async (wantKey) => {
-    if (authSetupPending()) return null;
+  const streamPriority = (p) => {
+    const st = String(p?.state || p?.status || "").toLowerCase();
+    if (st === "playing") return 0;
+    if (st === "buffering") return 1;
+    if (st === "paused") return 2;
+    return 3;
+  };
+  const sortStreams = (items) => items.sort((a, b) => {
+    const pa = streamPriority(a);
+    const pb = streamPriority(b);
+    if (pa !== pb) return pa - pb;
+    return (Number(b?.updated) || 0) - (Number(a?.updated) || 0);
+  });
+  const activeStreamsFromPayload = (payload) => {
+    const raw = Array.isArray(payload?.streams) ? payload.streams : [];
+    const items = raw.filter((x) => x && typeof x === "object" && isActiveState(x.state || x.status));
+    return sortStreams(items.slice());
+  };
+
+  const fetchCurrentlyWatchingData = async (force = false) => {
+    if (authSetupPending()) return { streams: [], primary: null, ts: 0 };
     const now = Date.now();
-    const wk = String(wantKey || "");
-    if (wk && cacheVal && cacheKey === wk && now - cacheAt < CACHE_TTL_MS) return cacheVal;
-    if (busy) return busy;
-    busy = (async () => {
+    if (!force && CARD.cachePayload && (now - CARD.cacheAt) < CACHE_TTL_MS) return CARD.cachePayload;
+    if (CARD.cacheBusy) return CARD.cacheBusy;
+    CARD.cacheBusy = (async () => {
       try {
         const r = await fetch("/api/watch/currently_watching", { cache: "no-store" });
-        if (!r.ok) return null;
+        if (!r.ok) return { streams: [], primary: null, ts: 0 };
         const j = await r.json();
-        let v = j?.currently_watching || null;
-        const sc = Number(j?.streams_count) || (Array.isArray(j?.streams) ? j.streams.length : 0);
+        const streams = activeStreamsFromPayload(j);
         const ts = Number(j?.ts) || 0;
-
-
-        if (v && v.streams && !v.title) {
-          const items = Object.values(v.streams || {}).filter(x => x && typeof x === "object");
-          items.sort((a, b) => (Number(b.updated) || 0) - (Number(a.updated) || 0));
-          v = items.find(it => isActiveState(it.state)) || items[0] || null;
-        }
-
-        if (v) {
-          const k = wk || keyOf(v) || "";
-          cacheVal = v;
-          cacheKey = k;
-          cacheAt = Date.now();
-          if (sc > 1) countByKey.set(k, sc); else countByKey.delete(k);
-          if (typeof v === "object") {
-            v._streams_count = sc;
-            if (ts) v._server_ts = ts;
-          }
-        }
-        return v;
+        countByKey.clear();
+        streams.forEach((item) => {
+          const k = keyOf(item);
+          if (k) countByKey.set(k, streams.length);
+          item._streams_count = streams.length;
+          if (ts) item._server_ts = ts;
+        });
+        CARD.serverTs = ts || CARD.serverTs || 0;
+        const payload = { streams, primary: streams[0] || null, ts };
+        CARD.cachePayload = payload;
+        CARD.cacheAt = Date.now();
+        return payload;
       } catch {
-        return null;
+        return { streams: [], primary: null, ts: 0 };
       } finally {
-        busy = null;
+        CARD.cacheBusy = null;
       }
     })();
-    return busy;
+    return CARD.cacheBusy;
   };
 
   const css = `
@@ -252,8 +264,17 @@
   #playing-detail .pc-poster{width:104px;border:1px solid rgba(255,255,255,.06);border-radius:14px;object-fit:cover;box-shadow:0 14px 30px rgba(0,0,0,.44),inset 0 1px 0 rgba(255,255,255,.04);background:#05070d}
   #playing-detail .pc-title-row{display:flex;align-items:flex-start;gap:8px}
   #playing-detail .pc-title{font-weight:700;font-size:17px;letter-spacing:.005em;line-height:1.2}
-  #playing-detail .pc-close{margin-left:auto;display:flex;align-items:center;justify-content:center;gap:4px;padding:4px 9px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));color:rgba(232,238,252,.78);cursor:pointer;font-size:12px;line-height:1;text-transform:uppercase;letter-spacing:.08em;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
-  #playing-detail .pc-close span{font-size:16px;line-height:1}
+  #playing-detail .pc-title-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+  #playing-detail .pc-nav{display:inline-flex;align-items:center;gap:6px;padding:3px 6px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018))}
+  #playing-detail .pc-nav[hidden]{display:none!important}
+  #playing-detail .pc-nav-btn{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border:0;border-radius:999px;background:rgba(255,255,255,.04);color:#eef3ff;cursor:pointer;transition:background .18s ease,transform .18s ease,opacity .18s ease}
+  #playing-detail .pc-nav-btn .material-symbols-rounded{font-size:18px;line-height:1}
+  #playing-detail .pc-nav-btn:hover{background:rgba(255,255,255,.09);transform:translateY(-1px)}
+  #playing-detail .pc-nav-btn:disabled{opacity:.35;cursor:default;transform:none}
+  #playing-detail .pc-nav-count{min-width:40px;text-align:center;font-size:11px;font-weight:800;letter-spacing:.08em;color:rgba(236,241,251,.88)}
+  #playing-detail .pc-close{margin-left:auto;display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;min-width:124px;padding:4px 12px 4px 10px;border:1px solid rgba(255,255,255,.08);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));color:rgba(232,238,252,.78);cursor:pointer;font-size:12px;line-height:1;text-transform:uppercase;letter-spacing:.08em;white-space:nowrap;transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
+  #playing-detail .pc-close .material-symbols-rounded{font-size:18px;line-height:1;font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 20}
+  #playing-detail .pc-close-text{display:inline-flex;align-items:center;justify-content:flex-end;min-width:0;flex:0 0 auto}
   #playing-detail .pc-close:hover{color:#fff;border-color:rgba(255,255,255,.13);background:linear-gradient(180deg,rgba(255,255,255,.075),rgba(255,255,255,.03));transform:translateY(-1px)}
   #playing-detail .pc-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
   #playing-detail .pc-chip{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 9px;border:1px solid rgba(255,255,255,.07);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.022));box-shadow:inset 0 1px 0 rgba(255,255,255,.03);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:rgba(236,241,251,.86);line-height:1}
@@ -276,7 +297,7 @@
   #playing-detail .pc-status{position:static;display:inline-flex;align-items:center;justify-content:center;align-self:stretch;min-height:28px;margin-top:auto;padding:0 10px;border:1px solid rgba(255,255,255,.07);border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:rgba(236,241,251,.88);opacity:.96;white-space:nowrap;text-align:center}
   @media (max-width:1024px){#playing-detail{width:calc(100vw - 40px)}}
   @media (max-width:768px){#playing-detail .pc-inner{grid-template-columns:80px 1fr;grid-template-rows:auto auto}#playing-detail .pc-right{grid-column:span 2;flex-direction:row;justify-content:space-between}}
-  @media (max-width:680px){#playing-detail{bottom:max(10px,env(safe-area-inset-bottom));width:calc(100vw - 20px);border-radius:18px}#playing-detail .pc-inner{grid-template-columns:64px 1fr;gap:12px;padding:12px}#playing-detail .pc-poster{width:64px;height:96px;border-radius:10px}#playing-detail .pc-title{font-size:15px;line-height:1.15}#playing-detail .pc-close{padding:2px 4px}#playing-detail .pc-close span:nth-child(2){display:none}#playing-detail .pc-meta{gap:4px;margin-top:4px}#playing-detail .pc-chip{font-size:10px;padding:3px 7px}#playing-detail .pc-overview{display:none}#playing-detail .pc-progress-bg{height:18px}#playing-detail .pc-progress-labels{font-size:11px;padding:0 8px}#playing-detail .pc-right{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}#playing-detail .pc-score-circle{width:46px;height:46px}#playing-detail .pc-score-label{display:none}#playing-detail .pc-link{font-size:11px;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);text-decoration:none}#playing-detail .pc-status{margin-top:0;flex:1 1 auto;text-align:right;white-space:normal;max-width:60%}}
+  @media (max-width:680px){#playing-detail{bottom:max(10px,env(safe-area-inset-bottom));width:calc(100vw - 20px);border-radius:18px}#playing-detail .pc-inner{grid-template-columns:64px 1fr;gap:12px;padding:12px}#playing-detail .pc-poster{width:64px;height:96px;border-radius:10px}#playing-detail .pc-title{font-size:15px;line-height:1.15}#playing-detail .pc-title-actions{gap:6px}#playing-detail .pc-nav{padding:2px 4px}#playing-detail .pc-nav-count{min-width:32px;font-size:10px}#playing-detail .pc-nav-btn{width:24px;height:24px}#playing-detail .pc-close{min-width:0;padding:2px 8px 2px 6px}#playing-detail .pc-close-text{display:none}#playing-detail .pc-meta{gap:4px;margin-top:4px}#playing-detail .pc-chip{font-size:10px;padding:3px 7px}#playing-detail .pc-overview{display:none}#playing-detail .pc-progress-bg{height:18px}#playing-detail .pc-progress-labels{font-size:11px;padding:0 8px}#playing-detail .pc-right{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}#playing-detail .pc-score-circle{width:46px;height:46px}#playing-detail .pc-score-label{display:none}#playing-detail .pc-link{font-size:11px;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);text-decoration:none}#playing-detail .pc-status{margin-top:0;flex:1 1 auto;text-align:right;white-space:normal;max-width:60%}}
   @media (hover:none){#playing-detail.show:hover{transform:translate(-50%,0);box-shadow:0 20px 48px rgba(0,0,0,.6)}}
   `;
 
@@ -293,9 +314,16 @@
       <div class="pc-body">
         <div class="pc-title-row">
           <div id="pc-title" class="pc-title">Now Playing</div>
-          <button id="pc-close" class="pc-close" title="Hide">
-            <span>x</span><span>Hide</span>
-          </button>
+          <div class="pc-title-actions">
+            <div id="pc-nav" class="pc-nav" hidden>
+              <button id="pc-prev" class="pc-nav-btn" type="button" aria-label="Previous stream"><span class="material-symbols-rounded">chevron_left</span></button>
+              <span id="pc-nav-count" class="pc-nav-count">1 / 1</span>
+              <button id="pc-next" class="pc-nav-btn" type="button" aria-label="Next stream"><span class="material-symbols-rounded">chevron_right</span></button>
+            </div>
+            <button id="pc-close" class="pc-close" title="Hide">
+              <span class="material-symbols-rounded" aria-hidden="true">close</span><span class="pc-close-text">Hide</span>
+            </button>
+          </div>
         </div>
         <div id="pc-meta" class="pc-meta"></div>
         <div id="pc-overview" class="pc-overview"></div>
@@ -329,31 +357,36 @@
   const imdbEl = detail.querySelector("#pc-imdb");
   const statusEl = detail.querySelector("#pc-status");
   const closeBtn = detail.querySelector("#pc-close");
+  const navWrap = detail.querySelector("#pc-nav");
+  const prevBtn = detail.querySelector("#pc-prev");
+  const nextBtn = detail.querySelector("#pc-next");
+  const navCountEl = detail.querySelector("#pc-nav-count");
 
   posterEl.onerror = () => {
     posterEl.onerror = null;
     posterEl.src = "/assets/img/placeholder_poster.svg";
   };
 
-  let lastKey = null;
-  let dismissedKey = null;
-  let lastUpdatedSec = 0;
-  let lastStartedSec = 0;
-  let lastServerTsSec = 0;
-  let statusPoll = null;
+  const CARD = {
+    selectedKey: "",
+    streams: [],
+    dismissed: false,
+    poll: null,
+    cacheBusy: null,
+    cacheAt: 0,
+    cachePayload: null,
+    serverTs: 0,
+  };
 
   const stopStatusPoll = () => {
-    if (!statusPoll) return;
-    try { clearInterval(statusPoll); } catch {}
-    statusPoll = null;
+    if (!CARD.poll) return;
+    try { clearInterval(CARD.poll); } catch {}
+    CARD.poll = null;
   };
-  const hide = () => {
+  const hide = (resetSelection = false) => {
     detail.classList.remove("show");
     stopStatusPoll();
-    lastKey = null;
-    lastUpdatedSec = 0;
-    lastStartedSec = 0;
-    lastServerTsSec = 0;
+    if (resetSelection) CARD.selectedKey = "";
   };
 
   const addChip = (txt, extraClass = "") => {
@@ -369,6 +402,7 @@
   const renderBaseMeta = (p, releaseLabel = "") => {
     metaEl.innerHTML = "";
     addChip(sourceLabel(p?.source), sourceChipClass(p?.source));
+    if (p?.provider_instance) addChip(instanceLabel(p.provider_instance));
     addChip(mediaTypeLabel(p));
     const sc = streamCount(p, countByKey);
     if (sc > 1) addChip(`${sc} streams`, "pc-chip-streams");
@@ -453,115 +487,88 @@
   };
 
   const startStatusPoll = () => {
-    if (statusPoll) return;
-    statusPoll = setInterval(async () => {
-      try {
-        if (!detail.classList.contains("show") || document.hidden) return;
-        const api = await fetchCurrentlyWatching(lastKey || "");
-        if (!api) return;
-        const k = keyOf(api);
-        if (!k || k !== lastKey) return;
-        const st = String(api.state || api.status || "").toLowerCase();
-        if (!isActiveState(st)) {
-          hide();
-          dismissedKey = null;
-          return;
-        }
-        const startedSec = Number(api.started) || lastStartedSec || 0;
-        if (startedSec) lastStartedSec = startedSec;
-        const serverTs = Number(api._server_ts) || 0;
-        if (serverTs) lastServerTsSec = serverTs;
-        const nowSec = lastServerTsSec || Math.floor(Date.now() / 1000);
-        const since = lastStartedSec ? sinceLabel(nowSec, lastStartedSec) : "";
-        if (!since) return;
-        statusEl.textContent = statusText(st, since);
-      } catch {}
-    }, 60000);
+    if (CARD.poll) return;
+    CARD.poll = setInterval(() => {
+      if (!detail.classList.contains("show") || document.hidden) return;
+      refreshCard(CARD.selectedKey, false).catch(() => {});
+    }, 15000);
   };
   closeBtn.addEventListener("click", () => {
-    if (lastKey) dismissedKey = lastKey;
-    hide();
+    CARD.dismissed = true;
+    hide(false);
   }, true);
+  const selectedIndex = () => Math.max(0, CARD.streams.findIndex((item) => keyOf(item) === CARD.selectedKey));
+  const selectedStream = () => CARD.streams.find((item) => keyOf(item) === CARD.selectedKey) || CARD.streams[0] || null;
+  const updateNav = () => {
+    const total = CARD.streams.length;
+    if (navWrap) navWrap.hidden = total <= 1;
+    if (navCountEl) navCountEl.textContent = total > 0 ? `${selectedIndex() + 1} / ${total}` : "0 / 0";
+    if (prevBtn) prevBtn.disabled = total <= 1;
+    if (nextBtn) nextBtn.disabled = total <= 1;
+  };
+  const ensureSelection = (preferredKey = "") => {
+    const keys = new Set(CARD.streams.map((item) => keyOf(item)));
+    if (preferredKey && keys.has(preferredKey)) {
+      CARD.selectedKey = preferredKey;
+      return;
+    }
+    if (CARD.selectedKey && keys.has(CARD.selectedKey)) return;
+    CARD.selectedKey = keyOf(CARD.streams[0] || {});
+  };
+  const applySelectionOffset = (delta) => {
+    const total = CARD.streams.length;
+    if (total <= 1) return;
+    const current = selectedIndex();
+    const next = (current + delta + total) % total;
+    CARD.selectedKey = keyOf(CARD.streams[next]);
+    CARD.dismissed = false;
+    renderSelectedStream().catch(() => {});
+  };
+  prevBtn?.addEventListener("click", () => applySelectionOffset(-1), true);
+  nextBtn?.addEventListener("click", () => applySelectionOffset(1), true);
 
-  async function render(payload) {
-    if (!isUiEnabled()) {
-      hide();
+  async function renderSelectedStream() {
+    const p = selectedStream();
+    if (!p) {
+      hide(true);
       return;
     }
 
-    let p = payload || {};
-    const eventState = p.state || p.status || "playing";
-
-    if (!p.title && !isActiveState(eventState)) {
-      hide();
-      return;
-    }
-
-    if (!tmdbIdOf(p) || !p.started) {
-      const wantKey = keyOf(p);
-      const api = await fetchCurrentlyWatching(wantKey);
-      if (api) {
-        const ak = keyOf(api);
-        if (!wantKey || wantKey === ak || !p.title) p = Object.assign({}, p, api);
-      }
-    }
-
-    const state = p.state || p.status || eventState;
-    if (!p.title || !isActiveState(state)) {
-      hide();
-      return;
-    }
-
-    const k = keyOf(p);
-    if (dismissedKey && dismissedKey === k) return;
-
-
-    if (k !== lastKey) {
-      lastKey = k;
-      lastUpdatedSec = 0;
-    }
-
-
+    const state = p.state || p.status || "playing";
     const st = String(state || "").toLowerCase();
+    if (!p.title || !isActiveState(st)) {
+      hide(true);
+      return;
+    }
 
-
-    let updatedSec = Number(p.updated) || 0;
-    if (!updatedSec && lastUpdatedSec && lastKey === k) updatedSec = lastUpdatedSec;
+    const updatedSec = Number(p.updated) || 0;
     if (updatedSec) {
-      lastUpdatedSec = updatedSec;
       const ageMs = Date.now() - updatedSec * 1000;
       const maxAgeMs = st === "paused" ? 4 * 60 * 60 * 1000 : 10 * 60 * 1000;
       if (ageMs > maxAgeMs) {
-        hide();
+        hide(true);
         return;
       }
     }
+
     const pct = Math.round(Math.max(0, Math.min(100, Number(p.progress) || 0)));
-    let startedSec = Number(p.started) || 0;
-    if (!startedSec && lastStartedSec && lastKey === k) startedSec = lastStartedSec;
-
-    const serverTs = Number(p._server_ts) || 0;
-    if (serverTs) lastServerTsSec = serverTs;
-
-    const nowSec = lastServerTsSec || Math.floor(Date.now() / 1000);
+    const startedSec = Number(p.started) || 0;
+    const serverTs = Number(p._server_ts) || CARD.serverTs || 0;
+    if (serverTs) CARD.serverTs = serverTs;
+    const nowSec = serverTs || Math.floor(Date.now() / 1000);
     const since = startedSec ? sinceLabel(nowSec, startedSec) : "";
 
-    if (startedSec) lastStartedSec = startedSec;
-
-
     statusEl.textContent = statusText(st, since);
-    statusEl.title = `source=${p.source || ""}, state=${state || ""}, started=${startedSec || ""}, updated=${updatedSec || ""}`;
-    
+    statusEl.title = `source=${p.source || ""}, instance=${p.provider_instance || ""}, state=${state || ""}, started=${startedSec || ""}, updated=${updatedSec || ""}`;
+
     titleEl.textContent = p.year ? `${p.title} ${p.year}` : (p.title || "Now Playing");
     overviewEl.textContent = p.overview || "";
     renderBaseMeta(p);
     posterEl.src = buildArtUrl(p);
     posterEl.alt = p.title || "Poster";
-
     progEl.style.width = `${pct}%`;
 
     let timeLabel = "";
-
     if (p.duration_ms && pct > 0) {
       const totalMs = Number(p.duration_ms) || 0;
       if (totalMs > 0) {
@@ -576,34 +583,43 @@
     setLinkState(tmdbEl, "", "TMDb ->", "View on TMDb ->");
     setLinkState(imdbEl, "", "IMDb ->", "View on IMDb ->");
     detail.style.setProperty("--pc-backdrop", "none");
+    updateNav();
     detail.classList.add("show");
     startStatusPoll();
 
+    const renderKey = keyOf(p);
     const meta = await getMetaFor(p);
-    if (!meta || k !== lastKey) return;
+    if (!meta || CARD.selectedKey !== renderKey) return;
     applyMeta(p, meta);
   }
 
-  window.addEventListener("currently-watching-updated", (ev) => {
-    (async () => {
-      try {
-        const d = ev.detail || {};
-        const st = String(d?.state || d?.status || "").toLowerCase();
-        const wantKey = keyOf(d) || lastKey || "";
-        const api = await fetchCurrentlyWatching(wantKey);
-        if (api && isActiveState(api.state || api.status)) {
-          await render(api);
-          return;
-        }
-        if (!d || st === "stopped") {
-          hide();
-          dismissedKey = null;
-          return;
-        }
-        await render(d);
-      } catch {}
-    })();
+  async function refreshCard(preferredKey = "", force = false) {
+    if (!isUiEnabled()) {
+      hide(true);
+      return;
+    }
+
+    const data = await fetchCurrentlyWatchingData(force);
+    CARD.streams = Array.isArray(data?.streams) ? data.streams.slice() : [];
+
+    if (!CARD.streams.length) {
+      CARD.dismissed = false;
+      hide(true);
+      return;
+    }
+
+    ensureSelection(preferredKey);
+    if (CARD.dismissed) {
+      hide(false);
+      return;
+    }
+    await renderSelectedStream();
+  }
+
+  window.addEventListener("currently-watching-updated", () => {
+    refreshCard(CARD.selectedKey, false).catch(() => {});
   });
 
-  window.updatePlayingCard = render;
+  window.updatePlayingCard = (payload) => refreshCard(keyOf(payload || {}), false);
+  refreshCard("", false).catch(() => {});
 })();
