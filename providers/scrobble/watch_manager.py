@@ -15,7 +15,7 @@ except Exception:
     BASE_LOG = None
 
 from cw_platform.config_base import load_config
-from providers.scrobble.routes import build_route_cfg, normalize_routes
+from providers.scrobble.routes import build_route_cfg, build_route_cfg_by_id, find_route, normalize_routes
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent
 
 
@@ -60,23 +60,44 @@ def _stop_blocking(w: Any, timeout: float = 6.0) -> bool:
     return False
 
 
+def _stop_groups(groups: dict[str, Any] | None) -> None:
+    if not isinstance(groups, dict):
+        return
+    for g in list(groups.values()):
+        try:
+            _stop_blocking(getattr(g, "watcher", None))
+        except Exception:
+            pass
+
+
 class MultiDispatcher:
     def __init__(self, dispatchers: list[Dispatcher]) -> None:
         self._dispatchers = list(dispatchers or [])
 
-    def dispatch(self, event: ScrobbleEvent) -> None:
+    def accepts(self, event: ScrobbleEvent) -> bool:
+        accepted = False
         for d in self._dispatchers:
             try:
-                d.dispatch(event)
+                accepted = bool(d.accepts(event)) or accepted
+            except Exception as e:
+                _log(f"Route acceptance check error: {e}", "ERROR")
+        return accepted
+
+    def dispatch(self, event: ScrobbleEvent) -> bool:
+        accepted = False
+        for d in self._dispatchers:
+            try:
+                accepted = bool(d.dispatch(event)) or accepted
             except Exception as e:
                 _log(f"Route dispatcher error: {e}", "ERROR")
+        return accepted
 
 
 class _SchedulerEventSink:
-    def __init__(self, route: dict[str, Any]) -> None:
-        self._route_id = str((route or {}).get("id") or "").strip()
-        self._provider = str((route or {}).get("provider") or "").strip().lower()
-        self._provider_instance = str((route or {}).get("provider_instance") or "").strip()
+    def __init__(self, route_id: str, route_provider: str, route_provider_instance: str) -> None:
+        self._route_id = str(route_id or "").strip()
+        self._provider = str(route_provider or "").strip().lower()
+        self._provider_instance = str(route_provider_instance or "").strip()
 
     def send(self, event: ScrobbleEvent, *args: Any, **kwargs: Any) -> None:
         try:
@@ -98,12 +119,13 @@ class _DispatchSink:
     def __init__(self, dispatcher: MultiDispatcher) -> None:
         self._dispatcher = dispatcher
 
-    def send(self, event: ScrobbleEvent, *args: Any, **kwargs: Any) -> None:
-        self._dispatcher.dispatch(event)
+    def send(self, event: ScrobbleEvent, *args: Any, **kwargs: Any) -> bool:
+        return self._dispatcher.dispatch(event)
 
 
 @dataclass
 class RouteRunner:
+    route_id: str
     route: dict[str, Any]
     sink: Any
     dispatcher: Dispatcher
@@ -149,6 +171,17 @@ def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_i
         except TypeError:
             continue
     return cls()
+
+
+def _route_cfg_provider(route_id: str) -> Callable[[], dict[str, Any]]:
+    rid = str(route_id or "").strip()
+
+    def _provider() -> dict[str, Any]:
+        cfg = load_config() or {}
+        built = build_route_cfg_by_id(cfg, rid)
+        return built if isinstance(built, dict) else {}
+
+    return _provider
 
 
 def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider: Callable[[], dict[str, Any]], instance_id: str) -> Any:
@@ -218,20 +251,30 @@ class WatchManager:
                 runners: list[RouteRunner] = []
 
                 for route in rs:
-                    def route_cfg_provider(route_obj: dict[str, Any] = route) -> dict[str, Any]:
-                        return build_route_cfg(load_config() or {}, route_obj)
+                    route_id = str(route.get("id") or "").strip()
+                    route_cfg = _route_cfg_provider(route_id)
 
                     sink_name = str(route.get("sink") or "").strip().lower()
                     if not sink_name:
                         continue
                     sink_inst = str(route.get("sink_instance") or "default").strip() or "default"
                     try:
-                        sink = _make_sink(sink_name, route_cfg_provider, sink_inst)
+                        sink = _make_sink(sink_name, route_cfg, sink_inst)
                     except Exception as e:
                         _log(f"Skipping route with invalid sink '{sink_name}': {e}", "WARNING")
                         continue
-                    disp = Dispatcher([sink, _SchedulerEventSink(route)], cfg_provider=route_cfg_provider)
-                    runners.append(RouteRunner(route=route, sink=sink, dispatcher=disp))
+                    disp = Dispatcher(
+                        [
+                            sink,
+                            _SchedulerEventSink(
+                                route_id,
+                                str(route.get("provider") or prov),
+                                str(route.get("provider_instance") or inst),
+                            ),
+                        ],
+                        cfg_provider=route_cfg,
+                    )
+                    runners.append(RouteRunner(route_id=route_id, route=route, sink=sink, dispatcher=disp))
 
                 if not runners:
                     continue
@@ -262,16 +305,15 @@ class WatchManager:
             self._app.state.watch_groups = watch_groups
             return self.status()
 
-    def stop_all(self) -> dict[str, Any]:
+    def stop_all(self, wait: bool = True) -> dict[str, Any]:
         with self._lock:
             groups = getattr(self._app.state, "watch_groups", None)
-            if isinstance(groups, dict):
-                for g in list(groups.values()):
-                    try:
-                        _stop_blocking(getattr(g, "watcher", None))
-                    except Exception:
-                        pass
+            groups_copy = dict(groups) if isinstance(groups, dict) else {}
             self._app.state.watch_groups = {}
+            if wait:
+                _stop_groups(groups_copy)
+            elif groups_copy:
+                threading.Thread(target=_stop_groups, args=(groups_copy,), daemon=True).start()
             return self.status()
 
     def status(self) -> dict[str, Any]:
@@ -297,7 +339,8 @@ class WatchManager:
                 }
             )
             for rr in (g.routes or []):
-                r = rr.route or {}
+                cfg = load_config() or {}
+                r = find_route(cfg, rr.route_id) or rr.route or {}
                 out_routes.append(
                     {
                         "id": str(r.get("id") or ""),
@@ -326,8 +369,8 @@ def start_from_config(app: Any) -> dict[str, Any]:
     return get_manager(app).start_from_config()
 
 
-def stop_all(app: Any) -> dict[str, Any]:
-    return get_manager(app).stop_all()
+def stop_all(app: Any, wait: bool = True) -> dict[str, Any]:
+    return get_manager(app).stop_all(wait=wait)
 
 
 def status(app: Any) -> dict[str, Any]:
