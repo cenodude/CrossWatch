@@ -89,12 +89,6 @@ except Exception:
 
 from pydantic import BaseModel
 
-from providers.scrobble.scrobble import Dispatcher, from_plex_webhook
-from providers.scrobble.trakt.sink import TraktSink
-from providers.scrobble.simkl.sink import SimklSink
-from providers.scrobble.mdblist.sink import MDBListSink
-
-
 # Webhook: Plex
 try:
     from providers.webhooks.plextrakt import process_webhook as process_webhook
@@ -149,8 +143,6 @@ HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
 CW_STATE_DIR = (CONFIG_DIR / ".cw_state"); CW_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 _METADATA: Any = None
-WATCH: Optional[Any] = None
-DISPATCHER: Optional[Dispatcher] = None
 scheduler: Optional[SyncScheduler] = None
 _AUTH_RESET_ENV_APPLIED = False
 
@@ -356,84 +348,6 @@ def _apply_debug_env_from_config() -> None:
     elif not on and os.environ.get("CW_DEBUG"):
         os.environ.pop("CW_DEBUG", None)
 
-# Watcher: Sink builder
-def _build_sinks_from_config(cfg) -> list:
-    sc = cfg.get("scrobble") or {}
-    watch_cfg = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
-    sink_cfg = str(watch_cfg.get("sink") or "").strip()
-    if not sink_cfg or sink_cfg.lower() in ("none", "off", "disabled", "false", "0"):
-        return []
-    raw = sink_cfg
-
-    names = [s.strip().lower() for s in re.split(r"[,&+]", raw) if s and s.strip()]
-    added, sinks = set(), []
-    for name in names:
-        if name == "trakt" and "trakt" not in added:
-            try:
-                sinks.append(TraktSink()); added.add("trakt")
-            except Exception:
-                pass
-        elif name == "simkl" and "simkl" not in added:
-            try:
-                sinks.append(SimklSink()); added.add("simkl")
-            except Exception:
-                pass
-        elif name == "mdblist" and "mdblist" not in added:
-            try:
-                sinks.append(MDBListSink()); added.add("mdblist")
-            except Exception:
-                pass
-
-    return sinks
-
-# Watcher: Autostart watch service from config
-def autostart_from_config():
-    cfg = load_config()
-    sc = cfg.get("scrobble")
-    if not isinstance(sc, dict):
-        sc = {}; cfg["scrobble"] = sc
-
-    if not (sc.get("enabled") and (sc.get("mode") or "").lower() == "watch"):
-        return None
-
-    watch_cfg = sc.get("watch")
-    if not isinstance(watch_cfg, dict):
-        watch_cfg = {}; sc["watch"] = watch_cfg
-
-    if watch_cfg.get("autostart") is False:
-        return None
-
-    provider = (watch_cfg.get("provider") or "plex").lower().strip()
-    filters = (watch_cfg.get("filters") or {}) if isinstance(watch_cfg, dict) else {}
-    sinks = _build_sinks_from_config(cfg)
-
-
-    try:
-        if provider == "emby":
-            from providers.scrobble.emby.watch import make_default_watch as _mk
-        elif provider == "jellyfin":
-            from providers.scrobble.jellyfin.watch import make_default_watch as _mk
-        else:
-            from providers.scrobble.plex.watch import make_default_watch as _mk
-
-    except Exception:
-        return None
-
-    try:
-        w = _mk(sinks=sinks)
-        if isinstance(filters, dict) and hasattr(w, "set_filters"):
-            try:
-                getattr(w, "set_filters")(filters)
-            except Exception:
-                pass
-        if hasattr(w, "start_async"):
-            w.start_async()
-        else:
-            threading.Thread(target=w.start, daemon=True).start()
-        return w
-    except Exception:
-        return None
-
 # Scheduler: Next run computation
 _SCHED_HINT: Dict[str, int] = {"next_run_at": 0, "last_saved_at": 0}
 
@@ -445,7 +359,7 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
 
     mode = str(scfg.get("mode") or "every_n_hours").lower()
 
-    if mode in {"hourly", "every_hour"}:
+    if mode == "hourly":
         base = datetime.fromtimestamp(now)
         target = base.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         return int(target.timestamp())
@@ -458,8 +372,8 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
             return int(target.timestamp())
         return now + n * 3600
 
-    if mode in {"custom", "custom_interval", "custom_minutes", "interval"}:
-        minutes = max(15, int(scfg.get("custom_interval_minutes", scfg.get("custom_minutes", 60)) or 60))
+    if mode == "custom_interval":
+        minutes = max(15, int(scfg.get("custom_interval_minutes", 60) or 60))
         return now + minutes * 60
 
     if mode == "daily_time":
@@ -772,7 +686,6 @@ def _json_safe(obj: Any) -> Any:
 # Startup sequence
 @asynccontextmanager
 async def _lifespan(app: Any) -> AsyncIterator[None]:
-    app.state.watch = None
     app.state.watch_groups = {}
     app.state.watch_manager = None
     _apply_debug_env_from_config()
@@ -793,7 +706,6 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         except Exception: pass
 
     started = False
-    wm_available = False
     try:
         cfg = load_config() or {}
         sc = (cfg.get("scrobble") or {}) or {}
@@ -803,7 +715,6 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         if want_autostart:
             try:
                 from providers.scrobble.watch_manager import start_from_config as _wm_start
-                wm_available = True
                 res = _wm_start(app)
                 if isinstance(res, dict):
                     started = any(bool(g.get("running")) for g in (res.get("groups") or []))
@@ -826,35 +737,6 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             _UIHostLogger("WATCH", "WATCH")(f"watch autostart check failed: {e}", level="ERROR")
         except Exception:
             pass
-
-    if not wm_available:
-        try:
-            w = autostart_from_config()
-            if w:
-                app.state.watch = w
-                globals()["WATCH"] = w
-                alive = bool(getattr(w, "is_alive", lambda: True)())
-                started = True
-                _UIHostLogger(
-                    "WATCH",
-                    "WATCH",
-                )(
-                    "watch autostarted" if alive else "watch autostarted (initializing)",
-                    level="INFO",
-                )
-            else:
-                cfg2 = load_config() or {}
-                sc2 = (cfg2.get("scrobble") or {})
-                watch2 = (sc2.get("watch") or {}) if isinstance(sc2.get("watch"), dict) else {}
-                if watch2.get("autostart") is False:
-                    _UIHostLogger("WATCH", "WATCH")("Autostart is disabled", level="INFO")
-                else:
-                    _UIHostLogger("WATCH", "WATCH")("autostart_from_config() returned None", level="INFO")
-        except Exception as e:
-            try:
-                _UIHostLogger("WATCH", "WATCH")(f"autostart_from_config failed: {e}", level="ERROR")
-            except Exception:
-                pass
 
 
     try:
@@ -895,18 +777,6 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             _wm_stop(app)
         except Exception:
             pass
-
-        try:
-            w = getattr(app.state, "watch", None) or (WATCH if 'WATCH' in globals() else None)
-            if w:
-                w.stop()
-                _UIHostLogger("WATCH", "WATCH")("watch stopped", level="INFO")
-            app.state.watch = None
-            if 'WATCH' in globals():
-                globals()['WATCH'] = None
-        except Exception as e:
-            try: _UIHostLogger("WATCH", "WATCH")(f"watch stop failed: {e}", level="ERROR")
-            except Exception: pass
 
 app.router.lifespan_context = _lifespan
 
@@ -1018,13 +888,21 @@ async def api_logs_watcher(
         sc = cfg.get("scrobble") or {}
         if isinstance(sc, dict) and isinstance(sc.get("watch"), dict):
             watch_cfg = sc.get("watch") or {}
-        if not watch_cfg and isinstance(cfg.get("watch"), dict):
-            watch_cfg = cfg.get("watch") or {}
-
-        provider = _norm_log_tag(str(watch_cfg.get("provider") or "plex"))
-        sinks_raw = str(watch_cfg.get("sink") or "")
-        sinks = [_norm_log_tag(s) for s in re.split(r"[,&+]", sinks_raw) if s and str(s).strip()]
-        sel = [provider, *sinks]
+        routes = watch_cfg.get("routes") if isinstance(watch_cfg, dict) else None
+        if isinstance(routes, list) and routes:
+            providers = [
+                _norm_log_tag(str((r or {}).get("provider") or ""))
+                for r in routes
+                if isinstance(r, dict) and bool((r or {}).get("enabled", True))
+            ]
+            sinks = [
+                _norm_log_tag(str((r or {}).get("sink") or ""))
+                for r in routes
+                if isinstance(r, dict) and bool((r or {}).get("enabled", True))
+            ]
+            sel = [*providers, *sinks]
+        else:
+            sel = ["WATCH"]
 
     out: List[str] = []
     for t in sel:
