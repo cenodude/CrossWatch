@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -18,6 +19,7 @@ from providers.scrobble.scrobble import ScrobbleEvent
 STATE_VERSION = 2
 PRUNE_AFTER_SEC = 10 * 60
 ACTIVE_STATES = {"playing", "paused", "buffering"}
+_STATE_LOCK = threading.RLock()
 
 
 def _log(msg: str, lvl: str = "DEBUG") -> None:
@@ -49,31 +51,42 @@ def state_file() -> Path:
 
 def _write_raw(payload: Optional[dict[str, Any]]) -> None:
     p = _state_file()
-    if not payload:
+    with _STATE_LOCK:
         try:
-            if p.exists():
-                p.unlink()
+            p.parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        if not payload:
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception as e:
+                _log(f"remove failed: {e}")
+            return
+        tmp = p.with_name(f"{p.name}.{time.time_ns()}.{threading.get_ident()}.tmp")
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            tmp.replace(p)
         except Exception as e:
-            _log(f"remove failed: {e}")
-        return
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    try:
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        tmp.replace(p)
-    except Exception as e:
-        _log(f"write failed: {e}")
+            _log(f"write failed: {e}")
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
 
 
 def _read_raw() -> Any:
     p = _state_file()
-    if not p.exists():
-        return None
-    try:
-        raw = p.read_text(encoding="utf-8")
-        return json.loads(raw) if raw.strip() else None
-    except Exception as e:
-        _log(f"read failed: {e}", "ERROR")
-        return None
+    with _STATE_LOCK:
+        if not p.exists():
+            return None
+        try:
+            raw = p.read_text(encoding="utf-8")
+            return json.loads(raw) if raw.strip() else None
+        except Exception as e:
+            _log(f"read failed: {e}", "ERROR")
+            return None
 
 
 def _extract_tmdb_ids(ev: ScrobbleEvent) -> dict[str, Any]:
@@ -105,9 +118,10 @@ def _payload_key(source: str, payload: dict[str, Any]) -> str:
     if pk:
         return pk
 
+    provider_instance = str(payload.get("provider_instance") or "").strip()
     sk = str(payload.get("session_key") or "").strip()
     if sk:
-        return f"{source}:{sk}"
+        return f"{source}:{provider_instance}:{sk}" if provider_instance else f"{source}:{sk}"
 
     #  Fallback construction for backward compatibility and non-session cases.
     raw_ids = payload.get("ids")
@@ -140,7 +154,32 @@ def _payload_key(source: str, payload: dict[str, Any]) -> str:
     year = str(payload.get("year") or "")
     season = str(payload.get("season") or "")
     episode = str(payload.get("episode") or "")
-    return f"{source}:{mt}:{title}:{year}:{season}:{episode}"
+    pi = f":{provider_instance}" if provider_instance else ""
+    return f"{source}{pi}:{mt}:{title}:{year}:{season}:{episode}"
+
+
+def _payload_alias_keys(source: str, payload: dict[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    primary = _payload_key(source, payload)
+    if primary:
+        keys.add(primary)
+
+    provider_instance = str(payload.get("provider_instance") or "").strip()
+    session_key = str(payload.get("session_key") or "").strip()
+    if session_key:
+        keys.add(f"{source}:{session_key}")
+        if provider_instance:
+            keys.add(f"{source}:{provider_instance}:{session_key}")
+        return {k for k in keys if k}
+
+    if provider_instance:
+        legacy_payload = dict(payload)
+        legacy_payload["provider_instance"] = ""
+        legacy_key = _payload_key(source, legacy_payload)
+        if legacy_key:
+            keys.add(legacy_key)
+
+    return {k for k in keys if k}
 
 
 def _as_v2(raw: Any, source_hint: str | None = None) -> dict[str, Any]:
@@ -166,39 +205,46 @@ def _prune(streams: dict[str, Any], now: int) -> None:
 
 
 def _update_stream(source: str, payload: dict[str, Any], clear_on_stop: bool) -> None:
-    now = int(time.time())
-    raw = _read_raw()
-    state = _as_v2(raw, source_hint=source)
-    streams = state.get("streams") or {}
-    if not isinstance(streams, dict):
-        streams = {}
+    with _STATE_LOCK:
+        now = int(time.time())
+        raw = _read_raw()
+        state = _as_v2(raw, source_hint=source)
+        streams = state.get("streams") or {}
+        if not isinstance(streams, dict):
+            streams = {}
 
-    _prune(streams, now)
+        _prune(streams, now)
 
-    key = _payload_key(source, payload)
-    st = str(payload.get("state") or "").lower()
+        key = _payload_key(source, payload)
+        alias_keys = _payload_alias_keys(source, payload)
+        st = str(payload.get("state") or "").lower()
 
-    existing_started = 0
-    existing = streams.get(key)
-    if isinstance(existing, dict):
-        try:
-            existing_started = int(existing.get("started") or 0)
-        except Exception:
-            existing_started = 0
+        existing_started = 0
+        for alias_key in alias_keys:
+            existing = streams.get(alias_key)
+            if not isinstance(existing, dict):
+                continue
+            try:
+                existing_started = max(existing_started, int(existing.get("started") or 0))
+            except Exception:
+                pass
+            if alias_key != key:
+                streams.pop(alias_key, None)
 
-    if st == "stopped":
-        streams.pop(key, None)
-    else:
-        if not existing_started:
-            existing_started = now
-        payload["started"] = existing_started
-        streams[key] = payload
+        if st == "stopped":
+            for alias_key in alias_keys:
+                streams.pop(alias_key, None)
+        else:
+            if not existing_started:
+                existing_started = now
+            payload["started"] = existing_started
+            streams[key] = payload
 
-    if not streams:
-        _write_raw(None)
-        return
+        if not streams:
+            _write_raw(None)
+            return
 
-    _write_raw({"v": STATE_VERSION, "streams": streams})
+        _write_raw({"v": STATE_VERSION, "streams": streams})
 
 
 def update_from_event(
@@ -207,6 +253,7 @@ def update_from_event(
     duration_ms: int | None = None,
     cover: str | None = None,
     clear_on_stop: bool = False,
+    provider_instance: str | None = None,
 ) -> None:
     try:
         action = (ev.action or "").lower()
@@ -224,6 +271,7 @@ def update_from_event(
 
         payload: dict[str, Any] = {
             "source": str(source),
+            "provider_instance": str(provider_instance or "").strip(),
             "media_type": media_type,
             "title": ev.title or "",
             "year": ev.year,
@@ -259,6 +307,7 @@ def update_from_payload(
     clear_on_stop: bool = False,
     ids: dict[str, Any] | None = None,
     session_key: str | None = None,
+    provider_instance: str | None = None,
 ) -> None:
     try:
         mt = (media_type or "").lower()
@@ -274,6 +323,7 @@ def update_from_payload(
 
         payload: dict[str, Any] = {
             "source": str(source),
+            "provider_instance": str(provider_instance or "").strip(),
             "media_type": mt,
             "title": title or "",
             "year": _coerce_int(year),
