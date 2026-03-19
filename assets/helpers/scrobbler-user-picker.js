@@ -16,16 +16,15 @@
       write,
       setNote,
       chip,
-      removeUserWatch,
       removeUserWebhook,
-      onSelectWatchUser,
     } = deps;
 
-    const USER_PICK = { mode: "watch", anchor: null, users: [], all: [], prov: "plex" };
+    const USER_PICK = { mode: "watch", anchor: null, users: [], all: [], prov: "plex", opts: null };
 
     function closeUserPicker() {
       const pop = d.getElementById("sc_user_pop");
       if (pop) pop.classList.add("hidden");
+      USER_PICK.opts = null;
     }
 
     function placeUserPickerPop() {
@@ -80,9 +79,13 @@
     }
 
     function applyPickedUser(u) {
+      if (USER_PICK.opts && typeof USER_PICK.opts.onPick === "function") {
+        USER_PICK.opts.onPick({ name: String(u?.name || "").trim(), id: String(u?.id || "").trim(), raw: u?.raw || null });
+        closeUserPicker();
+        return;
+      }
       const prov = provider();
       const name = String(u?.name || "").trim();
-      const uid = String(u?.id || "").trim();
 
       if (USER_PICK.mode === "webhook") {
         const added = addToWhitelist("#sc-whitelist-webhook", "scrobble.webhook.filters_plex.username_whitelist", name, removeUserWebhook);
@@ -91,24 +94,7 @@
         return;
       }
 
-      const added = addToWhitelist(
-        "#sc-whitelist",
-        "scrobble.watch.filters.username_whitelist",
-        name,
-        removeUserWatch,
-        prov === "emby" || prov === "jellyfin" ? onSelectWatchUser : undefined
-      );
-
-      if ((prov === "emby" || prov === "jellyfin") && uid) {
-        const inp = $("#sc-server-uuid", STATE.mount);
-        if (inp) inp.value = uid;
-        write("scrobble.watch.filters.server_uuid", uid);
-        write("scrobble.watch.filters.user_id", uid);
-        setNote("sc-uuid-note", "User ID set");
-      }
-
-      setNote("sc-users-note", added ? `Picked ${name}` : `${name} already added`);
-      closeUserPicker();
+      if (USER_PICK.mode === "watch") closeUserPicker();
     }
 
     function renderUserPickerList() {
@@ -195,25 +181,33 @@
     }
 
     async function fetchUsersForPicker(mode) {
+      const forcedProv = String(USER_PICK.opts?.provider || "").trim().toLowerCase();
+      const forcedInstance = String(USER_PICK.opts?.instance || "").trim();
       if (mode === "webhook") {
         const x = await j(`/api/plex/users?instance=${encodeURIComponent("default")}`);
         const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
         return Array.isArray(a) ? a : [];
       }
-      return API.users(activeProviderInstance());
+      if (forcedProv === "plex") {
+        const x = await j(`/api/plex/users?instance=${encodeURIComponent(forcedInstance || activeProviderInstance())}`);
+        const a = Array.isArray(x) ? x : Array.isArray(x?.users) ? x.users : [];
+        return Array.isArray(a) ? a : [];
+      }
+      return API.users(forcedInstance || activeProviderInstance());
     }
 
-    async function openUserPicker(mode, anchorEl) {
+    async function openUserPicker(mode, anchorEl, opts = {}) {
       USER_PICK.mode = mode === "webhook" ? "webhook" : "watch";
       USER_PICK.anchor = anchorEl || null;
-      USER_PICK.prov = USER_PICK.mode === "webhook" ? "plex" : provider();
+      USER_PICK.opts = opts && typeof opts === "object" ? opts : null;
+      USER_PICK.prov = USER_PICK.mode === "webhook" ? "plex" : String(USER_PICK.opts?.provider || provider() || "plex").toLowerCase();
 
       if (USER_PICK.mode === "watch" && (USER_PICK.prov === "emby" || USER_PICK.prov === "jellyfin") && w.cwMediaUserPicker && typeof w.cwMediaUserPicker.open === "function") {
         w.cwMediaUserPicker.open({
           provider: USER_PICK.prov,
-          instance: activeProviderInstance(),
+          instance: String(USER_PICK.opts?.instance || activeProviderInstance() || "default"),
           anchorEl: USER_PICK.anchor,
-          title: USER_PICK.prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user",
+          title: String(USER_PICK.opts?.title || (USER_PICK.prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user")),
           onPick: (u) => applyPickedUser({ name: u?.name, id: u?.id }),
         });
         return;
@@ -228,7 +222,7 @@
       if (!pop || !title || !filter || !listEl) return;
 
       const provLabel = USER_PICK.prov === "plex" ? "Plex" : USER_PICK.prov === "emby" ? "Emby" : "Jellyfin";
-      title.textContent = USER_PICK.mode === "webhook" ? "Pick Plex user" : `Pick ${provLabel} user`;
+      title.textContent = String(USER_PICK.opts?.title || (USER_PICK.mode === "webhook" ? "Pick Plex user" : `Pick ${provLabel} user`));
       filter.value = "";
       listEl.innerHTML = "";
       listEl.appendChild(el("div", { className: "sub", textContent: "Loading..." }));
