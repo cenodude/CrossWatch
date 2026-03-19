@@ -1,4 +1,4 @@
-/* assets/js/scrobbler.js */
+﻿/* assets/js/scrobbler.js */
 /* refactored */
 /* Scrobbler configuration UI and logic. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
@@ -6,7 +6,16 @@
   const authSetupPending = () => w.cwIsAuthSetupPending?.() === true;
   const $ = (s, r) => (r || d).querySelector(s);
   const $all = (s, r) => [...(r || d).querySelectorAll(s)];
-  const el = (t, a) => Object.assign(d.createElement(t), a || {});
+  const el = (t, a) => {
+    const node = d.createElement(t);
+    if (!a) return node;
+    const attrs = { ...a };
+    const dataset = attrs.dataset && typeof attrs.dataset === "object" ? attrs.dataset : null;
+    if (dataset) delete attrs.dataset;
+    Object.assign(node, attrs);
+    if (dataset) Object.assign(node.dataset, dataset);
+    return node;
+  };
   const on = (n, e, f) => n && n.addEventListener(e, f);
 
   const fieldKey = (value, fallback = "field") => String(value || fallback).replace(/[^a-z0-9_-]+/gi, "_");
@@ -70,20 +79,20 @@ function clearStickyNote(id) {
 
   const HELP_TEXT = {
     "sc-help-auto-remove":
-      "When you finish a movie, CW will automatically remove that title from your configured Watchlists. It’s currently movies-only. It honors your filters (username/server). If the movie isn’t on your Watchlist, nothing happens, your libraries and other services remain untouched.",
+      "When you finish a movie, CW will automatically remove that title from your configured Watchlists. It's currently movies-only. It honors your filters (username/server). If the movie isn't on your Watchlist, nothing happens, your libraries and other services remain untouched.",
     "sc-help-webhook-plex-ratings":
-      "When enabled, we’ll send ratings to Trakt. Movies, shows, seasons, and episodes are supported.",
+      "When enabled, we'll send ratings to Trakt. Movies, shows, seasons, and episodes are supported.",
     "sc-help-watch-plex-ratings":
-      "When enabled, we’ll send ratings to Trakt and/or SIMKL.\nTrakt: Movies, shows, seasons, and episodes are supported.\nMDBList: Movies, shows, seasons, and episodes are supported.\nSIMKL: Movies and shows are supported.\nAdd the below webhook to your Plex instance to enable ratings.",
+      "When enabled, we'll send ratings to Trakt and/or SIMKL.\nTrakt: Movies, shows, seasons, and episodes are supported.\nMDBList: Movies, shows, seasons, and episodes are supported.\nSIMKL: Movies and shows are supported.\nAdd the below webhook to your Plex instance to enable ratings.",
 
     "sc-help-adv-pause":
       "Pause debounce (sec) (default 5) - Ignore rapid, duplicate pause events.",
     "sc-help-adv-suppress":
-      "Suppress start @ (%) (default 99) - If play/resume is at or above this %, don’t send /scrobble/start.",
+      "Suppress start @ (%) (default 99) - If play/resume is at or above this %, don't send /scrobble/start.",
     "sc-help-adv-regress":
       "Regress tol % (default 5) - Block progress rollbacks bigger than this %.",
     "sc-help-adv-stop-pause":
-      "Stop pause ≥ (%) (default 80) - If STOP arrives below this %, treat it as PAUSE.",
+      "Stop pause >= (%) (default 80) - If STOP arrives below this %, treat it as PAUSE.",
     "sc-help-adv-force-stop":
       "Force stop @ (%) (default 80) - If STOP is at or above this %, send /scrobble/stop.",
     "sc-help-adv-progress-step":
@@ -91,12 +100,33 @@ function clearStickyNote(id) {
     "sc-help-watch-filters":
       "Don't skip the filtering step! While optional for solo media server users, it becomes essential the moment you share your server with other users. Without filters, the system will scrobble everything",
     "sc-help-watch-username-whitelist":
-      "Only scrobble activity for the usernames listed here. Leave it empty only if you want all detected users on the selected server or route to be included.",
+      "Only scrobble activity for the usernames listed here.",
     "sc-help-watch-server-uuid":
-      "Limit watcher scrobbles to one specific media server or user identity. Plex uses the server UUID. Emby and Jellyfin use the user ID.",
+      "Optional filter for one specific server or user identity.",
         "sc-help-watch-advanced":
       "Do not alter the Advanced settings unless you fully understand their impact. When in doubt, leave them untouched.",
   };
+
+  function helpTextForId(id) {
+    const key = String(id || "");
+    if (key === "sc-help-watch-username-whitelist") {
+      const prov = String(provider() || "plex").toLowerCase();
+      if (prov === "plex") {
+        return "Only scrobble activity for the Plex usernames listed here. Picking a user only adds the username to this whitelist.";
+      }
+      const label = prov === "emby" ? "Emby" : "Jellyfin";
+      return `Only scrobble activity for the ${label} usernames listed here. Picking a user only adds the username to this whitelist.`;
+    }
+    if (key === "sc-help-watch-server-uuid") {
+      const prov = String(provider() || "plex").toLowerCase();
+      if (prov === "plex") {
+        return "Optional: limit this route to one Plex server UUID. Fetch gets the server UUID for the configured Plex instance.";
+      }
+      const label = prov === "emby" ? "Emby" : "Jellyfin";
+      return `Optional: limit this route to one ${label} user ID. Fetch gets the user ID for the configured ${label} instance. Picking a username does not fill this field.`;
+    }
+    return HELP_TEXT[key] || (key === "sc-help-watch-routes" ? "Routes control which provider sends activity to which sink. You can create separate paths for different services or profiles. Do not forget to set Filters for each route, otherwise playback from the wrong users or server may be scrobbled." : "");
+  }
 
   const helpBtn = (tipId) =>
     `<button type="button" class="cx-help material-symbols-rounded" data-tip-id="${tipId}" aria-label="Help">help</button>`;
@@ -126,7 +156,6 @@ function clearStickyNote(id) {
   const scUi = w.CW?.ScrobblerUI || {};
   const helpBtnNode = scUi.helpBtnNode || (() => null);
   const ensureInlineHelp = scUi.ensureInlineHelp || (() => {});
-  const enhanceWatcherFiltersUI = scUi.enhanceWatcherFiltersUI || (() => {});
   const enhanceWatcherAdvancedUI = scUi.enhanceWatcherAdvancedUI || (() => {});
   const enhanceWebhookFiltersUI = scUi.enhanceWebhookFiltersUI || (() => {});
 
@@ -134,8 +163,8 @@ function clearStickyNote(id) {
     const scope = root || d;
     $all(".cx-help[data-tip-id]", scope).forEach((btn) => {
       const id = btn.getAttribute("data-tip-id") || "";
-      const text = HELP_TEXT[id] || (id === "sc-help-watch-routes" ? "Routes control which provider sends activity to which sink. You can create separate paths for different services or profiles. Do not forget to set Filters for each route, otherwise playback from the wrong users or server may be scrobbled." : "");
-      if (text && !btn.title) btn.title = wrapTooltipText(text);
+      const text = helpTextForId(id);
+      if (text) btn.title = wrapTooltipText(text);
 
       if (btn.dataset.cxBound === "1") return;
       btn.dataset.cxBound = "1";
@@ -150,11 +179,12 @@ function clearStickyNote(id) {
     if (d.getElementById("sc-styles")) return;
     const s = d.createElement("style");
     s.id = "sc-styles";
-    s.textContent = `.row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}.codepair{display:flex;gap:8px;align-items:center}.codepair.right{justify-content:flex-end}.codepair code{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}#card-scrobbler .badge,#sec-scrobbler .badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}#card-scrobbler .badge.is-on,#sec-scrobbler .badge.is-on{background:#0a3;color:#fff}#card-scrobbler .badge.is-off,#sec-scrobbler .badge.is-off{background:#333;color:#bbb;border:1px solid #444}#card-scrobbler .status-dot,#sec-scrobbler .status-dot{width:10px;height:10px;border-radius:50%}#card-scrobbler .status-dot.on,#sec-scrobbler .status-dot.on{background:#22c55e}#card-scrobbler .status-dot.off,#sec-scrobbler .status-dot.off{background:#ef4444}#card-scrobbler .chips,#sec-scrobbler .chips{display:flex;flex-wrap:wrap;gap:6px}#card-scrobbler .chip,#sec-scrobbler .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}#card-scrobbler .chip .rm,#sec-scrobbler .chip .rm{cursor:pointer;opacity:.7}.sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}.sc-filter-grid>div{display:grid;gap:10px;min-width:0}.sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}.sc-adv-grid .field{display:grid;grid-template-columns:minmax(0,1fr) auto 92px;align-items:center;gap:10px}.sc-adv-grid .field label{min-width:0;font-size:12px;opacity:.8;letter-spacing:.04em;text-transform:uppercase}.sc-adv-grid .field .cx-help{flex:0 0 auto}.sc-adv-grid .field input{width:92px;max-width:100%;justify-self:end}@media (max-width:1380px){.sc-adv-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}@media (max-width:980px){.sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}@media (max-width:640px){.sc-adv-grid,.sc-filter-grid{grid-template-columns:1fr;}}.sc-subbox{margin-top:12px;border-radius:12px;background:rgba(255,255,255,.04);box-shadow:0 0 0 1px rgba(255,255,255,.06) inset}.sc-subbox .head{padding:12px 14px;font-weight:700;opacity:.92}.sc-subbox .body{padding:12px 14px;border-top:1px solid rgba(255,255,255,.06)}.sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9;white-space:nowrap}.wh-logo{width:var(--wh-logo,24px);height:var(--wh-logo,24px);aspect-ratio:1/1;object-fit:contain;display:block;transform-origin:center}.wh-logo[alt="Plex"]{transform:scale(1.15)}.wh-logo[alt="Jellyfin"]{transform:scale(1)}.wh-logo[alt="Emby"]{transform:scale(1.15)}.sc-opt-col{display:flex;flex-direction:column;gap:10px}.sc-opt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sc-pillbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.sc-pill{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:rgba(255,255,255,.92);font-size:12px;line-height:1;cursor:pointer;user-select:none;transition:background .15s ease,border-color .15s ease,opacity .15s ease}.sc-pill.off{opacity:.78}.sc-pill.on{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.45);opacity:1}.sc-pill:hover{border-color:rgba(255,255,255,.22)}.sc-pill:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 6px rgba(34,197,94,.15)}.sc-pill:disabled{cursor:default;opacity:.45}.sc-user-pop{position:fixed;z-index:9999;width:min(360px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 24px));border-radius:14px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden}.sc-user-pop.hidden{display:none}.sc-user-pop .head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06)}.sc-user-pop .title{font-weight:800}.sc-user-pop .body{padding:10px 12px;display:grid;gap:10px}.sc-user-pop .list{overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:12px;max-height:280px}.sc-user-pop .userrow{width:100%;text-align:left;background:transparent;border:0;color:inherit;padding:10px 10px;cursor:pointer}.sc-user-pop .userrow:hover{background:rgba(255,255,255,.05)}.sc-user-pop .row1{display:flex;justify-content:space-between;align-items:center;gap:8px}.sc-user-pop .sub{font-size:12px;opacity:.7;padding:10px}.sc-user-pop .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);opacity:.85}#card-scrobbler .input,#sec-scrobbler .input{background:#0a0a17;border:1px solid rgba(255,255,255,.12);border-radius:14px;color:#e7e9f4;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}#card-scrobbler .input:focus,#sec-scrobbler .input:focus{outline:none;border-color:rgba(124,92,255,.52);box-shadow:0 0 0 3px rgba(124,92,255,.18),inset 0 0 0 1px rgba(255,255,255,.03)}#card-scrobbler select.input,#sec-scrobbler select.input{background-color:#0a0a17;color:#e7e9f4}#card-scrobbler select.input option,#sec-scrobbler select.input option{background:#11131a;color:#fff}.sc-prov-wrap{position:relative;display:inline-block}.sc-prov-btn{width:140px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;cursor:pointer;background:#0a0a17;border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}.sc-prov-left{display:inline-flex;align-items:center;gap:8px;min-width:0}.sc-prov-ico{width:18px;height:18px;object-fit:contain}.sc-prov-caret{opacity:.7}.sc-prov-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:140px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden;z-index:1000}.sc-prov-menu.hidden{display:none}.sc-prov-item{width:100%;display:flex;align-items:center;gap:8px;padding:10px 10px;background:transparent;border:0;color:inherit;cursor:pointer;text-align:left}.sc-prov-item:hover{background:rgba(255,255,255,.05)}.sc-prov-item[aria-selected="true"]{background:rgba(34,197,94,.18)}.sc-prov-btn,.sc-prov-btn *{color:rgba(255,255,255,.92)!important;-webkit-text-fill-color:rgba(255,255,255,.92)!important}.sc-prov-btn:disabled,.sc-prov-btn:disabled *{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}#sc-provider,#sc-sink{color:rgba(255,255,255,.92)!important;-webkit-text-fill-color:rgba(255,255,255,.92)!important}#sc-provider:disabled,#sc-sink:disabled{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}#sc-provider option,#sc-sink option{color:#fff;background:#111}.sc-route-table table{width:100%;border-collapse:separate;border-spacing:0 8px}.sc-route-table th{font-size:12px;opacity:.8;text-align:left;padding:0 6px}.sc-route-table td{padding:0 6px;vertical-align:middle}.sc-route-row{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:12px}.sc-route-row td{padding:8px 6px}.sc-route-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.sc-route-table select.input{height:34px}.sc-route-table .sc-prov-wrap{display:block;width:100%}.sc-route-table .sc-prov-btn{width:100%;height:34px;padding:6px 10px}.sc-route-table .sc-prov-menu{left:0;right:0;min-width:0}.sc-shell{display:grid;gap:14px}.sc-shell .cw-meta-provider-panel.active{display:grid;gap:14px}.sc-shell .cw-panel-head{padding:18px 18px 16px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:radial-gradient(120% 145% at 0% 0%,rgba(124,92,255,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985));box-shadow:0 18px 36px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}.sc-shell .cw-panel-head-main{display:grid;gap:6px}.sc-shell .cw-panel-title{font-size:24px;font-weight:900;letter-spacing:-.02em;color:#f4f7ff}.sc-shell .muted,.sc-shell .micro-note{color:rgba(196,204,222,.74)}.sc-shell .cw-subtiles{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.sc-shell .cw-subtile{min-height:38px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.035);color:#eef3ff;font-weight:800;letter-spacing:.04em;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}.sc-shell .cw-subtile:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.28);background:rgba(255,255,255,.06)}.sc-shell .cw-subtile.active{border-color:rgba(124,92,255,.40);background:linear-gradient(180deg,rgba(124,92,255,.20),rgba(45,161,255,.10));box-shadow:0 10px 22px rgba(18,22,40,.28),inset 0 1px 0 rgba(255,255,255,.06)}.sc-shell .cw-subpanels{display:grid;gap:14px}.sc-shell .cw-subpanel.active{display:grid;gap:14px}.sc-shell .sc-subbox,.sc-shell .cc-card,.sc-shell #sc-filters,.sc-shell #sc-advanced,.sc-shell #sc-routes-wrap{border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);box-shadow:0 18px 34px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.03)}.sc-shell .sc-subbox .head,.sc-shell .cc-head{padding:16px 16px 12px;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)}.sc-shell .sc-subbox .body,.sc-shell #sc-routes-wrap>.body{padding:14px 16px 16px;border-top:1px solid rgba(255,255,255,.06)}.sc-shell .cc-card{padding:16px}.sc-shell .cc-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;padding:0}.sc-shell .cc-body{display:grid;gap:14px}.sc-shell .cc-gauge{min-height:74px;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(8,12,19,.78),rgba(4,6,10,.90));border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.sc-shell .cc-state .lbl{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:rgba(196,204,222,.64)}.sc-shell .cc-state .val{font-size:24px;font-weight:900;color:#f4f7ff}.sc-shell .cc-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:rgba(196,204,222,.72)}.sc-shell .cc-actions{display:flex;gap:10px;flex-wrap:wrap}.sc-shell .cc-actions .btn,.sc-shell .codepair .btn,.sc-shell .row .btn{min-height:40px;border-radius:14px}.sc-shell .cc-actions .btn:nth-child(1),.sc-shell #sc-route-add{background:linear-gradient(135deg,rgba(86,60,180,.42),rgba(56,106,208,.42));border-color:rgba(124,92,255,.24);box-shadow:0 14px 28px rgba(22,24,40,.24)}.sc-shell .codepair code{padding:9px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985));border:1px solid rgba(255,255,255,.08);color:#eef3ff}.sc-shell #sc-plexwatcher-url,.sc-shell #sc-webhook-url-plex,.sc-shell #sc-webhook-url-jf,.sc-shell #sc-webhook-url-emby{font-family:inherit;font-size:14px;font-weight:400;letter-spacing:normal;line-height:1.4}.sc-shell .sc-filter-grid,.sc-shell .sc-adv-grid,.sc-shell .cc-wrap{gap:16px}.sc-shell #sc-filters,.sc-shell #sc-advanced{padding:18px 20px 20px}.sc-shell #sc-filters>div:first-child,.sc-shell #sc-advanced>div:first-child{display:flex;justify-content:flex-end;margin:0 0 16px}.sc-shell #sc-filters>.body,.sc-shell #sc-advanced>.body{padding:0}.sc-shell #sc-route-filter-wrap{padding:14px 16px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-route-filter-wrap .muted,.sc-shell .sc-filter-grid>div>.muted{font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-shell .sc-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.sc-shell .sc-filter-grid>div{display:grid;gap:10px;min-width:0}.sc-shell .sc-filter-grid .chips{min-height:40px;align-content:flex-start}.sc-shell .sc-user-pop,.sc-shell .sc-prov-menu{background:linear-gradient(180deg,rgba(12,14,23,.98),rgba(6,8,12,.985));border:1px solid rgba(255,255,255,.10);box-shadow:0 18px 42px rgba(0,0,0,.36)}.sc-shell .sc-prov-btn{width:164px;min-height:42px;border-radius:16px;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985));border:1px solid rgba(255,255,255,.10)}.sc-shell .sc-route-table table{border-spacing:0 10px}.sc-shell .sc-route-row{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08)}.sc-shell .badge,.sc-shell .pill,.sc-shell .sc-pill{display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:850;letter-spacing:.05em;text-transform:uppercase}.sc-shell .badge.is-off{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:rgba(236,241,255,.78)}.sc-shell .badge.is-on{background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.30);color:#dcffe7}.sc-shell .sc-pillbar{gap:8px}.sc-shell .sc-pill{min-height:34px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.04)}.sc-shell .sc-pill.on{background:linear-gradient(180deg,rgba(124,92,255,.22),rgba(45,161,255,.10));border-color:rgba(124,92,255,.34)}.sc-shell .sc-opt-row,.sc-shell .sc-opt-col{gap:12px}.sc-shell .cx-help{color:rgba(214,222,242,.72)}.sc-shell .cx-help:hover{color:#fff}.sc-shell .row .cx-toggle,.sc-shell .cc-auto .cx-toggle{padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}.sc-shell #sc-note,.sc-shell #sc-webhook-warning,.sc-shell #sc-endpoint-note{padding:12px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}.sc-shell #sc-webhook-warning.warn{border-color:rgba(245,158,11,.24);background:linear-gradient(180deg,rgba(245,158,11,.12),rgba(255,255,255,.018))}.sc-shell .input,.sc-shell select.input{min-height:44px;border-radius:16px}.sc-shell .field{display:grid;grid-template-columns:minmax(0,1fr) auto 92px;align-items:center;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))}.sc-shell .field input{width:92px}.sc-shell .field label{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,248,.74)}@media (max-width:980px){.sc-shell .cw-panel-head{gap:14px}.sc-shell .cw-subtiles{justify-content:flex-start}.sc-shell .cc-wrap,.sc-shell .sc-filter-grid{grid-template-columns:1fr}.sc-shell .sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-shell .row{align-items:flex-start}}@media (max-width:640px){.sc-shell .cw-panel-head{padding:16px}.sc-shell .cw-panel-title{font-size:22px}.sc-shell .cw-subtile{width:100%;justify-content:center}.sc-shell .cc-actions,.sc-shell .row,.sc-shell .codepair{width:100%}.sc-shell .codepair{flex-wrap:wrap}.sc-shell .codepair code,.sc-shell .codepair .btn,.sc-shell .cc-actions .btn,.sc-shell .row .btn,.sc-shell .sc-prov-btn{width:100%}.sc-shell .sc-filter-grid,.sc-shell .sc-adv-grid{grid-template-columns:1fr}.sc-shell #sc-filters,.sc-shell #sc-advanced{padding:16px}.sc-shell .field{grid-template-columns:minmax(0,1fr) auto}.sc-shell .field input{grid-column:1 / -1;width:100%}}`;
+    s.textContent = `.row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}.codepair{display:flex;gap:8px;align-items:center}.codepair.right{justify-content:flex-end}.codepair code{padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}#card-scrobbler .badge,#sec-scrobbler .badge{padding:4px 10px;border-radius:999px;font-weight:600;opacity:.9}#card-scrobbler .badge.is-on,#sec-scrobbler .badge.is-on{background:#0a3;color:#fff}#card-scrobbler .badge.is-off,#sec-scrobbler .badge.is-off{background:#333;color:#bbb;border:1px solid #444}#card-scrobbler .status-dot,#sec-scrobbler .status-dot{width:10px;height:10px;border-radius:50%}#card-scrobbler .status-dot.on,#sec-scrobbler .status-dot.on{background:#22c55e}#card-scrobbler .status-dot.off,#sec-scrobbler .status-dot.off{background:#ef4444}#card-scrobbler .chips,#sec-scrobbler .chips{display:flex;flex-wrap:wrap;gap:6px}#card-scrobbler .chip,#sec-scrobbler .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}#card-scrobbler .chip .rm,#sec-scrobbler .chip .rm{cursor:pointer;opacity:.7}.sc-filter-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}.sc-filter-grid>div{display:grid;gap:10px;min-width:0}.sc-adv-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}.sc-adv-grid .field{display:grid;grid-template-columns:minmax(0,1fr) auto 92px;align-items:center;gap:10px}.sc-adv-grid .field label{min-width:0;font-size:12px;opacity:.8;letter-spacing:.04em;text-transform:uppercase}.sc-adv-grid .field .cx-help{flex:0 0 auto}.sc-adv-grid .field input{width:92px;max-width:100%;justify-self:end}@media (max-width:1380px){.sc-adv-grid{grid-template-columns:repeat(4,minmax(0,1fr));}}@media (max-width:980px){.sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}@media (max-width:640px){.sc-adv-grid,.sc-filter-grid{grid-template-columns:1fr;}}.sc-subbox{margin-top:12px;border-radius:12px;background:rgba(255,255,255,.04);box-shadow:0 0 0 1px rgba(255,255,255,.06) inset}.sc-subbox .head{padding:12px 14px;font-weight:700;opacity:.92}.sc-subbox .body{padding:12px 14px;border-top:1px solid rgba(255,255,255,.06)}.sc-toggle{display:inline-flex;align-items:center;gap:8px;font-size:12px;opacity:.9;white-space:nowrap}.wh-logo{width:var(--wh-logo,24px);height:var(--wh-logo,24px);aspect-ratio:1/1;object-fit:contain;display:block;transform-origin:center}.wh-logo[alt="Plex"]{transform:scale(1.15)}.wh-logo[alt="Jellyfin"]{transform:scale(1)}.wh-logo[alt="Emby"]{transform:scale(1.15)}.sc-opt-col{display:flex;flex-direction:column;gap:10px}.sc-opt-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sc-pillbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.sc-pill{display:inline-flex;align-items:center;justify-content:center;padding:7px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:rgba(255,255,255,.92);font-size:12px;line-height:1;cursor:pointer;user-select:none;transition:background .15s ease,border-color .15s ease,opacity .15s ease}.sc-pill.off{opacity:.78}.sc-pill.on{background:rgba(34,197,94,.18);border-color:rgba(34,197,94,.45);opacity:1}.sc-pill:hover{border-color:rgba(255,255,255,.22)}.sc-pill:focus-visible{outline:0;box-shadow:0 0 0 2px rgba(255,255,255,.14),0 0 0 6px rgba(34,197,94,.15)}.sc-pill:disabled{cursor:default;opacity:.45}.sc-user-pop{position:fixed;z-index:9999;width:min(360px,calc(100vw - 24px));max-height:min(420px,calc(100vh - 24px));border-radius:14px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden}.sc-user-pop.hidden{display:none}.sc-user-pop .head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06)}.sc-user-pop .title{font-weight:800}.sc-user-pop .body{padding:10px 12px;display:grid;gap:10px}.sc-user-pop .list{overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:12px;max-height:280px;scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.92) rgba(255,255,255,.06)}.sc-user-pop .list::-webkit-scrollbar{width:12px}.sc-user-pop .list::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}.sc-user-pop .list::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,92,255,.95),rgba(86,60,180,.92));border-radius:999px;border:2px solid rgba(7,9,14,.88)}.sc-user-pop .list::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(145,116,255,.98),rgba(104,79,206,.95))}.sc-user-pop .userrow{width:100%;text-align:left;background:transparent;border:0;color:inherit;padding:10px 10px;cursor:pointer}.sc-user-pop .userrow:hover{background:rgba(255,255,255,.05)}.sc-user-pop .row1{display:flex;justify-content:space-between;align-items:center;gap:8px}.sc-user-pop .sub{font-size:12px;opacity:.7;padding:10px}.sc-user-pop .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.10);opacity:.85}#card-scrobbler .input,#sec-scrobbler .input{background:#0a0a17;border:1px solid rgba(255,255,255,.12);border-radius:14px;color:#e7e9f4;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}#card-scrobbler .input:focus,#sec-scrobbler .input:focus{outline:none;border-color:rgba(124,92,255,.52);box-shadow:0 0 0 3px rgba(124,92,255,.18),inset 0 0 0 1px rgba(255,255,255,.03)}#card-scrobbler select.input,#sec-scrobbler select.input{background-color:#0a0a17;color:#e7e9f4}#card-scrobbler select.input option,#sec-scrobbler select.input option{background:#11131a;color:#fff}.sc-prov-wrap{position:relative;display:inline-block}.sc-prov-btn{width:140px;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;cursor:pointer;background:#0a0a17;border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}.sc-prov-left{display:inline-flex;align-items:center;gap:8px;min-width:0}.sc-prov-ico{width:18px;height:18px;object-fit:contain}.sc-prov-caret{opacity:.7}.sc-prov-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:140px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 18px 50px rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.10);overflow:hidden;z-index:1000}.sc-prov-menu.hidden{display:none}.sc-prov-item{width:100%;display:flex;align-items:center;gap:8px;padding:10px 10px;background:transparent;border:0;color:inherit;cursor:pointer;text-align:left}.sc-prov-item:hover{background:rgba(255,255,255,.05)}.sc-prov-item[aria-selected="true"]{background:rgba(34,197,94,.18)}.sc-prov-btn,.sc-prov-btn *{color:rgba(255,255,255,.92)!important;-webkit-text-fill-color:rgba(255,255,255,.92)!important}.sc-prov-btn:disabled,.sc-prov-btn:disabled *{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}#sc-provider,#sc-sink{color:rgba(255,255,255,.92)!important;-webkit-text-fill-color:rgba(255,255,255,.92)!important}#sc-provider:disabled,#sc-sink:disabled{color:rgba(255,255,255,.55)!important;-webkit-text-fill-color:rgba(255,255,255,.55)!important}#sc-provider option,#sc-sink option{color:#fff;background:#111}.sc-route-table table{width:100%;border-collapse:separate;border-spacing:0 8px}.sc-route-table th{font-size:12px;opacity:.8;text-align:left;padding:0 6px}.sc-route-table td{padding:0 6px;vertical-align:middle}.sc-route-row{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:12px}.sc-route-row td{padding:8px 6px}.sc-route-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.sc-route-table select.input{height:34px}.sc-route-table .sc-prov-wrap{display:block;width:100%}.sc-route-table .sc-prov-btn{width:100%;height:34px;padding:6px 10px}.sc-route-table .sc-prov-menu{left:0;right:0;min-width:0}.sc-shell{display:grid;gap:14px}.sc-shell .cw-meta-provider-panel.active{display:grid;gap:14px}.sc-shell .cw-panel-head{padding:18px 18px 16px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:radial-gradient(120% 145% at 0% 0%,rgba(124,92,255,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985));box-shadow:0 18px 36px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}.sc-shell .cw-panel-head-main{display:grid;gap:6px}.sc-shell .cw-panel-title{font-size:24px;font-weight:900;letter-spacing:-.02em;color:#f4f7ff}.sc-shell .muted,.sc-shell .micro-note{color:rgba(196,204,222,.74)}.sc-shell .cw-subtiles{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.sc-shell .cw-subtile{min-height:38px;padding:0 14px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.035);color:#eef3ff;font-weight:800;letter-spacing:.04em;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}.sc-shell .cw-subtile:hover{transform:translateY(-1px);border-color:rgba(124,92,255,.28);background:rgba(255,255,255,.06)}.sc-shell .cw-subtile.active{border-color:rgba(124,92,255,.40);background:linear-gradient(180deg,rgba(124,92,255,.20),rgba(45,161,255,.10));box-shadow:0 10px 22px rgba(18,22,40,.28),inset 0 1px 0 rgba(255,255,255,.06)}.sc-shell .cw-subpanels{display:grid;gap:14px}.sc-shell .cw-subpanel.active{display:grid;gap:14px}.sc-shell .sc-subbox,.sc-shell .cc-card,.sc-shell #sc-filters,.sc-shell #sc-advanced,.sc-shell #sc-routes-wrap{border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);box-shadow:0 18px 34px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.03)}.sc-shell .sc-subbox .head,.sc-shell .cc-head{padding:16px 16px 12px;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)}.sc-shell .sc-subbox .body,.sc-shell #sc-routes-wrap>.body{padding:14px 16px 16px;border-top:1px solid rgba(255,255,255,.06)}.sc-shell .cc-card{padding:16px}.sc-shell .cc-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px;padding:0}.sc-shell .cc-body{display:grid;gap:14px}.sc-shell .cc-gauge{min-height:74px;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(8,12,19,.78),rgba(4,6,10,.90));border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.sc-shell .cc-state .lbl{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:rgba(196,204,222,.64)}.sc-shell .cc-state .val{font-size:24px;font-weight:900;color:#f4f7ff}.sc-shell .cc-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:rgba(196,204,222,.72)}.sc-shell .cc-actions{display:flex;gap:10px;flex-wrap:wrap}.sc-shell .cc-actions .btn,.sc-shell .codepair .btn,.sc-shell .row .btn{min-height:40px;border-radius:14px}.sc-shell .cc-actions .btn:nth-child(1),.sc-shell #sc-route-add{background:linear-gradient(135deg,rgba(86,60,180,.42),rgba(56,106,208,.42));border-color:rgba(124,92,255,.24);box-shadow:0 14px 28px rgba(22,24,40,.24)}.sc-shell .codepair code{padding:9px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985));border:1px solid rgba(255,255,255,.08);color:#eef3ff}.sc-shell #sc-plexwatcher-url,.sc-shell #sc-webhook-url-plex,.sc-shell #sc-webhook-url-jf,.sc-shell #sc-webhook-url-emby{font-family:inherit;font-size:14px;font-weight:400;letter-spacing:normal;line-height:1.4}.sc-shell .sc-filter-grid,.sc-shell .sc-adv-grid,.sc-shell .cc-wrap{gap:16px}.sc-shell #sc-filters,.sc-shell #sc-advanced{padding:18px 20px 20px}.sc-shell #sc-filters>div:first-child,.sc-shell #sc-advanced>div:first-child{display:flex;justify-content:flex-end;margin:0 0 16px}.sc-shell #sc-filters>.body,.sc-shell #sc-advanced>.body{padding:0}.sc-shell #sc-route-filter-wrap{padding:14px 16px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-route-filter-wrap .muted,.sc-shell .sc-filter-grid>div>.muted{font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-shell .sc-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.sc-shell .sc-filter-grid>div{display:grid;gap:10px;min-width:0}.sc-shell .sc-filter-grid .chips{min-height:40px;align-content:flex-start}.sc-shell .sc-user-pop,.sc-shell .sc-prov-menu{background:linear-gradient(180deg,rgba(12,14,23,.98),rgba(6,8,12,.985));border:1px solid rgba(255,255,255,.10);box-shadow:0 18px 42px rgba(0,0,0,.36)}.sc-shell .sc-prov-btn{width:164px;min-height:42px;border-radius:16px;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985));border:1px solid rgba(255,255,255,.10)}.sc-shell .sc-route-table table{border-spacing:0 10px}.sc-shell .sc-route-row{background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08)}.sc-shell .badge,.sc-shell .pill,.sc-shell .sc-pill{display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:850;letter-spacing:.05em;text-transform:uppercase}.sc-shell .badge.is-off{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);color:rgba(236,241,255,.78)}.sc-shell .badge.is-on{background:rgba(34,197,94,.16);border:1px solid rgba(34,197,94,.30);color:#dcffe7}.sc-shell .sc-pillbar{gap:8px}.sc-shell .sc-pill{min-height:34px;padding:0 12px;border-radius:999px;background:rgba(255,255,255,.04)}.sc-shell .sc-pill.on{background:linear-gradient(180deg,rgba(124,92,255,.22),rgba(45,161,255,.10));border-color:rgba(124,92,255,.34)}.sc-shell .sc-opt-row,.sc-shell .sc-opt-col{gap:12px}.sc-shell .cx-help{color:rgba(214,222,242,.72)}.sc-shell .cx-help:hover{color:#fff}.sc-shell .row .cx-toggle,.sc-shell .cc-auto .cx-toggle{padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}.sc-shell #sc-note,.sc-shell #sc-webhook-warning,.sc-shell #sc-endpoint-note{padding:12px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))}.sc-shell #sc-webhook-warning.warn{border-color:rgba(245,158,11,.24);background:linear-gradient(180deg,rgba(245,158,11,.12),rgba(255,255,255,.018))}.sc-shell .input,.sc-shell select.input{min-height:44px;border-radius:16px}.sc-shell .field{display:grid;grid-template-columns:minmax(0,1fr) auto 92px;align-items:center;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))}.sc-shell .field input{width:92px}.sc-shell .field label{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,248,.74)}@media (max-width:980px){.sc-shell .cw-panel-head{gap:14px}.sc-shell .cw-subtiles{justify-content:flex-start}.sc-shell .cc-wrap,.sc-shell .sc-filter-grid{grid-template-columns:1fr}.sc-shell .sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-shell .row{align-items:flex-start}}@media (max-width:640px){.sc-shell .cw-panel-head{padding:16px}.sc-shell .cw-panel-title{font-size:22px}.sc-shell .cw-subtile{width:100%;justify-content:center}.sc-shell .cc-actions,.sc-shell .row,.sc-shell .codepair{width:100%}.sc-shell .codepair{flex-wrap:wrap}.sc-shell .codepair code,.sc-shell .codepair .btn,.sc-shell .cc-actions .btn,.sc-shell .row .btn,.sc-shell .sc-prov-btn{width:100%}.sc-shell .sc-filter-grid,.sc-shell .sc-adv-grid{grid-template-columns:1fr}.sc-shell #sc-filters,.sc-shell #sc-advanced{padding:16px}.sc-shell .field{grid-template-columns:minmax(0,1fr) auto}.sc-shell .field input{grid-column:1 / -1;width:100%}}`;
     d.head.appendChild(s);
     const t = d.createElement("style");
     t.id = "sc-styles-tweaks";
     t.textContent = `.sc-shell #sc-server-required:empty,.sc-shell #sc-note:empty,.sc-shell #sc-endpoint-note:empty,.sc-shell #sc-webhook-warning:empty{display:none!important}.sc-shell .cc-head>div:first-child{display:inline-flex;align-items:center;gap:10px;min-width:0}.sc-shell .cx-switch-wrap,.sc-shell .sc-opt-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sc-shell .cx-switch-wrap .sc-toggle,.sc-shell .sc-opt-row .muted{display:inline-flex;align-items:center;min-height:40px;margin:0}.sc-shell .cx-switch-wrap .cx-help,.sc-shell .sc-opt-row .cx-help{display:inline-flex;align-items:center;justify-content:center;align-self:center;margin:0}.sc-shell .sc-inline-head{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.sc-shell .sc-route-select-host{display:block;width:100%}.sc-shell .sc-route-select-host>.cw-icon-select{width:100%}.sc-shell .sc-route-table .cw-icon-select-btn{min-height:34px;padding:0 10px;border-radius:14px}.sc-shell .sc-route-table .cw-icon-select-label{font-size:13px}.sc-shell #sc-filters.sc-filters-enhanced>.body{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}.sc-shell #sc-filters.sc-filters-enhanced #sc-route-filter-wrap{display:grid;gap:10px;width:100%;max-width:none;margin:0!important;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:stretch}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid>div{display:grid;gap:10px;align-content:start;min-width:0;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced #sc-whitelist{min-height:44px;align-content:flex-start}.sc-shell #sc-filters.sc-filters-enhanced #sc-users-note,.sc-shell #sc-filters.sc-filters-enhanced #sc-uuid-note{min-height:18px}.sc-shell .sc-filter-input-row{display:grid!important;align-items:center;gap:8px}.sc-shell .sc-filter-input-row--actions{grid-template-columns:minmax(0,1fr) 84px 84px}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:block;min-height:1px}.sc-shell .sc-filter-input-row .btn{width:100%}.sc-shell #sc-advanced .body{display:block}.sc-shell .sc-advanced-header{display:flex;align-items:center;margin:0 0 16px}.sc-shell .sc-advanced-title{display:inline-flex;align-items:center;gap:8px;min-height:28px;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-shell .sc-advanced-title .cx-help{margin:0}.sc-shell .sc-advanced-fields{display:grid;gap:16px}.sc-shell .sc-advanced-note{margin-top:12px}.sc-shell .sc-adv-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) 36px 112px;align-items:center;min-height:88px}.sc-shell .sc-adv-grid .field input{width:112px}.sc-shell .sc-adv-grid .field label{line-height:1.35}.sc-shell .sc-adv-grid .field .cx-help{justify-self:center;transform:none}@media (max-width:1180px){.sc-shell .sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:980px){.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:1fr}}@media (max-width:640px){.sc-shell .sc-filter-input-row,.sc-shell .sc-filter-input-row--actions,.sc-shell .sc-filter-input-row--fetch{grid-template-columns:minmax(0,1fr)!important}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:none}.sc-shell .sc-adv-grid{grid-template-columns:1fr}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) auto}.sc-shell .sc-adv-grid .field input{grid-column:1 / -1;width:100%}}`;
+    t.textContent += `.sc-user-pop{z-index:10050!important}.cw-media-user-picker{z-index:10060!important}.sc-route-modal-card{scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.92) rgba(255,255,255,.06)}.sc-route-modal-card::-webkit-scrollbar{width:12px}.sc-route-modal-card::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}.sc-route-modal-card::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,92,255,.95),rgba(86,60,180,.92));border-radius:999px;border:2px solid rgba(7,9,14,.88)}.sc-route-modal-card::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(145,116,255,.98),rgba(104,79,206,.95))}`;
     d.head.appendChild(t);
   }
 
@@ -163,7 +193,7 @@ function clearStickyNote(id) {
     trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 25 },
   };
 
-  const STATE = { mount: null, webhookIds: null, webhookHost: null, watcherHost: null, cfg: {}, users: [], ui: { watchProvider: null, watchSink: null, scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, pf: { key: "cx_sc_watch_filters_by_provider_v1", store: {}, loaded: false }, _pfMute: false, _noSinkAutostartFixApplied: false };
+  const STATE = { mount: null, webhookIds: null, routeWebhookHooks: [], webhookHost: null, watcherHost: null, cfg: {}, users: [], ui: { scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, _noSinkAutostartFixApplied: false };
 
   const deepSet = (o, p, v) =>
     p.split(".").reduce(
@@ -174,96 +204,63 @@ function clearStickyNote(id) {
       o
     );
 
-  const read = (p, dflt) => p.split(".").reduce((v, k) => (v && typeof v === "object" ? v[k] : undefined), STATE.cfg) ?? dflt;
+  function _readCfgPath(p, dflt) {
+    return p.split(".").reduce((v, k) => (v && typeof v === "object" ? v[k] : undefined), STATE.cfg) ?? dflt;
+  }
+
+  function _activeRouteFilterValue(path, dflt) {
+    const route = getActiveRoute() || getRoutes()[0] || null;
+    const filters = route?.filters;
+    const rel = String(path || "").replace(/^scrobble\.watch\.filters\./, "");
+    if (!filters || !rel) return dflt;
+    return rel.split(".").reduce((v, k) => (v && typeof v === "object" ? v[k] : undefined), filters) ?? dflt;
+  }
+
+  function read(p, dflt) {
+    const path = String(p || "");
+    if (path === "scrobble.watch.provider") {
+      return String((getActiveRoute() || getRoutes()[0] || {}).provider || dflt || "plex").toLowerCase();
+    }
+    if (path === "scrobble.watch.sink") {
+      return String((getActiveRoute() || getRoutes()[0] || {}).sink || dflt || "").toLowerCase();
+    }
+    if (path.startsWith("scrobble.watch.filters.")) {
+      return _activeRouteFilterValue(path, dflt);
+    }
+    return _readCfgPath(path, dflt);
+  }
 
   function write(p, v) {
-    deepSet(STATE.cfg, p, v);
-    try {
-      w._cfgCache ||= {};
-      deepSet(w._cfgCache, p, v);
-    } catch {}
-    try {
-      if (isRoutesMode() && String(p || "").startsWith("scrobble.watch.filters.")) {
-        // Persist filter edits into the active route 
-        syncActiveRouteFromView();
+    const path = String(p || "");
+    if (path === "scrobble.watch.provider" || path === "scrobble.watch.sink" || path.startsWith("scrobble.watch.filters.")) {
+      const route = getActiveRoute() || getRoutes()[0] || null;
+      if (route) {
+        if (path === "scrobble.watch.provider") {
+          route.provider = String(v || "").trim().toLowerCase();
+        } else if (path === "scrobble.watch.sink") {
+          route.sink = String(v || "").trim().toLowerCase();
+        } else {
+          route.filters ||= {};
+          const rel = path.replace(/^scrobble\.watch\.filters\./, "").split(".");
+          let target = route.filters;
+          for (let i = 0; i < rel.length - 1; i += 1) {
+            const key = rel[i];
+            if (!target[key] || typeof target[key] !== "object") target[key] = {};
+            target = target[key];
+          }
+          target[rel[rel.length - 1]] = v;
+        }
       }
-    } catch {}
-    try {
-      syncHiddenServerInputs();
-    } catch {}
-    try {
-      if (!STATE._pfMute && !isRoutesMode() && String(p || "").startsWith("scrobble.watch.filters.")) {
-        saveCurrentProviderFilters();
-      }
-    } catch {}
+      try { w._cfgCache = STATE.cfg; } catch {}
+      try { syncHiddenServerInputs(); } catch {}
+      return;
+    }
+    deepSet(STATE.cfg, path, v);
+    try { w._cfgCache ||= {}; deepSet(w._cfgCache, path, v); } catch {}
+    try { syncHiddenServerInputs(); } catch {}
   }
 
   const asArray = (v) => (Array.isArray(v) ? v.slice() : v == null || v === "" ? [] : [String(v)]);
-
-
-  function pfLoadStore() {
-    if (STATE.pf?.loaded) return;
-    STATE.pf.loaded = true;
-    try {
-      const raw = localStorage.getItem(STATE.pf.key);
-      const obj = raw ? JSON.parse(raw) : {};
-      if (obj && typeof obj === "object") STATE.pf.store = obj;
-    } catch {
-      STATE.pf.store = {};
-    }
-  }
-
-  function pfSaveStore() {
-    try {
-      localStorage.setItem(STATE.pf.key, JSON.stringify(STATE.pf.store || {}));
-    } catch {}
-  }
-
-  function snapshotWatchFilters() {
-    return {
-      username_whitelist: asArray(read("scrobble.watch.filters.username_whitelist", [])),
-      server_uuid: String(read("scrobble.watch.filters.server_uuid", "") || "").trim(),
-      user_id: String(read("scrobble.watch.filters.user_id", "") || "").trim(),
-    };
-  }
-
-  function saveCurrentProviderFilters(provOverride) {
-    pfLoadStore();
-    const prov = String(provOverride || provider() || "plex").toLowerCase().trim();
-    if (!["plex", "emby", "jellyfin"].includes(prov)) return;
-    STATE.pf.store ||= {};
-    STATE.pf.store[prov] = snapshotWatchFilters();
-    pfSaveStore();
-  }
-
-  function applyProviderFilters(provOverride) {
-    pfLoadStore();
-    const prov = String(provOverride || provider() || "plex").toLowerCase().trim();
-    if (!["plex", "emby", "jellyfin"].includes(prov)) return;
-
-    const snap = STATE.pf.store?.[prov] || null;
-    STATE._pfMute = true;
-    try {
-      if (snap) {
-        write("scrobble.watch.filters.username_whitelist", asArray(snap.username_whitelist));
-        if (prov === "plex") {
-          write("scrobble.watch.filters.server_uuid", String(snap.server_uuid || "").trim());
-          write("scrobble.watch.filters.user_id", "");
-        } else {
-          const uid = String(snap.user_id || snap.server_uuid || "").trim();
-          write("scrobble.watch.filters.user_id", uid);
-          write("scrobble.watch.filters.server_uuid", uid);
-        }
-      } else {
-        write("scrobble.watch.filters.username_whitelist", []);
-        write("scrobble.watch.filters.server_uuid", "");
-        write("scrobble.watch.filters.user_id", "");
-      }
-    } finally {
-      STATE._pfMute = false;
-    }
-    saveCurrentProviderFilters(prov);
-  }
   const clamp100 = (n) => Math.min(100, Math.max(1, Math.round(Number(n))));
   const norm100 = (n, dflt) => clamp100(Number.isFinite(+n) ? +n : dflt);
   const clampRange = (n, min, max) => Math.min(max, Math.max(min, Math.round(Number(n))));
@@ -320,50 +317,6 @@ function clearStickyNote(id) {
   }
 
 
-  function syncProviderPickerUi() {
-    const sel = $("#sc-provider", STATE.mount);
-    const btn = $("#sc-provider-btn", STATE.mount);
-    const icon = $("#sc-provider-icon", STATE.mount);
-    const label = $("#sc-provider-label", STATE.mount);
-    const menu = $("#sc-provider-menu", STATE.mount);
-    const v = String(sel?.value || provider() || "plex").toLowerCase().trim();
-    const meta = PROVIDER_META[v] || PROVIDER_META.plex;
-
-    if (icon) {
-      icon.src = meta.icon;
-      icon.alt = meta.alt;
-    }
-    if (label) label.textContent = meta.label;
-    if (btn) btn.title = `Pick ${meta.label} provider`;
-
-    if (menu) {
-      $all(".sc-prov-item[data-value]", menu).forEach((it) => {
-        const iv = String(it.getAttribute("data-value") || "").toLowerCase().trim();
-        it.setAttribute("aria-selected", iv === v ? "true" : "false");
-      });
-    }
-  }
-
-  function closeProviderMenu() {
-    const menu = $("#sc-provider-menu", STATE.mount);
-    const btn = $("#sc-provider-btn", STATE.mount);
-    if (menu) menu.classList.add("hidden");
-    if (btn) btn.setAttribute("aria-expanded", "false");
-  }
-
-  function toggleProviderMenu() {
-    const menu = $("#sc-provider-menu", STATE.mount);
-    const btn = $("#sc-provider-btn", STATE.mount);
-    if (!menu || !btn) return;
-    const open = menu.classList.contains("hidden");
-    if (open) {
-      menu.classList.remove("hidden");
-      btn.setAttribute("aria-expanded", "true");
-      syncProviderPickerUi();
-    } else {
-      closeProviderMenu();
-    }
-  }
   const SINK_ORDER = scrobblerSinkKeys();
   function normSinkCsv(raw) {
     const parts = String(raw || "")
@@ -409,13 +362,6 @@ function clearStickyNote(id) {
       btn.classList.toggle("off", !active);
       btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
-  }
-
-  function syncSinkPillsFromSelect() {
-    const sel = $("#sc-sink", STATE.mount);
-    const bar = $("#sc-sink-pills", STATE.mount);
-    if (!sel || !bar) return;
-    syncPillBar(bar, normSinkCsv(sel.value));
   }
 
   function syncPlexRatingsPillsFromSelect() {
@@ -467,6 +413,7 @@ serverUUID: async (instanceId) => {
       status: () => j("/api/watch/status"),
       start: (prov, sink) => (prov && sink) ? j(`/api/watch/start?provider=${encodeURIComponent(prov)}&sink=${encodeURIComponent(sink)}`, { method: "POST" }) : j("/api/watch/start", { method: "POST" }),
       stop: () => j("/api/watch/stop", { method: "POST" }),
+      refresh: () => j("/api/watch/refresh", { method: "POST" }),
     },
   };
 
@@ -484,13 +431,34 @@ serverUUID: async (instanceId) => {
       if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
     } catch (e) {
       console.warn("[scrobbler] save failed:", e);
-      if (noteId) setNote(noteId, "Couldn’t save settings. Hit Save or check logs.", "err");
+      if (noteId) setNote(noteId, "Couldn't save settings. Hit Save or check logs.", "err");
+    }
+  }
+
+  async function persistCurrentScrobblerState(noteId) {
+    try {
+      const serverCfg = await API.cfgGet();
+      const cfg = typeof structuredClone === "function" ? structuredClone(serverCfg || {}) : JSON.parse(JSON.stringify(serverCfg || {}));
+      cfg.scrobble = getScrobbleConfig();
+      const rootPatch = getRootPatch();
+      cfg.plex = Object.assign({}, cfg.plex || {}, rootPatch.plex || {});
+      cfg.emby = Object.assign({}, cfg.emby || {}, rootPatch.emby || {});
+      cfg.jellyfin = Object.assign({}, cfg.jellyfin || {}, rootPatch.jellyfin || {});
+      const r = await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(cfg),
+      });
+      if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
+    } catch (e) {
+      console.warn("[scrobbler] save failed:", e);
+      if (noteId) setNote(noteId, "Couldn't save settings. Hit Save or check logs.", "err");
     }
   }
 
   
   // Routes mode support
-  const ROUTES_NOTICE_KEY = "cw.scrobble.migrated_notice.v1";
   const ROUTES_TAB_KEY = "cw.ui.scrobbler.routes.active.v1";
   const ROUTE_PROVIDERS = ["plex", "emby", "jellyfin"];
   const ROUTE_SINKS = ["trakt", "simkl", "mdblist"];
@@ -535,6 +503,7 @@ serverUUID: async (instanceId) => {
     const s = (s0 === undefined || s0 === null) ? "trakt" : String(s0);
     const pi = (pi0 === undefined || pi0 === null) ? "default" : String(pi0);
     const si = (si0 === undefined || si0 === null) ? "default" : String(si0);
+    const options = normalizeRouteOptions(x.options || {});
     return {
       id: String(x.id || idFallback || "").trim() || "R1",
       enabled: x.enabled !== false,
@@ -543,7 +512,161 @@ serverUUID: async (instanceId) => {
       sink: s.trim().toLowerCase(),
       sink_instance: canonicalInstanceId(si),
       filters: deepClone(x.filters || {}),
+      options,
     };
+  }
+
+  function normalizeRouteOptions(raw) {
+    const src = (raw && typeof raw === "object") ? raw : {};
+    const autoRemoveRaw = String(src.auto_remove_watchlist || "inherit").trim().toLowerCase();
+    const autoRemove = ["inherit", "on", "off"].includes(autoRemoveRaw) ? autoRemoveRaw : "inherit";
+    const ratingsSrc = (src.ratings && typeof src.ratings === "object") ? src.ratings : {};
+    const ratingsModeRaw = String(ratingsSrc.mode || "inherit").trim().toLowerCase();
+    const ratingsMode = ["inherit", "off", "custom"].includes(ratingsModeRaw) ? ratingsModeRaw : "inherit";
+    const targetsIn = Array.isArray(ratingsSrc.targets) ? ratingsSrc.targets : (ratingsSrc.targets ? [ratingsSrc.targets] : []);
+    const targets = [];
+    const seen = new Set();
+    targetsIn.forEach((item) => {
+      const key = String(item || "").trim().toLowerCase();
+      if (!key || !["trakt", "simkl", "mdblist"].includes(key) || seen.has(key)) return;
+      seen.add(key);
+      targets.push(key);
+    });
+    const webhookId = String(ratingsSrc.webhook_id || "").trim();
+    const webhookToken = String(ratingsSrc.webhook_token || "").trim();
+    return {
+      auto_remove_watchlist: autoRemove,
+      ratings: {
+        mode: ratingsMode,
+        targets,
+        webhook_id: webhookId,
+        webhook_token: webhookToken,
+      },
+    };
+  }
+
+  function routeOptions(route) {
+    return normalizeRouteOptions(route?.options || {});
+  }
+
+  function routeAutoRemoveMode(route) {
+    return routeOptions(route).auto_remove_watchlist;
+  }
+
+  function routeAutoRemoveEffective(route) {
+    const mode = routeAutoRemoveMode(route);
+    if (mode === "on") return true;
+    if (mode === "off") return false;
+    return !!read("scrobble.delete_plex", false);
+  }
+
+  function routeOverrideSummary(route) {
+    const opts = routeOptions(route);
+    const parts = [];
+    if (opts.auto_remove_watchlist !== "inherit") {
+      parts.push(`Auto-remove ${opts.auto_remove_watchlist === "on" ? "On" : "Off"}`);
+    }
+    if (String(route?.provider || "").toLowerCase() === "plex") {
+      if (opts.ratings.mode === "off") {
+        parts.push("Ratings Off");
+      } else if (opts.ratings.mode === "custom") {
+        parts.push("Custom ratings");
+      }
+    }
+    return parts;
+  }
+
+  function routeOptionsSummaryText(route) {
+    const parts = routeOverrideSummary(route);
+    return parts.join(" • ");
+  }
+
+  function routeFilters(route) {
+    const filters = (route && typeof route.filters === "object" && route.filters) ? route.filters : {};
+    const whitelist = asArray(filters.username_whitelist || []);
+    const serverUuid = String(filters.server_uuid || "").trim();
+    const userId = String(filters.user_id || "").trim();
+    return { whitelist, server_uuid: serverUuid, user_id: userId };
+  }
+
+  function routeFilterSummaryText(route) {
+    const filters = routeFilters(route);
+    const parts = [];
+    if (filters.whitelist.length) parts.push(`${filters.whitelist.length} user${filters.whitelist.length === 1 ? "" : "s"}`);
+    if (String(route?.provider || "").toLowerCase() === "plex") {
+      if (filters.server_uuid) parts.push("UUID set");
+    } else if (filters.user_id) {
+      parts.push("User ID set");
+    }
+    return parts.join(" • ");
+  }
+
+  function humanAndList(items) {
+    const values = asArray(items).map((item) => String(item || "").trim()).filter(Boolean);
+    if (!values.length) return "";
+    if (values.length === 1) return values[0];
+    if (values.length === 2) return `${values[0]} and ${values[1]}`;
+    return `${values.slice(0, -1).join(", ")}, and ${values[values.length - 1]}`;
+  }
+
+  function routeHookMeta(route) {
+    const rid = String(route?.id || "").trim();
+    return asArray(STATE.routeWebhookHooks).find((item) => String(item?.route_id || "").trim() === rid) || null;
+  }
+
+  function routeCustomRatingsUrl(route) {
+    const opts = routeOptions(route);
+    const hook = routeHookMeta(route);
+    const hookId = String(opts?.ratings?.webhook_id || hook?.webhook_id || "").trim();
+    const hookToken = String(opts?.ratings?.webhook_token || hook?.webhook_token || "").trim();
+    if (!hookId || !hookToken) return "";
+    return `${location.origin}/webhook/plexwatcher?route=${encodeURIComponent(hookId)}&token=${encodeURIComponent(hookToken)}`;
+  }
+
+  function mergeRouteWebhookHooksIntoState() {
+    const hooks = asArray(STATE.routeWebhookHooks);
+    if (!hooks.length) return;
+    const routes = getRoutes().map((item, index) => normalizeRoute(item, `R${index + 1}`));
+    let changed = false;
+    routes.forEach((route) => {
+      const hook = hooks.find((item) => String(item?.route_id || "").trim() === String(route.id || "").trim());
+      if (!hook) return;
+      const opts = routeOptions(route);
+      const next = normalizeRouteOptions({
+        ...opts,
+        ratings: {
+          ...(opts.ratings || {}),
+          webhook_id: String(hook.webhook_id || "").trim(),
+          webhook_token: String(hook.webhook_token || "").trim(),
+        },
+      });
+      if (
+        next.ratings.webhook_id !== opts.ratings.webhook_id ||
+        next.ratings.webhook_token !== opts.ratings.webhook_token
+      ) {
+        route.options = next;
+        changed = true;
+      }
+    });
+    if (changed) setRoutes(routes);
+  }
+
+  async function refreshWebhookIds() {
+    try {
+      const r = await j("/api/webhooks/urls");
+      if (r && r.ok) {
+        STATE.webhookIds = r.ids || null;
+        STATE.routeWebhookHooks = Array.isArray(r.route_hooks) ? r.route_hooks : [];
+        mergeRouteWebhookHooksIntoState();
+      }
+    } catch {
+      STATE.webhookIds = null;
+      STATE.routeWebhookHooks = [];
+    }
+  }
+
+  function currentGlobalDefaultsSummary() {
+    return `Global auto-remove is currently ${read("scrobble.delete_plex", false) ? "On" : "Off"}.`;
   }
 
 
@@ -554,24 +677,11 @@ serverUUID: async (instanceId) => {
     return `R${i}`;
   }
 
-  function legacyToRoutesIfMissing() {
-    const wcfg = STATE.cfg?.scrobble?.watch || {};
-    const hasRoutesKey = hasOwn(wcfg, "routes");
-    const routesArr = Array.isArray(wcfg.routes) ? wcfg.routes : null;
-    if (routesArr && routesArr.length) return { migrated: false };
-    if (hasRoutesKey && !routesArr) return { migrated: false };
-
-    const prov = String(wcfg.provider || "").trim();
-    const sink = String(wcfg.sink || "").trim();
-    if (!prov || !sink) return { migrated: false };
-    const sinks = sink.split(",").map(s => s.trim()).filter(Boolean);
-    const filters = deepClone(wcfg.filters || {});
-    const routes = sinks.map((s, i) => normalizeRoute({ id: `R${i + 1}`, enabled: true, provider: prov, provider_instance: "default", sink: s, sink_instance: "default", filters }, `R${i + 1}`));
+  function ensureWatchRoutesArray() {
     STATE.cfg.scrobble ||= {};
     STATE.cfg.scrobble.watch ||= {};
-    STATE.cfg.scrobble.watch.routes = routes;
-    STATE.cfg.scrobble.watch.routes_migrated_from_legacy = true;
-    return { migrated: true };
+    if (!Array.isArray(STATE.cfg.scrobble.watch.routes)) STATE.cfg.scrobble.watch.routes = [];
+    return STATE.cfg.scrobble.watch.routes;
   }
 
   function activeRouteId() {
@@ -584,7 +694,10 @@ serverUUID: async (instanceId) => {
 
   function setActiveRouteId(id) {
     const rid = String(id || "").trim();
-    if (!rid) return;
+    if (!rid) {
+      try { localStorage.removeItem(ROUTES_TAB_KEY); } catch {}
+      return;
+    }
     localStorage.setItem(ROUTES_TAB_KEY, rid);
   }
 
@@ -599,11 +712,24 @@ serverUUID: async (instanceId) => {
     const si = String(r.sink_instance || "default");
     const p0 = String(r.provider || "").trim();
     const s0 = String(r.sink || "").trim();
-    const p = p0 ? p0 : "—";
-    const s = s0 ? s0 : "—";
+    const p = p0 ? p0 : "-";
+    const s = s0 ? s0 : "-";
     return `${r.id} ${p}(${pi}) → ${s}(${si})`;
   }
 
+  function routeInstanceBadge(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.toLowerCase() === "default") return "Default";
+    const upper = raw.toUpperCase();
+    const prof = upper.match(/(^|[^A-Z0-9])(P\d{1,3})(?=[^A-Z0-9]|$)/);
+    if (prof?.[2]) return prof[2];
+    const parts = upper.split(/[^A-Z0-9]+/).filter(Boolean);
+    if (parts.length) {
+      const last = parts[parts.length - 1];
+      if (last.length <= 4) return last;
+    }
+    return upper.slice(0, 4);
+  }
 
 function routeKey(r) {
   const p = String(r?.provider || "").trim().toLowerCase();
@@ -632,36 +758,29 @@ function findDuplicateRouteKeys(routes) {
   return dups;
 }
 
+function findSharedSinkProfileProviderConflicts(routes) {
+  const groups = new Map();
+  for (const r of (routes || [])) {
+    if (!r?.enabled) continue;
+    const provider = String(r?.provider || "").trim().toLowerCase();
+    const sink = String(r?.sink || "").trim().toLowerCase();
+    const sinkInstance = canonicalInstanceId(r?.sink_instance || "default");
+    if (!provider || !sink) continue;
+    const key = `${sink}|${sinkInstance}`;
+    const item = groups.get(key) || { sink, sinkInstance, providers: new Set(), ids: [] };
+    item.providers.add(provider);
+    item.ids.push(String(r?.id || ""));
+    groups.set(key, item);
+  }
+  return [...groups.values()].filter((item) => item.providers.size > 1);
+}
+
 
 
 
   function applyRouteView(route) {
     if (!route) return;
-    // Clear transient route-specific picker notes when switching routes
-    try {
-      setNote("sc-users-note", "");
-      setNote("sc-uuid-note", "");
-    } catch {}
-    const prov = String(route.provider || "").trim().toLowerCase();
-    const sink = String(route.sink || "").trim().toLowerCase();
-    if (prov) deepSet(STATE.cfg, "scrobble.watch.provider", prov);
-    if (sink) deepSet(STATE.cfg, "scrobble.watch.sink", sink);
-    deepSet(STATE.cfg, "scrobble.watch.filters", deepClone(route.filters || {}));
-    try {
-      const pvSel = $("#sc-provider", STATE.mount);
-      if (pvSel && prov) pvSel.value = prov;
-      const skSel = $("#sc-sink", STATE.mount);
-      if (skSel && sink) skSel.value = sink;
-      try { syncProviderPickerUi(); } catch {}
-      try { syncSinkPillsFromSelect(); } catch {}
-    } catch {}
-  }
-
-  function syncActiveRouteFromView(filtersObj) {
-    const r = getActiveRoute();
-    if (!r) return;
-    const f = filtersObj || read("scrobble.watch.filters", {}) || {};
-    r.filters = deepClone(f);
+    try { syncServerPreviewUi(); } catch {}
   }
 
   function activeProviderInstance() {
@@ -736,6 +855,57 @@ function findDuplicateRouteKeys(routes) {
     inp.disabled = true;
   }
 
+  function syncWatcherDefaultsNote() {
+    const body = $("#sc-card-server .sc-subbox .body", STATE.mount);
+    if (!body) return;
+    let note = $("#sc-watch-route-defaults-note", body);
+    if (!note) {
+      note = el("div", {
+        id: "sc-watch-route-defaults-note",
+        className: "micro-note",
+        style: "margin:0 0 10px;padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))",
+      });
+      body.insertBefore(note, body.firstChild || null);
+    }
+    note.textContent = "These watcher options are global defaults. Use Route Options on a route when that route should behave differently.";
+  }
+
+  function syncWatcherRouteWarnings() {
+    const body = $("#sc-card-status .cc-body", STATE.mount);
+    const auto = $("#sc-card-status .cc-auto", STATE.mount);
+    if (!body || !auto) return;
+    let note = $("#sc-watch-route-warning", body);
+    if (!note) {
+      note = el("div", {
+        id: "sc-watch-route-warning",
+        className: "micro-note",
+        style: "display:none;margin-top:10px;padding:12px 14px;border-radius:16px;border:1px solid rgba(245,158,11,.38);background:linear-gradient(180deg,rgba(49,30,7,.96),rgba(28,18,5,.96));color:rgba(255,236,205,.96);box-shadow:0 12px 24px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.03)",
+      });
+      auto.insertAdjacentElement("afterend", note);
+    }
+    const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
+    const problems = [];
+    const dups = findDuplicateRouteKeys(routes.filter((r) => r.enabled));
+    if (dups.length) {
+      const ids = dups.flatMap((item) => item.ids || []).filter(Boolean).join(", ");
+      problems.push(`Don't configure two identical enabled routes. Duplicate routes found: ${ids}.`);
+    }
+    const conflicts = findSharedSinkProfileProviderConflicts(routes);
+    conflicts.forEach((item) => {
+      const sinkName = providerLabel(item.sink) || item.sink;
+      const profile = routeInstanceBadge(item.sinkInstance);
+      const providers = humanAndList([...item.providers].map((name) => providerLabel(name) || name));
+      problems.push(`${providers} to ${sinkName} ${profile} cannot scrobble at the same time on the same tracker profile.`);
+    });
+    if (!problems.length) {
+      note.textContent = "";
+      note.style.display = "none";
+      return;
+    }
+    note.textContent = problems.join(" ");
+    note.style.display = "";
+  }
+
   function syncRouteActiveRowUi(rid) {
     const host = $("#sc-routes", STATE.mount);
     if (!host) return;
@@ -748,14 +918,9 @@ function findDuplicateRouteKeys(routes) {
   function setActiveRouteFromUi(rid) {
     const id = String(rid || "").trim();
     if (!id || id === activeRouteId()) return;
-    try { syncActiveRouteFromView(); } catch {}
     setActiveRouteId(id);
     const r = getActiveRoute();
     if (r) applyRouteView(r);
-    try {
-      const sel = $("#sc-route-select", STATE.mount);
-      if (sel) sel.value = id;
-    } catch {}
     try { syncRouteActiveRowUi(id); } catch {}
     try { syncServerPreviewUi(); } catch {}
     try { applyModeDisable(); } catch {}
@@ -783,66 +948,11 @@ function findDuplicateRouteKeys(routes) {
     return getRoutes().some(r => r?.enabled && providerAuthOkForRoute(r) && sinkAuthOkForRoute(r));
   }
 
-  async function renderRouteSelector() {
-    const wrap = $("#sc-route-filter-wrap", STATE.mount);
-    const sel = $("#sc-route-select", STATE.mount);
-    if (!wrap || !sel) return;
-    const on = isRoutesMode();
-    wrap.style.display = on ? "" : "none";
-    if (!on) return;
-    sel.innerHTML = "";
-    const routes = getRoutes();
-    routes.forEach((r) => sel.appendChild(el("option", { value: r.id, textContent: routeLabel(r) })));
-    const rid = activeRouteId();
-    if (rid) sel.value = rid;
-  }
-
-  function renderMigrateBanner(migrated) {
-    const host = $("#sc-migrate-banner", STATE.mount);
-    if (!host) return;
-    if (!migrated) { host.style.display = "none"; host.innerHTML = ""; return; }
-    if (localStorage.getItem(ROUTES_NOTICE_KEY) === "1") { host.style.display = "none"; host.innerHTML = ""; return; }
-
-    host.style.display = "";
-    host.innerHTML = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span>Routes were migrated from legacy watcher config.</span><button type="button" id="sc-migrate-save" class="btn small">Upgrade watcher config</button><button type="button" id="sc-migrate-dismiss" class="btn small">Dismiss</button></div>`;
-    const saveBtn = $("#sc-migrate-save", host);
-    const disBtn = $("#sc-migrate-dismiss", host);
-    on(saveBtn, "click", async () => {
-      localStorage.setItem(ROUTES_NOTICE_KEY, "1");
-      try {
-        const sc = getScrobbleConfig();
-        const serverCfg = await API.cfgGet();
-        const cfg = deepClone(serverCfg || {});
-        cfg.scrobble = sc;
-        const rp = getRootPatch();
-        cfg.plex = Object.assign({}, cfg.plex || {}, rp.plex || {});
-        cfg.emby = Object.assign({}, cfg.emby || {}, rp.emby || {});
-        cfg.jellyfin = Object.assign({}, cfg.jellyfin || {}, rp.jellyfin || {});
-        const r = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify(cfg) });
-        if (!r.ok) throw new Error(`POST /api/config ${r.status}`);
-        w._cfgCache = cfg;
-        STATE.cfg = cfg;
-        setNote("sc-note", "Watcher config upgraded.");
-      } catch {
-        setNote("sc-note", "Couldn’t upgrade watcher config. Hit Save or check logs.", "err");
-      }
-      host.style.display = "none";
-      host.innerHTML = "";
-    });
-    on(disBtn, "click", () => {
-      localStorage.setItem(ROUTES_NOTICE_KEY, "1");
-      host.style.display = "none";
-      host.innerHTML = "";
-    });
-  }
-
   async function renderRoutesUi() {
     const wrap = $("#sc-routes-wrap", STATE.mount);
     const host = $("#sc-routes", STATE.mount);
-    const legacy = $("#sc-legacy-picks", STATE.mount);
     const onMode = isRoutesMode();
     if (wrap) wrap.style.display = onMode ? "" : "none";
-    if (legacy) legacy.style.display = onMode ? "none" : "";
     if (!host) return;
     if (!onMode) { host.innerHTML = ""; return; }
 
@@ -889,7 +999,7 @@ try {
 
       const cP = el("td");
       const pSel = bindFieldIdentity(el("select", { className: "input" }), "sc_route_provider", r.id, "route");
-      pSel.appendChild(el("option", { value: "", textContent: "Select…" }));
+      pSel.appendChild(el("option", { value: "", textContent: "Select..." }));
       ROUTE_PROVIDERS.forEach((p) => {
         const meta = PROVIDER_META[p] || { label: p, icon: "", alt: p };
         pSel.appendChild(el("option", { value: p, textContent: meta.label || p }));
@@ -914,7 +1024,7 @@ try {
 
       const cS = el("td");
       const sSel = bindFieldIdentity(el("select", { className: "input" }), "sc_route_sink", r.id, "route");
-      sSel.appendChild(el("option", { value: "", textContent: "Select…" }));
+      sSel.appendChild(el("option", { value: "", textContent: "Select..." }));
       ROUTE_SINKS.forEach((s) => {
         const meta = SINK_META[s] || { label: s, icon: "", alt: s };
         sSel.appendChild(el("option", { value: s, textContent: meta.label || s }));
@@ -937,14 +1047,30 @@ try {
       cSI.appendChild(siSel);
       tr.appendChild(cSI);
 
-      const cA = el("td", { className: "sc-route-actions" });
+      const cA = el("td");
+      const cACol = el("div", { className: "sc-route-actions-col", style: "display:grid;gap:6px;justify-items:end" });
+      const cABtns = el("div", { className: "sc-route-actions" });
       const filt = el("button", { type: "button", className: "btn small", textContent: "Filters" });
       filt.dataset.act = "filters";
       filt.dataset.rid = r.id;
+      filt.disabled = !hasP;
+      const opts = el("button", { type: "button", className: "btn small", textContent: "Options" });
+      opts.dataset.act = "options";
+      opts.dataset.rid = r.id;
       const rm = el("button", { type: "button", className: "btn small", textContent: "Remove" });
       rm.dataset.act = "remove";
       rm.dataset.rid = r.id;
-      cA.append(filt, rm);
+      cABtns.append(filt, opts, rm);
+      cACol.appendChild(cABtns);
+      const summaries = [routeFilterSummaryText(r), routeOptionsSummaryText(r)].filter(Boolean);
+      if (summaries.length) {
+        cACol.appendChild(el("div", {
+          className: "micro-note",
+          textContent: summaries.join(" • "),
+          style: "text-align:right;font-size:11px;max-width:220px",
+        }));
+      }
+      cA.appendChild(cACol);
       tr.appendChild(cA);
 
       tbody.appendChild(tr);
@@ -960,9 +1086,473 @@ try {
     const ar = getActiveRoute() || routes[0] || null;
     if (ar) applyRouteView(ar);
 
-    await renderRouteSelector();
+    try { syncWatcherRouteWarnings(); } catch {}
     applyModeDisable();
   }
+
+  function ensureRouteOptionsModal() {
+    if (STATE.routeOptionsModal?.overlay?.isConnected) return STATE.routeOptionsModal;
+
+    const overlay = el("div", {
+      className: "sc-route-modal hidden",
+      style: "position:fixed;inset:0;z-index:10000;background:rgba(4,7,14,.62);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:20px",
+    });
+    const card = el("div", {
+      className: "sc-route-modal-card",
+      style: "width:min(560px,calc(100vw - 32px));max-height:min(88vh,820px);overflow:auto;border-radius:22px;background:linear-gradient(180deg,rgba(12,14,23,.98),rgba(6,8,12,.99));border:1px solid rgba(255,255,255,.10);box-shadow:0 24px 60px rgba(0,0,0,.45);padding:18px 18px 16px",
+    });
+    overlay.appendChild(card);
+
+    const head = el("div", { style: "display:flex;align-items:flex-start;gap:12px;justify-content:space-between;margin-bottom:14px" });
+    const headText = el("div", { style: "display:grid;gap:6px" });
+    const title = el("div", { style: "font-size:20px;font-weight:900;color:#f4f7ff", textContent: "Route Options" });
+    const subtitle = el("div", { className: "micro-note", style: "max-width:420px" });
+    headText.append(title, subtitle);
+    const close = el("button", { type: "button", className: "btn small", textContent: "Close" });
+    head.append(headText, close);
+    card.appendChild(head);
+
+    const defaultsNote = el("div", {
+      className: "micro-note",
+      style: "margin:0 0 14px;padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))",
+    });
+    card.appendChild(defaultsNote);
+
+    const autoBox = el("div", {
+      style: "display:grid;gap:10px;padding:14px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))",
+    });
+    autoBox.append(
+      el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Auto-remove from Watchlists" }),
+      el("div", { className: "micro-note", textContent: "Choose whether this route follows the global watcher default or overrides it." }),
+    );
+    const autoSelect = el("select", {
+      id: "sc-route-options-auto-select",
+      name: "route_options_auto_remove",
+      className: "input",
+      style: "width:100%",
+    });
+    [
+      ["inherit", "Inherit"],
+      ["on", "On"],
+      ["off", "Off"],
+    ].forEach(([value, label]) => autoSelect.appendChild(el("option", { value, textContent: label })));
+    const autoState = el("div", { className: "micro-note" });
+    autoBox.append(autoSelect, autoState);
+    card.appendChild(autoBox);
+
+    const ratingsBox = el("div", {
+      style: "display:grid;gap:10px;margin-top:14px;padding:14px 16px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))",
+    });
+    ratingsBox.append(
+      el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Ratings" }),
+      el("div", { className: "micro-note", textContent: "Use the global watcher ratings by default, disable ratings for this route, or create a custom route-specific ratings webhook." }),
+    );
+    const ratingsSelect = el("select", {
+      id: "sc-route-options-ratings-select",
+      name: "route_options_ratings_mode",
+      className: "input",
+      style: "width:100%",
+    });
+    [
+      ["inherit", "Inherit"],
+      ["off", "Off"],
+      ["custom", "Custom"],
+    ].forEach(([value, label]) => ratingsSelect.appendChild(el("option", { value, textContent: label })));
+    const ratingsState = el("div", { className: "micro-note" });
+    const ratingsTargetsWrap = el("div", { style: "display:grid;gap:8px" });
+    ratingsTargetsWrap.appendChild(el("div", { className: "micro-note", textContent: "Send ratings to" }));
+    const ratingsTargetsBar = el("div", { className: "sc-pillbar", role: "group", ariaLabel: "Route ratings targets" });
+    ["trakt", "simkl", "mdblist"].forEach((sinkKey) => {
+      ratingsTargetsBar.appendChild(el("button", {
+        type: "button",
+        className: "sc-pill off",
+        textContent: providerLabel(sinkKey),
+        dataset: { sink: sinkKey },
+      }));
+    });
+    ratingsTargetsWrap.appendChild(ratingsTargetsBar);
+    const ratingsProviderNote = el("div", { className: "micro-note", style: "display:none" });
+    const ratingsUrlWrap = el("div", { style: "display:grid;gap:8px" });
+    ratingsUrlWrap.appendChild(el("div", { className: "micro-note", textContent: "Route webhook URL" }));
+    const ratingsUrlCode = el("code", { style: "padding:9px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985));border:1px solid rgba(255,255,255,.08);color:#eef3ff;word-break:break-all" });
+    ratingsUrlWrap.appendChild(ratingsUrlCode);
+    const ratingsCopyRow = el("div", { className: "codepair" });
+    const ratingsCopy = el("button", { type: "button", className: "btn small", textContent: "Copy" });
+    ratingsCopyRow.appendChild(ratingsCopy);
+    ratingsUrlWrap.appendChild(ratingsCopyRow);
+    ratingsBox.append(ratingsSelect, ratingsState, ratingsTargetsWrap, ratingsProviderNote, ratingsUrlWrap);
+    card.appendChild(ratingsBox);
+
+    const foot = el("div", { style: "display:flex;justify-content:flex-end;gap:10px;margin-top:16px" });
+    const cancel = el("button", { type: "button", className: "btn small", textContent: "Cancel" });
+    const save = el("button", { type: "button", className: "btn small", textContent: "Save" });
+    foot.append(cancel, save);
+    card.appendChild(foot);
+
+    const modalState = { rid: "", provider: "", routeSink: "", ratingsTargets: [] };
+
+    const syncRatingsTargetPills = () => {
+      $all("[data-sink]", ratingsTargetsBar).forEach((btn) => {
+        const key = String(btn.dataset.sink || "").trim().toLowerCase();
+        const enabled = !modalState.routeSink || key === modalState.routeSink;
+        const onState = modalState.ratingsTargets.includes(key);
+        btn.classList.toggle("on", onState);
+        btn.classList.toggle("off", !onState);
+        btn.disabled = !enabled;
+        btn.setAttribute("aria-pressed", onState ? "true" : "false");
+      });
+    };
+
+    const syncRatingsUi = (route) => {
+      const mode = String(ratingsSelect.value || "inherit").trim().toLowerCase();
+      const isPlex = String(modalState.provider || "").toLowerCase() === "plex";
+      ratingsBox.style.display = isPlex ? "grid" : "none";
+      [...ratingsSelect.options].forEach((opt) => {
+        if (String(opt.value || "") === "custom") opt.disabled = !isPlex;
+      });
+      ratingsState.textContent = mode === "inherit"
+        ? "Inherit means this route follows the global watcher ratings settings."
+        : mode === "off"
+          ? "Ratings are disabled for this route."
+          : isPlex
+            ? "This route uses its own Plex ratings webhook and its own selected targets."
+            : "Custom route ratings webhooks currently apply to Plex routes only.";
+      ratingsTargetsWrap.style.display = mode === "custom" && isPlex ? "" : "none";
+      ratingsUrlWrap.style.display = mode === "custom" && isPlex ? "" : "none";
+      ratingsProviderNote.style.display = mode === "custom" && !isPlex ? "" : "none";
+      ratingsProviderNote.textContent = "Custom ratings webhooks are currently available for Plex routes. Use Inherit or Off for non-Plex routes.";
+      if (mode === "custom" && isPlex) {
+        const fallback = String(route?.sink || "").trim().toLowerCase();
+        if (["trakt", "simkl", "mdblist"].includes(fallback)) {
+          modalState.routeSink = fallback;
+          if (!modalState.ratingsTargets.length) modalState.ratingsTargets = [fallback];
+        }
+      } else {
+        modalState.routeSink = "";
+      }
+      ratingsUrlCode.textContent = mode === "custom" && isPlex
+        ? (routeCustomRatingsUrl(route) || "Save once to generate the route-specific webhook URL.")
+        : "";
+      syncRatingsTargetPills();
+    };
+
+    const closeModal = () => {
+      overlay.classList.add("hidden");
+      overlay.style.display = "none";
+      overlay.dataset.rid = "";
+      modalState.rid = "";
+      modalState.provider = "";
+      modalState.routeSink = "";
+      modalState.ratingsTargets = [];
+    };
+
+    const openModal = (rid) => {
+      const route = getRoutes().find((item) => String(item?.id || "") === String(rid || ""));
+      if (!route) return;
+      const opts = routeOptions(route);
+      modalState.rid = route.id;
+      modalState.provider = String(route.provider || "").toLowerCase();
+      modalState.routeSink = String(route.sink || "").toLowerCase();
+      modalState.ratingsTargets = Array.isArray(opts.ratings.targets) ? opts.ratings.targets.slice() : [];
+      overlay.dataset.rid = route.id;
+      title.textContent = `Route Options • ${route.id}`;
+      subtitle.textContent = routeLabel(route);
+      defaultsNote.textContent = `Global watcher settings are the default for every route. Use route options only when this route should behave differently. ${currentGlobalDefaultsSummary()}`;
+      autoSelect.value = opts.auto_remove_watchlist;
+      [...ratingsSelect.options].forEach((opt) => {
+        if (String(opt.value || "") === "custom") opt.disabled = modalState.provider !== "plex";
+      });
+      ratingsSelect.value = opts.ratings.mode;
+      autoState.textContent = opts.auto_remove_watchlist === "inherit"
+        ? `Inherit means this route follows the global auto-remove setting. Effective value: ${routeAutoRemoveEffective(route) ? "On" : "Off"}.`
+        : `This route forces auto-remove ${opts.auto_remove_watchlist === "on" ? "On" : "Off"}.`;
+      syncRatingsUi(route);
+      overlay.classList.remove("hidden");
+      overlay.style.display = "flex";
+    };
+
+    on(close, "click", closeModal);
+    on(cancel, "click", closeModal);
+    on(overlay, "click", (e) => {
+      if (e.target === overlay) closeModal();
+    });
+    on(autoSelect, "change", () => {
+      const mode = String(autoSelect.value || "inherit");
+      autoState.textContent = mode === "inherit"
+        ? `Inherit means this route follows the global auto-remove setting. Effective value: ${read("scrobble.delete_plex", false) ? "On" : "Off"}.`
+        : `This route forces auto-remove ${mode === "on" ? "On" : "Off"}.`;
+    });
+    on(ratingsSelect, "change", () => {
+      const route = getRoutes().find((item) => String(item?.id || "") === String(overlay.dataset.rid || ""));
+      if (route) syncRatingsUi(route);
+    });
+    $all("[data-sink]", ratingsTargetsBar).forEach((btn) => {
+      on(btn, "click", () => {
+        const key = String(btn.dataset.sink || "").trim().toLowerCase();
+        if (!key || (modalState.routeSink && key !== modalState.routeSink)) return;
+        if (modalState.ratingsTargets.includes(key)) {
+          modalState.ratingsTargets = modalState.ratingsTargets.filter((item) => item !== key);
+        } else {
+          modalState.ratingsTargets = [...modalState.ratingsTargets, key];
+        }
+        syncRatingsTargetPills();
+      });
+    });
+    on(ratingsCopy, "click", async () => {
+      const text = String(ratingsUrlCode.textContent || "").trim();
+      if (!text) return;
+      await copyText(text);
+    });
+    on(save, "click", async () => {
+      const rid = String(overlay.dataset.rid || "").trim();
+      if (!rid) return closeModal();
+      const routes = getRoutes().map((item, index) => normalizeRoute(item, `R${index + 1}`));
+      const route = routes.find((item) => item.id === rid);
+      if (!route) return closeModal();
+      const prev = routeOptions(route);
+      const isPlex = String(route.provider || "").toLowerCase() === "plex";
+      const ratingsMode = String(ratingsSelect.value || "inherit");
+      route.options = normalizeRouteOptions({
+        ...(route.options || {}),
+        auto_remove_watchlist: String(autoSelect.value || "inherit"),
+        ratings: {
+          ...(prev.ratings || {}),
+          mode: !isPlex && ratingsMode === "custom" ? "inherit" : ratingsMode,
+          targets: modalState.ratingsTargets.slice(),
+          webhook_id: prev.ratings.webhook_id,
+          webhook_token: prev.ratings.webhook_token,
+        },
+      });
+      setRoutes(routes);
+      await persistCurrentScrobblerState("sc-pms-note");
+      await refreshWebhookIds();
+      closeModal();
+      await renderRoutesUi();
+      populate();
+    });
+    on(d, "keydown", (e) => {
+      if (e.key === "Escape" && overlay.style.display !== "none") closeModal();
+    });
+
+    d.body.appendChild(overlay);
+    STATE.routeOptionsModal = { overlay, open: openModal, close: closeModal };
+    closeModal();
+    return STATE.routeOptionsModal;
+  }
+
+  async function openRouteOptionsModal(rid) {
+    const modal = ensureRouteOptionsModal();
+    modal.open(rid);
+  }
+
+  function normalizeRouteFiltersForSave(route, whitelist, rawId) {
+    const next = { username_whitelist: asArray(whitelist).map((x) => String(x || "").trim()).filter(Boolean) };
+    const value = String(rawId || "").trim();
+    if (String(route?.provider || "").toLowerCase() === "plex") {
+      next.server_uuid = value;
+    } else if (value) {
+      next.user_id = value;
+    }
+    return next;
+  }
+
+  function ensureRouteFiltersModal() {
+    if (STATE.routeFiltersModal?.overlay?.isConnected) return STATE.routeFiltersModal;
+
+    const overlay = el("div", {
+      className: "sc-route-modal hidden",
+      style: "position:fixed;inset:0;z-index:10000;background:rgba(4,7,14,.62);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;padding:20px",
+    });
+    const card = el("div", {
+      className: "sc-route-modal-card",
+      style: "width:min(760px,calc(100vw - 32px));max-height:min(88vh,820px);overflow:auto;border-radius:22px;background:linear-gradient(180deg,rgba(12,14,23,.98),rgba(6,8,12,.99));border:1px solid rgba(255,255,255,.10);box-shadow:0 24px 60px rgba(0,0,0,.45);padding:18px 18px 16px",
+    });
+    overlay.appendChild(card);
+
+    const head = el("div", { style: "display:flex;align-items:flex-start;gap:12px;justify-content:space-between;margin-bottom:14px" });
+    const headText = el("div", { style: "display:grid;gap:6px" });
+    const title = el("div", { style: "font-size:20px;font-weight:900;color:#f4f7ff", textContent: "Route Filters" });
+    const subtitle = el("div", { className: "micro-note", style: "max-width:480px" });
+    headText.append(title, subtitle);
+    const close = el("button", { type: "button", className: "btn small", textContent: "Close" });
+    head.append(headText, close);
+    card.appendChild(head);
+
+    const note = el("div", {
+      className: "micro-note",
+      style: "margin:0 0 14px;padding:12px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018))",
+      textContent: "Filters are route-specific. Only playback that matches this route's filters will be scrobbled through this route.",
+    });
+    card.appendChild(note);
+
+    const grid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:16px" });
+    const namesBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
+    const idBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
+    grid.append(namesBox, idBox);
+    card.appendChild(grid);
+
+    const namesHead = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
+    namesHead.append(
+      el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Username whitelist" }),
+      helpBtnNode ? helpBtnNode("sc-help-watch-username-whitelist") : el("span")
+    );
+    const namesChips = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;min-height:40px;align-content:flex-start" });
+    const namesNote = el("div", { className: "micro-note", style: "min-height:18px" });
+    const namesRow = el("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) 92px 92px;gap:8px" });
+    const namesInput = el("input", {
+      id: "sc-route-filter-username-input",
+      name: "route_filter_username",
+      className: "input",
+      placeholder: "Add username...",
+    });
+    const addBtn = el("button", { type: "button", className: "btn small", textContent: "Add" });
+    const pickBtn = el("button", { type: "button", className: "btn small", textContent: "Pick" });
+    namesRow.append(namesInput, addBtn, pickBtn);
+    namesBox.append(namesHead, namesChips, namesNote, namesRow);
+
+    const idHead = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
+    const idLabel = el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)" });
+    idHead.append(idLabel, helpBtnNode ? helpBtnNode("sc-help-watch-server-uuid") : el("span"));
+    const idNote = el("div", { className: "micro-note", style: "min-height:18px" });
+    const idRow = el("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:8px;align-items:center" });
+    const idInput = el("input", {
+      id: "sc-route-filter-id-input",
+      name: "route_filter_identity",
+      className: "input",
+    });
+    const fetchBtn = el("button", { type: "button", className: "btn small", textContent: "Fetch" });
+    idRow.append(idInput, fetchBtn);
+    idBox.append(idHead, idNote, idRow);
+
+    const foot = el("div", { style: "display:flex;justify-content:flex-end;gap:10px;margin-top:16px" });
+    const cancel = el("button", { type: "button", className: "btn small", textContent: "Cancel" });
+    const save = el("button", { type: "button", className: "btn small", textContent: "Save" });
+    foot.append(cancel, save);
+    card.appendChild(foot);
+
+    const modalState = { rid: "", provider: "plex", instance: "default", whitelist: [] };
+
+    const closeModal = () => {
+      overlay.classList.add("hidden");
+      overlay.style.display = "none";
+      overlay.dataset.rid = "";
+      modalState.rid = "";
+    };
+
+    const renderWhitelist = () => {
+      namesChips.innerHTML = "";
+      modalState.whitelist.forEach((name) => {
+        namesChips.append(chip(name, (value) => {
+          modalState.whitelist = modalState.whitelist.filter((item) => item !== value);
+          renderWhitelist();
+        }));
+      });
+    };
+
+    const addWhitelistName = (name, source = "added") => {
+      const clean = String(name || "").trim();
+      if (!clean) return;
+      if (modalState.whitelist.includes(clean)) {
+        namesNote.textContent = `${clean} already added`;
+        return;
+      }
+      modalState.whitelist = [...modalState.whitelist, clean];
+      renderWhitelist();
+      namesInput.value = "";
+      namesNote.textContent = source === "picked" ? `Picked ${clean}` : `Added ${clean}`;
+    };
+
+    const openModal = (rid) => {
+      const route = getRoutes().find((item) => String(item?.id || "") === String(rid || ""));
+      if (!route) return;
+      const prov = String(route.provider || "plex").toLowerCase();
+      const filters = routeFilters(route);
+      modalState.rid = route.id;
+      modalState.provider = prov;
+      modalState.instance = String(route.provider_instance || "default");
+      modalState.whitelist = filters.whitelist.slice();
+      overlay.dataset.rid = route.id;
+      title.textContent = `Route Filters - ${route.id}`;
+      subtitle.textContent = routeLabel(route);
+      namesInput.value = "";
+      namesNote.textContent = "";
+      idNote.textContent = prov === "plex"
+        ? "Optional. Fetch gets the server UUID for the configured Plex instance."
+        : "Optional. Fetch gets the user ID for the configured instance.";
+      idLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
+      idInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
+      idInput.value = prov === "plex" ? filters.server_uuid : filters.user_id;
+      renderWhitelist();
+      bindHelpTips(card);
+      overlay.classList.remove("hidden");
+      overlay.style.display = "flex";
+    };
+
+    on(addBtn, "click", () => addWhitelistName(namesInput.value, "added"));
+    on(namesInput, "keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addWhitelistName(namesInput.value, "added");
+      }
+    });
+    on(pickBtn, "click", async (e) => {
+      e.preventDefault();
+      const prov = modalState.provider;
+      await openUserPicker("watch", pickBtn, {
+        provider: prov,
+        instance: modalState.instance,
+        title: prov === "plex" ? "Pick Plex user" : prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user",
+        onPick: (u) => addWhitelistName(u?.name, "picked"),
+      });
+    });
+    on(fetchBtn, "click", async () => {
+      try {
+        if (modalState.rid) setActiveRouteFromUi(modalState.rid);
+        const result = await API.serverUUID(modalState.instance);
+        const value = String(result?.server_uuid || result?.uuid || result?.id || "").trim();
+        if (!value) {
+          idNote.textContent = modalState.provider === "plex" ? "No server UUID" : "No user ID";
+          return;
+        }
+        idInput.value = value;
+        idNote.textContent = modalState.provider === "plex" ? "Server UUID fetched" : "User ID fetched";
+      } catch {
+        idNote.textContent = "Fetch failed";
+      }
+    });
+    on(close, "click", closeModal);
+    on(cancel, "click", closeModal);
+    on(overlay, "click", (e) => {
+      if (e.target === overlay) closeModal();
+    });
+    on(save, "click", async () => {
+      const rid = String(overlay.dataset.rid || "").trim();
+      if (!rid) return closeModal();
+      const routes = getRoutes().map((item, index) => normalizeRoute(item, `R${index + 1}`));
+      const route = routes.find((item) => item.id === rid);
+      if (!route) return closeModal();
+      route.filters = normalizeRouteFiltersForSave(route, modalState.whitelist, idInput.value);
+      setRoutes(routes);
+      await persistCurrentScrobblerState("sc-pms-note");
+      closeModal();
+      await renderRoutesUi();
+      populate();
+    });
+    on(d, "keydown", (e) => {
+      if (e.key === "Escape" && overlay.style.display !== "none") closeModal();
+    });
+
+    d.body.appendChild(overlay);
+    STATE.routeFiltersModal = { overlay, open: openModal, close: closeModal };
+    closeModal();
+    return STATE.routeFiltersModal;
+  }
+
+  async function openRouteFiltersModal(rid) {
+    const modal = ensureRouteFiltersModal();
+    modal.open(rid);
+  }
+
 function chip(text, onRemove, onClick) {
     const c = el("span", { className: "chip" });
     const t = el("span", { textContent: text });
@@ -971,7 +1561,12 @@ function chip(text, onRemove, onClick) {
       t.title = "Click to select";
       on(t, "click", () => onClick(text));
     }
-    const rm = el("span", { className: "rm", textContent: "×" });
+    const rm = el("span", { className: "rm material-symbols-rounded", textContent: "close" });
+    rm.setAttribute("aria-label", `Remove ${text}`);
+    rm.title = `Remove ${text}`;
+    rm.style.fontSize = "16px";
+    rm.style.lineHeight = "1";
+    rm.style.fontVariationSettings = "'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20";
     on(rm, "click", () => onRemove(text));
     c.append(t, rm);
     return c;
@@ -1019,15 +1614,11 @@ function chip(text, onRemove, onClick) {
   const webhookOn = !!wh?.checked && useWebhook;
   const watcherOn = !!wa?.checked && useWatch;
 
-  // Routes mode: show routes editor and per-route filters
+  // Routes mode: show routes editor
   try {
     const routesMode = isRoutesMode();
-    const legacy = $("#sc-legacy-picks", STATE.mount);
     const routesWrap = $("#sc-routes-wrap", STATE.mount);
-    const routeFilterWrap = $("#sc-route-filter-wrap", STATE.mount);
-    if (legacy) legacy.style.display = routesMode ? "none" : "";
     if (routesWrap) routesWrap.style.display = routesMode ? "" : "none";
-    if (routeFilterWrap) routeFilterWrap.style.display = routesMode ? "" : "none";
   } catch {}
 
   $all(".input, input, button, select, textarea", webRoot).forEach((n) => {
@@ -1058,18 +1649,7 @@ function chip(text, onRemove, onClick) {
   const lab = $("#sc-server-label", STATE.mount);
   if (lab) lab.textContent = lbl;
 
-  const loadBtn = $("#sc-load-users", STATE.mount);
-  if (loadBtn) {
-    loadBtn.style.display = "";
-    loadBtn.textContent = "Pick";
-    loadBtn.title = prov === "plex" ? "Pick Plex user" : prov === "emby" ? "Pick Emby user" : "Pick Jellyfin user";
-  }
-  const fetchUuid = $("#sc-fetch-uuid", STATE.mount);
-  if (fetchUuid) fetchUuid.disabled = false;
-  const uuidLabel = $("#sc-uuid-label", STATE.mount);
-  if (uuidLabel) uuidLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
-  const uuidInput = $("#sc-server-uuid", STATE.mount);
-  if (uuidInput) uuidInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
+  bindHelpTips(STATE.mount);
 
   const plexTokenOk = !!String(plexCfg?.account_token || read("plex.account_token", "") || "").trim();
   const embyTokenOk = !!String(embyCfg?.access_token || read("emby.access_token", "") || "").trim();
@@ -1117,7 +1697,7 @@ function chip(text, onRemove, onClick) {
   if (watcherOn) {
     if (prov === "plex") {
       if (!plexTokenOk) setNote("sc-pms-note", "Not connected to Plex. Go to Authentication - Plex, or refresh your browser if you already configured it", "err");
-      else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
+      else if (!isValidServerUrl(srv)) setNote("sc-pms-note", "Plex Server is required (http(s)://...)", "err");
       else if (hasSink && !sinkOk) setNote("sc-pms-note", sinkErr, "err");
       else setNote("sc-pms-note", "");
     } else if (prov === "emby") {
@@ -1132,19 +1712,6 @@ function chip(text, onRemove, onClick) {
   } else {
     setNote("sc-pms-note", "");
     setNote("sc-note", "");
-  }
-
-  if (loadBtn) {
-    if (prov === "plex" && !plexTokenOk) loadBtn.disabled = true;
-    else if (prov === "emby" && !embyTokenOk) loadBtn.disabled = true;
-    else if (prov === "jellyfin" && !jellyTokenOk) loadBtn.disabled = true;
-    else loadBtn.disabled = !watcherOn;
-  }
-  if (fetchUuid) {
-    if (prov === "plex" && !plexTokenOk) fetchUuid.disabled = true;
-    else if (prov === "emby" && !embyTokenOk) fetchUuid.disabled = true;
-    else if (prov === "jellyfin" && !jellyTokenOk) fetchUuid.disabled = true;
-    else fetchUuid.disabled = !watcherOn;
   }
 
   const auto = $("#sc-autostart", STATE.mount);
@@ -1197,7 +1764,7 @@ function chip(text, onRemove, onClick) {
     injectStyles();
 
         if (STATE.webhookHost) {
-      STATE.webhookHost.innerHTML = `<div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="webhook"><div class="cw-panel-head"><div class="cw-panel-head-main"><div class="cw-panel-title">Webhooks</div><div class="muted">Legacy endpoints that scrobble to Trakt.</div></div><div class="cw-subtiles" aria-label="Webhook sections"><button type="button" class="cw-subtile active" data-sub="plex">Plex</button><button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button><button type="button" class="cw-subtile" data-sub="emby">Emby</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button></div></div><div id="sc-webhook-warning" class="micro-note" style="margin-top:10px"></div><div id="sc-endpoint-note" class="micro-note"></div><div class="cw-subpanels" style="gap:8px"><div class="cw-subpanel active" data-sub="plex"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("plex")}<code id="sc-webhook-url-plex"></code><button id="sc-copy-plex" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div><div class="sc-subbox"><div class="head">Filters</div><div class="body"><div class="sc-filter-grid"><div><div class="muted">Username whitelist</div><div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div><div id="sc-users-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;margin-top:6px"><input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1"><button id="sc-add-user-webhook" class="btn small">Add</button><button id="sc-load-users-webhook" class="btn small">Pick</button></div></div><div><div class="muted">Server UUID</div><div id="sc-uuid-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1"><button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button></div></div></div></div></div><div class="sc-subbox"><div class="head">Plex settings</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>${helpBtn("sc-help-webhook-plex-ratings")}</span></div></div></div><div class="cw-subpanel" data-sub="jellyfin"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-jf"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("jellyfin")}<code id="sc-webhook-url-jf"></code><button id="sc-copy-jf" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-jf"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="emby"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-emby"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("emby")}<code id="sc-webhook-url-emby"></code><button id="sc-copy-emby" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-emby"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="advanced"><div class="row" style="justify-content:flex-start;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-adv"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div><div class="sc-subbox"><div class="head">Advanced</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-stop-pause-webhook", "Stop pause >=", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1�100.</div></div></div></div></div></div></div>`;
+      STATE.webhookHost.innerHTML = `<div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="webhook"><div class="cw-panel-head"><div class="cw-panel-head-main"><div class="cw-panel-title">Webhooks</div><div class="muted">Legacy endpoints that scrobble to Trakt.</div></div><div class="cw-subtiles" aria-label="Webhook sections"><button type="button" class="cw-subtile active" data-sub="plex">Plex</button><button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button><button type="button" class="cw-subtile" data-sub="emby">Emby</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button></div></div><div id="sc-webhook-warning" class="micro-note" style="margin-top:10px"></div><div id="sc-endpoint-note" class="micro-note"></div><div class="cw-subpanels" style="gap:8px"><div class="cw-subpanel active" data-sub="plex"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("plex")}<code id="sc-webhook-url-plex"></code><button id="sc-copy-plex" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div><div class="sc-subbox"><div class="head">Filters</div><div class="body"><div class="sc-filter-grid"><div><div class="muted">Username whitelist</div><div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div><div id="sc-users-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;margin-top:6px"><input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1"><button id="sc-add-user-webhook" class="btn small">Add</button><button id="sc-load-users-webhook" class="btn small">Pick</button></div></div><div><div class="muted">Server UUID</div><div id="sc-uuid-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1"><button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button></div></div></div></div></div><div class="sc-subbox"><div class="head">Plex settings</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>${helpBtn("sc-help-webhook-plex-ratings")}</span></div></div></div><div class="cw-subpanel" data-sub="jellyfin"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-jf"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("jellyfin")}<code id="sc-webhook-url-jf"></code><button id="sc-copy-jf" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-jf"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="emby"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-emby"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("emby")}<code id="sc-webhook-url-emby"></code><button id="sc-copy-emby" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-emby"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="advanced"><div class="row" style="justify-content:flex-start;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-adv"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div><div class="sc-subbox"><div class="head">Advanced</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-stop-pause-webhook", "Stop pause >=", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1-100.</div></div></div></div></div></div></div>`;
 
       STATE.webhookHost.querySelector(".cw-panel")?.classList.add("sc-shell");
       enhanceWebhookFiltersUI(STATE.webhookHost);
@@ -1227,17 +1794,24 @@ function chip(text, onRemove, onClick) {
     }
 
     if (STATE.watcherHost) {
-      STATE.watcherHost.innerHTML = `<style> .cc-wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px} .cc-card{padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset} .cc-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px} .cc-body{display:grid;gap:14px} .cc-gauge{width:100%;min-height:68px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)} .cc-state{display:flex;flex-direction:column;line-height:1.15} .cc-state .lbl{font-size:12px;opacity:.75} .cc-state .val{font-size:22px;font-weight:800;letter-spacing:.2px} .cc-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.85} .cc-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap} .cc-auto{display:flex;justify-content:center;margin-top:2px} #scrob-watcher .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor} #scrob-watcher .status-dot.on{background:#22c55e;color:#22c55e} #scrob-watcher .status-dot.off{background:#ef4444;color:#ef4444} @media (max-width:900px){.cc-wrap{grid-template-columns:1fr}} .sc-box{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset} .sc-box>.body{padding:12px 14px} </style><div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="watcher"><div class="cw-panel-head"><div class="cw-panel-head-main"><div class="cw-panel-title">Watcher</div><div class="muted">Monitor playback and scrobble automatically.</div></div><div style="display:grid;justify-items:end;gap:10px"><div class="cw-subtiles" aria-label="Watcher sections"><button type="button" class="cw-subtile active" data-sub="watcher">Watcher</button><button type="button" class="cw-subtile" data-sub="filters">Filters</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button></div><div style="display:flex;justify-content:flex-end"><label class="cx-toggle"><input type="checkbox" id="sc-enable-watcher"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div></div></div><div class="cw-subpanels" style="gap:8px"><div class="cw-subpanel active" data-sub="watcher"><div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;flex-wrap:wrap"><div id="sc-legacy-picks" style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="opacity:.75;font-size:12px">Sink</span><div id="sc-sink-pills" class="sc-pillbar" role="group" aria-label="Sink"></div><select id="sc-sink" class="input" style="display:none;width:240px"><option value="">None</option><option value="trakt">Trakt</option><option value="simkl">SIMKL</option><option value="mdblist">MDBList</option><option value="simkl,trakt">Trakt & SIMKL</option><option value="trakt,mdblist">Trakt & MDBList</option><option value="simkl,mdblist">SIMKL & MDBList</option><option value="simkl,trakt,mdblist">Trakt & SIMKL & MDBList</option></select><span style="opacity:.75;font-size:12px">Provider</span><div class="sc-prov-wrap"><button type="button" id="sc-provider-btn" class="input sc-prov-btn" aria-haspopup="listbox" aria-expanded="false"><span class="sc-prov-left">${providerLogImg("plex", "wh-logo sc-prov-ico").replace("<img class=\"wh-logo sc-prov-ico\"", "<img id=\"sc-provider-icon\" class=\"wh-logo sc-prov-ico\"")}<span id="sc-provider-label">Plex</span></span><span class="sc-prov-caret" aria-hidden="true">&#9662;</span></button><div id="sc-provider-menu" class="sc-prov-menu hidden" role="listbox" aria-label="Provider"><button type="button" class="sc-prov-item" role="option" data-value="plex" aria-selected="true">${providerLogImg("plex", "wh-logo sc-prov-ico")}<span>Plex</span></button><button type="button" class="sc-prov-item" role="option" data-value="emby" aria-selected="false">${providerLogImg("emby", "wh-logo sc-prov-ico")}<span>Emby</span></button><button type="button" class="sc-prov-item" role="option" data-value="jellyfin" aria-selected="false">${providerLogImg("jellyfin", "wh-logo sc-prov-ico")}<span>Jellyfin</span></button></div><select id="sc-provider" class="input" style="display:none"><option value="plex">Plex</option><option value="emby">Emby</option><option value="jellyfin">Jellyfin</option></select></div></div></div><div id="sc-routes-wrap" class="sc-box" style="display:none;margin:2px 0 10px"><div class="body"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div style="display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)">Routes ${helpBtn("sc-help-watch-routes")}</div><div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" id="sc-route-add" class="btn small">Add Route</button></div></div><div id="sc-routes" class="sc-route-table"></div><div id="sc-migrate-banner" class="micro-note" style="margin-top:8px;display:none"></div></div></div><div id="sc-note" class="micro-note" style="display:none;margin:0"></div><div class="cc-wrap"><div class="cc-card" id="sc-card-status"><div class="cc-head"><div>Watcher Status</div><span id="sc-status-badge" class="badge is-off">Stopped</span></div><div class="cc-body"><div class="cc-gauge"><span id="sc-status-dot" class="status-dot off"></span><div class="cc-state"><span class="lbl">Status</span><span id="sc-status-text" class="val">Inactive</span></div></div><div class="cc-meta"><span id="sc-status-last" class="micro-note"></span><span id="sc-status-up" class="micro-note"></span></div><div class="cc-actions"><button id="sc-watch-start" class="btn small">Start</button><button id="sc-watch-stop" class="btn small">Stop</button><button id="sc-watch-refresh" class="btn small">Refresh</button></div><div class="cc-auto"><label class="cx-toggle"><input type="checkbox" id="sc-autostart"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Autostart on boot</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div></div></div><div class="cc-card" id="sc-card-server"><div class="cc-head"><div><span id="sc-server-label">Media Server</span><span id="sc-server-required" class="pill req"></span></div></div><div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div><div style="margin-top:12px"><div class="muted">Server URL (http(s)://host[:port])</div><input id="sc-pms-input" class="input" placeholder="http://192.168.1.10:32400" readonly/></div><div class="sc-subbox" style="margin-top:14px"><div class="head">Options</div><div class="body"><div class="sc-opt-col"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span><div id="sc-plex-ratings-wrap" style="display:none"><div class="sc-opt-row"><div class="muted" style="margin:0">Enable ratings</div>${helpBtn("sc-help-watch-plex-ratings")}<div id="sc-plex-ratings-pills" class="sc-pillbar" role="group" aria-label="Ratings"></div></div><div class="sc-opt-row" style="margin-top:6px"><select id="sc-plex-ratings" class="input" style="display:none;width:240px"><option value="none">None</option><option value="trakt">Trakt</option><option value="simkl">SIMKL</option><option value="mdblist">MDBList</option><option value="simkl,trakt">Trakt & SIMKL</option><option value="trakt,mdblist">Trakt & MDBList</option><option value="simkl,mdblist">SIMKL & MDBList</option><option value="simkl,trakt,mdblist">Trakt & SIMKL & MDBList</option></select><div id="sc-plexwatcher-url-wrap" class="codepair" style="display:none"><code id="sc-plexwatcher-url"></code><button id="sc-copy-plexwatcher" class="btn small">Copy</button></div></div><div id="sc-plexwatcher-note" class="micro-note" style="margin-top:6px"></div></div></div></div></div></div></div></div><div class="cw-subpanel" data-sub="filters"><div class="sc-box" id="sc-filters"><div style="display:flex;justify-content:flex-end;margin-bottom:10px">${helpBtn("sc-help-watch-filters")}</div><div class="body"><div id="sc-route-filter-wrap" style="display:none;margin-bottom:10px"><div class="muted">Filters for</div><select id="sc-route-select" class="input" style="width:100%;max-width:100%;margin-top:6px"></select></div><div class="sc-filter-grid"><div><div class="muted">Username whitelist</div><div id="sc-whitelist" class="chips" style="margin-top:4px"></div><div id="sc-users-note" class="micro-note"></div><div style="display:flex; gap:8px; margin-top:6px"><input id="sc-user-input" class="input" placeholder="Add username..." style="flex:1"><button id="sc-add-user" class="btn small">Add</button><button id="sc-load-users" class="btn small">Pick</button></div></div><div><div class="muted" id="sc-uuid-label">Server UUID</div><div id="sc-uuid-note" class="micro-note"></div><div style="display:flex; gap:8px; align-items:center; margin-top:6px"><input id="sc-server-uuid" class="input" placeholder="e.g. abcd1234..." style="flex:1"><button id="sc-fetch-uuid" class="btn small">Fetch</button></div></div></div></div></div></div><div class="cw-subpanel" data-sub="advanced"><div class="sc-box sc-advanced" id="sc-advanced"><div style="display:flex;justify-content:flex-end;margin-bottom:10px">${helpBtn("sc-help-watch-advanced")}</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress", "Regress", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-stop-pause", "Stop pause >=", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}${buildAdvField("sc-force-stop", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="sc-adv-grid" style="grid-template-columns:repeat(1,minmax(0,1fr));margin-top:10px">${buildAdvField("sc-progress-step", "Progress step", "sc-help-adv-progress-step", DEFAULTS.trakt.progress_step, { min: 1, max: 25, step: 1 })}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Percent fields are 1�100. Progress step is 1�25.</div></div></div></div></div></div></div>`;
+      STATE.watcherHost.innerHTML = `<style> .cc-wrap{display:grid;grid-template-columns:1fr 1fr;gap:16px} .cc-card{padding:14px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset} .cc-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px} .cc-body{display:grid;gap:14px} .cc-gauge{width:100%;min-height:68px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)} .cc-state{display:flex;flex-direction:column;line-height:1.15} .cc-state .lbl{font-size:12px;opacity:.75} .cc-state .val{font-size:22px;font-weight:800;letter-spacing:.2px} .cc-meta{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;opacity:.85} .cc-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap} .cc-auto{display:flex;justify-content:center;margin-top:2px} #scrob-watcher .status-dot{width:16px;height:16px;border-radius:50%;box-shadow:0 0 18px currentColor} #scrob-watcher .status-dot.on{background:#22c55e;color:#22c55e} #scrob-watcher .status-dot.off{background:#ef4444;color:#ef4444} @media (max-width:900px){.cc-wrap{grid-template-columns:1fr}} .sc-box{display:block;margin-top:12px;border-radius:12px;background:var(--panel,#111);box-shadow:0 0 0 1px rgba(255,255,255,.05) inset} .sc-box>.body{padding:12px 14px} </style><div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="watcher"><div class="cw-panel-head"><div class="cw-panel-head-main"><div class="cw-panel-title">Watcher</div><div class="muted">Monitor playback and scrobble automatically.</div></div><div style="display:grid;justify-items:end;gap:10px"><div class="cw-subtiles" aria-label="Watcher sections"><button type="button" class="cw-subtile active" data-sub="watcher">Watcher</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button></div><div style="display:flex;justify-content:flex-end"><label class="cx-toggle"><input type="checkbox" id="sc-enable-watcher"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div></div></div><div class="cw-subpanels" style="gap:8px"><div class="cw-subpanel active" data-sub="watcher"><div id="sc-routes-wrap" class="sc-box" style="display:none;margin:2px 0 10px"><div class="body"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px"><div style="display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)">Routes ${helpBtn("sc-help-watch-routes")}</div><div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button type="button" id="sc-route-add" class="btn small">Add Route</button></div></div><div id="sc-routes" class="sc-route-table"></div></div></div><div id="sc-note" class="micro-note" style="display:none;margin:0"></div><div class="cc-wrap"><div class="cc-card" id="sc-card-status"><div class="cc-head"><div>Watcher Status</div><span id="sc-status-badge" class="badge is-off">Stopped</span></div><div class="cc-body"><div class="cc-gauge"><span id="sc-status-dot" class="status-dot off"></span><div class="cc-state"><span class="lbl">Status</span><span id="sc-status-text" class="val">Inactive</span></div></div><div class="cc-meta"><span id="sc-status-last" class="micro-note"></span><span id="sc-status-up" class="micro-note"></span></div><div class="cc-actions"><button id="sc-watch-start" class="btn small">Start</button><button id="sc-watch-stop" class="btn small">Stop</button><button id="sc-watch-refresh" class="btn small">Refresh</button></div><div class="cc-auto"><label class="cx-toggle"><input type="checkbox" id="sc-autostart"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Autostart on boot</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div></div></div><div class="cc-card" id="sc-card-server"><div class="cc-head"><div><span id="sc-server-label">Media Server</span><span id="sc-server-required" class="pill req"></span></div></div><div id="sc-pms-note" class="micro-note" style="margin-top:2px"></div><div style="margin-top:12px"><div class="muted">Server URL (http(s)://host[:port])</div><input id="sc-pms-input" class="input" placeholder="http://192.168.1.10:32400" readonly/></div><div class="sc-subbox" style="margin-top:14px"><div class="head">Options</div><div class="body"><div class="sc-opt-col"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-watch"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span><div id="sc-plex-ratings-wrap" style="display:none"><div class="sc-opt-row"><div class="muted" style="margin:0">Enable ratings</div>${helpBtn("sc-help-watch-plex-ratings")}<div id="sc-plex-ratings-pills" class="sc-pillbar" role="group" aria-label="Ratings"></div></div><div class="sc-opt-row" style="margin-top:6px"><select id="sc-plex-ratings" class="input" style="display:none;width:240px"><option value="none">None</option><option value="trakt">Trakt</option><option value="simkl">SIMKL</option><option value="mdblist">MDBList</option><option value="simkl,trakt">Trakt & SIMKL</option><option value="trakt,mdblist">Trakt & MDBList</option><option value="simkl,mdblist">SIMKL & MDBList</option><option value="simkl,trakt,mdblist">Trakt & SIMKL & MDBList</option></select><div id="sc-plexwatcher-url-wrap" class="codepair" style="display:none"><code id="sc-plexwatcher-url"></code><button id="sc-copy-plexwatcher" class="btn small">Copy</button></div></div><div id="sc-plexwatcher-note" class="micro-note" style="margin-top:6px"></div></div></div></div></div></div></div></div></div><div class="cw-subpanel" data-sub="advanced"><div class="sc-box sc-advanced" id="sc-advanced"><div style="display:flex;justify-content:flex-end;margin-bottom:10px">${helpBtn("sc-help-watch-advanced")}</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress", "Regress", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-stop-pause", "Stop pause >=", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}${buildAdvField("sc-force-stop", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="sc-adv-grid" style="grid-template-columns:repeat(1,minmax(0,1fr));margin-top:10px">${buildAdvField("sc-progress-step", "Progress step", "sc-help-adv-progress-step", DEFAULTS.trakt.progress_step, { min: 1, max: 25, step: 1 })}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Percent fields are 1-100. Progress step is 1-25.</div></div></div></div></div></div></div>`;
 
       STATE.watcherHost.querySelector(".cw-panel")?.classList.add("sc-shell");
-      enhanceWatcherFiltersUI(STATE.watcherHost);
       enhanceWatcherAdvancedUI(STATE.watcherHost);
+      try {
+        const reloadBtn = $("#sc-watch-refresh", STATE.watcherHost);
+        if (reloadBtn) {
+          reloadBtn.textContent = "Reload";
+          reloadBtn.title = "Reload the running watcher from the current config.";
+        }
+      } catch {}
 
-      // Tabs: Watcher / Filters / Advanced
+      // Tabs: Watcher / Advanced
       const tabKey = "cw.ui.scrobbler.watcher.tab.v1";
       const root = STATE.watcherHost;
       const selectTab = (sub, opts = {}) => {
-        const want = (sub || "watcher").toLowerCase();
+        const raw = (sub || "watcher").toLowerCase();
+        const want = raw === "advanced" ? "advanced" : "watcher";
         root.querySelectorAll('.cw-subtile[data-sub]').forEach((btn) => {
           btn.classList.toggle("active", (btn.dataset.sub || "").toLowerCase() === want);
         });
@@ -1470,24 +2044,6 @@ function chip(text, onRemove, onClick) {
       .filter(Boolean);
   }
 
-
-  function onSelectWatchUser(name) {
-  const prov = provider();
-  if (prov !== "emby" && prov !== "jellyfin") return;
-  const list = Array.isArray(STATE.users) ? STATE.users : [];
-  const hit = list.find((u) => String(u?.username || u?.Name || u?.name || "").toLowerCase() === String(name || "").toLowerCase());
-  const id = hit?.id || hit?.Id;
-  if (id) {
-    const inp = $("#sc-server-uuid", STATE.mount);
-    if (inp) inp.value = id;
-    write("scrobble.watch.filters.server_uuid", id);
-    write("scrobble.watch.filters.user_id", id);
-    setNote("sc-uuid-note", "User ID set from username");
-  } else {
-    setNote("sc-uuid-note", "User not found", "err");
-  }
-}
-
   const scUserPicker = w.CW?.ScrobblerUserPicker?.create({
     STATE,
     el,
@@ -1502,9 +2058,7 @@ function chip(text, onRemove, onClick) {
     write,
     setNote,
     chip,
-    removeUserWatch,
     removeUserWebhook,
-    onSelectWatchUser,
   }) || {};
   const closeUserPicker = scUserPicker.closeUserPicker || (() => {});
   const openUserPicker = scUserPicker.openUserPicker || (async () => {});
@@ -1617,17 +2171,12 @@ function chip(text, onRemove, onClick) {
     try {
       const fresh = await API.cfgGet();
       if (fresh && typeof fresh === "object") {
-        const backendProv = String(fresh?.scrobble?.watch?.provider || "").toLowerCase().trim();
-        const backendSinkRaw = fresh?.scrobble?.watch?.sink;
-        const backendSink = normSinkCsv(backendSinkRaw == null ? "trakt" : backendSinkRaw);
-
         STATE.cfg = fresh;
+        ensureWatchRoutesArray();
 
         // Provider instances (profiles) can change outside this view; drop instance options cache.
         try { delete STATE._routesCache; } catch {}
 
-        const uiProv = String(STATE.ui?.watchProvider || "").toLowerCase().trim();
-        const uiSinkRaw = STATE.ui?.watchSink;
         const uiEnabled = STATE.ui?.scrobbleEnabled;
         const uiModeRaw = String(STATE.ui?.scrobbleMode || "").toLowerCase().trim();
         const uiAutostart = STATE.ui?.watchAutostart;
@@ -1636,15 +2185,6 @@ function chip(text, onRemove, onClick) {
         const backendMode = String(fresh?.scrobble?.mode || "webhook").toLowerCase().trim();
         const backendAutostart = !!fresh?.scrobble?.watch?.autostart;
 
-        if (uiProv) {
-          if (backendProv === uiProv) STATE.ui.watchProvider = null;
-          else deepSet(STATE.cfg, "scrobble.watch.provider", uiProv);
-        }
-        if (uiSinkRaw != null) {
-          const uiSink = normSinkCsv(uiSinkRaw);
-          if (backendSink === uiSink) STATE.ui.watchSink = null;
-          else deepSet(STATE.cfg, "scrobble.watch.sink", uiSink);
-        }
         if (typeof uiEnabled === "boolean") {
           if (backendEnabled === uiEnabled) STATE.ui.scrobbleEnabled = null;
           else deepSet(STATE.cfg, "scrobble.enabled", uiEnabled);
@@ -1666,13 +2206,12 @@ function chip(text, onRemove, onClick) {
   }
 
   function populate() {
-  const mig = legacyToRoutesIfMissing();
+  ensureWatchRoutesArray();
   try {
     if (isRoutesMode()) {
       const ar = getActiveRoute() || getRoutes()[0] || null;
       if (ar) applyRouteView(ar);
       renderRoutesUi().catch(() => {});
-      renderMigrateBanner(!!mig?.migrated);
     }
   } catch {}
   const enabled = !!read("scrobble.enabled", false);
@@ -1683,32 +2222,10 @@ function chip(text, onRemove, onClick) {
 
   const whEl = $("#sc-enable-webhook", STATE.mount);
   const waEl = $("#sc-enable-watcher", STATE.mount);
-  const pvSel = $("#sc-provider", STATE.mount);
-  const skSel = $("#sc-sink", STATE.mount);
 
-    if (whEl) whEl.checked = useWebhook;
+  if (whEl) whEl.checked = useWebhook;
   ["#sc-enable-webhook-jf", "#sc-enable-webhook-emby", "#sc-enable-webhook-adv"].forEach((id) => { const n = $(id, STATE.mount); if (n) n.checked = useWebhook; });
   if (waEl) waEl.checked = useWatch;
-  if (pvSel) pvSel.value = prov;
-  try { syncProviderPickerUi(); } catch {}
-  if (skSel) {
-    const raw = read("scrobble.watch.sink", "trakt");
-    skSel.value = normSinkCsv(raw == null ? "trakt" : raw);
-  }
-  try { syncSinkPillsFromSelect(); } catch {}
-
-  let wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
-  
-
-  const hostW = $("#sc-whitelist", STATE.mount);
-  if (hostW) {
-    hostW.innerHTML = "";
-    wlWatch.forEach((u) => hostW.append(chip(u, removeUserWatch, (prov === "emby" || prov === "jellyfin") ? onSelectWatchUser : undefined)));
-  }
-
-  const suWatch = read("scrobble.watch.filters.server_uuid", "");
-  const suInpW = $("#sc-server-uuid", STATE.mount);
-  if (suInpW) suInpW.value = suWatch || "";
 
   const wlWeb = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
   const hostWB = $("#sc-whitelist-webhook", STATE.mount);
@@ -1729,15 +2246,6 @@ function chip(text, onRemove, onClick) {
     return id ? `${path}?${id}` : path;
   }
 
-  async function refreshWebhookIds() {
-    try {
-      const r = await j("/api/webhooks/urls");
-      if (r && r.ok && r.ids) STATE.webhookIds = r.ids || null;
-    } catch {
-      STATE.webhookIds = null;
-    }
-  }
-
   function applyWebhookUrls() {
     const base = location.origin;
     const ids = STATE.webhookIds || {};
@@ -1756,8 +2264,11 @@ function chip(text, onRemove, onClick) {
       const r = await j("/api/webhooks/regenerate", { method: "POST" });
       if (r && r.ok && r.ids) {
         STATE.webhookIds = r.ids || null;
+        STATE.routeWebhookHooks = Array.isArray(r.route_hooks) ? r.route_hooks : [];
+        mergeRouteWebhookHooksIntoState();
         applyWebhookUrls();
         try { updatePlexWatcherWebhookUrl(); } catch {}
+        try { renderRoutesUi(); } catch {}
       }
     } finally {
       if (btn) btn.disabled = false;
@@ -1784,14 +2295,14 @@ function chip(text, onRemove, onClick) {
     const host = anchor && anchor.parentElement ? anchor.parentElement : null;
     if (host) {
       if (!btn) {
-        btn = el("button", { id: "sc-regen-webhooks", className: "btn small", textContent: "Regenerate IDs", title: wrapTooltipText("Generates new webhook IDs and invalidates the current URLs. Warning: you must update every media server webhook URL afterwards or scrobbling will stop working.") });
+        btn = el("button", { id: "sc-regen-webhooks", className: "btn small", textContent: "Regenerate IDs", title: wrapTooltipText("Generates new global and route webhook IDs and invalidates the current URLs. Warning: you must update every media server webhook URL afterwards or scrobbling will stop working.") });
       }
 
       if (btn && btn.parentElement !== host) host.appendChild(btn);
     }
 
     on(btn, "click", async () => {
-      if (!confirm("Regenerate webhook IDs? You must update all media server webhook URLs afterwards.")) return;
+      if (!confirm("Regenerate webhook IDs? This resets the global and route-specific webhook URLs, so you must update all media server webhook URLs afterwards.")) return;
       try {
         await regenWebhookIds();
       } catch (e) {
@@ -1805,6 +2316,8 @@ function chip(text, onRemove, onClick) {
   if (auto) auto.checked = !!autostart;
 
   try { syncServerPreviewUi(); } catch {}
+  try { syncWatcherDefaultsNote(); } catch {}
+  try { syncWatcherRouteWarnings(); } catch {}
 
   const set = (id, v) => {
     const n = $(id, STATE.mount);
@@ -1842,7 +2355,6 @@ function chip(text, onRemove, onClick) {
 
   updatePlexWatcherWebhookUrl();
 
-  restoreDetailsState("#sc-filters", false, "sc-filters-open-v2");
   restoreDetailsState("#sc-advanced", false, "sc-advanced-open-v2");
 
   syncHiddenServerInputs();
@@ -1858,61 +2370,76 @@ function chip(text, onRemove, onClick) {
     }
   }
 
+  async function reloadWatcherRuntime() {
+    setNote("sc-note", "");
+    try {
+      await persistCurrentScrobblerState("sc-pms-note");
+      await API.watch.refresh();
+      await refreshWatcher();
+      try { w.refreshWatchLogs?.(); } catch {}
+      setNote("sc-note", "Watcher reloaded from current config.");
+    } catch {
+      setNote("sc-pms-note", "Watcher reload failed", "err");
+      await refreshWatcher();
+    }
+  }
+
   async function onWatchStart() {
   const routesMode = isRoutesMode();
+  let prov = String(provider() || "plex").toLowerCase().trim();
+  let sink = normSinkCsv(read("scrobble.watch.sink", "trakt"));
   if (routesMode) {
     const routes = getRoutes();
     if (!routes.length) return setNote("sc-note", "Add at least one route before starting the watcher.", "warn");
     if (!anyStartableRoute()) return setNote("sc-note", "No startable routes. Check provider/sink authentication (and Plex server URL for that profile).", "warn");
-    const pick = routes.find(r => r.enabled && providerAuthOkForRoute(r) && sinkAuthOkForRoute(r)) || routes[0];
-    setActiveRouteId(pick.id);
-    applyRouteView(pick);
-    await renderRouteSelector();
-  }
-
-  const prov = String($("#sc-provider", STATE.mount)?.value || provider() || "plex")
-    .toLowerCase()
-    .trim();
-
-  const sinkRawUi = $("#sc-sink", STATE.mount)?.value;
-  const sinkRawCfg = read("scrobble.watch.sink", "trakt");
-  const sink = normSinkCsv(sinkRawUi != null ? sinkRawUi : (sinkRawCfg == null ? "trakt" : sinkRawCfg));
-
-  write("scrobble.watch.provider", prov);
-  write("scrobble.watch.sink", sink);
-
-  if (!sink) {
-    write("scrobble.watch.autostart", false);
-    STATE.ui.watchAutostart = false;
-    const auto = $("#sc-autostart", STATE.mount);
-    if (auto) {
-      auto.checked = false;
-      auto.disabled = true;
+    const current = getActiveRoute() || routes[0] || null;
+    if (current?.id) {
+      setActiveRouteFromUi(current.id);
+      prov = String(current.provider || prov).toLowerCase().trim();
+      sink = normSinkCsv(String(current.sink || ""));
     }
-    setNote("sc-note", "You must select at least one sink to start the watcher.", "warn");
-    try { await API.watch.stop(); } catch {}
-    try { await persistConfigPaths([["scrobble.watch.sink", ""], ["scrobble.watch.autostart", false]], "sc-pms-note"); } catch {}
-    applyModeDisable();
-    refreshWatcher();
-    return;
+  } else {
+    write("scrobble.watch.provider", prov);
+    write("scrobble.watch.sink", sink);
+
+    if (!sink) {
+      write("scrobble.watch.autostart", false);
+      STATE.ui.watchAutostart = false;
+      const auto = $("#sc-autostart", STATE.mount);
+      if (auto) {
+        auto.checked = false;
+        auto.disabled = true;
+      }
+      setNote("sc-note", "You must select at least one sink to start the watcher.", "warn");
+      try { await API.watch.stop(); } catch {}
+      try {
+        if (routesMode) await persistCurrentScrobblerState("sc-pms-note");
+        else await persistConfigPaths([["scrobble.watch.sink", ""], ["scrobble.watch.autostart", false]], "sc-pms-note");
+      } catch {}
+      applyModeDisable();
+      refreshWatcher();
+      return;
+    }
+
+    setNote("sc-note", "");
+
+    const srvProv = prov === "plex" ? "plex.server_url" : prov === "emby" ? "emby.server" : "jellyfin.server";
+    const srv = String(read(srvProv, "") || "");
+    const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
+    const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
+    const jellyTokenOk = !!String(read("jellyfin.access_token", "") || "").trim();
+
+    if (prov === "plex") {
+      if (!plexTokenOk) return setNote("sc-pms-note", "Not connected to Plex. Go to Authentication -> Plex.", "err");
+      if (!isValidServerUrl(srv)) return setNote("sc-pms-note", "Plex Server is required (http(s)://...)", "err");
+    } else if (prov === "emby") {
+      if (!embyTokenOk) return setNote("sc-pms-note", "Not connected to Emby. Go to Authentication -> Emby.", "err");
+    } else {
+      if (!jellyTokenOk) return setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication -> Jellyfin.", "err");
+    }
   }
 
   setNote("sc-note", "");
-
-  const srvProv = prov === "plex" ? "plex.server_url" : prov === "emby" ? "emby.server" : "jellyfin.server";
-  const srv = String(read(srvProv, "") || "");
-  const plexTokenOk = !!String(read("plex.account_token", "") || "").trim();
-  const embyTokenOk = !!String(read("emby.access_token", "") || "").trim();
-  const jellyTokenOk = !!String(read("jellyfin.access_token", "") || "").trim();
-
-  if (prov === "plex") {
-    if (!plexTokenOk) return setNote("sc-pms-note", "Not connected to Plex. Go to Authentication → Plex.", "err");
-    if (!isValidServerUrl(srv)) return setNote("sc-pms-note", "Plex Server is required (http(s)://…)", "err");
-  } else if (prov === "emby") {
-    if (!embyTokenOk) return setNote("sc-pms-note", "Not connected to Emby. Go to Authentication → Emby.", "err");
-  } else {
-    if (!jellyTokenOk) return setNote("sc-pms-note", "Not connected to Jellyfin. Go to Authentication → Jellyfin.", "err");
-  }
 
   try {
     const nextScrobble = getScrobbleConfig();
@@ -1941,7 +2468,7 @@ function chip(text, onRemove, onClick) {
     } catch {}
   } catch (e) {
     console.warn("[scrobbler] pre-start save failed:", e);
-    return setNote("sc-pms-note", "Couldn’t save settings. Hit Save or check logs.", "err");
+    return setNote("sc-pms-note", "Couldn't save settings. Hit Save or check logs.", "err");
   }
 
   try {
@@ -1955,6 +2482,8 @@ function chip(text, onRemove, onClick) {
 
 
   async function onWatchStop() {
+    setWatcherStatus({ alive: false });
+    setNote("sc-note", "");
     try {
       await API.watch.stop();
     } catch {
@@ -1979,7 +2508,7 @@ function chip(text, onRemove, onClick) {
     }
   }
 
-  const watchChipClick = () => (provider() === "emby" || provider() === "jellyfin") ? onSelectWatchUser : undefined;
+  const watchChipClick = () => undefined;
   function redrawWhitelist(hostSel, path, removeFn, onClick) {
     const host = $(hostSel, STATE.mount);
     if (!host) return;
@@ -1996,27 +2525,6 @@ function chip(text, onRemove, onClick) {
     write(path, asArray(read(path, [])).filter((x) => String(x) !== String(value)));
     redrawWhitelist(hostSel, path, removeFn, onClick);
   }
-
-  async function fetchServerUUID() {
-    const prov = provider();
-    await fetchServerUUIDBase(
-      "sc-uuid-note",
-      { input: "#sc-server-uuid", write: ["scrobble.watch.filters.server_uuid"] },
-      () => API.serverUUID(activeProviderInstance()),
-      prov === "plex" ? "Server UUID fetched" : "User ID fetched",
-      prov === "plex" ? "No server UUID" : "No user ID",
-      (v) => { if (prov === "emby" || prov === "jellyfin") write("scrobble.watch.filters.user_id", v); }
-    );
-  }
-
-  function onAddUserWatch() {
-    addWhitelistInput("#sc-user-input", "#sc-whitelist", "scrobble.watch.filters.username_whitelist", removeUserWatch, watchChipClick());
-  }
-
-  function removeUserWatch(u) {
-    removeWhitelistItem(u, "#sc-whitelist", "scrobble.watch.filters.username_whitelist", removeUserWatch, watchChipClick());
-  }
-
   async function fetchServerUUIDWebhook() {
     await fetchServerUUIDBase(
       "sc-uuid-note-webhook",
@@ -2037,47 +2545,21 @@ function chip(text, onRemove, onClick) {
 
   async function hydrateEmby() {
     try {
-      const info = await j("/api/emby/inspect");
-      const server = String(info?.server || "").trim();
-      const uid = String(info?.user_id || info?.user?.Id || "").trim();
-      if (server) {
-        write("emby.server", server);
-        const inp = $("#sc-pms-input", STATE.mount);
-        if (inp) inp.value = server;
-      }
-      if (uid) {
-        const inp = $("#sc-server-uuid", STATE.mount);
-        if (inp) inp.value = uid;
-        write("scrobble.watch.filters.server_uuid", uid);
-        write("scrobble.watch.filters.user_id", uid);
-        setNote("sc-uuid-note", "User ID detected");
-      }
+      STATE._embyInspect = await j("/api/emby/inspect");
+      if (provider() === "emby") syncServerPreviewUi();
     } catch {}
   }
 async function hydrateJellyfin() {
   try {
-    const info = await j("/api/jellyfin/inspect");
-    const server = String(info?.server || "").trim();
-    const uid = String(info?.user_id || info?.user?.Id || "").trim();
-    if (server) {
-      write("jellyfin.server", server);
-      const inp = $("#sc-pms-input", STATE.mount);
-      if (inp && provider() === "jellyfin") inp.value = server;
-    }
-    if (uid) {
-      const inp = $("#sc-server-uuid", STATE.mount);
-      if (inp) inp.value = uid;
-      write("scrobble.watch.filters.server_uuid", uid);
-      write("scrobble.watch.filters.user_id", uid);
-      setNote("sc-uuid-note", "User ID detected");
-    }
+    STATE._jellyfinInspect = await j("/api/jellyfin/inspect");
+    if (provider() === "jellyfin") syncServerPreviewUi();
   } catch {}
 }
 
 
   function wire() {
     ensureHiddenServerInputs();
-    setNote("sc-webhook-warning", "These legacy webhooks scrobble only to Trakt and will be removed in a future release; they’re no longer maintained or supported, please switch to Watcher ASAP.", "warn");
+    setNote("sc-webhook-warning", "These legacy webhooks scrobble only to Trakt and will be removed in a future release; they're no longer maintained or supported, please switch to Watcher ASAP.", "warn");
     // Copy the displayed webhook URL
     function getCodeText(id) {
       const n = $(id, STATE.mount);
@@ -2111,45 +2593,24 @@ async function hydrateJellyfin() {
       await copyWebhookFromCode("#sc-plexwatcher-url", "sc-plexwatcher-note", "Watcher endpoint copied", `${location.origin}/webhook/plexwatcher`);
     });
 
-    on($("#sc-add-user", STATE.mount), "click", onAddUserWatch);
-    on($("#sc-load-users", STATE.mount), "click", (e) => {
-      e.preventDefault();
-      openUserPicker("watch", e.currentTarget);
-    });
     on($("#sc-watch-start", STATE.mount), "click", onWatchStart);
     on($("#sc-watch-stop", STATE.mount), "click", onWatchStop);
     on($("#sc-watch-refresh", STATE.mount), "click", () => {
-      refreshWatcher();
-      try {
-        w.refreshWatchLogs?.();
-      } catch {}
+      reloadWatcherRuntime();
     });
 
     // Routes UI
     on($("#sc-route-add", STATE.mount), "click", async (e) => {
       e.preventDefault();
       if (!isRoutesMode()) return;
-      try { syncActiveRouteFromView(); } catch {}
       const routes = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
       const id = nextRouteId();
       const nr = normalizeRoute({ id, enabled: true, provider: "", provider_instance: "default", sink: "", sink_instance: "default", filters: {} }, id);
       routes.push(nr);
       setRoutes(routes);
-      setActiveRouteId(id);
+      setActiveRouteFromUi(id);
       await renderRoutesUi();
-    });
-
-    const rSel = $("#sc-route-select", STATE.mount);
-    on(rSel, "change", async (e) => {
-      if (!isRoutesMode()) return;
-      syncActiveRouteFromView();
-      const rid = String(e.target.value || "").trim();
-      if (!rid) return;
-      setActiveRouteId(rid);
-      const r = getActiveRoute();
-      if (r) applyRouteView(r);
       populate();
-      await renderRoutesUi();
     });
 
     const rHost = $("#sc-routes", STATE.mount);
@@ -2164,20 +2625,19 @@ async function hydrateJellyfin() {
       if (!r) return;
       if (f === "enabled") r.enabled = !!t.checked;
       else r[f] = String(t.value || "").trim() || (f.endsWith("_instance") ? "default" : r[f]);
-      if (f === "provider") { r.provider_instance = "default"; r.filters ||= {}; }
+      if (f === "provider") {
+        r.provider_instance = "default";
+        const names = asArray(r.filters?.username_whitelist || []);
+        r.filters = names.length ? { username_whitelist: names } : {};
+      }
       if (f === "sink") { r.sink_instance = "default"; }
       setRoutes(routes);
       try {
         const dd = findDuplicateRouteKeys(getRoutes());
         if (!dd.length) clearStickyNote("sc-note");
       } catch {}
-
-      if (activeRouteId() !== rid) { try { syncActiveRouteFromView(); } catch {} }
-      setActiveRouteId(rid);
-      applyRouteView(r);
-      try { syncRouteActiveRowUi(rid); } catch {}
-      try { syncServerPreviewUi(); } catch {}
-      try { applyModeDisable(); } catch {}
+      setActiveRouteFromUi(rid);
+      populate();
       await renderRoutesUi();
     });
 
@@ -2208,24 +2668,15 @@ async function hydrateJellyfin() {
         return;
       }
       if (act === "filters") {
-        syncActiveRouteFromView();
-        setActiveRouteId(rid);
-        const r = getRoutes().find(x => x.id === rid) || null;
-        if (r) applyRouteView(r);
-        await renderRouteSelector();
-        try { STATE._watcherSelectTab?.("filters"); } catch {}
-        populate();
+        setActiveRouteFromUi(rid);
+        await openRouteFiltersModal(rid);
+        return;
+      }
+      if (act === "options") {
+        setActiveRouteFromUi(rid);
+        await openRouteOptionsModal(rid);
       }
     });
-    on($("#sc-fetch-uuid", STATE.mount), "click", () => {
-      fetchServerUUID();
-    });
-    on($("#sc-server-uuid", STATE.mount), "input", (e) => {
-      const v = String(e.target.value || "").trim();
-      write("scrobble.watch.filters.server_uuid", v);
-      if (provider() === "emby" || provider() === "jellyfin") write("scrobble.watch.filters.user_id", v);
-    });
-
     on($("#sc-add-user-webhook", STATE.mount), "click", onAddUserWebhook);
     on($("#sc-load-users-webhook", STATE.mount), "click", (e) => {
       e.preventDefault();
@@ -2250,7 +2701,6 @@ async function hydrateJellyfin() {
 
     const wh = $("#sc-enable-webhook", STATE.mount);
     const wa = $("#sc-enable-watcher", STATE.mount);
-    const pv = $("#sc-provider", STATE.mount);
 
     const mirrorToggle = (masterSel, clones) => {
       const master = $(masterSel, STATE.mount);
@@ -2282,67 +2732,6 @@ async function hydrateJellyfin() {
 
     mirrorToggle("#sc-enable-webhook", ["#sc-enable-webhook-jf", "#sc-enable-webhook-emby", "#sc-enable-webhook-adv"]);
     mirrorToggle("#sc-delete-plex-webhook", ["#sc-delete-plex-webhook-jf", "#sc-delete-plex-webhook-emby"]);
-
-    const pvBtn = $("#sc-provider-btn", STATE.mount);
-    const pvMenu = $("#sc-provider-menu", STATE.mount);
-
-    on(pvBtn, "click", (e) => {
-      e.preventDefault();
-      toggleProviderMenu();
-    });
-
-    if (pvMenu) {
-      $all(".sc-prov-item[data-value]", pvMenu).forEach((it) => {
-        on(it, "click", (e) => {
-          e.preventDefault();
-          const v = String(it.getAttribute("data-value") || "").toLowerCase().trim();
-          const sel = $("#sc-provider", STATE.mount);
-          if (sel && v) {
-            sel.value = v;
-            sel.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          closeProviderMenu();
-        });
-      });
-    }
-
-    if (!STATE.__scProvAwayBound) {
-      STATE.__scProvAwayBound = true;
-      d.addEventListener("click", (e) => {
-        const menu = $("#sc-provider-menu", STATE.mount);
-        const btn = $("#sc-provider-btn", STATE.mount);
-        if (!menu || menu.classList.contains("hidden")) return;
-        if (menu.contains(e.target)) return;
-        if (btn && (btn === e.target || btn.contains(e.target))) return;
-        closeProviderMenu();
-      });
-      d.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") closeProviderMenu();
-      });
-    }
-    const sk = $("#sc-sink", STATE.mount);
-
-    const skPills = $("#sc-sink-pills", STATE.mount);
-    if (sk && skPills) {
-      ensureSinkPillBar(skPills);
-      syncPillBar(skPills, normSinkCsv(sk.value));
-      on(skPills, "click", (e) => {
-        const btn = e.target && e.target.closest ? e.target.closest("button[data-sink]") : null;
-        if (!btn || btn.disabled) return;
-        const key = String(btn.getAttribute("data-sink") || "").toLowerCase().trim();
-        if (!key) return;
-        const curArr = normSinkCsv(sk.value || "").split(",").filter(Boolean);
-        const has = curArr.includes(key);
-        const nextArr = has ? curArr.filter((x) => x !== key) : [...curArr, key];
-        const next = normSinkCsv(nextArr.join(","));
-        if (sk.value !== next) {
-          sk.value = next;
-          sk.dispatchEvent(new Event("change", { bubbles: true }));
-        } else {
-          syncPillBar(skPills, next);
-        }
-      });
-    }
 
     const ratSel = $("#sc-plex-ratings", STATE.mount);
     const ratPills = $("#sc-plex-ratings-pills", STATE.mount);
@@ -2408,60 +2797,6 @@ async function hydrateJellyfin() {
       persistConfigPaths([["scrobble.watch.autostart", v]], "sc-pms-note");
     });
 
-    on(pv, "change", async (e) => {
-      const prev = provider();
-      const val = String(e.target.value || "plex").toLowerCase();
-      try {
-        await API.watch.stop();
-      } catch {}
-      try {
-        refreshWatcher();
-      } catch {}
-      try {
-        if (!isRoutesMode()) saveCurrentProviderFilters(prev);
-      } catch {}
-      STATE.ui.watchProvider = val;
-      write("scrobble.watch.provider", val);
-      persistConfigPaths([["scrobble.watch.provider", val]], "sc-pms-note");
-      try {
-        if (!isRoutesMode()) applyProviderFilters(val);
-      } catch {}
-      try {
-        closeUserPicker();
-      } catch {}
-      populate();
-      try { syncProviderPickerUi(); } catch {}
-      if (val === "emby") await hydrateEmby();
-      if (val === "jellyfin") await hydrateJellyfin();
-      applyModeDisable();
-    });
-
-    on(sk, "change", async (e) => {
-      const val = normSinkCsv(e.target?.value ?? "");
-      try { await refreshWatcher(); } catch {}
-      STATE.ui.watchSink = val;
-      write("scrobble.watch.sink", val);
-
-      const pairs = [["scrobble.watch.sink", val]];
-      if (!val) {
-        write("scrobble.watch.autostart", false);
-        STATE.ui.watchAutostart = false;
-        pairs.push(["scrobble.watch.autostart", false]);
-        const auto = $("#sc-autostart", STATE.mount);
-        if (auto) auto.checked = false;
-        setNote("sc-note", "You must select at least one sink to start the watcher.", "warn");
-        try { await API.watch.stop(); } catch {}
-        try { await refreshWatcher(); } catch {}
-      } else {
-        setNote("sc-note", "");
-      }
-
-      await persistConfigPaths(pairs, "sc-pms-note");
-      try { syncSinkPillsFromSelect(); } catch {}
-      rebuildPlexRatingsDropdown();
-      applyModeDisable();
-    });
-
     const ratingsSel = $("#sc-plex-ratings", STATE.mount);
     if (ratingsSel) {
       on(ratingsSel, "change", (e) => {
@@ -2513,9 +2848,8 @@ async function hydrateJellyfin() {
   const wlWeb = wlWebHost ? namesFromChips("#sc-whitelist-webhook") : asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
   const suWeb = String($("#sc-server-uuid-webhook", STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid", "")).trim();
 
-  const wlWatchHost = $("#sc-whitelist", STATE.mount);
-  const wlWatch = wlWatchHost ? namesFromChips("#sc-whitelist") : asArray(read("scrobble.watch.filters.username_whitelist", []));
-  const suWatch = String($("#sc-server-uuid", STATE.mount)?.value ?? read("scrobble.watch.filters.server_uuid", "")).trim();
+  const wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
+  const suWatch = String(read("scrobble.watch.filters.server_uuid", "") || "").trim();
   const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
 
   let filtersWatch = {
@@ -2534,7 +2868,6 @@ async function hydrateJellyfin() {
     let routesOut = undefined;
 
     if (routesMode) {
-      syncActiveRouteFromView(filtersWatch);
       const routesRaw = getRoutes().map((r, i) => normalizeRoute(r, `R${i + 1}`));
       const routesKeep = routesRaw.filter((r) => {
         const p = String(r?.provider || "").trim();
@@ -2551,16 +2884,10 @@ async function hydrateJellyfin() {
 
 const dups = findDuplicateRouteKeys(routesOut);
 if (dups.length) {
-  const msg = "Duplicate routes are not allowed. Fix these before saving: " + dups.map(d => d.key).join(" · ");
+  const msg = "Duplicate routes are not allowed. Fix these before saving: " + dups.map(d => d.key).join(" | ");
   setStickyNote("sc-note", msg, "err");
   throw new Error(msg);
 }
-
-      // Per-route filters are stored on watch.routes[].filters.
-      try {
-        const r1 = routesRaw.find(r => String(r?.id || "").toUpperCase() === "R1") || routesRaw[0];
-        if (r1 && r1.filters && typeof r1.filters === "object") filtersWatch = deepClone(r1.filters);
-      } catch {}
 
       setRoutes(routesRaw);
     }
@@ -2583,8 +2910,6 @@ if (dups.length) {
     },
 
     watch: {
-      provider: prov,
-      sink: normSinkCsv(read("scrobble.watch.sink", "trakt")),
       routes: routesOut,
       autostart: !!read("scrobble.watch.autostart", false),
       plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
@@ -2592,7 +2917,11 @@ if (dups.length) {
       plex_mdblist_ratings: !!read("scrobble.watch.plex_mdblist_ratings", false),
       pause_debounce_seconds: read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
       suppress_start_at: read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at),
-      filters: filtersWatch,
+      ...(routesMode ? {} : {
+        provider: prov,
+        sink: normSinkCsv(read("scrobble.watch.sink", "trakt")),
+        filters: filtersWatch,
+      }),
     },
 
     trakt: {
@@ -2622,7 +2951,7 @@ async function init(opts = {}) {
         const className = ["section", "cw-settings-section", "cw-settings-provider-section"];
         if (id === "sc-sec-watch") className.push("open");
         const sec = el("div", { className: className.join(" "), id });
-        sec.innerHTML = `<div class="head" onclick="toggleSection('${id}')"><span class="chev">▶</span><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
+        sec.innerHTML = `<div class="head" onclick="toggleSection('${id}')"><span class="chev">></span><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
         root.append(sec);
       };
       if (!STATE.webhookHost) {
@@ -2667,15 +2996,7 @@ async function init(opts = {}) {
     }
 
     await refreshCfgBeforePopulate();
-    try { legacyToRoutesIfMissing(); } catch {}
-    try {
-      if (!isRoutesMode()) {
-        pfLoadStore();
-        const prov = provider();
-        if (STATE.pf.store?.[prov]) applyProviderFilters(prov);
-        else saveCurrentProviderFilters(prov);
-      }
-    } catch {}
+    try { ensureWatchRoutesArray(); } catch {}
     populate();
     await refreshWatcher();
     if (provider() === "emby") await hydrateEmby();
@@ -2697,4 +3018,5 @@ async function init(opts = {}) {
     init({ mountId: "scrobble-mount" });
   });
 })(window, document);
+
 
