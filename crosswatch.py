@@ -277,8 +277,10 @@ _SENSITIVE_QUERY_KEYS = {
 
 _APP_AUTH_SETUP_ALLOWED_PATHS = {
     "/",
+    "/healthz",
     "/login",
     "/logout",
+    "/api/health",
     "/api/config/meta",
     "/api/app-auth/status",
     "/api/app-auth/credentials",
