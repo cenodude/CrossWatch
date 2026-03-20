@@ -44,6 +44,31 @@ def _norm_key(x: Any) -> str:
     return urllib.parse.unquote(s) if "%" in s else s
 
 
+def _norm_key_spec(x: Any) -> dict[str, Any]:
+    key = _norm_key(x)
+    aliases_raw = x.get("aliases") if isinstance(x, dict) else []
+    alias_values = aliases_raw if isinstance(aliases_raw, list) else []
+    aliases = [
+        alias
+        for alias in dict.fromkeys([key, *(_norm_key(v) for v in alias_values)])
+        if alias
+    ]
+    return {"key": key, "aliases": aliases}
+
+
+def _resolve_key_spec_for_provider(
+    state: dict[str, Any],
+    provider: str,
+    spec: dict[str, Any],
+    *,
+    instance_id: str | None = None,
+) -> str | None:
+    for alias in spec.get("aliases") or []:
+        if _find_item_in_state_for_provider(state, str(alias), provider, instance_id=instance_id):
+            return str(alias)
+    return None
+
+
 def _active_providers(cfg: dict[str, Any]) -> list[str]:
     try:
         manifest = detect_available_watchlist_providers(cfg) or []
@@ -137,8 +162,14 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
     if not isinstance(keys_raw, list) or not keys_raw:
         return {"ok": False, "error": "keys must be a non-empty array"}
 
-    keys = [k for k in (_norm_key(k) for k in keys_raw) if k]
-    keys = list(dict.fromkeys(keys))
+    specs: list[dict[str, Any]] = []
+    seen_specs: set[str] = set()
+    for spec in (_norm_key_spec(k) for k in keys_raw):
+        key = str(spec.get("key") or "")
+        if not key or key in seen_specs:
+            continue
+        seen_specs.add(key)
+        specs.append(spec)
 
     cfg = load_config()
     state = _load_state() or {}
@@ -162,15 +193,17 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
         try:
             per_key: list[dict[str, Any]] = []
             deleted = 0
-            for k in keys:
-                if not _find_item_in_state_for_provider(state, k, p, instance_id=inst_p):
-                    per_key.append({"key": k, "deleted": 0, "attempted": False, "reason": "not_in_state"})
+            for spec in specs:
+                primary_key = str(spec.get("key") or "")
+                resolved_key = _resolve_key_spec_for_provider(state, p, spec, instance_id=inst_p)
+                if not resolved_key:
+                    per_key.append({"key": primary_key, "deleted": 0, "attempted": False, "reason": "not_in_state"})
                     continue
-                kind, label = _item_label(state, k, p)
+                kind, label = _item_label(state, resolved_key, p)
                 safe_label = (label or "").replace("'", "’")
-                r = delete_watchlist_batch([k], p, state, cfg, provider_instance=inst_p) or {}
+                r = delete_watchlist_batch([resolved_key], p, state, cfg, provider_instance=inst_p) or {}
                 d = int(r.get("deleted", 0)) if isinstance(r, dict) else 0
-                per_key.append({"key": k, "deleted": d, "attempted": True})
+                per_key.append({"key": primary_key, "resolved_key": resolved_key, "deleted": d, "attempted": True})
                 deleted += d
                 _append_log(
                     "SYNC",
@@ -204,7 +237,7 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
         "provider": prov,
         "targets": targets,
         "deleted_ok": deleted_sum,
-        "deleted_total": len(keys),
+        "deleted_total": len(specs),
         "results": results,
     }
 
