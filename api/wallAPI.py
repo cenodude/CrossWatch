@@ -68,6 +68,7 @@ def register_wall(app: FastAPI) -> None:
     def api_state_wall(
         both_only: bool = Query(False, description="Keep only items present on multiple providers"),
         active_only: bool = Query(False, description="Keep only items from configured providers"),
+        limit: int = Query(0, ge=0, le=100, description="Optional item limit"),
     ) -> dict[str, Any]:
         cfg = load_config() or {}
         st = _load_state() or {}
@@ -86,6 +87,8 @@ def register_wall(app: FastAPI) -> None:
             return True
 
         items = [it for it in items if keep(it)]
+        if limit:
+            items = items[:limit]
 
         return {
             "ok": True,
