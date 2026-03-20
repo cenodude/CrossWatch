@@ -516,7 +516,7 @@ DEFAULT_CFG: dict[str, Any] = {
     # --- Metadata (TMDb resolver) -------------------------------------------
     "metadata": {
         "locale": "en-US",                              # example: "en-US" / "nl-NL"
-        "ttl_hours": 6,                                 # Coarse cache TTL
+        "ttl_hours": 72,                                # Coarse cache TTL
     },
 
     # --- Scrobble ------------------------------------------------------------
@@ -1321,6 +1321,15 @@ def load_config() -> dict[str, Any]:
 
 def save_config(cfg: dict[str, Any]) -> None:
     data: dict[str, Any] = dict(cfg or {})
+    prev_version = str(data.get("version") or "").strip()
+    try:
+        ui0 = data.get("ui")
+        if isinstance(ui0, dict):
+            pending0 = str(ui0.get("_pending_upgrade_from_version") or "").strip()
+            if not pending0 and prev_version and _current_version_norm() != prev_version:
+                ui0["_pending_upgrade_from_version"] = prev_version
+    except Exception:
+        pass
     data["version"] = _current_version_norm()
     _normalize_tmdb_sync(data)
     _normalize_trakt(data)
