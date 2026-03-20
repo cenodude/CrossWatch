@@ -326,12 +326,10 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
         return False
 
     optional_fields = {
-        "overview",
         "tagline",
         "runtime_minutes",
         "score",
         "certification",
-        "videos",
         "ids",
     }
 
@@ -359,6 +357,8 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
                 or det.get("release_year")
                 or det.get("first_air_year")
             )
+        if k == "videos":
+            return "videos" in meta
         return bool(meta.get(k))
 
     for k, v in (need or {}).items():
@@ -402,6 +402,15 @@ def _write_meta_cache(p: Path, payload: dict[str, Any]) -> None:
         tmp.replace(p)
     except Exception:
         pass
+
+
+def _merge_meta_cache_payload(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
+    prev = base if isinstance(base, dict) else {}
+    out = {**prev, **extra}
+    out["ids"] = {**(prev.get("ids") or {}), **(extra.get("ids") or {})}
+    out["detail"] = {**(prev.get("detail") or {}), **(extra.get("detail") or {})}
+    out["images"] = {**(prev.get("images") or {}), **(extra.get("images") or {})}
+    return out
 
 
 def _prune_meta_cache_if_needed() -> None:
@@ -498,7 +507,7 @@ def get_meta(
 
     if res and _meta_cache_enabled():
         try:
-            payload = dict(res)
+            payload = _merge_meta_cache_payload(cached, dict(res))
             payload["locale"] = eff_locale or payload.get("locale") or None
             _write_meta_cache(
                 _meta_cache_path(entity, tmdb_id, eff_locale or "en-US"),
@@ -579,8 +588,36 @@ def get_art_file(
     cache_root.mkdir(parents=True, exist_ok=True)
 
     art_kind = "backdrop" if str(kind).strip().lower() == "backdrop" else "poster"
-    meta = get_meta(api_key, typ, str(tmdb_id), cache_dir=cache_dir, need={art_kind: True}, locale=locale) or {}
-    eff_locale = locale or meta.get("locale") or None
+    eff_locale = locale or _cfg_ui_locale() or None
+    loc_tag = _safe_cache_part(_locale_tag(eff_locale), default="any")
+    safe_typ = _safe_cache_part(typ, default="media")
+    safe_tmdb_id = _safe_cache_part(tmdb_id)
+    safe_kind = _safe_cache_part(art_kind, default="poster")
+    safe_size = _safe_cache_part(_sanitize_tmdb_size(size), default="w342")
+    base = cache_root / f"{safe_typ}_{safe_tmdb_id}_{safe_kind}_{loc_tag}_{safe_size}"
+    meta_path = base.with_suffix(".json")
+
+    cached_art = None
+    if meta_path.exists() and _read_json(meta_path).get("url"):
+        for f in cache_root.glob(base.name + ".*"):
+            if f.suffix.lower() != ".json" and f.exists():
+                cached_art = f
+                break
+    if cached_art:
+        ext = cached_art.suffix.lower()
+        mime = "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png" if ext == ".png" else "application/octet-stream"
+        _meta_debug(
+            "art_cache_hit",
+            type=typ,
+            tmdb_id=tmdb_id,
+            kind=art_kind,
+            size=safe_size,
+            locale=eff_locale or "any",
+        )
+        return str(cached_art), mime
+
+    meta = get_meta(api_key, typ, str(tmdb_id), cache_dir=cache_dir, need={art_kind: True}, locale=eff_locale) or {}
+    eff_locale = eff_locale or meta.get("locale") or None
 
     art = _art_candidates(meta, art_kind)
 
@@ -594,16 +631,11 @@ def get_art_file(
     if not best:
         return str(_placeholder_poster()), "image/svg+xml"
 
-    size_tag = _sanitize_tmdb_size(size)
+    size_tag = safe_size
     src_url = _tmdb_size_url(best, size_tag) or ""
     if not src_url:
         return str(_placeholder_poster()), "image/svg+xml"
 
-    loc_tag = _safe_cache_part(_locale_tag(eff_locale), default="any")
-    safe_typ = _safe_cache_part(typ, default="media")
-    safe_tmdb_id = _safe_cache_part(tmdb_id)
-    safe_kind = _safe_cache_part(art_kind, default="poster")
-    safe_size = _safe_cache_part(size_tag, default="w342")
     base = cache_root / f"{safe_typ}_{safe_tmdb_id}_{safe_kind}_{loc_tag}_{safe_size}"
     meta_path = base.with_suffix(".json")
 
