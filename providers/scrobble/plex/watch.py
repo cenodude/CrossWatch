@@ -345,6 +345,7 @@ class WatchService:
         self._first_seen: dict[str, float] = {}
         self._last_pause_ts: dict[str, float] = {}
         self._filtered_ts: dict[str, float] = {}
+        self._route_filtered_ts: dict[str, float] = {}
         self._last_probe: dict[str, float] = {}
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
@@ -577,7 +578,7 @@ class WatchService:
         self._max_seen[sk] = max(pct_i, self._max_seen.get(sk, 0))
         accepted = bool(self._dispatch.dispatch(ev2))
         if not accepted:
-            self._dbg(f"seek update filtered by route dispatcher: user={_mask_account(ev2.account)} server={ev2.server_uuid} sess={ev2.session_key}")
+            self._throttled_route_filtered_log(ev2, "seek update")
             self._clear_currently_watching(ev2)
             return
         try:
@@ -955,6 +956,14 @@ class WatchService:
             self._dbg(f"event filtered: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
             self._filtered_ts[key] = now
 
+    def _throttled_route_filtered_log(self, ev: ScrobbleEvent, kind: str = "event") -> None:
+        key = f"{kind}|{ev.account}|{ev.server_uuid}|{ev.session_key or self._find_rating_key(ev.raw or {}) or '?'}"
+        now = time.time()
+        last = self._route_filtered_ts.get(key, 0.0)
+        if now - last >= 30.0:
+            self._dbg(f"{kind} filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
+            self._route_filtered_ts[key] = now
+
     def _clear_currently_watching(self, ev: ScrobbleEvent) -> None:
         try:
             _cw_update_payload(
@@ -1187,7 +1196,7 @@ class WatchService:
 
             accepted = bool(self._dispatch.dispatch(ev))
             if not accepted:
-                self._dbg(f"event filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={ev.session_key}")
+                self._throttled_route_filtered_log(ev)
                 self._clear_currently_watching(ev)
                 return
 

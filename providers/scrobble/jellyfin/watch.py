@@ -563,6 +563,7 @@ class JellyfinWatchService:
         self._last_emit: dict[str, tuple[str, int]] = {}
         self._allowed_sessions: set[str] = set()
         self._filtered_sessions: set[str] = set()
+        self._route_filtered_ts: dict[str, float] = {}
         self._cw_last_heartbeat: dict[str, float] = {}
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._last_seek_emit: dict[str, float] = {}
@@ -846,7 +847,7 @@ class JellyfinWatchService:
 
         accepted = bool(self._dispatch.dispatch(ev2))
         if not accepted:
-            self._dbg(f"seek update filtered by route dispatcher: user={_mask_account(ev2.account)} server={ev2.server_uuid} sess={ev2.session_key}")
+            self._throttled_route_filtered_log(ev2, "seek update")
             self._clear_currently_watching(ev2)
             return False
 
@@ -886,7 +887,7 @@ class JellyfinWatchService:
 
         accepted = bool(self._dispatch.dispatch(ev))
         if not accepted:
-            self._dbg(f"event filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={sk}")
+            self._throttled_route_filtered_log(ev)
             self._clear_currently_watching(ev)
             return
 
@@ -908,6 +909,15 @@ class JellyfinWatchService:
             last_meta["meta"] = self._meta_from_event(ev)
             self._last[sk] = last_meta
             self._last_emit[sk] = (ev.action, ev.progress)
+
+    def _throttled_route_filtered_log(self, ev: ScrobbleEvent, kind: str = "event") -> None:
+        sk = str(ev.session_key or "")
+        key = f"{kind}|{ev.account}|{ev.server_uuid}|{sk or '?'}"
+        now = time.time()
+        last = self._route_filtered_ts.get(key, 0.0)
+        if now - last >= 30.0:
+            self._dbg(f"{kind} filtered by route dispatcher: user={_mask_account(ev.account)} server={ev.server_uuid} sess={sk}")
+            self._route_filtered_ts[key] = now
 
     def _clear_currently_watching(self, ev: ScrobbleEvent) -> None:
         try:
