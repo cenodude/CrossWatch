@@ -254,17 +254,41 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
     ids_src = item.get("ids")
     ids_raw = dict(ids_src) if isinstance(ids_src, Mapping) else {}
     if not ids_raw:
-        ids_raw = {"imdb": item.get("imdb") or item.get("imdb_id"), "tmdb": item.get("tmdb") or item.get("tmdb_id"), "tvdb": item.get("tvdb") or item.get("tvdb_id")}
+        ids_raw = {
+            "imdb": item.get("imdb") or item.get("imdb_id"),
+            "tmdb": item.get("tmdb") or item.get("tmdb_id"),
+            "tvdb": item.get("tvdb") or item.get("tvdb_id"),
+            "trakt": item.get("trakt") or item.get("trakt_id"),
+            "kitsu": item.get("kitsu") or item.get("kitsu_id"),
+            "mdblist": item.get("mdblist") or item.get("mdblist_id"),
+        }
+
+    typ = str(item.get("type") or item.get("mediatype") or "").strip().lower()
+    if typ.endswith("s") and typ in ("movies", "shows"):
+        typ = typ[:-1]
+    if typ not in ("movie", "show"):
+        typ = "movie"
+
+    allowed = {"imdb", "tmdb", "trakt", "mdblist"}
+    if typ == "movie":
+        allowed.update({"tvdb", "kitsu"})
+    else:
+        allowed.add("tvdb")
+
     out: dict[str, Any] = {}
-    imdb_val = _as_str(ids_raw.get("imdb"))
+    imdb_val = _as_str(ids_raw.get("imdb")) if "imdb" in allowed else None
     if imdb_val:
         out["imdb"] = imdb_val
-    tmdb_i = _as_int(ids_raw.get("tmdb"))
-    if tmdb_i is not None:
-        out["tmdb"] = tmdb_i
-    tvdb_i = _as_int(ids_raw.get("tvdb"))
-    if tvdb_i is not None:
-        out["tvdb"] = tvdb_i
+    for key in ("tmdb", "tvdb", "trakt", "kitsu"):
+        if key not in allowed:
+            continue
+        ident = _as_int(ids_raw.get(key))
+        if ident is not None:
+            out[key] = ident
+    if "mdblist" in allowed:
+        mdblist_val = _as_str(ids_raw.get("mdblist"))
+        if mdblist_val:
+            out["mdblist"] = mdblist_val
     return out
 
 
@@ -272,12 +296,14 @@ def _pick_kind_from_row(row: Mapping[str, Any]) -> str:
     t = str(row.get("mediatype") or row.get("type") or "").strip().lower()
     if t in ("show", "tv", "series", "shows"):
         return "show"
-    if row.get("tvdb_id") not in (None, ""):
-        return "show"
+    if t in ("movie", "movies", "film", "films"):
+        return "movie"
     if row.get("first_air_date") or row.get("first_air_year"):
         return "show"
     if row.get("release_date") or row.get("release_year"):
         return "movie"
+    if row.get("tvdb_id") not in (None, ""):
+        return "show"
     ids = row.get("ids")
     if isinstance(ids, Mapping):
         if ids.get("tvdb") not in (None, ""):
@@ -481,14 +507,16 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
     frozen = _load_unresolved()
     frozen_keys = set(frozen.keys())
     for item in items or []:
-        if _key_of(id_minimal(item)) in frozen_keys:
+        minimal_item = id_minimal(item)
+        if _key_of(minimal_item) in frozen_keys:
+            rejected.append({"item": minimal_item, "hint": "frozen_unresolved"})
             continue
         ids = _ids_for_mdblist(item)
         if not ids:
-            rejected.append({"item": id_minimal(item), "hint": "missing_ids"})
+            rejected.append({"item": minimal_item, "hint": "missing_ids"})
             continue
-        if not ids.get("imdb") and ids.get("tmdb") is None:
-            rejected.append({"item": id_minimal(item), "hint": "missing_imdb_tmdb"})
+        if not any(ids.get(k) not in (None, "") for k in ("imdb", "tmdb", "trakt", "mdblist", "tvdb", "kitsu")):
+            rejected.append({"item": minimal_item, "hint": "missing_supported_ids"})
             continue
         kind = "show" if str(item.get("type") or "").lower() in ("show", "shows", "tv", "series") else "movie"
         accepted.append({"type": kind, "ids": ids})
@@ -496,8 +524,27 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
 
 
 def _payload_from_accepted(accepted_slice: list[dict[str, Any]]) -> dict[str, Any]:
-    movies = [{"imdb": x["ids"].get("imdb"), "tmdb": x["ids"].get("tmdb")} for x in accepted_slice if x["type"] == "movie"]
-    shows = [{"imdb": x["ids"].get("imdb"), "tmdb": x["ids"].get("tmdb")} for x in accepted_slice if x["type"] == "show"]
+    movies: list[dict[str, Any]] = []
+    shows: list[dict[str, Any]] = []
+    for x in accepted_slice:
+        ids = dict(x.get("ids") or {})
+        if x["type"] == "movie":
+            entry: dict[str, Any] = {}
+            imdb = ids.get("imdb")
+            tmdb = ids.get("tmdb")
+            tvdb = ids.get("tvdb")
+            if imdb is not None:
+                entry["imdb"] = imdb
+            if tmdb is not None:
+                entry["tmdb"] = tmdb
+            if not entry and tvdb is not None:
+                entry["tvdb"] = tvdb
+            if entry:
+                movies.append(entry)
+            continue
+
+        entry = {"imdb": ids.get("imdb"), "tmdb": ids.get("tmdb")}
+        shows.append(entry)
     movies = [{k: v for k, v in d.items() if v is not None} for d in movies]
     shows = [{k: v for k, v in d.items() if v is not None} for d in shows]
     movies = [d for d in movies if d]
@@ -517,7 +564,7 @@ def _freeze_not_found(not_found: Any, *, action: str, unresolved: list[dict[str,
         if not isinstance(value, list):
             continue
         for obj in value:
-            ids = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb")}
+            ids = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb", "tvdb")}
             typ = "movie" if bucket == "movies" else "show"
             minimal = id_minimal({"type": typ, "ids": ids})
             unresolved.append({"item": minimal, "hint": "not_found"})
@@ -525,11 +572,27 @@ def _freeze_not_found(not_found: Any, *, action: str, unresolved: list[dict[str,
             _freeze_item(minimal, action=action, reasons=[f"{action}:not-found"], details=details)
 
 
-def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def _count_bucket(value: Any) -> int:
+    if isinstance(value, list):
+        return len(value)
+    count = _as_int(value)
+    return int(count or 0)
+
+
+def _not_found_total(not_found: Any) -> int:
+    if not isinstance(not_found, Mapping):
+        return _count_bucket(not_found)
+    total = 0
+    for bucket in ("movies", "shows", "seasons", "episodes"):
+        total += _count_bucket(not_found.get(bucket))
+    return total
+
+
+def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     cfg = _cfg(adapter)
     apikey = _as_str(cfg.get("api_key")) or ""
     if not apikey:
-        return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]
+        return {"count": 0, "unresolved": [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]}
 
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
     freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
@@ -537,7 +600,7 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
     sess = adapter.client.session
     accepted, unresolved = _batch_payload(items)
     if not accepted:
-        return 0, unresolved
+        return {"count": 0, "unresolved": unresolved}
 
     ok = 0
     for sl in _chunk(accepted, batch):
@@ -545,7 +608,7 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
         if not payload:
             for x in sl:
                 minimal = id_minimal({"type": x["type"], "ids": x["ids"]})
-                unresolved.append({"item": minimal, "hint": "missing_imdb_tmdb"})
+                unresolved.append({"item": minimal, "hint": "missing_write_ids"})
             continue
 
         r = request_with_retries(
@@ -569,13 +632,17 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
             removed = removed_any if isinstance(removed_any, Mapping) else {}
 
             if action == "add":
-                ok += int(_as_int(added.get("movies")) or 0)
-                ok += int(_as_int(added.get("shows")) or 0)
-                ok += int(_as_int(existing.get("movies")) or 0)
-                ok += int(_as_int(existing.get("shows")) or 0)
+                slice_success_count = 0
+                slice_success_count += int(_as_int(added.get("movies")) or 0)
+                slice_success_count += int(_as_int(added.get("shows")) or 0)
+                slice_success_count += int(_as_int(existing.get("movies")) or 0)
+                slice_success_count += int(_as_int(existing.get("shows")) or 0)
+                ok += slice_success_count
             else:
-                ok += int(_as_int(removed.get("movies")) or 0)
-                ok += int(_as_int(removed.get("shows")) or 0)
+                slice_success_count = 0
+                slice_success_count += int(_as_int(removed.get("movies")) or 0)
+                slice_success_count += int(_as_int(removed.get("shows")) or 0)
+                ok += slice_success_count
 
             nf_any = body.get("not_found")
             _freeze_not_found(nf_any, action=action, unresolved=unresolved, add_details=freeze_details)
@@ -587,15 +654,42 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
                 if not isinstance(value, list):
                     continue
                 for obj in value:
-                    ids_nf = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb")}
+                    ids_nf = {k: v for k, v in dict(obj or {}).items() if k in ("tmdb", "imdb", "tvdb")}
                     if ids_nf:
                         not_found_keys.add(_key_of({"ids": ids_nf}))
+
+            response_nf_total = _not_found_total(nf_any)
+            unresolved_now = len(not_found_keys)
+            if response_nf_total > unresolved_now:
+                extra_needed = min(len(sl), response_nf_total - unresolved_now)
+                fallback_left = [
+                    x for x in sl if _key_of({"type": x["type"], "ids": x["ids"]}) not in not_found_keys
+                ]
+                for x in fallback_left[:extra_needed]:
+                    minimal = id_minimal({"type": x["type"], "ids": x["ids"]})
+                    unresolved.append({"item": minimal, "hint": "not_found"})
+                    _freeze_item(
+                        minimal,
+                        action=action,
+                        reasons=[f"{action}:not-found"],
+                        details={"ids": x["ids"]} if freeze_details else None,
+                    )
+                    not_found_keys.add(_key_of({"type": x["type"], "ids": x["ids"]}))
 
             ok_keys: list[str] = []
             for x in sl:
                 k = _key_of({"type": x["type"], "ids": x["ids"]})
                 if k not in not_found_keys:
                     ok_keys.append(k)
+            if not ok_keys and slice_success_count > 0:
+                # API docs only guarantee aggregate counts; if counts say some rows succeeded
+                # but the response doesn't identify which, treat the remainder as successful.
+                success_guess = max(0, min(len(sl), slice_success_count))
+                ok_keys = [
+                    _key_of({"type": x["type"], "ids": x["ids"]})
+                    for x in sl[:success_guess]
+                    if _key_of({"type": x["type"], "ids": x["ids"]}) not in not_found_keys
+                ]
             if ok_keys:
                 _unfreeze_keys_if_present(ok_keys)
         else:
@@ -609,12 +703,12 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
 
     if ok > 0:
         _shadow_bust()
-    return ok, unresolved
+    return {"count": ok, "unresolved": unresolved}
 
 
-def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     return _write(adapter, "add", items)
 
 
-def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     return _write(adapter, "remove", items)
