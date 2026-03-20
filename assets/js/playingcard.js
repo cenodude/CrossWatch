@@ -166,23 +166,28 @@
   };
 
   const metaCache = new Map();
+  const metaInflight = new Map();
+  const SHARED_WATCH_KEY = "__CW_CURRENT_WATCHING_SHARED__";
   const getMetaFor = async (p) => {
     const k = metaKey(p);
     const hit = metaCache.get(k);
     if (hit) return hit;
+    const inflight = metaInflight.get(k);
+    if (inflight) return inflight;
 
     const tmdb = String(tmdbIdOf(p) || "");
     if (!tmdb) return null;
     const mt = String(p?.media_type || p?.type || "").toLowerCase();
     const type = mt === "movie" ? "movie" : "show";
 
-    try {
+    const req = (async () => {
+      try {
       const r = await fetch("/api/metadata/bulk?overview=full", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items: [{ type, tmdb }],
-          need: { overview: 1, tagline: 1, runtime_minutes: 1, poster: 1, ids: 1, videos: 1, genres: 1, certification: 1, score: 1, release: 1, backdrop: 1 },
+          need: { overview: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1, certification: 1, score: 1, release: 1, backdrop: 1 },
           concurrency: 1
         })
       });
@@ -192,9 +197,14 @@
       const meta = first?.ok ? (first.meta || null) : null;
       if (meta) metaCache.set(k, meta);
       return meta;
-    } catch {
-      return null;
-    }
+      } catch {
+        return null;
+      } finally {
+        metaInflight.delete(k);
+      }
+    })();
+    metaInflight.set(k, req);
+    return req;
   };
 
   const countByKey = new Map();
@@ -223,6 +233,10 @@
   const fetchCurrentlyWatchingData = async (force = false) => {
     if (authSetupPending()) return { streams: [], primary: null, ts: 0 };
     const now = Date.now();
+    const shared = window[SHARED_WATCH_KEY];
+    if (!force && shared && typeof shared === "object" && (now - (Number(shared.at) || 0)) < CACHE_TTL_MS) {
+      return shared.payload || { streams: [], primary: null, ts: 0 };
+    }
     if (!force && CARD.cachePayload && (now - CARD.cacheAt) < CACHE_TTL_MS) return CARD.cachePayload;
     if (CARD.cacheBusy) return CARD.cacheBusy;
     CARD.cacheBusy = (async () => {
@@ -243,6 +257,7 @@
         const payload = { streams, primary: streams[0] || null, ts };
         CARD.cachePayload = payload;
         CARD.cacheAt = Date.now();
+        window[SHARED_WATCH_KEY] = { at: CARD.cacheAt, payload };
         return payload;
       } catch {
         return { streams: [], primary: null, ts: 0 };
@@ -483,9 +498,9 @@
     }
     setScoreState(Number.isFinite(meta.score) ? meta.score : null);
     const tmdbUrl = buildTmdbUrl(Object.assign({}, p, { tmdb: tmdbIdOf(p) || (meta.ids && (meta.ids.tmdb || meta.ids.id)) }));
-    setLinkState(tmdbEl, tmdbUrl, "TMDb ->", "View on TMDb ->");
+    setLinkState(tmdbEl, tmdbUrl, "TMDb", "View on TMDb");
     const imdbUrl = buildImdbUrl(p, meta);
-    setLinkState(imdbEl, imdbUrl, "IMDb ->", "View on IMDb ->");
+    setLinkState(imdbEl, imdbUrl, "IMDb", "View on IMDb");
     detail.style.setProperty("--pc-backdrop", backdrop ? `url("${backdrop}")` : "none");
   };
 
@@ -583,8 +598,8 @@
     progPctEl.textContent = `${pct}% watched`;
     progTimeEl.textContent = timeLabel;
     setScoreState(null);
-    setLinkState(tmdbEl, "", "TMDb ->", "View on TMDb ->");
-    setLinkState(imdbEl, "", "IMDb ->", "View on IMDb ->");
+    setLinkState(tmdbEl, "", "TMDb", "View on TMDb");
+    setLinkState(imdbEl, "", "IMDb", "View on IMDb");
     detail.style.setProperty("--pc-backdrop", "none");
     updateNav();
     detail.classList.add("show");
