@@ -457,7 +457,7 @@ async function saveSettings() {
     }
 
     const prevMetaLocale = _cwNorm(serverCfg?.metadata?.locale);
-    const prevMetaTTL = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 6;
+    const prevMetaTTL = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 72;
     const uiMetaLocale = _getVal("metadata_locale");
     const uiMetaTTL = _getVal("metadata_ttl_hours");
     if (uiMetaLocale !== prevMetaLocale) {
