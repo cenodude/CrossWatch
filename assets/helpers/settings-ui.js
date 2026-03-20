@@ -1272,6 +1272,7 @@ async function loadConfig() {
     }
     const btn = document.getElementById("btn-auth-logout");
     if (btn) btn.disabled = !(st && st.authenticated);
+    cwRenderOtherSessions(st);
   } catch {}
 
   try { await cwAppAuthPlexRefreshStatus(); } catch {}
@@ -1286,11 +1287,106 @@ async function loadConfig() {
   } catch {}
 }
 
+function cwSessionBrowserLabel(ua) {
+  const text = String(ua || "").trim();
+  if (!text) return "";
+  if (/edg\//i.test(text)) return "Microsoft Edge";
+  if (/chrome\//i.test(text) && !/edg\//i.test(text) && !/opr\//i.test(text)) return "Google Chrome";
+  if (/firefox\//i.test(text)) return "Mozilla Firefox";
+  if (/safari\//i.test(text) && !/chrome\//i.test(text) && !/chromium\//i.test(text)) return "Safari";
+  if (/opr\//i.test(text) || /opera/i.test(text)) return "Opera";
+  return "";
+}
+
+function cwSessionAgentLabel(ua) {
+  const browser = cwSessionBrowserLabel(ua);
+  if (browser) return browser;
+  const text = String(ua || "").trim();
+  if (!text) return "Unknown browser";
+  return text.length > 72 ? `${text.slice(0, 69)}...` : text;
+}
+
+function cwRenderOtherSessions(st) {
+  const stateEl = document.getElementById("app_auth_other_sessions_state");
+  const detailEl = document.getElementById("app_auth_other_sessions_detail");
+  const btn = document.getElementById("btn-auth-logout-others");
+  const sessions = Array.isArray(st?.other_sessions) ? st.other_sessions : [];
+  const count = Number.isFinite(st?.other_session_count) ? Number(st.other_session_count) : sessions.length;
+
+  if (stateEl) {
+    const label = count === 1 ? "browser session" : "browser sessions";
+    stateEl.textContent = `Logged in from: ${count} ${label}`;
+  }
+
+  if (detailEl) {
+    if (!count) {
+      detailEl.textContent = "";
+    } else {
+      const grouped = new Map();
+      for (const session of sessions) {
+        const browser = cwSessionAgentLabel(session?.ua);
+        const ip = String(session?.ip || "").trim();
+        const key = `${browser}|||${ip}`;
+        grouped.set(key, (grouped.get(key) || 0) + 1);
+      }
+      const details = Array.from(grouped.entries())
+        .slice(0, 3)
+        .map(([key, n]) => {
+          const [browser, ip] = key.split("|||");
+          const label = ip ? `${browser} on ${ip}` : browser;
+          return n > 1 ? `${label} (${n})` : label;
+        });
+      const remaining = grouped.size - details.length;
+      if (remaining > 0) details.push(`+${remaining} more`);
+      detailEl.textContent = details.join(" | ");
+    }
+  }
+
+  if (btn) btn.disabled = !(st && st.authenticated && count > 0);
+}
+
+async function cwRefreshAppAuthStatus() {
+  const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
+  const st = r.ok ? await r.json() : null;
+  window._appAuthStatus = st;
+  const rememberEnabled = st
+    ? !!st.remember_session_enabled
+    : ((document.getElementById("app_auth_remember_enabled")?.value || "").toString() === "true");
+
+  try {
+    const aaUserEl = document.getElementById("app_auth_username");
+    if (aaUserEl && st && st.configured) aaUserEl.value = (st.username || "").toString();
+  } catch {}
+
+  const el = document.getElementById("app_auth_state");
+  if (el) {
+    if (!st) el.textContent = "-";
+    else if (!st.configured || st.reset_required) el.textContent = "Auth: set password";
+    else if (st.authenticated) {
+      const exp = (st.session_expires_at && st.session_expires_at > 0) ? new Date(st.session_expires_at * 1000) : null;
+      el.textContent = !rememberEnabled
+        ? "Auth: signed in (browser session)"
+        : (exp ? `Auth: signed in (until ${exp.toISOString().replace("T", " ").slice(0, 16)}Z)` : "Auth: signed in");
+    } else el.textContent = "Auth: locked";
+  }
+
+  const btn = document.getElementById("btn-auth-logout");
+  if (btn) btn.disabled = !(st && st.authenticated);
+  cwRenderOtherSessions(st);
+}
+
 window.cwAppLogout = async function cwAppLogout() {
   try {
     await fetch("/api/app-auth/logout", { method: "POST", cache: "no-store", credentials: "same-origin" });
   } catch {}
   location.href = "/login";
+};
+
+window.cwAppLogoutOthers = async function cwAppLogoutOthers() {
+  try {
+    await fetch("/api/app-auth/logout-others", { method: "POST", cache: "no-store", credentials: "same-origin" });
+  } catch {}
+  try { await cwRefreshAppAuthStatus(); } catch {}
 };
 
 async function updateTmdbHint() {
