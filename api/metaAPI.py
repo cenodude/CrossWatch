@@ -69,9 +69,9 @@ def _shorten(txt: str, limit: int = 280) -> str:
 def _cfg_meta_ttl_secs() -> int:
     try:
         md = (load_config() or {}).get("metadata") or {}
-        return max(1, int(md.get("ttl_hours", 6))) * 3600
+        return max(1, int(md.get("ttl_hours", 72))) * 3600
     except Exception:
-        return 6 * 3600
+        return 72 * 3600
 
 
 def _meta_cache_enabled() -> bool:
