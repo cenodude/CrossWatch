@@ -847,29 +847,8 @@
   }
 
   async function hydrateSettingsPage() {
-    try { await window.mountAuthProviders?.(); } catch {}
-    try { await window.loadProviders?.(); } catch {}
-    try { await window.mountMetadataProviders?.(); } catch {}
     try { await window.loadConfig?.(); } catch {}
-
-    try {
-      if (typeof window.cwLoadAuth === "function") {
-        await Promise.allSettled([window.cwLoadAuth("simkl"), window.cwLoadAuth("trakt")]);
-      }
-      ["simkl", "trakt"].forEach((key) => {
-        try { window.cwAuth?.[key]?.init?.(); } catch {}
-      });
-    } catch {}
-
-    [
-      () => window.updateTmdbHint?.(),
-      () => window.updateSimklHint?.(),
-      () => window.updateSimklButtonState?.(),
-      () => window.updateTraktHint?.(),
-      () => window.startTraktTokenPoll?.(),
-    ].forEach((fn) => {
-      try { fn(); } catch {}
-    });
+    try { await window.ensureProvidersPaneReady?.(); } catch {}
 
     if (typeof window.loadScheduling === "function") {
       await window.loadScheduling();
