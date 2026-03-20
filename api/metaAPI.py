@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import requests
-from fastapi import APIRouter, Body, Path as FPath, Query
+from fastapi import APIRouter, Body, Path as FPath, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import (
     FileResponse,
@@ -25,9 +25,54 @@ from pydantic import BaseModel
 
 from cw_platform.config_base import load_config
 
+try:
+    from _logging import log as cw_log
+except Exception:  # pragma: no cover
+    def cw_log(
+        message: str,
+        *,
+        level: str = "INFO",
+        module: str = "META",
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        return
+
 router = APIRouter(tags=["metadata"])
 LOG = logging.getLogger(__name__)
 _SAFE_CACHE_PART_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
+def _runtime_debug_enabled() -> bool:
+    try:
+        cfg = load_config() or {}
+        return bool((cfg.get("runtime") or {}).get("debug"))
+    except Exception:
+        return False
+
+
+def _meta_debug(event: str, **fields: Any) -> None:
+    if not _runtime_debug_enabled():
+        return
+    clean = {
+        str(k): v
+        for k, v in fields.items()
+        if v not in (None, "", [], {})
+    }
+    suffix = " ".join(f"{k}={v}" for k, v in clean.items())
+    msg = event if not suffix else f"{event} {suffix}"
+    cw_log(msg, level="debug", module="META", extra=clean or None)
+
+
+def _debug_caller(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    try:
+        referer = str(request.headers.get("referer") or "").strip()
+        if referer:
+            return referer.rsplit("/", 1)[-1] or referer
+    except Exception:
+        pass
+    return str(getattr(request.url, "path", "") or "").strip() or None
 
 try:
     from providers.metadata.registry import (
@@ -280,6 +325,16 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
     if not isinstance(meta, dict):
         return False
 
+    optional_fields = {
+        "overview",
+        "tagline",
+        "runtime_minutes",
+        "score",
+        "certification",
+        "videos",
+        "ids",
+    }
+
     def has_img(k: str) -> bool:
         return bool(((meta.get("images") or {}).get(k) or []))
 
@@ -312,6 +367,8 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
         if k in {"poster", "backdrop", "logo"}:
             if not has_img(k):
                 return False
+        elif k in optional_fields:
+            continue
         elif not has_nested(k):
             return False
     return True
@@ -420,7 +477,19 @@ def get_meta(
         p = _meta_cache_path(entity, tmdb_id, eff_locale or "en-US")
         cached = _read_meta_cache(p)
         if cached and _need_satisfied(cached, eff_need):
+            _meta_debug(
+                "meta_cache_hit",
+                type=entity,
+                tmdb_id=tmdb_id,
+                locale=eff_locale or "en-US",
+            )
             return cached
+        _meta_debug(
+            "meta_cache_miss",
+            type=entity,
+            tmdb_id=tmdb_id,
+            locale=eff_locale or "en-US",
+        )
 
     ttl_key = _ttl_bucket(_cfg_meta_ttl_secs())
     res = _resolve_tmdb_cached(
@@ -556,6 +625,16 @@ def get_art_file(
                 except Exception:
                     pass
 
+    art_hit = bool(dest.exists() and prev_url == src_url)
+    _meta_debug(
+        "art_cache_hit" if art_hit else "art_cache_miss",
+        type=typ,
+        tmdb_id=tmdb_id,
+        kind=art_kind,
+        size=size_tag,
+        locale=eff_locale or "any",
+    )
+
     path, mime = _cache_download(src_url, dest)
     _write_json(meta_path, {"url": src_url, "ts": int(time.time())})
     return str(path), mime
@@ -612,6 +691,7 @@ def api_metadata_providers_html() -> HTMLResponse:
 
 @router.get("/art/tmdb/{typ}/{tmdb_id}", tags=["metadata"])
 def api_tmdb_art(
+    request: Request,
     typ: str = FPath(...),
     tmdb_id: int = FPath(...),
     size: str = Query("w342"),
@@ -636,6 +716,14 @@ def api_tmdb_art(
             size_tag = _sanitize_tmdb_size(size)
         except Exception:
             return PlainTextResponse("Invalid size", status_code=400)
+
+        _meta_debug(
+            "art_request",
+            caller=_debug_caller(request),
+            type=t,
+            tmdb_id=tmdb_id,
+            kind=kind,
+        )
 
         local_path, mime = get_art_file(
             api_key,
@@ -730,7 +818,10 @@ def api_metadata_search(
 
 
 @router.post("/api/metadata/resolve", tags=["metadata"])
-def api_metadata_resolve(payload: MetadataResolveIn = Body(...)) -> JSONResponse:
+def api_metadata_resolve(
+    request: Request,
+    payload: MetadataResolveIn = Body(...),
+) -> JSONResponse:
     _METADATA, _, _ = _env()
     if _METADATA is None:
         return JSONResponse(
@@ -740,6 +831,13 @@ def api_metadata_resolve(payload: MetadataResolveIn = Body(...)) -> JSONResponse
     try:
         entity = _norm_media_type(payload.entity)
         base_ids: dict[str, Any] = payload.ids or {}
+        _meta_debug(
+            "metadata_resolve_request",
+            caller=_debug_caller(request),
+            entity=payload.entity or entity,
+            normalized=entity,
+            tmdb_id=base_ids.get("tmdb"),
+        )
         res = (
             _METADATA.resolve(
                 entity=entity,
@@ -786,6 +884,7 @@ def api_metadata_resolve(payload: MetadataResolveIn = Body(...)) -> JSONResponse
 
 @router.post("/api/metadata/bulk", tags=["metadata"])
 def api_metadata_bulk(
+    request: Request,
     payload: dict[str, Any] = Body(
         ..., description="items[] with {type|entity|media_type, tmdb}; need{} optional"
     ),
@@ -837,6 +936,16 @@ def api_metadata_bulk(
     except Exception:
         requested_workers = default_workers
     workers = max(1, min(requested_workers, 12))
+
+    first = items[0] if items else {}
+    _meta_debug(
+        "metadata_bulk_request",
+        caller=_debug_caller(request),
+        count=len(items),
+        workers=workers,
+        first_type=(first.get("type") or first.get("entity") or first.get("media_type")) if isinstance(first, dict) else None,
+        first_tmdb=(first.get("tmdb") or first.get("id")) if isinstance(first, dict) else None,
+    )
 
     def _fetch_one(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         typ = _norm_media_type(
@@ -920,6 +1029,15 @@ def api_metadata_bulk(
                 results[k] = v
                 if v.get("ok"):
                     fetched += 1
+
+    failed_keys = [k for k, v in results.items() if not v.get("ok")]
+    _meta_debug(
+        "metadata_bulk_done",
+        caller=_debug_caller(request),
+        count=len(items),
+        fetched=fetched,
+        failed=len(failed_keys),
+    )
 
     return JSONResponse(
         {
