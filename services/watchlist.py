@@ -1250,14 +1250,20 @@ def _delete_on_mdblist_batch(
     for it in items or []:
         ids = _ids_from_key_or_item(it["key"], it["item"])
         entry: dict[str, Any] = {}
+        typ = str(it.get("type") or "").strip().lower()
         tmdb = ids.get("tmdb")
         imdb = ids.get("imdb")
+        tvdb = ids.get("tvdb")
         if tmdb and str(tmdb).isdigit():
             entry["tmdb"] = int(str(tmdb))
         elif tmdb:
             entry["tmdb"] = tmdb
         if imdb:
             entry["imdb"] = imdb
+        if typ == "movie" and not entry and tvdb and str(tvdb).isdigit():
+            entry["tvdb"] = int(str(tvdb))
+        elif typ == "movie" and not entry and tvdb:
+            entry["tvdb"] = tvdb
         if not entry:
             continue
         if it.get("type") == "movie":
@@ -1499,4 +1505,3 @@ def detect_available_watchlist_providers(
         },
     )
     return arr
-
