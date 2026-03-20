@@ -437,6 +437,13 @@ sel.name = 'trakt_instance';
     try { if (window._traktVisPollCfg) document.removeEventListener("visibilitychange", window._traktVisPollCfg); } catch (_){}
     window._traktVisPollCfg = null;
 
+    var tokenNow = _str(_el("trakt_token")?.value);
+    var pinNow = _str(_el("trakt_pin")?.value);
+    if (tokenNow || !pinNow) {
+      window._traktPollCfg = null;
+      return;
+    }
+
     var MAX_MS    = 120000;
     var startTs   = Date.now();
     var deadline  = startTs + MAX_MS;
