@@ -247,20 +247,50 @@
     return providersInflight;
   }
 
+  function currentSettingsPane() {
+    const active = document.querySelector("#page-settings .cw-settings-pane.active");
+    return String(active?.dataset?.pane || window.__cwSettingsPane || "").toLowerCase();
+  }
+
+  async function ensureProvidersPaneReady(force = false) {
+    if (authSetupPending()) return;
+    const page = document.getElementById("page-settings");
+    const settingsVisible = !!(page && !page.classList.contains("hidden"));
+    if (!settingsVisible || currentSettingsPane() !== "providers") return;
+
+    await Promise.allSettled([
+      mountMetadataProviders(!!force),
+      mountAuthProviders(!!force),
+      loadProviders(!!force),
+    ]);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     if (authSetupPending()) return;
     wireCopyButtons();
     updateFlowRailLogos();
     ["cx-src", "cx-dst"].forEach((id) => document.getElementById(id)?.addEventListener("change", updateFlowRailLogos));
-    try { mountMetadataProviders(); } catch {}
-    try { mountAuthProviders(); } catch {}
-    try { loadProviders(); } catch {}
+    try { ensureProvidersPaneReady(); } catch {}
+  });
+
+  document.addEventListener("cw-settings-pane-changed", (ev) => {
+    if (String(ev?.detail?.pane || "").toLowerCase() !== "providers") return;
+    try { ensureProvidersPaneReady(); } catch {}
+  });
+
+  document.addEventListener("tab-changed", (ev) => {
+    const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();
+    if (tab !== "settings") return;
+    setTimeout(() => {
+      try { ensureProvidersPaneReady(); } catch {}
+    }, 0);
   });
 
   const ProvidersUI = {
     cxBrandInfo,
     cxBrandLogo,
     updateFlowRailLogos,
+    ensureProvidersPaneReady,
     mountAuthProviders,
     mountMetadataProviders,
     loadProviders,
