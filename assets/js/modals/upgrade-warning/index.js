@@ -279,7 +279,7 @@ export default {
             <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
             <div>
               <div class="t">${requiresCleanReset ? "Unsupported config detected" : "Config version notice"}</div>
-              <div class="sub">${requiresCleanReset ? "Pre-v0.9.12 requires a clean reset" : "v0.9.12+ is saved automatically to the new format."}</div>
+              ${requiresCleanReset ? '<div class="sub">Pre-v0.9.12 requires a clean reset</div>' : ""}
             </div>
             <div class="pill">
               <span class="b">Engine v${cur}</span>
@@ -294,22 +294,10 @@ export default {
 
     function migrationBody() {
       return `
-        <div class="card ok">
-          <div class="h">Automatic config update</div>
-          <div class="p">Configs from <b>v0.9.12</b> and newer are supported. CrossWatch now saves the updated config keys automatically, even if the modal is dismissed.</div>
-        </div>
         <div class="card">
           <div class="h">Current status</div>
           <div class="p">${escapeHtml(state.autoSaveMessage || "Preparing the upgrade flow...")}</div>
           ${state.autoSaveFailed ? '<div class="p" style="color:#ffb3b3">Automatic save failed. Review logs before continuing.</div>' : ""}
-        </div>
-        <div class="card">
-          <div class="h">What changed</div>
-          <div class="p">There is no manual migration step here anymore. CrossWatch writes the new config structure in the background and does not reboot after you press <b>OK</b> or <b>Acknowledge</b>.</div>
-        </div>
-        <div class="card">
-          <div class="h">Tip</div>
-          <div class="p">After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
         </div>
         <div class="card">
           <div class="h">Release notes</div>
@@ -320,6 +308,7 @@ export default {
         </div>
         <div class="card">
           <div class="h">Need help?</div>
+          <div class="p"><b>Tip:</b> After each CrossWatch update, hard refresh your browser (Ctrl+F5) so the UI loads the new assets.</div>
           <a class="helpLink" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
             <span class="helpCopy">
               <span class="helpEyebrow">Documentation</span>
@@ -416,13 +405,9 @@ export default {
     function renderMigrate() {
       setModalDismissible(true);
       hostEl.innerHTML = layout(migrationBody(), `
-        <button class="btn" type="button" data-x="ack">Acknowledge</button>
         <button class="btn primary" type="button" data-x="ok"${state.autoSaveFailed ? " disabled" : ""}>OK</button>
       `);
       setModalShellInline(shell);
-      hostEl.querySelector('[data-x="ack"]')?.addEventListener("click", () => {
-        try { window.cxCloseModal?.(); } catch {}
-      });
       hostEl.querySelector('[data-x="ok"]')?.addEventListener("click", () => {
         try { window.cxCloseModal?.(); } catch {}
       });
