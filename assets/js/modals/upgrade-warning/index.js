@@ -1,6 +1,6 @@
-  /* assets/js/modals/upgrade-warning/index.js */
-  /* CrossWatch - upgrade warning modal component */
-  /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+/* assets/js/modals/upgrade-warning/index.js */
+/* CrossWatch - upgrade warning modal component */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 const NOTES_ENDPOINT = "/api/update";
 const _cwV = (() => {
   try { return new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__ || Date.now(); }
@@ -44,6 +44,10 @@ async function _runConfigMigration() {
   return postJson("/api/config/migrate");
 }
 
+async function _runFullReset() {
+  return postJson("/api/maintenance/reset-all-default", {});
+}
+
 async function _restartAfterMigration() {
   try {
     window.cxCloseModal?.();
@@ -63,145 +67,33 @@ async function _restartAfterMigration() {
   }, 150);
 }
 
-async function _pauseSchedulerOnce() {
-  const notify = window.notify || ((m) => console.log("[notify]", m));
-  const KEY = "cw_stop_scheduler_pre_0911";
-
-  try {
-    if (window.__CW_STOP_SCHED_0911_DONE__ || window.__CW_STOP_SCHED_0911_INFLIGHT__) return;
-  } catch {}
-
-  try {
-    if (localStorage.getItem(KEY) === "1") {
-      try { window.__CW_STOP_SCHED_0911_DONE__ = true; } catch {}
-      return;
-    }
-  } catch {}
-
-  try { window.__CW_STOP_SCHED_0911_INFLIGHT__ = true; } catch {}
-
-  try {
-    await postJson("/api/scheduling/stop");
-    notify("Scheduler stopped until you complete migration.");
-    try {
-      localStorage.setItem(KEY, "1");
-      window.__CW_STOP_SCHED_0911_DONE__ = true;
-    } catch {}
-  } catch (e) {
-    console.warn("[upgrade-warning] scheduler stop failed", e);
-  } finally {
-    try { window.__CW_STOP_SCHED_0911_INFLIGHT__ = false; } catch {}
-  }
-}
-
-async function saveNow(btn) {
+async function runCleanupAndRestart(btn) {
   const notify = window.notify || ((m) => console.log("[notify]", m));
   try {
-    if (btn && btn.dataset && btn.dataset.done === "1") return;
     if (btn) {
       btn.disabled = true;
       btn.classList.add("busy");
-      btn.textContent = "Migrating...";
+      btn.textContent = "Cleaning...";
     }
   } catch {}
 
   try {
-    const res = await _runConfigMigration();
+    const res = await _runFullReset();
+    if (res && res.ok === false) {
+      throw new Error(String(res.error || (res.errors || []).join(", ") || "reset_failed"));
+    }
     notify(res && res.backup
-      ? `Migrated. Config backup created: ${res.backup}`
-      : "Migrated. Config updated and backup completed.");
-
-    try {
-      if (btn) {
-        btn.classList.remove("busy");
-        btn.textContent = "MIGRATED";
-        btn.disabled = true;
-        btn.dataset.done = "1";
-      }
-    } catch {}
-
+      ? `Cleanup completed. Config backup created: ${res.backup}`
+      : "Cleanup completed. CrossWatch will restart now.");
     await _restartAfterMigration();
   } catch (e) {
-    console.warn("[upgrade-warning] save failed", e);
-    notify("Save failed. Check logs.");
-    try {
-      if (btn && (!btn.dataset || btn.dataset.done !== "1")) {
-        btn.disabled = false;
-        btn.classList.remove("busy");
-        btn.textContent = "MIGRATE";
-      }
-    } catch {}
-  }
-}
-
-async function migrateNow(btn, fullClean = false) {
-  const notify = window.notify || ((m) => console.log("[notify]", m));
-  try {
-    if (btn) {
-      btn.disabled = true;
-      btn.classList.add("busy");
-      btn.textContent = "Migrating...";
-    }
-  } catch {}
-
-  try {
-    const ops = [
-      { url: "/api/maintenance/clear-state", opts: {} },
-      { url: "/api/maintenance/clear-cache", opts: {} },
-      { url: "/api/maintenance/clear-metadata-cache", opts: {} },
-    ];
-
-    if (fullClean) {
-      ops.push(
-        {
-          url: "/api/maintenance/crosswatch-tracker/clear",
-          opts: {
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ clear_state: true, clear_snapshots: true }),
-          },
-        },
-        {
-          url: "/api/maintenance/reset-stats",
-          opts: {
-            headers: { "Content-Type": "application/json" },
-            body: "{}",
-          },
-        },
-        { url: "/api/maintenance/reset-currently-watching", opts: {} },
-      );
-    }
-
-    for (const op of ops) {
-      await postJson(op.url, op.opts);
-    }
-
-    const res = await _runConfigMigration();
-    notify(fullClean
-      ? (res && res.backup
-          ? `Migration completed. Legacy state/cache cleared. Config backup created: ${res.backup}`
-          : "Migration completed. Legacy state/cache cleared. Config backup created.")
-      : (res && res.backup
-          ? `Migration completed. State/cache cleared. Config backup created: ${res.backup}`
-          : "Migration completed. State/cache cleared. Config backup created."));
-
-    try {
-      if (btn) {
-        btn.classList.remove("busy");
-        btn.textContent = "MIGRATED";
-        btn.disabled = true;
-        btn.dataset.done = "1";
-      }
-    } catch {}
-
-    await _restartAfterMigration();
-  } catch (e) {
-    console.warn("[upgrade-warning] migrate failed", e);
-    notify("Migration failed. Check logs.");
+    console.warn("[upgrade-warning] cleanup failed", e);
+    notify("Cleanup failed. Check logs.");
     try {
       if (btn) {
         btn.disabled = false;
         btn.classList.remove("busy");
-        btn.textContent = "MIGRATE";
+        btn.textContent = "Clean & Reboot";
       }
     } catch {}
   }
@@ -216,20 +108,21 @@ export default {
     const rawCfgVer = props.config_version;
     const hasCfgVer = rawCfgVer != null && String(rawCfgVer).trim() !== "";
     const cfg = hasCfgVer ? _norm(rawCfgVer) : "";
-    const legacy = !hasCfgVer || _cmp(cfg, "0.7.0") < 0;
-    const needs0911Cleanup = !hasCfgVer || _cmp(cfg, "0.9.11") < 0;
-
-    if (needs0911Cleanup) _pauseSchedulerOnce();
+    const requiresCleanReset = !hasCfgVer || _cmp(cfg, "0.9.12") < 0;
 
     const shell = hostEl.closest(".cx-modal-shell");
     const state = {
       authReady: false,
-      step: "intro",
+      step: requiresCleanReset ? "cleanup" : "intro",
       username: "admin",
       password: "",
       password2: "",
       error: "",
       saving: false,
+      autoSaveStarted: false,
+      autoSaveDone: false,
+      autoSaveFailed: false,
+      autoSaveMessage: "",
       notesLoaded: false,
       notesVisible: false,
       notesBody: "",
@@ -237,17 +130,19 @@ export default {
       notesUrl: "https://github.com/cenodude/CrossWatch/releases",
     };
 
-    try {
-      const authStatus = await fetchAppAuthStatus();
-      state.authReady = !!(
-        authStatus
-        && !authStatus.reset_required
-        && hasEnabledAppAuth(authStatus)
-      );
-      state.step = state.authReady ? "migrate" : "intro";
-    } catch {
-      state.authReady = false;
-      state.step = "intro";
+    if (!requiresCleanReset) {
+      try {
+        const authStatus = await fetchAppAuthStatus();
+        state.authReady = !!(
+          authStatus
+          && !authStatus.reset_required
+          && hasEnabledAppAuth(authStatus)
+        );
+        state.step = state.authReady ? "migrate" : "intro";
+      } catch {
+        state.authReady = false;
+        state.step = "intro";
+      }
     }
 
     async function ensureNotesLoaded() {
@@ -265,6 +160,33 @@ export default {
         state.notesVisible = true;
         render();
       } catch {}
+    }
+
+    async function ensureAutoSaved() {
+      if (requiresCleanReset || state.step !== "migrate" || state.autoSaveStarted) return;
+      state.autoSaveStarted = true;
+      state.autoSaveFailed = false;
+      state.autoSaveMessage = "Saving the updated config format in the background...";
+      render();
+
+      try {
+        const res = await _runConfigMigration();
+        if (res && res.ok === false) {
+          throw new Error(String(res.error || "config_save_failed"));
+        }
+        state.autoSaveDone = true;
+        state.autoSaveMessage = res && res.backup
+          ? `Saved the updated config format. Backup created: ${res.backup}`
+          : "Saved the updated config format.";
+        notify("Upgrade settings saved.");
+      } catch (e) {
+        console.warn("[upgrade-warning] auto-save failed", e);
+        state.autoSaveFailed = true;
+        state.autoSaveMessage = "Automatic save failed. Check logs before continuing.";
+        notify("Automatic upgrade save failed. Check logs.");
+      } finally {
+        render();
+      }
     }
 
     async function submitCredentials() {
@@ -289,7 +211,7 @@ export default {
         state.password = "";
         state.password2 = "";
         state.step = "migrate";
-        notify("Sign-in saved. Continue with migration.");
+        notify("Sign-in saved. CrossWatch is updating the config in the background.");
         render();
         return;
       } catch (err) {
@@ -315,6 +237,7 @@ export default {
           #upg-host .card .h{font-weight:950}
           #upg-host .card .p{opacity:.84;margin-top:6px;line-height:1.45}
           #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
+          #upg-host .ok{border-color:rgba(80,210,170,.22);background:linear-gradient(180deg,rgba(40,180,140,.13),rgba(40,180,140,.05))}
           #upg-host .notes{margin-top:8px;max-height:320px;overflow:auto;padding:16px 18px;border-radius:16px;background:linear-gradient(180deg,rgba(7,9,16,.72),rgba(4,6,10,.88));border:1px solid rgba(255,255,255,.08);font:14px/1.65 "Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;color:rgba(236,241,255,.94)}
           #upg-host .notes h2,#upg-host .notes h3,#upg-host .notes h4{margin:0 0 10px;line-height:1.15;letter-spacing:-.02em;color:#f5f7ff}
           #upg-host .notes h2{font-size:24px;font-weight:950}
@@ -328,6 +251,11 @@ export default {
           #upg-host .notes strong{color:#f7f9ff}
           #upg-host .notes em{color:rgba(230,214,255,.92)}
           #upg-host .notes code{padding:2px 6px;border-radius:8px;background:rgba(140,109,255,.14);border:1px solid rgba(140,109,255,.18);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;color:#f6ebff}
+          #upg-host .notes pre.notes-code{margin:0 0 14px;padding:14px 16px;overflow:auto;border-radius:14px;background:rgba(4,6,10,.92);border:1px solid rgba(255,255,255,.08)}
+          #upg-host .notes pre.notes-code code{display:block;padding:0;border:0;background:none;color:#f3f6ff;white-space:pre}
+          #upg-host .notes blockquote.notes-quote{margin:0 0 14px;padding:10px 14px;border-left:3px solid rgba(160,120,255,.7);border-radius:0 12px 12px 0;background:rgba(120,90,255,.08)}
+          #upg-host .notes blockquote.notes-quote p{margin:0 0 8px}
+          #upg-host .notes blockquote.notes-quote p:last-child{margin-bottom:0}
           #upg-host .notes a{color:#caa7ff;text-decoration:none;word-break:break-word}
           #upg-host .notes a:hover{text-decoration:underline}
           #upg-host .helpLink{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px;padding:14px 16px;border-radius:14px;text-decoration:none;color:#eef3ff;background:linear-gradient(135deg,rgba(150,70,255,.18),rgba(60,140,255,.14));border:1px solid rgba(150,70,255,.22);box-shadow:0 14px 34px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.04);transition:transform .16s ease, filter .16s ease, border-color .16s ease}
@@ -350,12 +278,12 @@ export default {
           <div class="head">
             <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
             <div>
-              <div class="t">${needs0911Cleanup ? "Migration required" : (legacy ? "Legacy config detected" : "Config version notice")}</div>
-              <div class="sub">${needs0911Cleanup ? "Pre-v0.9.11 data cleanup" : (legacy ? "This release introduced config versioning (0.7.0+)." : "Migrate to new save format.")}</div>
+              <div class="t">${requiresCleanReset ? "Unsupported config detected" : "Config version notice"}</div>
+              <div class="sub">${requiresCleanReset ? "Pre-v0.9.12 requires a clean reset" : "v0.9.12+ is saved automatically to the new format."}</div>
             </div>
             <div class="pill">
               <span class="b">Engine v${cur}</span>
-              ${legacy ? `<span class="b">Config: Legacy</span>` : `<span class="b">Config v${cfg}</span>`}
+              <span class="b">${hasCfgVer ? `Config v${cfg}` : "Config: Legacy"}</span>
             </div>
           </div>
           <div class="body">${body}</div>
@@ -366,22 +294,18 @@ export default {
 
     function migrationBody() {
       return `
-        ${needs0911Cleanup ? `
-        <div class="card warn">
-          <div class="h">IMPORTANT</div>
-          <div class="p">Starting with <b>v0.9.11</b>, CrossWatch switched the primary ID from <b>IMDb</b> to <b>TMDb</b>. Click <b>MIGRATE</b> to remove the old IMDb-based state and cache data.</div>
+        <div class="card ok">
+          <div class="h">Automatic config update</div>
+          <div class="p">Configs from <b>v0.9.12</b> and newer are supported. CrossWatch now saves the updated config keys automatically, even if the modal is dismissed.</div>
         </div>
-        ` : ``}
-        ${legacy ? `
-        <div class="card warn">
-          <div class="h">IMPORTANT</div>
-          <div class="p">CrossWatch now separates <b>global orchestration state</b> from <b>pair-specific provider caches</b>.</div>
-          <div class="p">For a smooth transition, the current caches need to be removed or migrated.</div>
-        </div>
-        ` : ``}
         <div class="card">
-          <div class="h">What to do</div>
-          <div class="p">${needs0911Cleanup ? "Click <b>MIGRATE</b> below. It runs the cleanup flow, backs up <code>config.json</code>, applies migration updates, and restarts CrossWatch." : (legacy ? "Click <b>MIGRATE</b> below. It clears legacy state/cache, backs up <code>config.json</code>, applies migration updates, and restarts CrossWatch." : "Nothing is broken. Click <b>MIGRATE</b> once so CrossWatch backs up your current config, applies the updated config structure, and restarts.")}</div>
+          <div class="h">Current status</div>
+          <div class="p">${escapeHtml(state.autoSaveMessage || "Preparing the upgrade flow...")}</div>
+          ${state.autoSaveFailed ? '<div class="p" style="color:#ffb3b3">Automatic save failed. Review logs before continuing.</div>' : ""}
+        </div>
+        <div class="card">
+          <div class="h">What changed</div>
+          <div class="p">There is no manual migration step here anymore. CrossWatch writes the new config structure in the background and does not reboot after you press <b>OK</b> or <b>Acknowledge</b>.</div>
         </div>
         <div class="card">
           <div class="h">Tip</div>
@@ -408,16 +332,33 @@ export default {
       `;
     }
 
+    function cleanupBody() {
+      return `
+        <div class="card warn">
+          <div class="h">Clean reset required</div>
+          <div class="p">Configs older than <b>v0.9.12</b> are no longer supported. CrossWatch must clean everything using the maintenance reset flow, create a backup of <code>config.json</code>, and reboot.</div>
+        </div>
+        <div class="card">
+          <div class="h">What will be cleaned</div>
+          <div class="p">This matches the maintenance <b>Reset all to default</b> action: local state, provider cache, tracker files, reports, metadata cache, and TLS material are removed. Snapshots are kept.</div>
+        </div>
+        <div class="card">
+          <div class="h">What happens next</div>
+          <div class="p">Click <b>Clean &amp; Reboot</b> to start over with a fresh config baseline. This runs before any username/password upgrade checks.</div>
+        </div>
+      `;
+    }
+
     function renderIntro() {
       setModalDismissible(false);
       hostEl.innerHTML = layout(`
         <div class="card warn">
           <div class="h">Migration now requires admin credentials</div>
-          <div class="p">Before you migrate this installation, CrossWatch now requires a local admin username and password to be configured.</div>
+          <div class="p">Before this supported upgrade can continue, CrossWatch needs a local admin username and password to be configured.</div>
         </div>
         <div class="card">
           <div class="h">What happens next</div>
-          <div class="p">Click <b>Next</b>, create the admin credentials, and then continue with the normal migration flow.</div>
+          <div class="p">Click <b>Next</b>, create the admin credentials, and CrossWatch will save the updated config in the background.</div>
         </div>
       `, `<button class="btn primary" type="button" data-x="next">Next</button>`);
       setModalShellInline(shell);
@@ -432,11 +373,11 @@ export default {
       hostEl.innerHTML = layout(`
         <div class="card">
           <div class="h">Create admin credentials</div>
-          <div class="p">You must finish this step before migration can continue.</div>
+          <div class="p">You must finish this step before the supported upgrade flow can continue.</div>
         </div>
         <div class="card">
-          <div class="h">Background activity is paused</div>
-          <div class="p">Sync summary and log streams stay paused until sign-in is configured.</div>
+          <div class="h">Background save will start afterwards</div>
+          <div class="p">As soon as sign-in is configured, CrossWatch saves the new config keys automatically.</div>
         </div>
         <div class="card">
           ${renderAppAuthFields({
@@ -463,27 +404,34 @@ export default {
       });
     }
 
+    function renderCleanup() {
+      setModalDismissible(false);
+      hostEl.innerHTML = layout(cleanupBody(), `
+        <button class="btn danger" type="button" data-x="cleanup">Clean &amp; Reboot</button>
+      `);
+      setModalShellInline(shell);
+      hostEl.querySelector('[data-x="cleanup"]')?.addEventListener("click", (e) => runCleanupAndRestart(e.currentTarget));
+    }
+
     function renderMigrate() {
       setModalDismissible(true);
       hostEl.innerHTML = layout(migrationBody(), `
-        <button class="btn" type="button" data-x="close">Close</button>
-        ${needs0911Cleanup || legacy
-          ? `<button class="btn danger" type="button" data-x="migrate">MIGRATE</button>`
-          : `<button class="btn primary" type="button" data-x="save">MIGRATE</button>`}
+        <button class="btn" type="button" data-x="ack">Acknowledge</button>
+        <button class="btn primary" type="button" data-x="ok"${state.autoSaveFailed ? " disabled" : ""}>OK</button>
       `);
       setModalShellInline(shell);
-      hostEl.querySelector('[data-x="close"]')?.addEventListener("click", () => {
+      hostEl.querySelector('[data-x="ack"]')?.addEventListener("click", () => {
         try { window.cxCloseModal?.(); } catch {}
       });
-      if (needs0911Cleanup || legacy) {
-        hostEl.querySelector('[data-x="migrate"]')?.addEventListener("click", (e) => migrateNow(e.currentTarget, needs0911Cleanup));
-      } else {
-        hostEl.querySelector('[data-x="save"]')?.addEventListener("click", (e) => saveNow(e.currentTarget));
-      }
+      hostEl.querySelector('[data-x="ok"]')?.addEventListener("click", () => {
+        try { window.cxCloseModal?.(); } catch {}
+      });
       ensureNotesLoaded();
+      ensureAutoSaved();
     }
 
     function render() {
+      if (state.step === "cleanup") return renderCleanup();
       if (state.step === "credentials") return renderCredentials();
       if (state.step === "migrate") return renderMigrate();
       return renderIntro();
