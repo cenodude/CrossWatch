@@ -100,6 +100,25 @@ class TmdbProvider:
         lvl = "INFO" if int(status or 0) == 404 else "WARNING"
         log(f"{msg}: {exc}", level=lvl, module="META")
 
+    def _debug_enabled(self) -> bool:
+        try:
+            cfg = self.load_cfg() or {}
+            return bool((cfg.get("runtime") or {}).get("debug"))
+        except Exception:
+            return False
+
+    def _debug_log(self, event: str, **fields: Any) -> None:
+        if not self._debug_enabled():
+            return
+        clean = {
+            str(k): v
+            for k, v in fields.items()
+            if v not in (None, "", [], {})
+        }
+        suffix = " ".join(f"{k}={v}" for k, v in clean.items())
+        msg = event if not suffix else f"{event} {suffix}"
+        log(msg, level="debug", module="META", extra=clean or None)
+
     def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
         q = dict(params or {})
         q["api_key"] = self._apikey()
@@ -149,7 +168,12 @@ class TmdbProvider:
                 retryable = (status == 429) or (status is None) or (500 <= int(status or 0) < 600)
                 if (not retryable) or (attempt >= max_retries):
                     lvl = "INFO" if int(status or 0) == 404 else "WARNING"
-                    log(f"TMDb request failed ({status or 'n/a'}) at {url}", level=lvl, module="META")
+                    log(
+                        f"TMDb request failed ({status or 'n/a'}) at {url}",
+                        level=lvl,
+                        module="META",
+                        extra={"status": status, "url": url},
+                    )
                     raise
                 time.sleep(self._retry_delay(attempt, base_s, max_s))
                 attempt += 1
@@ -413,9 +437,21 @@ class TmdbProvider:
             status = getattr(getattr(e, "response", None), "status_code", None)
             if int(status or 0) == 404:
                 alt = "tv" if kind == "movie" else "movie"
+                self._debug_log(
+                    "tmdb_detail_fallback",
+                    tmdb_id=tmdb_id,
+                    requested=kind,
+                    fallback=alt,
+                    entity=entity,
+                )
                 try:
                     det = _get_details(alt)
                     kind = alt
+                    self._debug_log(
+                        "tmdb_detail_fallback_hit",
+                        tmdb_id=tmdb_id,
+                        resolved=kind,
+                    )
                 except Exception as e2:
                     self._log_exc("TMDb detail fetch failed", e2)
                     return {}
