@@ -1069,23 +1069,6 @@ async function loadConfig() {
   const cfg = await r.json();
   window._cfgCache = cfg;
 
-  try { bindSyncVisibilityObservers?.(); } catch {}
-  try {
-    if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
-    else applySyncVisibility?.();
-  } catch {}
-
-  _setVal("mode",   cfg.sync?.bidirectional?.mode || "two-way");
-  _setVal("source", cfg.sync?.bidirectional?.source_of_truth || "plex");
-  (function(){
-    const rt = cfg.runtime || {};
-    let mode = 'off';
-    if (rt.debug) mode = (rt.debug_mods && rt.debug_http) ? 'full' : (rt.debug_mods ? 'mods' : 'on');
-    _setVal("debug", mode);
-  })();
-  _setVal("metadata_locale", cfg.metadata?.locale || "");
-  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
-
   const _refreshSelectUi = (el) => {
     if (!el) return;
     try { el.dispatchEvent(new Event("change")); } catch {}
@@ -1098,6 +1081,23 @@ async function loadConfig() {
     _refreshSelectUi(el);
     return el;
   };
+
+  try { bindSyncVisibilityObservers?.(); } catch {}
+  try {
+    if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
+    else applySyncVisibility?.();
+  } catch {}
+
+  _setSelectValue("mode", cfg.sync?.bidirectional?.mode || "two-way");
+  _setSelectValue("source", cfg.sync?.bidirectional?.source_of_truth || "plex");
+  (function(){
+    const rt = cfg.runtime || {};
+    let mode = 'off';
+    if (rt.debug) mode = (rt.debug_mods && rt.debug_http) ? 'full' : (rt.debug_mods ? 'mods' : 'on');
+    _setSelectValue("debug", mode);
+  })();
+  _setVal("metadata_locale", cfg.metadata?.locale || "");
+  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 6));
 
   
   (function () {
@@ -1232,19 +1232,19 @@ async function loadConfig() {
   try { cwMetaSettingsHubUpdate(); } catch {}
 
   const s = cfg.scheduling || {};
-  _setVal("schEnabled", String(!!s.enabled));
-  _setVal("schMode",    typeof s.mode === "string" && s.mode ? s.mode : "hourly");
+  _setSelectValue("schEnabled", String(!!s.enabled));
+  _setSelectValue("schMode", typeof s.mode === "string" && s.mode ? s.mode : "hourly");
   _setVal("schN",       Number.isFinite(s.every_n_hours) ? String(s.every_n_hours) : "12");
   _setVal("schTime",    typeof s.daily_time === "string" && s.daily_time ? s.daily_time : "03:30");
   const customMinutes = Math.max(15, parseInt(s.custom_interval_minutes ?? 60, 10) || 60);
   if (customMinutes % 60 === 0) {
     _setVal("schCustomValue", String(Math.max(1, customMinutes / 60)));
-    _setVal("schCustomUnit", "hours");
+    _setSelectValue("schCustomUnit", "hours");
   } else {
     _setVal("schCustomValue", String(customMinutes));
-    _setVal("schCustomUnit", "minutes");
+    _setSelectValue("schCustomUnit", "minutes");
   }
-  if (document.getElementById("schTz")) _setVal("schTz", s.timezone || "");
+  if (document.getElementById("schTz")) _setSelectValue("schTz", s.timezone || "");
 
   try {
     const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
