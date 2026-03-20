@@ -557,7 +557,7 @@ class TmdbProvider:
             out["genres"] = genres
         if score is not None:
             out["score"] = score
-        if videos:
+        if need.get("videos"):
             out["videos"] = videos
         if certification:
             out["certification"] = certification
