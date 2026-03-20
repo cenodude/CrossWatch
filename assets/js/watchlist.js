@@ -179,6 +179,103 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
 
   const metaCache = new Map();
   const derivedCache = new Map();
+  const metaInflight = new Map();
+  const renderedRowRefs = new Map();
+  const META_ROW_NEED = { genres: 1, release: 1 };
+  const META_DETAIL_NEED = { overview: 1, runtime_minutes: 1, genres: 1, certification: 1, score: 1, release: 1, videos: 1 };
+  let rowHydrationSeq = 0;
+  let lastRowHydrationKey = "";
+
+  const mergeMeta = (base, extra, profile) => {
+    const prev = base && typeof base === "object" ? base : {};
+    const next = extra && typeof extra === "object" ? extra : {};
+    const merged = { ...prev, ...next };
+    merged.ids = { ...(prev.ids || {}), ...(next.ids || {}) };
+    merged.detail = { ...(prev.detail || {}), ...(next.detail || {}) };
+    merged.images = { ...(prev.images || {}), ...(next.images || {}) };
+    merged.__rowLoaded = !!(prev.__rowLoaded || profile === "row" || profile === "detail");
+    merged.__detailLoaded = !!(prev.__detailLoaded || profile === "detail");
+    return merged;
+  };
+
+  const hasProfile = (meta, profile) => {
+    if (!meta || typeof meta !== "object") return false;
+    return profile === "detail" ? !!meta.__detailLoaded : !!meta.__rowLoaded;
+  };
+
+  const requestMetaBatch = async (items, profile = "row") => {
+    if (!TMDB_OK) return false;
+    const need = profile === "detail" ? META_DETAIL_NEED : META_ROW_NEED;
+    const overview = profile === "detail" ? "full" : "none";
+    const profileKey = profile === "detail" ? "detail" : "row";
+    const missing = [];
+    const pending = [];
+    const seen = new Set();
+
+    for (const it of items || []) {
+      const k = metaKey(it);
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      if (hasProfile(metaCache.get(k), profileKey)) continue;
+      const inflightKey = `${profileKey}:${k}`;
+      const inflight = metaInflight.get(inflightKey);
+      if (inflight) {
+        pending.push(inflight);
+        continue;
+      }
+      const tmdb = String(it?.tmdb || it?.ids?.tmdb || "").trim();
+      if (!tmdb) continue;
+      missing.push({
+        cacheKey: k,
+        inflightKey,
+        tmdb,
+        type: k.startsWith("movie:") ? "movie" : "show",
+      });
+    }
+
+    if (missing.length) {
+      const fetchPromise = (async () => {
+        try {
+          const r = await fetch(`/api/metadata/bulk?overview=${encodeURIComponent(overview)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              items: missing.map((x) => ({ type: x.type, tmdb: x.tmdb })),
+              need,
+              concurrency: Math.min(Math.max(missing.length, 1), 6),
+            })
+          });
+          const data = await r.json();
+          const results = data?.results || {};
+          for (const item of missing) {
+            const first = results[`${item.type}:${item.tmdb}`];
+            const meta = first?.ok ? (first.meta || null) : null;
+            if (!meta) continue;
+            metaCache.set(item.cacheKey, mergeMeta(metaCache.get(item.cacheKey), meta, profileKey));
+          }
+          return true;
+        } catch {
+          return false;
+        } finally {
+          missing.forEach((x) => metaInflight.delete(x.inflightKey));
+        }
+      })();
+      missing.forEach((x) => metaInflight.set(x.inflightKey, fetchPromise));
+      pending.push(fetchPromise);
+    }
+
+    if (!pending.length) return false;
+    const settled = await Promise.all(pending);
+    return settled.some(Boolean);
+  };
+
+  const getMetaFor = async (it, profile = "detail") => {
+    const k = metaKey(it);
+    const cached = metaCache.get(k);
+    if (hasProfile(cached, profile)) return cached;
+    await requestMetaBatch([it], profile);
+    return metaCache.get(k) || null;
+  };
 
   function rebuildProviderOptions() {
     if (providerSel) {
@@ -322,12 +419,11 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
     el.title = next;
   };
 
-  async function hydrateRow(it, tr){
+  function hydrateRow(it, tr){
     const k=normKey(it); if(_hydrating.has(k)) return; _hydrating.add(k);
     try{
-      const canTMDB = (typeof TMDB_OK==="undefined") ? true : !!TMDB_OK;
       const movie = /^movie$/i.test(it.type||"");
-      const m = canTMDB ? (await getMetaFor(it)) : null;
+      const m = metaCache.get(metaKey(it)) || null;
 
       const isoMeta = m ? (movie ? (m.detail?.release_date||m.release?.date||"") : (m.detail?.first_air_date||m.release?.date||"")) : "";
       const gs = m ? (Array.isArray(m.genres||m.detail?.genres) ? (m.genres||m.detail?.genres) : []) : [];
@@ -364,29 +460,49 @@ const css = `#page-watchlist{--wl-shell-bg:linear-gradient(180deg,rgba(8,10,15,.
     catch { return {}; }
   };
 
-  const getMetaFor = async it => {
-    if (!TMDB_OK) return null;
-    const k = metaKey(it), hit = metaCache.get(k);
-    if (hit) return hit;
-    const tmdb = String(it.tmdb || it.ids?.tmdb || "");
-    if (!tmdb) return null;
-
-    try {
-      const r = await fetch("/api/metadata/bulk?overview=full", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: [{ type: k.startsWith("movie") ? "movie" : "show", tmdb }],
-          need: { overview:1, tagline:1, runtime_minutes:1, poster:1, ids:1, videos:1, genres:1, certification:1, score:1, release:1, backdrop:1 },
-          concurrency: 1
-        })
-      });
-      const first = Object.values((await r.json())?.results || {})[0];
-      const meta = first?.ok ? (first.meta || null) : null;
-      if (meta) metaCache.set(k, meta);
-      return meta;
-    } catch { return null; }
+  const metadataAffectsListState = () => {
+    const releasedPref = normReleased(releasedSel?.value || prefs.released || "both");
+    const genrePref = (genreSel?.value || prefs.genre || "").trim();
+    return releasedPref !== "both" || !!genrePref || sortKey === "release" || sortKey === "genre";
   };
+
+  const visibleItemsForHydration = () => {
+    if (!filtered.length) return [];
+    if (metadataAffectsListState()) {
+      return filtered.slice(0, Math.min(filtered.length, 250));
+    }
+    if (viewMode === "list") {
+      const sorted = sortFilteredForList(filtered);
+      return sorted.slice(pageInfo.start, pageInfo.end);
+    }
+    return filtered.slice(pageInfo.start, pageInfo.end);
+  };
+
+  const rowHydrationKeyFor = targets => targets.map(it => metaKey(it)).filter(Boolean).join("|");
+
+  async function hydrateVisibleMetadata() {
+    if (!TMDB_OK) return;
+    const targets = visibleItemsForHydration().filter((it) => it?.tmdb || it?.ids?.tmdb);
+    if (!targets.length) return;
+    const batchKey = rowHydrationKeyFor(targets);
+    const missingRowProfile = targets.some((it) => !hasProfile(metaCache.get(metaKey(it)), "row"));
+    if (!missingRowProfile && batchKey && batchKey === lastRowHydrationKey) return;
+    lastRowHydrationKey = batchKey;
+    const seq = ++rowHydrationSeq;
+    const changed = await requestMetaBatch(targets, "row");
+    if (!changed || seq !== rowHydrationSeq) return;
+    populateGenreOptions(buildGenreIndex(items));
+    if (metadataAffectsListState()) {
+      applyFilters();
+      return;
+    }
+    if (viewMode === "list") {
+      targets.forEach((it) => {
+        const tr = renderedRowRefs.get(normKey(it));
+        if (tr) hydrateRow(it, tr);
+      });
+    }
+  }
 
   /*  Genre extraction  */
   const extractGenres = it => {
@@ -760,7 +876,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     if (mode === "posters" && prefs.overlays === "no") return;
     if (viewMode !== mode) return;
     const k=normKey(it); activePreviewKey=k;
-    getMetaFor(it).then(m=>{ if(activePreviewKey===k && viewMode === mode) renderDetail(it,m||{}); });
+    getMetaFor(it, "detail").then(m=>{ if(activePreviewKey===k && viewMode === mode) renderDetail(it,m||{}); });
   }
   function hidePreview(it, mode = viewMode){
     if (viewMode !== mode) return;
@@ -789,6 +905,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
     empty.style.display = "none";
     posters ? renderPosters() : renderList();
+    void hydrateVisibleMetadata();
     selCount.textContent = `${selected.size} selected`;
     updatePaginationUI();
     updateHeaderSummary();
@@ -833,7 +950,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       card.addEventListener("click",()=>{
         selected.has(key)?selected.delete(key):selected.add(key);
         card.classList.toggle("selected"); updateSelCount();
-        if(canTMDB) getMetaFor(it).then(m=>renderDetail(it,m||{})); else renderDetail(it,{});
+        if(canTMDB) getMetaFor(it, "detail").then(m=>renderDetail(it,m||{})); else renderDetail(it,{});
       },true);
 
       card.addEventListener("mouseenter",()=>{ if(canTMDB) showPreview(it); },true);
@@ -847,6 +964,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
   function renderList() {
     listBodyEl.replaceChildren();
+    renderedRowRefs.clear();
     const frag = document.createDocumentFragment();
     const sorted = sortFilteredForList(filtered);
     const canTMDB=(typeof TMDB_OK==="undefined")?true:!!TMDB_OK;
@@ -856,6 +974,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
     rows.forEach(it => {
       const key = normKey(it), tr = document.createElement("tr");
+      tr.dataset.key = key;
+      renderedRowRefs.set(key, tr);
       const typeLabel = typeLabelFor(it);
       const thumb = artUrl(it, "w92") || "/assets/img/placeholder_poster.svg";
       const have = new Set(providersOf(it));
@@ -873,7 +993,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
         <td class="sync" data-col="sync">${matrix}</td>
       `;
 
-      if (!d.relFmt || !d.genresText) setTimeout(() => hydrateRow(it, tr), 0);
+      if (d.relFmt || d.genresText) hydrateRow(it, tr);
       const posterCell = tr.querySelector(".wl-poster-cell");
       const showFromCover = () => {
         if (canTMDB) showPreview(it, "list");
