@@ -18,6 +18,7 @@
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.action?.kind||"sync_pair")==="sync_pair"&&String(r?.action?.pair_id||r?.action?.pairId||r?.pair_id||"").trim()&&String(r?.filters?.route_id||r?.filters?.routeId||"").trim()).length,
     chipText={sched:"Scheduler",watch:"Watcher",hook:"Webhook"},
     S={cfg:null,sched:{enabled:false,running:false,next:0,advanced:false,captures:0},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),timers:{sched:null,scrob:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
+  const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=10000;
 
   if (!$("#sched-banner-css")) {
     const st=document.createElement("style");
@@ -200,7 +201,12 @@
     if (document.hidden) return scheduleScrob();
     try {
       if (S.watch.enabled) S.watch.alive=!!(await API().Watch.status(force))?.alive;
-      const cw=await API().Watch.currentlyWatching(force).catch(()=>null);
+      const now=Date.now();
+      const shared=!force?window[SHARED_WATCH_KEY]:null;
+      const cw=shared&&typeof shared==="object"&&(now-(Number(shared.at)||0))<SHARED_WATCH_TTL_MS
+        ? (shared.payload||null)
+        : await API().Watch.currentlyWatching(force).catch(()=>null);
+      if (cw) window[SHARED_WATCH_KEY]={at:now,payload:cw};
       const all=Array.isArray(cw?.streams)?cw.streams.filter(x=>x&&typeof x==="object"):[];
       const watchItems=all.filter(it=>!String(it?.source||"").toLowerCase().includes("webhook"));
       const hookItems=all.filter(it=>String(it?.source||"").toLowerCase().includes("webhook"));
