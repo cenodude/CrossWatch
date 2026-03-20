@@ -285,6 +285,80 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+_WATCHLIST_ALIAS_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")
+
+
+def _watchlist_alias_tokens(key: str, item: dict[str, Any]) -> set[str]:
+    ids = _ids_from_key_or_item(key, item)
+    out: set[str] = set()
+    for name in _WATCHLIST_ALIAS_ID_KEYS:
+        value = ids.get(name)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        if name == "imdb" and text.isdigit():
+            text = f"tt{text}"
+        out.add(f"{name}:{text}")
+    return out
+
+
+def _group_watchlist_refs(
+    refs: list[tuple[str, str, str, dict[str, Any]]],
+) -> list[list[tuple[str, str, str, dict[str, Any]]]]:
+    if not refs:
+        return []
+
+    parents = list(range(len(refs)))
+
+    def _find(i: int) -> int:
+        while parents[i] != i:
+            parents[i] = parents[parents[i]]
+            i = parents[i]
+        return i
+
+    def _union(a: int, b: int) -> None:
+        ra, rb = _find(a), _find(b)
+        if ra != rb:
+            parents[rb] = ra
+
+    seen_by_token: dict[str, int] = {}
+    for idx, (key, _prov, _inst, item) in enumerate(refs):
+        for token in _watchlist_alias_tokens(key, item):
+            prev = seen_by_token.get(token)
+            if prev is None:
+                seen_by_token[token] = idx
+                continue
+            _union(idx, prev)
+
+    grouped: dict[int, list[tuple[str, str, str, dict[str, Any]]]] = {}
+    for idx, ref in enumerate(refs):
+        grouped.setdefault(_find(idx), []).append(ref)
+    return list(grouped.values())
+
+
+def _preferred_watchlist_key(alias_keys: list[str], info: dict[str, Any], typ: str) -> str:
+    ids = _ids_from_key_or_item("", info)
+    if typ == "anime":
+        ordered = ("anilist", "mal", "tmdb", "imdb", "tvdb", "trakt", "slug")
+    else:
+        ordered = ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")
+
+    for name in ordered:
+        value = ids.get(name)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        if name == "imdb" and text.isdigit():
+            text = f"tt{text}"
+        return f"{name}:{text}"
+
+    return alias_keys[0] if alias_keys else ""
+
+
 def _type_from_item_or_guess(item: dict[str, Any], key: str) -> str:
     typ = (item.get("type") or "").lower().strip()
     if typ == "movie":
@@ -775,7 +849,7 @@ def _get_items(state: dict[str, Any], prov: str) -> dict[str, Any]:
 def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]]:
     providers = _registry_sync_providers()
     hidden = _load_hide_set()
-    by_key: dict[str, list[tuple[str, str, dict[str, Any]]]] = {}
+    raw_refs: list[tuple[str, str, str, dict[str, Any]]] = []
 
     for p in providers:
         refs = _get_provider_item_refs(state, p, instance_id="all")
@@ -784,10 +858,15 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
                 continue
             for it in arr or []:
                 inst = str((it or {}).get("_cw_instance") or _DEFAULT_INSTANCE)
-                by_key.setdefault(str(k), []).append((p.lower(), inst, it))
+                raw_refs.append((str(k), p.lower(), inst, it))
 
     out: list[dict[str, Any]] = []
-    for key, candidates in by_key.items():
+    for group in _group_watchlist_refs(raw_refs):
+        if not group:
+            continue
+        alias_keys = sorted({key for key, _, _, _ in group})
+        key = alias_keys[0] if alias_keys else ""
+        candidates = [(prov, inst, it) for _key, prov, inst, it in group]
         if not candidates:
             continue
 
@@ -838,6 +917,8 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
             else:
                 typ = "tv" if ids_.get("tvdb") else "movie"
 
+        key = _preferred_watchlist_key(alias_keys, info, typ)
+
         title = info.get("title") or info.get("name") or ""
         year = info.get("year") or info.get("release_year")
         tmdb_id = (info.get("ids") or {}).get("tmdb") or info.get("tmdb")
@@ -854,6 +935,7 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
         out.append(
             {
                 "key": key,
+                "aliases": alias_keys,
                 "type": typ,
                 "title": title,
                 "year": year,
