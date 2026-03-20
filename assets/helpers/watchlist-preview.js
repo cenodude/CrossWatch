@@ -11,6 +11,7 @@
   window.__wallLoading = window.__wallLoading || false;
   window._lastSyncEpoch = window._lastSyncEpoch || null;
   window.__wallRenderSignature = window.__wallRenderSignature || "";
+  const WALL_PREVIEW_CACHE_KEY = `cw.wall.preview.${window.APP_VERSION || "v1"}`;
 
   const json = async (url, opt) => {
     if (authSetupPending()) throw new Error("auth setup pending");
@@ -55,6 +56,21 @@
 
   const writeHidden = (set) => {
     try { localStorage.setItem("wl_hidden", JSON.stringify([...set])); } catch {}
+  };
+
+  const readWallCache = () => {
+    try {
+      const data = JSON.parse(localStorage.getItem(WALL_PREVIEW_CACHE_KEY) || "{}");
+      return Array.isArray(data?.items) ? data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeWallCache = (items, lastSyncEpoch) => {
+    try {
+      localStorage.setItem(WALL_PREVIEW_CACHE_KEY, JSON.stringify({ items, last_sync_epoch: lastSyncEpoch || 0 }));
+    } catch {}
   };
 
   const firstSeenMap = () => {
@@ -167,6 +183,110 @@
     });
   }
 
+  function renderWall(row, msg, items, lastSyncEpoch, { preserveIfSame = false } = {}) {
+    let wallItems = Array.isArray(items) ? items.slice() : [];
+    if (!wallItems.length) {
+      setWallEmpty(row, msg, "No items to show yet.");
+      return false;
+    }
+
+    const signature = wallSignature(wallItems, lastSyncEpoch);
+    const hasRenderedWall = row.childElementCount > 0 && !row.classList.contains("hidden");
+    if (preserveIfSame && signature === window.__wallRenderSignature && hasRenderedWall) {
+      msg.classList.add("hidden");
+      row.classList.remove("hidden");
+      return true;
+    }
+
+    const hidden = readHidden();
+    const isDeleted = (item) => {
+      if (hidden.has(item.key) && String(item.status || "").toLowerCase() === "deleted") return true;
+      if (hidden.has(item.key) && String(item.status || "").toLowerCase() !== "deleted") {
+        hidden.delete(item.key);
+        writeHidden(hidden);
+      }
+      return !!(window._deletedKeys && window._deletedKeys.has(item.key));
+    };
+
+    const firstSeen = firstSeenMap();
+    const now = Date.now();
+    for (const item of wallItems) if (item?.key && !firstSeen[item.key]) firstSeen[item.key] = now;
+    try { localStorage.setItem("wl_first_seen", JSON.stringify(firstSeen)); } catch {}
+
+    const getTs = (it) => Number(it?.added_epoch ?? it?.added_ts ?? it?.created_ts ?? it?.created ?? it?.epoch ?? firstSeen[it?.key] ?? 0);
+    wallItems.sort((a, b) => getTs(b) - getTs(a));
+    wallItems = wallItems.slice(0, Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20);
+
+    const frag = document.createDocumentFragment();
+    let renderedCount = 0;
+
+    for (const item of wallItems) {
+      if (!item?.tmdb) continue;
+      const link = document.createElement("a");
+      const source = isDeleted(item) ? "deleted" : (item.status || "");
+      const pill = pillFor(source);
+
+      link.className = "poster";
+      link.href = `https://www.themoviedb.org/${isTV(item.type) ? "tv" : "movie"}/${item.tmdb}`;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.dataset.type = item.type || "";
+      link.dataset.tmdb = String(item.tmdb);
+      link.dataset.key = item.key || "";
+      link.dataset.source = source;
+
+      const img = document.createElement("img");
+      img.loading = "lazy";
+      img.alt = `${item.title || ""} (${item.year || ""})`;
+      img.src = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
+      img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
+      link.appendChild(img);
+
+      const overlay = document.createElement("div");
+      const currentProviders = providersForItem(item).slice(0, 3);
+      const synced = String(source).toLowerCase() === "both";
+      overlay.className = "ovr";
+      overlay.style.left = "8px";
+      overlay.style.right = synced ? "8px" : "auto";
+      overlay.style.justifyContent = synced ? "center" : "flex-start";
+      overlay.style.width = synced ? "calc(100% - 16px)" : "auto";
+      overlay.innerHTML = synced
+        ? `<div class="pill ${pill.cls}">${pill.text}</div>`
+        : currentProviders.map(providerIconMarkup).join("");
+      link.appendChild(overlay);
+
+      const cap = document.createElement("div");
+      cap.className = "cap";
+      cap.textContent = `${item.title || ""}${item.year ? ` - ${item.year}` : ""}`;
+      link.appendChild(cap);
+
+      const hover = document.createElement("div");
+      hover.className = "hover";
+      hover.innerHTML = `
+        <div class="titleline">${item.title || ""}</div>
+        <div class="meta">
+          <div class="chip time">${lastSyncEpoch ? `updated ${window.relTimeFromEpoch?.(lastSyncEpoch) || ""}` : ""}</div>
+        </div>`;
+      link.appendChild(hover);
+
+      frag.appendChild(link);
+      renderedCount++;
+    }
+
+    if (!renderedCount) {
+      setWallEmpty(row, msg, "No items to show yet.");
+      return false;
+    }
+
+    window._lastSyncEpoch = lastSyncEpoch || null;
+    row.replaceChildren(frag);
+    row.classList.remove("hidden");
+    msg.classList.add("hidden");
+    window.__wallRenderSignature = wallSignature(wallItems, lastSyncEpoch);
+    initWallInteractions();
+    return true;
+  }
+
   async function loadWall() {
     const card = document.getElementById("placeholder-card");
     const msg = document.getElementById("wall-msg");
@@ -188,20 +308,15 @@
       msg.textContent = "Loading...";
       msg.classList.remove("hidden");
       row.classList.add("hidden");
+      const cached = readWallCache();
+      if (cached) {
+        renderWall(row, msg, cached.items, cached.last_sync_epoch || 0);
+      }
     }
 
-    const hidden = readHidden();
-    const isDeleted = (item) => {
-      if (hidden.has(item.key) && String(item.status || "").toLowerCase() === "deleted") return true;
-      if (hidden.has(item.key) && String(item.status || "").toLowerCase() !== "deleted") {
-        hidden.delete(item.key);
-        writeHidden(hidden);
-      }
-      return !!(window._deletedKeys && window._deletedKeys.has(item.key));
-    };
-
     try {
-      const data = await json("/api/state/wall?both_only=0&active_only=1");
+      const limit = Number.isFinite(window.MAX_WALL_POSTERS) ? Math.max(1, Number(window.MAX_WALL_POSTERS)) : 20;
+      const data = await json(`/api/state/wall?both_only=0&active_only=1&limit=${encodeURIComponent(limit)}`);
       if (myReq !== wallReqSeq) return;
       if (data?.missing_tmdb_key) { card.classList.add("hidden"); return; }
       if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return; }
@@ -213,89 +328,8 @@
         setWallEmpty(row, msg, "No items to show yet.");
         return;
       }
-
-      const firstSeen = firstSeenMap();
-      const now = Date.now();
-      for (const item of items) if (item?.key && !firstSeen[item.key]) firstSeen[item.key] = now;
-      try { localStorage.setItem("wl_first_seen", JSON.stringify(firstSeen)); } catch {}
-
-      const getTs = (it) => Number(it?.added_epoch ?? it?.added_ts ?? it?.created_ts ?? it?.created ?? it?.epoch ?? firstSeen[it?.key] ?? 0);
-      items.sort((a, b) => getTs(b) - getTs(a));
-      items = items.slice(0, Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20);
-
-      const signature = wallSignature(items, data.last_sync_epoch);
-      if (signature === window.__wallRenderSignature && hasRenderedWall) {
-        msg.classList.add("hidden");
-        row.classList.remove("hidden");
-        return;
-      }
-
-      const frag = document.createDocumentFragment();
-      let renderedCount = 0;
-
-      for (const item of items) {
-        if (!item?.tmdb) continue;
-        const link = document.createElement("a");
-        const source = isDeleted(item) ? "deleted" : (item.status || "");
-        const pill = pillFor(source);
-
-        link.className = "poster";
-        link.href = `https://www.themoviedb.org/${isTV(item.type) ? "tv" : "movie"}/${item.tmdb}`;
-        link.target = "_blank";
-        link.rel = "noopener";
-        link.dataset.type = item.type || "";
-        link.dataset.tmdb = String(item.tmdb);
-        link.dataset.key = item.key || "";
-        link.dataset.source = source;
-
-        const img = document.createElement("img");
-        img.loading = "lazy";
-        img.alt = `${item.title || ""} (${item.year || ""})`;
-        img.src = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
-        img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
-        link.appendChild(img);
-
-        const overlay = document.createElement("div");
-        const currentProviders = providersForItem(item).slice(0, 3);
-        const synced = String(source).toLowerCase() === "both";
-        overlay.className = "ovr";
-        overlay.style.left = "8px";
-        overlay.style.right = synced ? "8px" : "auto";
-        overlay.style.justifyContent = synced ? "center" : "flex-start";
-        overlay.style.width = synced ? "calc(100% - 16px)" : "auto";
-        overlay.innerHTML = synced
-          ? `<div class="pill ${pill.cls}">${pill.text}</div>`
-          : currentProviders.map(providerIconMarkup).join("");
-        link.appendChild(overlay);
-
-        const cap = document.createElement("div");
-        cap.className = "cap";
-        cap.textContent = `${item.title || ""}${item.year ? ` - ${item.year}` : ""}`;
-        link.appendChild(cap);
-
-        const hover = document.createElement("div");
-        hover.className = "hover";
-        hover.innerHTML = `
-          <div class="titleline">${item.title || ""}</div>
-          <div class="meta">
-            <div class="chip time">${window._lastSyncEpoch ? `updated ${window.relTimeFromEpoch?.(window._lastSyncEpoch) || ""}` : ""}</div>
-          </div>`;
-        link.appendChild(hover);
-
-        frag.appendChild(link);
-        renderedCount++;
-      }
-
-      if (!renderedCount) {
-        setWallEmpty(row, msg, "No items to show yet.");
-        return;
-      }
-
-      row.replaceChildren(frag);
-      row.classList.remove("hidden");
-      msg.classList.add("hidden");
-      window.__wallRenderSignature = signature;
-      initWallInteractions();
+      writeWallCache(items, data.last_sync_epoch || 0);
+      renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true });
     } catch {
       if (!hasRenderedWall) {
         row.classList.add("hidden");
@@ -374,10 +408,14 @@
       if (!card) return false;
 
       if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
+      card.classList.remove("hidden");
+      if (msg && !window.wallLoaded) {
+        msg.textContent = "Loading...";
+        msg.classList.remove("hidden");
+      }
 
       const { allowed } = await previewGate();
       if (!allowed) { hidePreviewCard(card, row, msg); return false; }
-      card.classList.remove("hidden");
 
       if (!window.wallLoaded && !window.__wallLoading) {
         window.__wallLoading = true;
