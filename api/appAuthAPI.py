@@ -338,6 +338,31 @@ def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None
     return None
 
 
+def _public_session_entry(s: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(s.get("id") or "").strip(),
+        "created_at": int(s.get("created_at") or 0),
+        "expires_at": int(s.get("expires_at") or 0),
+        "ip": str(s.get("ip") or "").strip(),
+        "ua": str(s.get("ua") or "").strip()[:240],
+    }
+
+
+def _public_session_state(a: dict[str, Any], token: str | None) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    sessions = _prune_sessions(_iter_sessions(a))
+    current = _find_session(a, token)
+    current_token_hash = str((current or {}).get("token_hash") or "").strip()
+
+    current_public = _public_session_entry(current) if current is not None else None
+    other_public: list[dict[str, Any]] = []
+    for session in sessions:
+        token_hash = str(session.get("token_hash") or "").strip()
+        if current_token_hash and _digest_eq(token_hash, current_token_hash):
+            continue
+        other_public.append(_public_session_entry(session))
+    return current_public, other_public
+
+
 def is_authenticated(cfg: dict[str, Any], token: str | None) -> bool:
     if not auth_required(cfg):
         return True
@@ -447,6 +472,16 @@ def _clear_sessions(cfg: dict[str, Any]) -> None:
         return
     a["sessions"] = []
     _sync_legacy_session(a, [])
+
+
+def _clear_other_sessions(cfg: dict[str, Any], token: str | None) -> None:
+    a = cfg.get("app_auth")
+    if not isinstance(a, dict):
+        return
+    keep = _find_session(a, token)
+    kept = [keep] if keep is not None else []
+    a["sessions"] = kept
+    _sync_legacy_session(a, kept)
 
 
 def _clear_setup_autogen_flag(cfg: dict[str, Any]) -> None:
@@ -950,6 +985,7 @@ def api_status(request: Request) -> JSONResponse:
     pending_setup = setup_lock_required(cfg)
     token = request.cookies.get(COOKIE_NAME)
     s = _find_session(a, token)
+    current_session, other_sessions = _public_session_state(a, token)
     return JSONResponse(
         {
             "enabled": enabled,
@@ -957,6 +993,9 @@ def api_status(request: Request) -> JSONResponse:
             "username": str(a.get("username") or "") if (enabled and s is not None) else "",
             "authenticated": (s is not None) if auth_required(cfg) else (not pending_setup),
             "session_expires_at": int((s or {}).get("expires_at") or 0),
+            "current_session": current_session,
+            "other_sessions": other_sessions,
+            "other_session_count": len(other_sessions),
             "reset_required": reset_pending(cfg),
             "remember_session_enabled": _cfg_remember_session_enabled(a),
             "remember_session_days": _cfg_remember_session_days(a),
@@ -1055,6 +1094,20 @@ def api_logout_all(request: Request) -> JSONResponse:
     resp = JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
     _del_cookie(resp, request)
     return resp
+
+
+@router.post("/logout-others")
+def api_logout_others(request: Request) -> JSONResponse:
+    cfg = load_config()
+    token = request.cookies.get(COOKIE_NAME)
+    if auth_required(cfg):
+        if not is_authenticated(cfg, token):
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
+        if not _origin_allowed(request):
+            return _origin_blocked_response()
+    _clear_other_sessions(cfg, token)
+    save_config(cfg)
+    return JSONResponse({"ok": True}, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/apply-now")
