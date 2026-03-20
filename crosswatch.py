@@ -286,6 +286,11 @@ _APP_AUTH_SETUP_ALLOWED_PATHS = {
     "/api/app-auth/credentials",
 }
 
+_PUBLIC_HEALTH_PATHS = {
+    "/api/health",
+    "/healthz",
+}
+
 def _redact_query_string(query: str) -> str:
     q = (query or "").strip()
     if not q:
@@ -457,6 +462,9 @@ async def app_auth_gate(request: Request, call_next):
         return await call_next(request)
     
     if path in {"/manifest.webmanifest", "/sw.js"}:
+        return await call_next(request)
+    
+    if path in _PUBLIC_HEALTH_PATHS:
         return await call_next(request)
     
     if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
