@@ -1047,11 +1047,18 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     updateHeaderSummary();
   }
 
+  const deleteSpecsForKeys = keys => keys.map(key => {
+    const aliases = items.find(it => normKey(it) === key)?.aliases;
+    return Array.isArray(aliases) && aliases.some(Boolean)
+      ? { key, aliases: aliases.filter(Boolean) }
+      : { key };
+  });
+
   async function postDelete(keys, provider){
     const send = async prov => {
       const r = await fetch("/api/watchlist/delete", {
         method:"POST", headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ keys, provider: prov })
+        body: JSON.stringify({ keys: deleteSpecsForKeys(keys), provider: prov })
       });
       const txt = await r.text(); let j=null; try{ j = txt ? JSON.parse(txt) : null }catch{}
       const okCount =
