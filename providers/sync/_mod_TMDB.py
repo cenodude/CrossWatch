@@ -113,7 +113,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": True,
             },
             "ratings": {
-                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
                 "add": True,
                 "remove": True,
             },
@@ -277,6 +277,25 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
     return out
 
 
+def _confirmed_items(
+    key_of,
+    items: Iterable[Mapping[str, Any]],
+    confirmed_keys: Iterable[str],
+) -> list[dict[str, Any]]:
+    keep = set(str(k) for k in (confirmed_keys or []))
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items or []:
+        if not isinstance(item, Mapping):
+            continue
+        k = str(key_of(item) or "").strip()
+        if not k or k not in keep or k in seen:
+            continue
+        out.append(dict(item))
+        seen.add(k)
+    return out
+
+
 class TMDBModule:
     def __init__(self, cfg: Mapping[str, Any]) -> None:
         raw = (cfg or {}).get("tmdb_sync")
@@ -344,7 +363,13 @@ class TMDBModule:
             cnt, unresolved = mod.add(self, lst)
             confirmed_keys = _confirmed_keys(_tmdb_key_of, lst, unresolved)
             _info("add_done", sync_feature=feature, ok=True, applied=int(cnt), unresolved=len(unresolved or []))
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            return {
+                "ok": True,
+                "count": int(cnt),
+                "unresolved": unresolved,
+                "confirmed_keys": confirmed_keys,
+                "confirmed_items": [],
+            }
         except Exception as e:
             _error("add_failed", sync_feature=feature, error=f"{type(e).__name__}: {e}")
             return {"ok": False, "error": str(e)}
@@ -363,7 +388,13 @@ class TMDBModule:
             cnt, unresolved = mod.remove(self, lst)
             confirmed_keys = _confirmed_keys(_tmdb_key_of, lst, unresolved)
             _info("remove_done", sync_feature=feature, ok=True, applied=int(cnt), unresolved=len(unresolved or []))
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            return {
+                "ok": True,
+                "count": int(cnt),
+                "unresolved": unresolved,
+                "confirmed_keys": confirmed_keys,
+                "confirmed_items": [],
+            }
         except Exception as e:
             _error("remove_failed", sync_feature=feature, error=f"{type(e).__name__}: {e}")
             return {"ok": False, "error": str(e)}
