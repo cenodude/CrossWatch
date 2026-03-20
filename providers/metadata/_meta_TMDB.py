@@ -64,11 +64,11 @@ class TmdbProvider:
     def _ttl_seconds(self) -> int:
         cfg = self.load_cfg() or {}
         md = cfg.get("metadata") or {}
-        hours = md.get("ttl_hours", 6)
+        hours = md.get("ttl_hours", 72)
         try:
             hours = int(hours)
         except Exception:
-            hours = 6
+            hours = 72
         return max(1, hours) * 3600
 
     def _backoff_params(self) -> tuple[int, float, float]:
@@ -579,8 +579,8 @@ def html() -> str:
 
           <div>
             <label for="metadata_ttl_hours">TTL hours (metadata.ttl_hours)</label>
-            <input id="metadata_ttl_hours" name="metadata_ttl_hours" type="number" min="1" step="1" placeholder="6" oninput="this.dataset.dirty='1'">
-            <div class="sub">Resolver cache freshness (coarse). Default 6h.</div>
+            <input id="metadata_ttl_hours" name="metadata_ttl_hours" type="number" min="1" step="1" placeholder="72" oninput="this.dataset.dirty='1'">
+            <div class="sub">Resolver cache freshness (coarse). Default 72h.</div>
           </div>
 
         </div>
