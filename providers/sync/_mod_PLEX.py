@@ -35,7 +35,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "5.2.0"
+__VERSION__ = "5.2.1"
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:
@@ -1099,7 +1099,7 @@ class PLEXModule:
                                 uk = None
                         if uk:
                             unresolved_keys.add(str(uk))
-            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys]
+            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys and not str(k).startswith("unknown:")]
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -1151,7 +1151,7 @@ class PLEXModule:
                                 uk = None
                         if uk:
                             unresolved_keys.add(str(uk))
-            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys]
+            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys and not str(k).startswith("unknown:")]
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
             return {"ok": False, "error": str(e)}
