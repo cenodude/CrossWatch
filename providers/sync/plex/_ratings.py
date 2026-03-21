@@ -3,7 +3,10 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+from threading import Lock
 from typing import Any, Iterable, Mapping, cast
 
 from ._common import (
@@ -42,6 +45,18 @@ def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     c = _plex_cfg(adapter)
     v = c.get(key, default) if isinstance(c, Mapping) else default
     return default if v is None else v
+
+def _get_workers(adapter: Any, cfg_key: str, env_key: str, default: int) -> int:
+    try:
+        n = int(_plex_cfg_get(adapter, cfg_key, 0) or 0)
+    except Exception:
+        n = 0
+    if n <= 0:
+        try:
+            n = int(os.environ.get(env_key, str(default)))
+        except Exception:
+            n = default
+    return max(1, min(n, 64))
 
 def _allowed_ratings_sec_ids(adapter: Any) -> set[str]:
     try:
@@ -409,7 +424,8 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         tmo = float(_plex_cfg_get(adapter, "timeout", 10) or 10)
         page_size = int(_plex_cfg_get(adapter, "ratings_page_size", 120) or 120)
         page_size = max(10, min(page_size, 200))
-    
+        workers = _get_workers(adapter, "rating_workers", "CW_PLEX_RATING_WORKERS", 12)
+
         allow = _allowed_ratings_sec_ids(adapter)
     
         out: dict[str, dict[str, Any]] = {}
@@ -427,19 +443,22 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     
         # Plex library types: 1=movie, 2=show, 3=season, 4=episode
         type_hint = {1: "movie", 2: "show", 3: "season", 4: "episode"}
-    
+
         show_ids_cache: dict[str, dict[str, Any]] = {}
-    
+        show_ids_lock = Lock()
+
         def _show_ids_for_rating_key(rk: Any) -> dict[str, Any]:
             rk_s = str(rk or "").strip()
             if not rk_s:
                 return {}
-            if rk_s in show_ids_cache:
-                return show_ids_cache[rk_s]
+            with show_ids_lock:
+                if rk_s in show_ids_cache:
+                    return dict(show_ids_cache[rk_s])
             try:
                 obj = srv.fetchItem(int(rk_s))
             except Exception:
-                show_ids_cache[rk_s] = {}
+                with show_ids_lock:
+                    show_ids_cache[rk_s] = {}
                 return {}
     
             norm = plex_normalize(obj) or {}
@@ -458,7 +477,8 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 v = ids0.get(k)
                 if v:
                     out_ids[k] = str(v)
-            show_ids_cache[rk_s] = out_ids
+            with show_ids_lock:
+                show_ids_cache[rk_s] = dict(out_ids)
             return out_ids
     
         def _tick(force: bool = False) -> None:
@@ -501,27 +521,22 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 rows = mc.get("Metadata") or []
                 if not rows:
                     break
-    
-                for row in rows:
-                    scanned += 1
-    
+
+                def _process_rating_row(row: Mapping[str, Any]) -> tuple[str, dict[str, Any], int, int] | None:
                     # /library/all is global; enforce library allow-list here.
                     sid = row.get("librarySectionID") or row.get("sectionID") or row.get("librarySectionId") or row.get("sectionId")
                     sid_s = str(sid).strip() if sid is not None else ""
                     if allow and sid_s and sid_s not in allow:
-                        _tick()
-                        continue
-    
+                        return None
+
                     rating = _norm_rating(row.get("userRating"))
                     if not rating or rating <= 0:
-                        _tick()
-                        continue
-    
+                        return None
+
                     m = normalize_discover_row(row, token=tok) or {}
                     if not m:
-                        _tick()
-                        continue
-    
+                        return None
+
                     m = dict(m)
                     m["rating"] = rating
                     ts = _as_epoch(row.get("lastRatedAt"))
@@ -541,10 +556,12 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                                 ids0 = dict(m.get("ids") or {})
                                 ids0.setdefault("imdb", show_ids["imdb"])
                                 m["ids"] = ids0
-    
+
                     # Keep fallback GUID enrichment intact.
+                    fb_try_local = 0
+                    fb_ok_local = 0
                     if fallback_guid and not _has_ext_ids(m):
-                        fb_try += 1
+                        fb_try_local += 1
                         try:
                             fb = minimal_from_history_row(row, token=tok, allow_discover=True)
                         except Exception:
@@ -556,7 +573,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                             ids_fb = {}
                             show_ids_fb = {}
                         if ids_fb or show_ids_fb:
-                            fb_ok += 1
+                            fb_ok_local += 1
                             ids0 = dict(m.get("ids") or {})
                             ids0.update({k: v for k, v in ids_fb.items() if v})
                             m["ids"] = ids0
@@ -565,23 +582,57 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                                 si0.update({k: v for k, v in show_ids_fb.items() if v})
                                 m["show_ids"] = si0
                     _force_episode_title(m)
-    
+
                     k = canonical_key(m)
-                    if k:
-                        out[k] = m
-                        added += 1
-                        if limit is not None and added >= limit:
-                            if prog is not None:
-                                try:
-                                    prog.done(ok=True, total=max(total, scanned) if total else None)
-                                except Exception:
-                                    pass
-                            _info("index_truncated", limit=limit)
-                            _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
-                            return out
-    
-                    _tick()
-    
+                    if not k:
+                        return None
+                    return k, m, fb_try_local, fb_ok_local
+
+                if workers > 1 and len(rows) > 1:
+                    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plex-ratings")
+                    try:
+                        result_iter = executor.map(_process_rating_row, rows)
+                        for result in result_iter:
+                            scanned += 1
+                            if result:
+                                k, m, fb_try_local, fb_ok_local = result
+                                out[k] = m
+                                added += 1
+                                fb_try += fb_try_local
+                                fb_ok += fb_ok_local
+                                if limit is not None and added >= limit:
+                                    if prog is not None:
+                                        try:
+                                            prog.done(ok=True, total=max(total, scanned) if total else None)
+                                        except Exception:
+                                            pass
+                                    _info("index_truncated", limit=limit)
+                                    _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers)
+                                    return out
+                            _tick()
+                    finally:
+                        executor.shutdown(wait=True, cancel_futures=False)
+                else:
+                    for row in rows:
+                        scanned += 1
+                        result = _process_rating_row(row)
+                        if result:
+                            k, m, fb_try_local, fb_ok_local = result
+                            out[k] = m
+                            added += 1
+                            fb_try += fb_try_local
+                            fb_ok += fb_ok_local
+                            if limit is not None and added >= limit:
+                                if prog is not None:
+                                    try:
+                                        prog.done(ok=True, total=max(total, scanned) if total else None)
+                                    except Exception:
+                                        pass
+                                _info("index_truncated", limit=limit)
+                                _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers)
+                                return out
+                        _tick()
+
                 if len(rows) < page_size:
                     break
                 start += len(rows)
@@ -592,7 +643,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             except Exception:
                 pass
     
-        _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok)
+        _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers)
         return out
     finally:
         home_scope_exit(adapter, did_switch)
