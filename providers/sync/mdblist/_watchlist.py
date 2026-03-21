@@ -99,7 +99,6 @@ def _shadow_load() -> dict[str, Any]:
         doc["items"] = {}
         return doc
 
-    # Migrate legacy cache: /watchlist/items uses "id" as TMDB id; older code stored it as ids.mdblist.
     migrated: dict[str, Any] = {}
     changed = False
     for k, v in items.items():
@@ -109,14 +108,10 @@ def _shadow_load() -> dict[str, Any]:
         it = dict(v)
         ids_src = it.get("ids")
         ids = dict(ids_src) if isinstance(ids_src, Mapping) else {}
-        if not ids.get("tmdb"):
-            mdbl = ids.get("mdblist")
-            tmdb_i = _as_int(mdbl)
-            if tmdb_i is not None:
-                ids["tmdb"] = str(tmdb_i)
-                ids.pop("mdblist", None)
-                it["ids"] = ids
-                changed = True
+        if "mdblist" in ids:
+            ids.pop("mdblist", None)
+            it["ids"] = ids
+            changed = True
         nk = _key_of(it)
         if nk != str(k):
             changed = True
@@ -207,9 +202,6 @@ def _key_of(obj: Mapping[str, Any]) -> str:
     tvdb_i = _as_int(ids.get("tvdb") or ids.get("tvdb_id"))
     if tvdb_i is not None:
         return f"tvdb:{tvdb_i}"
-    mdbl = _as_str(ids.get("mdblist"))
-    if mdbl:
-        return f"mdblist:{mdbl}"
     title = _as_str(obj.get("title"))
     year_i = _as_int(obj.get("year"))
     if title and year_i is not None:
@@ -260,7 +252,6 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             "tvdb": item.get("tvdb") or item.get("tvdb_id"),
             "trakt": item.get("trakt") or item.get("trakt_id"),
             "kitsu": item.get("kitsu") or item.get("kitsu_id"),
-            "mdblist": item.get("mdblist") or item.get("mdblist_id"),
         }
 
     typ = str(item.get("type") or item.get("mediatype") or "").strip().lower()
@@ -269,7 +260,7 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
     if typ not in ("movie", "show"):
         typ = "movie"
 
-    allowed = {"imdb", "tmdb", "trakt", "mdblist"}
+    allowed = {"imdb", "tmdb", "trakt"}
     if typ == "movie":
         allowed.update({"tvdb", "kitsu"})
     else:
@@ -285,10 +276,6 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
         ident = _as_int(ids_raw.get(key))
         if ident is not None:
             out[key] = ident
-    if "mdblist" in allowed:
-        mdblist_val = _as_str(ids_raw.get("mdblist"))
-        if mdblist_val:
-            out["mdblist"] = mdblist_val
     return out
 
 
@@ -317,7 +304,6 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any]:
     imdb_val = ids_block.get("imdb") or row.get("imdb_id") or row.get("imdb")
     tvdb_val = ids_block.get("tvdb") or row.get("tvdb_id") or row.get("tvdb")
     tmdb_val = ids_block.get("tmdb") or row.get("tmdb_id") or row.get("tmdb") or row.get("id")
-    mdblist_val = ids_block.get("mdblist")
 
     ids: dict[str, Any] = {}
     imdb_s = _as_str(imdb_val)
@@ -329,9 +315,6 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any]:
     tvdb_i = _as_int(tvdb_val)
     if tvdb_i is not None:
         ids["tvdb"] = str(tvdb_i)
-    mdbl_s = _as_str(mdblist_val)
-    if mdbl_s:
-        ids["mdblist"] = mdbl_s
 
     typ = _pick_kind_from_row(row)
     title = str(row.get("title") or row.get("name") or row.get("original_title") or row.get("original_name") or "").strip()
@@ -515,7 +498,7 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
         if not ids:
             rejected.append({"item": minimal_item, "hint": "missing_ids"})
             continue
-        if not any(ids.get(k) not in (None, "") for k in ("imdb", "tmdb", "trakt", "mdblist", "tvdb", "kitsu")):
+        if not any(ids.get(k) not in (None, "") for k in ("imdb", "tmdb", "trakt", "tvdb", "kitsu")):
             rejected.append({"item": minimal_item, "hint": "missing_supported_ids"})
             continue
         kind = "show" if str(item.get("type") or "").lower() in ("show", "shows", "tv", "series") else "movie"
@@ -682,8 +665,6 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dic
                 if k not in not_found_keys:
                     ok_keys.append(k)
             if not ok_keys and slice_success_count > 0:
-                # API docs only guarantee aggregate counts; if counts say some rows succeeded
-                # but the response doesn't identify which, treat the remainder as successful.
                 success_guess = max(0, min(len(sl), slice_success_count))
                 ok_keys = [
                     _key_of({"type": x["type"], "ids": x["ids"]})
