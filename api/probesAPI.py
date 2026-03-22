@@ -1419,11 +1419,34 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 prov_sources.setdefault(c, set()).add("watcher")
                 used_instances.setdefault(c, set()).add(normalize_instance_id(inst))
 
-            # Always probe the default profile + any configured instances so the UI can show profile tooltips.
+            configured_instances: dict[str, set[str]] = {}
             for prov in DETAIL_PROBES.keys():
                 ck = _cfg_key(prov)
-                for inst in list_instance_ids(cfg, ck):
-                    targets.add((prov, normalize_instance_id(inst)))
+                insts = {
+                    normalize_instance_id(inst)
+                    for inst in list_instance_ids(cfg, ck)
+                }
+                if insts:
+                    configured_instances[prov] = insts
+
+            def _probe_targets_for(prov: str) -> set[str]:
+                insts = configured_instances.get(prov) or set()
+                if not insts:
+                    return set()
+                used = {
+                    inst
+                    for inst in (used_instances.get(prov) or set())
+                    if inst in insts
+                }
+                if used:
+                    return used
+                if "default" in insts:
+                    return {"default"}
+                return {sorted(insts, key=lambda x: (x != "default", x))[0]}
+
+            for prov in DETAIL_PROBES.keys():
+                for inst in _probe_targets_for(prov):
+                    targets.add((prov, inst))
 
             active_providers = {p for p, _ in targets}
 
@@ -1542,23 +1565,34 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
 
             def _instances_payload(prov: str) -> tuple[dict[str, Any], dict[str, Any]]:
                 items = per.get(prov) or {}
-                inst_ids = sorted(items.keys(), key=lambda x: (x != "default", x))
+                inst_ids = sorted(
+                    set(configured_instances.get(prov) or set()) | set(items.keys()),
+                    key=lambda x: (x != "default", x),
+                )
                 used = used_instances.get(prov) or set()
                 inst_map: dict[str, Any] = {}
                 ok_count = 0
+                probed_count = 0
                 for inst in inst_ids:
-                    ok, rsn, _ = items.get(inst) or (False, "", {})
-                    if ok:
-                        ok_count += 1
-                    payload: dict[str, Any] = {"connected": bool(ok)}
-                    if not ok and rsn:
-                        payload["reason"] = rsn
+                    payload: dict[str, Any] = {"configured": True, "probed": False}
+                    if inst in items:
+                        ok, rsn, _ = items.get(inst) or (False, "", {})
+                        payload["connected"] = bool(ok)
+                        payload["probed"] = True
+                        probed_count += 1
+                        if ok:
+                            ok_count += 1
+                        elif rsn:
+                            payload["reason"] = rsn
                     if inst in used:
                         payload["used"] = True
                     inst_map[inst] = payload
                 rep_inst = _rep_instance(prov)
+                if rep_inst not in inst_map and inst_ids:
+                    rep_inst = inst_ids[0]
                 summary: dict[str, Any] = {
                     "ok": int(ok_count),
+                    "probed": int(probed_count),
                     "total": int(len(inst_ids)),
                     "rep": rep_inst,
                     "used": sorted(used, key=lambda x: (x != "default", x)),
