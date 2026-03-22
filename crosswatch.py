@@ -2,33 +2,21 @@
 # CrossWatch main application entry point
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from collections.abc import AsyncIterator
 
 from contextlib import asynccontextmanager
-from datetime import datetime, date, timedelta, timezone
-from functools import lru_cache
+from datetime import datetime, timedelta
 from pathlib import Path
-from urllib.parse import parse_qs, parse_qsl, urlencode, quote
-from importlib import import_module
+from urllib.parse import parse_qsl, urlencode, quote
 
 import sys
 sys.modules.setdefault("crosswatch", sys.modules[__name__])
-import traceback
-import json
 import os
 import re
-import secrets
-import shutil
 import socket
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
-import uuid
-import shlex
-import requests
 import uvicorn
 import asyncio
 
@@ -41,9 +29,6 @@ from api import (
     register as register_api,
     _is_sync_running,
     _load_state,
-    _compute_lanes_from_stats,
-    _lane_is_empty,
-    _parse_epoch,
     api_run_sync,
 )
 
@@ -62,67 +47,33 @@ def _c(text: str, color: str) -> str:
 
 from api.versionAPI import CURRENT_VERSION
 from services import register as register_services
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from fastapi import Body, FastAPI, Query, Request, Path as FPath
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import (
-    FileResponse,
-    HTMLResponse,
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
-    Response,
     StreamingResponse,
 )
-from fastapi.staticfiles import StaticFiles
 
-try:
-    from plexapi.myplex import MyPlexAccount
-    HAVE_PLEXAPI = True
-except Exception:
-    HAVE_PLEXAPI = False
-
-try:
-    from api.wallAPI import _load_wall_snapshot, refresh_wall
-except Exception:
-    _load_wall_snapshot = lambda: []
-    refresh_wall = lambda: None
-
-from pydantic import BaseModel
-
-# Webhook: Plex
-try:
-    from providers.webhooks.plextrakt import process_webhook as process_webhook
-except Exception:
-    process_webhook = None
-
-# Webhook: Jellyfin
-try:
-    from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
-except Exception:
-    process_webhook_jellyfin = None
+from api.wallAPI import _load_wall_snapshot
+from providers.webhooks.plextrakt import process_webhook as process_webhook
+from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
 
 __all__ = ["process_webhook", "process_webhook_jellyfin"]
 
 from ui_frontend import (
-    get_index_html,
     register_assets_and_favicons,
     register_ui_root,
 )
 from services.scheduling import SyncScheduler
 from services.statistics import Stats
-from services.watchlist import build_watchlist, delete_watchlist_item
 
 from cw_platform.orchestrator import Orchestrator, minimal
-from cw_platform.modules_registry import MODULES as _MODULES
 from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
 from cw_platform.tls import ensure_self_signed_cert, resolve_tls_paths
 from cw_platform.orchestrator import canonical_key
-from cw_platform import config_base
 
-try:
-    from zoneinfo import ZoneInfo
-except Exception:
-    ZoneInfo = None
+from zoneinfo import ZoneInfo
 
 # Paths and globals
 ROOT = Path(__file__).resolve().parent
@@ -139,7 +90,6 @@ LAST_SYNC_PATH  = (STATE_DIR / "last_sync.json").resolve()
 REPORT_DIR = (CONFIG_DIR / "sync_reports"); REPORT_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR  = (CONFIG_DIR / "cache");        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATHS = [CONFIG_DIR / "state.json", ROOT / "state.json"]
-HIDE_PATH   = (CONFIG_DIR / "watchlist_hide.json")
 CW_STATE_DIR = (CONFIG_DIR / ".cw_state"); CW_STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 _METADATA: Any = None
@@ -261,12 +211,6 @@ def _is_static_noise(path: str, status: int) -> bool:
         "/placeholder" in path
     ):
         return True
-
-    if request_method := None:
-        try:
-            pass
-        except Exception:
-            pass
     return False
 
 _SENSITIVE_QUERY_KEYS = {
@@ -393,7 +337,7 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
         tz = None
         try:
             tzname = scfg.get("timezone")
-            if tzname and ZoneInfo:
+            if tzname:
                 tz = ZoneInfo(tzname)
         except Exception:
             tz = None
@@ -684,15 +628,6 @@ def _get_orchestrator() -> Orchestrator:
     cfg = load_config()
     return Orchestrator(config=cfg)
 
-def _json_safe(obj: Any) -> Any:
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_json_safe(x) for x in obj]
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
-        return obj
-    return str(obj)
-
 # Startup sequence
 @asynccontextmanager
 async def _lifespan(app: Any) -> AsyncIterator[None]:
@@ -700,20 +635,6 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
     app.state.watch_manager = None
     _apply_debug_env_from_config()
     _install_ui_log_forwarder()
-
-    try:
-        fn = globals().get("_on_startup")
-        if callable(fn):
-            res = fn()
-            try:
-                import inspect
-                if inspect.iscoroutine(res):
-                    await res
-            except Exception:
-                pass
-    except Exception as e:
-        try: _UIHostLogger("WATCH", "WATCH")(f"startup hook error: {e}", level="ERROR")
-        except Exception: pass
 
     started = False
     try:
@@ -768,20 +689,6 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        try:
-            fn2 = globals().get("_on_shutdown")
-            if callable(fn2):
-                res2 = fn2()
-                try:
-                    import inspect
-                    if inspect.iscoroutine(res2):
-                        await res2
-                except Exception:
-                    pass
-        except Exception as e:
-            try: _UIHostLogger("WATCH", "WATCH")(f"shutdown hook error: {e}", level="ERROR")
-            except Exception: pass
-
         try:
             from providers.scrobble.watch_manager import stop_all as _wm_stop
             _wm_stop(app)
@@ -973,63 +880,6 @@ async def api_logs_watcher(
         },
     )
 
-# Sync runner (orchestrator)
-def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
-    overrides = overrides or {}
-
-    def _log(msg: str):
-        _append_log("SYNC", msg)
-
-    _log(f"> SYNC start: orchestrator pairs run_id={run_id}")
-
-    try:
-        import importlib
-        orch_mod = importlib.import_module("cw_platform.orchestrator")
-        try:
-            orch_mod = importlib.reload(orch_mod)
-        except Exception:
-            pass
-
-        OrchestratorClass = getattr(orch_mod, "Orchestrator")
-        _log(f"[i] Orchestrator module: {getattr(orch_mod, '__file__', '?')}")
-
-        cfg = load_config()
-        mgr = OrchestratorClass(config=cfg)
-        dry_cfg = bool(((cfg.get("sync") or {}).get("dry_run") or False))
-        dry_ovr = bool(overrides.get("dry_run"))
-        dry = dry_cfg or dry_ovr
-
-        result = mgr.run_pairs(
-            dry_run=dry,
-            progress=_append_log.__get__(None, type(_append_log)) if False else _append_log,
-            write_state_json=True,
-            state_path=STATE_PATH,
-            use_snapshot=True,
-            overrides=overrides,
-        )
-
-        added = int(result.get("added", 0))
-        removed = int(result.get("removed", 0))
-
-        try:
-            state = _load_state()
-            if state:
-                STATS.refresh_from_state(state)
-                STATS.record_summary(added, removed)
-            else:
-                _append_log("SYNC", "[!] No state found after sync; stats not updated.")
-        except Exception as e:
-            _append_log("SYNC", f"[!] Stats update failed: {e}")
-
-        _log(f"[i] Done. Total added: {added}, Total removed: {removed}")
-        _log("[SYNC] exit code: 0")
-
-    except Exception as e:
-        _append_log("SYNC", f"[!] Sync error: {e}")
-        _append_log("SYNC", "[SYNC] exit code: 1")
-    finally:
-        RUNNING_PROCS.pop("SYNC", None)
-
 # Scheduler sync starter
 def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
     p = dict(payload or {})
@@ -1156,20 +1006,10 @@ scheduler = SyncScheduler(
     log_fn=_UIHostLogger("SYNC", "SCHED"),
 )
 
-# Platform and metadata managers
-try:
-    from cw_platform.manager import PlatformManager as _PlatformMgr
-    _PLATFORM = _PlatformMgr(load_config, save_config)
-except Exception as _e:
-    _PLATFORM = None
-    print("PlatformManager not available:", _e)
+from cw_platform.metadata import MetadataManager as _MetadataMgr
 
-try:
-    from cw_platform.metadata import MetadataManager as _MetadataMgr
-    _METADATA = _MetadataMgr(load_config, save_config)
-except Exception as _e:
-    _METADATA = None
-    print("MetadataManager not available:", _e)
+# Metadata manager
+_METADATA = _MetadataMgr(load_config, save_config)
 
 # Entry point
 def main(host: str = "0.0.0.0", port: int = 8787) -> None:
