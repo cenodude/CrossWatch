@@ -18,7 +18,7 @@ from ._snapshots import (
     module_checkpoint,
     prev_checkpoint,
 )
-from ._applier import apply_add, apply_remove
+from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._planner import diff, diff_ratings, diff_progress
@@ -379,7 +379,15 @@ def run_one_way_feature(
 
     def _cap_obsdel(ops) -> bool | None:
         try:
-            v = (ops.capabilities() or {}).get("observed_deletes")
+            caps = ops.capabilities() or {}
+            if isinstance(caps, Mapping):
+                per = caps.get(feature)
+                if isinstance(per, Mapping) and per.get("observed_deletes") is not None:
+                    v = per.get("observed_deletes")
+                else:
+                    v = caps.get("observed_deletes")
+            else:
+                v = None
             return None if v is None else bool(v)
         except Exception:
             return None
@@ -663,12 +671,16 @@ def run_one_way_feature(
         remove_mode = "source_deletes"
 
     mirror_removes: list[dict[str, Any]] = []
+    updates: list[dict[str, Any]] = []
     if feature == "ratings":
         src_idx  = _ratings_filter_index(src_idx,  fcfg)
         dst_full = _ratings_filter_index(dst_full, fcfg)
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
         adds, mirror_removes = diff_ratings(src_idx, dst_full)
+        dst_alias_tmp = _alias_index(dst_full)
+        updates = [it for it in adds if _present(dst_full, dst_alias_tmp, it)]
+        adds = [it for it in adds if not _present(dst_full, dst_alias_tmp, it)]
 
     elif feature == "progress":
         if manual_adds:
@@ -846,6 +858,7 @@ def run_one_way_feature(
 
     if not allow_adds:
         adds = []
+        updates = []
     if not allow_removes:
         removes = []
 
@@ -864,10 +877,11 @@ def run_one_way_feature(
 
     manual_blocked = 0
     if manual_blocks:
-        b_adds, b_rem = len(adds), len(removes)
+        b_adds, b_upd, b_rem = len(adds), len(updates), len(removes)
         adds = _filter_manual_block(adds, manual_blocks)
+        updates = _filter_manual_block(updates, manual_blocks)
         removes = _filter_manual_block(removes, manual_blocks)
-        manual_blocked = (b_adds - len(adds)) + (b_rem - len(removes))
+        manual_blocked = (b_adds - len(adds)) + (b_upd - len(updates)) + (b_rem - len(removes))
 
         if manual_blocked:
             ctx.emit(
@@ -895,8 +909,18 @@ def run_one_way_feature(
         if _blocked:
             emit("debug", msg="blocked.unresolved", feature=feature, dst=dst, blocked=_blocked)
 
+    if unresolved_known and updates:
+        _before = len(updates)
+        try:
+            updates = [it for it in updates if _ck(it) not in unresolved_known]
+        except Exception:
+            pass
+        _blocked = _before - len(updates)
+        if _blocked:
+            emit("debug", msg="blocked.unresolved", feature=feature, dst=dst, blocked=_blocked)
+
     emit("one:plan", src=src, dst=dst, feature=feature,
-        adds=len(adds), removes=len(removes),
+        adds=len(adds), removes=len(removes), updates=len(updates),
         src_count=len(src_idx), dst_count=len(dst_full))
 
     bb = ((cfg or {}).get("blackbox") if isinstance(cfg, dict) else getattr(cfg, "blackbox", {})) or {}
@@ -905,15 +929,7 @@ def run_one_way_feature(
 
     guard = PhantomGuard(src, dst, feature, ttl_days=ttl_days, enabled=use_phantoms)
     if use_phantoms and adds:
-        # Ratings use upsert semantics
-        if feature == "ratings":
-            updates = [it for it in adds if _present(dst_full, dst_alias, it)]
-            fresh = [it for it in adds if not _present(dst_full, dst_alias, it)]
-            if fresh:
-                fresh, _blocked = guard.filter_adds(fresh, _ck, _minimal, emit, ctx.state_store, pair_key)
-            adds = updates + fresh
-        else:
-            adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
+        adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
@@ -941,8 +957,20 @@ def run_one_way_feature(
             duplicate_canonical_keys=add_attempted_duplicate_keys,
         )
 
+    updated_effective = 0
     added_effective = 0
     added_provider_reported = 0
+    res_update: dict[str, Any] = {
+        "attempted": 0,
+        "confirmed": 0,
+        "skipped": 0,
+        "skipped_exact": 0,
+        "skipped_inferred": 0,
+        "skipped_reported": 0,
+        "skip_basis": "provider_keys",
+        "unresolved": 0,
+        "errors": 0,
+    }
     res_add: dict[str, Any] = {
         "attempted": 0,
         "confirmed": 0,
@@ -957,6 +985,56 @@ def run_one_way_feature(
     unresolved_new_total = 0
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
+
+    if updates:
+        if dst_down:
+            record_unresolved(dst, feature, updates, hint="provider_down:update")
+            emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="update", count=len(updates))
+            unresolved_new_total += len(updates)
+        else:
+            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            upd_res = apply_update(
+                dst_ops=dst_ops,
+                cfg=cfg,
+                dst_name=dst,
+                feature=feature,
+                items=updates,
+                dry_run=dry_run_flag,
+                emit=emit,
+                dbg=dbg,
+                chunk_size=effective_chunk_size(ctx, dst),
+                chunk_pause_ms=_pause_for(dst),
+            )
+            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            res_update = {
+                "attempted": int((upd_res or {}).get("attempted", 0)),
+                "confirmed": int((upd_res or {}).get("confirmed", (upd_res or {}).get("count", 0)) or 0),
+                "skipped": int((upd_res or {}).get("skipped", 0)),
+                "skipped_exact": int((upd_res or {}).get("skipped_exact", 0) or 0),
+                "skipped_inferred": int((upd_res or {}).get("skipped_inferred", 0) or 0),
+                "skipped_reported": int((upd_res or {}).get("skipped_reported", 0) or 0),
+                "skip_basis": str((upd_res or {}).get("skip_basis") or "provider_keys"),
+                "unresolved": int((upd_res or {}).get("unresolved", 0)),
+                "errors": int((upd_res or {}).get("errors", 0)),
+            }
+            prov_unresolved_keys_raw = (upd_res or {}).get("unresolved_keys")
+            prov_unresolved_keys: list[str] = (
+                [str(x) for x in prov_unresolved_keys_raw if x] if isinstance(prov_unresolved_keys_raw, list) else []
+            )
+            prov_unresolved_set: set[str] = set(prov_unresolved_keys)
+            new_unresolved = (unresolved_after - unresolved_before) | (prov_unresolved_set - unresolved_before)
+            unresolved_new_total += len(new_unresolved)
+            updated_effective = int((upd_res or {}).get("confirmed", (upd_res or {}).get("count", 0)) or 0)
+            if updated_effective and not dry_run_flag:
+                upd_map = {(_ck(_minimal(it)) or ""): _minimal(it) for it in updates}
+                confirmed_update_keys = [str(x) for x in ((upd_res or {}).get("confirmed_keys") or []) if x]
+                keys_to_write = confirmed_update_keys if confirmed_update_keys else (list(upd_map.keys()) if updated_effective >= len(upd_map) else [])
+                for k in keys_to_write:
+                    v = upd_map.get(k)
+                    if v:
+                        dst_full[k] = v
+                if keys_to_write:
+                    _bust_snapshot(dst)
 
     if adds:
         if dst_down:
@@ -1217,11 +1295,15 @@ def run_one_way_feature(
 
     return {
         "ok": True,
+        "updated": int(updated_effective),
         "added": int(added_effective),
         "removed": int(removed_count),
-        "skipped": int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
-        "unresolved": int((res_add or {}).get("unresolved", 0)) + int((res_remove or {}).get("unresolved", 0)),
-        "errors": int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
+        "skipped": int((res_update or {}).get("skipped", 0)) + int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
+        "unresolved": int((res_update or {}).get("unresolved", 0)) + int((res_add or {}).get("unresolved", 0)) + int((res_remove or {}).get("unresolved", 0)),
+        "errors": int((res_update or {}).get("errors", 0)) + int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
+        "skipped_exact": int((res_update or {}).get("skipped_exact", 0)) + int((res_add or {}).get("skipped_exact", 0)),
+        "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),
         "res_add": res_add,
+        "res_update": res_update,
         "res_remove": res_remove,
     }
