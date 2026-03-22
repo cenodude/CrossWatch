@@ -201,19 +201,22 @@
     providersInflight = (async () => {
       try {
         const arr = await listProviders(!!force);
-        if (!Array.isArray(arr) || !arr.length) {
+        const visible = Array.isArray(arr) && arr.some((item) => typeof item?.configured === "boolean")
+          ? arr.filter((item) => item?.configured !== false)
+          : arr;
+        if (!Array.isArray(visible) || !visible.length) {
           div.innerHTML = '<div class="muted">No providers discovered.</div>';
           return [];
         }
 
         window.cx = window.cx || {};
-        window.cx.providers = arr;
+        window.cx.providers = visible;
 
         if (typeof window.renderConnections === "function") {
           try { window.renderConnections(); } catch (e) { console.warn("renderConnections failed", e); }
         } else {
           const chip = (label, on) => `<span class="badge ${on ? "" : "feature-disabled"}" style="margin-left:6px">${label}</span>`;
-          div.innerHTML = arr.map((p) => {
+          div.innerHTML = visible.map((p) => {
             const key = normProviderKey(p.key || p.name || p.label);
             const caps = p.features || {};
             return `
@@ -230,7 +233,7 @@
               </div>`;
           }).join("");
         }
-        return arr;
+        return visible;
       } catch (e) {
         div.innerHTML = '<div class="muted">Failed to load providers.</div>';
         console.warn("loadProviders error", e);
