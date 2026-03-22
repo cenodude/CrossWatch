@@ -44,10 +44,10 @@
   const badge = (name)=>{ const key=String(name || "").toUpperCase(), meta=providerMeta(), label=meta.label?.(key) || key, logo=logoFor(key), img=logo ? `<img src="${logo}" alt="" aria-hidden="true">` : ""; return `<span class="cf-badge">${img}${esc(label)}</span>`; };
   const head = (tag,title)=>`<span class="cf-head"><span class="cf-tag">${esc(tag)}</span><span class="cf-title">${title}</span></span>`;
   const block = (type,titleHTML,metaText="",extra="")=>`<div class="cf-event ${type} ${type==="start"?"cf-slide-in":"cf-fade-in"} ${String(extra).replace(/\b(?:cf-)?complete-shimmer\b/g,"").replace(/\s+/g," ").trim()}">${titleHTML}${metaText?`<span class="cf-sep">·</span><span class="cf-meta">${metaText}</span>`:""}</div>`;
-  const summary = (ev, withPairs=true)=>{ const parts=[`+${ev.added|0} / -${ev.removed|0}`]; if(withPairs && "pairs" in ev) parts.push(`pairs=${ev.pairs|0}`); if("skipped" in ev) parts.push(`skipped=${ev.skipped|0}`); if("unresolved" in ev) parts.push(`unresolved=${ev.unresolved|0}`); if("errors" in ev) parts.push(`errors=${ev.errors|0}`); if("blocked" in ev) parts.push(`blocked=${ev.blocked|0}`); return parts.join(" · "); };
+  const summary = (ev, withPairs=true)=>{ const parts=[`+${ev.added|0} / -${ev.removed|0} / ~${ev.updated|0}`]; if(withPairs && "pairs" in ev) parts.push(`pairs=${ev.pairs|0}`); if("skipped" in ev) parts.push(`skipped=${ev.skipped|0}`); if("unresolved" in ev) parts.push(`unresolved=${ev.unresolved|0}`); if("errors" in ev) parts.push(`errors=${ev.errors|0}`); if("blocked" in ev) parts.push(`blocked=${ev.blocked|0}`); return parts.join(" · "); };
 
-  let pendingRunId=null, pair={A:"A",B:"B"}, counts={add:{},remove:{}}, squelchPlain=0;
-  const resetCounts=(a,b)=>(counts={add:{[a]:0,[b]:0},remove:{[a]:0,[b]:0}});
+  let pendingRunId=null, pair={A:"A",B:"B"}, counts={add:{},remove:{},update:{}}, squelchPlain=0;
+  const resetCounts=(a,b)=>(counts={add:{[a]:0,[b]:0},remove:{[a]:0,[b]:0},update:{[a]:0,[b]:0}});
   const dstNameFrom=(ev)=>ev?.dst ? String(ev.dst).toUpperCase() : String(ev?.event || "").includes(":A:") ? pair.A : pair.B;
 
   const progMap=Object.create(null), progPendingTick=Object.create(null), progActiveKeyByBase=Object.create(null), progRunCounterByBase=Object.create(null);
@@ -55,7 +55,7 @@
   function resetState(){
     pendingRunId=null;
     pair={A:"A",B:"B"};
-    counts={add:{},remove:{}};
+    counts={add:{},remove:{},update:{}};
     squelchPlain=0;
     clearObj(progMap);
     clearObj(progPendingTick);
@@ -74,7 +74,7 @@
 
   function ensureProgressRow(root,key){
     let el=progMap[key]; if(el && root.contains(el)) return el;
-    const [mode,dst,feat,action]=String(key).split("|"), verb=mode==="snap" ? "Snapshot" : action==="remove" ? "Removing" : "Adding";
+    const [mode,dst,feat,action]=String(key).split("|"), verb=mode==="snap" ? "Snapshot" : action==="remove" ? "Removing" : action==="update" ? "Updating" : "Adding";
     el=d.createElement("div");
     el.className="cf-event progress cf-fade-in";
     el.innerHTML=`<div class="cf-prog-head"><span class="cf-tag">${mode==="snap"?"Scan":"Apply"}</span><span class="cf-title">${verb}</span><span class="cf-prog-badge">${badge(dst)}</span><span class="cf-prog-sub">· ${esc(cap(feat))}</span><div class="cf-prog-bar"><div class="cf-prog-fill"></div><div class="cf-prog-text">0%</div></div></div><div class="cf-prog-stats"></div>`;
@@ -94,7 +94,7 @@
       row.classList.add("cf-prog-done");
       if(txt) txt.textContent=total>0 ? `${total}/${total} · 100%` : "100%";
       if((/^apply:/.test(String(ev.event || "")) || String(key).startsWith("apply|")) && statsEl){
-        const action=String(ev.event || "").includes(":remove:") ? "remove" : "add", word=action==="remove" ? "removed" : "added";
+        const action=String(ev.event || "").includes(":remove:") ? "remove" : String(ev.event || "").includes(":update:") ? "update" : "add", word=action==="remove" ? "removed" : action==="update" ? "updated" : "added";
         const vals={attempted:Number(ev.attempted ?? ev.result?.attempted ?? 0),confirmed:Number(ev.confirmed ?? ev.result?.confirmed ?? ev.result?.count ?? 0),skipped:Number(ev.skipped ?? ev.result?.skipped ?? 0),unresolved:Number(ev.unresolved ?? ev.result?.unresolved ?? 0),errors:Number(ev.errors ?? ev.result?.errors ?? 0)};
         statsEl.innerHTML=[{cls:"",txt:`<b>${vals.attempted}</b> attempted`},{cls:"stat-ok",txt:`<b>${vals.confirmed}</b> ${word}`},vals.skipped>0&&{cls:"stat-muted",txt:`<b>${vals.skipped}</b> skipped`},vals.unresolved>0&&{cls:"stat-warn",txt:`<b>${vals.unresolved}</b> unresolved`},vals.errors>0&&{cls:"stat-err",txt:`<b>${vals.errors}</b> errors`}].filter(Boolean).map((p)=>`<span class="cf-stat ${p.cls}">${p.txt}</span>`).join(" ");
       }
@@ -136,29 +136,33 @@
       case "snapshot:progress":
       case "apply:add:start":
       case "apply:add:progress":
+      case "apply:update:start":
+      case "apply:update:progress":
       case "apply:remove:start":
       case "apply:remove:progress":
         return null;
       case "one:plan": {
-        const adds=ev.adds|0, removes=ev.removes|0, has=adds+removes;
-        return block("plan", head("Plan", `Plan for ${esc(cap(ev.feature))}`), has ? `adding ${adds}, removing ${removes}` : "nothing to do", has ? "" : "cf-muted");
+        const adds=ev.adds|0, removes=ev.removes|0, updates=ev.updates|0, has=adds+removes+updates;
+        return block("plan", head("Plan", `Plan for ${esc(cap(ev.feature))}`), has ? `adding ${adds}, removing ${removes}, updating ${updates}` : "nothing to do", has ? "" : "cf-muted");
       }
       case "apply:unresolved": return block("plan", head("Check", `${ev.count|0} unresolved ${esc(cap(ev.feature))} on ${badge(ev.provider)}`), "item could not be matched", "cf-muted");
       case "two:plan": {
-        const has=(ev.add_to_A|0)+(ev.add_to_B|0)+(ev.rem_from_A|0)+(ev.rem_from_B|0);
-        return block("plan", head("Plan","Plan"), has ? `add A=${ev.add_to_A|0}, add B=${ev.add_to_B|0}, remove A=${ev.rem_from_A|0}, remove B=${ev.rem_from_B|0}` : "nothing to do", has ? "" : "cf-muted");
+        const has=(ev.add_to_A|0)+(ev.add_to_B|0)+(ev.upd_to_A|0)+(ev.upd_to_B|0)+(ev.rem_from_A|0)+(ev.rem_from_B|0);
+        return block("plan", head("Plan","Plan"), has ? `add A=${ev.add_to_A|0}, add B=${ev.add_to_B|0}, update A=${ev.upd_to_A|0}, update B=${ev.upd_to_B|0}, remove A=${ev.rem_from_A|0}, remove B=${ev.rem_from_B|0}` : "nothing to do", has ? "" : "cf-muted");
       }
+      case "two:apply:update:A:done":
+      case "two:apply:update:B:done":
       case "two:apply:add:A:done":
       case "two:apply:add:B:done":
       case "two:apply:remove:A:done":
       case "two:apply:remove:B:done": {
-        const kind=ev.event.includes("add") ? "add" : "remove", who=dstNameFrom(ev), cnt=Number(ev.result?.count ?? ev.count ?? 0);
+        const kind=ev.event.includes("remove") ? "remove" : ev.event.includes("update") ? "update" : "add", who=dstNameFrom(ev), cnt=Number(ev.result?.count ?? ev.count ?? 0);
         counts[kind][who]=(counts[kind][who] || 0)+cnt;
         return null;
       }
       case "two:done": {
         const {A,B}=pair, row=(kind,a,b)=>block(kind, head(kind, cap(kind)), `${A}·${a} / ${B}·${b}`, a+b ? "" : "cf-muted");
-        return [row("remove",counts.remove[A]|0,counts.remove[B]|0), row("add",counts.add[A]|0,counts.add[B]|0)].join("");
+        return [row("remove",counts.remove[A]|0,counts.remove[B]|0), row("update",counts.update[A]|0,counts.update[B]|0), row("add",counts.add[A]|0,counts.add[B]|0)].join("");
       }
       case "run:done": return block("complete", head("Done","Sync complete"), summary(ev));
       case "debug":
@@ -187,8 +191,8 @@
       if(/^\[i]\s*providers:/i.test(t)){ squelchPlain=2; return null; }
       if(/^\[i]\s*features:/i.test(t)){ squelchPlain=3; return null; }
     }
-    const mDone=t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)(?:,\s*Total skipped:\s*(\d+))?(?:,\s*Total unresolved:\s*(\d+))?(?:,\s*Total errors:\s*(\d+))?(?:,\s*Total blocked:\s*(\d+))?/i);
-    if(mDone){ const ev={added:Number(mDone[1] || 0),removed:Number(mDone[2] || 0),skipped:Number(mDone[3] || 0),unresolved:Number(mDone[4] || 0),errors:Number(mDone[5] || 0),blocked:Number(mDone[6] || 0)}; return block("complete", head("Done","Sync complete"), summary(ev,false)); }
+    const mDone=t.match(/^\[i]\s*Done\.\s*Total added:\s*(\d+),\s*Total removed:\s*(\d+)(?:,\s*Total updated:\s*(\d+))?(?:,\s*Total skipped:\s*(\d+))?(?:,\s*Total unresolved:\s*(\d+))?(?:,\s*Total errors:\s*(\d+))?(?:,\s*Total blocked:\s*(\d+))?/i);
+    if(mDone){ const ev={added:Number(mDone[1] || 0),removed:Number(mDone[2] || 0),updated:Number(mDone[3] || 0),skipped:Number(mDone[4] || 0),unresolved:Number(mDone[5] || 0),errors:Number(mDone[6] || 0),blocked:Number(mDone[7] || 0)}; return block("complete", head("Done","Sync complete"), summary(ev,false)); }
     const mSched1=t.match(/^\s*(?:\[?INFO]?)\s*\[?SCHED]?\s*scheduler\s+(started|stopped|refreshed)\s*\((enabled|disabled)\)/i);
     if(mSched1) return block(mSched1[2].toLowerCase()==="enabled" ? "start" : "remove", head("Sched","Scheduler"), `${mSched1[1].toLowerCase()} · ${mSched1[2].toLowerCase()}`);
     if(/^\s*(?:\[?INFO]?)\s*scheduler:\s*started\s*(?:&|&amp;)\s*refreshed\s*$/i.test(t)) return block("start", head("Sched","Scheduler"), "started · refreshed");
