@@ -319,7 +319,15 @@
   }
 
   function applySyncVisibility() {
-    const allowed = getConfiguredProviders();
+    const fromProviderList = Array.isArray(window.cx?.providers) ? window.cx.providers : [];
+    const allowed = fromProviderList.some((item) => typeof item?.configured === "boolean")
+      ? new Set(
+          fromProviderList
+            .filter((item) => item?.configured !== false)
+            .map((item) => String(item?.key || item?.name || item?.label || "").trim().toUpperCase())
+            .filter(Boolean)
+        )
+      : getConfiguredProviders();
     const host = byId("providers_list");
     if (host) {
       const cards = host.querySelectorAll(".prov-card").length
@@ -660,6 +668,9 @@
       const providers = extractProviderStatus(payload);
       renderConnectorStatus(providers, { stale: false });
       saveStatusCache(providers);
+      try {
+        document.dispatchEvent(new CustomEvent("cw-status-updated", { detail: { payload, providers } }));
+      } catch {}
       UI.status = buildStatusUIState(payload, providers);
       recomputeRunDisabled();
       applyStatusSideEffects();
@@ -806,7 +817,6 @@
     await refreshStatus(true);
     await refreshStats(true);
     await Promise.resolve(window.refreshInsights?.(true));
-    await Promise.resolve(window.manualRefreshStatus?.());
 
     if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
     if (!window.esLogs) queueSafe(() => window.openLogStream?.());
@@ -1720,22 +1730,15 @@
   }
 
 Object.assign(window, {
-  _el: byId, _val: readValue, _boolSel: boolSelect, _text: readText,
-  _setVal: setValue, _setText: setText, _setChecked: setChecked, setValIfExists: setValue,
-  isTV, stateAsBool, cwGetProviderInstances, cwGetProviderUsers, cwEnsureScrobbleRoutes, cwNextRouteId,
-  applyServerSecret, startSecretLoad, finishSecretLoad, getConfiguredProviders, resolveProviderKeyFromNode,
+  _setVal: setValue,
+  getConfiguredProviders,
   applySyncVisibility, scheduleApplySyncVisibility, bindSyncVisibilityObservers,
-  _invalidatePairsCache, _savePairsCache, _loadPairsCache, _getPairsFresh, isWatchlistEnabledInPairs,
-  normalizeProviders, saveStatusCache, loadStatusCache, refreshPairedProviders, toggleProviderBadges,
-  connState, pickCase, instancesTooltip, setBadge, renderConnectorStatus, refreshStatus, manualRefreshStatus,
-  toLocal, computeRedirectURI, flashCopy, recomputeRunDisabled, setSyncHeader, relTimeFromEpoch,
-  enforceMainLayout, softRefreshMain, hardRefreshMain, showTab, ensureScrobbler, toggleSection, setBusy,
-  runSync, setStatsExpanded, isElementOpen, findDetailsButton, findDetailsPanel, wireDetailsToStats,
-  fetchJSON, scheduleInsights, refreshInsights, renderSparkline, animateNumber, animateChart, refreshStats,
-  _setBarValues, _initStatsTooltip, ensureMainUpdateSlot, renderMainUpdatePill, checkForUpdate,
-  renderSummary, copySummary, setRefreshBusy, isPlaceholder,
-  isSettingsVisible, setBtnBusy, flashBtnOK, loadPairs, deletePair, cxSavePair, fixFormLabels,
-  cwToggleSyncMenu, cwCloseSyncMenu, DETAILS_MAX_LINES,
+  _invalidatePairsCache, isWatchlistEnabledInPairs,
+  loadStatusCache, renderConnectorStatus, refreshStatus, manualRefreshStatus,
+  computeRedirectURI, recomputeRunDisabled, relTimeFromEpoch,
+  showTab, toggleSection, runSync,
+  copySummary, loadPairs, cxSavePair,
+  cwToggleSyncMenu, DETAILS_MAX_LINES,
 });
 
   onReady(() => {
