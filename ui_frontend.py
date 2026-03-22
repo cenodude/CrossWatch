@@ -106,7 +106,7 @@ def _is_https_request(request: Request) -> bool:
 _HELPER_SCRIPTS = (
     "provider-meta.js", "icon-select.js", "scrobbler-ui.js", "scrobbler-user-picker.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
     "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js",
-    "restart_apply.js", "legacy-bridge.js",
+    "restart_apply.js",
 )
 _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
