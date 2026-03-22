@@ -19,7 +19,6 @@
   let providersCache = null;
   let authMo = null;
   let metaMo = null;
-  let busy = false;
 
   function getCachedConfig() {
     return window.CW?.Cache?.getCfg?.() || window._cfgCache || {};
@@ -33,23 +32,6 @@
       }
     } catch {}
     return getCachedConfig();
-  }
-
-  async function loadStatus(force = false) {
-    try {
-      if (!force && typeof window.CW?.API?.Status?.get === "function") {
-        return await window.CW.API.Status.get(!!force);
-      }
-      if (typeof window.CW?.API?.j === "function") {
-        return await window.CW.API.j(`/api/status${force ? "?fresh=1" : ""}`, {}, 15000);
-      }
-    } catch {}
-
-    try {
-      const res = await fetch(`/api/status${force ? "?fresh=1" : ""}`, { cache: "no-store" });
-      return res?.ok ? await res.json() : null;
-    } catch {}
-    return null;
   }
 
   window.invalidateConfigCache = () => {
@@ -84,6 +66,10 @@
 
   async function refreshAuthDots(force = false) {
     const cfg = await loadConfig(force);
+    if (cfg && typeof cfg === "object") {
+      try { window.CW?.Cache?.setCfg?.(cfg); } catch {}
+      try { window._cfgCache = cfg; } catch {}
+    }
     const host = $("auth-providers-icons");
     host?.querySelectorAll("img[data-prov]").forEach((img) => {
       img.style.display = isProviderConfigured(img.dataset.prov, cfg) ? "inline-block" : "none";
@@ -150,11 +136,15 @@
     const inst = data && typeof data === "object" ? data.instances : null;
     const sum = data && typeof data === "object" ? data.instances_summary : null;
     if (!inst || typeof inst !== "object") return "";
+    const ok = Number(sum?.ok);
+    const probed = Number(sum?.probed);
     const total = Number(sum?.total);
     if (!Number.isFinite(total) || total <= 1) return "";
     const lines = [
-      Number.isFinite(Number(sum?.ok))
-        ? `Profiles: ${Number(sum.ok)}/${total} connected`
+      Number.isFinite(probed) && probed > 0 && probed < total
+        ? `Profiles: ${ok}/${probed} checked, ${total} total`
+        : Number.isFinite(ok)
+        ? `Profiles: ${ok}/${total} connected`
         : `Profiles: ${total}`,
     ];
     const used = Array.isArray(sum?.used) ? sum.used : [];
@@ -244,71 +234,46 @@
       .forEach((el) => host.appendChild(el));
   }
 
-  async function refreshMainStatus(force = false) {
-    if (busy || window.cwIsAuthSetupPending?.() === true) return;
-    busy = true;
-
-    const btn = $("btn-status-refresh");
-    if (btn) {
-      btn.disabled = true;
-      btn.dataset.busy = "1";
-    }
-
-    try {
-      const [cfgJson, statusJson] = await Promise.all([
-        loadConfig(force).catch(() => null),
-        loadStatus(force).catch(() => null),
-      ]);
-      if (cfgJson && typeof cfgJson === "object") {
-        try { window.CW?.Cache?.setCfg?.(cfgJson); } catch {}
-        try { window._cfgCache = cfgJson; } catch {}
-      }
-      if (statusJson?.providers && typeof statusJson.providers === "object") providersCache = statusJson.providers;
-      Promise.resolve(refreshAuthDots(force)).catch(() => {});
-      renderProviders();
-    } catch (err) {
-      console.error("Status refresh failed:", err);
-      renderProviders();
-    } finally {
-      busy = false;
-      if (btn) {
-        btn.disabled = false;
-        delete btn.dataset.busy;
-      }
-    }
+  function applyStatusProviders(providers) {
+    if (providers && typeof providers === "object") providersCache = providers;
+    renderProviders();
   }
 
-  window.manualRefreshStatus = (e) => {
-    e?.preventDefault?.();
-    return refreshMainStatus(true);
-  };
+  function renderCachedProviders() {
+    const cached = typeof window.loadStatusCache === "function" ? window.loadStatusCache() : null;
+    if (cached?.providers && typeof cached.providers === "object") {
+      providersCache = cached.providers;
+    }
+    renderProviders();
+  }
 
   function bindStatusButton() {
     const btn = $("btn-status-refresh");
     if (!btn || btn.dataset.boundClick === "1") return;
     btn.dataset.boundClick = "1";
-    btn.addEventListener("click", window.manualRefreshStatus);
+    btn.addEventListener("click", (e) => window.manualRefreshStatus?.(e));
   }
 
   function init() {
     bindStatusButton();
-    observe("auth-providers", "auth", 200, () => refreshAuthDots(true).catch(() => {}), { childList: true, subtree: true });
+    observe("auth-providers", "auth", 200, () => refreshAuthDots(true).catch(() => {}).finally(renderProviders), { childList: true, subtree: true });
     observe("hub_tmdb_key", "meta", 0, syncMetadataProviderDot, { childList: true, characterData: true, subtree: true });
+    renderCachedProviders();
     let tries = 0;
     (function retry() {
       refreshAuthDots(false)
-        .then((ok) => ok || ++tries >= 50 || setTimeout(retry, 200))
+        .then((ok) => {
+          renderProviders();
+          return ok || ++tries >= 50 || setTimeout(retry, 200);
+        })
         .catch(() => ++tries < 50 && setTimeout(retry, 200));
     })();
-    if (String(document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase() === "main") {
-      void refreshMainStatus(false);
-    }
   }
 
   document.addEventListener(
     "settings-collect",
     () => {
-      refreshAuthDots(true).catch(() => {});
+      refreshAuthDots(true).catch(() => {}).finally(renderProviders);
       syncMetadataProviderDot();
     },
     true
@@ -318,15 +283,24 @@
     "tab-changed",
     (event) => {
       const tab = String(event?.detail?.id || event?.detail?.tab || "").toLowerCase();
-      refreshAuthDots(tab === "settings").catch(() => {});
+      refreshAuthDots(tab === "settings").catch(() => {}).finally(renderProviders);
       syncMetadataProviderDot();
-      if (tab === "main") setTimeout(() => { void refreshMainStatus(false); }, 0);
+      if (tab === "main") setTimeout(renderCachedProviders, 0);
+    },
+    true
+  );
+
+  document.addEventListener(
+    "cw-status-updated",
+    (event) => {
+      const providers = event?.detail?.providers || null;
+      refreshAuthDots(false).catch(() => {}).finally(() => applyStatusProviders(providers));
     },
     true
   );
 
   window.addEventListener("auth-changed", () => {
-    refreshAuthDots(true).catch(() => {});
+    refreshAuthDots(true).catch(() => {}).finally(renderProviders);
   });
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
