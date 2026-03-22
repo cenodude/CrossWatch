@@ -102,12 +102,9 @@ def register_insights(app: FastAPI) -> None:
         STATS = getattr(CW, "STATS", None)
         REPORT_DIR = getattr(CW, "REPORT_DIR", None)
         CACHE_DIR = getattr(CW, "CACHE_DIR", None)
-        _parse_epoch: Callable[[Any], int] = getattr(CW, "_parse_epoch", lambda *_: 0)
         _load_wall_snapshot = getattr(CW, "_load_wall_snapshot", lambda: [])
         _get_orchestrator = getattr(CW, "_get_orchestrator", None)
         _append_log = getattr(CW, "_append_log", lambda *a, **k: None)
-        
-        _compute_lanes_impl = getattr(CW, "_compute_lanes_from_stats", None)
         _load_state = getattr(CW, "_load_state", lambda: {})
         
         def _series_title_for_event(e: dict[str, Any]) -> str:
@@ -806,10 +803,19 @@ def register_insights(app: FastAPI) -> None:
             return merged or list(base_feats)
 
         feature_keys = _features_from(getattr(STATS, "data", {}) or {})
+        events_raw: list[dict[str, Any]] = []
+        _lane_cache: dict[tuple[int, int, int], tuple[dict[str, dict[str, Any]], dict[str, bool]]] = {}
 
         def _safe_parse_epoch(v: Any) -> int:
             try:
-                return int(_parse_epoch(v) or 0)
+                if v is None:
+                    return 0
+                if isinstance(v, (int, float)):
+                    return int(v)
+                s = str(v).strip()
+                if s.isdigit():
+                    return int(s)
+                return int(_dt.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
             except Exception:
                 return 0
 
@@ -835,6 +841,71 @@ def register_insights(app: FastAPI) -> None:
 
         def _empty_enabled() -> dict[str, bool]:
             return {k: False for k in feature_keys}
+
+        def _event_epoch(e: dict[str, Any]) -> int:
+            for k in ("sync_ts", "ingested_ts", "seen_ts", "ts"):
+                try:
+                    v = e.get(k)
+                    if v is not None:
+                        n = int(v)
+                        if n:
+                            return n
+                except Exception:
+                    pass
+            for k in ("watched_at", "last_watched_at", "rated_at", "user_rated_at"):
+                n = _safe_parse_epoch(e.get(k))
+                if n:
+                    return n
+            return 0
+
+        def _event_sig(e: dict[str, Any]) -> str:
+            key = str(e.get("key") or "").strip().lower()
+            if key:
+                if "@" in key:
+                    key = key.split("@", 1)[0]
+                if "|" in key:
+                    key = key.split("|")[-1]
+                return key
+            ids = (e.get("ids") or {}) if isinstance(e.get("ids"), dict) else {}
+            for idk in ("tmdb", "imdb", "tvdb", "slug"):
+                v = ids.get(idk)
+                if v:
+                    return f"{idk}:{str(v).lower()}"
+            title = str(e.get("title") or e.get("name") or "").strip().lower()
+            year = str(e.get("year") or e.get("release_year") or "")
+            typ = str(e.get("type") or "").strip().lower()
+            return f"{typ}|title:{title}|year:{year}"
+
+        def _spot_item_for_event(e: dict[str, Any]) -> dict[str, Any]:
+            slim = {
+                k: e.get(k)
+                for k in (
+                    "title",
+                    "series_title",
+                    "show_title",
+                    "name",
+                    "key",
+                    "type",
+                    "source",
+                    "year",
+                    "season",
+                    "episode",
+                    "added_at",
+                    "listed_at",
+                    "watched_at",
+                    "rated_at",
+                    "last_watched_at",
+                    "user_rated_at",
+                    "ts",
+                    "seen_ts",
+                    "sync_ts",
+                    "ingested_ts",
+                )
+                if k in e and e.get(k) is not None
+            }
+            if "title" not in slim:
+                slim["title"] = e.get("title") or e.get("key") or "item"
+            return _format_event_title(slim)
         
         def _is_presence_stub(rec: dict[str, Any]) -> bool:
             if not rec:
@@ -1050,26 +1121,99 @@ def register_insights(app: FastAPI) -> None:
             since: int,
             until: int,
         ) -> tuple[dict[str, dict[str, Any]], dict[str, bool]]:
-            try:
-                if callable(_compute_lanes_impl):
-                    res: Any = _compute_lanes_impl(int(since or 0), int(until or 0))
-                    feats_raw: Any = {}
-                    enabled_raw: Any = {}
-                    if isinstance(res, tuple) and len(res) == 2:
-                        feats_raw, enabled_raw = res
-                    feats: dict[str, dict[str, Any]] = (
-                        feats_raw if isinstance(feats_raw, dict) else _empty_feats()
-                    )
-                    enabled: dict[str, bool] = (
-                        enabled_raw if isinstance(enabled_raw, dict) else _empty_enabled()
-                    )
-                    for k in feature_keys:
-                        feats.setdefault(k, _zero_lane())
-                        enabled.setdefault(k, False)
-                    return feats, enabled
-            except Exception as e:
-                _append_log("INSIGHTS", f"[!] _compute_lanes_from_stats failed: {e}")
-            return _empty_feats(), _empty_enabled()
+            key = (int(since or 0), int(until or 0), len(events_raw))
+            if key in _lane_cache:
+                return _lane_cache[key]
+
+            feats = _empty_feats()
+            enabled = _empty_enabled()
+            if not events_raw:
+                _lane_cache[key] = (feats, enabled)
+                return feats, enabled
+
+            rows = [
+                e for e in events_raw
+                if isinstance(e, dict) and key[0] <= _event_epoch(e) <= key[1]
+            ]
+            if not rows:
+                _lane_cache[key] = (feats, enabled)
+                return feats, enabled
+
+            anyin = lambda s, toks: any(t in s for t in toks)
+            seen = {
+                name: {"add": set(), "remove": set(), "update": set()}
+                for name in feature_keys
+            }
+
+            for e in rows:
+                action = (
+                    str(e.get("action") or e.get("op") or e.get("change") or "")
+                    .lower()
+                    .replace(":", "_")
+                    .replace("-", "_")
+                )
+                feat = (
+                    str(e.get("feature") or e.get("feat") or "")
+                    .lower()
+                    .replace(":", "_")
+                    .replace("-", "_")
+                )
+                sig = _event_sig(e)
+                spot = _spot_item_for_event(e)
+
+                lane_name = None
+                bucket = "add"
+                if ("watchlist" in action) or feat == "watchlist":
+                    lane_name = "watchlist"
+                    if anyin(action, ("remove", "unwatchlist", "delete", "del", "rm", "clear")):
+                        bucket = "remove"
+                    elif anyin(action, ("update", "rename", "edit", "move", "reorder", "relist")):
+                        bucket = "update"
+                elif action in ("rate", "rating", "update_rating", "unrate") or ("rating" in action) or ("rating" in feat):
+                    lane_name = "ratings"
+                    if anyin(action, ("unrate", "remove", "clear", "delete", "unset", "erase")):
+                        bucket = "remove"
+                    elif anyin(action, ("update", "edit", "correct", "fix")):
+                        bucket = "update"
+                elif feat == "progress" or ("progress" in feat) or ("resume" in action):
+                    lane_name = "progress"
+                    bucket = "remove" if anyin(action, ("remove", "clear", "reset")) else "update"
+                elif feat == "playlists" or "playlist" in action or "playlists" in action:
+                    lane_name = "playlists"
+                    if anyin(action, ("remove", "delete", "del", "rm", "clear")):
+                        bucket = "remove"
+                    elif anyin(action, ("update", "edit", "rename", "move", "reorder")):
+                        bucket = "update"
+                else:
+                    is_history_feat = feat in ("history", "watch", "watched") or ("history" in action)
+                    is_add_like = anyin(action, ("watch", "scrobble", "checkin", "mark_watched", "history_add", "add_history"))
+                    is_remove_like = anyin(action, ("unwatch", "remove_history", "history_remove", "delete_watch", "del_history"))
+                    if is_history_feat or is_add_like or is_remove_like:
+                        lane_name = "history"
+                        if is_remove_like:
+                            bucket = "remove"
+                        elif anyin(action, ("update", "edit", "fix", "repair", "adjust", "correct")):
+                            bucket = "update"
+
+                if lane_name not in feats:
+                    continue
+                lane = feats[lane_name]
+                if sig in seen[lane_name][bucket]:
+                    continue
+                if bucket == "update" and (sig in seen[lane_name]["add"] or sig in seen[lane_name]["remove"]):
+                    continue
+                seen[lane_name][bucket].add(sig)
+                lane["added" if bucket == "add" else "removed" if bucket == "remove" else "updated"] += 1
+                lane[f"spotlight_{bucket if bucket != 'remove' else 'remove'}"].append(spot)
+                enabled[lane_name] = True
+
+            for lane in feats.values():
+                lane["spotlight_add"] = list((lane.get("spotlight_add") or [])[-25:])[::-1]
+                lane["spotlight_remove"] = list((lane.get("spotlight_remove") or [])[-25:])[::-1]
+                lane["spotlight_update"] = list((lane.get("spotlight_update") or [])[-25:])[::-1]
+
+            _lane_cache[key] = (feats, enabled)
+            return feats, enabled
 
         series: list[dict[str, int]] = []
         generated_at: str | None = None
@@ -1155,10 +1299,8 @@ def register_insights(app: FastAPI) -> None:
 
                     stats_feats, stats_enabled = _safe_compute_lanes(since, until)
                     for name in feature_keys:
-                        lane = lanes.get(name)
-                        if not isinstance(lane, dict) or all(
-                            (lane.get(x) or 0) == 0 for x in ("added", "removed", "updated")
-                        ):
+                        lane_in = lanes_in.get(name)
+                        if not isinstance(lane_in, dict):
                             lanes[name] = stats_feats.get(name) or _zero_lane()
 
                     enabled_raw = d.get("features_enabled") or d.get("enabled") or {}
@@ -1706,9 +1848,6 @@ def register_insights(app: FastAPI) -> None:
                 wa, wr, wu = t
             else:
                 wa, wr, wu = (0, 0, 0)
-
-            if not (add_last or rem_last or upd_last):
-                add_last, rem_last, upd_last = wa, wr, wu
 
             s = series_by_feature.get(feat, [])
             feats_out[feat] = {
