@@ -16,6 +16,56 @@ def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5)
             __import__("time").sleep(base_sleep * (2 ** i))
     raise last  # type: ignore
 
+def _spotlight_items(
+    items: Sequence[Mapping[str, Any]],
+    confirmed_keys: Sequence[str],
+    *,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    try:
+        from ..id_map import canonical_key as _ckey  # type: ignore
+    except Exception:
+        _ckey = None  # type: ignore
+
+    if not _ckey:
+        return []
+
+    key_order = [str(k) for k in confirmed_keys if k]
+    if not key_order:
+        return []
+
+    by_key: dict[str, Mapping[str, Any]] = {}
+    for item in items or []:
+        try:
+            key = str(_ckey(item) or "")
+        except Exception:
+            key = ""
+        if key and key not in by_key:
+            by_key[key] = item
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in key_order:
+        item = by_key.get(key)
+        if not isinstance(item, Mapping) or key in seen:
+            continue
+        slim: dict[str, Any] = {"key": key}
+        for field in ("type", "title", "name", "year", "season", "episode", "series_title", "show_title"):
+            val = item.get(field)
+            if val not in (None, ""):
+                slim[field] = val
+        raw_ids = item.get("ids")
+        if isinstance(raw_ids, Mapping):
+            slim["ids"] = dict(raw_ids)
+        raw_show_ids = item.get("show_ids")
+        if isinstance(raw_show_ids, Mapping):
+            slim["show_ids"] = dict(raw_show_ids)
+        out.append(slim)
+        seen.add(key)
+        if len(out) >= limit:
+            break
+    return out
+
 def _normalize(
     res: dict[str, Any] | None,
     items: Sequence[Mapping[str, Any]],
@@ -243,6 +293,51 @@ def apply_add(
         skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
+        spotlight=_spotlight_items(items, cast(Sequence[str], res.get("confirmed_keys") or [])),
+        result=res,
+    )
+    return res
+
+def apply_update(
+    *,
+    dst_ops,
+    cfg,
+    dst_name: str,
+    feature: str,
+    items: Sequence[Mapping[str, Any]],
+    dry_run: bool,
+    emit,
+    dbg,
+    chunk_size: int,
+    chunk_pause_ms: int,
+) -> dict[str, Any]:
+    emit("apply:update:start", dst=dst_name, feature=feature, count=len(items))
+    res = _apply_chunked(
+        "apply:update",
+        dst=dst_name,
+        feature=feature,
+        items=items,
+        call=lambda ch: dst_ops.add(cfg, ch, feature=feature, dry_run=dry_run),
+        emit=emit,
+        dbg=dbg,
+        chunk_size=chunk_size,
+        chunk_pause_ms=chunk_pause_ms,
+    )
+    _conf = int(res.get("confirmed", 0))
+    emit(
+        "apply:update:done",
+        dst=dst_name,
+        feature=feature,
+        count=_conf,
+        attempted=int(res.get("attempted", 0)),
+        updated=_conf,
+        skipped=int(res.get("skipped", 0)),
+        skipped_exact=int(res.get("skipped_exact", 0)),
+        skipped_inferred=int(res.get("skipped_inferred", 0)),
+        skip_basis=str(res.get("skip_basis") or "provider_keys"),
+        unresolved=int(res.get("unresolved", 0)),
+        errors=int(res.get("errors", 0)),
+        spotlight=_spotlight_items(items, cast(Sequence[str], res.get("confirmed_keys") or [])),
         result=res,
     )
     return res
@@ -286,6 +381,7 @@ def apply_remove(
         skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
+        spotlight=_spotlight_items(items, cast(Sequence[str], res.get("confirmed_keys") or [])),
         result=res,
     )
     return res
