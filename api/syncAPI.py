@@ -1826,6 +1826,14 @@ def api_sync_providers() -> JSONResponse:
     HIDDEN = {"BASE"}
     PKG_CANDIDATES = ("providers.sync",)
     FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists", "progress")
+    try:
+        from cw_platform.config_base import load_config
+        from cw_platform.provider_instances import build_provider_config_view, list_instance_ids
+        cfg = dict(load_config() or {})
+    except Exception:
+        cfg = {}
+        build_provider_config_view = None  # type: ignore[assignment]
+        list_instance_ids = None  # type: ignore[assignment]
 
     def _asdict_dc(obj):
         try:
@@ -1849,6 +1857,23 @@ def api_sync_providers() -> JSONResponse:
         caps = dict(caps or {})
         return {"bidirectional": bool(caps.get("bidirectional", False))}
 
+    def _configured_state(mod, provider_name: str) -> bool:
+        ops = getattr(mod, "OPS", None)
+        if ops is None or not hasattr(ops, "is_configured"):
+            return True
+        try:
+            inst_ids = list_instance_ids(cfg, provider_name) if callable(list_instance_ids) else ["default"]
+        except Exception:
+            inst_ids = ["default"]
+        for inst in inst_ids or ["default"]:
+            try:
+                cfg_view = build_provider_config_view(cfg, provider_name, inst) if callable(build_provider_config_view) else cfg
+                if bool(ops.is_configured(cfg_view)):
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _manifest_from_module(mod) -> dict | None:
         if hasattr(mod, "get_manifest") and callable(mod.get_manifest):
             try:
@@ -1862,6 +1887,7 @@ def api_sync_providers() -> JSONResponse:
                     "label": mf.get("label") or (mf.get("name") or "").title(),
                     "features": _norm_features(mf.get("features")),
                     "capabilities": _norm_caps(mf.get("capabilities")),
+                    "configured": _configured_state(mod, (mf.get("name") or "").upper()),
                     "version": mf.get("version"),
                     "vendor": mf.get("vendor"),
                     "description": mf.get("description"),
@@ -1894,6 +1920,7 @@ def api_sync_providers() -> JSONResponse:
                     "label": label,
                     "features": _norm_features(feats),
                     "capabilities": _norm_caps(caps),
+                    "configured": _configured_state(mod, name),
                     "version": getattr(info, "version", None),
                     "vendor": getattr(info, "vendor", None),
                     "description": getattr(info, "description", None),
@@ -1910,6 +1937,7 @@ def api_sync_providers() -> JSONResponse:
                     "label": label,
                     "features": _norm_features(feats),
                     "capabilities": _norm_caps(caps),
+                    "configured": _configured_state(mod, name),
                     "version": None,
                     "vendor": None,
                     "description": None,
