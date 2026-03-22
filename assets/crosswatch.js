@@ -408,11 +408,6 @@ window.cwIsAuthSetupPending = () => window.__cwAuthSetupPending === true;
   // Bootstrap
   window.addEventListener("DOMContentLoaded", () => {
     try { DOM.fixFormLabels?.(); } catch {}
-    try { CW.Providers?.load?.(); } catch {}
-    try { CW.Providers?.mountMetadataProviders?.(); } catch {}
-    try { CW.Pairs?.list?.(); } catch {}
-    try { CW.Scheduling?.load?.(); } catch {}
-    try { CW.Insights?.loadLight?.(); } catch {}
     try { cwInitPwaInstall(); } catch {}
 
     // Setup 
