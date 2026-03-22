@@ -253,6 +253,7 @@ def run_pairs(ctx) -> dict[str, Any]:
     added_total = 0
     added_provider_total = 0
     removed_total = 0
+    updated_total = 0
     unresolved_total = 0
     skipped_total = 0
     skipped_exact_total = 0
@@ -364,6 +365,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                     try:
                         if mode == "two-way":
                             res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
+                            updated_total += int(res.get("upd_to_A", 0)) + int(res.get("upd_to_B", 0))
                             added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
                             removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
                             unresolved_total += (
@@ -383,6 +385,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                             )
                         else:
                             res = run_one_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
+                            updated_total += int(res.get("updated", 0))
                             added_total += int(res.get("added", 0))
                             added_provider_total += int(res.get("added_provider_reported", res.get("added", 0)))
                             removed_total += int(res.get("removed", 0))
@@ -435,6 +438,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                 "started_at": now,
                 "finished_at": now,
                 "result": {
+                    "updated": updated_total,
                     "added": added_total,
                     "added_provider_reported": added_provider_total,
                     "removed": removed_total,
@@ -490,6 +494,7 @@ def run_pairs(ctx) -> dict[str, Any]:
 
     emit(
         "run:done",
+        updated=updated_total,
         added=added_total,
         added_provider_reported=added_provider_total,
         removed=removed_total,
@@ -504,6 +509,7 @@ def run_pairs(ctx) -> dict[str, Any]:
     )
     return {
         "ok": True,
+        "updated": updated_total,
         "added": added_total,
         "removed": removed_total,
         "skipped": skipped_total,
