@@ -55,7 +55,7 @@ from ._snapshots import (
     module_checkpoint,
     prev_checkpoint,
 )
-from ._applier import apply_add, apply_remove
+from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._tombstones import keys_for_feature
 from ._unresolved import load_unresolved_keys, record_unresolved
@@ -325,7 +325,15 @@ def _two_way_sync(
 
     def _cap_obsdel(ops) -> bool | None:
         try:
-            v = (ops.capabilities() or {}).get("observed_deletes")
+            caps = ops.capabilities() or {}
+            if isinstance(caps, Mapping):
+                per = caps.get(feature)
+                if isinstance(per, Mapping) and per.get("observed_deletes") is not None:
+                    v = per.get("observed_deletes")
+                else:
+                    v = caps.get("observed_deletes")
+            else:
+                v = None
             return None if v is None else bool(v)
         except Exception:
             return None
@@ -658,6 +666,8 @@ def _two_way_sync(
 
     add_to_A: list[dict[str, Any]] = []
     add_to_B: list[dict[str, Any]] = []
+    upd_to_A: list[dict[str, Any]] = []
+    upd_to_B: list[dict[str, Any]] = []
     rem_from_A: list[dict[str, Any]] = []
     rem_from_B: list[dict[str, Any]] = []
 
@@ -1165,25 +1175,15 @@ def _two_way_sync(
     guardB = PhantomGuard(src=a, dst=b, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
 
     if use_phantoms and add_to_A:
-        # Ratings and progress use upsert semantics
-        if feature in ("ratings", "progress"):
-            upd = [it for it in add_to_A if _present(A_eff, A_alias, it)]
-            fresh = [it for it in add_to_A if not _present(A_eff, A_alias, it)]
-            if fresh:
-                fresh, _ = guardA.filter_adds(fresh, _ck, _minimal, emit, ctx.state_store, pair_key)
-            add_to_A = upd + fresh
-        else:
-            add_to_A, _ = guardA.filter_adds(add_to_A, _ck, _minimal, emit, ctx.state_store, pair_key)
+        add_to_A, _ = guardA.filter_adds(add_to_A, _ck, _minimal, emit, ctx.state_store, pair_key)
     if use_phantoms and add_to_B:
-        # Ratings and progress use upsert semantics
-        if feature in ("ratings", "progress"):
-            upd = [it for it in add_to_B if _present(B_eff, B_alias, it)]
-            fresh = [it for it in add_to_B if not _present(B_eff, B_alias, it)]
-            if fresh:
-                fresh, _ = guardB.filter_adds(fresh, _ck, _minimal, emit, ctx.state_store, pair_key)
-            add_to_B = upd + fresh
-        else:
-            add_to_B, _ = guardB.filter_adds(add_to_B, _ck, _minimal, emit, ctx.state_store, pair_key)
+        add_to_B, _ = guardB.filter_adds(add_to_B, _ck, _minimal, emit, ctx.state_store, pair_key)
+
+    if feature == "ratings":
+        upd_to_A = [it for it in add_to_A if _present(A_eff, A_alias, it)]
+        upd_to_B = [it for it in add_to_B if _present(B_eff, B_alias, it)]
+        add_to_A = [it for it in add_to_A if not _present(A_eff, A_alias, it)]
+        add_to_B = [it for it in add_to_B if not _present(B_eff, B_alias, it)]
 
     rem_from_A = _maybe_block_massdelete(
         rem_from_A, baseline_size=len(A_eff),
@@ -1200,6 +1200,7 @@ def _two_way_sync(
 
     emit("two:plan", a=a, b=b, feature=feature,
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),
+         upd_to_A=len(upd_to_A), upd_to_B=len(upd_to_B),
          rem_from_A=len(rem_from_A), rem_from_B=len(rem_from_B))
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
@@ -1301,10 +1302,94 @@ def _two_way_sync(
 
     resA_add: dict[str, Any] = {"ok": True, "count": 0}
     resB_add: dict[str, Any] = {"ok": True, "count": 0}
+    resA_upd: dict[str, Any] = {"ok": True, "count": 0}
+    resB_upd: dict[str, Any] = {"ok": True, "count": 0}
+    eff_upd_A = 0
+    eff_upd_B = 0
     eff_add_A = 0
     eff_add_B = 0
     unresolved_new_A_total = 0
     unresolved_new_B_total = 0
+
+    if upd_to_A:
+        if a_down:
+            record_unresolved(a, feature, upd_to_A, hint="provider_down:update")
+            emit("writes:skipped", dst=a, feature=feature, reason="provider_down", op="update", count=len(upd_to_A))
+            unresolved_new_A_total += len(upd_to_A)
+        else:
+            emit("two:apply:update:A:start", dst=a, feature=feature, count=len(upd_to_A))
+            unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+            resA_upd = apply_update(
+                dst_ops=aops, cfg=cfg, dst_name=a, feature=feature, items=upd_to_A,
+                dry_run=dry_run_flag, emit=emit, dbg=dbg,
+                chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
+            )
+            unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+            prov_unresolved_keys_A_raw = (resA_upd or {}).get("unresolved_keys")
+            prov_unresolved_keys_A: list[str] = (
+                [str(x) for x in prov_unresolved_keys_A_raw if x] if isinstance(prov_unresolved_keys_A_raw, list) else []
+            )
+            new_unresolved_A = (unresolved_after_A - unresolved_before_A) | (set(prov_unresolved_keys_A) - unresolved_before_A)
+            unresolved_new_A_total += len(new_unresolved_A)
+            eff_upd_A = int((resA_upd or {}).get("confirmed", (resA_upd or {}).get("count", 0)) or 0)
+            if eff_upd_A and not dry_run_flag:
+                upd_map_A = {(_ck(_minimal(it)) or ""): _minimal(it) for it in upd_to_A}
+                confirmed_keys_A = [str(x) for x in ((resA_upd or {}).get("confirmed_keys") or []) if x]
+                keys_to_write_A = confirmed_keys_A if confirmed_keys_A else (list(upd_map_A.keys()) if eff_upd_A >= len(upd_map_A) else [])
+                for k in keys_to_write_A:
+                    v = upd_map_A.get(k)
+                    if v:
+                        A_eff[k] = v
+                if keys_to_write_A:
+                    _bust_snapshot(a)
+            emit("two:apply:update:A:done", dst=a, feature=feature,
+                 count=eff_upd_A,
+                 attempted=int(resA_upd.get("attempted", 0)),
+                 updated=eff_upd_A,
+                 skipped=int(resA_upd.get("skipped", 0)),
+                 unresolved=int(resA_upd.get("unresolved", 0)),
+                 errors=int(resA_upd.get("errors", 0)),
+                 result=resA_upd)
+
+    if upd_to_B:
+        if b_down:
+            record_unresolved(b, feature, upd_to_B, hint="provider_down:update")
+            emit("writes:skipped", dst=b, feature=feature, reason="provider_down", op="update", count=len(upd_to_B))
+            unresolved_new_B_total += len(upd_to_B)
+        else:
+            emit("two:apply:update:B:start", dst=b, feature=feature, count=len(upd_to_B))
+            unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+            resB_upd = apply_update(
+                dst_ops=bops, cfg=cfg, dst_name=b, feature=feature, items=upd_to_B,
+                dry_run=dry_run_flag, emit=emit, dbg=dbg,
+                chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
+            )
+            unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+            prov_unresolved_keys_B_raw = (resB_upd or {}).get("unresolved_keys")
+            prov_unresolved_keys_B: list[str] = (
+                [str(x) for x in prov_unresolved_keys_B_raw if x] if isinstance(prov_unresolved_keys_B_raw, list) else []
+            )
+            new_unresolved_B = (unresolved_after_B - unresolved_before_B) | (set(prov_unresolved_keys_B) - unresolved_before_B)
+            unresolved_new_B_total += len(new_unresolved_B)
+            eff_upd_B = int((resB_upd or {}).get("confirmed", (resB_upd or {}).get("count", 0)) or 0)
+            if eff_upd_B and not dry_run_flag:
+                upd_map_B = {(_ck(_minimal(it)) or ""): _minimal(it) for it in upd_to_B}
+                confirmed_keys_B = [str(x) for x in ((resB_upd or {}).get("confirmed_keys") or []) if x]
+                keys_to_write_B = confirmed_keys_B if confirmed_keys_B else (list(upd_map_B.keys()) if eff_upd_B >= len(upd_map_B) else [])
+                for k in keys_to_write_B:
+                    v = upd_map_B.get(k)
+                    if v:
+                        B_eff[k] = v
+                if keys_to_write_B:
+                    _bust_snapshot(b)
+            emit("two:apply:update:B:done", dst=b, feature=feature,
+                 count=eff_upd_B,
+                 attempted=int(resB_upd.get("attempted", 0)),
+                 updated=eff_upd_B,
+                 skipped=int(resB_upd.get("skipped", 0)),
+                 unresolved=int(resB_upd.get("unresolved", 0)),
+                 errors=int(resB_upd.get("errors", 0)),
+                 result=resB_upd)
 
     if add_to_A:
         if a_down:
@@ -1659,21 +1744,26 @@ def _two_way_sync(
         pass
 
     emit("two:done", a=a, b=b, feature=feature,
+         upd_to_A=eff_upd_A, upd_to_B=eff_upd_B,
          adds_to_A=eff_add_A, adds_to_B=eff_add_B,
          rem_from_A=_confirmed(resA_rem),
          rem_from_B=_confirmed(resB_rem))
 
-    skipped_total = int(resA_add.get("skipped", 0)) + int(resB_add.get("skipped", 0)) + \
+    skipped_total = int(resA_upd.get("skipped", 0)) + int(resB_upd.get("skipped", 0)) + \
+                    int(resA_add.get("skipped", 0)) + int(resB_add.get("skipped", 0)) + \
                     int(resA_rem.get("skipped", 0)) + int(resB_rem.get("skipped", 0))
-    errors_total = int(resA_add.get("errors", 0)) + int(resB_add.get("errors", 0)) + \
+    errors_total = int(resA_upd.get("errors", 0)) + int(resB_upd.get("errors", 0)) + \
+                   int(resA_add.get("errors", 0)) + int(resB_add.get("errors", 0)) + \
                    int(resA_rem.get("errors", 0)) + int(resB_rem.get("errors", 0))
     unresolved_total = int(unresolved_new_A_total) + int(unresolved_new_B_total)
 
     return {
         "ok": True, "feature": feature, "a": a, "b": b,
+        "upd_to_A": eff_upd_A, "upd_to_B": eff_upd_B,
         "adds_to_A": eff_add_A, "adds_to_B": eff_add_B,
         "rem_from_A": _confirmed(resA_rem),
         "rem_from_B": _confirmed(resB_rem),
+        "resA_update": resA_upd, "resB_update": resB_upd,
         "resA_add": resA_add, "resB_add": resB_add,
         "resA_remove": resA_rem, "resB_remove": resB_rem,
         "unresolved_to_A": int(unresolved_new_A_total),
