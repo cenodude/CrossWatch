@@ -27,9 +27,6 @@ from .syncAPI import (
     router as sync_router,
     _is_sync_running,
     _load_state,
-    _compute_lanes_from_stats,
-    _lane_is_empty,
-    _parse_epoch,
     api_run_sync,
 )
 
@@ -60,9 +57,6 @@ __all__ = [
     "PROBES_STATUS_CACHE",
     "_is_sync_running",
     "_load_state",
-    "_compute_lanes_from_stats",
-    "_lane_is_empty",
-    "_parse_epoch",
     "api_run_sync",
     "register",
 ]
