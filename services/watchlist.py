@@ -256,7 +256,7 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
     if len(parts) >= 2:
         k = parts[-2].lower().strip()
         v = parts[-1].strip()
-        if k in {"imdb", "tmdb", "tvdb", "trakt", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
+        if k in {"tmdb", "imdb", "tvdb", "trakt", "slug", "jellyfin", "emby", "anilist", "mal"} and v:
             ids.setdefault(k, v)
     if "thetvdb" in ids and "tvdb" not in ids:
         ids["tvdb"] = ids.get("thetvdb")
@@ -265,11 +265,11 @@ def _ids_from_key_or_item(key: str, item: dict[str, Any]) -> dict[str, Any]:
         ids["imdb"] = f"tt{imdb}"
     out: dict[str, Any] = {}
     for k in (
-        "simkl",
-        "imdb",
         "tmdb",
+        "imdb",
         "tvdb",
         "trakt",
+        "simkl",
         "slug",
         "jellyfin",
         "emby",
@@ -340,10 +340,7 @@ def _group_watchlist_refs(
 
 def _preferred_watchlist_key(alias_keys: list[str], info: dict[str, Any], typ: str) -> str:
     ids = _ids_from_key_or_item("", info)
-    if typ == "anime":
-        ordered = ("anilist", "mal", "tmdb", "imdb", "tvdb", "trakt", "slug")
-    else:
-        ordered = ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")
+    ordered = ("tmdb", "imdb", "tvdb", "trakt", "slug", "anilist", "mal")
 
     for name in ordered:
         value = ids.get(name)
@@ -372,7 +369,7 @@ def _type_from_item_or_guess(item: dict[str, Any], key: str) -> str:
     return "tv" if pref in {"tvdb", "thetvdb", "anilist", "mal"} else "movie"
 
 
-_SIMKL_ID_KEYS = ("simkl", "imdb", "tmdb", "tvdb", "slug")
+_SIMKL_ID_KEYS = ("tmdb", "imdb", "tvdb", "simkl", "slug")
 
 
 def _simkl_filter_ids(ids: dict[str, Any]) -> dict[str, Any]:
@@ -431,10 +428,10 @@ def _guid_variants_from_key_or_item(
     prov, ident = prov.lower().strip(), ident.strip()
     if not (prov and ident):
         ids = (item or {}).get("ids") or {}
-        if ids.get("imdb"):
-            prov, ident = "imdb", str(ids["imdb"])
-        elif ids.get("tmdb"):
+        if ids.get("tmdb"):
             prov, ident = "tmdb", str(ids["tmdb"])
+        elif ids.get("imdb"):
+            prov, ident = "imdb", str(ids["imdb"])
         elif ids.get("tvdb") or ids.get("thetvdb"):
             prov, ident = "tvdb", str(ids.get("tvdb") or ids.get("thetvdb"))
     if not (prov and ident):
@@ -1207,7 +1204,7 @@ def _delete_on_trakt_batch(
     for it in items:
         ids = _ids_from_key_or_item(it["key"], it["item"])
         entry = {
-            k: ids[k] for k in ("trakt", "imdb", "tmdb", "tvdb") if ids.get(k)
+            k: ids[k] for k in ("tmdb", "imdb", "tvdb", "trakt") if ids.get(k)
         }
         if not entry:
             continue
@@ -1550,16 +1547,6 @@ def detect_available_watchlist_providers(
             counts[pid] = len(keys)
     except Exception:
         pass
-
-    if providers and not any(counts.values()):
-        try:
-            from cw_platform.orchestrator import Orchestrator
-
-            snaps = Orchestrator(config=cfg).build_snapshots(feature="watchlist") or {}
-            for pid in providers:
-                counts[pid] = len(snaps.get(pid) or {})
-        except Exception:
-            pass
 
     arr: list[dict[str, Any]] = []
     for pid in providers:
