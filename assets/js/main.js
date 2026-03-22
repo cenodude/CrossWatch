@@ -64,7 +64,6 @@
   let prevRunKey = null;
   let sumBusy = false;
   let sumAbort = null;
-  let insightsTriedForRun = null;
   let logHydratedForRun = null;
   let pairsRefreshTO = null;
   let spotsModal = null;
@@ -74,8 +73,6 @@
   const hydratedLanes = Object.create(null);
   const lastCounts = Object.create(null);
   const lastLaneTs = Object.fromEntries(FEAT_KEYS.map((k) => [k, 0]));
-  const insightsRetry = { runKey: null, tries: 0, t: null };
-  const INSIGHTS_RETRY_DELAYS = [0, 800, 2000, 5000];
 
   const runKeyOf = (s) => s?.run_id || s?.run_uuid || s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) : null);
   const defaultEnabledMap = () => ({ ...DEFAULT_ENABLED });
@@ -174,7 +171,15 @@
       spotRem: Array.isArray(f.spotlight_remove) ? f.spotlight_remove : [],
       spotUpd: Array.isArray(f.spotlight_update) ? f.spotlight_update : []
     };
+    const prev = hydratedLanes[key];
+    const prevHasSpots = !!((prev?.spotAdd?.length || 0) + (prev?.spotRem?.length || 0) + (prev?.spotUpd?.length || 0));
+    const outHasSpots = !!(out.spotAdd.length + out.spotRem.length + out.spotUpd.length);
     if (!out.added && !out.removed && !out.updated && hydratedLanes[key] && sync.isRunning()) return { ...hydratedLanes[key] };
+    if (!outHasSpots && prevHasSpots) {
+      out.spotAdd = Array.isArray(prev?.spotAdd) ? prev.spotAdd : out.spotAdd;
+      out.spotRem = Array.isArray(prev?.spotRem) ? prev.spotRem : out.spotRem;
+      out.spotUpd = Array.isArray(prev?.spotUpd) ? prev.spotUpd : out.spotUpd;
+    }
     if (!out.spotAdd.length && !out.spotRem.length && !out.spotUpd.length && out.items.length) {
       const s = synthSpots(out.items, key);
       out.spotAdd = s.a; out.spotRem = s.r; out.spotUpd = s.u;
@@ -256,7 +261,11 @@
 
       const cappedTotal = Math.min(25, total);
       if (!enabled || !cappedTotal || !spots.length) {
-        body.appendChild(Object.assign(document.createElement("div"), { className: "spot muted small", textContent: !enabled ? "Feature not configured" : sync.state().timeline.done ? "No changes" : "Awaiting results…" }));
+        let emptyText = "Awaiting results…";
+        if (!enabled) emptyText = "Feature not configured";
+        else if (cappedTotal > 0) emptyText = updated && !added && !removed ? `${updated} updated` : `${cappedTotal} change${cappedTotal === 1 ? "" : "s"}`;
+        else if (sync.state().timeline.done) emptyText = "No changes";
+        body.appendChild(Object.assign(document.createElement("div"), { className: "spot muted small", textContent: emptyText }));
       } else {
         let lastRow = null;
         for (const [kind, text] of spots.slice(0, Math.min(3, cappedTotal))) {
@@ -308,60 +317,6 @@
   document.addEventListener("config-saved", queuePairsRefresh);
   window.addEventListener("sync-complete", queuePairsRefresh);
 
-  const inferInsightFeature = (e) => {
-    const f = String(e.feature || e.lane || e.kind || "").toLowerCase();
-    if (f) return f;
-    const act = String(e.action || "").toLowerCase();
-    if (act.includes("watch") || act.includes("scrobble")) return "history";
-    if (act.includes("rate") || "rating" in (e || {})) return "ratings";
-    if (["progress", "resume", "position", "offset"].some((s) => act.includes(s)) || "progress_ms" in (e || {}) || "playback_position" in (e || {})) return "progress";
-    if (act.includes("playlist")) return "playlists";
-    return "watchlist";
-  };
-
-  async function hydrateFromInsights(startTsEpoch) {
-    const events = (await fetchJSON("/api/insights", null))?.events;
-    if (!Array.isArray(events) || !events.length) return false;
-    const since = Math.floor(startTsEpoch || 0);
-    const tallies = Object.fromEntries(FEAT_KEYS.map((k) => [k, mkLane()]));
-
-    for (const e of events) {
-      if ((e.ts || 0) < since) continue;
-      const key = inferInsightFeature(e);
-      const lane = tallies[key] || (tallies[key] = mkLane());
-      const act = String(e.action || "").toLowerCase();
-      const spot = { title: titleOf(e), key: e.key, type: e.type, ts: e.ts, source: e.source || e.provider || e.side, series_title: e.series_title || e.show_title, season: e.season, episode: e.episode, display_title: e.display_title };
-      if (act === "add") { lane.added++; if (lane.spotAdd.length < 25) lane.spotAdd.push(spot); }
-      else if (act === "remove") { lane.removed++; if (lane.spotRem.length < 25) lane.spotRem.push(spot); }
-      else { lane.updated++; if (lane.spotUpd.length < 25) lane.spotUpd.push(spot); }
-    }
-
-    summary ||= {}; summary.features ||= {};
-    let appliedAny = false;
-    for (const [feat, lane] of Object.entries(tallies)) {
-      if (!laneHasCounts(lane) && !lane.spotAdd.length && !lane.spotRem.length && !lane.spotUpd.length) continue;
-      const prev = summary.features[feat] || {};
-      const prevCounts = (+prev.added || 0) + (+prev.removed || 0) + (+prev.updated || 0);
-      if (!prevCounts) continue;
-      const merged = {
-        added: +prev.added || 0,
-        removed: +prev.removed || 0,
-        updated: +prev.updated || 0,
-        spotlight_add: prev.spotlight_add?.length ? prev.spotlight_add : lane.spotAdd,
-        spotlight_remove: prev.spotlight_remove?.length ? prev.spotlight_remove : lane.spotRem,
-        spotlight_update: prev.spotlight_update?.length ? prev.spotlight_update : lane.spotUpd
-      };
-      if (!guardLaneOverwrite(feat, merged)) continue;
-      appliedAny = true;
-      summary.features[feat] = merged;
-      hydratedLanes[feat] = { added: merged.added, removed: merged.removed, updated: merged.updated, spotAdd: merged.spotlight_add, spotRem: merged.spotlight_remove, spotUpd: merged.spotlight_update };
-    }
-    if (!appliedAny) return false;
-    summary.enabled = { ...defaultEnabledMap(), ...(summary.enabled || {}) };
-    renderAll();
-    return true;
-  }
-
   const needsSpotlights = (s) => {
     const feats = s?.features;
     if (!feats) return false;
@@ -371,24 +326,14 @@
     });
   };
 
-  const queueInsightsHydration = (runKey, startTs) => {
+  const queueLogHydration = (runKey) => {
     if (!runKey) return;
-    if (insightsRetry.runKey !== runKey) Object.assign(insightsRetry, { runKey, tries: 0 });
-    clearTimeout(insightsRetry.t);
-    const delay = INSIGHTS_RETRY_DELAYS[Math.min(insightsRetry.tries, INSIGHTS_RETRY_DELAYS.length - 1)] || 0;
-    insightsRetry.t = setTimeout(async () => {
-      const got = await hydrateFromInsights(startTs).catch(() => false);
-      if (got || insightsRetry.runKey !== runKey || !needsSpotlights(summary)) return;
-      if (insightsRetry.tries >= INSIGHTS_RETRY_DELAYS.length - 1) {
-        if (logHydratedForRun !== runKey) {
-          logHydratedForRun = runKey;
-          hydrateFromLog();
-        }
-        return;
+    setTimeout(() => {
+      if (logHydratedForRun !== runKey) {
+        logHydratedForRun = runKey;
+        hydrateFromLog();
       }
-      insightsRetry.tries++;
-      queueInsightsHydration(runKey, startTs);
-    }, delay);
+    }, 300);
   };
 
   function hydrateFromLog() {
@@ -422,9 +367,20 @@
         if (/:done$/.test(obj.event)) sync.applyDone({ feature: lastFeatHint, count: obj.result?.count || obj.count });
         const lane = ensureLane(lastFeatHint || feat || obj.feature);
         const cnt = +(obj.result?.count || obj.count || 0);
-        if (/^apply:add:done$/.test(obj.event)) lane.added += cnt;
-        else if (/^apply:remove:done$/.test(obj.event)) lane.removed += cnt;
-        else if (/^apply:update:done$/.test(obj.event)) lane.updated += cnt;
+        let bucket = null;
+        if (/^apply:add:done$/.test(obj.event)) { lane.added += cnt; bucket = lane.spotAdd; }
+        else if (/^apply:remove:done$/.test(obj.event)) { lane.removed += cnt; bucket = lane.spotRem; }
+        else if (/^apply:update:done$/.test(obj.event)) { lane.updated += cnt; bucket = lane.spotUpd; }
+        if (bucket && Array.isArray(obj.spotlight)) {
+          const seen = new Set(bucket.map((it) => JSON.stringify(it)));
+          for (const item of obj.spotlight) {
+            const sig = JSON.stringify(item);
+            if (seen.has(sig)) continue;
+            bucket.push(item);
+            seen.add(sig);
+            if (bucket.length >= 25) break;
+          }
+        }
       }
       if (obj.event === "spotlight" && (feat || obj.feature) && obj.action && obj.title) {
         const lane = ensureLane(feat || lastFeatHint || obj.feature);
@@ -499,7 +455,6 @@
     if (runKey !== prevRunKey) {
       finishedForRun = null;
       prevRunKey = runKey;
-      insightsTriedForRun = null;
       logHydratedForRun = null;
     }
 
@@ -513,10 +468,8 @@
       safe(window.updatePreviewVisibility);
       safe(window.refreshSchedulingBanner);
       safe(window.Insights?.refreshInsights || window.refreshInsights);
-      if (insightsTriedForRun !== runKey) insightsTriedForRun = runKey;
       try {
-        const startTs = s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) / 1000 : 0);
-        if (needsSpotlights(s)) queueInsightsHydration(runKey, startTs);
+        if (needsSpotlights(s)) queueLogHydration(runKey);
       } catch {}
       try {
         window.wallLoaded = false;
@@ -533,18 +486,11 @@
     scheduleRender();
 
     if (!sync.state().timeline.done) return;
-    const startTs = summary?.raw_started_ts || (summary?.started_at ? Date.parse(summary.started_at) / 1000 : 0);
     const hasFeatures = summary?.features && Object.values(summary.features).some((v) => laneHasCounts(v) || v?.spotlight_add?.length || v?.spotlight_remove?.length || v?.spotlight_update?.length);
     if (needsSpotlights(summary)) {
-      if (insightsTriedForRun !== runKey) insightsTriedForRun = runKey;
-      queueInsightsHydration(runKey, startTs);
+      queueLogHydration(runKey);
     } else if (!hasFeatures) {
-      setTimeout(() => {
-        if (logHydratedForRun !== runKey) {
-          logHydratedForRun = runKey;
-          hydrateFromLog();
-        }
-      }, 300);
+      queueLogHydration(runKey);
     }
   }
 
@@ -585,13 +531,13 @@
       on(esSummary, ["progress:snapshot", "snapshot:progress"], (e) => {
         try { sync.snap(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["progress:apply", "apply:add:progress", "apply:remove:progress"], (e) => {
+      on(esSummary, ["progress:apply", "apply:add:progress", "apply:update:progress", "apply:remove:progress"], (e) => {
         try { sync.applyProg(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["apply:add:start", "apply:remove:start"], (e) => {
+      on(esSummary, ["apply:add:start", "apply:update:start", "apply:remove:start"], (e) => {
         try { sync.applyStart(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["apply:add:done", "apply:remove:done"], (e) => {
+      on(esSummary, ["apply:add:done", "apply:update:done", "apply:remove:done"], (e) => {
         try { sync.applyDone(JSON.parse(e.data || "{}")); } catch {}
       });
       on(esSummary, ["run:error", "run:aborted"], () => {
