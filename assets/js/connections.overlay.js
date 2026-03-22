@@ -110,8 +110,11 @@
     const containers = ensureHost();
     if (!containers) return;
     const { host, board } = containers;
+    const visibleProviders = Array.isArray(providers) && providers.some((item) => typeof item?.configured === "boolean")
+      ? providers.filter((item) => item?.configured !== false)
+      : providers;
 
-    if (!Array.isArray(providers) || !providers.length) {
+    if (!Array.isArray(visibleProviders) || !visibleProviders.length) {
       board.innerHTML = '<div class="prov-empty">No providers discovered.</div>';
       syncLegacySelectors();
       return;
@@ -120,7 +123,7 @@
     const source = key(_pick.source);
     const target = key(_pick.target);
 
-    board.innerHTML = providers.map((item) => {
+    board.innerHTML = visibleProviders.map((item) => {
       const providerKey = key(item.key || item.name || item.label);
       const label = providerLabel(item, providerKey);
       const cls = providerClass(providerKey);
