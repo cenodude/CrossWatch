@@ -161,8 +161,14 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
                     out.append(str(fname))
             else:
                 out.append(str(fname))
+
+        if "history" in out and "watchlist" in out:
+            hi, wi = out.index("history"), out.index("watchlist")
+            if hi > wi:
+                out.remove("history")
+                out.insert(wi, "history")
         return out
-    return ["watchlist", "ratings", "history", "progress", "playlists"]
+    return ["history", "watchlist", "ratings", "progress", "playlists"]
 
 
 
