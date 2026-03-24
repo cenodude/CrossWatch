@@ -721,14 +721,14 @@ def _two_way_sync(
                 continue
 
             if k in upB and k in unA:
-                if allow_removals and ((_tokens(a_it) & tombX) or (k in tombX)):
+                if allow_removals and ((_tokens(a_it) & tombX) or (k in tombX) or (k in obsB)):
                     remA.append(_minimal(unA[k]))
                 else:
                     addB.append(_minimal_keep_rating(upB[k]))
                 continue
 
             if k in upA and k in unB:
-                if allow_removals and ((_tokens(b_it) & tombX) or (k in tombX)):
+                if allow_removals and ((_tokens(b_it) & tombX) or (k in tombX) or (k in obsA)):
                     remB.append(_minimal(unB[k]))
                 else:
                     addA.append(_minimal_keep_rating(upA[k]))
@@ -1027,6 +1027,17 @@ def _two_way_sync(
             rem_from_B.extend(remB)
 
     else:
+        # Strip synthetic entries (no watched_at) from both sides before planning
+        if feature == "history":
+            A_eff = {
+                k: v for k, v in A_eff.items()
+                if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+            }
+            B_eff = {
+                k: v for k, v in B_eff.items()
+                if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+            }
+
         bucket_sec = _hist_bucket_sec(a, b, feature)
         if bucket_sec and int(bucket_sec) > 1:
             bsec = int(bucket_sec)
@@ -1066,6 +1077,9 @@ def _two_way_sync(
                     if toks and any((tok, tsb) in B_tok_ts for tok in toks):
                         continue
                 else:
+                    # Skip synthetic entries (no watched_at) key-matching helpers only.
+                    if not (v.get("watched_at") or v.get("last_watched_at")):
+                        continue
                     if _present(B_eff, B_alias, v):
                         continue
 
@@ -1083,6 +1097,9 @@ def _two_way_sync(
                     if toks and any((tok, tsb) in A_tok_ts for tok in toks):
                         continue
                 else:
+                    # Skip synthetic entries (no watched_at) key-matching helpers only.
+                    if not (v.get("watched_at") or v.get("last_watched_at")):
+                        continue
                     if _present(A_eff, A_alias, v):
                         continue
 
