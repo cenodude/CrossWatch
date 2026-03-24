@@ -322,33 +322,30 @@ def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
     if "confirmed_keys" in obj and not ev:
         return _slim_counts(cast(dict[str, Any], obj))
 
-    if ev.startswith("apply:") and ev.endswith(":done"):
+    _VERBOSE_RESULT_KEYS = ("confirmed_keys", "skipped_keys", "unresolved_keys", "skipped_reported")
+
+    is_apply_done = ev.endswith(":done") and "apply:" in ev
+    if is_apply_done:
         out = dict(cast(dict[str, Any], obj))
         res = out.get("result")
-        spotlight = out.get("spotlight")
-        if not isinstance(spotlight, list) or not spotlight:
-            spotlight = _spotlight_items_from_keys(
-                (res.get("confirmed_keys") if isinstance(res, dict) else None)
-                or out.get("confirmed_keys")
-                or [],
-                limit=3,
-            )
         if isinstance(res, dict):
-            out["result"] = _slim_counts(cast(dict[str, Any], res))
-        if spotlight:
-            out["spotlight"] = spotlight
+            res2 = dict(cast(dict[str, Any], res))
+            for k in _VERBOSE_RESULT_KEYS:
+                res2.pop(k, None)
+            out["result"] = res2
+        out.pop("spotlight", None)
         out.pop("confirmed_keys", None)
-        if isinstance(out.get("result"), dict):
-            cast(dict[str, Any], out["result"]).pop("confirmed_keys", None)
         return out
 
-    if "confirmed_keys" in obj:
+    if "confirmed_keys" in obj or (isinstance(obj.get("result"), dict) and "confirmed_keys" in obj["result"]):
         out = dict(cast(dict[str, Any], obj))
         out.pop("confirmed_keys", None)
+        out.pop("spotlight", None)
         res = out.get("result")
-        if isinstance(res, dict) and "confirmed_keys" in res:
+        if isinstance(res, dict):
             res2 = dict(cast(dict[str, Any], res))
-            res2.pop("confirmed_keys", None)
+            for k in _VERBOSE_RESULT_KEYS:
+                res2.pop(k, None)
             out["result"] = res2
         return out
 
