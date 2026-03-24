@@ -3,42 +3,41 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
 import re
 import os
 import time
-from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
-    build_headers,
+    adapter_headers,
     coalesce_date_from,
     fetch_activities,
     get_watermark,
+    load_json_state,
     normalize_flat_watermarks,
     key_of as simkl_key_of,
-    normalize as simkl_normalize,
+    save_json_state,
     save_watermark,
     state_file,
-    _pair_scope,
     _is_capture_mode,
 )
 
 BASE = "https://api.simkl.com"
+URL_INDEX_ALL = f"{BASE}/sync/all-items/"
 URL_INDEX_BUCKET = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
 URL_INDEX_IDS = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
 URL_ADD = f"{BASE}/sync/add-to-list"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 
 
-def _unresolved_path() -> Path:
+def _unresolved_path():
     return state_file("simkl.watchlist.unresolved.json")
 
 
-def _shadow_path() -> Path:
+def _shadow_path():
     return state_file("simkl.watchlist.shadow.json")
 
 
@@ -50,57 +49,26 @@ def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
     cw_log("SIMKL", "watchlist", level, msg, **fields)
 
 
-def _legacy_path(path: Path) -> Path | None:
-    parts = path.stem.split(".")
-    if len(parts) < 2:
-        return None
-    legacy_name = ".".join(parts[:-1]) + path.suffix
-    legacy = path.with_name(legacy_name)
-    return None if legacy == path else legacy
+def _dbg(event: str, **fields: Any) -> None:
+    _log(event, level="debug", **fields)
 
 
-def _migrate_legacy_json(path: Path) -> None:
-    if path.exists():
-        return
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    legacy = _legacy_path(path)
-    if not legacy or not legacy.exists():
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_bytes(legacy.read_bytes())
-        os.replace(tmp, path)
-    except Exception:
-        pass
+def _info(event: str, **fields: Any) -> None:
+    _log(event, level="info", **fields)
 
+
+def _warn(event: str, **fields: Any) -> None:
+    _log(event, level="warn", **fields)
 
 
 def _load_unresolved() -> dict[str, Any]:
-    if _is_capture_mode() or _pair_scope() is None:
-        return {}
-    p = _unresolved_path()
-    _migrate_legacy_json(p)
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
-        return {}
+    return load_json_state(_unresolved_path())
 
 
 def _save_unresolved(data: Mapping[str, Any]) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
+    if _is_capture_mode():
         return
-    try:
-        _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
-        tmp = _unresolved_path().with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True),
-            "utf-8",
-        )
-        os.replace(tmp, _unresolved_path())
-    except Exception as exc:
-        _log(f"unresolved.save failed: {exc}")
+    save_json_state(_unresolved_path(), data)
 
 
 def _freeze(
@@ -142,22 +110,17 @@ def _unfreeze_if_present(keys: Iterable[str]) -> None:
 
 
 def _shadow_load() -> dict[str, Any]:
-    if _is_capture_mode() or _pair_scope() is None:
+    if _is_capture_mode():
         return {"ts": None, "items": {}, "buckets_seen": {}}
-    p = _shadow_path()
-    _migrate_legacy_json(p)
-    try:
-        data = json.loads(p.read_text("utf-8"))
-        if isinstance(data, dict):
-            if "buckets_seen" not in data or not isinstance(data.get("buckets_seen"), dict):
-                data["buckets_seen"] = {}
-            if "items" not in data or not isinstance(data.get("items"), dict):
-                data["items"] = {}
-            data.setdefault("ts", None)
-            return data
+    data = load_json_state(_shadow_path())
+    if not isinstance(data, dict):
         return {"ts": None, "items": {}, "buckets_seen": {}}
-    except Exception:
-        return {"ts": None, "items": {}, "buckets_seen": {}}
+    if "buckets_seen" not in data or not isinstance(data.get("buckets_seen"), dict):
+        data["buckets_seen"] = {}
+    if "items" not in data or not isinstance(data.get("items"), dict):
+        data["items"] = {}
+    data.setdefault("ts", None)
+    return data
 
 
 def _shadow_save(
@@ -165,27 +128,16 @@ def _shadow_save(
     items: Mapping[str, Any],
     buckets_seen: Mapping[str, Any] | None = None,
 ) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
+    if _is_capture_mode():
         return
-    try:
-        _shadow_path().parent.mkdir(parents=True, exist_ok=True)
-        tmp = _shadow_path().with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(
-                {
-                    "ts": ts,
-                    "items": dict(items),
-                    "buckets_seen": dict(buckets_seen or {}),
-                },
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            ),
-            "utf-8",
-        )
-        os.replace(tmp, _shadow_path())
-    except Exception:
-        pass
+    save_json_state(
+        _shadow_path(),
+        {
+            "ts": ts,
+            "items": dict(items),
+            "buckets_seen": dict(buckets_seen or {}),
+        },
+    )
 
 
 def _shadow_age_seconds() -> float:
@@ -203,7 +155,7 @@ def _shadow_ttl_seconds() -> float:
         return 300.0
 
 
-_ALLOWED_ID_KEYS = ("simkl", "tmdb", "imdb", "tvdb", "trakt", "mal", "anilist", "kitsu", "anidb")
+_ALLOWED_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 
 def _ids_filter(ids_in: Mapping[str, Any]) -> dict[str, Any]:
@@ -420,9 +372,7 @@ def _has_all_buckets(
 
 
 def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
-    headers = build_headers(
-        {"simkl": {"api_key": adapter.cfg.api_key, "access_token": adapter.cfg.access_token}},
-    )
+    headers = adapter_headers(adapter, force_refresh=force_refresh)
     if force_refresh:
         headers.pop("If-None-Match", None)
         headers["Cache-Control"] = "no-cache"
@@ -479,7 +429,7 @@ def _keys_from_write_resp(body: Any) -> list[str]:
     return uniq
 
 
-_SIG_ID_ORDER = ("simkl", "tmdb", "imdb", "tvdb", "mal", "anilist", "kitsu", "anidb", "trakt")
+_SIG_ID_ORDER = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 
 def _id_sig(ids: Mapping[str, Any]) -> str:
@@ -590,7 +540,7 @@ def _pull_bucket(
                 timeout=adapter.cfg.timeout,
             )
             if resp.status_code != 200:
-                _log(f"GET {url} -> {resp.status_code}")
+                _warn("http_failed", op="index", bucket=bucket, method="GET", url=url, status=resp.status_code)
                 return {}
             try:
                 data = resp.json()
@@ -614,7 +564,7 @@ def _pull_bucket(
                     continue
             return out_local
         except Exception as exc:
-            _log(f"bucket pull error {bucket}: {exc}")
+            _warn("http_failed", op="index", bucket=bucket, method="GET", url=url, error=str(exc))
             return {}
 
     first_url = url_ids if ids_only else url_full
@@ -629,6 +579,57 @@ def _pull_bucket(
             alt_url = first_url
         result = _do_fetch(alt_url, alt_params, True)
     return result
+
+
+def _pull_all_watchlist(
+    adapter: Any,
+    *,
+    date_from: str | None = None,
+    limit: int | None,
+    force_refresh: bool = False,
+) -> dict[str, dict[str, Any]]:
+    session = adapter.client.session
+    params: dict[str, Any] = {}
+    if date_from:
+        params["date_from"] = date_from
+
+    try:
+        resp = session.get(
+            URL_INDEX_ALL,
+            headers=_headers(adapter, force_refresh=force_refresh),
+            params=params or None,
+            timeout=adapter.cfg.timeout,
+        )
+        if resp.status_code != 200:
+            _warn("http_failed", op="index", method="GET", url=URL_INDEX_ALL, status=resp.status_code)
+            return {}
+        try:
+            data = resp.json()
+        except Exception:
+            data = None
+    except Exception as exc:
+        _warn("http_failed", op="index", method="GET", url=URL_INDEX_ALL, error=str(exc))
+        return {}
+
+    out: dict[str, dict[str, Any]] = {}
+    count = 0
+    for bucket in WATCHLIST_BUCKETS:
+        for row in _rows_from_data(data, bucket):
+            if isinstance(row, Mapping):
+                status = str(row.get("status") or "").strip().lower()
+                if status and status != "plantowatch":
+                    continue
+            try:
+                mapped = _normalize_row(bucket, row)
+            except Exception:
+                continue
+            if not mapped.get("ids"):
+                continue
+            out[simkl_key_of(mapped)] = mapped
+            count += 1
+            if limit and count >= int(limit):
+                return out
+    return out
 
 
 
@@ -687,39 +688,96 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     prog.tick(total, total=total)
                 except Exception:
                     pass
-            _log(f"unchanged via activities (reuse shadow) size={len(items)} age={int(age)}s", level="info")
+            _dbg("index_cache_hit", source="shadow", reason="activities_unchanged", count=len(items), age_s=int(age))
+            _info("index_done", count=len(items), source="shadow")
             return items
-
-        _log(f"shadow stale (age={int(age)}s>{int(ttl)}s) - ids_only verify")
-        for bucket in WATCHLIST_BUCKETS:
-            df = coalesce_date_from("watchlist", cfg_date_from="1970-01-01T00:00:00Z")
-            snap = _pull_bucket(
-                adapter,
-                bucket,
-                date_from=df,
-                ids_only=True,
-                limit=limit,
-                force_refresh=True,
-            )
-            buckets_seen[bucket] = True
-            _merge_upsert(items, snap)
-            buckets_seen[bucket] = True
-            cnt = len(snap)
-            if cnt and prog:
-                try:
-                    total_known += cnt
-                    done += cnt
-                    prog.tick(done, total=total_known, force=(done == cnt))
-                except Exception:
-                    pass
-
+        _dbg("index_reconcile", reason="shadow_stale", strategy="aggregate", age_s=int(age), ttl_s=int(ttl))
+        fresh = _pull_all_watchlist(
+            adapter,
+            date_from=None,
+            limit=limit,
+            force_refresh=True,
+        )
+        items = dict(fresh)
+        buckets_seen = {bucket: True for bucket in WATCHLIST_BUCKETS}
+        total_known = len(items)
+        done = len(items)
+        _unfreeze_if_present(items.keys())
         _shadow_save(comp_ts, items, buckets_seen)
         if prog:
             try:
-                final_total = len(items)
-                prog.tick(done, total=final_total, force=True)
+                prog.tick(0, total=done, force=True)
+                prog.tick(done, total=done)
             except Exception:
                 pass
+        _info("index_done", count=len(items), source="aggregate")
+        return items
+
+    watchlist_wm = get_watermark("watchlist")
+    removed_wm = get_watermark("watchlist_removed")
+    shadow_complete = _has_all_buckets(items, buckets_seen)
+    cold_start = not items and not any(bool(v) for v in (buckets_seen or {}).values())
+    removal_changed = bool(
+        removed_wm
+        and any(
+            isinstance(ts_map[bucket]["rm"], str) and str(ts_map[bucket]["rm"]) > removed_wm
+            for bucket in WATCHLIST_BUCKETS
+        )
+    )
+    needs_full_reconcile = (
+        cold_start
+        or not watchlist_wm
+        or not removed_wm
+        or not shadow_complete
+        or removal_changed
+    )
+
+    if needs_full_reconcile:
+        reason = "cold_start"
+        if not cold_start:
+            if removal_changed:
+                reason = "removed_from_list_changed"
+            elif not watchlist_wm or not removed_wm:
+                reason = "missing_watermarks"
+            elif not shadow_complete:
+                reason = "partial_shadow"
+        _dbg("index_reconcile", reason=reason, strategy="aggregate")
+        fresh = _pull_all_watchlist(
+            adapter,
+            date_from=None,
+            limit=limit,
+            force_refresh=True,
+        )
+        items = dict(fresh)
+        buckets_seen = {bucket: True for bucket in WATCHLIST_BUCKETS}
+        total_known = len(items)
+        done = len(items)
+        _unfreeze_if_present(items.keys())
+        _shadow_save(comp_ts, items, buckets_seen)
+
+        candidates: list[str] = [
+            t
+            for t in (ts_map["movies"]["ptw"], ts_map["shows"]["ptw"], ts_map["anime"]["ptw"])
+            if isinstance(t, str)
+        ]
+        if candidates:
+            save_watermark("watchlist", max(candidates))
+
+        rm_candidates: list[str] = [
+            t
+            for t in (ts_map["movies"]["rm"], ts_map["shows"]["rm"], ts_map["anime"]["rm"])
+            if isinstance(t, str)
+        ]
+        if rm_candidates:
+            save_watermark("watchlist_removed", max(rm_candidates))
+
+        if prog:
+            try:
+                prog.tick(0, total=done, force=True)
+                prog.tick(done, total=done)
+            except Exception:
+                pass
+        _info("index_done", count=len(items), source="aggregate")
         return items
 
     force_present = (os.getenv("CW_SIMKL_FORCE_PRESENT") or "").strip().lower()
@@ -730,10 +788,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         ptw_ts = ts_map[bucket]["ptw"]
         rm_ts = ts_map[bucket]["rm"]
         rm_key = "watchlist_removed"
-        prev_rm = get_watermark(rm_key)
+        prev_rm = removed_wm
 
         if force_all or force_present == bucket:
-            _log(f"{bucket}: forced present ids_only reconcile")
+            _dbg("index_reconcile", bucket=bucket, reason="force_present", strategy="ids_only")
             df_force = coalesce_date_from(
                 "watchlist",
                 cfg_date_from="1970-01-01T00:00:00Z",
@@ -750,6 +808,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             _merge_upsert(items, fresh)
             buckets_seen[bucket] = True
             cnt = len(fresh)
+            _dbg("index_reconcile", bucket=bucket, reason="force_present_done", strategy="ids_only", count=cnt)
             if cnt and prog:
                 try:
                     total_known += cnt
@@ -784,8 +843,8 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             buckets_seen[bucket] = True
             _merge_upsert(items, fresh)
             buckets_seen[bucket] = True
-            _log(f"{bucket}: rebuilt via ids_only ({len(fresh)})")
             cnt = len(fresh)
+            _dbg("index_reconcile", bucket=bucket, reason="removed_from_list_changed", strategy="ids_only", count=cnt)
             if cnt and prog:
                 try:
                     total_known += cnt
@@ -798,7 +857,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         df_key = "watchlist"
         date_from = coalesce_date_from(df_key)
 
-        wm = get_watermark(df_key)
+        wm = watchlist_wm
         if ptw_ts and (wm is None or ptw_ts > wm):
             inc = _pull_bucket(
                 adapter,
@@ -810,7 +869,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             )
             buckets_seen[bucket] = True
             if not inc:
-                _log(f"{bucket}: incremental returned 0; fallback to present ids_only")
+                _dbg("index_reconcile", bucket=bucket, reason="incremental_empty", strategy="ids_only")
                 df_full = coalesce_date_from(
                     df_key,
                     cfg_date_from="1970-01-01T00:00:00Z",
@@ -827,7 +886,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
             _merge_upsert(items, inc)
             buckets_seen[bucket] = True
-            _log(f"{bucket}: incremental {len(inc)} from {date_from or 'baseline'}")
+            _dbg("index_reconcile", bucket=bucket, reason="activity_delta", strategy="incremental", count=len(inc), date_from=date_from or "baseline")
 
             cnt = len(inc)
             if cnt and prog:
@@ -840,7 +899,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
         if not have_bucket:
-            _log(f"{bucket}: missing in shadow; forcing FULL snapshot")
+            _dbg("index_reconcile", bucket=bucket, reason="missing_shadow_bucket", strategy="full")
             df_full = coalesce_date_from(
                 "watchlist",
                 cfg_date_from="1970-01-01T00:00:00Z",
@@ -904,7 +963,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         except Exception:
             pass
 
-    _log(f"index size: {len(items)}")
+    _info("index_done", count=len(items), source="mixed")
     return items
 
 
@@ -943,7 +1002,7 @@ def add(
     items_list: list[Mapping[str, Any]] = list(items or [])
     raw_payload, unresolved = _split_buckets(items_list)
     if not raw_payload:
-        _log("add: no payload to send")
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
     body: dict[str, Any] = {}
     movies_payload = raw_payload.get("movies")
@@ -985,7 +1044,7 @@ def add(
                             reasons=["not_processed"],
                             ids_sent=body_ids,
                         )
-                _log(f"ADD 2xx but no items processed; body={str(resp_body)[:180]}")
+                _warn("write_failed", op="add", status=resp.status_code, reason="not_processed", body=str(resp_body)[:180])
             ok = int(processed)
             if ok > 0:
                 sigs = _sigs_from_write_resp(resp_body)
@@ -1001,7 +1060,7 @@ def add(
                     _shadow_add_items(items_list)
                 _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
         else:
-            _log(f"ADD failed {resp.status_code}: {(resp.text or '')[:180]}")
+            _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
             for item in items_list:
                 ids = dict(item.get("ids") or {})
                 body_ids = {
@@ -1021,7 +1080,7 @@ def add(
                         ids_sent=body_ids,
                     )
     except Exception as exc:
-        _log(f"ADD error: {exc}")
+        _warn("write_failed", op="add", error=str(exc))
         for item in items_list:
             ids = dict(item.get("ids") or {})
             body_ids = {k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
@@ -1035,7 +1094,7 @@ def add(
                     reasons=["exception"],
                     ids_sent=body_ids,
                 )
-    _log(f"add done: +{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="add", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -1048,7 +1107,7 @@ def remove(
     items_list: list[Mapping[str, Any]] = list(items or [])
     payload, unresolved = _split_buckets(items_list)
     if not payload:
-        _log("remove: no payload to send")
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
     ok = 0
     try:
@@ -1071,7 +1130,7 @@ def remove(
                 ok = len(items_list)
                 _shadow_remove_keys([_mk_shadow_item(item)[0] for item in items_list])
                 _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
-                _log("REMOVE 2xx with empty body; assuming requested items were removed")
+                _dbg("write_assumed_success", op="remove", reason="empty_body", applied=ok)
             else:
                 if processed == 0:
                     for item in items_list:
@@ -1089,9 +1148,7 @@ def remove(
                                 reasons=["not_processed"],
                                 ids_sent=body_ids,
                             )
-                    _log(
-                        f"REMOVE 2xx but no items processed; body={(str(resp_body)[:180] if resp_body else '∅')}",
-                    )
+                    _warn("write_failed", op="remove", status=resp.status_code, reason="not_processed", body=(str(resp_body)[:180] if resp_body else "empty"))
                 ok = int(processed)
                 if ok > 0:
                     sigs = _sigs_from_write_resp(resp_body)
@@ -1107,7 +1164,7 @@ def remove(
                         _shadow_remove_keys([_mk_shadow_item(item)[0] for item in items_list])
                     _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
         else:
-            _log(f"REMOVE failed {resp.status_code}: {(resp.text or '')[:180]}")
+            _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
             for item in items_list:
                 ids = dict(item.get("ids") or {})
                 body_ids = {
@@ -1127,7 +1184,7 @@ def remove(
                         ids_sent=body_ids,
                     )
     except Exception as exc:
-        _log(f"REMOVE error: {exc}")
+        _warn("write_failed", op="remove", error=str(exc))
         for item in items_list:
             ids = dict(item.get("ids") or {})
             body_ids = {k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
@@ -1141,5 +1198,5 @@ def remove(
                     reasons=["exception"],
                     ids_sent=body_ids,
                 )
-    _log(f"remove done: -{ok} / unresolved {len(unresolved)}")
+    _info("write_done", op="remove", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
     return ok, unresolved

@@ -4,16 +4,26 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
-UA = os.getenv("CW_UA", "CrossWatch/3.2.1 (SIMKL)")
+def simkl_user_agent() -> str:
+    env_ua = str(os.getenv("CW_UA") or "").strip()
+    if env_ua:
+        return env_ua
+    for mod_name in ("sync._mod_SIMKL", "providers.sync._mod_SIMKL"):
+        mod = sys.modules.get(mod_name)
+        version = getattr(mod, "__VERSION__", None) if mod is not None else None
+        if isinstance(version, str) and version.strip():
+            return f"CrossWatch/{version.strip()} (SIMKL)"
+    return "CrossWatch (SIMKL)"
 
 STATE_DIR = Path("/config/.cw_state")
 
@@ -222,7 +232,7 @@ def build_headers(cfg: Mapping[str, Any], *, force_refresh: bool = False) -> dic
     headers: dict[str, str] = {
         "Accept": "application/json",
         "Content-Type": "application/json",
-        "User-Agent": UA,
+        "User-Agent": simkl_user_agent(),
         "simkl-api-key": api_key,
     }
     if token:
@@ -233,7 +243,173 @@ def build_headers(cfg: Mapping[str, Any], *, force_refresh: bool = False) -> dic
     return headers
 
 
+def adapter_headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
+    return build_headers(
+        {"simkl": {"api_key": adapter.cfg.api_key, "access_token": adapter.cfg.access_token}},
+        force_refresh=force_refresh,
+    )
+
+
+def load_json_state(path: str | Path) -> dict[str, Any]:
+    p = Path(path)
+    return _read_json(p)
+
+
+def save_json_state(path: str | Path, data: Mapping[str, Any]) -> None:
+    p = Path(path)
+    _write_json(p, data)
+
+
+_SLUG_SMALL_WORDS = {
+    "a", "an", "and", "as", "at", "but", "by", "for", "in",
+    "nor", "of", "on", "or", "per", "the", "to", "vs", "via", "with",
+}
+
+
+def slug_to_title(slug: str | None) -> str:
+    s = (slug or "").strip().strip("/").replace("_", "-")
+    if not s:
+        return ""
+    parts = [p for p in s.split("-") if p]
+    out: list[str] = []
+    for i, part in enumerate(parts):
+        word = part.lower()
+        if i and word in _SLUG_SMALL_WORDS:
+            out.append(word)
+        else:
+            out.append(word[:1].upper() + word[1:])
+    return " ".join(out)
+
+
+_ANIME_TVDB_MAP_MEMO: dict[str, str] | None = None
+_ANIME_TVDB_MAP_TTL_SEC = 24 * 3600
+_ANIME_TVDB_MAP_DATE_FROM = START_OF_TIME_ISO
+
+
+def anime_tvdb_map_path() -> Path:
+    return state_file("simkl.anime.tvdb_map.json")
+
+
+def load_anime_tvdb_map() -> tuple[dict[str, str], int]:
+    if _is_capture_mode():
+        return {}, 0
+    try:
+        raw = load_json_state(anime_tvdb_map_path())
+        mp = dict(raw.get("map") or {})
+        updated = int(raw.get("updated_at") or 0)
+        return {str(k): str(v) for k, v in mp.items() if k and v}, updated
+    except Exception:
+        return {}, 0
+
+
+def save_anime_tvdb_map(mp: Mapping[str, str]) -> None:
+    if _is_capture_mode():
+        return
+    save_json_state(
+        anime_tvdb_map_path(),
+        {"updated_at": int(time.time()), "map": dict(mp)},
+    )
+
+
+def ensure_anime_tvdb_map(
+    adapter: Any,
+    *,
+    fetch_rows: Callable[[], Iterable[Mapping[str, Any]]],
+) -> dict[str, str]:
+    global _ANIME_TVDB_MAP_MEMO
+    if _ANIME_TVDB_MAP_MEMO is not None:
+        return _ANIME_TVDB_MAP_MEMO
+
+    mp, updated = load_anime_tvdb_map()
+    if mp and updated and (time.time() - updated) < _ANIME_TVDB_MAP_TTL_SEC:
+        _ANIME_TVDB_MAP_MEMO = mp
+        return mp
+
+    try:
+        rows = list(fetch_rows() or [])
+    except Exception:
+        _ANIME_TVDB_MAP_MEMO = mp
+        return mp
+
+    built: dict[str, str] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+        ids = dict(show.get("ids") or {}) if isinstance(show, Mapping) else {}
+        tvdb = str(ids.get("tvdb") or "").strip()
+        if not tvdb:
+            continue
+        for key in ("tmdb", "imdb", "simkl"):
+            value = str(ids.get(key) or "").strip()
+            if value:
+                built[f"{key}:{value}"] = tvdb
+    if built:
+        mp = built
+        save_anime_tvdb_map(mp)
+    _ANIME_TVDB_MAP_MEMO = mp
+    return mp
+
+
+def maybe_map_tvdb_ids(
+    adapter: Any,
+    ids: Mapping[str, Any],
+    *,
+    fetch_rows: Callable[[], Iterable[Mapping[str, Any]]],
+) -> dict[str, str]:
+    out = {k: str(v) for k, v in dict(ids).items() if v}
+    if out.get("tvdb"):
+        return out
+    if not any(out.get(k) for k in ("tmdb", "imdb", "simkl")):
+        return out
+    mp = ensure_anime_tvdb_map(adapter, fetch_rows=fetch_rows)
+    for key in ("tmdb", "imdb", "simkl"):
+        value = out.get(key)
+        if not value:
+            continue
+        tvdb = mp.get(f"{key}:{value}")
+        if tvdb:
+            out["tvdb"] = tvdb
+            break
+    return out
+
+
+def sync_date_from(
+    feature: str,
+    *,
+    cfg_date_from: str | None = None,
+    shadow_has_data: bool = False,
+) -> str | None:
+    wm = get_watermark(feature)
+    if wm:
+        return coalesce_date_from(feature, cfg_date_from=cfg_date_from)
+    env_any = os.getenv("SIMKL_DATE_FROM")
+    env_feature = os.getenv(f"SIMKL_{feature.upper()}_DATE_FROM")
+    for candidate in (env_feature, env_any, cfg_date_from):
+        if _iso_ok(candidate):
+            return _iso_z(candidate)
+    return START_OF_TIME_ISO if shadow_has_data else None
+
+
 _ACT_MEMO: tuple[float, dict[str, Any] | None, dict[str, Any]] = (0.0, None, {})
+
+
+def memoize_activities(
+    data: Mapping[str, Any] | None,
+    rate: Mapping[str, Any] | None = None,
+) -> None:
+    global _ACT_MEMO
+    if not isinstance(data, Mapping):
+        return
+    try:
+        cached = dict(data)
+    except Exception:
+        return
+    try:
+        cached_rate = dict(rate or {})
+    except Exception:
+        cached_rate = {}
+    _ACT_MEMO = (time.time(), cached, cached_rate)
 
 
 def fetch_activities(
@@ -407,7 +583,6 @@ def key_of(item: Mapping[str, Any]) -> str:
 __all__ = [
     "START_OF_TIME_ISO",
     "DEFAULT_DATE_FROM",
-    "UA",
     "STATE_DIR",
     "state_file",
     "scoped_state_path",
@@ -416,8 +591,19 @@ __all__ = [
     "get_watermark",
     "update_watermark_if_new",
     "coalesce_date_from",
+    "sync_date_from",
     "build_headers",
+    "adapter_headers",
+    "load_json_state",
+    "save_json_state",
+    "slug_to_title",
+    "anime_tvdb_map_path",
+    "load_anime_tvdb_map",
+    "save_anime_tvdb_map",
+    "ensure_anime_tvdb_map",
+    "maybe_map_tvdb_ids",
     "fetch_activities",
+    "memoize_activities",
     "parse_rate_limit",
     "extract_latest_ts",
     "canonical_key",

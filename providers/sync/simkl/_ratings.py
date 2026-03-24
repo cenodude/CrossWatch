@@ -3,35 +3,32 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
-import os
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
 
 from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
-    build_headers,
-    coalesce_date_from,
+    adapter_headers,
     extract_latest_ts,
     fetch_activities,
     get_watermark,
+    load_json_state,
+    maybe_map_tvdb_ids,
     normalize_flat_watermarks,
     key_of as simkl_key_of,
     normalize as simkl_normalize,
+    save_json_state,
+    slug_to_title,
     update_watermark_if_new,
     state_file,
-    _pair_scope,
-    _is_capture_mode,
 )
 
 BASE = "https://api.simkl.com"
 URL_ADD = f"{BASE}/sync/ratings"
 URL_REMOVE = f"{BASE}/sync/ratings/remove"
-URL_ALL_ITEMS = f"{BASE}/sync/all-items"
 
 
 def _unresolved_path() -> str:
@@ -44,100 +41,25 @@ def _shadow_path() -> str:
 
 ID_KEYS = ("tmdb", "imdb", "tvdb", "simkl", "trakt", "mal", "anilist", "kitsu", "anidb")
 
-_ANIME_TVDB_MAP_MEMO: dict[str, str] | None = None
-_ANIME_TVDB_MAP_TTL_SEC = 24 * 3600
-_ANIME_TVDB_MAP_DATE_FROM = "1900-01-01T00:00:00Z"
-
-
-def _anime_tvdb_map_path() -> str:
-    return str(state_file("simkl.anime.tvdb_map.json"))
-
-
-def _load_anime_tvdb_map() -> tuple[dict[str, str], int]:
-    if _is_capture_mode():
-        return {}, 0
-    try:
-        raw = json.loads(Path(_anime_tvdb_map_path()).read_text("utf-8"))
-        mp = dict(raw.get("map") or {})
-        updated = int(raw.get("updated_at") or 0)
-        return {str(k): str(v) for k, v in mp.items() if k and v}, updated
-    except Exception:
-        return {}, 0
-
-
-def _save_anime_tvdb_map(mp: Mapping[str, str]) -> None:
-    if _is_capture_mode():
-        return
-    try:
-        payload = {"updated_at": int(time.time()), "map": dict(mp)}
-        Path(_anime_tvdb_map_path()).write_text(json.dumps(payload, indent=2, sort_keys=True), "utf-8")
-    except Exception:
-        pass
-
-
-def _ensure_anime_tvdb_map(adapter: Any) -> dict[str, str]:
-    global _ANIME_TVDB_MAP_MEMO
-    if _ANIME_TVDB_MAP_MEMO is not None:
-        return _ANIME_TVDB_MAP_MEMO
-
-    mp, updated = _load_anime_tvdb_map()
-    if mp and updated and (time.time() - updated) < _ANIME_TVDB_MAP_TTL_SEC:
-        _ANIME_TVDB_MAP_MEMO = mp
-        return mp
-
-    built: dict[str, str] = {}
-    try:
-        resp = adapter.client.session.get(
-            f"{URL_ALL_ITEMS}/anime",
-            headers=_headers(adapter, force_refresh=True),
-            params={"extended": "full_anime_seasons", "date_from": _ANIME_TVDB_MAP_DATE_FROM},
-            timeout=adapter.cfg.timeout,
-        )
-        data = resp.json() if resp.ok else {}
-        if isinstance(data, Mapping):
-            rows = data.get("anime")
-        elif isinstance(data, list):
-            rows = data
-        else:
-            rows = []
-    except Exception:
-        rows = []
-
-    for row in rows or []:
-        if not isinstance(row, Mapping):
-            continue
-        show = row.get("show") if isinstance(row.get("show"), Mapping) else row
-        ids = dict(show.get("ids") or {}) if isinstance(show, Mapping) else {}
-        tvdb = str(ids.get("tvdb") or "").strip()
-        if not tvdb:
-            continue
-        for k in ("tmdb", "imdb", "simkl"):
-            v = str(ids.get(k) or "").strip()
-            if v:
-                built[f"{k}:{v}"] = tvdb
-    if built:
-        mp = built
-        _save_anime_tvdb_map(mp)
-    _ANIME_TVDB_MAP_MEMO = mp
-    return mp
-
 
 def _maybe_map_tvdb(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
-    out = {k: str(v) for k, v in dict(ids).items() if v}
-    if out.get("tvdb"):
-        return out
-    if not any(out.get(k) for k in ("tmdb", "imdb", "simkl")):
-        return out
-    mp = _ensure_anime_tvdb_map(adapter)
-    for k in ("tmdb", "imdb", "simkl"):
-        v = out.get(k)
-        if not v:
-            continue
-        tvdb = mp.get(f"{k}:{v}")
-        if tvdb:
-            out["tvdb"] = tvdb
-            break
-    return out
+    def _fetch_rows() -> Iterable[Mapping[str, Any]]:
+        try:
+            resp = adapter.client.session.get(
+                f"{BASE}/sync/all-items/anime",
+                headers=_headers(adapter, force_refresh=True),
+                params={"extended": "full_anime_seasons"},
+                timeout=adapter.cfg.timeout,
+            )
+            data = resp.json() if resp.ok else {}
+        except Exception:
+            return []
+        if isinstance(data, Mapping):
+            rows = data.get("anime")
+            return rows if isinstance(rows, list) else []
+        return data if isinstance(data, list) else []
+
+    return maybe_map_tvdb_ids(adapter, ids, fetch_rows=_fetch_rows)
 
 
 
@@ -149,11 +71,20 @@ def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
     cw_log("SIMKL", "ratings", level, msg, **fields)
 
 
+def _dbg(event: str, **fields: Any) -> None:
+    _log(event, level="debug", **fields)
+
+
+def _info(event: str, **fields: Any) -> None:
+    _log(event, level="info", **fields)
+
+
+def _warn(event: str, **fields: Any) -> None:
+    _log(event, level="warn", **fields)
+
+
 def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
-    return build_headers(
-        {"simkl": {"api_key": adapter.cfg.api_key, "access_token": adapter.cfg.access_token}},
-        force_refresh=force_refresh,
-    )
+    return adapter_headers(adapter, force_refresh=force_refresh)
 
 
 def _norm_rating(v: Any) -> int | None:
@@ -205,54 +136,12 @@ def _as_iso(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _legacy_path(path: Path) -> Path | None:
-    parts = path.stem.split(".")
-    if len(parts) < 2:
-        return None
-    legacy_name = ".".join(parts[:-1]) + path.suffix
-    legacy = path.with_name(legacy_name)
-    return None if legacy == path else legacy
-
-
-def _migrate_legacy_json(path: Path) -> None:
-    if path.exists():
-        return
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    legacy = _legacy_path(path)
-    if not legacy or not legacy.exists():
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_bytes(legacy.read_bytes())
-        os.replace(tmp, path)
-    except Exception:
-        pass
-
-
 def _load_json(path: str) -> dict[str, Any]:
-    if _is_capture_mode() or _pair_scope() is None:
-        return {}
-    p = Path(path)
-    _migrate_legacy_json(p)
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
-        return {}
+    return load_json_state(path)
 
 
 def _save_json(path: str, data: Mapping[str, Any]) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    try:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, p)
-    except Exception as exc:
-        _log(f"save {Path(path).name} failed: {exc}")
+    save_json_state(path, data)
 
 
 def _load_unresolved() -> dict[str, Any]:
@@ -335,6 +224,27 @@ def _rshadow_save(obj: Mapping[str, Any]) -> None:
     _save_json(_shadow_path(), obj)
 
 
+def _rshadow_items_from(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    store: dict[str, Any] = {}
+    now = _now()
+    for it in items or []:
+        mini = id_minimal(dict(it))
+        bk = simkl_key_of(mini)
+        if not bk or _is_unknown_key(bk):
+            continue
+        rt = _norm_rating(it.get("rating"))
+        if rt is None:
+            continue
+        ra = _pick_rated_at(it)
+        ts = _as_epoch(ra) or 0
+        store[bk] = {
+            "item": mini,
+            "rating": rt,
+            "rated_at": ra or (_as_iso(ts) if ts else _as_iso(now)),
+        }
+    return store
+
+
 def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
     rows = list(items or [])
     if not rows:
@@ -364,6 +274,12 @@ def _rshadow_put_all(items: Iterable[Mapping[str, Any]]) -> None:
         if ts >= old_ts:
             store[bk] = {"item": mini, "rating": rt, "rated_at": ra or _as_iso(ts)}
     sh["items"] = store
+    _rshadow_save(sh)
+
+
+def _rshadow_replace_all(items: Iterable[Mapping[str, Any]]) -> None:
+    sh = _rshadow_load()
+    sh["items"] = _rshadow_items_from(items)
     _rshadow_save(sh)
 
 
@@ -416,10 +332,29 @@ def _rshadow_merge_into(out: dict[str, dict[str, Any]], thaw: set[str]) -> None:
             out[bk] = m
             merged += 1
     if merged:
-        _log(f"shadow merged {merged} rating items")
+        _dbg("cache_merged", cache="shadow", count=merged)
     if cleaned or changed:
         sh["items"] = store
         _rshadow_save(sh)
+
+
+def _shadow_has_anime_items() -> bool:
+    sh = _rshadow_load()
+    store = sh.get("items") or {}
+    if not isinstance(store, Mapping):
+        return False
+    for rec_any in store.values():
+        rec = rec_any if isinstance(rec_any, Mapping) else {}
+        item = rec.get("item") if isinstance(rec.get("item"), Mapping) else {}
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("anime_type") or "").strip():
+            return True
+        ids_any = item.get("ids")
+        ids: Mapping[str, Any] = ids_any if isinstance(ids_any, Mapping) else {}
+        if any(ids.get(k) for k in ("anilist", "mal", "kitsu", "anidb")):
+            return True
+    return False
 
 
 def _dedupe_prefer_plex_id(out: dict[str, dict[str, Any]]) -> None:
@@ -460,7 +395,7 @@ def _dedupe_prefer_plex_id(out: dict[str, dict[str, Any]]) -> None:
     for k in drop:
         out.pop(k, None)
     if drop:
-        _log(f"deduped {len(drop)} rating ids (prefer plex/guid)")
+        _dbg("index_reconcile", reason="dedupe_applied", strategy="prefer_plex_guid", count=len(drop))
 
 
 def _row_ids(obj: Mapping[str, Any]) -> dict[str, Any]:
@@ -495,22 +430,7 @@ def _row_ids(obj: Mapping[str, Any]) -> dict[str, Any]:
 _SLUG_ID_KEYS = ("tvdbslug", "trakttvslug", "traktmslug", "letterslug", "slug")
 
 def _slug_to_title(slug: str) -> str:
-    s = (slug or "").strip().strip("/")
-    if not s:
-        return ""
-    s = s.replace("-", " ").replace("_", " ")
-    s = " ".join(s.split())
-    if not s:
-        return ""
-    lower_words = {"and", "or", "the", "a", "an", "of", "to", "in", "on", "for", "with"}
-    out: list[str] = []
-    for i, w in enumerate(s.split(" ")):
-        wl = w.lower()
-        if i and (wl in lower_words):
-            out.append(wl)
-        else:
-            out.append(w[:1].upper() + w[1:].lower() if w else w)
-    return " ".join(out)
+    return slug_to_title(slug)
 
 
 def _title_from_slug_ids(ids: Mapping[str, Any]) -> str:
@@ -641,30 +561,55 @@ def _resolve_by_simkl_id(
 RATINGS_ALL = "1,2,3,4,5,6,7,8,9,10"
 
 
-def _fetch_rows_any(
+def _fetch_rows_current(
     sess: Any,
     hdrs: Mapping[str, str],
     *,
     kind: str,
-    df_iso: str,
     timeout: float,
-) -> list[Mapping[str, Any]]:
+) -> tuple[list[Mapping[str, Any]], bool]:
     if kind not in {"movies", "shows", "anime"}:
-        return []
-    url = f"{BASE}/sync/ratings/{kind}/{RATINGS_ALL}?date_from={df_iso}"
+        return [], False
+    url = f"{BASE}/sync/ratings/{kind}/{RATINGS_ALL}"
     try:
         resp = sess.post(url, headers=dict(hdrs), timeout=timeout)
         if resp.status_code != 200:
-            return []
+            _warn("http_failed", op="index", kind=kind, status=resp.status_code, body=(resp.text or "")[:200])
+            return [], False
         data = resp.json()
         if not isinstance(data, Mapping):
-            return []
+            if isinstance(data, list):
+                _dbg("index_reconcile", op="index", kind=kind, reason="non_mapping_bare_list", count=len(data))
+                return [r for r in data if isinstance(r, Mapping)], True
+            _dbg("http_failed", op="index", kind=kind, reason="non_mapping_response_assumed_empty")
+            return [], True
         rows_any = data.get(kind)
-        if not isinstance(rows_any, list) or not rows_any:
-            return []
-        return [r for r in rows_any if isinstance(r, Mapping)]
-    except Exception:
-        return []
+        if not isinstance(rows_any, list):
+            return [], True
+        return [r for r in rows_any if isinstance(r, Mapping)], True
+    except Exception as exc:
+        _warn("http_failed", op="index", kind=kind, error=str(exc))
+        return [], False
+
+
+def _filter_rows_since(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    since_iso: str | None,
+) -> list[Mapping[str, Any]]:
+    floor = _as_epoch(since_iso)
+    if floor is None:
+        return [dict(r) for r in rows if isinstance(r, Mapping)]
+    out: list[Mapping[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        rated_at = row.get("user_rated_at") if "user_rated_at" in row else row.get("rated_at")
+        ts = _as_epoch(rated_at)
+        if ts is not None and ts < floor:
+            continue
+        out.append(dict(row))
+    return out
 
 
 def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict[str, Any]]:
@@ -676,6 +621,7 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
     out: dict[str, dict[str, Any]] = {}
     thaw: set[str] = set()
+    shadow_has_data = bool((_rshadow_load().get("items") or {}))
 
     act_latest: str | None = None
 
@@ -688,8 +634,8 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         candidates = [x for x in (lm, ls, la) if x]
         act_latest = max(candidates) if candidates else None
         unchanged = bool(wm) and (lm is None or lm <= wm) and (ls is None or ls <= wm) and (la is None or la <= wm)
-        if unchanged:
-            _log(f"activities unchanged; ratings from shadow (m={lm} s={ls} a={la})", level="info")
+        if unchanged and shadow_has_data:
+            _dbg("index_cache_hit", source="shadow", reason="activities_unchanged", movies=lm or "", shows=ls or "", anime=la or "")
             _rshadow_merge_into(out, thaw)
             _dedupe_prefer_plex_id(out)
             if prog:
@@ -701,17 +647,38 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
             try:
                 _rshadow_put_all(out.values())
             except Exception as exc:
-                _log(f"shadow.put index skipped: {exc}")
-            _log(f"index size: {len(out)} (shadow)", level="info")
+                _warn("cache_save_failed", cache="shadow", op="index", source="shadow", error=str(exc))
+            _info("index_done", count=len(out), source="shadow")
             return out
 
     hdrs = _headers(adapter, force_refresh=True)
+    rows_movies_raw, ok_movies = _fetch_rows_current(sess, hdrs, kind="movies", timeout=tmo)
+    rows_shows_raw, ok_shows = _fetch_rows_current(sess, hdrs, kind="shows", timeout=tmo)
+    rows_anime_raw, ok_anime = _fetch_rows_current(sess, hdrs, kind="anime", timeout=tmo)
+    if ok_movies and ok_shows and not ok_anime:
+        if _shadow_has_anime_items():
+            _warn("index_reconcile", reason="anime_bucket_unavailable_shadow_has_items", source="current")
+        else:
+            _dbg("index_reconcile", reason="anime_bucket_unavailable_assumed_empty", source="current")
+        rows_anime_raw = []
+        ok_anime = True
+    fetch_ok = ok_movies and ok_shows and ok_anime
 
-    df_all = coalesce_date_from("ratings", cfg_date_from=since_iso)
+    if not fetch_ok and shadow_has_data:
+        _warn("index_reconcile", reason="current_fetch_incomplete", source="shadow_fallback")
+        _rshadow_merge_into(out, thaw)
+        _dedupe_prefer_plex_id(out)
+        if prog:
+            try:
+                prog.done(ok=True, total=len(out))
+            except Exception:
+                pass
+        _info("index_done", count=len(out), source="shadow_fallback")
+        return out
 
-    rows_movies = _fetch_rows_any(sess, hdrs, kind="movies", df_iso=df_all, timeout=tmo)
-    rows_shows = _fetch_rows_any(sess, hdrs, kind="shows", df_iso=df_all, timeout=tmo)
-    rows_anime = _fetch_rows_any(sess, hdrs, kind="anime", df_iso=df_all, timeout=tmo)
+    rows_movies = _filter_rows_since(rows_movies_raw, since_iso=since_iso)
+    rows_shows = _filter_rows_since(rows_shows_raw, since_iso=since_iso)
+    rows_anime = _filter_rows_since(rows_anime_raw, since_iso=since_iso)
 
     grand_total = len(rows_movies) + len(rows_shows) + len(rows_anime)
 
@@ -721,8 +688,6 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         except Exception:
             pass
 
-    resolved_cache: dict[tuple[str, int], Mapping[str, Any]] = {}
-    search_cache: dict[str, tuple[str, int | None]] = {}
     done = 0
     max_movies: int | None = None
     max_shows: int | None = None
@@ -838,7 +803,6 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
     _ingest("shows", rows_shows)
     _ingest("anime", rows_anime)
 
-    _rshadow_merge_into(out, thaw)
     _dedupe_prefer_plex_id(out)
 
     if prog:
@@ -847,10 +811,7 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
         except Exception:
             pass
 
-    _log(
-        f"counts movies={len(rows_movies)} shows={len(rows_shows)} anime={len(rows_anime)} from={df_all}",
-        level="info",
-    )
+    _dbg("index_fetch_counts", movies=len(rows_movies), shows=len(rows_shows), anime=len(rows_anime), source="current")
 
     if act_latest:
         update_watermark_if_new("ratings", act_latest)
@@ -861,11 +822,11 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
 
     _unfreeze_if_present(thaw)
     try:
-        _rshadow_put_all(out.values())
+        _rshadow_replace_all(out.values())
     except Exception as exc:
-        _log(f"shadow.put index skipped: {exc}")
+        _warn("cache_save_failed", cache="shadow", op="index", source="live", error=str(exc))
 
-    _log(f"index size: {len(out)}", level="info")
+    _info("index_done", count=len(out), source="current")
     return out
 
 
@@ -986,6 +947,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
 
     if not (movies or shows):
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
 
     body: dict[str, Any] = {}
@@ -1001,13 +963,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             ok = len(movies) + len(shows)
             try:
                 _rshadow_put_all(rshadow_events)
-            except Exception:
-                pass
-            _log(f"add done: +{ok}", level="info")
+            except Exception as exc:
+                _warn("cache_save_failed", cache="shadow", op="add", error=str(exc))
+            _info("write_done", op="add", ok=len(unresolved) == 0 and ok == len(thaw_keys), applied=ok, unresolved=len(unresolved))
             return ok, unresolved
-        _log(f"ADD failed {resp.status_code}: {(resp.text or '')[:180]}")
+        _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
     except Exception as exc:
-        _log(f"ADD error: {exc}")
+        _warn("write_failed", op="add", error=str(exc))
 
     for it in attempted:
         ids = _maybe_map_tvdb(adapter, _ids_of(it))
@@ -1015,6 +977,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if ids and rating is not None:
             _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
 
+    _info("write_done", op="add", ok=False, applied=0, unresolved=len(unresolved))
     return 0, unresolved
 
 
@@ -1064,6 +1027,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         attempted.append(it)
 
     if not (movies or shows):
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
 
     body: dict[str, Any] = {}
@@ -1090,11 +1054,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             except Exception:
                 pass
             ok = len(movies) + len(shows)
-            _log(f"remove done: -{ok}")
+            _info("write_done", op="remove", ok=len(unresolved) == 0 and ok == len(thaw_keys), applied=ok, unresolved=len(unresolved))
             return ok, unresolved
-        _log(f"REMOVE failed {resp.status_code}: {(resp.text or '')[:180]}")
+        _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
     except Exception as exc:
-        _log(f"REMOVE error: {exc}")
+        _warn("write_failed", op="remove", error=str(exc))
 
     for it in attempted:
         ids = _ids_of(it) or _show_ids_of_episode(it)
@@ -1102,4 +1066,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if ids:
             _freeze(it, action="remove", reasons=["write_failed"], ids_sent=ids, rating=None)
 
+    _info("write_done", op="remove", ok=False, applied=0, unresolved=len(unresolved))
     return 0, unresolved

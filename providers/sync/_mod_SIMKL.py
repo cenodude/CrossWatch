@@ -22,7 +22,7 @@ from ._mod_common import (
     SimpleRateLimiter,
     request_with_retries,
 )
-from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, normalize as simkl_normalize, key_of as simkl_key_of, state_file
+from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, memoize_activities, normalize as simkl_normalize, key_of as simkl_key_of, state_file
 
 
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
@@ -65,7 +65,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "4.1.1"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -87,19 +87,19 @@ try:
     from .simkl import _watchlist as feat_watchlist
 except Exception as e:
     feat_watchlist = None
-    _log("failed to import watchlist", level="warn", error=str(e))
+    _log("feature_import_failed", level="warn", import_feature="watchlist", error=str(e))
 
 try:
     from .simkl import _history as feat_history
 except Exception as e:
     feat_history = None
-    _log("failed to import history", level="warn", error=str(e))
+    _log("feature_import_failed", level="warn", import_feature="history", error=str(e))
 
 try:
     from .simkl import _ratings as feat_ratings
 except Exception as e:
     feat_ratings = None
-    _log("failed to import ratings", level="warn", error=str(e))
+    _log("feature_import_failed", level="warn", import_feature="ratings", error=str(e))
 
 
 class SIMKLError(RuntimeError):
@@ -172,7 +172,17 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "delta",
             "observed_deletes": False,
+            "watchlist": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+            },
+            "history": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+            },
             "ratings": {
+                "index_semantics": "present",
+                "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "upsert": True,
                 "unrate": True,
@@ -341,6 +351,12 @@ class SIMKLModule:
                     except Exception:
                         pass
                 rate = parse_rate_limit(r.headers)
+                if core_ok:
+                    try:
+                        data = r.json() if (r.text or "").strip() else {}
+                    except Exception:
+                        data = None
+                    memoize_activities(data, rate)
             except Exception as e:
                 core_reason = f"exception:{e.__class__.__name__}"
 
@@ -417,7 +433,7 @@ class SIMKLModule:
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         feats = supported_features()
         if not feats.get(feature) or feature not in _FEATURES:
-            _log(f"build_index skipped: feature disabled or missing: {feature}")
+            _log("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -431,7 +447,7 @@ class SIMKLModule:
     ) -> dict[str, Any]:
         feats = supported_features()
         if not feats.get(feature) or feature not in _FEATURES:
-            _log(f"add skipped: feature disabled or missing: {feature}")
+            _log("write_skipped", feature=feature, level="info", op="add", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         lst = list(items or [])
         if not lst:
@@ -440,7 +456,7 @@ class SIMKLModule:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"add skipped: feature module missing: {feature}")
+            _log("write_skipped", feature=feature, level="info", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = mod.add(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
@@ -454,7 +470,7 @@ class SIMKLModule:
     ) -> dict[str, Any]:
         feats = supported_features()
         if not feats.get(feature) or feature not in _FEATURES:
-            _log(f"remove skipped: feature disabled or missing: {feature}")
+            _log("write_skipped", feature=feature, level="info", op="remove", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         lst = list(items or [])
         if not lst:
@@ -463,7 +479,7 @@ class SIMKLModule:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _log(f"remove skipped: feature module missing: {feature}")
+            _log("write_skipped", feature=feature, level="info", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = mod.remove(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
@@ -484,6 +500,18 @@ class _SIMKLOPS:
             "provides_ids": True,
             "index_semantics": "delta",
             "observed_deletes": False,
+            "watchlist": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+            },
+            "history": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+            },
+            "ratings": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+            },
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
