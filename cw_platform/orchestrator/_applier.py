@@ -104,8 +104,13 @@ def _normalize(
             return x, (str(hint).strip() or None) if hint is not None else None
 
         def _has_ids(x: Mapping[str, Any] | None) -> bool:
+            _id_keys = ("tmdb", "imdb", "tvdb", "trakt", "slug")
             ids = (x or {}).get("ids") or {}
-            return any(ids.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt", "slug"))
+            if any(ids.get(k) for k in _id_keys):
+                return True
+            # Episode/season items carry show IDs in show_ids, not ids
+            show_ids = (x or {}).get("show_ids") or {}
+            return any(show_ids.get(k) for k in _id_keys)
 
         try:
             from ..id_map import canonical_key as _ckey  # type: ignore
