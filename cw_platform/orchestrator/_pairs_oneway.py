@@ -732,6 +732,13 @@ def run_one_way_feature(
         if manual_adds:
             src_idx = _merge_manual_adds(src_idx, manual_adds)
 
+        # Strip synthetic entries (no watched_at) from src before planning
+        if feature == "history":
+            src_idx = {
+                k: dict(v) for k, v in src_idx.items()
+                if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
+            }
+
         bucket_sec = _history_bucket_sec(src, dst, feature)
         if bucket_sec and int(bucket_sec) > 1:
             b = int(bucket_sec)
@@ -768,7 +775,10 @@ def run_one_way_feature(
                     continue
                 tsb = _tsb_from_key(str(sk))
                 if tsb is None:
-
+                    # Skip synthetic entries (e.g. season keys with no watched_at)
+                    # — they exist for dst key-matching only and have no watch event to propagate.
+                    if not (sv.get("watched_at") or sv.get("last_watched_at")):
+                        continue
                     if str(sk) not in (dst_full or {}):
                         adds.append(_minimal(sv))
                     continue
