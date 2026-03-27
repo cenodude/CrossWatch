@@ -76,6 +76,8 @@ def _error(msg: str, **fields: Any) -> None:
 
 def _log(msg: str, **fields: Any) -> None:
     _dbg(msg, **fields)
+
+
 def _cache_path() -> Path:
     return state_file("mdblist_ratings.index.json")
 
@@ -156,14 +158,15 @@ def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
 
 
 def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries: int) -> dict[str, Any] | None:
-    try:
-        client = getattr(adapter, "client", None)
-        if client and hasattr(client, "last_activities"):
+    client = getattr(adapter, "client", None)
+    if client and hasattr(client, "last_activities"):
+        try:
             data = client.last_activities()
             if isinstance(data, Mapping) and "error" not in data and "status" not in data:
                 return dict(data)
-    except Exception:
-        pass
+        except Exception:
+            pass
+        return None
     try:
         r = request_with_retries(
             adapter.client.session,
@@ -190,7 +193,6 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             "tvdb": item.get("tvdb") or item.get("tvdb_id"),
             "trakt": item.get("trakt") or item.get("trakt_id"),
             "kitsu": item.get("kitsu") or item.get("kitsu_id"),
-            "mdblist": item.get("mdblist") or item.get("mdblist_id"),
         }
     out: dict[str, Any] = {}
     imdb_val = _imdb_ok(ids_raw.get("imdb"))
@@ -204,9 +206,6 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             out[key] = int(value)
         except Exception:
             continue
-    mdblist_val = ids_raw.get("mdblist")
-    if mdblist_val not in (None, ""):
-        out["mdblist"] = str(mdblist_val)
     if out.get("imdb") and out.get("tmdb") and out.get("tvdb"):
         out.pop("tvdb", None)
     return out
@@ -229,6 +228,13 @@ def _pick_kind(item: Mapping[str, Any]) -> str:
     if str(item.get("show") or "").lower() == "true":
         return "shows"
     return "movies"
+
+
+def _type_norm(value: object) -> str:
+    t = str(value or "").strip().lower()
+    if t.endswith("s") and t in ("movies", "shows", "seasons", "episodes"):
+        t = t[:-1]
+    return t or "movie"
 
 
 
@@ -279,11 +285,6 @@ def _key_of(obj: Mapping[str, Any]) -> str:
             except Exception:
                 base = ""
 
-    if not base:
-        mdbl = ids.get("mdblist") or ids.get("mdblist_id") or ids.get("id")
-        if mdbl:
-            base = f"mdblist:{mdbl}"
-
     if kind in ("season", "episode") and not base:
         title = str(obj.get("series_title") or obj.get("title") or "").strip()
         year_val = obj.get("year")
@@ -321,6 +322,64 @@ def _valid_rating(value: Any) -> int | None:
         return i if 1 <= i <= 10 else None
     except Exception:
         return None
+
+
+def _journal_item(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    if str(row.get("category") or "").strip().lower() != "rated":
+        return None
+    typ = _type_norm(row.get("item_type"))
+    ids = _ids_for_mdblist({"ids": row.get("ids") or {}})
+    if not ids:
+        return None
+    out: dict[str, Any] = {"type": typ}
+    if typ in ("season", "episode"):
+        out["show_ids"] = ids
+        out["ids"] = ids
+        out["season"] = row.get("season")
+        if typ == "episode":
+            out["episode"] = row.get("episode")
+    else:
+        out["ids"] = ids
+    rating = _valid_rating(row.get("rating"))
+    if rating is None:
+        out["_removed"] = True
+    else:
+        out["rating"] = rating
+    rated_at = row.get("value_at") or row.get("action_at")
+    if _iso_ok(rated_at):
+        out["rated_at"] = _iso_z(rated_at)
+    return out
+
+
+def _apply_journal_rows(
+    cached: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, Any], dict[str, int], str | None]:
+    merged: dict[str, Any] = {
+        str(k): dict(v) for k, v in (cached or {}).items() if isinstance(v, Mapping)
+    }
+    stats = {"added": 0, "removed": 0}
+    latest_seen: str | None = None
+
+    def _sort_key(row: Mapping[str, Any]) -> str:
+        return str(row.get("action_at") or row.get("value_at") or "")
+
+    for row in sorted((r for r in (rows or []) if isinstance(r, Mapping)), key=_sort_key):
+        item = _journal_item(row)
+        if not item:
+            continue
+        latest_seen = _max_iso(latest_seen, row.get("action_at") or row.get("value_at"))
+        key = _key_of(item)
+        if not key:
+            continue
+        if item.get("_removed") or item.get("rating") is None:
+            if key in merged:
+                merged.pop(key, None)
+                stats["removed"] += 1
+            continue
+        merged[key] = item
+        stats["added"] += 1
+    return merged, stats, latest_seen
 
 
 def _row_movie(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -506,7 +565,12 @@ def build_index(
     cached = _load_cache()
 
     if not apikey:
-        _log("missing api_key - ratings index from cache only")
+        source = "cache" if cached else "empty"
+        if cached:
+            _dbg("index_cache_hit", source=source, reason="missing_api_key", count=len(cached))
+        else:
+            _dbg("index_reconcile", reason="missing_api_key", strategy="empty")
+        _info("index_done", count=len(cached), source=source)
         return dict(cached) if cached else {}
 
     per_page = _cfg_int(cfg, "ratings_per_page", per_page)
@@ -520,22 +584,47 @@ def build_index(
     acts = _fetch_last_activities(adapter, apikey=apikey, timeout=timeout, retries=retries) or {}
     acts_ts_raw = acts.get("rated_at") if isinstance(acts, Mapping) else None
     acts_ts = _iso_z(acts_ts_raw) if _iso_ok(acts_ts_raw) else None
+    journal_ts_raw = acts.get("journal_at") if isinstance(acts, Mapping) else None
+    journal_ts = _iso_z(journal_ts_raw) if _iso_ok(journal_ts_raw) else None
     force_full = False
 
     wm = get_watermark("ratings")
-    if acts_ts and wm:
+    journal_wm = get_watermark("ratings_journal")
+    if acts_ts and journal_ts and wm and journal_wm:
         a = _as_epoch(acts_ts) or 0
         b = _as_epoch(wm) or 0
-        if a <= b:
-            if cached:
-                _log(f"no-op (rated_at={acts_ts} <= watermark={wm}) - using cached snapshot")
-                return dict(cached)
-            _log(f"no-op (rated_at={acts_ts} <= watermark={wm}) but no cached snapshot - forcing refresh")
-            force_full = True
+        jn = _as_epoch(journal_ts) or 0
+        jw = _as_epoch(journal_wm) or 0
+        if a <= b and jn <= jw:
+            _dbg("index_cache_hit", source="cache", reason="activities_unchanged", rated_at=acts_ts, journal_at=journal_ts, watermark=wm, journal_watermark=journal_wm, count=len(cached))
+            _info("index_done", count=len(cached), source="cache")
+            return dict(cached)
+        if cached and jn > jw:
+            journal_limit = max(50, min(per_page, 1000))
+            journal = adapter.fetch_journal(since=journal_wm, limit=journal_limit, category="rated")
+            journal_oldest = str(journal.get("journal_oldest_at") or "").strip()
+            if _iso_ok(journal_oldest) and (_as_epoch(journal_wm) or 0) < (_as_epoch(_iso_z(journal_oldest)) or 0):
+                _warn("index_reconcile", reason="journal_window_stale", strategy="full_replace", journal_oldest_at=journal_oldest, journal_watermark=journal_wm)
+                force_full = True
+            else:
+                rows = journal.get("rows") if isinstance(journal.get("rows"), list) else []
+                merged_journal, journal_stats, latest_journal_seen = _apply_journal_rows(cached, rows)
+                _save_cache(merged_journal)
+                update_watermark_if_new("ratings", _max_iso(latest_journal_seen, acts_ts))
+                update_watermark_if_new("ratings_journal", journal_ts)
+                _dbg("index_reconcile", reason="journal_applied", strategy="journal", rows=len(rows), added=journal_stats["added"], removed=journal_stats["removed"], rated_at=acts_ts or "-", journal_at=journal_ts, journal_watermark=journal_wm)
+                _info("index_done", count=len(merged_journal), source="journal")
+                return merged_journal
 
-    if acts_ts and (not wm) and cached:
+    if acts_ts and journal_ts and (not journal_wm) and cached:
+        force_full = True
+
+    if acts_ts and (not wm) and cached and not force_full:
         save_watermark("ratings", acts_ts)
-        _log(f"baseline watermark set to {acts_ts} (using cached snapshot)")
+        if journal_ts:
+            save_watermark("ratings_journal", journal_ts)
+        _dbg("index_cache_hit", source="cache", reason="baseline_watermark_set", watermark=acts_ts, count=len(cached))
+        _info("index_done", count=len(cached), source="cache")
         return dict(cached)
     cfg_since = str(cfg.get("ratings_since") or "").strip() or None
     if force_full:
@@ -551,7 +640,7 @@ def build_index(
     pages = 0
     latest_seen: str | None = None
 
-    _log(f"delta.start since={since_req} per_page={per_page} max_pages={max_pages} timeout={timeout} retries={retries}")
+    _dbg("index_reconcile", reason="delta_fetch", strategy="delta", since=since_req, per_page=per_page, max_pages=max_pages, timeout=timeout, retries=retries)
     while True:
         r = request_with_retries(
             sess,
@@ -562,7 +651,8 @@ def build_index(
             max_retries=retries,
         )
         if r.status_code != 200:
-            _log(f"GET /sync/ratings offset {offset} -> {r.status_code}: {(r.text or '')[:160]}")
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset, body=(r.text or '')[:160])
+            _info("index_done", count=len(cached), source="cache_fallback")
             return dict(cached)
 
         data = r.json() if (r.text or "").strip() else {}
@@ -684,18 +774,25 @@ def build_index(
         if not bool(has_more) or pages >= max_pages:
             break
         offset += per_page
-    merged = dict(cached)
-    if out:
-        for k, v in out.items():
-            if v.get("_removed") or v.get("rating") is None:
-                merged.pop(k, None)
-            else:
-                merged[k] = v
+    if force_full and out:
+        merged = {k: v for k, v in out.items() if not v.get("_removed") and v.get("rating") is not None}
         _save_cache(merged)
+    else:
+        merged = dict(cached)
+        if out:
+            for k, v in out.items():
+                if v.get("_removed") or v.get("rating") is None:
+                    merged.pop(k, None)
+                else:
+                    merged[k] = v
+            _save_cache(merged)
 
     update_watermark_if_new("ratings", _max_iso(latest_seen, acts_ts))
+    if journal_ts:
+        update_watermark_if_new("ratings_journal", journal_ts)
 
-    _log(f"delta size: {len(out)} latest_seen={latest_seen or '-'} watermark={get_watermark('ratings') or '-'}")
+    _dbg("index_fetch_counts", count=len(out), latest_seen=latest_seen or "-", watermark=get_watermark("ratings") or "-", source="current")
+    _info("index_done", count=len(merged), source="current")
     return merged
 
 
@@ -708,8 +805,6 @@ def _show_key(ids: Mapping[str, Any]) -> str:
         return f"trakt:{ids['trakt']}"
     if ids.get("tvdb"):
         return f"tvdb:{ids['tvdb']}"
-    if ids.get("mdblist"):
-        return f"mdblist:{ids['mdblist']}"
     if ids.get("kitsu"):
         return f"kitsu:{ids['kitsu']}"
     return json.dumps(ids, sort_keys=True)
@@ -915,9 +1010,11 @@ def _write(
 ) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
+    items_list = list(items or [])
     if not apikey:
-        _log("write abort: missing api_key")
-        return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]
+        unresolved = [{"item": id_minimal(it), "hint": "missing_api_key"} for it in items_list]
+        _info("write_skipped", op="remove" if unrate else "add", reason="missing_api_key", unresolved=len(unresolved))
+        return 0, unresolved
 
     sess = adapter.client.session
     tmo = adapter.cfg.timeout
@@ -927,13 +1024,21 @@ def _write(
     delay_ms = _cfg_int(cfg, "ratings_write_delay_ms", 600)
     max_backoff_ms = _cfg_int(cfg, "ratings_max_backoff_ms", 8000)
 
-    body, accepted = _bucketize(items, unrate=unrate)
+    body, accepted = _bucketize(items_list, unrate=unrate)
     if not body:
-        _log("nothing to write (empty body after aggregate)")
+        _info("write_skipped", op="remove" if unrate else "add", reason="empty_payload", unresolved=0)
         return 0, []
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
+    _dbg(
+        "write_start",
+        op="remove" if unrate else "add",
+        movies=len(body.get("movies") or []),
+        shows_nested=len(body.get("shows_nested") or []),
+        shows_plain=len(body.get("shows_plain") or []),
+        chunk_size=chunk_size,
+    )
 
     stages: list[tuple[str, str]] = [
         ("movies", "movies"),
@@ -946,8 +1051,7 @@ def _write(
         if not rows:
             continue
 
-        stage = "" if body_key == bucket else f" stage={body_key}"
-        _log(f"{'UNRATE' if unrate else 'UPSERT'} bucket={bucket}{stage} rows={len(rows)} chunk={chunk_size}")
+        stage = "" if body_key == bucket else body_key
 
         for part in _chunk(rows, chunk_size):
             payload = {bucket: part}
@@ -999,9 +1103,15 @@ def _write(
                     break
 
                 if r.status_code in (429, 503):
-                    _log(
-                        f"{'UNRATE' if unrate else 'UPSERT'} throttled {r.status_code} "
-                        f"bucket={bucket}{stage} attempt={attempt} backoff_ms={backoff}: {(r.text or '')[:180]}"
+                    _warn(
+                        "rate_limit",
+                        op="remove" if unrate else "add",
+                        bucket=bucket,
+                        stage=stage or bucket,
+                        status=r.status_code,
+                        attempt=attempt,
+                        backoff_ms=backoff,
+                        body=(r.text or '')[:180],
                     )
                     time.sleep(min(max_backoff_ms, backoff) / 1000.0)
                     attempt += 1
@@ -1009,9 +1119,13 @@ def _write(
                     if attempt <= 4:
                         continue
 
-                _log(
-                    f"{'UNRATE' if unrate else 'UPSERT'} failed {r.status_code} "
-                    f"bucket={bucket}{stage}: {(r.text or '')[:200]}"
+                _warn(
+                    "write_failed",
+                    op="remove" if unrate else "add",
+                    bucket=bucket,
+                    stage=stage or bucket,
+                    status=r.status_code,
+                    body=(r.text or '')[:200],
                 )
                 for x in part:
                     iid = x.get("ids") or {}
@@ -1030,6 +1144,7 @@ def _write(
         _save_cache(cache)
         update_watermark_if_new("ratings", _now_iso())
 
+    _info("write_done", op="remove" if unrate else "add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
