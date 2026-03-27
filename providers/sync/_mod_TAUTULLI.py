@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
+import os
 import time
 
 from ._log import log as cw_log
@@ -16,7 +17,9 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0"
+os.environ.setdefault("CW_TAUTULLI_VERSION", __VERSION__)
+os.environ.setdefault("CW_TAUTULLI_UA", f"CrossWatch/{__VERSION__} (Tautulli)")
 __all__ = ["get_manifest", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -106,6 +109,11 @@ class TAUTULLIClient:
         self.cfg = cfg
         self.raw_cfg = raw_cfg
         self.session = build_session("TAUTULLI", ctx, feature_label=_label)
+        try:
+            self.session.headers.setdefault("User-Agent", os.environ.get("CW_TAUTULLI_UA") or f"CrossWatch/{__VERSION__} (Tautulli)")
+            self.session.headers.setdefault("Accept", "application/json")
+        except Exception:
+            pass
 
     def _url(self) -> str:
         return f"{self.cfg.server_url}/api/v2"
@@ -130,12 +138,12 @@ class TAUTULLIClient:
         if isinstance(resp, dict):
             if str(resp.get("result") or "").lower() != "success":
                 msg = str(resp.get("message") or "unknown error")
-                _warn("api result not success", cmd=cmd, message=msg)
+                _warn("http_failed", op=cmd, message=msg)
                 raise RuntimeError(msg)
             return resp.get("data")
 
         if r.status_code >= 400:
-            _warn("http non ok", cmd=cmd, status=r.status_code)
+            _warn("http_failed", op=cmd, status=r.status_code)
             raise RuntimeError(f"HTTP {r.status_code}")
         return j
 
@@ -185,12 +193,12 @@ class TAUTULLIModule:
                 ts = rows[0].get("date") or rows[0].get("started")
             return {"history": str(ts or "0"), "updated_at": str(ts or "0")}
         except Exception as e:
-            _dbg("activities failed", error=str(e))
+            _dbg("activities_failed", error=str(e))
             return {"updated_at": "0"}
 
     def build_index(self, feature: str) -> Mapping[str, dict[str, Any]]:
         if feature != "history":
-            _dbg("unsupported feature", requested=feature)
+            _info("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
         from .tautulli import _history
 
@@ -198,11 +206,15 @@ class TAUTULLIModule:
         return _history.build_index(adapter)
 
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
+        if feature != "history":
+            return {"ok": True, "count": 0, "unresolved": [], "reason": "disabled_or_missing"}
         from .tautulli import _history
 
         return _history.add(self, items, dry_run=dry_run)
 
     def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
+        if feature != "history":
+            return {"ok": True, "count": 0, "unresolved": [], "reason": "disabled_or_missing"}
         from .tautulli import _history
 
         return _history.remove(self, items, dry_run=dry_run)
