@@ -92,7 +92,7 @@ try:
 except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 
 _FEATURES: dict[str, Any] = {}
@@ -261,7 +261,7 @@ class CROSSWATCHModule:
             return {}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn(feature, "index_skipped", reason="module_missing")
+            _info(feature, "index_skipped", reason="module_missing")
             return {}
         started = time.perf_counter()
         out = mod.build_index(self, **kwargs)
@@ -285,12 +285,12 @@ class CROSSWATCHModule:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn(feature, "write_skipped", op="add", reason="module_missing")
+            _info(feature, "write_skipped", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             started = time.perf_counter()
             cnt, unresolved = mod.add(self, lst)
-            _info(feature, "write_done", op="add", count=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
+            _info(feature, "write_done", op="add", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
@@ -314,12 +314,12 @@ class CROSSWATCHModule:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn(feature, "write_skipped", op="remove", reason="module_missing")
+            _info(feature, "write_skipped", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             started = time.perf_counter()
             cnt, unresolved = mod.remove(self, lst)
-            _info(feature, "write_done", op="remove", count=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
+            _info(feature, "write_done", op="remove", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
