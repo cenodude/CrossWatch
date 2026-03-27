@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 import requests
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
 from ._mod_common import (
@@ -22,7 +23,7 @@ from ._mod_common import (
     SimpleRateLimiter,
     request_with_retries,
 )
-from .simkl._common import _pair_scope as simkl_pair_scope, build_headers, memoize_activities, normalize as simkl_normalize, key_of as simkl_key_of, state_file
+from .simkl._common import _pair_scope as simkl_pair_scope, _is_capture_mode as simkl_capture_mode, build_headers, memoize_activities, normalize as simkl_normalize, key_of as simkl_key_of, state_file
 
 
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
@@ -127,6 +128,26 @@ def _json_save(path: str, data: Mapping[str, Any]) -> None:
         os.replace(tmp, path)
     except Exception:
         pass
+
+
+def _show_identity_tokens(item: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
+    try:
+        ck = canonical_key(item)
+        if ck:
+            out.add(str(ck))
+    except Exception:
+        pass
+    ids = item.get("ids") or {}
+    if isinstance(ids, Mapping):
+        for k, v in ids.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if not sv:
+                continue
+            out.add(f"{str(k).lower()}:{sv.lower()}")
+    return out
 
 
 _FEATURES: dict[str, Any] = {}
@@ -396,7 +417,7 @@ class SIMKLModule:
             },
         }
 
-        if simkl_pair_scope():
+        if simkl_pair_scope() and not simkl_capture_mode():
             try:
                 _json_save(
                     str(state_file("simkl.activities.shadow.json")),
@@ -429,6 +450,69 @@ class SIMKLModule:
     def feature_names(self) -> tuple[str, ...]:
         feats = supported_features()
         return tuple(k for k, v in feats.items() if v and k in _FEATURES)
+
+    def dropped_show_tokens(self) -> set[str]:
+        cache_path = str(state_file("simkl_dropped.index.json"))
+        remote_ts = ""
+        try:
+            acts = self.client.activities() or {}
+            shows_raw = acts.get("shows") if isinstance(acts, Mapping) else None
+            shows_blk = shows_raw if isinstance(shows_raw, Mapping) else {}
+            remote_ts = str(shows_blk.get("dropped") or acts.get("all") or "").strip()
+        except Exception:
+            remote_ts = ""
+
+        cached = _json_load(cache_path)
+        raw_cached_tokens = cached.get("tokens") if isinstance(cached, Mapping) else None
+        cached_tokens = raw_cached_tokens if isinstance(raw_cached_tokens, list) else []
+        cache_version = int(cached.get("version") or 0) if isinstance(cached, Mapping) else 0
+        if cache_version >= 1 and remote_ts and str(cached.get("updated_at") or "").strip() == remote_ts:
+            return {str(x) for x in cached_tokens if str(x).strip()}
+        if cache_version >= 1 and not remote_ts and cached_tokens:
+            return {str(x) for x in cached_tokens if str(x).strip()}
+
+        tokens: set[str] = set()
+        try:
+            r = self.client._request(
+                "GET",
+                f"{self.client.BASE}/sync/all-items/shows/dropped",
+                params={"client_id": self.cfg.api_key},
+            )
+            if 200 <= r.status_code < 300:
+                data = r.json() if (r.text or "").strip() else {}
+                raw_rows = data.get("shows") if isinstance(data, Mapping) else None
+                rows = raw_rows if isinstance(raw_rows, list) else []
+                for row in rows:
+                    if not isinstance(row, Mapping):
+                        continue
+                    show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+                    if not isinstance(show, Mapping):
+                        continue
+                    ids = {k: str(v) for k, v in dict(show.get("ids") or {}).items() if v is not None and str(v).strip()}
+                    if not ids:
+                        continue
+                    item = id_minimal(
+                        {
+                            "type": "show",
+                            "title": show.get("title"),
+                            "year": show.get("year"),
+                            "ids": ids,
+                        }
+                    )
+                    tokens.update(_show_identity_tokens(item))
+        except Exception:
+            pass
+
+        _json_save(
+            cache_path,
+            {
+                "version": 1,
+                "updated_at": remote_ts,
+                "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "tokens": sorted(tokens),
+            },
+        )
+        return tokens
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         feats = supported_features()
@@ -570,5 +654,8 @@ class _SIMKLOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
+        return self._adapter(cfg).dropped_show_tokens()
 
 OPS = _SIMKLOPS()

@@ -17,7 +17,6 @@ export const HELP_TEXT = {
   "cx-wl-enable": "Watchlist: Enable\nCompare watchlists and write missing items to the target.",
   "cx-wl-add": "Watchlist: Add\nAdds missing items to the target watchlist.",
   "cx-wl-remove": "Watchlist: Remove\nRemoves items from the target.",
-
   "cx-rt-enable": "Ratings: Enable\nCompare and write ratings to the target.",
   "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
   "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",
@@ -26,6 +25,9 @@ export const HELP_TEXT = {
   "cx-hs-add": "History: Add\nAdds plays/watched items to the target history.",
   "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
   "cx-tr-hs-col": "Trakt: Add collections\nAlso add items to Trakt collections when writing history (if enabled).",
+  "cx-tr-hs-ignore-dropped": "Trakt: Ignore dropped shows\nWhen enabled, shows marked as dropped on Trakt are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
+  "cx-md-hs-ignore-dropped": "MDBList: Ignore dropped shows\nWhen enabled, shows marked as dropped on MDBList are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
+  "cx-sm-hs-ignore-dropped": "Simkl: Ignore dropped shows\nWhen enabled, shows marked as dropped on Simkl are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
 
   "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between media servers.",
   "cx-pr-add": "Progress: Add / Update\nWrite resume position to the target.",

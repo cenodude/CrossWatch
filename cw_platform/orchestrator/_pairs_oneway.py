@@ -58,6 +58,87 @@ _PROVIDER_KEY_MAP = {
 }
 
 
+def _provider_ignore_dropped_enabled(cfg: Mapping[str, Any], provider_key: str, feature: str) -> bool:
+    try:
+        blk = cfg.get(str(provider_key or "").strip().lower()) or {}
+        if not isinstance(blk, Mapping):
+            return False
+        key = f"{str(feature or '').strip().lower()}_ignore_dropped_shows"
+        return bool(blk.get(key, False))
+    except Exception:
+        return False
+
+
+def _load_provider_dropped_tokens(ops: Any, cfg: Mapping[str, Any]) -> set[str]:
+    getter = getattr(ops, "dropped_show_tokens", None)
+    if not callable(getter):
+        return set()
+    try:
+        raw = getter(cfg)
+        if isinstance(raw, set):
+            return {str(x) for x in raw if str(x).strip()}
+        if isinstance(raw, (list, tuple)):
+            return {str(x) for x in raw if str(x).strip()}
+        return set()
+    except Exception:
+        return set()
+
+
+def _show_level_tokens(item: Mapping[str, Any]) -> set[str]:
+    ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else None
+    if not ids:
+        ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else None
+    out: set[str] = set()
+    try:
+        if str(item.get("type") or "").lower() == "show":
+            ck = _ck(item)
+            if ck:
+                out.add(str(ck))
+    except Exception:
+        pass
+    if isinstance(ids, Mapping):
+        for k, v in ids.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if not sv:
+                continue
+            out.add(f"{str(k).lower()}:{sv.lower()}")
+    return out
+
+
+def _matches_dropped_show(item: Mapping[str, Any], dropped_tokens: set[str]) -> bool:
+    if not dropped_tokens or not isinstance(item, Mapping):
+        return False
+    return bool(_show_level_tokens(item) & dropped_tokens)
+
+
+def _filter_index_for_dropped_shows(idx: dict[str, Any], dropped_tokens: set[str]) -> tuple[dict[str, Any], int]:
+    if not idx or not dropped_tokens:
+        return dict(idx or {}), 0
+    out: dict[str, Any] = {}
+    removed = 0
+    for k, v in (idx or {}).items():
+        if isinstance(v, Mapping) and _matches_dropped_show(v, dropped_tokens):
+            removed += 1
+            continue
+        out[k] = v
+    return out, removed
+
+
+def _filter_items_for_dropped_shows(items: list[dict[str, Any]], dropped_tokens: set[str]) -> tuple[list[dict[str, Any]], int]:
+    if not items or not dropped_tokens:
+        return list(items or []), 0
+    out: list[dict[str, Any]] = []
+    removed = 0
+    for it in (items or []):
+        if isinstance(it, Mapping) and _matches_dropped_show(it, dropped_tokens):
+            removed += 1
+            continue
+        out.append(it)
+    return out, removed
+
+
 def _index_semantics(ops, feature: str) -> str:
     try:
         caps = ops.capabilities() or {}
@@ -471,6 +552,29 @@ def run_one_way_feature(
 
         return toks
 
+    def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
+        ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else it.get("ids")
+        ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+        out: set[str] = set()
+        for k, v in ids.items():
+            if v is None or str(v) == "":
+                continue
+            out.add(f"{str(k).lower()}:{str(v).lower()}")
+        return out
+
+    def _history_show_present(idx: dict[str, Any], it: Mapping[str, Any]) -> bool:
+        if feature != "history" or str(it.get("type") or "").strip().lower() != "show":
+            return False
+        target = _show_level_tokens(it)
+        if not target:
+            return False
+        for row in (idx or {}).values():
+            if not isinstance(row, Mapping):
+                continue
+            if target & _show_level_tokens(row):
+                return True
+        return False
+
     def _alias_index(idx: dict[str, dict[str, Any]]) -> dict[str, str]:
         m: dict[str, str] = {}
         for ck, it in (idx or {}).items():
@@ -487,6 +591,8 @@ def run_one_way_feature(
         for tok in _typed_tokens(it):
             if tok in alias:
                 return True
+        if _history_show_present(idx, it):
+            return True
         return False
 
     def _find_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -500,6 +606,12 @@ def run_one_way_feature(
                 continue
             v = idx.get(dk)
             return v if isinstance(v, Mapping) else None
+        if feature == "history" and str(it.get("type") or "").strip().lower() == "show":
+            target = _show_level_tokens(it)
+            if target:
+                for v in (idx or {}).values():
+                    if isinstance(v, Mapping) and (target & _show_level_tokens(v)):
+                        return v
         return None
 
     # normalize destination keys onto source keyspace
@@ -650,6 +762,20 @@ def run_one_way_feature(
         prev_dst = _filter_index_by_libraries(prev_dst, libs_dst, allow_unknown=allow_unknown_dst)
         dst_cur  = _filter_index_by_libraries(dst_cur,  libs_dst, allow_unknown=allow_unknown_dst)
         eff_dst  = _filter_index_by_libraries(eff_dst,  libs_dst, allow_unknown=allow_unknown_dst)
+
+    src_dropped_tokens: set[str] = set()
+    dst_dropped_tokens: set[str] = set()
+    if src in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, src, feature):
+        src_dropped_tokens = _load_provider_dropped_tokens(src_ops, cfg)
+        if src_dropped_tokens:
+            prev_src, prev_filtered = _filter_index_for_dropped_shows(prev_src, src_dropped_tokens)
+            src_cur, cur_filtered = _filter_index_for_dropped_shows(src_cur, src_dropped_tokens)
+            eff_src, eff_filtered = _filter_index_for_dropped_shows(eff_src, src_dropped_tokens)
+            if prev_filtered or cur_filtered or eff_filtered:
+                emit("debug", msg="provider.dropped.filtered", provider=src, feature=feature, scope="source", prev=prev_filtered, current=cur_filtered, effective=eff_filtered)
+
+    if dst in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, dst, feature):
+        dst_dropped_tokens = _load_provider_dropped_tokens(dst_ops, cfg)
 
     dst_sem = _index_semantics(dst_ops, feature)
     src_sem = _index_semantics(src_ops, feature)
@@ -872,6 +998,13 @@ def run_one_way_feature(
     if not allow_removes:
         removes = []
 
+    if dst_dropped_tokens:
+        adds, adds_blocked = _filter_items_for_dropped_shows(adds, dst_dropped_tokens)
+        updates, updates_blocked = _filter_items_for_dropped_shows(updates, dst_dropped_tokens)
+        removes, removes_blocked = _filter_items_for_dropped_shows(removes, dst_dropped_tokens)
+        if adds_blocked or updates_blocked or removes_blocked:
+            emit("debug", msg="provider.dropped.filtered", provider=dst, feature=feature, scope="destination", adds=adds_blocked, updates=updates_blocked, removes=removes_blocked)
+
     removes = _maybe_block_mass_delete(
         removes, baseline_size=len(dst_full),
         allow_mass_delete=bool(sync_cfg.get("allow_mass_delete", True)),
@@ -882,7 +1015,13 @@ def run_one_way_feature(
     pair_key = "-".join(sorted([src, dst]))
     if feature != "watchlist":
         adds = apply_blocklist(
-            ctx.state_store, adds, dst=dst, feature=feature, pair_key=pair_key, emit=emit
+            ctx.state_store,
+            adds,
+            dst=dst,
+            feature=feature,
+            pair_key=pair_key,
+            ignore_pair_tomb=(str(feature or "").lower() == "history"),
+            emit=emit,
         )
 
     manual_blocked = 0

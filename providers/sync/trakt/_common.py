@@ -13,9 +13,15 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 from .._mod_common import request_with_retries
+from .._log import log as cw_log
 
 # headers
-UA = os.environ.get("CW_UA", "CrossWatch/1.0 (Trakt)")
+def _user_agent() -> str:
+    return (
+        os.environ.get("CW_TRAKT_UA")
+        or os.environ.get("CW_UA")
+        or "CrossWatch TRAKT"
+    )
 
 STATE_DIR = Path("/config/.cw_state")
 _ACT_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
@@ -51,36 +57,9 @@ def state_file(name: str) -> Path:
     return STATE_DIR / f"{name}.{safe}"
 
 
-def _legacy_path(path: Path) -> Path | None:
-    parts = path.stem.split(".")
-    if len(parts) < 2:
-        return None
-    legacy_name = ".".join(parts[:-1]) + path.suffix
-    legacy = path.with_name(legacy_name)
-    return None if legacy == path else legacy
-
-
-def _migrate_legacy_json(path: Path) -> None:
-    if path.exists():
-        return
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    legacy = _legacy_path(path)
-    if not legacy or not legacy.exists():
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_bytes(legacy.read_bytes())
-        os.replace(tmp, path)
-    except Exception:
-        pass
-
-
 def _read_json(path: Path) -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
-    _migrate_legacy_json(path)
     try:
         return json.loads(path.read_text("utf-8"))
     except Exception:
@@ -88,7 +67,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, data: Mapping[str, Any]) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -99,8 +78,51 @@ def _write_json(path: Path, data: Mapping[str, Any]) -> None:
         pass
 
 
+def _now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
+    n = max(1, int(n or 1))
+    for i in range(0, len(seq), n):
+        yield seq[i : i + n]
+
+
+def _last_limit_path() -> Path:
+    return state_file("trakt_last_limit_error.json")
+
+
+def _record_limit_error(feature: str) -> None:
+    if _is_capture_mode() or _pair_scope() is None:
+        return
+    try:
+        _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
+        tmp = _last_limit_path().with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(
+                {"feature": feature, "ts": _now_iso()},
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+            "utf-8",
+        )
+        os.replace(tmp, _last_limit_path())
+    except Exception as e:
+        cw_log("TRAKT", "common", "warn", "limit_error_save_failed", limit_feature=feature, error=str(e))
+
+
+def headers_for_adapter(adapter: Any) -> dict[str, str]:
+    return build_headers(
+        {"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}}
+    )
+
+
 def _watermark_path() -> Path:
     return state_file("trakt.watermarks.json")
+
+
+def _dropped_path() -> Path:
+    return state_file("trakt_dropped.index.json")
 
 
 def load_watermarks() -> dict[str, str]:
@@ -229,6 +251,105 @@ def update_watermarks_from_last_activities(activities: Mapping[str, Any] | None)
     return load_watermarks()
 
 
+def _identity_tokens(item: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
+    try:
+        ck = canonical_key(item)
+        if ck:
+            out.add(str(ck))
+    except Exception:
+        pass
+    ids = item.get("ids") or {}
+    if isinstance(ids, Mapping):
+        for k, v in ids.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if not sv:
+                continue
+            out.add(f"{str(k).lower()}:{sv.lower()}")
+    return out
+
+
+def load_dropped_show_tokens(adapter: Any) -> set[str]:
+    sess = adapter.client.session
+    headers = headers_for_adapter(adapter)
+    dropped_path = _dropped_path()
+    acts = fetch_last_activities(
+        sess,
+        headers,
+        timeout=float(getattr(adapter.cfg, "timeout", 15.0) or 15.0),
+        max_retries=int(getattr(adapter.cfg, "max_retries", 3) or 3),
+    )
+    remote_ts = extract_latest_ts(acts or {}, (("shows", "dropped_at"),))
+    cached = _read_json(dropped_path)
+    raw_cached_tokens = cached.get("tokens") if isinstance(cached, Mapping) else None
+    cached_tokens = raw_cached_tokens if isinstance(raw_cached_tokens, list) else []
+    cache_version = int(cached.get("version") or 0) if isinstance(cached, Mapping) else 0
+    cache_ok = cache_version >= 1
+    if cache_ok and remote_ts and str(cached.get("updated_at") or "").strip() == str(remote_ts).strip():
+        return {str(x) for x in cached_tokens if str(x).strip()}
+    if cache_ok and not remote_ts and cached_tokens:
+        return {str(x) for x in cached_tokens if str(x).strip()}
+
+    tokens: set[str] = set()
+    page = 1
+    limit = 100
+    while page <= 100:
+        try:
+            r = adapter.client.get(
+                "https://api.trakt.tv/users/hidden/dropped",
+                params={"type": "show", "page": page, "limit": limit},
+            )
+        except Exception:
+            try:
+                cw_log("TRAKT", "common", "warn", "dropped_fetch_failed", page=page, path=str(dropped_path))
+            except Exception:
+                pass
+            break
+        if not (200 <= r.status_code < 300):
+            try:
+                cw_log("TRAKT", "common", "warn", "dropped_fetch_http", page=page, status=r.status_code, path=str(dropped_path))
+            except Exception:
+                pass
+            break
+        data = r.json() if (r.text or "").strip() else []
+        rows = data if isinstance(data, list) else []
+        if not rows:
+            break
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+            if not isinstance(show, Mapping):
+                continue
+            ids = dict(show.get("ids") or {})
+            _fix_imdb(ids)
+            if not ids:
+                continue
+            item = id_minimal(
+                {
+                    "type": "show",
+                    "title": show.get("title"),
+                    "year": show.get("year"),
+                    "ids": {k: str(v) for k, v in ids.items() if v is not None and str(v).strip()},
+                }
+            )
+            tokens.update(_identity_tokens(item))
+        if len(rows) < limit:
+            break
+        page += 1
+
+    doc = {
+        "version": 1,
+        "updated_at": str(remote_ts or ""),
+        "fetched_at": _now_iso(),
+        "tokens": sorted(tokens),
+    }
+    _write_json(dropped_path, doc)
+    return tokens
+
+
 def build_headers(arg1: Any, access_token: str | None = None) -> dict[str, str]:
     client_id = ""
     token = ""
@@ -244,7 +365,7 @@ def build_headers(arg1: Any, access_token: str | None = None) -> dict[str, str]:
         "Content-Type": "application/json",
         "trakt-api-version": "2",
         "trakt-api-key": client_id,
-        "User-Agent": UA,
+        "User-Agent": _user_agent(),
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"

@@ -110,7 +110,10 @@ def _normalize_id(key: str, val: Any) -> str | None:
     if s.lower() in _CLEAN_SENTINELS:
         return None
 
-    if k in ("tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb", "plex", "jellyfin", "mdblist", "emby"):
+    if k == "mdblist":
+        return s.lower()
+
+    if k in ("tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb", "plex", "jellyfin", "emby"):
         digits = re.sub(r"\D+", "", s)
         return digits or None
 
@@ -309,6 +312,11 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
     }
     for opt in ("watched", "watched_at", "rating", "rated_at", "season", "episode", "series_title"):
         if opt in item:
+            out[opt] = item.get(opt)
+
+    # Preserve provider-specific raw history ids
+    for opt in ("_trakt_history_id", "history_id"):
+        if opt in item and item.get(opt) not in (None, ""):
             out[opt] = item.get(opt)
 
     # Preserve internal flags needed by orchestrator blocklist logic.

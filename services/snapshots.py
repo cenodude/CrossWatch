@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal
+from typing import Any, Iterator, Literal
 
 import json
 import os
@@ -180,6 +181,35 @@ def _build_index_capture_mode(
     os.environ["CW_CAPTURE_ID"] = ts.strftime("%Y%m%dT%H%M%SZ")
     try:
         return ops.build_index(cfg_view, feature=feat) or {}
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@contextmanager
+def _capture_mode_env(
+    *,
+    pid: str,
+    instance: str,
+    feat: str,
+) -> Iterator[None]:
+    prev: dict[str, str | None] = {
+        "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
+        "CW_CAPTURE_PROVIDER": os.environ.get("CW_CAPTURE_PROVIDER"),
+        "CW_CAPTURE_INSTANCE": os.environ.get("CW_CAPTURE_INSTANCE"),
+        "CW_CAPTURE_FEATURE": os.environ.get("CW_CAPTURE_FEATURE"),
+        "CW_CAPTURE_ID": os.environ.get("CW_CAPTURE_ID"),
+    }
+    os.environ["CW_CAPTURE_MODE"] = "1"
+    os.environ["CW_CAPTURE_PROVIDER"] = str(pid or "").strip().upper()
+    os.environ["CW_CAPTURE_INSTANCE"] = normalize_instance_id(instance)
+    os.environ["CW_CAPTURE_FEATURE"] = str(feat or "").strip().lower()
+    os.environ["CW_CAPTURE_ID"] = "tools-clear"
+    try:
+        yield
     finally:
         for key, value in prev.items():
             if value is None:
@@ -912,7 +942,8 @@ def clear_provider_features(
             done["results"][feat] = {"ok": True, "skipped": True, "reason": "unsupported_clear"}
             continue
 
-        cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
+        with _capture_mode_env(pid=pid, instance=inst, feat=feat):
+            cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
         cur: list[Mapping[str, Any]] = []
         if isinstance(cur_raw, Mapping):
             for v in cur_raw.values():
@@ -931,11 +962,12 @@ def clear_provider_features(
 
         # Prefer a single remove call per feature. 
         try:
-            res = (
-                adapter.remove(feat, cur, dry_run=False)
-                if adapter
-                else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
-            ) or {}
+            with _capture_mode_env(pid=pid, instance=inst, feat=feat):
+                res = (
+                    adapter.remove(feat, cur, dry_run=False)
+                    if adapter
+                    else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
+                ) or {}
             if isinstance(res, Mapping) and "count" in res:
                 removed = int(res.get("count") or 0)
             else:

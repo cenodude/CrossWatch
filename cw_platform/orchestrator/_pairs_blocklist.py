@@ -141,6 +141,7 @@ def apply_blocklist(
     feature: str,
     pair_key: str | None = None,
     cross_feature_unresolved: bool = True,
+    ignore_pair_tomb: bool = False,
     emit=None,
 ) -> list[dict[str, Any]]:
     global_tomb: set[str] = set()
@@ -163,7 +164,8 @@ def apply_blocklist(
     except Exception:
         blackbox = set()
 
-    bl = global_tomb | pair_tomb | unresolved | blackbox
+    pair_tomb_eff: set[str] = set() if ignore_pair_tomb else set(pair_tomb)
+    bl = global_tomb | pair_tomb_eff | unresolved | blackbox
 
     if emit is not None:
         try:
@@ -174,7 +176,7 @@ def apply_blocklist(
                 dst=dst,
                 pair=pair_key,
                 blocked_global_tomb=0,
-                blocked_pair_tomb=len(pair_tomb),
+                blocked_pair_tomb=len(pair_tomb_eff),
                 blocked_unresolved=len(unresolved),
                 blocked_blackbox=len(blackbox),
                 blocked_total=len(bl),
@@ -193,21 +195,17 @@ def apply_blocklist(
     if hard:
         items_list = filter_with(state_store, items_list, extra_block=hard)
 
-    if not pair_tomb:
+    if ignore_pair_tomb or not pair_tomb_eff:
         return items_list
 
     out: list[dict[str, Any]] = []
     for it in items_list:
         try:
-            if bool(it.get("_cw_marked")):
-                if _history_is_blocked_by_tomb(it, pmap):
-                    continue
-            else:
-                if filter_with(state_store, [it], extra_block=pair_tomb) == []:
-                    continue
+            if _history_is_blocked_by_tomb(it, pmap):
+                continue
         except Exception:
             try:
-                if filter_with(state_store, [it], extra_block=pair_tomb) == []:
+                if filter_with(state_store, [it], extra_block=pair_tomb_eff) == []:
                     continue
             except Exception:
                 pass

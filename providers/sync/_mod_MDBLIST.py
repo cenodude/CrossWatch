@@ -8,7 +8,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
+from cw_platform.id_map import canonical_key, minimal as id_minimal
+
 from ._log import log as cw_log
+from .mdblist._common import read_json as mdblist_read_json, state_file as mdblist_state_file, write_json as mdblist_write_json
 
 from ._mod_common import (
     HitSession,
@@ -62,19 +65,42 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
 
 def _mdblist_key_of(obj: Any) -> str:
     try:
-        from cw_platform.id_map import canonical_key, minimal as id_minimal
         if isinstance(obj, Mapping):
             return str(canonical_key(id_minimal(obj)) or "").strip()
     except Exception:
         pass
     return ""
 
+
+def _dropped_cache_path() -> Any:
+    return mdblist_state_file("mdblist_dropped.index.json")
+
+
+def _show_identity_tokens(item: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
+    try:
+        ck = canonical_key(item)
+        if ck:
+            out.add(str(ck))
+    except Exception:
+        pass
+    ids = item.get("ids") or {}
+    if isinstance(ids, Mapping):
+        for k, v in ids.items():
+            if v is None:
+                continue
+            sv = str(v).strip()
+            if not sv:
+                continue
+            out.add(f"{str(k).lower()}:{sv.lower()}")
+    return out
+
 try:  # type: ignore[name-defined]
     ctx  # type: ignore[misc]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "4.1.1"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -96,8 +122,8 @@ def _error(msg: str, **fields: Any) -> None:
     cw_log("MDBLIST", "module", "error", msg, **fields)
 
 
-def _log(msg: str, **fields: Any) -> None:
-    _dbg(msg, **fields)
+def _log(msg: str, *, level: str = "debug", **fields: Any) -> None:
+    cw_log("MDBLIST", "module", level, msg, **fields)
 
 
 def _label_mdblist(*_args: Any, **_kwargs: Any) -> str:
@@ -155,12 +181,14 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "history": {
+                "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "remove": True,
                 "from_date": True,
             },
             "ratings": {
+                "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
@@ -245,6 +273,27 @@ class MDBLISTClient:
 
     def last_activities(self) -> Mapping[str, Any]:
         r = self.get(f"{self.BASE}/sync/last_activities", params={"apikey": self.cfg.api_key})
+        if 200 <= r.status_code < 300:
+            try:
+                data = r.json() if (r.text or "").strip() else {}
+                return dict(data) if isinstance(data, Mapping) else {}
+            except Exception:
+                return {}
+        return {"status": r.status_code}
+
+    def journal_page(
+        self,
+        *,
+        since: str | None = None,
+        cursor: str | None = None,
+        limit: int = 100,
+    ) -> Mapping[str, Any]:
+        params: dict[str, Any] = {"apikey": self.cfg.api_key, "limit": max(1, min(int(limit or 100), 1000))}
+        if cursor:
+            params["cursor"] = str(cursor)
+        elif since:
+            params["since"] = str(since)
+        r = self.get(f"{self.BASE}/sync/journal", params=params)
         if 200 <= r.status_code < 300:
             try:
                 data = r.json() if (r.text or "").strip() else {}
@@ -419,9 +468,163 @@ class MDBLISTModule:
     def feature_names(self) -> tuple[str, ...]:
         return tuple(k for k, v in self.supported_features().items() if v and k in _FEATURES)
 
+    def fetch_journal(
+        self,
+        *,
+        since: str | None = None,
+        limit: int = 250,
+        category: str | None = None,
+    ) -> dict[str, Any]:
+        rows: list[dict[str, Any]] = []
+        journal_oldest_at = ""
+        latest_action_at = ""
+        cursor: str | None = None
+        pages = 0
+
+        while pages < 1000:
+            try:
+                data = self.client.journal_page(since=since, cursor=cursor, limit=limit)
+            except Exception as e:
+                _warn("journal_fetch_failed", cursor=cursor or "", since=since or "", error=str(e))
+                break
+
+            if not isinstance(data, Mapping):
+                break
+            status = data.get("status")
+            if status is not None:
+                _warn("journal_fetch_http", cursor=cursor or "", since=since or "", status=status)
+                break
+
+            oldest = str(data.get("journal_oldest_at") or "").strip()
+            if oldest and not journal_oldest_at:
+                journal_oldest_at = oldest
+
+            raw_journal = data.get("journal") if isinstance(data, Mapping) else None
+            page_rows = raw_journal if isinstance(raw_journal, list) else []
+            for row in page_rows:
+                if not isinstance(row, Mapping):
+                    continue
+                if category and str(row.get("category") or "").strip().lower() != str(category).strip().lower():
+                    continue
+                row_dict = dict(row)
+                rows.append(row_dict)
+                act = str(row_dict.get("action_at") or "").strip()
+                if act:
+                    latest_action_at = act if not latest_action_at else str(max(latest_action_at, act))
+
+            pag = data.get("pagination") if isinstance(data.get("pagination"), Mapping) else {}
+            has_more = bool(pag.get("has_more")) if isinstance(pag, Mapping) else False
+            next_cursor = ""
+            if isinstance(pag, Mapping):
+                next_cursor = str(
+                    pag.get("next_cursor")
+                    or pag.get("cursor")
+                    or data.get("next_cursor")
+                    or ""
+                ).strip()
+            if not has_more:
+                break
+            if not next_cursor:
+                _warn("journal_fetch_paging_incomplete", since=since or "", page=pages + 1)
+                break
+            cursor = next_cursor
+            pages += 1
+
+        return {
+            "rows": rows,
+            "journal_oldest_at": journal_oldest_at,
+            "latest_action_at": latest_action_at,
+        }
+
+    def dropped_show_tokens(self) -> set[str]:
+        cache_path = _dropped_cache_path()
+        acts_raw = self.client.last_activities()
+        acts = acts_raw if isinstance(acts_raw, Mapping) else {}
+        remote_ts = ""
+        try:
+            shows_raw = acts.get("shows")
+            shows_blk = shows_raw if isinstance(shows_raw, Mapping) else {}
+            remote_ts = str(
+                acts.get("dropped_at")
+                or shows_blk.get("dropped_at")
+                or acts.get("updated_at")
+                or ""
+            ).strip()
+        except Exception:
+            remote_ts = ""
+
+        cached = mdblist_read_json(cache_path)
+        raw_cached_tokens = cached.get("tokens") if isinstance(cached, Mapping) else None
+        cached_tokens = raw_cached_tokens if isinstance(raw_cached_tokens, list) else []
+        cache_version = int(cached.get("version") or 0) if isinstance(cached, Mapping) else 0
+        if cache_version >= 1 and remote_ts and str(cached.get("updated_at") or "").strip() == remote_ts:
+            return {str(x) for x in cached_tokens if str(x).strip()}
+        if cache_version >= 1 and not remote_ts and cached_tokens:
+            return {str(x) for x in cached_tokens if str(x).strip()}
+
+        tokens: set[str] = set()
+        offset = 0
+        limit = 1000
+        while offset <= 100000:
+            try:
+                r = self.client.get(
+                    f"{self.client.BASE}/sync/dropped",
+                    params={"apikey": self.cfg.api_key, "offset": offset, "limit": limit},
+                )
+            except Exception as e:
+                _warn("dropped_fetch_failed", offset=offset, error=str(e))
+                break
+
+            if not (200 <= r.status_code < 300):
+                _warn("dropped_fetch_http", offset=offset, status=r.status_code)
+                break
+
+            data = r.json() if (r.text or "").strip() else {}
+            raw_rows = data.get("shows") if isinstance(data, Mapping) else None
+            rows = raw_rows if isinstance(raw_rows, list) else []
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+                if not isinstance(show, Mapping):
+                    continue
+                ids = {k: str(v) for k, v in dict(show.get("ids") or {}).items() if v is not None and str(v).strip()}
+                if not ids:
+                    continue
+                item = id_minimal(
+                    {
+                        "type": "show",
+                        "title": show.get("title"),
+                        "year": show.get("year"),
+                        "ids": ids,
+                    }
+                )
+                tokens.update(_show_identity_tokens(item))
+
+            raw_pag = data.get("pagination") if isinstance(data, Mapping) else None
+            pag = raw_pag if isinstance(raw_pag, Mapping) else {}
+            has_more = bool(pag.get("has_more")) if isinstance(pag, Mapping) else False
+            if not rows or not has_more:
+                break
+            try:
+                offset += int(pag.get("limit") or limit)
+            except Exception:
+                offset += limit
+
+        mdblist_write_json(
+            cache_path,
+            {
+                "version": 1,
+                "updated_at": remote_ts,
+                "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "tokens": sorted(tokens),
+            },
+        )
+        return tokens
+
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _dbg("build_index_skipped", requested_feature=feature)
+            _log("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -437,13 +640,13 @@ class MDBLISTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _dbg("add_skipped", requested_feature=feature)
+            _log("write_skipped", feature=feature, level="info", op="add", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn("add_skipped_missing_module", requested_feature=feature)
+            _log("write_skipped", feature=feature, level="warn", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
@@ -463,13 +666,13 @@ class MDBLISTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _dbg("remove_skipped", requested_feature=feature)
+            _log("write_skipped", feature=feature, level="info", op="remove", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn("remove_skipped_missing_module", requested_feature=feature)
+            _log("write_skipped", feature=feature, level="warn", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
@@ -495,12 +698,14 @@ class _MDBLISTOPS:
             "provides_ids": True,
             "index_semantics": "present",
             "history": {
+                "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "remove": True,
                 "from_date": True,
             },
             "ratings": {
+                "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
@@ -646,5 +851,18 @@ class _MDBLISTOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
+        return self._adapter(cfg).dropped_show_tokens()
+
+    def fetch_journal(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        since: str | None = None,
+        limit: int = 250,
+        category: str | None = None,
+    ) -> Mapping[str, Any]:
+        return self._adapter(cfg).fetch_journal(since=since, limit=limit, category=category)
 
 OPS = _MDBLISTOPS()

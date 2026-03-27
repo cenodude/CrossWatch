@@ -8,7 +8,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
-from .trakt._common import build_headers, normalize as trakt_normalize, key_of as trakt_key_of
+from .trakt._common import (
+    build_headers,
+    load_dropped_show_tokens as trakt_load_dropped_show_tokens,
+    normalize as trakt_normalize,
+    key_of as trakt_key_of,
+)
 from ._log import log as cw_log
 
 
@@ -84,8 +89,10 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "4.5.0"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
+
+os.environ.setdefault("CW_TRAKT_UA", f"CrossWatch TRAKT/{__VERSION__}")
 
 
 class TRAKTError(RuntimeError):
@@ -530,12 +537,19 @@ class TRAKTModule:
             "api": api,
         }
 
+    def dropped_show_tokens(self) -> set[str]:
+        try:
+            return set(trakt_load_dropped_show_tokens(self) or set())
+        except Exception as e:
+            _warn("common", "dropped_load_failed", error=str(e))
+            return set()
+
     def feature_names(self) -> tuple[str, ...]:
         return tuple(k for k, v in self.supported_features().items() if v and k in _FEATURES)
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _dbg(feature, "feature_disabled_or_missing")
+            _dbg(feature, "index_skipped", reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -551,13 +565,13 @@ class TRAKTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _dbg(feature, "feature_disabled_or_missing")
+            _info(feature, "write_skipped", op="add", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _dbg(feature, "feature_module_missing")
+            _warn(feature, "write_skipped", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             skipped_keys: list[str] = []
@@ -579,10 +593,12 @@ class TRAKTModule:
             else:
                 cnt, unresolved = 0, []
 
-            confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-            if skipped_keys:
-                sk = set(skipped_keys)
-                confirmed_keys = [k for k in confirmed_keys if k not in sk]
+            confirmed_keys: list[str] = []
+            if int(cnt or 0) > 0 or skipped_keys:
+                confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
+                if skipped_keys:
+                    sk = set(skipped_keys)
+                    confirmed_keys = [k for k in confirmed_keys if k not in sk]
 
             out: dict[str, Any] = {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
             if skipped_keys:
@@ -603,13 +619,13 @@ class TRAKTModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _dbg(feature, "feature_disabled_or_missing")
+            _info(feature, "write_skipped", op="remove", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _dbg(feature, "feature_module_missing")
+            _warn(feature, "write_skipped", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
@@ -691,5 +707,8 @@ class _TraktOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
+        return self._adapter(cfg).dropped_show_tokens()
 
 OPS = _TraktOPS()

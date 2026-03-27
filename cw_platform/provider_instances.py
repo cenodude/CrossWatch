@@ -12,6 +12,18 @@ _DEFAULT_INSTANCE = "default"
 _INSTANCES_KEY = "instances"
 
 
+def _deep_merge(base: dict[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(base or {})
+    for k, v in (overlay or {}).items():
+        key = str(k)
+        cur = out.get(key)
+        if isinstance(cur, dict) and isinstance(v, Mapping):
+            out[key] = _deep_merge(cur, dict(v))
+        else:
+            out[key] = copy.deepcopy(v)
+    return out
+
+
 def normalize_instance_id(v: Any) -> str:
     s = str(v or "").strip()
     if not s or s.lower() == _DEFAULT_INSTANCE:
@@ -46,7 +58,9 @@ def get_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_id: 
 
     insts = base_block.get(_INSTANCES_KEY)
     if isinstance(insts, Mapping) and inst in insts and isinstance(insts.get(inst), Mapping):
-        return dict(insts.get(inst) or {})
+        merged_base = dict(base_block or {})
+        merged_base.pop(_INSTANCES_KEY, None)
+        return _deep_merge(merged_base, dict(insts.get(inst) or {}))
 
     return {}
 
