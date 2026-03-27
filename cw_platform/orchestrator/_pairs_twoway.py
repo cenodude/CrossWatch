@@ -14,6 +14,10 @@ try:
         _history_bucket_sec as _hist_bucket_sec,
         _history_ts_from_key as _hist_ts_from_key,
         _bucket_ts as _hist_bucket_ts,
+        _provider_ignore_dropped_enabled,
+        _load_provider_dropped_tokens,
+        _filter_index_for_dropped_shows,
+        _filter_items_for_dropped_shows,
     )
 except Exception:  # pragma: no cover
     _HIST_RE = re.compile(r"^(?P<base>.+?)@(?P<ts>\d+)(?P<rest>.*)$")
@@ -40,8 +44,20 @@ except Exception:  # pragma: no cover
             return int(ts)
         return (int(ts) // b2) * b2
 
+    def _provider_ignore_dropped_enabled(cfg: Mapping[str, Any], provider_key: str, feature: str) -> bool:
+        return False
+
+    def _load_provider_dropped_tokens(ops: Any, cfg: Mapping[str, Any]) -> set[str]:
+        return set()
+
+    def _filter_index_for_dropped_shows(idx: dict[str, Any], dropped_tokens: set[str]) -> tuple[dict[str, Any], int]:
+        return dict(idx or {}), 0
+
+    def _filter_items_for_dropped_shows(items: list[dict[str, Any]], dropped_tokens: set[str]) -> tuple[list[dict[str, Any]], int]:
+        return list(items or []), 0
+
 from ..provider_instances import normalize_instance_id
-from ._planner import diff_ratings, diff_progress
+from ._planner import diff_ratings, diff_progress, _pick_rating
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
 except Exception:
@@ -475,6 +491,25 @@ def _two_way_sync(
         B_cur = _filter_index_by_libraries(B_cur, libs_B, allow_unknown=allow_unknown_B)
         B_eff = _filter_index_by_libraries(B_eff, libs_B, allow_unknown=allow_unknown_B)
 
+    dropped_A: set[str] = set()
+    dropped_B: set[str] = set()
+    if a in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, a, feature):
+        dropped_A = _load_provider_dropped_tokens(aops, cfg)
+        if dropped_A:
+            prevA, prev_filtered_A = _filter_index_for_dropped_shows(prevA, dropped_A)
+            A_cur, cur_filtered_A = _filter_index_for_dropped_shows(A_cur, dropped_A)
+            A_eff, eff_filtered_A = _filter_index_for_dropped_shows(A_eff, dropped_A)
+            if prev_filtered_A or cur_filtered_A or eff_filtered_A:
+                emit("debug", msg="provider.dropped.filtered", provider=a, feature=feature, scope="side_a", prev=prev_filtered_A, current=cur_filtered_A, effective=eff_filtered_A)
+    if b in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, b, feature):
+        dropped_B = _load_provider_dropped_tokens(bops, cfg)
+        if dropped_B:
+            prevB, prev_filtered_B = _filter_index_for_dropped_shows(prevB, dropped_B)
+            B_cur, cur_filtered_B = _filter_index_for_dropped_shows(B_cur, dropped_B)
+            B_eff, eff_filtered_B = _filter_index_for_dropped_shows(B_eff, dropped_B)
+            if prev_filtered_B or cur_filtered_B or eff_filtered_B:
+                emit("debug", msg="provider.dropped.filtered", provider=b, feature=feature, scope="side_b", prev=prev_filtered_B, current=cur_filtered_B, effective=eff_filtered_B)
+
     # Keep rich metadata when the provider index is presence-only.
     A_eff = _enrich_index_payload(A_eff, prevA, feature)
     B_eff = _enrich_index_payload(B_eff, prevB, feature)
@@ -586,6 +621,29 @@ def _two_way_sync(
 
         return toks
 
+    def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
+        ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else it.get("ids")
+        ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+        out: set[str] = set()
+        for k, v in ids.items():
+            if v is None or str(v) == "":
+                continue
+            out.add(f"{str(k).lower()}:{str(v).lower()}")
+        return out
+
+    def _history_show_present(idx: dict[str, Any], it: Mapping[str, Any]) -> bool:
+        if feature != "history" or str(it.get("type") or "").strip().lower() != "show":
+            return False
+        target = _show_level_tokens(it)
+        if not target:
+            return False
+        for row in (idx or {}).values():
+            if not isinstance(row, Mapping):
+                continue
+            if target & _show_level_tokens(row):
+                return True
+        return False
+
     def _alias_index(idx: dict[str, dict[str, Any]]) -> dict[str, str]:
         m: dict[str, str] = {}
         for ck, it in (idx or {}).items():
@@ -602,6 +660,8 @@ def _two_way_sync(
         for tok in _typed_tokens(it):
             if tok in alias:
                 return True
+        if _history_show_present(idx, it):
+            return True
         return False
 
     def _find_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> Mapping[str, Any] | None:
@@ -616,6 +676,28 @@ def _two_way_sync(
                 continue
             v = idx.get(dk)
             return v if isinstance(v, Mapping) else None
+        if feature == "history" and str(it.get("type") or "").strip().lower() == "show":
+            target = _show_level_tokens(it)
+            if target:
+                for v in (idx or {}).values():
+                    if isinstance(v, Mapping) and (target & _show_level_tokens(v)):
+                        return v
+        return None
+
+    def _find_key_in_idx(idx: dict[str, Any], alias: dict[str, str], it: Mapping[str, Any]) -> str | None:
+        ck = _ck(it)
+        if ck and ck in idx:
+            return ck
+        for tok in _typed_tokens(it):
+            dk = alias.get(tok)
+            if dk and dk in idx:
+                return dk
+        if feature == "history" and str(it.get("type") or "").strip().lower() == "show":
+            target = _show_level_tokens(it)
+            if target:
+                for dk, v in (idx or {}).items():
+                    if isinstance(v, Mapping) and (target & _show_level_tokens(v)):
+                        return str(dk)
         return None
 
     def _tokens(it: Mapping[str, Any]) -> set[str]:
@@ -664,6 +746,42 @@ def _two_way_sync(
             pass
         return False
 
+    def _observed_tokens(prev_idx: Mapping[str, Any], observed: set[str]) -> set[str]:
+        out: set[str] = set()
+        if not observed:
+            return out
+        for ck in observed:
+            row = prev_idx.get(ck)
+            if not isinstance(row, Mapping):
+                continue
+            out.add(str(ck))
+            try:
+                out |= _tokens(row)
+            except Exception:
+                pass
+        return out
+
+    obsA_tokens = _observed_tokens(prevA, obsA)
+    obsB_tokens = _observed_tokens(prevB, obsB)
+
+    def _deleted_on_A(it: Mapping[str, Any]) -> bool:
+        ck = _ck(it)
+        if ck in obsA:
+            return True
+        try:
+            return bool(_tokens(it) & obsA_tokens)
+        except Exception:
+            return False
+
+    def _deleted_on_B(it: Mapping[str, Any]) -> bool:
+        ck = _ck(it)
+        if ck in obsB:
+            return True
+        try:
+            return bool(_tokens(it) & obsB_tokens)
+        except Exception:
+            return False
+
     add_to_A: list[dict[str, Any]] = []
     add_to_B: list[dict[str, Any]] = []
     upd_to_A: list[dict[str, Any]] = []
@@ -675,8 +793,8 @@ def _two_way_sync(
         A_f = _rate_filter(A_eff, fcfg)
         B_f = _rate_filter(B_eff, fcfg)
 
-        up_B, unrate_B = diff_ratings(A_f, B_f, propagate_timestamp_updates=False)
-        up_A, unrate_A = diff_ratings(B_f, A_f, propagate_timestamp_updates=False)
+        B_alias_tmp = _alias_index(B_f)
+        A_alias_tmp = _alias_index(A_f)
 
         def _rated_epoch(it: Mapping[str, Any]) -> int | None:
             from datetime import datetime
@@ -693,55 +811,66 @@ def _two_way_sync(
         sot = (bi.get("source_of_truth") or bi.get("sourceOfTruth") or "").strip().upper()
         prefer = sot if sot in (a, b) else a
 
-        upB = {k: it for it in up_B if (k := _ck(it))}
-        upA = {k: it for it in up_A if (k := _ck(it))}
-        unA = {k: it for it in unrate_A if (k := _ck(it))}
-        unB = {k: it for it in unrate_B if (k := _ck(it))}
-
         addA: list[dict[str, Any]] = []
         addB: list[dict[str, Any]] = []
         remA: list[dict[str, Any]] = []
         remB: list[dict[str, Any]] = []
+        matched_B: set[str] = set()
+        matched_A: set[str] = set()
 
-        for k in (set(upA) | set(upB) | set(unA) | set(unB)):
-            a_it = A_f.get(k) or upB.get(k) or {}
-            b_it = B_f.get(k) or upA.get(k) or {}
+        for ak, av in (A_f or {}).items():
+            if not isinstance(av, Mapping):
+                continue
+            bk = _find_key_in_idx(B_f, B_alias_tmp, av)
+            bv = (B_f.get(bk) if bk else None)
+            if isinstance(bv, Mapping):
+                matched_A.add(str(ak))
+                matched_B.add(str(bk))
 
-            if k in upA and k in upB:
-                ta = _rated_epoch(a_it)
-                tb = _rated_epoch(b_it)
+                ra = _pick_rating(av)
+                rb = _pick_rating(bv)
+                if ra is None and rb is None:
+                    continue
+                if ra is None:
+                    if allow_removals and _deleted_on_A(bv):
+                        remB.append(_minimal(bv))
+                    continue
+                if rb is None:
+                    if allow_removals and _deleted_on_B(av):
+                        remA.append(_minimal(av))
+                    else:
+                        addB.append(_minimal_keep_rating(av))
+                    continue
+                if ra == rb:
+                    continue
+
+                ta = _rated_epoch(av)
+                tb = _rated_epoch(bv)
                 if ta is not None and tb is not None and ta != tb:
                     win = a if ta > tb else b
                 else:
                     win = prefer
                 if win == a:
-                    addB.append(_minimal_keep_rating(upB[k]))
+                    addB.append(_minimal_keep_rating(av))
                 else:
-                    addA.append(_minimal_keep_rating(upA[k]))
+                    addA.append(_minimal_keep_rating(bv))
                 continue
 
-            if k in upB and k in unA:
-                if allow_removals and ((_tokens(a_it) & tombX) or (k in tombX) or (k in obsB)):
-                    remA.append(_minimal(unA[k]))
-                else:
-                    addB.append(_minimal_keep_rating(upB[k]))
-                continue
+            if allow_removals and _deleted_on_B(av):
+                remA.append(_minimal(av))
+            else:
+                addB.append(_minimal_keep_rating(av))
 
-            if k in upA and k in unB:
-                if allow_removals and ((_tokens(b_it) & tombX) or (k in tombX) or (k in obsA)):
-                    remB.append(_minimal(unB[k]))
-                else:
-                    addA.append(_minimal_keep_rating(upA[k]))
+        for bk, bv in (B_f or {}).items():
+            if not isinstance(bv, Mapping) or str(bk) in matched_B:
                 continue
-
-            if k in upB:
-                addB.append(_minimal_keep_rating(upB[k]))
-            elif k in upA:
-                addA.append(_minimal_keep_rating(upA[k]))
-            elif allow_removals and k in unA:
-                remA.append(_minimal(unA[k]))
-            elif allow_removals and k in unB:
-                remB.append(_minimal(unB[k]))
+            matched_A_key = _find_key_in_idx(A_f, A_alias_tmp, bv)
+            if matched_A_key and matched_A_key in matched_A:
+                continue
+            if allow_removals and _deleted_on_A(bv):
+                remB.append(_minimal(bv))
+            else:
+                addA.append(_minimal_keep_rating(bv))
 
         add_to_A = addA if allow_adds else []
         add_to_B = addB if allow_adds else []
@@ -1129,6 +1258,19 @@ def _two_way_sync(
         rem_from_A.clear()
         rem_from_B.clear()
 
+    if dropped_A:
+        add_to_A, addA_blocked = _filter_items_for_dropped_shows(add_to_A, dropped_A)
+        upd_to_A, updA_blocked = _filter_items_for_dropped_shows(upd_to_A, dropped_A)
+        rem_from_A, remA_blocked = _filter_items_for_dropped_shows(rem_from_A, dropped_A)
+        if addA_blocked or updA_blocked or remA_blocked:
+            emit("debug", msg="provider.dropped.filtered", provider=a, feature=feature, scope="write_a", adds=addA_blocked, updates=updA_blocked, removes=remA_blocked)
+    if dropped_B:
+        add_to_B, addB_blocked = _filter_items_for_dropped_shows(add_to_B, dropped_B)
+        upd_to_B, updB_blocked = _filter_items_for_dropped_shows(upd_to_B, dropped_B)
+        rem_from_B, remB_blocked = _filter_items_for_dropped_shows(rem_from_B, dropped_B)
+        if addB_blocked or updB_blocked or remB_blocked:
+            emit("debug", msg="provider.dropped.filtered", provider=b, feature=feature, scope="write_b", adds=addB_blocked, updates=updB_blocked, removes=remB_blocked)
+
     if bootstrap and allow_removals:
         rem_from_A.clear()
         rem_from_B.clear()
@@ -1154,8 +1296,24 @@ def _two_way_sync(
         pass
 
     if feature != "watchlist":
-        add_to_A = apply_blocklist(ctx.state_store, add_to_A, dst=a, feature=feature, pair_key=pair_key, emit=emit)
-        add_to_B = apply_blocklist(ctx.state_store, add_to_B, dst=b, feature=feature, pair_key=pair_key, emit=emit)
+        add_to_A = apply_blocklist(
+            ctx.state_store,
+            add_to_A,
+            dst=a,
+            feature=feature,
+            pair_key=pair_key,
+            ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+            emit=emit,
+        )
+        add_to_B = apply_blocklist(
+            ctx.state_store,
+            add_to_B,
+            dst=b,
+            feature=feature,
+            pair_key=pair_key,
+            ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+            emit=emit,
+        )
 
     manual_blocked = 0
     if manual_blocks_A:
