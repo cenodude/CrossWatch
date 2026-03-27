@@ -16,7 +16,9 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0"
+os.environ.setdefault("CW_TMDB_VERSION", __VERSION__)
+os.environ.setdefault("CW_TMDB_UA", f"CrossWatch/{__VERSION__} (TMDB)")
 __all__ = ["get_manifest", "TMDBModule", "OPS"]
 
 
@@ -162,7 +164,7 @@ class TMDBClient:
             pass
         try:
             self.session.headers.setdefault("Accept", "application/json")
-            self.session.headers.setdefault("User-Agent", f"CrossWatch TMDB/{__VERSION__}")
+            self.session.headers.setdefault("User-Agent", os.environ.get("CW_TMDB_UA") or f"CrossWatch/{__VERSION__} (TMDB)")
         except Exception:
             pass
         return self
@@ -342,12 +344,13 @@ class TMDBModule:
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         mod = _FEATURES.get(feature)
         if not mod:
+            _info("index_skipped", sync_feature=feature, reason="disabled_or_missing")
             return {}
-        _info("build_index", sync_feature=feature)
-        t0 = time.perf_counter()
-        out = mod.build_index(self, **kwargs)
-        _info("build_index_done", sync_feature=feature, count=len(out), ms=int((time.perf_counter() - t0) * 1000))
-        return out
+        try:
+            return mod.build_index(self, **kwargs)
+        except Exception as e:
+            _error("http_failed", sync_feature=feature, op="build_index", error=f"{type(e).__name__}: {e}")
+            raise
 
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         lst = list(items)
@@ -355,14 +358,13 @@ class TMDBModule:
             return {"ok": True, "count": 0}
         mod = _FEATURES.get(feature)
         if not mod:
+            _info("write_skipped", sync_feature=feature, op="add", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
-        _info("add", sync_feature=feature, count=len(lst))
         try:
             cnt, unresolved = mod.add(self, lst)
             confirmed_keys = _confirmed_keys(_tmdb_key_of, lst, unresolved)
-            _info("add_done", sync_feature=feature, ok=True, applied=int(cnt), unresolved=len(unresolved or []))
             return {
                 "ok": True,
                 "count": int(cnt),
@@ -371,7 +373,7 @@ class TMDBModule:
                 "confirmed_items": [],
             }
         except Exception as e:
-            _error("add_failed", sync_feature=feature, error=f"{type(e).__name__}: {e}")
+            _error("write_failed", sync_feature=feature, op="add", error=f"{type(e).__name__}: {e}")
             return {"ok": False, "error": str(e)}
 
     def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
@@ -380,14 +382,13 @@ class TMDBModule:
             return {"ok": True, "count": 0}
         mod = _FEATURES.get(feature)
         if not mod:
+            _info("write_skipped", sync_feature=feature, op="remove", reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
-        _info("remove", sync_feature=feature, count=len(lst))
         try:
             cnt, unresolved = mod.remove(self, lst)
             confirmed_keys = _confirmed_keys(_tmdb_key_of, lst, unresolved)
-            _info("remove_done", sync_feature=feature, ok=True, applied=int(cnt), unresolved=len(unresolved or []))
             return {
                 "ok": True,
                 "count": int(cnt),
@@ -396,7 +397,7 @@ class TMDBModule:
                 "confirmed_items": [],
             }
         except Exception as e:
-            _error("remove_failed", sync_feature=feature, error=f"{type(e).__name__}: {e}")
+            _error("write_failed", sync_feature=feature, op="remove", error=f"{type(e).__name__}: {e}")
             return {"ok": False, "error": str(e)}
 
     def health(self) -> Mapping[str, Any]:
@@ -411,7 +412,7 @@ class TMDBModule:
             return {"ok": ok, "status": status, "latency_ms": latency_ms, "rate_limit": rl}
         except Exception as e:
             latency_ms = int((time.perf_counter() - start) * 1000)
-            _warn("health_failed", latency_ms=latency_ms, ok=False, error=f"{type(e).__name__}: {e}")
+            _health("error", False, latency_ms, rate_limit={})
             return {"ok": False, "status": "error", "latency_ms": latency_ms, "error": str(e)}
 
 
