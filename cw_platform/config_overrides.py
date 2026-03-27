@@ -14,6 +14,9 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     # Simkl
     "simkl.rate_limit.post_per_sec",
     "simkl.rate_limit.get_per_sec",
+    "simkl.watchlist_batch_size",
+    "simkl.ratings_chunk_size",
+    "simkl.history_chunk_size",
 
     # MDBList
     "mdblist.rate_limit.post_per_sec",
@@ -49,6 +52,7 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     "trakt.ratings_chunk_size",
     "trakt.history_per_page",
     "trakt.history_max_pages",
+    "trakt.history_chunk_size",
 
     # Jellyfin
     "jellyfin.watchlist.watchlist_query_limit",
