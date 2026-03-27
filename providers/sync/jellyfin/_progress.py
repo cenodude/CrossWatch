@@ -6,27 +6,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
-from .._log import log as cw_log
-
 from cw_platform.id_map import canonical_key
 
 from ._common import (
+    make_logger,
     normalize as jelly_normalize,
     resolve_item_id,
     resolve_item_ids,
 )
 
-
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "progress", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "progress", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "progress", "warn", msg, **fields)
+_dbg, _info, _warn = make_logger("progress")
 
 
 def _iso_now() -> str:
@@ -81,14 +70,14 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     try:
         r = http.get(f"/Users/{uid}/Items", params=params)
         if getattr(r, "status_code", 0) != 200:
-            _warn("index.http", status=getattr(r, "status_code", None))
+            _warn("http_failed", op="build_index", status=getattr(r, "status_code", None))
             return {}
         body = r.json() or {}
         rows = body.get("Items") or []
         if not isinstance(rows, list):
             return {}
     except Exception as e:
-        _warn("index.exception", error=str(e))
+        _warn("http_failed", op="build_index", error=str(e))
         return {}
 
     out: dict[str, dict[str, Any]] = {}
@@ -155,7 +144,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             action=action,
         )
 
-    _dbg("index.done", count=len(out), rows=total_rows, dup_keys=dup_keys)
+    _info("index_done", count=len(out), rows=total_rows, dup_keys=dup_keys)
     return out
 
 
@@ -173,16 +162,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         ck = canonical_key(it0) or ""
         ids = dict(it0.get("ids") or {})
         iids = resolve_item_ids(adapter, it0)
-        _dbg(
-            "iid.resolve",
-            canonical_key=str(ck),
-            type=str(it0.get("type") or ""),
-            ids=ids,
-            resolved_ids=list(iids),
-        )
         if not iids:
+            _dbg("resolve_miss", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids)
             unresolved.append({"item": it0, "hint": "not_found"})
             continue
+        _dbg("resolve_hit", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids, resolved=len(iids))
 
         ms = it0.get("progress_ms") or it0.get("progress") or it0.get("viewOffset")
         ticks = _ms_to_ticks(ms)
@@ -200,25 +184,19 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             try:
                 r = http.post(f"/Users/{uid}/Items/{iid}/UserData", json=payload)
                 sc = int(getattr(r, "status_code", 0) or 0)
-                _dbg(
-                    "add.write",
-                    canonical_key=str(ck),
-                    item_id=str(iid),
-                    progress_ms=_ticks_to_ms(payload.get("PlaybackPositionTicks")),
-                    status=sc,
-                )
+                _dbg("write_prepare", op="add", canonical_key=str(ck), item_id=str(iid), progress_ms=_ticks_to_ms(payload.get("PlaybackPositionTicks")), status=sc)
                 if sc in (200, 204):
                     ok += 1
                     any_ok = True
                 else:
                     unresolved.append({"item": it0, "hint": f"http_{sc}", "item_id": str(iid)})
             except Exception as e:
-                _warn("add.exception", canonical_key=str(ck), item_id=str(iid), error=str(e))
+                _warn("write_failed", op="add", canonical_key=str(ck), item_id=str(iid), error=str(e))
                 unresolved.append({"item": it0, "hint": f"exception:{e}", "item_id": str(iid)})
         if not any_ok:
             unresolved.append({"item": it0, "hint": "all_writes_failed"})
 
-    _info("add.done", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -235,23 +213,24 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         it0 = dict(it or {})
         ck = canonical_key(it0) or ""
         iid = resolve_item_id(adapter, it0)
-        _dbg("iid.resolve.one", canonical_key=str(ck), resolved_id=str(iid or ""))
         if not iid:
+            _dbg("resolve_miss", canonical_key=str(ck))
             unresolved.append({"item": it0, "hint": "not_found"})
             continue
+        _dbg("resolve_hit", canonical_key=str(ck), resolved=1, resolved_id=str(iid))
 
         payload: dict[str, Any] = {"PlaybackPositionTicks": 0}
         try:
             r = http.post(f"/Users/{uid}/Items/{iid}/UserData", json=payload)
             sc = int(getattr(r, "status_code", 0) or 0)
-            _dbg("remove.write", canonical_key=str(ck), item_id=str(iid), status=sc)
+            _dbg("write_prepare", op="remove", canonical_key=str(ck), item_id=str(iid), status=sc)
             if sc in (200, 204):
                 ok += 1
             else:
                 unresolved.append({"item": it0, "hint": f"http_{sc}"})
         except Exception as e:
-            _warn("remove.exception", canonical_key=str(ck), item_id=str(iid), error=str(e))
+            _warn("write_failed", op="remove", canonical_key=str(ck), item_id=str(iid), error=str(e))
             unresolved.append({"item": it0, "hint": f"exception:{e}"})
 
-    _info("remove.done", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
