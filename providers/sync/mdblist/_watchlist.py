@@ -41,6 +41,10 @@ def _dbg(msg: str, **fields: Any) -> None:
     cw_log("MDBLIST", "watchlist", "debug", msg, **fields)
 
 
+def _info(msg: str, **fields: Any) -> None:
+    cw_log("MDBLIST", "watchlist", "info", msg, **fields)
+
+
 def _warn(msg: str, **fields: Any) -> None:
     cw_log("MDBLIST", "watchlist", "warn", msg, **fields)
 
@@ -106,12 +110,6 @@ def _shadow_load() -> dict[str, Any]:
             changed = True
             continue
         it = dict(v)
-        ids_src = it.get("ids")
-        ids = dict(ids_src) if isinstance(ids_src, Mapping) else {}
-        if "mdblist" in ids:
-            ids.pop("mdblist", None)
-            it["ids"] = ids
-            changed = True
         nk = _key_of(it)
         if nk != str(k):
             changed = True
@@ -140,20 +138,21 @@ def _shadow_bust() -> None:
     try:
         if p.exists():
             p.unlink()
-            _log("shadow.bust - file removed")
+            _dbg("cache_invalidated", cache="shadow", reason="write_applied")
     except Exception:
         pass
 
 
 def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries: int) -> dict[str, Any] | None:
-    try:
-        client = getattr(adapter, "client", None)
-        if client and hasattr(client, "last_activities"):
+    client = getattr(adapter, "client", None)
+    if client and hasattr(client, "last_activities"):
+        try:
             data = client.last_activities()
             if isinstance(data, Mapping) and "error" not in data and "status" not in data:
                 return dict(data)
-    except Exception:
-        pass
+        except Exception:
+            pass
+        return None
     try:
         r = request_with_retries(
             adapter.client.session,
@@ -187,7 +186,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, p)
     except Exception as e:
-        _warn("unresolved_save_failed", error=str(e))
+        _warn("cache_save_failed", cache="unresolved", op="save", error=str(e))
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:
@@ -202,6 +201,9 @@ def _key_of(obj: Mapping[str, Any]) -> str:
     tvdb_i = _as_int(ids.get("tvdb") or ids.get("tvdb_id"))
     if tvdb_i is not None:
         return f"tvdb:{tvdb_i}"
+    mdblist_id = _as_str(ids.get("mdblist") or ids.get("mdblist_id"))
+    if mdblist_id:
+        return f"mdblist:{mdblist_id}"
     title = _as_str(obj.get("title"))
     year_i = _as_int(obj.get("year"))
     if title and year_i is not None:
@@ -251,6 +253,7 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             "tmdb": item.get("tmdb") or item.get("tmdb_id"),
             "tvdb": item.get("tvdb") or item.get("tvdb_id"),
             "trakt": item.get("trakt") or item.get("trakt_id"),
+            "mdblist": item.get("mdblist") or item.get("mdblist_id"),
             "kitsu": item.get("kitsu") or item.get("kitsu_id"),
         }
 
@@ -260,7 +263,7 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
     if typ not in ("movie", "show"):
         typ = "movie"
 
-    allowed = {"imdb", "tmdb", "trakt"}
+    allowed = {"imdb", "tmdb", "trakt", "mdblist"}
     if typ == "movie":
         allowed.update({"tvdb", "kitsu"})
     else:
@@ -270,6 +273,9 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
     imdb_val = _as_str(ids_raw.get("imdb")) if "imdb" in allowed else None
     if imdb_val:
         out["imdb"] = imdb_val
+    mdblist_val = _as_str(ids_raw.get("mdblist")) if "mdblist" in allowed else None
+    if mdblist_val:
+        out["mdblist"] = mdblist_val
     for key in ("tmdb", "tvdb", "trakt", "kitsu"):
         if key not in allowed:
             continue
@@ -304,6 +310,8 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any]:
     imdb_val = ids_block.get("imdb") or row.get("imdb_id") or row.get("imdb")
     tvdb_val = ids_block.get("tvdb") or row.get("tvdb_id") or row.get("tvdb")
     tmdb_val = ids_block.get("tmdb") or row.get("tmdb_id") or row.get("tmdb") or row.get("id")
+    trakt_val = ids_block.get("trakt") or row.get("trakt_id") or row.get("trakt")
+    mdblist_val = ids_block.get("mdblist") or row.get("mdblist_id") or row.get("mdblist")
 
     ids: dict[str, Any] = {}
     imdb_s = _as_str(imdb_val)
@@ -315,6 +323,12 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any]:
     tvdb_i = _as_int(tvdb_val)
     if tvdb_i is not None:
         ids["tvdb"] = str(tvdb_i)
+    trakt_i = _as_int(trakt_val)
+    if trakt_i is not None:
+        ids["trakt"] = str(trakt_i)
+    mdblist_s = _as_str(mdblist_val)
+    if mdblist_s:
+        ids["mdblist"] = mdblist_s
 
     typ = _pick_kind_from_row(row)
     title = str(row.get("title") or row.get("name") or row.get("original_title") or row.get("original_name") or "").strip()
@@ -337,6 +351,17 @@ def _parse_rows_and_total(data: Any) -> tuple[list[Mapping[str, Any]], int | Non
             if v is not None and v > 0:
                 total = v
                 break
+        if total is None:
+            pag = data.get("pagination")
+            if isinstance(pag, Mapping):
+                tm = _as_int(pag.get("total_movies"))
+                ts = _as_int(pag.get("total_shows"))
+                if tm is not None and ts is not None:
+                    total = tm + ts
+                elif tm is not None:
+                    total = tm
+                elif ts is not None:
+                    total = ts
         rows_any: Any
         if "movies" in data or "shows" in data:
             rows_any = list(data.get("movies", []) or []) + list(data.get("shows", []) or [])
@@ -356,12 +381,12 @@ def _peek_live(adapter: Any, apikey: str, timeout: float, retries: int) -> tuple
             adapter.client.session,
             "GET",
             URL_LIST,
-            params={"apikey": apikey, "limit": 1, "offset": 0, "unified": 1},
+            params={"apikey": apikey, "limit": 1, "offset": 0, "unified": "true"},
             timeout=timeout,
             max_retries=retries,
         )
         if r.status_code != 200:
-            _log("peek_failed", status=r.status_code)
+            _warn("http_failed", op="peek", method="GET", url=URL_LIST, status=r.status_code)
             return None, None
         rows, total = _parse_rows_and_total(r.json() if (r.text or "").strip() else {})
         if rows:
@@ -369,7 +394,7 @@ def _peek_live(adapter: Any, apikey: str, timeout: float, retries: int) -> tuple
             return key, total
         return None, total
     except Exception as e:
-        _log("peek_error", error=str(e))
+        _warn("http_failed", op="peek", method="GET", url=URL_LIST, error=str(e))
         return None, None
 
 
@@ -383,6 +408,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     shadow = _shadow_load()
     cached: dict[str, dict[str, Any]] = dict(shadow.get("items") or {})
     if not apikey:
+        if cached:
+            _dbg("index_cache_hit", source="shadow", reason="missing_api_key", count=len(cached))
+            _info("index_done", count=len(cached), source="shadow")
+        else:
+            _dbg("index_reconcile", reason="missing_api_key", strategy="empty")
+            _info("index_done", count=0, source="empty")
         return cached
 
     timeout = adapter.cfg.timeout
@@ -398,18 +429,20 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         b = _as_epoch(wm) or 0
         if a <= b:
             if cached:
-                _log("no_op_using_shadow", watchlisted_at=acts_ts, watermark=wm)
+                _dbg("index_cache_hit", source="shadow", reason="activities_unchanged", watchlisted_at=acts_ts, watermark=wm, count=len(cached))
+                _info("index_done", count=len(cached), source="shadow")
                 return cached
-            _log("no_op_no_shadow_force_refresh", watchlisted_at=acts_ts, watermark=wm)
+            _dbg("index_reconcile", reason="activities_unchanged_cache_miss", strategy="full", watchlisted_at=acts_ts, watermark=wm)
 
     if acts_ts and (not wm) and cached:
         save_watermark("watchlist", acts_ts)
         save_watermark("watchlist_removed", acts_ts)
-        _log("baseline_watermark_set_using_shadow", watermark=acts_ts)
+        _dbg("index_cache_hit", source="shadow", reason="baseline_watermark_set", watermark=acts_ts, count=len(cached))
+        _info("index_done", count=len(cached), source="shadow")
         return cached
 
     if acts_ts:
-        _log("watchlist_changed_refresh", watchlisted_at=acts_ts, watermark=wm or "-")
+        _dbg("index_reconcile", reason="activities_changed", strategy="full", watchlisted_at=acts_ts, watermark=wm or "-")
     else:
         if ttl_h > 0 and shadow.get("ts") and cached:
             age = int(time.time()) - int(shadow.get("ts", 0))
@@ -420,11 +453,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     cached_count = len(cached)
                     if total_live is not None and int(total_live) != cached_count:
                         stale = True
-                        _log("shadow_invalid_total_mismatch", live_total=total_live, cached=cached_count)
+                        _dbg("index_reconcile", reason="shadow_invalid_total_mismatch", strategy="full", live_total=total_live, cached=cached_count)
                     elif k0 and (k0 not in cached):
                         stale = True
-                        _log("shadow_invalid_first_item_missing")
+                        _dbg("index_reconcile", reason="shadow_invalid_first_item_missing", strategy="full")
                 if not stale:
+                    _dbg("index_cache_hit", source="shadow", reason="ttl_valid", age_s=age, count=len(cached))
+                    _info("index_done", count=len(cached), source="shadow")
                     return cached
 
     prog_factory = getattr(adapter, "progress_factory", None)
@@ -436,10 +471,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     total_tick = 0
 
     while True:
-        params = {"apikey": apikey, "limit": limit, "offset": offset, "unified": 1}
+        params = {"apikey": apikey, "limit": limit, "offset": offset, "unified": "true"}
         r = request_with_retries(sess, "GET", URL_LIST, params=params, timeout=timeout, max_retries=retries)
         if r.status_code != 200:
-            _log("get_failed", status=r.status_code, offset=offset)
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset)
             break
         data = r.json() if (r.text or "").strip() else {}
         rows, _ = _parse_rows_and_total(data)
@@ -455,7 +490,11 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 prog.tick(total_tick, total=max(total_tick, offset + batch_len))
             except Exception:
                 pass
-        if batch_len < limit:
+        pag = data.get("pagination") if isinstance(data, Mapping) else None
+        has_more = pag.get("has_more") if isinstance(pag, Mapping) else None
+        if has_more is None:
+            has_more = batch_len >= limit
+        if not has_more:
             break
         offset += batch_len
 
@@ -474,7 +513,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         except Exception:
             pass
 
-    _log("index_size", count=len(collected))
+    _info("index_done", count=len(collected), source="current")
     return collected
 
 
@@ -498,7 +537,7 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
         if not ids:
             rejected.append({"item": minimal_item, "hint": "missing_ids"})
             continue
-        if not any(ids.get(k) not in (None, "") for k in ("imdb", "tmdb", "trakt", "tvdb", "kitsu")):
+        if not any(ids.get(k) not in (None, "") for k in ("imdb", "tmdb", "trakt", "tvdb", "kitsu", "mdblist")):
             rejected.append({"item": minimal_item, "hint": "missing_supported_ids"})
             continue
         kind = "show" if str(item.get("type") or "").lower() in ("show", "shows", "tv", "series") else "movie"
@@ -571,19 +610,23 @@ def _not_found_total(not_found: Any) -> int:
     return total
 
 
-def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
     apikey = _as_str(cfg.get("api_key")) or ""
+    items_list = list(items or [])
     if not apikey:
-        return {"count": 0, "unresolved": [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]}
+        unresolved = [{"item": id_minimal(it), "hint": "missing_api_key"} for it in items_list]
+        _info("write_skipped", op=action, reason="missing_api_key", unresolved=len(unresolved))
+        return 0, unresolved
 
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
     freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
 
     sess = adapter.client.session
-    accepted, unresolved = _batch_payload(items)
+    accepted, unresolved = _batch_payload(items_list)
     if not accepted:
-        return {"count": 0, "unresolved": unresolved}
+        _info("write_skipped", op=action, reason="empty_payload", unresolved=len(unresolved))
+        return 0, unresolved
 
     ok = 0
     for sl in _chunk(accepted, batch):
@@ -614,6 +657,7 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dic
             existing = existing_any if isinstance(existing_any, Mapping) else {}
             removed = removed_any if isinstance(removed_any, Mapping) else {}
 
+            nf_any = body.get("not_found")
             if action == "add":
                 slice_success_count = 0
                 slice_success_count += int(_as_int(added.get("movies")) or 0)
@@ -625,9 +669,16 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dic
                 slice_success_count = 0
                 slice_success_count += int(_as_int(removed.get("movies")) or 0)
                 slice_success_count += int(_as_int(removed.get("shows")) or 0)
+                # API may return added/existing instead of removed for the remove action
+                if slice_success_count == 0:
+                    slice_success_count += int(_as_int(added.get("movies")) or 0)
+                    slice_success_count += int(_as_int(added.get("shows")) or 0)
+                    slice_success_count += int(_as_int(existing.get("movies")) or 0)
+                    slice_success_count += int(_as_int(existing.get("shows")) or 0)
+                # Final fallback: assume all succeeded if nothing was not_found
+                if slice_success_count == 0 and _not_found_total(nf_any) == 0:
+                    slice_success_count = len(sl)
                 ok += slice_success_count
-
-            nf_any = body.get("not_found")
             _freeze_not_found(nf_any, action=action, unresolved=unresolved, add_details=freeze_details)
 
             not_found_keys: set[str] = set()
@@ -675,7 +726,7 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dic
                 _unfreeze_keys_if_present(ok_keys)
         else:
             text = (r.text or "")[:200]
-            _log("write_failed", action=action, status=r.status_code, text=text)
+            _warn("write_failed", op=action, status=r.status_code, body=text)
             for x in sl:
                 minimal = id_minimal({"type": x["type"], "ids": x["ids"]})
                 unresolved.append({"item": minimal, "hint": f"http:{r.status_code}"})
@@ -684,12 +735,13 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> dic
 
     if ok > 0:
         _shadow_bust()
-    return {"count": ok, "unresolved": unresolved}
+    _info("write_done", op=action, ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
+    return ok, unresolved
 
 
-def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     return _write(adapter, "add", items)
 
 
-def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     return _write(adapter, "remove", items)
