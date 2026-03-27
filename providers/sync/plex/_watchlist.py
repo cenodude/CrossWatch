@@ -10,12 +10,15 @@ from typing import Any, Iterable, Mapping
 from ._common import (
     DISCOVER,
     METADATA,
+    _plex_cfg,
     _xml_to_container,
+    active_cloud_token,
     candidate_guids_from_ids,
     hydrate_external_ids,
     home_scope_enter,
     home_scope_exit,
     ids_from_discover_row,
+    meta_guids,
     normalize_discover_row,
     plex_headers,
     sort_guid_candidates,
@@ -41,44 +44,6 @@ def _sleep_ms(ms: int) -> None:
             time.sleep(ms / 1000.0)
     except Exception:
         pass
-
-def _cfg(adapter: Any) -> dict[str, Any]:
-    c = getattr(adapter, "config", {}) or {}
-    return c.get("plex", {}) if isinstance(c, dict) else {}
-
-def _active_token(adapter: Any) -> str | None:
-    cli = getattr(adapter, "client", None)
-    try:
-        ses = getattr(cli, "session", None)
-        tok = ses.headers.get("X-Plex-Token") if ses and hasattr(ses, "headers") else None
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    srv = getattr(cli, "server", None)
-    try:
-        tok = getattr(srv, "_token", None) or getattr(srv, "token", None)
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    try:
-        tok = getattr(getattr(adapter, "cfg", None), "token", None)
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    return None
-
-def _cloud_token(adapter: Any) -> str | None:
-    cli = getattr(adapter, "client", None)
-    try:
-        tok = getattr(cli, "cloud_token", None)
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    return _active_token(adapter)
 
 def _cfg_int(d: Mapping[str, Any], key: str, default: int) -> int:
     try:
@@ -147,27 +112,27 @@ def _get_container(
                     else:
                         safe_headers[k] = str(v)
                 snippet = body.replace("\n", " ")[:300]
-                _warn("http_non_ok", method="GET", url=req_url, status=r.status_code, ctype=(ctype or "n/a"), headers=safe_headers, body_snippet=snippet)
+                _warn("http_failed", method="GET", url=req_url, status=r.status_code, ctype=(ctype or "n/a"), headers=safe_headers, body_snippet=snippet)
             except Exception:
-                _warn("http_non_ok", method="GET", url=url, status=r.status_code)
+                _warn("http_failed", method="GET", url=url, status=r.status_code)
             return None
 
         if "application/json" in ctype:
             try:
                 return r.json()
             except Exception:
-                _dbg("parse_json_failed_fallback_xml")
+                _dbg("parse_failed", format="json", fallback="xml")
 
         if "xml" in ctype or body.lstrip().startswith("<"):
             try:
                 return _xml_to_container(body)
             except Exception as e:
-                _warn("parse_xml_failed", error=str(e))
+                _warn("parse_failed", format="xml", error=str(e))
 
-        _warn("parse_unknown_payload", ctype=(ctype or "n/a"))
+        _warn("parse_failed", format="unknown", ctype=(ctype or "n/a"))
         return None
     except Exception as e:
-        _warn("http_request_failed", method="GET", url=url, error=str(e))
+        _warn("http_failed", method="GET", url=url, error=str(e))
         return None
 
 def _iter_meta_rows(container: Mapping[str, Any] | None):
@@ -428,24 +393,10 @@ def _discover_write_by_rk(
                     time.sleep(min(wait, 5.0))
                 except Exception:
                     pass
-        _info("discover_write", action=action, rating_key=rating_key, status=status, ok=ok, already_ok=already_ok, transient=transient, body_snippet=body)
+        _dbg("write_prepare", op=action, rating_key=rating_key, status=status, ok=ok, already_ok=already_ok, transient=transient, body_snippet=body)
         return ok, status, body, transient
     except Exception as e:
         return False, 0, str(e), True
-
-# Unresolved items store
-def meta_guids(meta_obj: Any) -> list[str]:
-    vals: list[str] = []
-    try:
-        if getattr(meta_obj, "guid", None):
-            vals.append(str(meta_obj.guid))
-        for gg in getattr(meta_obj, "guids", []) or []:
-            gid = getattr(gg, "id", None)
-            if gid:
-                vals.append(str(gid))
-    except Exception:
-        pass
-    return vals
 
 def _build_guid_index(adapter: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     gi_m: dict[str, Any] = {}
@@ -464,7 +415,7 @@ def _build_guid_index(adapter: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         except Exception as e:
             _warn("guid_index_build_failed", library=(getattr(sec, "title", None)), error=str(e))
             continue
-    _info("guid_index_done", movies=len(gi_m), shows=len(gi_s))
+    _dbg("index_fetch_counts", source="guid_index", movies=len(gi_m), shows=len(gi_s))
     return gi_m, gi_s
 
 def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
@@ -478,14 +429,14 @@ def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     _, did_switch, _, _ = home_scope_enter(adapter)
     try:
-        token = _cloud_token(adapter)
+        token = active_cloud_token(adapter)
         if not token:
             raise RuntimeError("Plex token is required for watchlist index")
     
         session = adapter.client.session
         timeout = float(getattr(adapter.cfg, "timeout", 12.0) or 12.0)
         retries = int(getattr(adapter.cfg, "max_retries", 3) or 3)
-        cfg = _cfg(adapter)
+        cfg = dict(_plex_cfg(adapter))
     
         prog_mk = getattr(adapter, "progress_factory", None)
         prog: Any = prog_mk("watchlist") if callable(prog_mk) else None
@@ -570,13 +521,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     _, did_switch, _, _ = home_scope_enter(adapter)
     try:
-        token = _cloud_token(adapter)
+        token = active_cloud_token(adapter)
         if not token:
             raise RuntimeError("Plex token is required for watchlist writes")
     
         session = adapter.client.session
         acct = adapter.account()
-        cfg = _cfg(adapter)
+        cfg = dict(_plex_cfg(adapter))
     
         allow_pms = _cfg_bool(cfg, "watchlist_allow_pms_fallback", False)
         pms_first = _cfg_bool(cfg, "watchlist_pms_first", False)
@@ -636,7 +587,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             if _UNRES.is_frozen(it):
                                 _UNRES.unfreeze([canonical_key(it)])
                             continue
-                        _warn("pms_write_failed", op="add", error=str(e))
+                        _warn("write_failed", op="add", target="pms", error=str(e))
     
             rk = _discover_resolve_rating_key(
                 session,
@@ -672,7 +623,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 if transient:
                     unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
                     continue
-                _warn("discover_write_failed", op="add", rating_key=rk, status=status, body_snippet=body)
+                _warn("write_failed", op="add", target="discover", rating_key=rk, status=status, body_snippet=body)
     
             if not pms_first and pms_enabled:
                 chosen = _pms_find_in_index(libtype, guids)
@@ -690,7 +641,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             if _UNRES.is_frozen(it):
                                 _UNRES.unfreeze([canonical_key(it)])
                             continue
-                        _warn("pms_write_failed", op="add", error=str(e))
+                        _warn("write_failed", op="add", target="pms", error=str(e))
                         unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                         continue
     
@@ -705,7 +656,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 extra={"guids_tried": guids},
             )
     
-        _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
+        _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
         home_scope_exit(adapter, did_switch)
@@ -714,13 +665,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     _, did_switch, _, _ = home_scope_enter(adapter)
     try:
-        token = _cloud_token(adapter)
+        token = active_cloud_token(adapter)
         if not token:
             raise RuntimeError("Plex token is required for watchlist writes")
     
         session = adapter.client.session
         acct = adapter.account()
-        cfg = _cfg(adapter)
+        cfg = dict(_plex_cfg(adapter))
     
         allow_pms = _cfg_bool(cfg, "watchlist_allow_pms_fallback", False)
         pms_first = _cfg_bool(cfg, "watchlist_pms_first", False)
@@ -780,7 +731,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                             if _UNRES.is_frozen(it):
                                 _UNRES.unfreeze([canonical_key(it)])
                             continue
-                        _warn("pms_write_failed", op="remove", error=str(e))
+                        _warn("write_failed", op="remove", target="pms", error=str(e))
     
             rk = _discover_resolve_rating_key(
                 session,
@@ -816,7 +767,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 if transient:
                     unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
                     continue
-                _warn("discover_write_failed", op="remove", rating_key=rk, status=status, body_snippet=body)
+                _warn("write_failed", op="remove", target="discover", rating_key=rk, status=status, body_snippet=body)
     
             if not pms_first and pms_enabled:
                 chosen = _pms_find_in_index(libtype, guids)
@@ -834,7 +785,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                             if _UNRES.is_frozen(it):
                                 _UNRES.unfreeze([canonical_key(it)])
                             continue
-                        _warn("pms_write_failed", op="remove", error=str(e))
+                        _warn("write_failed", op="remove", target="pms", error=str(e))
                         unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                         continue
     
@@ -849,7 +800,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 extra={"guids_tried": guids},
             )
     
-        _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+        _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
         home_scope_exit(adapter, did_switch)
