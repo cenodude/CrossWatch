@@ -24,6 +24,7 @@ const same=(a,b)=>String(a||"").trim().toLowerCase()===String(b||"").trim().toLo
 const isSimkl=(v)=>same(v,"simkl");
 const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
+const isMDBList=(v)=>same(v,"mdblist");
 const isPlex = (v) => same(v, "plex");
 function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
 const isMedia = (v) => isPlex(v) || isEmby(v) || isJelly(v);
@@ -31,6 +32,7 @@ function isProgressPair(state){ return isMedia(state?.src) && isMedia(state?.dst
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
+function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 
 const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]}};
 function ratingsDisabledFor(state){
@@ -195,6 +197,7 @@ function normalizePairProviders(p){
       if("strict_id_matching" in blk) blk.strict_id_matching=!!blk.strict_id_matching;
       if(key==="trakt"){
         if("history_collection" in blk) blk.history_collection=!!blk.history_collection;
+        if("history_ignore_dropped_shows" in blk) blk.history_ignore_dropped_shows=!!blk.history_ignore_dropped_shows;
         const raw=blk.history_collection_types;
         let types=[];
         if(typeof raw==="string") types=raw.split(",").map(s=>s.trim().toLowerCase()).filter(Boolean);
@@ -203,6 +206,12 @@ function normalizePairProviders(p){
         if(blk.history_collection && !types.length) types=["movies"];
         if(types.length) blk.history_collection_types=types;
         else delete blk.history_collection_types;
+      }
+      if(key==="mdblist"){
+        if("history_ignore_dropped_shows" in blk) blk.history_ignore_dropped_shows=!!blk.history_ignore_dropped_shows;
+      }
+      if(key==="simkl"){
+        if("history_ignore_dropped_shows" in blk) blk.history_ignore_dropped_shows=!!blk.history_ignore_dropped_shows;
       }
       out[key]=blk;
     }
@@ -594,7 +603,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp"]
   };
@@ -883,6 +892,7 @@ function renderFeaturePanel(state){
     const wl = getOpts(state, "watchlist");
     const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
     const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
+    const trPair = (state.pairProviders?.trakt) || {};
 
     left.innerHTML = `
       <div class="panel-title">Watchlist | Basics</div>
@@ -1108,8 +1118,13 @@ function renderFeaturePanel(state){
     const trCfg = (state.cfgRaw?.trakt) || {};
     const emCfg = (state.cfgRaw?.emby?.history) || {};
 
-        const trPair = (state.pairProviders?.trakt) || {};
+    const trPair = (state.pairProviders?.trakt) || {};
+    const mdPair = (state.pairProviders?.mdblist) || {};
+    const smPair = (state.pairProviders?.simkl) || {};
     const trColOn = !!trPair.history_collection;
+    const trIgnoreDropped = !!trPair.history_ignore_dropped_shows;
+    const mdIgnoreDropped = !!mdPair.history_ignore_dropped_shows;
+    const smIgnoreDropped = !!smPair.history_ignore_dropped_shows;
     const trColTypesRaw = trPair.history_collection_types;
     let trColTypes = [];
     if (typeof trColTypesRaw === "string") trColTypes = trColTypesRaw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
@@ -1121,7 +1136,7 @@ function renderFeaturePanel(state){
 
     const trColRow = hasTrakt(state)
       ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-tr-hs-col">Add to Trakt Collection</label>
+          <label for="cx-tr-hs-col"><span class="cx-provider-pill provider-trakt">TRAKT</span> Add to collection</label>
           <label class="switch">
             <input id="cx-tr-hs-col" type="checkbox" ${trColOn ? "checked" : ""}>
             <span class="slider"></span>
@@ -1142,6 +1157,31 @@ function renderFeaturePanel(state){
               <span class="slider"></span>
             </label>
           </div>
+        </div>
+        <div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-tr-hs-ignore-dropped"><span class="cx-provider-pill provider-trakt">TRAKT</span> Ignore dropped shows</label>
+          <label class="switch">
+            <input id="cx-tr-hs-ignore-dropped" type="checkbox" ${trIgnoreDropped ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>`
+      : "";
+    const mdDroppedRow = hasMDBList(state)
+      ? `<div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-md-hs-ignore-dropped"><span class="cx-provider-pill provider-mdblist">MDBLIST</span> Ignore dropped shows</label>
+          <label class="switch">
+            <input id="cx-md-hs-ignore-dropped" type="checkbox" ${mdIgnoreDropped ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>`
+      : "";
+    const smDroppedRow = hasSimkl(state)
+      ? `<div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-sm-hs-ignore-dropped"><span class="cx-provider-pill provider-simkl">SIMKL</span> Ignore dropped shows</label>
+          <label class="switch">
+            <input id="cx-sm-hs-ignore-dropped" type="checkbox" ${smIgnoreDropped ? "checked" : ""}>
+            <span class="slider"></span>
+          </label>
         </div>`
       : "";
 left.innerHTML = `
@@ -1169,6 +1209,8 @@ left.innerHTML = `
           </label>
         </div>
         ${trColRow}
+        ${mdDroppedRow}
+        ${smDroppedRow}
       </div>
       <div class="muted">Synchronize plays between providers. “Remove” is not recommended and should only be enabled for specific cases like mirroring.</div>
     `;
@@ -1336,11 +1378,12 @@ function bindChangeHandlers(state,root){
       if(id==="em-strict-ids") state.pairProviders.emby=Object.assign({},state.pairProviders.emby||{}, {strict_id_matching:!!el.checked});
       return;
     }
-    if(id==="cx-tr-hs-col"||id==="cx-tr-hs-col-movies"||id==="cx-tr-hs-col-shows"){
+    if(id==="cx-tr-hs-col"||id==="cx-tr-hs-col-movies"||id==="cx-tr-hs-col-shows"||id==="cx-tr-hs-ignore-dropped"){
       state.pairProviders=state.pairProviders||{};
       const tr=Object.assign({},state.pairProviders.trakt||{});
       const on=!!ID("cx-tr-hs-col")?.checked;
       tr.history_collection=on;
+      tr.history_ignore_dropped_shows=!!ID("cx-tr-hs-ignore-dropped")?.checked;
 
       const box=ID("cx-tr-hs-col-types");
       if(box) box.style.display=on?"":"none";
@@ -1363,6 +1406,20 @@ function bindChangeHandlers(state,root){
       }
 
       state.pairProviders.trakt=tr;
+      return;
+    }
+    if(id==="cx-md-hs-ignore-dropped"){
+      state.pairProviders=state.pairProviders||{};
+      const md=Object.assign({},state.pairProviders.mdblist||{});
+      md.history_ignore_dropped_shows=!!ID("cx-md-hs-ignore-dropped")?.checked;
+      state.pairProviders.mdblist=md;
+      return;
+    }
+    if(id==="cx-sm-hs-ignore-dropped"){
+      state.pairProviders=state.pairProviders||{};
+      const sm=Object.assign({},state.pairProviders.simkl||{});
+      sm.history_ignore_dropped_shows=!!ID("cx-sm-hs-ignore-dropped")?.checked;
+      state.pairProviders.simkl=sm;
       return;
     }
 
@@ -1787,12 +1844,31 @@ function buildPayload(state,wrap){
   if(useTr){
     const trSrc=pp.trakt||{};
     const colOn=!!trSrc.history_collection;
+    const histIgnoreDropped=!!trSrc.history_ignore_dropped_shows;
     let types=Array.isArray(trSrc.history_collection_types)?trSrc.history_collection_types.map(x=>String(x).trim().toLowerCase()):[];
     types=types.filter(x=>x==="movies"||x==="shows");
     if(colOn && !types.length) types=["movies"];
-    if(colOn || types.length){
-      prov.trakt={history_collection:colOn};
-      if(types.length) prov.trakt.history_collection_types=types;
+    if(colOn || types.length || histIgnoreDropped){
+      prov.trakt={};
+      if(colOn || types.length){
+        prov.trakt.history_collection=colOn;
+        if(types.length) prov.trakt.history_collection_types=types;
+      }
+      if(histIgnoreDropped) prov.trakt.history_ignore_dropped_shows=true;
+    }
+  }
+  if(isMDBList(src)||isMDBList(dst)){
+    const mdSrc=pp.mdblist||{};
+    const histIgnoreDropped=!!mdSrc.history_ignore_dropped_shows;
+    if(histIgnoreDropped){
+      prov.mdblist={history_ignore_dropped_shows:true};
+    }
+  }
+  if(isSimkl(src)||isSimkl(dst)){
+    const smSrc=pp.simkl||{};
+    const histIgnoreDropped=!!smSrc.history_ignore_dropped_shows;
+    if(histIgnoreDropped){
+      prov.simkl={history_ignore_dropped_shows:true};
     }
   }
   if(Object.keys(prov).length) payload.providers=prov;
