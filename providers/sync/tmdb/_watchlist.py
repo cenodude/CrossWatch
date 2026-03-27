@@ -51,7 +51,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 params=client._user_params({"page": page, "sort_by": "created_at.asc"}),
             )
             if not (200 <= r.status_code < 300):
-                _warn("fetch_failed", kind=kind, page=page, status=r.status_code)
+                _warn("http_failed", op="build_index", source=kind, page=page, status=r.status_code)
                 raise RuntimeError(f"TMDb watchlist fetch failed ({kind}) ({r.status_code})")
             data = r.json() if (r.text or "").strip() else {}
             if not isinstance(data, Mapping):
@@ -59,7 +59,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
             total_pages = as_int(data.get("total_pages")) or total_pages
             results_any = data.get("results")
             results = results_any if isinstance(results_any, list) else []
-            _dbg("page", kind=kind, page=page, total_pages=total_pages, batch=len(results))
+            _dbg("index_fetch_counts", source=kind, page=page, total_pages=total_pages, batch=len(results))
 
             for raw in results:
                 if not isinstance(raw, Mapping):
@@ -84,11 +84,10 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
             prog.tick(len(out), total=None)
             page += 1
 
-    _info("build_index", account_id=account_id)
     pull("movies")
     pull("tv")
     prog.done(ok=True)
-    _info("build_index_done", count=len(out))
+    _info("index_done", count=len(out), source="account")
     touch_feature_state(adapter, "watchlist", phase="index_done", count=len(out), ts=now_epoch())
     return out
 
@@ -116,8 +115,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if 200 <= r.status_code < 300:
             ok += 1
         else:
+            _warn("write_failed", op="add", media_type=media_type, media_id=int(tid), status=r.status_code)
             unresolved.append(unresolved_item(it, f"http_{r.status_code}"))
-    _info("add_done", applied=ok, unresolved=len(unresolved))
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -144,6 +144,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if 200 <= r.status_code < 300:
             ok += 1
         else:
+            _warn("write_failed", op="remove", media_type=media_type, media_id=int(tid), status=r.status_code)
             unresolved.append(unresolved_item(it, f"http_{r.status_code}"))
-    _info("remove_done", applied=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
