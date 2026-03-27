@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import Any, cast
+from collections.abc import Iterator
 from pathlib import Path
 from datetime import datetime, timezone, date
 from contextlib import contextmanager
@@ -190,8 +191,17 @@ def _normalize_pair_providers(p: Any) -> dict[str, Any]:
         blk: dict[str, Any] = {}
         if "strict_id_matching" in v:
             blk["strict_id_matching"] = bool(v.get("strict_id_matching"))
+        if key == "trakt":
+            if "history_ignore_dropped_shows" in v:
+                blk["history_ignore_dropped_shows"] = bool(v.get("history_ignore_dropped_shows"))
+        if key == "mdblist":
+            if "history_ignore_dropped_shows" in v:
+                blk["history_ignore_dropped_shows"] = bool(v.get("history_ignore_dropped_shows"))
+        if key == "simkl":
+            if "history_ignore_dropped_shows" in v:
+                blk["history_ignore_dropped_shows"] = bool(v.get("history_ignore_dropped_shows"))
         for kk, vv in v.items():
-            if kk == "strict_id_matching":
+            if kk in {"strict_id_matching", "history_ignore_dropped_shows"}:
                 continue
             blk[str(kk)] = vv
         if blk:
@@ -424,7 +434,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     pair_mode = (os.getenv("CW_PAIR_MODE") or "run").strip().lower()
 
     @contextmanager
-    def _orch_scope_env():
+    def _orch_scope_env() -> Iterator[None]:
         if pair_scope:
             with _scope_env(pair_scope, mode=pair_mode, feature="run", src=pair_src, dst=pair_dst):
                 yield
@@ -1367,6 +1377,14 @@ def _finalize_spotlight_item(it: dict[str, Any]) -> None:
     show = str(it.get("series_title") or it.get("show_title") or "").strip()
     key = str(it.get("key") or "").strip()
 
+    def _looks_like_id_label(v: str) -> bool:
+        s = str(v or "").strip().lower()
+        if not s:
+            return False
+        if key and s == key.lower():
+            return True
+        return bool(re.match(r"^(tmdb|imdb|tvdb|trakt|slug|mdblist|kitsu):", s))
+
     def _to_int(v: Any) -> int | None:
         if isinstance(v, int):
             return v
@@ -1439,6 +1457,16 @@ def _finalize_spotlight_item(it: dict[str, Any]) -> None:
     if raw_type == "season" and show and season is not None:
         it["display_title"] = f"{show} - Season {season}"
         return
+
+    if raw_type in ("show", "anime"):
+        title = show if show and _looks_like_id_label(raw_title) else raw_title or show
+        it["display_title"] = title or "Item"
+        return
+
+    title = raw_title
+    if show and _looks_like_id_label(title):
+        title = show
+    it["display_title"] = title or show or "Item"
 
 
 # Check if sync is running
@@ -1930,7 +1958,7 @@ def _sanitize_scope(v: str) -> str:
     return s or "ui"
 
 @contextmanager
-def _scope_env(scope: str, *, src: str = "SYNCAPI", dst: str = "SYNCAPI", mode: str = "ui", feature: str = "ui"):
+def _scope_env(scope: str, *, src: str = "SYNCAPI", dst: str = "SYNCAPI", mode: str = "ui", feature: str = "ui") -> Iterator[None]:
     key = _sanitize_scope(scope)
     new = {
         "CW_PAIR_KEY": key,
