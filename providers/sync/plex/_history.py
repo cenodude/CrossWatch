@@ -15,26 +15,35 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 from ._common import (
     _as_base_url,
+    _fb_cache_flush,
     _xml_to_container,
+    active_pms_token,
     as_epoch as _as_epoch,
-    candidate_guids_from_ids,
+    episode_rating_key_from_show,
+    extract_show_ids,
     force_episode_title as _force_episode_title,
+    has_external_ids,
     home_scope_enter,
     home_scope_exit,
     iso_from_epoch as _iso,
+    item_guid_candidates,
+    meta_guids,
     minimal_from_history_row,
     normalize as plex_normalize,
     normalize_discover_row,
+    object_type,
+    plex_cfg_get,
+    plex_feature_library_ids,
     plex_headers,
     read_json,
-    server_find_rating_key_by_guid,
-    sort_guid_candidates,
+    plex_worker_count,
+    resolve_obj_by_guids,
+    section_allowed,
     state_file,
     unresolved_store,
     write_json,
     emit,
     make_logger,
-    _plex_cfg,
 )
 
 _UNRES = unresolved_store("history")
@@ -139,25 +148,12 @@ _dbg, _info, _warn, _error, _log = make_logger("history")
 _GUID_INDEX_MOVIE: dict[str, str] = {}
 _GUID_INDEX_SHOW: dict[str, str] = {}
 
-def _meta_guids(meta_obj: Any) -> list[str]:
-    vals: list[str] = []
-    try:
-        if getattr(meta_obj, "guid", None):
-            vals.append(str(meta_obj.guid))
-        for gg in getattr(meta_obj, "guids", []) or []:
-            gid = getattr(gg, "id", None)
-            if gid:
-                vals.append(str(gid))
-    except Exception:
-        pass
-    return vals
-
 def _build_guid_index(adapter: Any, allow: set[str]) -> None:
     if _GUID_INDEX_MOVIE or _GUID_INDEX_SHOW:
         return
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if srv and _load_guid_index(srv, allow):
-        _dbg("guid_index_loaded", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
+        _dbg("index_cache_hit", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
         return
     try:
         for sec in adapter.libraries(types=("movie", "show")) or []:
@@ -172,7 +168,7 @@ def _build_guid_index(adapter: Any, allow: set[str]) -> None:
                         rk = str(getattr(obj, "ratingKey", "") or "").strip()
                         if not rk:
                             continue
-                        for g in _meta_guids(obj):
+                        for g in meta_guids(obj):
                             gg = str(g or "").strip().lower()
                             if gg and gg not in dst:
                                 dst[gg] = rk
@@ -182,7 +178,7 @@ def _build_guid_index(adapter: Any, allow: set[str]) -> None:
                 continue
         if srv:
             _save_guid_index(srv, allow)
-        _dbg("guid_index_done", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
+        _dbg("index_fetch_counts", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
     except Exception:
         pass
 
@@ -251,11 +247,6 @@ def _username_from_history_entry(entry: Any) -> str | None:
                 return s or None
     return None
 
-def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
-    cfg = _plex_cfg(adapter)
-    val = cfg.get(key, default) if isinstance(cfg, dict) else default
-    return default if val is None else val
-
 def _history_cfg(adapter: Any) -> Mapping[str, Any]:
     try:
         cfg = getattr(adapter, "config", {}) or {}
@@ -269,27 +260,6 @@ def _history_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     cfg = _history_cfg(adapter)
     val = cfg.get(key, default) if isinstance(cfg, dict) else default
     return default if val is None else val
-
-def _get_workers(adapter: Any, cfg_key: str, env_key: str, default: int) -> int:
-    try:
-        n = int(_plex_cfg_get(adapter, cfg_key, 0) or 0)
-    except Exception:
-        n = 0
-    if n <= 0:
-        try:
-            n = int(os.environ.get(env_key, str(default)))
-        except Exception:
-            n = default
-    return max(1, min(n, 64))
-
-def _allowed_history_sec_ids(adapter: Any) -> set[str]:
-    try:
-        cfg = getattr(adapter, "config", {}) or {}
-        plex = cfg.get("plex", {}) if isinstance(cfg, dict) else {}
-        arr = (plex.get("history") or {}).get("libraries") or []
-        return {str(int(x)) for x in arr if str(x).strip()}
-    except Exception:
-        return set()
 
 def _row_section_id(h: Any) -> str | None:
     for attr in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
@@ -306,21 +276,15 @@ def _row_section_id(h: Any) -> str | None:
             return m.group(1)
     return None
 
-def _event_key(item: Mapping[str, Any]) -> str:
-    return unresolved_store("history").event_key(item)
-
 def _load_shadow() -> dict[str, Any]:
     return read_json(_shadow_path())
-
-def _shadow_load() -> dict[str, Any]:
-    return _load_shadow()
 
 def _save_shadow(data: Mapping[str, Any]) -> None:
     write_json(_shadow_path(), data)
 
 def _shadow_add(item: Mapping[str, Any]) -> None:
     try:
-        key = _event_key(item)
+        key = _UNRES.event_key(item)
         if not key:
             return
         data = _load_shadow()
@@ -332,6 +296,28 @@ def _shadow_add(item: Mapping[str, Any]) -> None:
         if "first_seen" not in entry:
             entry["first_seen"] = entry["last_seen"]
         data[key] = entry
+        _save_shadow(data)
+    except Exception:
+        pass
+
+def _shadow_add_batch(items: list[Mapping[str, Any]]) -> None:
+    if not items:
+        return
+    try:
+        data = _load_shadow()
+        now_iso = _iso(int(datetime.now(timezone.utc).timestamp()))
+        for item in items:
+            key = _UNRES.event_key(item)
+            if not key:
+                continue
+            existing = data.get(key)
+            entry: dict[str, Any] = dict(existing) if isinstance(existing, Mapping) else {}
+            entry["item"] = id_minimal(item)
+            entry["watched_at"] = item.get("watched_at")
+            entry["last_seen"] = now_iso
+            if "first_seen" not in entry:
+                entry["first_seen"] = now_iso
+            data[key] = entry
         _save_shadow(data)
     except Exception:
         pass
@@ -356,9 +342,9 @@ def _guid_from_minimal(minimal: Mapping[str, Any]) -> str:
     return str(guid).lower() if guid else ""
 
 def _keep_in_snapshot(adapter: Any, minimal: Mapping[str, Any]) -> bool:
-    ignore_local = bool(_plex_cfg_get(adapter, "history_ignore_local_guid", False))
-    prefixes = _plex_cfg_get(adapter, "history_ignore_guid_prefixes", ["local://"]) or []
-    require_ext = bool(_plex_cfg_get(adapter, "history_require_external_ids", False))
+    ignore_local = bool(plex_cfg_get(adapter, "history_ignore_local_guid", False))
+    prefixes = plex_cfg_get(adapter, "history_ignore_guid_prefixes", ["local://"]) or []
+    require_ext = bool(plex_cfg_get(adapter, "history_require_external_ids", False))
     if require_ext and not _has_external_ids(minimal):
         return False
     if ignore_local:
@@ -544,11 +530,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
-            _info("no_server", reason="account_only")
+            _info("index_skipped", reason="account_only")
             return {}
         prog_mk = getattr(adapter, "progress_factory", None)
         prog: Any | None = prog_mk("history") if callable(prog_mk) else None
-        fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+        fallback_guid = bool(plex_cfg_get(adapter, "fallback_GUID", False) or plex_cfg_get(adapter, "fallback_guid", False))
         if fallback_guid:
             _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "history"})
 
@@ -558,11 +544,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             except Exception:
                 return 0
 
-        cfg_acct_id = _int_or_zero(_plex_cfg_get(adapter, "account_id", 0))
+        cfg_acct_id = _int_or_zero(plex_cfg_get(adapter, "account_id", 0))
         cli_acct_id = _int_or_zero(getattr(getattr(adapter, "client", None), "user_account_id", None))
         acct_id = cfg_acct_id or cli_acct_id
 
-        cfg_uname = str(_plex_cfg_get(adapter, "username", "") or "").strip().lower()
+        cfg_uname = str(plex_cfg_get(adapter, "username", "") or "").strip().lower()
         cli_uname = str(getattr(getattr(adapter, "client", None), "user_username", "") or "").strip().lower()
         uname = cfg_uname or cli_uname
 
@@ -576,7 +562,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         else:
             eff_since = None
 
-        allow = _allowed_history_sec_ids(adapter)
+        allow = plex_feature_library_ids(adapter, "history")
         explicit_user = bool(cfg_acct_id or cfg_uname)
 
         # Optional cursor debugging (helps diagnose 1-item re-add loops).
@@ -637,17 +623,12 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     base_kwargs2.pop("accountID", None)
                     rows = _call_history(**base_kwargs2)
         except Exception as e:
-            _warn("history_fetch_failed", error=str(e))
+            _warn("http_failed", op="build_index", error=str(e))
             rows = []
 
-        max_seen = 0
-        for r in rows:
-            ts = _epoch_from_history_entry(r) or 0
-            if ts and ts > max_seen:
-                max_seen = ts
-
         total = len(rows)
-        workers = _get_workers(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
+        max_seen = 0
+        workers = plex_worker_count(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
 
         # Optional cursor debugging: show the rows that are considered "new" for this run.
         if eff_since is not None and str(os.environ.get("CW_PLEX_HISTORY_DEBUG_CURSOR", "")).strip().lower() in ("1", "true", "yes"):
@@ -729,6 +710,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                         break
             finally:
                 executor.shutdown(wait=True, cancel_futures=False)
+                _fb_cache_flush()
         else:
             for i, raw in enumerate(rows, start=1):
                 if prog:
@@ -740,12 +722,16 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 out[key] = row
                 if limit and len(out) >= int(limit):
                     break
+            _fb_cache_flush()
+
+        if out:
+            max_seen = max((_as_epoch(r.get("watched_at")) or 0) for r in out.values())
 
         include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", True))
         include_shadow = bool(_history_cfg_get(adapter, "include_shadow", True))
 
         if include_shadow:
-            shadow = _shadow_load()
+            shadow = _load_shadow()
             for _, entry in (shadow or {}).items():
                 item = (entry or {}).get("item")
                 watched_at = (entry or {}).get("watched_at")
@@ -788,10 +774,20 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                 found += 1
 
             # Validate watched/unwatched toggles directly from PMS metadata.
-            for rk, item in list(marked.items()):
+            def _fetch_marked_meta(rk_item: tuple[str, Any]) -> tuple[str, Any, Mapping[str, Any] | None]:
+                rk_, item_ = rk_item
+                if not isinstance(item_, Mapping):
+                    return rk_, item_, None
+                return rk_, item_, _pms_fetch_metadata_row(adapter, str(rk_))
+
+            marked_pairs = list(marked.items())
+            meta_workers = plex_worker_count(adapter, "marked_meta_workers", "CW_PLEX_MARKED_META_WORKERS", 8)
+            with ThreadPoolExecutor(max_workers=meta_workers, thread_name_prefix="plex-marked-meta") as meta_exec:
+                fetched_rows = list(meta_exec.map(_fetch_marked_meta, marked_pairs))
+
+            for rk, item, row in fetched_rows:
                 if not isinstance(item, Mapping):
                     continue
-                row = _pms_fetch_metadata_row(adapter, str(rk))
                 if not row:
                     continue
                 is_watched = _pms_row_is_watched(row)
@@ -889,6 +885,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
         ok = 0
         unresolved: list[dict[str, Any]] = []
+        shadow_batch: list[Mapping[str, Any]] = []
         for item in items or []:
             if _UNRES.is_frozen(item):
                 _dbg("skip_frozen", title=id_minimal(item).get("title"))
@@ -905,12 +902,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
             if _scrobble_with_date(srv, rating_key, ts):
                 ok += 1
-                _UNRES.unfreeze([_event_key(item)])
-                _shadow_add(item)
+                _UNRES.unfreeze([_UNRES.event_key(item)])
+                shadow_batch.append(item)
             else:
                 _UNRES.freeze(item, action="add", reasons=["scrobble_failed"])
                 unresolved.append({"item": id_minimal(item), "hint": "scrobble_failed"})
-        _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
+        _shadow_add_batch(shadow_batch)
+        _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
 
     finally:
@@ -948,141 +946,22 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 continue
             if _unscrobble(srv, rating_key):
                 ok += 1
-                _UNRES.unfreeze([_event_key(item)])
+                _UNRES.unfreeze([_UNRES.event_key(item)])
             else:
                 _UNRES.freeze(item, action="remove", reasons=["unscrobble_failed"])
                 unresolved.append({"item": id_minimal(item), "hint": "unscrobble_failed"})
-        _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+        _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
 
     finally:
         home_scope_exit(adapter, did_home_switch)
 
-def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
-    def _match(ep: Any) -> str | None:
-        try:
-            season_ok = season is None or getattr(ep, "parentIndex", None) == season or getattr(ep, "seasonNumber", None) == season
-            episode_ok = episode is None or getattr(ep, "index", None) == episode
-            if season_ok and episode_ok:
-                rk = getattr(ep, "ratingKey", None)
-                return str(rk) if rk else None
-        except Exception:
-            return None
-        return None
-
-    try:
-        try:
-            episodes = show_obj.episodes() or []
-        except Exception:
-            episodes = []
-        for ep in episodes:
-            rk = _match(ep)
-            if rk:
-                return rk
-    except Exception:
-        pass
-
-    try:
-        srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
-        obj_id = getattr(show_obj, "ratingKey", None)
-        if not (srv and obj_id and hasattr(srv, "_session")):
-            return None
-
-        def _scan_xml(path: str) -> str | None:
-            try:
-                resp = srv._session.get(
-                    srv.url(path),
-                    params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
-                    timeout=12,
-                )
-                if not resp.ok:
-                    return None
-                import xml.etree.ElementTree as ET
-
-                root = ET.fromstring(resp.text or "")
-                for ep in root.findall(".//Video"):
-                    try:
-                        season_ok = season is None or int(ep.attrib.get("parentIndex", "0") or "0") == int(season)
-                        episode_ok = episode is None or int(ep.attrib.get("index", "0") or "0") == int(episode)
-                        if season_ok and episode_ok:
-                            rk = ep.attrib.get("ratingKey")
-                            if rk:
-                                return str(rk)
-                    except Exception:
-                        continue
-            except Exception:
-                return None
-            return None
-
-        rk = _scan_xml(f"/library/metadata/{obj_id}/children")
-        if rk:
-            return rk
-
-        return _scan_xml(f"/library/metadata/{obj_id}/allLeaves")
-    except Exception:
-        return None
-
-def _extract_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
-    v = item.get("show_ids")
-    if isinstance(v, Mapping):
-        return dict(v)
-    show = item.get("show") or item.get("series") or item.get("grandparent")
-    if isinstance(show, Mapping):
-        ids = show.get("ids")
-        if isinstance(ids, Mapping):
-            return dict(ids)
-    return {}
-
 def _has_matchable_ids(ids: Mapping[str, Any]) -> bool:
-    for k in ("tmdb", "imdb", "tvdb"):
-        if ids.get(k):
-            return True
-    return False
-
-def _type_of_obj(obj: Any) -> str:
-    return (getattr(obj, "type", "") or "").lower()
-
-def _section_allowed(obj: Any, allow: set[str]) -> bool:
-    if not allow:
-        return True
-    sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "").strip()
-    return not sid or sid in allow
-
-def _guid_candidates(ids: Mapping[str, Any], show_ids: Mapping[str, Any], item: Mapping[str, Any]) -> list[str]:
-    out: list[str] = []
-    for g in candidate_guids_from_ids({"ids": ids, "guid": item.get("guid")}) or []:
-        if g and g not in out:
-            out.append(g)
-    for g in candidate_guids_from_ids({"ids": show_ids, "guid": item.get("show_guid") or item.get("grandparentGuid")}) or []:
-        if g and g not in out:
-            out.append(g)
-    for key in ("plex_guid", "grandparentGuid", "show_guid"):
-        g = item.get(key)
-        if g and str(g) not in out:
-            out.append(str(g))
-    return sort_guid_candidates(out)
-
-def _resolve_obj_by_guids(srv: Any, guids: list[str], allow: set[str], accept: set[str]) -> Any | None:
-    if not guids:
-        return None
-    rk = server_find_rating_key_by_guid(srv, guids)
-    if not rk:
-        return None
-    try:
-        obj = srv.fetchItem(int(rk))
-    except Exception:
-        obj = None
-    if not obj:
-        return None
-    if accept and _type_of_obj(obj) not in accept:
-        return None
-    if not _section_allowed(obj, allow):
-        return None
-    return obj
+    return has_external_ids(ids)
 
 def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     ids = ids_from(item)
-    show_ids = _extract_show_ids(item)
+    show_ids = extract_show_ids(item)
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
         return None
@@ -1100,13 +979,13 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
         kind = "episode"
     is_episode = kind == "episode"
 
-    strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
-    allow = _allowed_history_sec_ids(adapter)
+    strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
+    allow = plex_feature_library_ids(adapter, "history")
 
     season = item.get("season") or item.get("season_number")
     episode = item.get("episode") or item.get("episode_number")
 
-    guids = _guid_candidates(ids, show_ids, item)
+    guids = item_guid_candidates(ids, show_ids, item)
 
     if strict:
         if not (guids or _has_matchable_ids(ids) or _has_matchable_ids(show_ids)):
@@ -1119,17 +998,17 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
                     obj0 = srv.fetchItem(int(rk_show))
                 except Exception:
                     obj0 = None
-                if obj0 and _section_allowed(obj0, allow):
-                    rk0 = _episode_rk_from_show(obj0, season, episode)
+                if obj0 and section_allowed(obj0, allow):
+                    rk0 = episode_rating_key_from_show(obj0, season, episode)
                     if rk0:
                         return rk0
 
-            obj = _resolve_obj_by_guids(srv, guids, allow, {"episode"})
+            obj = resolve_obj_by_guids(srv, guids, allow, {"episode"})
             if obj:
                 return str(getattr(obj, "ratingKey", None) or "")
-            obj2 = _resolve_obj_by_guids(srv, guids, allow, {"show", "season"})
+            obj2 = resolve_obj_by_guids(srv, guids, allow, {"show", "season"})
             if obj2:
-                rk2 = _episode_rk_from_show(obj2, season, episode)
+                rk2 = episode_rating_key_from_show(obj2, season, episode)
                 return rk2
 
             _build_guid_index(adapter, allow)
@@ -1139,13 +1018,13 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
                     obj_g = srv.fetchItem(int(rk_show_g))
                 except Exception:
                     obj_g = None
-                if obj_g and _section_allowed(obj_g, allow):
-                    rk_g = _episode_rk_from_show(obj_g, season, episode)
+                if obj_g and section_allowed(obj_g, allow):
+                    rk_g = episode_rating_key_from_show(obj_g, season, episode)
                     if rk_g:
                         return rk_g
             return None
 
-        obj = _resolve_obj_by_guids(srv, guids, allow, {"movie"})
+        obj = resolve_obj_by_guids(srv, guids, allow, {"movie"})
         if obj:
             return str(getattr(obj, "ratingKey", None) or "")
         _build_guid_index(adapter, allow)
@@ -1157,7 +1036,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
                 obj_g = srv.fetchItem(int(rk_movie_g))
             except Exception:
                 obj_g = None
-            if obj_g and _section_allowed(obj_g, allow):
+            if obj_g and section_allowed(obj_g, allow):
                 return str(getattr(obj_g, "ratingKey", None) or "")
         return None
 
@@ -1172,7 +1051,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     sec_types = ("show",) if is_episode else ("movie",)
     hits: list[Any] = []
 
-    obj = _resolve_obj_by_guids(srv, guids, allow, {"movie", "episode", "show", "season"})
+    obj = resolve_obj_by_guids(srv, guids, allow, {"movie", "episode", "show", "season"})
     if obj:
         hits.append(obj)
 
@@ -1195,7 +1074,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
             mediatype = "episode" if is_episode else "movie"
             search_hits = srv.search(query_title, mediatype=mediatype) or []
             for obj in search_hits:
-                if _section_allowed(obj, allow):
+                if section_allowed(obj, allow):
                     hits.append(obj)
         except Exception:
             pass
@@ -1227,14 +1106,14 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
         return None
 
     if is_episode:
-        ep_hits = [o for o in hits if _type_of_obj(o) == "episode"]
+        ep_hits = [o for o in hits if object_type(o) == "episode"]
         if ep_hits:
             best_ep = max(ep_hits, key=_score)
             rk_val = getattr(best_ep, "ratingKey", None)
             return str(rk_val) if rk_val else None
-        show_hits = [o for o in hits if _type_of_obj(o) in ("show", "season")]
+        show_hits = [o for o in hits if object_type(o) in ("show", "season")]
         for show in show_hits:
-            rk_val = _episode_rk_from_show(show, season, episode)
+            rk_val = episode_rating_key_from_show(show, season, episode)
             if rk_val:
                 return rk_val
         return None
@@ -1243,20 +1122,6 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     rk_val = getattr(best, "ratingKey", None)
     return str(rk_val) if rk_val else None
 
-
-def _active_token(srv: Any) -> str | None:
-    try:
-        ses = getattr(srv, "_session", None)
-        tok = (getattr(ses, "headers", {}) or {}).get("X-Plex-Token")
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    for attr in ("token", "_token"):
-        tok = getattr(srv, attr, None)
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    return None
 
 def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
     try:
@@ -1271,7 +1136,7 @@ def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
 
         base = _as_base_url(srv)
         ses = getattr(srv, "_session", None)
-        tok = _active_token(srv)
+        tok = active_pms_token(srv)
         if not (base and ses and tok):
             return False
 
@@ -1284,19 +1149,14 @@ def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
             try:
                 resp = ses.get(url, params=params, headers=headers, timeout=10)
             except Exception as e:
-                _warn("scrobble_request_failed", rating_key=str(rating_key), error=str(e))
+                _warn("http_failed", op="scrobble", rating_key=str(rating_key), error=str(e))
                 continue
 
             # Plex often returns 200 before the library reflects the new view state. At least that is what i hope...
             if resp.ok:
                 return True
 
-            _warn(
-                "scrobble_http_failed",
-                rating_key=str(rating_key),
-                status=resp.status_code,
-                body_snippet=(resp.text or "")[:200].replace("\n", " "),
-            )
+            _warn("write_failed", op="scrobble", rating_key=str(rating_key), status=resp.status_code, body_snippet=(resp.text or "")[:200].replace("\n", " "))
 
         if obj:
             try:
@@ -1308,7 +1168,7 @@ def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
         return False
 
     except Exception as e:
-        _warn("scrobble_exception", rating_key=str(rating_key), error=str(e))
+        _warn("write_failed", op="scrobble", rating_key=str(rating_key), error=str(e))
         return False
 
 def _unscrobble(srv: Any, rating_key: Any) -> bool:
