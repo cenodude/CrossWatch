@@ -993,6 +993,12 @@ def _split_buckets(
     return payload, unresolved
 
 
+def _chunk_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mapping[str, Any]]]:
+    size = max(1, int(n or 1))
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
 def add(
     adapter: Any,
     items: Iterable[Mapping[str, Any]],
@@ -1000,100 +1006,106 @@ def add(
     session = adapter.client.session
     headers = _headers(adapter)
     items_list: list[Mapping[str, Any]] = list(items or [])
-    raw_payload, unresolved = _split_buckets(items_list)
-    if not raw_payload:
-        _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
-        return 0, unresolved
-    body: dict[str, Any] = {}
-    movies_payload = raw_payload.get("movies")
-    shows_payload = raw_payload.get("shows")
-    if movies_payload:
-        body["movies"] = [
-            {"ids": entry["ids"], "to": "plantowatch"} for entry in movies_payload
-        ]
-    if shows_payload:
-        body["shows"] = [
-            {"ids": entry["ids"], "to": "plantowatch"} for entry in shows_payload
-        ]
+    if not items_list:
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=0)
+        return 0, []
+    batch = max(1, int(getattr(adapter.cfg, "watchlist_batch_size", 100) or 100))
     ok = 0
-    try:
-        resp = session.post(
-            URL_ADD,
-            headers=headers,
-            json=body,
-            timeout=adapter.cfg.timeout,
-        )
-        content_type = resp.headers.get("Content-Type", "")
-        resp_body: Any = (
-            resp.json()
-            if resp.text and "application/json" in content_type
-            else {}
-        )
-        if 200 <= resp.status_code < 300:
-            processed = _sum_processed_from_body(resp_body)
-            if processed == 0:
-                for item in items_list:
+    unresolved: list[dict[str, Any]] = []
+    for part in _chunk_items(items_list, batch):
+        raw_payload, part_unresolved = _split_buckets(part)
+        unresolved.extend(part_unresolved)
+        if not raw_payload:
+            continue
+        body: dict[str, Any] = {}
+        movies_payload = raw_payload.get("movies")
+        shows_payload = raw_payload.get("shows")
+        if movies_payload:
+            body["movies"] = [
+                {"ids": entry["ids"], "to": "plantowatch"} for entry in movies_payload
+            ]
+        if shows_payload:
+            body["shows"] = [
+                {"ids": entry["ids"], "to": "plantowatch"} for entry in shows_payload
+            ]
+        try:
+            resp = session.post(
+                URL_ADD,
+                headers=headers,
+                json=body,
+                timeout=adapter.cfg.timeout,
+            )
+            content_type = resp.headers.get("Content-Type", "")
+            resp_body: Any = (
+                resp.json()
+                if resp.text and "application/json" in content_type
+                else {}
+            )
+            if 200 <= resp.status_code < 300:
+                processed = _sum_processed_from_body(resp_body)
+                if processed == 0:
+                    for item in part:
+                        ids = dict(item.get("ids") or {})
+                        body_ids = {
+                            k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
+                        }
+                        if body_ids:
+                            _freeze(
+                                item,
+                                action="add",
+                                reasons=["not_processed"],
+                                ids_sent=body_ids,
+                            )
+                    _warn("write_failed", op="add", status=resp.status_code, reason="not_processed", body=str(resp_body)[:180])
+                ok += int(processed)
+                if processed > 0:
+                    sigs = _sigs_from_write_resp(resp_body)
+                    if sigs:
+                        to_add: list[Mapping[str, Any]] = []
+                        for item in part:
+                            sig = _id_sig(_ids_filter(item.get("ids") or {}))
+                            if sig and sig in sigs:
+                                to_add.append(item)
+                        if to_add:
+                            _shadow_add_items(to_add)
+                    elif processed == len(part):
+                        _shadow_add_items(part)
+                    _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in part])
+            else:
+                _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
+                for item in part:
                     ids = dict(item.get("ids") or {})
                     body_ids = {
                         k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
                     }
                     if body_ids:
+                        unresolved.append(
+                            {
+                                "item": id_minimal(item),
+                                "hint": f"add_failed:{resp.status_code}",
+                            }
+                        )
                         _freeze(
                             item,
                             action="add",
-                            reasons=["not_processed"],
+                            reasons=[f"write_failed:{resp.status_code}"],
                             ids_sent=body_ids,
                         )
-                _warn("write_failed", op="add", status=resp.status_code, reason="not_processed", body=str(resp_body)[:180])
-            ok = int(processed)
-            if ok > 0:
-                sigs = _sigs_from_write_resp(resp_body)
-                if sigs:
-                    to_add: list[Mapping[str, Any]] = []
-                    for item in items_list:
-                        sig = _id_sig(_ids_filter(item.get("ids") or {}))
-                        if sig and sig in sigs:
-                            to_add.append(item)
-                    if to_add:
-                        _shadow_add_items(to_add)
-                elif ok == len(items_list):
-                    _shadow_add_items(items_list)
-                _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
-        else:
-            _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
-            for item in items_list:
+        except Exception as exc:
+            _warn("write_failed", op="add", error=str(exc))
+            for item in part:
                 ids = dict(item.get("ids") or {})
-                body_ids = {
-                    k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
-                }
+                body_ids = {k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
                 if body_ids:
                     unresolved.append(
-                        {
-                            "item": id_minimal(item),
-                            "hint": f"add_failed:{resp.status_code}",
-                        }
+                        {"item": id_minimal(item), "hint": "add_exception"},
                     )
                     _freeze(
                         item,
                         action="add",
-                        reasons=[f"write_failed:{resp.status_code}"],
+                        reasons=["exception"],
                         ids_sent=body_ids,
                     )
-    except Exception as exc:
-        _warn("write_failed", op="add", error=str(exc))
-        for item in items_list:
-            ids = dict(item.get("ids") or {})
-            body_ids = {k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
-            if body_ids:
-                unresolved.append(
-                    {"item": id_minimal(item), "hint": "add_exception"},
-                )
-                _freeze(
-                    item,
-                    action="add",
-                    reasons=["exception"],
-                    ids_sent=body_ids,
-                )
     _info("write_done", op="add", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
@@ -1105,98 +1117,104 @@ def remove(
     session = adapter.client.session
     headers = _headers(adapter)
     items_list: list[Mapping[str, Any]] = list(items or [])
-    payload, unresolved = _split_buckets(items_list)
-    if not payload:
-        _info("write_skipped", op="remove", reason="empty_payload", unresolved=len(unresolved))
-        return 0, unresolved
+    if not items_list:
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=0)
+        return 0, []
+    batch = max(1, int(getattr(adapter.cfg, "watchlist_batch_size", 100) or 100))
     ok = 0
-    try:
-        resp = session.post(
-            URL_REMOVE,
-            headers=headers,
-            json=payload,
-            timeout=adapter.cfg.timeout,
-        )
-        content_type = resp.headers.get("Content-Type", "").lower()
-        resp_body: Any = (
-            resp.json()
-            if resp.text and "application/json" in content_type
-            else {}
-        )
-        if 200 <= resp.status_code < 300:
-            processed = _sum_processed_from_body(resp_body)
-            empty_success = not str(resp.text or "").strip()
-            if processed == 0 and empty_success:
-                ok = len(items_list)
-                _shadow_remove_keys([_mk_shadow_item(item)[0] for item in items_list])
-                _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
-                _dbg("write_assumed_success", op="remove", reason="empty_body", applied=ok)
+    unresolved: list[dict[str, Any]] = []
+    for part in _chunk_items(items_list, batch):
+        payload, part_unresolved = _split_buckets(part)
+        unresolved.extend(part_unresolved)
+        if not payload:
+            continue
+        try:
+            resp = session.post(
+                URL_REMOVE,
+                headers=headers,
+                json=payload,
+                timeout=adapter.cfg.timeout,
+            )
+            content_type = resp.headers.get("Content-Type", "").lower()
+            resp_body: Any = (
+                resp.json()
+                if resp.text and "application/json" in content_type
+                else {}
+            )
+            if 200 <= resp.status_code < 300:
+                processed = _sum_processed_from_body(resp_body)
+                empty_success = not str(resp.text or "").strip()
+                if processed == 0 and empty_success:
+                    ok += len(part)
+                    _shadow_remove_keys([_mk_shadow_item(item)[0] for item in part])
+                    _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in part])
+                    _dbg("write_assumed_success", op="remove", reason="empty_body", applied=len(part))
+                else:
+                    if processed == 0:
+                        for item in part:
+                            ids = dict(item.get("ids") or {})
+                            body_ids = {
+                                k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
+                            }
+                            if body_ids:
+                                unresolved.append(
+                                    {"item": id_minimal(item), "hint": "not_removed"},
+                                )
+                                _freeze(
+                                    item,
+                                    action="remove",
+                                    reasons=["not_processed"],
+                                    ids_sent=body_ids,
+                                )
+                        _warn("write_failed", op="remove", status=resp.status_code, reason="not_processed", body=(str(resp_body)[:180] if resp_body else "empty"))
+                    ok += int(processed)
+                    if processed > 0:
+                        sigs = _sigs_from_write_resp(resp_body)
+                        if sigs:
+                            rm_keys: list[str] = []
+                            for item in part:
+                                sig = _id_sig(_ids_filter(item.get("ids") or {}))
+                                if sig and sig in sigs:
+                                    rm_keys.append(_mk_shadow_item(item)[0])
+                            if rm_keys:
+                                _shadow_remove_keys(rm_keys)
+                        elif processed == len(part):
+                            _shadow_remove_keys([_mk_shadow_item(item)[0] for item in part])
+                        _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in part])
             else:
-                if processed == 0:
-                    for item in items_list:
-                        ids = dict(item.get("ids") or {})
-                        body_ids = {
-                            k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
-                        }
-                        if body_ids:
-                            unresolved.append(
-                                {"item": id_minimal(item), "hint": "not_removed"},
-                            )
-                            _freeze(
-                                item,
-                                action="remove",
-                                reasons=["not_processed"],
-                                ids_sent=body_ids,
-                            )
-                    _warn("write_failed", op="remove", status=resp.status_code, reason="not_processed", body=(str(resp_body)[:180] if resp_body else "empty"))
-                ok = int(processed)
-                if ok > 0:
-                    sigs = _sigs_from_write_resp(resp_body)
-                    if sigs:
-                        rm_keys: list[str] = []
-                        for item in items_list:
-                            sig = _id_sig(_ids_filter(item.get("ids") or {}))
-                            if sig and sig in sigs:
-                                rm_keys.append(_mk_shadow_item(item)[0])
-                        if rm_keys:
-                            _shadow_remove_keys(rm_keys)
-                    elif ok == len(items_list):
-                        _shadow_remove_keys([_mk_shadow_item(item)[0] for item in items_list])
-                    _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in items_list])
-        else:
-            _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
-            for item in items_list:
+                _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
+                for item in part:
+                    ids = dict(item.get("ids") or {})
+                    body_ids = {
+                        k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
+                    }
+                    if body_ids:
+                        unresolved.append(
+                            {
+                                "item": id_minimal(item),
+                                "hint": f"remove_failed:{resp.status_code}",
+                            }
+                        )
+                        _freeze(
+                            item,
+                            action="remove",
+                            reasons=[f"write_failed:{resp.status_code}"],
+                            ids_sent=body_ids,
+                        )
+        except Exception as exc:
+            _warn("write_failed", op="remove", error=str(exc))
+            for item in part:
                 ids = dict(item.get("ids") or {})
-                body_ids = {
-                    k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v
-                }
+                body_ids = {k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
                 if body_ids:
                     unresolved.append(
-                        {
-                            "item": id_minimal(item),
-                            "hint": f"remove_failed:{resp.status_code}",
-                        }
+                        {"item": id_minimal(item), "hint": "remove_exception"},
                     )
                     _freeze(
                         item,
                         action="remove",
-                        reasons=[f"write_failed:{resp.status_code}"],
+                        reasons=["exception"],
                         ids_sent=body_ids,
                     )
-    except Exception as exc:
-        _warn("write_failed", op="remove", error=str(exc))
-        for item in items_list:
-            ids = dict(item.get("ids") or {})
-            body_ids = {k: v for k, v in ids.items() if k in _ALLOWED_ID_KEYS and v}
-            if body_ids:
-                unresolved.append(
-                    {"item": id_minimal(item), "hint": "remove_exception"},
-                )
-                _freeze(
-                    item,
-                    action="remove",
-                    reasons=["exception"],
-                    ids_sent=body_ids,
-                )
     _info("write_done", op="remove", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
     return ok, unresolved
