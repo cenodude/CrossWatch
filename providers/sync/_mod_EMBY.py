@@ -16,7 +16,7 @@ from cw_platform.provider_instances import normalize_instance_id
 from ._log import log as cw_log
 
 from .emby._common import normalize as emby_normalize, key_of as emby_key_of
-from .emby._common import _pair_scope as _emby_pair_scope, state_file as _emby_state_file
+from .emby._common import _pair_scope as _emby_pair_scope, state_file as _emby_state_file, _is_capture_mode as _emby_capture_mode
 from .emby import _watchlist as feat_watchlist
 from .emby import _history as feat_history
 from .emby import _ratings as feat_ratings
@@ -76,10 +76,12 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.3.0"
+__VERSION__ = "1.0"
+os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
+os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
 
-_DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Emby)")
+_DEF_UA = os.environ.get("CW_EMBY_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (Emby)"
 
 
 def _pick_instance_id(provider: str) -> str:
@@ -149,7 +151,7 @@ def _present_flags() -> dict[str, bool]:
 
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
-    if _emby_pair_scope() is None:
+    if _emby_pair_scope() is None or _emby_capture_mode():
         return
     try:
         path = _emby_state_file(_HEALTH_SHADOW_NAME)
@@ -172,7 +174,7 @@ def get_manifest() -> Mapping[str, Any]:
         "features": {
             "watchlist": True,
             "history": True,
-            "ratings": False,
+            "ratings": True,
             "playlists": False,
             "progress": True,
         },
@@ -399,7 +401,7 @@ class EMBYModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": False, "progress": True}
+        toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False, "progress": True}
         present = _present_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -545,7 +547,7 @@ class EMBYModule:
     def build_index(self, feature: str, **kwargs: Any) -> Mapping[str, dict[str, Any]]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _dbg("feature_disabled", op="build_index", feature=f)
+            _info("index_skipped", feature=f, reason="feature_disabled")
             return {}
         mod = _FEATURES.get(f)
         if not mod:
@@ -565,7 +567,7 @@ class EMBYModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _dbg("feature_disabled", op="add", feature=f)
+            _info("write_skipped", op="add", feature=f, reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)
@@ -592,7 +594,7 @@ class EMBYModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _dbg("feature_disabled", op="remove", feature=f)
+            _info("write_skipped", op="remove", feature=f, reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)
