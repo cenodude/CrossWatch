@@ -127,9 +127,8 @@ def _plex_headers(token: str) -> dict[str, str]:
     return plex_headers(
         token or "",
         platform="Web",
-        version="1.0",
         accept="application/xml, application/json;q=0.9,*/*;q=0.5",
-        user_agent="CrossWatch/1.0",
+        user_agent=os.environ.get("CW_PLEX_UA") or os.environ.get("CW_UA"),
     )
 
 
@@ -992,4 +991,3 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
         save_config(cfg)
         _info("whitelist_defaults_ensured")
     return changed
-
