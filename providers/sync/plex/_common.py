@@ -84,7 +84,7 @@ def write_json(
     sort_keys: bool = True,
     separators: tuple[str, str] | None = None,
 ) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -174,19 +174,17 @@ def stable_client_id() -> str:
             return cid
 
 
-def set_client_id(cid: str) -> None:
-    global CLIENT_ID, _CLIENT_ID_CACHE
-    v = str(cid or "").strip()
-    if not v:
-        return
-    with _CLIENT_ID_LOCK:
-        _CLIENT_ID_CACHE = v
-    CLIENT_ID = v
-
-
 CLIENT_ID = stable_client_id()
 
-
+def set_client_id(value: str | None) -> str:
+    global _CLIENT_ID_CACHE, CLIENT_ID
+    cid = str(value or "").strip() or stable_client_id()
+    with _CLIENT_ID_LOCK:
+        _CLIENT_ID_CACHE = cid
+        CLIENT_ID = cid
+    for k in ("CW_PLEX_CID", "PLEX_CLIENT_IDENTIFIER", "X_PLEX_CLIENT_IDENTIFIER"):
+        os.environ[k] = cid
+    return cid
 
 def make_logger(feature: str):
     feat = str(feature or "common")
@@ -352,41 +350,129 @@ def _plex_cfg(adapter: Any) -> Mapping[str, Any]:
     return cfg.get("plex", {}) if isinstance(cfg, dict) else {}
 
 
+def plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
+    cfg = _plex_cfg(adapter)
+    value = cfg.get(key, default) if isinstance(cfg, Mapping) else default
+    return default if value is None else value
+
+
+def plex_feature_cfg(adapter: Any, feature: str) -> Mapping[str, Any]:
+    cfg = _plex_cfg(adapter)
+    value = cfg.get(str(feature or "").strip()) if isinstance(cfg, Mapping) else {}
+    return value if isinstance(value, Mapping) else {}
+
+
+def plex_feature_library_ids(adapter: Any, feature: str) -> set[str]:
+    try:
+        cfg = plex_feature_cfg(adapter, feature)
+        arr = cfg.get("libraries") or []
+        return {str(int(x)) for x in arr if str(x).strip()}
+    except Exception:
+        return set()
+
+
+def plex_worker_count(adapter: Any, cfg_key: str, env_key: str, default: int) -> int:
+    try:
+        workers = int(plex_cfg_get(adapter, cfg_key, 0) or 0)
+    except Exception:
+        workers = 0
+    if workers <= 0:
+        try:
+            workers = int(os.environ.get(env_key, str(default)))
+        except Exception:
+            workers = default
+    return max(1, min(workers, 64))
+
+
+def active_pms_token(source: Any) -> str | None:
+    candidates: list[Any] = []
+    seen: set[int] = set()
+
+    def add(obj: Any) -> None:
+        if obj is None:
+            return
+        marker = id(obj)
+        if marker in seen:
+            return
+        seen.add(marker)
+        candidates.append(obj)
+
+    add(source)
+    add(getattr(source, "client", None))
+    add(getattr(source, "server", None))
+    add(getattr(getattr(source, "client", None), "server", None))
+    add(getattr(source, "cfg", None))
+    add(getattr(getattr(source, "client", None), "cfg", None))
+
+    for obj in candidates:
+        try:
+            ses = getattr(obj, "session", None) or getattr(obj, "_session", None)
+            headers = getattr(ses, "headers", None) or {}
+            tok = headers.get("X-Plex-Token")
+            if tok and str(tok).strip():
+                return str(tok).strip()
+        except Exception:
+            pass
+
+        for attr in ("token", "_token"):
+            try:
+                tok = getattr(obj, attr, None)
+            except Exception:
+                tok = None
+            if tok and str(tok).strip():
+                return str(tok).strip()
+
+        try:
+            cfg = getattr(obj, "cfg", None)
+            tok = getattr(cfg, "token", None) if cfg is not None else None
+            if tok and str(tok).strip():
+                return str(tok).strip()
+        except Exception:
+            pass
+
+    return None
+
+
+def active_cloud_token(source: Any) -> str | None:
+    for obj in (source, getattr(source, "client", None)):
+        try:
+            tok = getattr(obj, "cloud_token", None)
+            if tok and str(tok).strip():
+                return str(tok).strip()
+        except Exception:
+            pass
+    return active_pms_token(source)
+
+
 _dbg, _info, _warn, _error, _log = make_logger("common")
 
 
 def _emit(evt: dict[str, Any]) -> None:
     emit(evt, default_feature="common")
 
-
-def key_of(item: Mapping[str, Any]) -> str:
-    try:
-        m = normalize(item)
-    except Exception:
-        m = id_minimal(item)
-    return canonical_key(m) or ""
-
 def plex_headers(
     token: str,
     *,
     product: str = "CrossWatch",
     platform: str = "CrossWatch",
-    version: str = "5.2.0",
+    version: str | None = None,
     client_id: str | None = None,
     accept: str = "application/json, application/xml;q=0.9, */*;q=0.5",
     user_agent: str | None = None,
 ) -> dict[str, str]:
     cid = str(client_id or CLIENT_ID or "").strip() or stable_client_id()
+    version_s = str(version or os.environ.get("CW_PLEX_VERSION") or os.environ.get("CW_VERSION") or "").strip() or "unknown"
     headers = {
         "X-Plex-Product": product,
         "X-Plex-Platform": platform,
-        "X-Plex-Version": version,
+        "X-Plex-Version": version_s,
         "X-Plex-Client-Identifier": cid,
         "X-Plex-Token": token,
         "Accept": accept,
     }
-    if user_agent:
-        headers["User-Agent"] = str(user_agent)
+    ua = str(user_agent or os.environ.get("CW_PLEX_UA") or os.environ.get("CW_UA") or "").strip()
+    if ua:
+        headers["User-Agent"] = ua
     return headers
 
 def _safe_int(v: Any) -> int | None:
@@ -467,6 +553,20 @@ def show_ids_hint(obj: Any) -> dict[str, str]:
     if gp_rk:
         out["plex"] = str(gp_rk)
     return {k: v for k, v in out.items() if v}
+
+
+def meta_guids(meta_obj: Any) -> list[str]:
+    vals: list[str] = []
+    try:
+        if getattr(meta_obj, "guid", None):
+            vals.append(str(meta_obj.guid))
+        for gg in getattr(meta_obj, "guids", []) or []:
+            gid = getattr(gg, "id", None)
+            if gid:
+                vals.append(str(gid))
+    except Exception:
+        pass
+    return vals
 
 
 def server_find_rating_key_by_guid(srv: Any, guids: Iterable[str]) -> str | None:
@@ -618,6 +718,15 @@ def _fb_cache_save() -> None:
         write_json(_fbguid_cache_path(), _FBGUID_MEMO, indent=0, sort_keys=False, separators=(",", ":"))
     except Exception:
         pass
+
+_FBGUID_MEMO_DIRTY: bool = False
+
+def _fb_cache_flush() -> None:
+    global _FBGUID_MEMO_DIRTY
+    if not _FBGUID_MEMO_DIRTY:
+        return
+    _fb_cache_save()
+    _FBGUID_MEMO_DIRTY = False
 
 _SHOW_PMS_GUID_CACHE: dict[str, dict[str, str]] = {}
 _EP_SHOW_IDS_CACHE: dict[str, dict[str, str]] = {}
@@ -1108,6 +1217,157 @@ def candidate_guids_from_ids(it: Mapping[str, Any], *, include_raw_ids: bool = F
         add(str(g))
     return out
 
+
+def has_external_ids(ids: Mapping[str, Any]) -> bool:
+    try:
+        return any(str(ids.get(k) or "").strip() for k in ("tmdb", "imdb", "tvdb"))
+    except Exception:
+        return False
+
+
+def extract_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
+    value = item.get("show_ids")
+    if isinstance(value, Mapping):
+        return dict(value)
+    show = item.get("show") or item.get("series") or item.get("grandparent")
+    if isinstance(show, Mapping):
+        ids = show.get("ids")
+        if isinstance(ids, Mapping):
+            return dict(ids)
+    return {}
+
+
+def object_type(obj: Any) -> str:
+    return (getattr(obj, "type", "") or "").lower()
+
+
+def section_allowed(obj: Any, allow: set[str]) -> bool:
+    if not allow:
+        return True
+    sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "").strip()
+    return not sid or sid in allow
+
+
+def item_guid_candidates(ids: Mapping[str, Any], show_ids: Mapping[str, Any], item: Mapping[str, Any]) -> list[str]:
+    out: list[str] = []
+    for g in candidate_guids_from_ids({"ids": ids, "guid": item.get("guid")}) or []:
+        if g and g not in out:
+            out.append(g)
+    for g in candidate_guids_from_ids({"ids": show_ids, "guid": item.get("show_guid") or item.get("grandparentGuid")}) or []:
+        if g and g not in out:
+            out.append(g)
+    for key in ("plex_guid", "grandparentGuid", "show_guid"):
+        g = item.get(key)
+        if g and str(g) not in out:
+            out.append(str(g))
+    return sort_guid_candidates(out)
+
+
+def resolve_obj_by_guids(srv: Any, guids: list[str], allow: set[str], accept: set[str]) -> Any | None:
+    if not guids:
+        return None
+    rk = server_find_rating_key_by_guid(srv, guids)
+    if not rk:
+        return None
+    try:
+        obj = srv.fetchItem(int(rk))
+    except Exception:
+        obj = None
+    if not obj:
+        return None
+    if accept and object_type(obj) not in accept:
+        return None
+    if not section_allowed(obj, allow):
+        return None
+    return obj
+
+
+def season_rating_key_from_show(show_obj: Any, season: Any) -> str | None:
+    try:
+        try:
+            target = int(season) if season is not None else None
+        except Exception:
+            target = season
+        if target is None:
+            return None
+        try:
+            seasons = show_obj.seasons() or []
+        except Exception:
+            seasons = []
+        for sn in seasons:
+            try:
+                idx = getattr(sn, "index", None)
+                if idx is not None and int(idx) == int(target):
+                    rk = getattr(sn, "ratingKey", None)
+                    return str(rk) if rk else None
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def episode_rating_key_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
+    def _match(ep: Any) -> str | None:
+        try:
+            season_ok = season is None or getattr(ep, "parentIndex", None) == season or getattr(ep, "seasonNumber", None) == season
+            episode_ok = episode is None or getattr(ep, "index", None) == episode
+            if season_ok and episode_ok:
+                rk = getattr(ep, "ratingKey", None)
+                return str(rk) if rk else None
+        except Exception:
+            return None
+        return None
+
+    try:
+        try:
+            episodes = show_obj.episodes() or []
+        except Exception:
+            episodes = []
+        for ep in episodes:
+            rk = _match(ep)
+            if rk:
+                return rk
+    except Exception:
+        pass
+
+    try:
+        srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
+        obj_id = getattr(show_obj, "ratingKey", None)
+        if not (srv and obj_id and hasattr(srv, "_session")):
+            return None
+
+        def _scan(path: str) -> str | None:
+            try:
+                resp = srv._session.get(
+                    srv.url(path),
+                    params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
+                    timeout=12,
+                )
+                if not resp.ok:
+                    return None
+                root = ET.fromstring(resp.text or "")
+                for ep in root.findall(".//Video"):
+                    try:
+                        season_ok = season is None or int(ep.attrib.get("parentIndex", "0") or "0") == int(season)
+                        episode_ok = episode is None or int(ep.attrib.get("index", "0") or "0") == int(episode)
+                        if season_ok and episode_ok:
+                            rk = ep.attrib.get("ratingKey")
+                            if rk:
+                                return str(rk)
+                    except Exception:
+                        continue
+            except Exception:
+                return None
+            return None
+
+        rk = _scan(f"/library/metadata/{obj_id}/children")
+        if rk:
+            return rk
+        return _scan(f"/library/metadata/{obj_id}/allLeaves")
+    except Exception:
+        return None
+
 def _iso8601_any(v: Any) -> str | None:
     try:
         if v is None:
@@ -1186,11 +1446,7 @@ def ids_from_history_row(row: Any) -> dict[str, str]:
     return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
 
 
-def _has_ext_ids(ids: Mapping[str, Any]) -> bool:
-    try:
-        return any(str(ids.get(k) or "").strip() for k in ("tmdb", "imdb", "tvdb"))
-    except Exception:
-        return False
+_has_ext_ids = has_external_ids
 
 
 def _build_minimal_from_row(row: Any, ids: Mapping[str, Any]) -> dict[str, Any]:
@@ -1539,6 +1795,7 @@ def minimal_from_history_row(
     token: str | None = None,
     allow_discover: bool = False,
 ) -> dict[str, Any] | None:
+    global _FBGUID_MEMO_DIRTY
     key = _fb_key_from_row(row)
     memo = _fb_cache_load()
     hit = memo.get(key, None)
@@ -1676,16 +1933,16 @@ def minimal_from_history_row(
     if not (m.get("title") or m.get("series_title")):
         if allow_discover:
             _FBGUID_MEMO[key] = _FBGUID_NOHIT
-            _fb_cache_save()
+            _FBGUID_MEMO_DIRTY = True
         return None
-    
+
     if not _has_ext_ids(m.get("ids", {})) and not _has_ext_ids(m.get("show_ids", {})):
         if allow_discover:
             _FBGUID_MEMO[key] = _FBGUID_NOHIT
-            _fb_cache_save()
+            _FBGUID_MEMO_DIRTY = True
         return None
     _FBGUID_MEMO[key] = dict(m)
-    _fb_cache_save()
+    _FBGUID_MEMO_DIRTY = True
     return m
 
 
@@ -1883,3 +2140,20 @@ class UnresolvedStore:
 
 def unresolved_store(feature: str) -> UnresolvedStore:
     return UnresolvedStore(feature)
+
+def key_of(obj: Any) -> str:
+    try:
+        return canonical_key(normalize(obj))
+    except Exception:
+        pass
+    try:
+        if isinstance(obj, Mapping):
+            return canonical_key(id_minimal(obj))
+    except Exception:
+        pass
+    try:
+        if isinstance(obj, Mapping):
+            return canonical_key(obj)
+    except Exception:
+        pass
+    return ""

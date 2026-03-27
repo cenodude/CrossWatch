@@ -15,7 +15,7 @@ from cw_platform.provider_instances import normalize_instance_id
 
 from ._log import log as cw_log
 
-from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of, _pair_scope as _jf_pair_scope, state_file as _jf_state_file
+from .jellyfin._common import normalize as jelly_normalize, key_of as jelly_key_of, _pair_scope as _jf_pair_scope, state_file as _jf_state_file, _is_capture_mode as _jf_capture_mode
 from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history as feat_history
 from .jellyfin import _ratings as feat_ratings
@@ -74,10 +74,12 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.3.0"
+__VERSION__ = "1.0"
+os.environ.setdefault("CW_JELLYFIN_VERSION", __VERSION__)
+os.environ.setdefault("CW_JELLYFIN_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
 
-_DEF_UA = os.environ.get("CW_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
+_DEF_UA = os.environ.get("CW_JELLYFIN_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (Jellyfin)"
 
 
 def _pick_instance_id(provider: str) -> str:
@@ -140,7 +142,7 @@ def _error(feature: str, msg: str, **fields: Any) -> None:
 
 
 def _save_health_shadow(payload: Mapping[str, Any]) -> None:
-    if _jf_pair_scope() is None:
+    if _jf_pair_scope() is None or _jf_capture_mode():
         return
     try:
         path = str(_jf_state_file(_HEALTH_SHADOW_NAME))
@@ -167,7 +169,7 @@ def get_manifest() -> Mapping[str, Any]:
         "features": {
             "watchlist": True,
             "history": True,
-            "ratings": False,
+            "ratings": True,
             "playlists": False,
             "progress": True,
         },
@@ -366,7 +368,7 @@ class JELLYFINModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": False, "progress": True}
+        toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False, "progress": True}
         present = _present_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -511,7 +513,7 @@ class JELLYFINModule:
     def build_index(self, feature: str, **kwargs: Any) -> Mapping[str, dict[str, Any]]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _dbg(f, "build index skipped", reason="feature disabled")
+            _info(f, "index_skipped", reason="feature_disabled")
             return {}
         mod = _FEATURES.get(f)
         if not mod:
@@ -531,7 +533,7 @@ class JELLYFINModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _dbg(f, "add skipped", reason="feature disabled")
+            _info(f, "write_skipped", op="add", reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)
@@ -558,7 +560,7 @@ class JELLYFINModule:
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
         if not self._is_enabled(f):
-            _dbg(f, "remove skipped", reason="feature disabled")
+            _info(f, "write_skipped", op="remove", reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return self._dry_result(items)

@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 
 from ._common import (
     _is_capture_mode,
+    make_logger,
     state_file,
     normalize as emby_normalize,
     key_of as emby_key_of,
@@ -34,7 +35,6 @@ from ._common import (
 )
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
-from .._log import log as cw_log
 
 def _unresolved_path() -> str:
     return state_file("emby_watchlist.unresolved.json")
@@ -42,20 +42,7 @@ def _unresolved_path() -> str:
 
 
 
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "watchlist", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "watchlist", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "watchlist", "warn", msg, **fields)
-
-
-def _error(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "watchlist", "error", msg, **fields)
+_dbg, _info, _warn, _error = make_logger("watchlist")
 
 
 def _load() -> dict[str, Any]:
@@ -113,7 +100,7 @@ def _get_playlist_id(adapter: Any, *, create_if_missing: bool) -> str | None:
         return None
     pid = create_playlist(http, uid, name, is_public=False)
     if pid:
-        _info("playlist_created", name=name, playlist_id=pid)
+        _info("container_created", container="playlist", name=name, playlist_id=pid)
     return pid
 
 
@@ -145,15 +132,15 @@ def _get_collection_id(adapter: Any, *, create_if_missing: bool) -> str | None:
 
     created = create_collection(http, name, [seed] if seed else None)
     if created:
-        _info("collection_created", name=name, collection_id=created)
+        _info("container_created", container="collection", name=name, collection_id=created)
         return created
 
     cid = find_collection_id_by_name(http, uid, name)
     if cid:
-        _info("collection_created_post_lookup", name=name, collection_id=cid)
+        _info("container_created", container="collection", name=name, collection_id=cid, source="post_lookup")
         return cid
 
-    _warn("collection_create_failed", name=name)
+    _warn("write_failed", op="container_create", container="collection", name=name)
     return None
 
 
@@ -453,7 +440,7 @@ def _remove_favorites(
 
         if not _verify_favorite(http, uid, iid, False):
             forced = update_userdata(http, uid, iid, {"IsFavorite": False})
-            _dbg("force_unfavorite", item_id=iid, forced=forced)
+            _dbg("write_prepare", op="remove", item_id=iid, strategy="force_userdata", forced=forced)
             if not forced:
                 unresolved.append(
                     {"item": id_minimal(it), "hint": "verify_failed"},
@@ -771,7 +758,7 @@ def add(
         ok, unresolved = _add_collections(adapter, items)
     else:
         ok, unresolved = _add_favorites(adapter, items)
-    _info("write_done", op="add", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved
 
 
@@ -786,5 +773,5 @@ def remove(
         ok, unresolved = _remove_collections(adapter, items)
     else:
         ok, unresolved = _remove_favorites(adapter, items)
-    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved

@@ -54,7 +54,9 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0"
+os.environ.setdefault("CW_ANILIST_VERSION", __VERSION__)
+os.environ.setdefault("CW_ANILIST_UA", f"CrossWatch/{__VERSION__} (AniList)")
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -86,7 +88,7 @@ except Exception as e:
 
 
 GQL_URL = "https://graphql.anilist.co"
-UA = "CrossWatch/1.0"
+UA = os.environ.get("CW_ANILIST_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (AniList)"
 
 
 class ANILISTError(RuntimeError):
@@ -378,6 +380,7 @@ class ANILISTModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if feature != "watchlist" or not feat_watchlist:
+            _info("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
         return feat_watchlist.build_index(self)
 
@@ -394,6 +397,7 @@ class ANILISTModule:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         if feature != "watchlist" or not feat_watchlist:
+            _info("write_skipped", op="add", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if hasattr(feat_watchlist, "add_detailed"):
             res = feat_watchlist.add_detailed(self, lst)  # type: ignore[attr-defined]
@@ -425,6 +429,7 @@ class ANILISTModule:
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         if feature != "watchlist" or not feat_watchlist:
+            _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = feat_watchlist.remove(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)

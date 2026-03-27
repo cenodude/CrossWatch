@@ -3,8 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from .._log import log as cw_log
-
 import json
 import os
 import time
@@ -17,7 +15,9 @@ from ._common import (
     jf_get_library_roots,
     jf_resolve_library_id,
     jf_scope_history,
+    make_logger,
     normalize as jelly_normalize,
+    _now_iso_z,
     resolve_item_id,
     sleep_ms,
     _pair_scope,
@@ -34,23 +34,7 @@ def _shadow_path() -> str:
 def _blackbox_path() -> str:
     return str(state_file("jellyfin_history.jellyfin-plex.blackbox.json"))
 
-
-
-
-def _trc(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "history", "trace", msg, **fields)
-
-
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "history", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "history", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "history", "warn", msg, **fields)
+_dbg, _info, _warn = make_logger("history")
 
 
 # unresolved
@@ -223,9 +207,6 @@ def _parse_iso_to_epoch(s: str | None) -> int | None:
 def _epoch_to_iso_z(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-
-def _now_iso_z() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Deep lookup
@@ -433,7 +414,7 @@ def build_index(
 
     roots = jf_get_library_roots(adapter)
     if roots:
-        _dbg("library roots", roots=list(sorted(roots.keys())))
+        _dbg("index_fetch_counts", source="library_roots", roots=list(sorted(roots.keys())))
 
     start = 0
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
@@ -466,14 +447,7 @@ def build_index(
         rows = body.get("Items") or []
         page += 1
         took_ms = int((time.monotonic() - t0) * 1000)
-        _dbg(
-            "index page",
-            page=page,
-            start=start,
-            got=len(rows),
-            limit=page_size,
-            latency_ms=took_ms,
-        )
+        _dbg("index_fetch_counts", source="page", page=page, start=start, got=len(rows), limit=page_size, latency_ms=took_ms)
         if not rows:
             break
 
@@ -603,7 +577,7 @@ def build_index(
                                 rec[hk] = hint.get(hk)
             added += 1
         if added:
-            _dbg("shadow merged", added=added)
+            _dbg("cache_merged", source="shadow", added=added)
 
     bb = _bb_load()
     if bb:
@@ -625,7 +599,7 @@ def build_index(
                             rec.setdefault("jellyfin_item_id", str(iid))
                     added += 1
         if added:
-            _dbg("blackbox presence merged", added=added)
+            _dbg("cache_merged", source="blackbox_presence", added=added)
 
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
         try:
@@ -643,9 +617,9 @@ def build_index(
             s = str(lid)
             lib_counts[s] = lib_counts.get(s, 0) + 1
 
-        _trc("library distribution", cfg_libraries=cfg_libs, distribution=lib_counts)
+        _dbg("index_fetch_counts", source="library_distribution", cfg_libraries=cfg_libs, distribution=lib_counts)
 
-    _info("index done", count=len(out), mode="events+presence")
+    _info("index_done", count=len(out), mode="events+presence")
     return out
 
 # shared write helpers
@@ -679,7 +653,7 @@ def _try_resolve_iid(adapter: Any, m: Mapping[str, Any]) -> str | None:
         iid = resolve_item_id(adapter, m)
         return str(iid) if iid else None
     except Exception as e:
-        _warn("resolve exception", err=repr(e))
+        _dbg("resolve_miss", error=repr(e))
         return None
 
 
@@ -778,7 +752,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     total = len(mids)
     if total:
-        _info("add start", count=total)
+        _info("write_start", op="add", count=total)
 
     processed = 0
     for chunk in chunked(mids, qlim):
@@ -800,7 +774,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 stats["skip_newer"] += 1
                 processed += 1
                 if (processed % 25) == 0:
-                    _dbg("add progress", done=processed, total=total, ok=ok, unresolved=len(unresolved))
+                    _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -809,7 +783,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 stats["skip_played_untimed"] += 1
                 processed += 1
                 if (processed % 25) == 0:
-                    _dbg("add progress", done=processed, total=total, ok=ok, unresolved=len(unresolved))
+                    _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -832,14 +806,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             processed += 1
             if (processed % 25) == 0:
-                _dbg("add progress", done=processed, total=total, ok=ok, unresolved=len(unresolved))
+                _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
             sleep_ms(delay)
 
     _shadow_save(shadow)
     _bb_save(bb)
     if ok:
         _thaw_if_present([k for k, _ in mids])
-    _info("add done", ok=ok, unresolved=len(unresolved), **stats)
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), **stats)
     return ok, unresolved
 
 
@@ -931,5 +905,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     _shadow_save(shadow)
     if ok:
         _thaw_if_present([k for k, _ in mids])
-    _info("remove done", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved

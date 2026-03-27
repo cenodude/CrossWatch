@@ -14,7 +14,9 @@ from ._common import (
     state_file,
     chunked,
     emby_scope_history,
+    make_logger,
     normalize as emby_normalize,
+    _now_iso_z,
     resolve_item_id,
     _pair_scope,
     _is_capture_mode,
@@ -22,7 +24,6 @@ from ._common import (
     prefetch_series_minimals,
 )
 from cw_platform.id_map import canonical_key, minimal as id_minimal
-from .._log import log as cw_log
 
 def _unresolved_path() -> str:
     return state_file("emby_history.unresolved.json")
@@ -34,22 +35,7 @@ def _blackbox_path() -> str:
     return state_file("emby_history.emby.blackbox.json")
 
 
-
-
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "history", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "history", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "history", "warn", msg, **fields)
-
-
-def _error(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "history", "error", msg, **fields)
+_dbg, _info, _warn, _error = make_logger("history")
 
 
 def sleep_ms(ms: int) -> None:
@@ -99,9 +85,6 @@ def _epoch_to_iso_z(ts: int) -> str:
 def _epoch_to_emby_dateparam(ts: int) -> str:
     return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y%m%d%H%M%S")
 
-
-def _now_iso_z() -> str:
-    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _played_ts_from_row(row: Mapping[str, Any]) -> int:
@@ -481,7 +464,7 @@ def _emby_library_roots(adapter: Any) -> dict[str, dict[str, Any]]:
     except Exception:
         pass
     if (os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG")) and roots:
-        _dbg("library_roots", roots=sorted(roots.keys()))
+        _dbg("index_fetch_counts", source="library_roots", roots=sorted(roots.keys()))
     return roots
 
 
@@ -522,7 +505,7 @@ def _write_userdata(http: Any, uid: str, item_id: str, *, date_iso: str | None) 
     r = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
     ok = getattr(r, "status_code", 0) in (200, 204)
     if not ok:
-        _warn("userdata_write_failed", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
+        _warn("write_failed", op="userdata", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
     return ok
 
 
@@ -539,19 +522,19 @@ def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | No
         )
         if getattr(r, "status_code", 0) in (200, 204):
             return True
-        _warn("mark_played_failed", phase="A", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
+        _warn("write_failed", op="mark_played", phase="A", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
         r2 = http.post(
             f"/Users/{uid}/PlayedItems/{item_id}",
             json={"DatePlayed": date_param} if date_param else {},
         )
         if getattr(r2, "status_code", 0) in (200, 204):
             return True
-        _warn("mark_played_failed", phase="B", item_id=item_id, status=getattr(r2, 'status_code', None), body=_resp_snip(r2))
+        _warn("write_failed", op="mark_played", phase="B", item_id=item_id, status=getattr(r2, 'status_code', None), body=_resp_snip(r2))
         if _write_userdata(http, uid, item_id, date_iso=date_played_iso):
             return True
         return False
     except Exception as e:
-        _warn("mark_played_exception", item_id=item_id, error=str(e))
+        _warn("write_failed", op="mark_played", item_id=item_id, error=str(e))
         return False
 
 
@@ -560,10 +543,10 @@ def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
         r = http.delete(f"/Users/{uid}/PlayedItems/{item_id}")
         ok = getattr(r, "status_code", 0) in (200, 204)
         if not ok:
-            _warn("unmark_played_failed", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
+            _warn("write_failed", op="unmark_played", item_id=item_id, status=getattr(r, 'status_code', None), body=_resp_snip(r))
         return ok
     except Exception as e:
-        _warn("unmark_played_exception", item_id=item_id, error=str(e))
+        _warn("write_failed", op="unmark_played", item_id=item_id, error=str(e))
         return False
 
 
@@ -577,7 +560,7 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
             },
         )
         if getattr(r, "status_code", 0) != 200:
-            _dbg("dst_user_state_http", user_id=uid, item_id=iid, status=getattr(r, 'status_code', None))
+            _dbg("http_failed", op="dst_user_state", user_id=uid, item_id=iid, status=getattr(r, 'status_code', None))
             return False, 0
         data = r.json() or {}
         ud = data.get("UserData") or {}
@@ -590,7 +573,7 @@ def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
             _dbg("dst_user_state", item_id=iid, played=played, ts=ts)
         return played, ts
     except Exception as e:
-        _dbg("dst_user_state_exception", item_id=iid, error=str(e))
+        _dbg("http_failed", op="dst_user_state", item_id=iid, error=str(e))
         return False, 0
 
 
@@ -719,20 +702,20 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
 
             r = http.get(f"/Users/{uid}/Items", params=params)
             if getattr(r, "status_code", 0) != 200:
-                _warn("query_failed", status=getattr(r, 'status_code', None), body=_resp_snip(r))
+                _warn("http_failed", op="index", status=getattr(r, 'status_code', None), body=_resp_snip(r))
                 break
 
             try:
                 body = r.json() or {}
                 rows = body.get("Items") or []
             except Exception as e:
-                _warn("json_parse_failed", error=str(e))
+                _warn("parse_failed", op="index", error=str(e))
                 rows = []
 
             page += 1
             took_ms = int((time.monotonic() - t0) * 1000)
             _dbg(
-                "index page",
+                "index_fetch_counts",
                 scan=include_types,
                 page=page,
                 start=start,
@@ -992,7 +975,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             out.setdefault(k, _minimal_from_ckey(k))
             added += 1
         if added:
-            _dbg("shadow_merged", added=added)
+            _dbg("cache_merged", source="shadow", added=added)
 
     bb = _bb_load()
     if bb:
@@ -1004,7 +987,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 out.setdefault(k, _minimal_from_ckey(k))
                 added += 1
         if added:
-            _dbg("blackbox_presence_merged", added=added)
+            _dbg("cache_merged", source="blackbox_presence", added=added)
 
     if presence_items:
         added = 0
@@ -1014,7 +997,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             out.setdefault(k, dict(payload))
             added += 1
         if added:
-            _dbg("presence_merged", added=added)
+            _dbg("cache_merged", source="presence", added=added)
 
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_EMBY_DEBUG"):
         try:
@@ -1030,7 +1013,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             lid = ev.get("library_id") or "NONE"
             s = str(lid)
             lib_counts[s] = lib_counts.get(s, 0) + 1
-        _dbg("index_library_distribution", cfg_libs=cfg_libs, distribution=lib_counts)
+        _dbg("index_fetch_counts", source="library_distribution", cfg_libs=cfg_libs, distribution=lib_counts)
 
     _info("index_done", count=len(out), mode="events+presence")
     return out
@@ -1109,7 +1092,7 @@ def _prepare_mids(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[
         try:
             iid = resolve_item_id(adapter, m)
         except Exception as e:
-            _warn("resolve_exception", error=str(e))
+            _dbg("resolve_miss", error=str(e))
             iid = None
 
         if iid:
@@ -1258,7 +1241,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if ok:
         _thaw_if_present([k for k, _ in mids])
 
-    _info("write_done", op="add", ok=ok, unresolved=len(unresolved), wrote=stats['wrote'], forced=stats['forced'], backdated=stats['backdated'], skip_newer=stats['skip_newer'], skip_played_untimed=stats['skip_played_untimed'], skip_missing_date=stats['skip_missing_date'], fail_mark=stats['fail_mark'])
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), wrote=stats['wrote'], forced=stats['forced'], backdated=stats['backdated'], skip_newer=stats['skip_newer'], skip_played_untimed=stats['skip_played_untimed'], skip_missing_date=stats['skip_missing_date'], fail_mark=stats['fail_mark'])
     return ok, unresolved
 
 
@@ -1289,5 +1272,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     if ok:
         _thaw_if_present([k for k, _ in mids])
 
-    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved

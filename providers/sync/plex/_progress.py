@@ -10,11 +10,12 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, ids_from_guid, ids_from, minimal as id_minimal
 
 from ._common import (
-    candidate_guids_from_ids,
+    episode_rating_key_from_show,
+    has_external_ids,
     home_scope_enter,
     home_scope_exit,
+    item_guid_candidates,
     server_find_rating_key_by_guid,
-    sort_guid_candidates,
     make_logger,
     normalize,
 )
@@ -61,13 +62,6 @@ def _iso(v: Any) -> str | None:
         return None
 
 
-def _has_ext_ids(ids: Mapping[str, Any]) -> bool:
-    try:
-        return any(str(ids.get(k) or "").strip() for k in ("tmdb", "imdb", "tvdb"))
-    except Exception:
-        return False
-
-
 def _fetch_resume_rating_keys(srv: Any, *, limit: int = 100) -> set[str]:
     rks: set[str] = set()
 
@@ -87,7 +81,7 @@ def _fetch_resume_rating_keys(srv: Any, *, limit: int = 100) -> set[str]:
             continue
 
     if _mods_debug():
-        _dbg("resume.rks", count=len(rks), limit=int(limit))
+        _dbg("index_fetch_counts", source="resume", count=len(rks), limit=int(limit))
     return rks
 
 
@@ -131,7 +125,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     if not srv:
         return {}
 
-    did_switch, _ok, _aid, _uname = home_scope_enter(adapter)
+    _need_scope, did_switch, _aid, _uname = home_scope_enter(adapter)
     try:
         rks = _fetch_resume_rating_keys(srv, limit=150)
         out: dict[str, dict[str, Any]] = {}
@@ -158,7 +152,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             }
 
             # Keep external IDs when available
-            if _has_ext_ids(ext_ids):
+            if has_external_ids(ext_ids):
                 base["ids"] = dict(ext_ids)
                 base["ids"]["plex"] = str(rk)
 
@@ -197,74 +191,10 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                     canonical_key=str(ck),
                 )
 
-        _dbg("index.done", count=len(out))
+        _info("index_done", count=len(out))
         return out
     finally:
         home_scope_exit(adapter, did_switch)
-
-
-def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
-    def _match(ep: Any) -> str | None:
-        try:
-            season_ok = season is None or getattr(ep, "parentIndex", None) == season or getattr(ep, "seasonNumber", None) == season
-            episode_ok = episode is None or getattr(ep, "index", None) == episode
-            if season_ok and episode_ok:
-                rk = getattr(ep, "ratingKey", None)
-                return str(rk) if rk else None
-        except Exception:
-            return None
-        return None
-
-    try:
-        try:
-            eps = show_obj.episodes() or []
-        except Exception:
-            eps = []
-        for ep in eps:
-            rk = _match(ep)
-            if rk:
-                return rk
-    except Exception:
-        pass
-
-    # Fallback: fetch leaves via XML endpoints
-    try:
-        srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
-        obj_id = getattr(show_obj, "ratingKey", None)
-        if not (srv and obj_id and hasattr(srv, "_session")):
-            return None
-
-        def _scan(path: str) -> str | None:
-            try:
-                resp = srv._session.get(
-                    srv.url(path),
-                    params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
-                    timeout=12,
-                )
-                if not resp.ok:
-                    return None
-                import xml.etree.ElementTree as ET
-
-                root = ET.fromstring(resp.text or "")
-                for ep in root.findall(".//Video"):
-                    try:
-                        season_ok = season is None or int(ep.attrib.get("parentIndex", "0") or "0") == int(season)
-                        episode_ok = episode is None or int(ep.attrib.get("index", "0") or "0") == int(episode)
-                        if season_ok and episode_ok:
-                            rk = ep.attrib.get("ratingKey")
-                            return str(rk) if rk else None
-                    except Exception:
-                        continue
-            except Exception:
-                return None
-            return None
-
-        rk = _scan(f"/library/metadata/{obj_id}/children")
-        if rk:
-            return rk
-        return _scan(f"/library/metadata/{obj_id}/allLeaves")
-    except Exception:
-        return None
 
 
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
@@ -287,20 +217,13 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else {}
     show_ids = dict(show_ids or {})
 
-    guid_candidates: list[str] = []
-    for g in candidate_guids_from_ids({"ids": ids, "guid": it.get("guid")} ) or []:
-        if g and g not in guid_candidates:
-            guid_candidates.append(g)
-    for g in candidate_guids_from_ids({"ids": show_ids, "guid": it.get("show_guid") or it.get("grandparentGuid")} ) or []:
-        if g and g not in guid_candidates:
-            guid_candidates.append(g)
-
-    guid_candidates = sort_guid_candidates(guid_candidates)
+    guid_candidates = item_guid_candidates(ids, show_ids, it)
 
     dbg = _mods_debug()
     if dbg:
         _dbg(
-            "rk.resolve.start",
+            "write_prepare",
+            op="add",
             canonical_key=str(canonical_key(id_minimal(it)) or ""),
             kind=kind,
             ids=dict(ids),
@@ -315,7 +238,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     # GUID lookup on the server.
     rk = server_find_rating_key_by_guid(srv, guid_candidates)
     if dbg:
-        _dbg("rk.resolve.guid", hit=bool(rk), ratingKey=str(rk or ""))
+        _dbg("resolve_hit" if rk else "resolve_miss", source="guid", rating_key=str(rk or ""))
     if rk:
         try:
             obj = srv.fetchItem(int(rk))  # type: ignore[attr-defined]
@@ -328,7 +251,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 if otype in ("show", "season"):
                     season = it.get("season")
                     episode = it.get("episode")
-                    rk_ep = _episode_rk_from_show(obj, season, episode)
+                    rk_ep = episode_rating_key_from_show(obj, season, episode)
                     if rk_ep:
                         return rk_ep
         except Exception:
@@ -360,11 +283,11 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             hits = []
     if not hits:
         if dbg:
-            _dbg("rk.resolve.title", hit=False, query_title=str(query_title))
+            _dbg("resolve_miss", source="title", query_title=str(query_title))
         return None
 
     if dbg:
-        _dbg("rk.resolve.title", hit=True, query_title=str(query_title), hits=len(hits))
+        _dbg("resolve_hit", source="title", query_title=str(query_title), hits=len(hits))
 
     def _score(obj: Any) -> int:
         sc = 0
@@ -417,7 +340,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             rk2 = getattr(best, "ratingKey", None)
             return str(rk2) if rk2 else None
         if otype in ("show", "season"):
-            rk_ep = _episode_rk_from_show(best, season, episode)
+            rk_ep = episode_rating_key_from_show(best, season, episode)
             return rk_ep
     except Exception:
         return None
@@ -429,7 +352,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if not srv:
         return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
 
-    did_switch, _ok, _aid, _uname = home_scope_enter(adapter)
+    _need_scope, did_switch, _aid, _uname = home_scope_enter(adapter)
     try:
         ok = 0
         unresolved: list[dict[str, Any]] = []
@@ -448,7 +371,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if not rk:
                 unresolved.append({"item": it0, "hint": "not_found"})
                 if _mods_debug():
-                    _dbg("add.unresolved", hint="not_found", canonical_key=str(canonical_key(id_minimal(it0)) or ""), ids=dict(ids_from(it0)))
+                    _dbg("resolve_miss", hint="not_found", canonical_key=str(canonical_key(id_minimal(it0)) or ""), ids=dict(ids_from(it0)))
                 continue
 
             try:
@@ -457,10 +380,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 ok += 1
             except Exception as e:
                 if _mods_debug():
-                    _warn("add.exception", ratingKey=str(rk), canonical_key=str(canonical_key(id_minimal(it0)) or ""), err=str(e))
+                    _warn("write_failed", op="add", rating_key=str(rk), canonical_key=str(canonical_key(id_minimal(it0)) or ""), error=str(e))
                 unresolved.append({"item": it0, "hint": f"exception:{e}"})
 
-        _info("add.done", ok=ok, unresolved=len(unresolved))
+        _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
         home_scope_exit(adapter, did_switch)
@@ -468,5 +391,5 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     unresolved = [{"item": dict(x), "hint": "not_supported"} for x in (items or [])]
-    _info("remove.blocked", unresolved=len(unresolved))
+    _info("write_skipped", op="remove", reason="not_supported", unresolved=len(unresolved))
     return 0, unresolved

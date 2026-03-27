@@ -60,7 +60,7 @@ def state_file(name: str) -> Path:
     else:
         scoped = STATE_DIR / f"{name}.{safe}"
         legacy = STATE_DIR / name
-    if scoped != legacy and not scoped.exists() and legacy.exists():
+    if (not _is_capture_mode()) and scoped != legacy and not scoped.exists() and legacy.exists():
         try:
             STATE_DIR.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, scoped)
@@ -76,12 +76,12 @@ CfgLike = Mapping[str, Any] | object
 # logging
 
 def _bootstrap_log_level() -> None:
-    # Back-compat: CW_JELLYFIN_DEBUG_LEVEL (summary/verbose) -> CW_JELLYFIN_LOG_LEVEL (debug/trace)
+    # Back-compat: CW_JELLYFIN_DEBUG_LEVEL (summary/verbose) -> CW_JELLYFIN_LOG_LEVEL (debug)
     if os.getenv('CW_JELLYFIN_LOG_LEVEL') or os.getenv('CW_LOG_LEVEL') or os.getenv('CW_DEBUG') or os.getenv('CW_JELLYFIN_DEBUG'):
         return
     v = (os.getenv('CW_JELLYFIN_DEBUG_LEVEL') or '').strip().lower()
     if v in ('2', 'v', 'verbose'):
-        os.environ['CW_JELLYFIN_LOG_LEVEL'] = 'trace'
+        os.environ['CW_JELLYFIN_LOG_LEVEL'] = 'debug'
     elif v in ('1', 's', 'summary', 'true', 'on'):
         os.environ['CW_JELLYFIN_LOG_LEVEL'] = 'debug'
 
@@ -94,7 +94,7 @@ def _dbg(msg: str, **fields: Any) -> None:
 
 
 def _trc(msg: str, **fields: Any) -> None:
-    cw_log('JELLYFIN', 'common', 'trace', msg, **fields)
+    cw_log('JELLYFIN', 'common', 'debug', msg, **fields)
 
 
 def _info(msg: str, **fields: Any) -> None:
@@ -103,6 +103,24 @@ def _info(msg: str, **fields: Any) -> None:
 
 def _warn(msg: str, **fields: Any) -> None:
     cw_log('JELLYFIN', 'common', 'warn', msg, **fields)
+
+
+def make_logger(feature: str):  # type: ignore[return]
+    def _dbg(msg: str, **fields: Any) -> None:
+        cw_log('JELLYFIN', feature, 'debug', msg, **fields)
+
+    def _info(msg: str, **fields: Any) -> None:
+        cw_log('JELLYFIN', feature, 'info', msg, **fields)
+
+    def _warn(msg: str, **fields: Any) -> None:
+        cw_log('JELLYFIN', feature, 'warn', msg, **fields)
+
+    return _dbg, _info, _warn
+
+
+def _now_iso_z() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # cfg helpers
@@ -595,7 +613,7 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
         items = body.get("Items") or []
         if total is None:
             total = int(body.get("TotalRecordCount") or 0)
-            _dbg('provider index scan', total=total)
+            _dbg('index_fetch_counts', source='provider_index', total=total)
         for row in items:
             pids = row.get("ProviderIds") or {}
             if not pids:
@@ -622,7 +640,7 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
 
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
-    _dbg('provider index built', keys=len(out))
+    _dbg('index_done', source='provider_index', count=len(out))
     setattr(adapter, "_provider_index_cache", out)
     return out
 
@@ -893,7 +911,7 @@ def mark_favorite(http: Any, user_id: str, item_id: str, flag: bool) -> bool:
                 body_snip = (s[:200] + "…") if len(s) > 200 else s
             except Exception:
                 body_snip = "no-body"
-        _warn('favorite write failed', user_id=user_id, item_id=item_id, status=getattr(r,'status_code',None), body=body_snip)
+        _warn('write_failed', op='favorite', user_id=user_id, item_id=item_id, status=getattr(r,'status_code',None), body=body_snip)
     return ok
 
 
@@ -950,7 +968,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     if raw_iid:
         s = str(raw_iid).strip()
         if s and not looks_like_bad_id(s):
-            _trc('resolve hit', kind='direct_field', item_id=s)
+            _dbg('resolve_hit', kind='direct', method='item_field', item_id=s)
             return s
 
     ids = dict(it.get("ids") or {})
@@ -958,7 +976,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
 
     jf = ids.get("jellyfin")
     if jf and not looks_like_bad_id(jf):
-        _trc('resolve hit', kind='direct', item_id=str(jf))
+        _dbg('resolve_hit', kind='direct', method='provider_id', item_id=str(jf))
         return str(jf)
 
     t = _norm_type(it.get("type"))
@@ -987,7 +1005,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             cands = idx.get(pref) or []
             iid = _pick_from_candidates(cands, want_type="movie", want_year=year)
             if iid:
-                _trc('resolve hit', kind='movie', method='provider_index', pref=pref, item_id=iid)
+                _dbg('resolve_hit', kind='movie', method='provider_index', pref=pref, item_id=iid)
                 return iid
         if title and not strict:
             try:
@@ -1014,11 +1032,11 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 for row in cand:
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
-                        _dbg('resolve hit', kind='movie', method='search', title=title, year=year, item_id=str(iid))
+                        _dbg('resolve_hit', kind='movie', method='search', title=title, year=year, item_id=str(iid))
                         return str(iid)
             except Exception:
                 pass
-        _trc('resolve miss', kind='movie', title=title, year=year)
+        _dbg('resolve_miss', kind='movie', title=title, year=year)
         return None
 
     # Shows
@@ -1028,7 +1046,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             cands = [row for row in rows if (row.get("Type") or "").strip() == "Series"]
             iid = _pick_from_candidates(cands, want_type="show", want_year=year)
             if iid:
-                _dbg('resolve hit', kind='series', method='provider_index', title=(title or ''), pref=pref, year=year, item_id=str(iid))
+                _dbg('resolve_hit', kind='series', method='provider_index', title=(title or ''), pref=pref, year=year, item_id=str(iid))
                 return iid
         if title and not strict:
             try:
@@ -1057,11 +1075,11 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 for row in cand:
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
-                        _dbg('resolve hit', kind='series', method='search', title=title, year=year, item_id=str(iid))
+                        _dbg('resolve_hit', kind='series', method='search', title=title, year=year, item_id=str(iid))
                         return str(iid)
             except Exception:
                 pass
-        _trc('resolve miss', kind='series', title=title, year=year)
+        _dbg('resolve_miss', kind='series', title=title, year=year)
         return None
 
     # Episodes
@@ -1069,7 +1087,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     if pairs:
         series_row = find_series_in_index(adapter, pairs)
         if series_row:
-            _trc('resolve series candidate', method='provider_index')
+            _dbg('resolve_hit', kind='series', method='provider_index_candidate')
     if not series_row and series_title and not strict:
         try:
             q = {
@@ -1093,7 +1111,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             cands.sort(key=lambda x: 0 if (x.get("ProviderIds") or {}) else 1)
             if cands:
                 series_row = cands[0]
-                _trc('resolve series candidate', method='title', series_title=series_title)
+                _dbg('resolve_hit', kind='series', method='title_candidate', series_title=series_title)
         except Exception:
             pass
 
@@ -1107,7 +1125,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 if isinstance(s, int) and isinstance(e, int) and s == int(season) and e == int(episode):
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
-                        _trc('resolve hit', kind='episode', method='series_episodes', season=int(season), episode=int(episode), item_id=str(iid))
+                        _dbg('resolve_hit', kind='episode', method='series_episodes', season=int(season), episode=int(episode), item_id=str(iid))
                         return str(iid)
 
     if title and not strict:
@@ -1132,12 +1150,12 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 if nm == t_l and ((season is None) or s == season) and ((episode is None) or e == episode):
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
-                        _trc('resolve hit', kind='episode', method='search', title=title, season=season, episode=episode, item_id=str(iid))
+                        _dbg('resolve_hit', kind='episode', method='search', title=title, season=season, episode=episode, item_id=str(iid))
                         return str(iid)
         except Exception:
             pass
 
-    _trc('resolve miss', kind='episode', title=title, series_title=series_title, season=season, episode=episode)
+    _dbg('resolve_miss', kind='episode', title=title, series_title=series_title, season=season, episode=episode)
     return None
 
 

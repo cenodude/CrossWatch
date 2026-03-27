@@ -35,7 +35,9 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "5.2.1"
+__VERSION__ = "1.0"
+os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
+os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
 try:
@@ -1047,7 +1049,7 @@ class PLEXModule:
 
     def build_index(self, feature: str, **kwargs) -> dict[str, dict[str, Any]]:
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _info("feature_skipped", op="build_index", feature=feature, reason="disabled_or_missing")
+            _info("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
@@ -1063,13 +1065,13 @@ class PLEXModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _info("feature_skipped", op="add", feature=feature, reason="disabled_or_missing")
+            _info("write_skipped", op="add", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn("feature_missing", op="add", feature=feature)
+            _warn("write_skipped", op="add", feature=feature, reason="missing_feature")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
@@ -1115,13 +1117,13 @@ class PLEXModule:
         if not lst:
             return {"ok": True, "count": 0}
         if not self._is_enabled(feature) or feature not in _FEATURES:
-            _info("feature_skipped", op="remove", feature=feature, reason="disabled_or_missing")
+            _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         mod = _FEATURES.get(feature)
         if not mod:
-            _warn("feature_missing", op="remove", feature=feature)
+            _warn("write_skipped", op="remove", feature=feature, reason="missing_feature")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)

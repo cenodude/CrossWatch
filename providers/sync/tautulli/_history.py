@@ -230,7 +230,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     if cfg_max_pages <= 0:
         cfg_max_pages = max_pages
 
-    _log("index start", per_page=cfg_per_page, max_pages=cfg_max_pages, has_user_id=bool(user_id))
+    _log("index_fetch_counts", per_page=cfg_per_page, max_pages=cfg_max_pages, has_user_id=bool(user_id))
 
     out: dict[str, dict[str, Any]] = {}
     meta_cache: dict[str, Mapping[str, Any] | None] = {}
@@ -265,7 +265,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         try:
             meta = client.call("get_metadata", rating_key=rk) or None
         except Exception as e:
-            _log("metadata fetch failed", level="debug", rating_key=rk, error=str(e))
+            _log("http_failed", rating_key=rk, op="get_metadata", error=str(e))
             meta = None
         meta_cache[rk] = meta if isinstance(meta, Mapping) else None
         return meta_cache[rk]
@@ -273,7 +273,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     while True:
         pages += 1
         if pages > cfg_max_pages:
-            _log("max pages reached", level="warn", pages=pages, max_pages=cfg_max_pages)
+            _log("index_reconcile", level="warn", reason="max_pages_reached", pages=pages, max_pages=cfg_max_pages)
             break
 
         params: dict[str, Any] = {"start": start, "length": cfg_per_page, "order_column": "date", "order_dir": "desc"}
@@ -301,11 +301,13 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         if sig and sig == prev_sig:
             repeats += 1
             if repeats >= 2:
-                _log("page repeat", level="warn", pages=pages, start=start, sig=sig)
+                _log("index_reconcile", level="warn", reason="page_repeat", pages=pages, start=start, sig=sig)
                 break
         else:
             repeats = 0
             prev_sig = sig
+
+        _log("index_fetch_counts", start=start, page=pages, batch=len(rows), total=_to_int_total(total))
 
         for row in rows:
             if not isinstance(row, Mapping):
@@ -387,7 +389,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             break
 
     _log(
-        "index done",
+        "index_done",
+        level="info",
         count=len(out),
         pages=pages,
         rows_seen=rows_seen,
@@ -402,11 +405,11 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     _ = (adapter, items, dry_run)
-    _log("write not supported", level="warn", op="add")
-    return {"ok": False, "error": "Tautulli is read-only (history can only be sourced).", "count": 0}
+    _log("write_skipped", level="info", op="add", reason="read_only")
+    return {"ok": True, "count": 0, "unresolved": [], "reason": "read_only"}
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     _ = (adapter, items, dry_run)
-    _log("write not supported", level="warn", op="remove")
-    return {"ok": False, "error": "Tautulli is read-only (history can only be sourced).", "count": 0}
+    _log("write_skipped", level="info", op="remove", reason="read_only")
+    return {"ok": True, "count": 0, "unresolved": [], "reason": "read_only"}

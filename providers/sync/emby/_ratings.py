@@ -9,8 +9,16 @@ import time
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
-from .._log import log as cw_log
-from ._common import normalize as emby_normalize, provider_index, resolve_item_id, state_file, _pair_scope, _is_capture_mode
+from ._common import (
+    make_logger,
+    normalize as emby_normalize,
+    _now_iso_z,
+    provider_index,
+    resolve_item_id,
+    state_file,
+    _pair_scope,
+    _is_capture_mode,
+)
 
 def _unresolved_path() -> str:
     return state_file("emby_ratings.unresolved.json")
@@ -18,10 +26,6 @@ def _unresolved_path() -> str:
 
 def _meta_path() -> str:
     return state_file("emby_ratings.meta.json")
-
-
-def _now_iso_z() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _meta_load() -> dict[str, dict[str, Any]]:
@@ -54,20 +58,7 @@ def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
 
 
 
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "ratings", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "ratings", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "ratings", "warn", msg, **fields)
-
-
-def _error(msg: str, **fields: Any) -> None:
-    cw_log("EMBY", "ratings", "error", msg, **fields)
+_dbg, _info, _warn, _error = make_logger("ratings")
 
 
 def _load() -> dict[str, Any]:
@@ -148,7 +139,7 @@ def _set_like(http: Any, uid: str, item_id: str, *, likes: bool | None) -> bool:
         )
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception as e:
-        _dbg("rating_write_thumbs_error", item_id=item_id, error=str(e))
+        _warn("write_failed", op="thumbs", item_id=item_id, error=str(e))
         return False
 
 
@@ -166,7 +157,7 @@ def _set_numeric_rating(http: Any, uid: str, item_id: str, *, rating: float | No
         )
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception as e:
-        _dbg("rating_write_numeric_error", item_id=item_id, error=str(e))
+        _warn("write_failed", op="numeric", item_id=item_id, error=str(e))
         return False
 
 
@@ -178,7 +169,7 @@ def _progress_tick(progress: Any | None, current: int, *, total: int, force: boo
         if callable(tick):
             tick(current, total=total, force=force)
     except Exception:
-        _dbg("progress_tick_failed")
+        _dbg("write_prepare", op="progress_tick", status="failed")
 
 
 def build_index(adapter: Any, *, progress: Any | None = None) -> dict[str, dict[str, Any]]:
@@ -369,7 +360,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     _info(
         "write_done",
         op="add",
-        ok=ok,
+        ok=len(unresolved) == 0,
+        applied=ok,
         unresolved=len(unresolved),
         numeric_set=stats["numeric_set"],
         thumbs_set=stats["thumbs_set"],
@@ -421,5 +413,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             _freeze(m, reason="write_failed")
     if meta_changed:
         _meta_save(meta)
-    _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
