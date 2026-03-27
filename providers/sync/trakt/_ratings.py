@@ -11,7 +11,6 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ._common import (
-    build_headers,
     ids_for_trakt,
     key_of,
     normalize_watchlist_row,
@@ -21,6 +20,9 @@ from ._common import (
     state_file,
     _pair_scope,
     _is_capture_mode,
+    _now_iso,
+    _chunk,
+    headers_for_adapter,
 )
 from cw_platform.id_map import minimal as id_minimal
 from .._log import log as cw_log
@@ -32,7 +34,6 @@ URL_RAT_SEA = f"{BASE}/sync/ratings/seasons"
 URL_RAT_EPI = f"{BASE}/sync/ratings/episodes"
 URL_UPSERT = f"{BASE}/sync/ratings"
 URL_UNRATE = f"{BASE}/sync/ratings/remove"
-RESOLVE_ENABLE = False
 
 def _cache_path() -> Path:
     return state_file("trakt_ratings.index.json")
@@ -59,36 +60,6 @@ def _error(event: str, **fields: Any) -> None:
 
 
 
-def _legacy_path(path: Path) -> Path | None:
-    parts = path.stem.split(".")
-    if len(parts) < 2:
-        return None
-    legacy_name = ".".join(parts[:-1]) + path.suffix
-    legacy = path.with_name(legacy_name)
-    return None if legacy == path else legacy
-
-
-def _migrate_legacy_json(path: Path) -> None:
-    if path.exists():
-        return
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    legacy = _legacy_path(path)
-    if not legacy or not legacy.exists():
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_bytes(legacy.read_bytes())
-        os.replace(tmp, path)
-    except Exception:
-        pass
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
 def _valid_rating(v: Any) -> int | None:
     try:
         i = int(str(v).strip())
@@ -106,20 +77,12 @@ def _sleep_backoff(attempt: int, retry_after: str | None) -> None:
     time.sleep(delay)
 
 
-def _chunk_iter(lst: list[dict[str, Any]], size: int) -> Iterable[list[dict[str, Any]]]:
-    n = int(size or 0)
-    if n <= 0:
-        n = 100
-    for i in range(0, len(lst), n):
-        yield lst[i : i + n]
-
 
 def _load_cache_doc() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
     try:
         p = _cache_path()
-        _migrate_legacy_json(p)
         if not p.exists():
             return {}
         return json.loads(p.read_text("utf-8") or "{}")
@@ -137,9 +100,8 @@ def _save_cache_doc(items: Mapping[str, Any], wm: Mapping[str, Any]) -> None:
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, p)
-        _dbg("cache_saved", path=str(p), count=len(items))
     except Exception as e:
-        _warn("cache_save_failed", error=str(e))
+        _warn("cache_save_failed", cache="index", error=str(e))
 
 
 def _extract_ratings_wm(acts: Mapping[str, Any]) -> dict[str, str]:
@@ -173,11 +135,44 @@ def _merge_by_canonical(dst: dict[str, Any], src: Iterable[Mapping[str, Any]]) -
         score = sum(1 for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k))
         return score, str(x.get("rated_at") or "")
 
+    def _merge_ids(a: Any, b: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if isinstance(a, Mapping):
+            out.update({str(k): v for k, v in a.items() if v not in (None, "")})
+        if isinstance(b, Mapping):
+            out.update({str(k): v for k, v in b.items() if v not in (None, "")})
+        return out
+
     for m in src or []:
         k = key_of(m)
         cur = dst.get(k)
-        if not cur or q(m) >= q(cur):
+        if not cur:
             dst[k] = dict(m)
+            continue
+
+        merged = dict(cur)
+        ids = _merge_ids(cur.get("ids"), m.get("ids"))
+        if ids:
+            merged["ids"] = ids
+        show_ids = _merge_ids(cur.get("show_ids"), m.get("show_ids"))
+        if show_ids:
+            merged["show_ids"] = show_ids
+
+        if m.get("rating") is not None:
+            merged["rating"] = m.get("rating")
+        ra_in = str(m.get("rated_at") or "")
+        ra_cur = str(cur.get("rated_at") or "")
+        if ra_in and (not ra_cur or ra_in >= ra_cur):
+            merged["rated_at"] = ra_in
+
+        if q(m) >= q(cur):
+            for field, val in dict(m).items():
+                if field in ("ids", "show_ids", "rating", "rated_at"):
+                    continue
+                if val not in (None, ""):
+                    merged[field] = val
+
+        dst[k] = merged
 
 
 def _accepted_minimal_for_cache(
@@ -318,19 +313,19 @@ def _fetch_bucket(
                     break
 
                 if r.status_code in _RETRYABLE_STATUS and attempt < rr:
-                    _warn("http_retry", url=url, page=page, status=r.status_code, attempt=attempt + 1, max_attempts=rr)
+                    _warn("http_failed", op="index", url=url, page=page, status=r.status_code, attempt=attempt + 1, max_attempts=rr, retrying=True)
                     _sleep_backoff(attempt, r.headers.get("Retry-After"))
                     continue
 
-                _warn("http_failed", url=url, page=page, status=r.status_code, body=((r.text or "")[:200]))
+                _warn("http_failed", op="index", url=url, page=page, status=r.status_code, body=((r.text or "")[:200]))
                 return out
 
             except Exception as e:
                 if attempt < rr:
-                    _warn("http_error_retry", url=url, page=page, error=str(e), attempt=attempt + 1, max_attempts=rr)
+                    _warn("http_failed", op="index", url=url, page=page, error=str(e), attempt=attempt + 1, max_attempts=rr, retrying=True)
                     _sleep_backoff(attempt, None)
                     continue
-                _warn("http_error", url=url, page=page, error=str(e))
+                _warn("http_failed", op="index", url=url, page=page, error=str(e))
                 return out
 
         if last_status is not None and last_status != 200:
@@ -358,7 +353,7 @@ def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> di
     max_pages = int(getattr(adapter.cfg, "ratings_max_pages", max_pages) or max_pages)
 
     sess = adapter.client.session
-    headers = build_headers({"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}})
+    headers = headers_for_adapter(adapter)
     tmo = adapter.cfg.timeout
     rr = int(getattr(adapter.cfg, "max_retries", 3) or 3)
 
@@ -375,10 +370,12 @@ def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> di
             if str(wm_remote.get(k, "")) > str(cached_wm.get(k, "")):
                 break
         else:
-            _info("index_cache_hit", reason="activities_unchanged", count=len(cached_items))
+            _dbg("index_cache_hit", reason="activities_unchanged", source="cache", count=len(cached_items))
+            _info("index_done", count=len(cached_items), source="cache")
             return cached_items
     elif cached_items and not wm_remote:
-        _info("index_cache_hit", reason="activities_unavailable", count=len(cached_items))
+        _dbg("index_cache_hit", reason="activities_unavailable", source="cache", count=len(cached_items))
+        _info("index_done", count=len(cached_items), source="cache")
         return cached_items
 
     movies = _fetch_bucket(sess, headers, URL_RAT_MOV, "movie", per_page, max_pages, tmo, rr)
@@ -387,9 +384,9 @@ def build_index(adapter: Any, *, per_page: int = 200, max_pages: int = 50) -> di
     episodes = _fetch_bucket(sess, headers, URL_RAT_EPI, "episode", per_page, max_pages, tmo, rr)
 
     all_items = movies + shows + seasons + episodes
-    _dbg("fetch_done", count=len(all_items))
+    _dbg("index_fetch_counts", count=len(all_items), movies=len(movies), shows=len(shows), seasons=len(seasons), episodes=len(episodes), source="current")
     idx = _dedupe_canonical(all_items)
-    _info("index_done", count=len(idx), movies=len(movies), shows=len(shows), seasons=len(seasons), episodes=len(episodes))
+    _info("index_done", count=len(idx), movies=len(movies), shows=len(shows), seasons=len(seasons), episodes=len(episodes), source="current")
 
     _save_cache_doc(idx, wm_remote or cached_wm)
     return idx
@@ -519,20 +516,23 @@ def _bucketize_for_upsert(
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
-    headers = build_headers({"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}})
+    headers = headers_for_adapter(adapter)
     tmo = adapter.cfg.timeout
 
     body, accepted = _bucketize_for_upsert(items)
     if not body:
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=0)
         return 0, []
 
     chunk = int(getattr(adapter.cfg, "ratings_chunk_size", 100) or 100)
     ok_total = 0
+    had_failure = False
     unresolved: list[dict[str, Any]] = []
+    _dbg("write_prepare", op="add", movies=len(body.get("movies") or []), shows=len(body.get("shows") or []), seasons=len(body.get("seasons") or []), episodes=len(body.get("episodes") or []), chunk_size=chunk)
 
     for bucket in ("movies", "shows", "seasons", "episodes"):
         rows = body.get(bucket) or []
-        for part in _chunk_iter(rows, chunk):
+        for part in _chunk(rows, chunk):
             payload = {bucket: part}
             r = sess.post(URL_UPSERT, headers=headers, json=payload, timeout=tmo)
             if r.status_code in (200, 201):
@@ -542,7 +542,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 ok_total += sum(int(added.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
                 ok_total += sum(int(updated.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             else:
-                _warn("write_failed", action="upsert", status=r.status_code, body=((r.text or "")[:200]))
+                had_failure = True
+                _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:200]))
 
     if ok_total > 0:
         doc = _load_cache_doc()
@@ -550,12 +551,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         _merge_by_canonical(cache, accepted)
         _save_cache_doc(cache, doc.get("wm") or {})
 
+    _info("write_done", op="add", ok=(not had_failure and len(unresolved) == 0), applied=ok_total, unresolved=len(unresolved))
     return ok_total, unresolved
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
-    headers = build_headers({"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}})
+    headers = headers_for_adapter(adapter)
     tmo = adapter.cfg.timeout
 
     buckets: dict[str, list[dict[str, Any]]] = {}
@@ -611,15 +613,17 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         accepted_minimals.append(_accepted_minimal_for_cache(t, ids, it))
 
     if not buckets:
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=0)
         return 0, []
 
     chunk = int(getattr(adapter.cfg, "ratings_chunk_size", 100) or 100)
     ok_total = 0
+    had_failure = False
     unresolved: list[dict[str, Any]] = []
 
     for bucket in ("movies", "shows", "seasons", "episodes"):
         rows = buckets.get(bucket) or []
-        for part in _chunk_iter(rows, chunk):
+        for part in _chunk(rows, chunk):
             payload = {bucket: part}
             r = sess.post(URL_UNRATE, headers=headers, json=payload, timeout=tmo)
             if r.status_code in (200, 201):
@@ -627,7 +631,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 deleted = d.get("deleted") or d.get("removed") or {}
                 ok_total += sum(int(deleted.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             else:
-                _warn("write_failed", action="unrate", status=r.status_code, body=((r.text or "")[:200]))
+                had_failure = True
+                _warn("write_failed", op="remove", status=r.status_code, body=((r.text or "")[:200]))
 
     if ok_total > 0:
         doc = _load_cache_doc()
@@ -636,4 +641,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             cache.pop(key_of(m), None)
         _save_cache_doc(cache, doc.get("wm") or {})
 
+    _info("write_done", op="remove", ok=(not had_failure and len(unresolved) == 0), applied=ok_total, unresolved=len(unresolved))
     return ok_total, unresolved
