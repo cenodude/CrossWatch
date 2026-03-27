@@ -5,30 +5,35 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
-import os
 from threading import Lock
 from typing import Any, Iterable, Mapping, cast
 
 from ._common import (
     _as_base_url,
     _xml_to_container,
+    active_pms_token,
     as_epoch as _as_epoch,
-    candidate_guids_from_ids,
     configure_plex_context,
+    episode_rating_key_from_show,
     force_episode_title as _force_episode_title,
+    has_external_ids,
     home_scope_enter,
     home_scope_exit,
+    item_guid_candidates,
     iso_from_epoch as _iso,
     minimal_from_history_row,
     normalize as plex_normalize,
     normalize_discover_row,
+    plex_cfg_get,
+    plex_feature_library_ids,
     plex_headers,
     server_find_rating_key_by_guid,
-    sort_guid_candidates,
+    plex_worker_count,
+    season_rating_key_from_show,
+    section_allowed,
     unresolved_store,
     emit,
     make_logger,
-    _plex_cfg,
 )
 
 _UNRES = unresolved_store("ratings")
@@ -40,32 +45,6 @@ _dbg, _info, _warn, _error, _log = make_logger("ratings")
 
 def _emit(evt: dict[str, Any]) -> None:
     emit(evt, default_feature="ratings")
-
-def _plex_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
-    c = _plex_cfg(adapter)
-    v = c.get(key, default) if isinstance(c, Mapping) else default
-    return default if v is None else v
-
-def _get_workers(adapter: Any, cfg_key: str, env_key: str, default: int) -> int:
-    try:
-        n = int(_plex_cfg_get(adapter, cfg_key, 0) or 0)
-    except Exception:
-        n = 0
-    if n <= 0:
-        try:
-            n = int(os.environ.get(env_key, str(default)))
-        except Exception:
-            n = default
-    return max(1, min(n, 64))
-
-def _allowed_ratings_sec_ids(adapter: Any) -> set[str]:
-    try:
-        cfg = getattr(adapter, "config", {}) or {}
-        plex = cfg.get("plex", {}) if isinstance(cfg, dict) else {}
-        arr = (plex.get("ratings") or {}).get("libraries") or []
-        return {str(int(x)) for x in arr if str(x).strip()}
-    except Exception:
-        return set()
 
 def _container_from_plex_response(resp: Any) -> Mapping[str, Any] | None:
     try:
@@ -82,30 +61,6 @@ def _container_from_plex_response(resp: Any) -> Mapping[str, Any] | None:
     except Exception:
         return None
 
-def _active_pms_token(adapter: Any) -> str | None:
-    cli = getattr(adapter, "client", None)
-    try:
-        ses = getattr(cli, "session", None)
-        tok = ses.headers.get("X-Plex-Token") if ses and hasattr(ses, "headers") else None
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    srv = getattr(cli, "server", None)
-    try:
-        tok = getattr(srv, "_token", None) or getattr(srv, "token", None)
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    try:
-        tok = getattr(getattr(cli, "cfg", None), "token", None)
-        if tok and str(tok).strip():
-            return str(tok).strip()
-    except Exception:
-        pass
-    return None
-
 def _norm_rating(v: Any) -> int | None:
     if v is None:
         return None
@@ -120,69 +75,6 @@ def _norm_rating(v: Any) -> int | None:
     if i > 10:
         i = 10
     return i
-
-def _has_ext_ids(m: Mapping[str, Any]) -> bool:
-    ids = (m.get("ids") if isinstance(m, Mapping) else None) or {}
-    return bool(ids.get("tmdb") or ids.get("imdb") or ids.get("tvdb"))
-
-def _event_key(it: Mapping[str, Any]) -> str:
-    return unresolved_store("ratings").event_key(it)
-
-def _season_rk_from_show(show_obj: Any, season: Any) -> str | None:
-    try:
-        try:
-            s_target = int(season) if season is not None else None
-        except Exception:
-            s_target = season
-        if s_target is None:
-            return None
-        try:
-            seasons = show_obj.seasons() or []
-        except Exception:
-            seasons = []
-        for sn in seasons:
-            try:
-                idx = getattr(sn, "index", None)
-                if idx is not None and int(idx) == int(s_target):
-                    rk = getattr(sn, "ratingKey", None)
-                    return str(rk) if rk else None
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
-
-def _episode_rk_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
-    try:
-        try:
-            s_target = int(season) if season is not None else None
-        except Exception:
-            s_target = season
-        try:
-            e_target = int(episode) if episode is not None else None
-        except Exception:
-            e_target = episode
-
-        try:
-            episodes = show_obj.episodes() or []
-        except Exception:
-            episodes = []
-        for ep in episodes:
-            try:
-                s_ok = (
-                    s_target is None
-                    or getattr(ep, "parentIndex", None) == s_target
-                    or getattr(ep, "seasonNumber", None) == s_target
-                )
-                e_ok = e_target is None or getattr(ep, "index", None) == e_target
-                if s_ok and e_ok:
-                    rk = getattr(ep, "ratingKey", None)
-                    return str(rk) if rk else None
-            except Exception:
-                continue
-    except Exception:
-        pass
-    return None
 
 def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     if not isinstance(it, Mapping):
@@ -236,7 +128,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     title = (it.get("title") or "").strip()
     series_title = (it.get("series_title") or "").strip()
     query_title = series_title if (is_episode or is_season) and series_title else title
-    strict = bool(_plex_cfg_get(adapter, "strict_id_matching", False))
+    strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
     if not query_title and not ids and not show_ids:
         return None
 
@@ -244,25 +136,14 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     season = it.get("season") or it.get("season_number")
     episode = it.get("episode") or it.get("episode_number")
 
-    allow = _allowed_ratings_sec_ids(adapter)
+    allow = plex_feature_library_ids(adapter, "ratings")
     sec_types = ("show",) if (is_episode or is_season or is_show) else ("movie",)
 
     hits: list[Any] = []
 
     if ids or (show_ids and (is_episode or is_season)):
         try:
-            guid_candidates: list[str] = []
-            if ids:
-                guid_candidates += candidate_guids_from_ids({"ids": ids, "guid": it.get("guid")})
-            if show_ids and (is_episode or is_season):
-                guid_candidates += candidate_guids_from_ids({"ids": show_ids})
-            seen: set[str] = set()
-            deduped: list[str] = []
-            for g in guid_candidates:
-                if g and g not in seen:
-                    seen.add(g)
-                    deduped.append(g)
-            guids = sort_guid_candidates(deduped)
+            guids = item_guid_candidates(ids, show_ids if (is_episode or is_season) else {}, it)
             rk_any = server_find_rating_key_by_guid(srv, guids)
         except Exception:
             rk_any = None
@@ -270,8 +151,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             try:
                 obj = srv.fetchItem(int(rk_any))
                 if obj and _accept_obj(obj):
-                    sid = str(getattr(obj, "librarySectionID", "") or getattr(obj, "sectionID", "") or "")
-                    if not allow or not sid or sid in allow:
+                    if section_allowed(obj, allow):
                         hits.append(obj)
             except Exception:
                 pass
@@ -296,8 +176,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 for o in hs:
                     if not _accept_obj(o):
                         continue
-                    sid = str(getattr(o, "librarySectionID", "") or getattr(o, "sectionID", "") or "")
-                    if allow and sid and sid not in allow:
+                    if not section_allowed(o, allow):
                         continue
                     hits.append(o)
             except Exception:
@@ -349,7 +228,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             return str(rk2) if rk2 else None
         show_hits = [o for o in hits if _otype(o) == "show"]
         for show in sorted(show_hits, key=_score, reverse=True):
-            rk2 = _episode_rk_from_show(show, season, episode)
+            rk2 = episode_rating_key_from_show(show, season, episode)
             if rk2:
                 return rk2
         return None
@@ -362,7 +241,7 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
             return str(rk2) if rk2 else None
         show_hits = [o for o in hits if _otype(o) == "show"]
         for show in sorted(show_hits, key=_score, reverse=True):
-            rk2 = _season_rk_from_show(show, season)
+            rk2 = season_rating_key_from_show(show, season)
             if rk2:
                 return rk2
         return None
@@ -401,10 +280,9 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         prog_mk = getattr(adapter, "progress_factory", None)
         prog: Any = prog_mk("ratings") if callable(prog_mk) else None
     
-        plex_cfg = _plex_cfg(adapter)
-        if plex_cfg.get("fallback_GUID") or plex_cfg.get("fallback_guid"):
+        if plex_cfg_get(adapter, "fallback_GUID", False) or plex_cfg_get(adapter, "fallback_guid", False):
             _emit({"event": "debug", "msg": "fallback_guid.enabled", "provider": "PLEX", "feature": "ratings"})
-        fallback_guid = bool(_plex_cfg_get(adapter, "fallback_GUID", False) or _plex_cfg_get(adapter, "fallback_guid", False))
+        fallback_guid = bool(plex_cfg_get(adapter, "fallback_GUID", False) or plex_cfg_get(adapter, "fallback_guid", False))
     
         base = _as_base_url(srv)
         if not base:
@@ -413,7 +291,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         client = getattr(adapter, "client", None)
         ses = getattr(srv, "_session", None) or getattr(client, "session", None)
     
-        tok = str(_active_pms_token(adapter) or "").strip()
+        tok = str(active_pms_token(adapter) or "").strip()
         configure_plex_context(baseurl=base, token=tok)
     
     
@@ -421,12 +299,12 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             raise RuntimeError(f"PLEX ratings fast query unavailable (base={bool(base)} tok={bool(tok)} ses={bool(ses)})")
     
         hdrs = plex_headers(tok)
-        tmo = float(_plex_cfg_get(adapter, "timeout", 10) or 10)
-        page_size = int(_plex_cfg_get(adapter, "ratings_page_size", 120) or 120)
+        tmo = float(plex_cfg_get(adapter, "timeout", 10) or 10)
+        page_size = int(plex_cfg_get(adapter, "ratings_page_size", 120) or 120)
         page_size = max(10, min(page_size, 200))
-        workers = _get_workers(adapter, "rating_workers", "CW_PLEX_RATING_WORKERS", 12)
+        workers = plex_worker_count(adapter, "rating_workers", "CW_PLEX_RATING_WORKERS", 12)
 
-        allow = _allowed_ratings_sec_ids(adapter)
+        allow = plex_feature_library_ids(adapter, "ratings")
     
         out: dict[str, dict[str, Any]] = {}
         added = 0
@@ -560,7 +438,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     # Keep fallback GUID enrichment intact.
                     fb_try_local = 0
                     fb_ok_local = 0
-                    if fallback_guid and not _has_ext_ids(m):
+                    if fallback_guid and not has_external_ids(m.get("ids") or {}):
                         fb_try_local += 1
                         try:
                             fb = minimal_from_history_row(row, token=tok, allow_discover=True)
@@ -606,8 +484,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                                             prog.done(ok=True, total=max(total, scanned) if total else None)
                                         except Exception:
                                             pass
-                                    _info("index_truncated", limit=limit)
-                                    _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers)
+                                    _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers, truncated=True, limit=limit)
                                     return out
                             _tick()
                     finally:
@@ -628,8 +505,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                                         prog.done(ok=True, total=max(total, scanned) if total else None)
                                     except Exception:
                                         pass
-                                _info("index_truncated", limit=limit)
-                                _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers)
+                                _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers, truncated=True, limit=limit)
                                 return out
                         _tick()
 
@@ -690,20 +566,20 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             existing = _get_existing_rating(srv, rk)
             if existing is not None and existing == rating:
                 _dbg("skip_same_rating", title=id_minimal(it).get("title"))
-                _UNRES.unfreeze([_event_key(it)])
+                _UNRES.unfreeze([_UNRES.event_key(it)])
                 continue
     
             if _rate(srv, rk, rating):
                 ok += 1
-                _UNRES.unfreeze([_event_key(it)])
+                _UNRES.unfreeze([_UNRES.event_key(it)])
             else:
                 _UNRES.freeze(it, action="add", reasons=["rate_failed"])
                 unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
     
-        _info("write_done", op="add", ok=ok, unresolved=len(unresolved))
+        _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
-    
-    
+
+
     finally:
         home_scope_exit(adapter, did_switch)
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -734,12 +610,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     
             if _rate(srv, rk, 0):
                 ok += 1
-                _UNRES.unfreeze([_event_key(it)])
+                _UNRES.unfreeze([_UNRES.event_key(it)])
             else:
                 _UNRES.freeze(it, action="remove", reasons=["clear_failed"])
                 unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
     
-        _info("write_done", op="remove", ok=ok, unresolved=len(unresolved))
+        _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
         home_scope_exit(adapter, did_switch)
