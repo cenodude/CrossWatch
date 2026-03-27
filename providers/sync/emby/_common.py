@@ -88,7 +88,7 @@ def _bootstrap_log_level() -> None:
     if dl == 'summary':
         os.environ.setdefault('CW_EMBY_LOG_LEVEL', 'debug')
     elif dl == 'verbose':
-        os.environ.setdefault('CW_EMBY_LOG_LEVEL', 'trace')
+        os.environ.setdefault('CW_EMBY_LOG_LEVEL', 'debug')
 
 
 _bootstrap_log_level()
@@ -99,11 +99,32 @@ def _log_summary(msg: str) -> None:
 
 
 def _log_detail(msg: str) -> None:
-    cw_log("EMBY", "common", "trace", msg)
+    cw_log("EMBY", "common", "debug", msg)
 
 
 def _log(msg: str) -> None:
     cw_log("EMBY", "common", "debug", msg)
+
+
+def make_logger(feature: str):  # type: ignore[return]
+    def _dbg(msg: str, **fields: Any) -> None:
+        cw_log("EMBY", feature, "debug", msg, **fields)
+
+    def _info(msg: str, **fields: Any) -> None:
+        cw_log("EMBY", feature, "info", msg, **fields)
+
+    def _warn(msg: str, **fields: Any) -> None:
+        cw_log("EMBY", feature, "warn", msg, **fields)
+
+    def _error(msg: str, **fields: Any) -> None:
+        cw_log("EMBY", feature, "error", msg, **fields)
+
+    return _dbg, _info, _warn, _error
+
+
+def _now_iso_z() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # Config helpers
@@ -475,7 +496,7 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
         items = body.get("Items") or []
         if total is None:
             total = int(body.get("TotalRecordCount") or 0)
-            _log_summary(f"provider-index scan total={total}")
+            cw_log("EMBY", "common", "debug", "index_fetch_counts", source="provider_index", total=total)
         for row in items:
             pids = row.get("ProviderIds") or {}
             if not pids:
@@ -508,7 +529,7 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
             break
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
-    _log_summary(f"provider-index built keys={len(out)}")
+    cw_log("EMBY", "common", "debug", "index_done", source="provider_index", count=len(out))
     return out
 
 
@@ -1066,8 +1087,16 @@ def mark_favorite(http: Any, user_id: str, item_id: str, flag: bool) -> bool:
                 body_snip = (s[:200] + "…") if len(s) > 200 else s
             except Exception:
                 body_snip = "no-body"
-        _log_summary(
-            f"favorite write failed user={user_id} item={item_id} status={getattr(r,'status_code',None)} body={body_snip}"
+        cw_log(
+            "EMBY",
+            "common",
+            "warn",
+            "write_failed",
+            op="favorite",
+            user_id=user_id,
+            item_id=item_id,
+            status=getattr(r, 'status_code', None),
+            body=body_snip,
         )
     return ok
 
@@ -1200,7 +1229,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         return memo[mk]
     em = ids.get("emby")
     if em and not looks_like_bad_id(em):
-        _log_detail(f"resolve direct emby id -> {em}")
+        cw_log("EMBY", "common", "debug", "resolve_hit", kind="direct", method="provider_id", item_id=str(em))
         memo[mk] = str(em)
         return str(em)
     t = _norm_type(it.get("type"))
@@ -1273,7 +1302,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             rows2 = [r for r in _prefer_library(rows) if (r.get("Type") or "") == "Movie"]
             iid = _pick_from_candidates(rows2, want_type="movie", want_year=year)
             if iid:
-                _log_detail(f"resolve (movie) direct AnyProviderIdEquals -> {iid}")
+                cw_log("EMBY", "common", "debug", "resolve_hit", kind="movie", method="direct_query", item_id=str(iid))
                 memo[mk] = iid
                 return iid
     elif t in ("show", "series"):
@@ -1282,7 +1311,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             rows2 = [r for r in _prefer_library(rows) if (r.get("Type") or "") == "Series"]
             iid = _pick_from_candidates(rows2, want_type="show", want_year=year)
             if iid:
-                _log_detail(f"resolve (series) direct AnyProviderIdEquals -> {iid}")
+                cw_log("EMBY", "common", "debug", "resolve_hit", kind="series", method="direct_query", item_id=str(iid))
                 memo[mk] = iid
                 return iid
     elif t == "episode":
@@ -1300,7 +1329,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         if ep_row and ep_row.get("Id"):
             iid = str(ep_row["Id"])
             memo[mk] = iid
-            _log_detail(f"resolve (episode) direct AnyProviderIdEquals -> {iid}")
+            cw_log("EMBY", "common", "debug", "resolve_hit", kind="episode", method="direct_query", item_id=iid)
             return iid
         ser_row = next((r for r in rows if (r.get("Type") or "") == "Series"), None)
         if not ser_row and series_pairs:
@@ -1318,7 +1347,17 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                         iid = str(ep.get("Id") or "")
                         if iid:
                             memo[mk] = iid
-                            _log_detail(f"resolve (episode) via series->S/E -> {iid}")
+                            cw_log(
+                                "EMBY",
+                                "common",
+                                "debug",
+                                "resolve_hit",
+                                kind="episode",
+                                method="series_episodes",
+                                season=int(season),
+                                episode=int(episode),
+                                item_id=iid,
+                            )
                             return iid
     idx = provider_index(adapter)
     if t == "movie":
@@ -1327,7 +1366,16 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             cands = _prefer_library(cands)
             iid = _pick_from_candidates(cands, want_type="movie", want_year=year)
             if iid:
-                _log_detail(f"resolve hit (movie index) pref={pref} -> item_id={iid}")
+                cw_log(
+                    "EMBY",
+                    "common",
+                    "debug",
+                    "resolve_hit",
+                    kind="movie",
+                    method="provider_index",
+                    pref=pref,
+                    item_id=str(iid),
+                )
                 memo[mk] = iid
                 return iid
     if t in ("show", "series"):
@@ -1336,7 +1384,16 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             cands = _prefer_library(cands)
             iid = _pick_from_candidates(cands, want_type="show", want_year=year)
             if iid:
-                _log_detail(f"resolve series (index) pref={pref} -> {iid}")
+                cw_log(
+                    "EMBY",
+                    "common",
+                    "debug",
+                    "resolve_hit",
+                    kind="series",
+                    method="provider_index",
+                    pref=pref,
+                    item_id=str(iid),
+                )
                 memo[mk] = iid
                 return iid
     if t == "episode":
@@ -1344,12 +1401,12 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         if series_pairs:
             series_row = find_series_in_index(adapter, series_pairs)
             if series_row:
-                _log_detail("series hit via show_ids in provider index")
+                cw_log("EMBY", "common", "debug", "resolve_hit", kind="series", method="show_ids_index")
         if not series_row and ep_pairs:
             maybe = find_series_in_index(adapter, ep_pairs)
             if maybe:
                 series_row = maybe
-                _log_detail("series hit via episode ids (weak)")
+                cw_log("EMBY", "common", "debug", "resolve_hit", kind="series", method="episode_ids_index")
         if series_row and season is not None and episode is not None:
             sid = series_row.get("Id")
             if sid:
@@ -1365,7 +1422,17 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                     ):
                         iid = row.get("Id")
                         if iid and not looks_like_bad_id(iid):
-                            _log_detail(f"resolve episode S{int(season):02d}E{int(episode):02d} -> {iid}")
+                            cw_log(
+                                "EMBY",
+                                "common",
+                                "debug",
+                                "resolve_hit",
+                                kind="episode",
+                                method="provider_index_episode",
+                                season=int(season),
+                                episode=int(episode),
+                                item_id=str(iid),
+                            )
                             memo[mk] = str(iid)
                             return str(iid)
     def _items(resp: Any) -> list[Mapping[str, Any]]:
@@ -1373,7 +1440,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             body = resp.json() or {}
             return body.get("Items") or []
         except Exception:
-            _log_detail("safe-json: treating response as empty")
+            cw_log("EMBY", "common", "debug", "parse_failed", target="items_response", fallback="empty")
             return []
     if t == "movie" and title and not strict:
         try:
@@ -1400,7 +1467,17 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             for row in cand:
                 iid = row.get("Id")
                 if iid and not looks_like_bad_id(iid):
-                    _log_summary(f"resolve movie '{title}' ({year}) -> {iid}")
+                    cw_log(
+                        "EMBY",
+                        "common",
+                        "debug",
+                        "resolve_hit",
+                        kind="movie",
+                        method="search",
+                        title=title,
+                        year=year,
+                        item_id=str(iid),
+                    )
                     memo[mk] = str(iid)
                     return str(iid)
         except Exception:
@@ -1432,7 +1509,17 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             for row in cand2:
                 iid = row.get("Id")
                 if iid and not looks_like_bad_id(iid):
-                    _log_summary(f"resolve series '{title}' ({year}) -> {iid}")
+                    cw_log(
+                        "EMBY",
+                        "common",
+                        "debug",
+                        "resolve_hit",
+                        kind="series",
+                        method="search",
+                        title=title,
+                        year=year,
+                        item_id=str(iid),
+                    )
                     memo[mk] = str(iid)
                     return str(iid)
         except Exception:
@@ -1462,13 +1549,33 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 if nm == t_l and ((season is None) or s == season) and ((episode is None) or e == episode):
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
-                        _log_detail(f"resolve episode '{title}' S{season}E{episode} -> {iid}")
+                        cw_log(
+                            "EMBY",
+                            "common",
+                            "debug",
+                            "resolve_hit",
+                            kind="episode",
+                            method="search",
+                            title=title,
+                            season=season,
+                            episode=episode,
+                            item_id=str(iid),
+                        )
                         memo[mk] = str(iid)
                         return str(iid)
         except Exception:
             pass
-    _log_detail(
-        f"resolve miss: type={t} title='{title}' year={year} S{season}E{episode} series='{series_title}'"
+    cw_log(
+        "EMBY",
+        "common",
+        "debug",
+        "resolve_miss",
+        kind=t,
+        title=title,
+        year=year,
+        season=season,
+        episode=episode,
+        series_title=series_title,
     )
     return None
 
