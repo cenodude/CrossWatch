@@ -3,8 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from .._log import log as cw_log
-
 import json
 import os
 from typing import Any, Iterable, Mapping
@@ -22,6 +20,7 @@ from ._common import (
     playlist_fetch_all,
     collection_fetch_all,
     mark_favorite,
+    make_logger,
     playlist_add_items,
     playlist_remove_entries,
     resolve_item_id,
@@ -36,23 +35,7 @@ from ._common import (
 def _unresolved_path() -> str:
     return str(state_file("jellyfin_watchlist.unresolved.json"))
 
-
-
-
-def _trc(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "watchlist", "trace", msg, **fields)
-
-
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "watchlist", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "watchlist", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "watchlist", "warn", msg, **fields)
+_dbg, _info, _warn = make_logger("watchlist")
 
 
 def _load() -> dict[str, Any]:
@@ -112,7 +95,7 @@ def _get_playlist_id(adapter: Any, *, create_if_missing: bool) -> str | None:
         return None
     pid = create_playlist(http, uid, name, is_public=False)
     if pid:
-        _info("playlist created", name=name, playlist_id=pid)
+        _info("container_created", container="playlist", name=name, playlist_id=pid)
     return pid
 
 
@@ -128,7 +111,7 @@ def _get_collection_id(adapter: Any, *, create_if_missing: bool) -> str | None:
         return None
     cid = create_collection(http, name)
     if cid:
-        _info("collection created", name=name, collection_id=cid)
+        _info("container_created", container="collection", name=name, collection_id=cid)
     return cid
 
 
@@ -188,7 +171,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                         pass
 
         _thaw_if_present(out.keys())
-        _info("index done", mode="playlist", name=name, count=len(out))
+        _info("index_done", mode="playlist", name=name, count=len(out))
         return out
 
     # Collection mode
@@ -228,7 +211,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                         pass
 
         _thaw_if_present(out.keys())
-        _info("index done", mode="collection", name=name, count=len(out))
+        _info("index_done", mode="collection", name=name, count=len(out))
         return out
 
     # Favorites mode
@@ -288,7 +271,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             break
 
     _thaw_if_present(out.keys())
-    _info("index done", mode="favorites", count=len(out))
+    _info("index_done", mode="favorites", count=len(out))
     return out
 
 # writes
@@ -321,7 +304,7 @@ def _verify_favorite(
             if getattr(r, "status_code", 0) == 200:
                 ud = (r.json() or {}).get("UserData") or {}
                 val = bool(ud.get("IsFavorite"))
-                _trc("favorite verify", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
+                _dbg("write_prepare", op="verify", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
                 if val is expect:
                     return True
             else:
@@ -332,12 +315,12 @@ def _verify_favorite(
                 if getattr(r2, "status_code", 0) == 200:
                     arr = (r2.json() or {}).get("Items") or []
                     if not arr and expect is False:
-                        _dbg("favorite verify fallback empty", item_id=iid, expect=expect)
+                        _dbg("write_prepare", op="verify", item_id=iid, expect=expect, source="fallback_empty")
                         return True
                     if arr:
                         ud = arr[0].get("UserData") or {}
                         val = bool(ud.get("IsFavorite"))
-                        _trc("favorite verify fallback", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1)
+                        _dbg("write_prepare", op="verify", item_id=iid, is_favorite=val, expect=expect, attempt=attempt + 1, source="fallback")
                         if val is expect:
                             return True
         except Exception:
@@ -384,7 +367,7 @@ def _add_favorites(
 
         if not _verify_favorite(http, uid, iid, True):
             forced = update_userdata(http, uid, iid, {"IsFavorite": True})
-            _warn("favorite force userdata", item_id=iid, forced=forced)
+            _dbg("write_prepare", op="add", item_id=iid, strategy="force_userdata", forced=forced)
             if not forced:
                 unresolved.append({"item": id_minimal(it), "hint": "verify_failed"})
                 _freeze(it, reason="verify_or_userdata_failed")
@@ -425,7 +408,7 @@ def _remove_favorites(
 
         if not _verify_favorite(http, uid, iid, False):
             forced = update_userdata(http, uid, iid, {"IsFavorite": False})
-            _warn("unfavorite force userdata", item_id=iid, forced=forced)
+            _dbg("write_prepare", op="remove", item_id=iid, strategy="force_userdata", forced=forced)
             if not forced:
                 unresolved.append({"item": id_minimal(it), "hint": "verify_failed"})
                 _freeze(it, reason="verify_or_userdata_failed")
@@ -647,7 +630,7 @@ def add(
         ok, unresolved = _add_collection(adapter, items)
     else:
         ok, unresolved = _add_favorites(adapter, items)
-    _info("add done", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved
 
 
@@ -662,5 +645,5 @@ def remove(
         ok, unresolved = _remove_collection(adapter, items)
     else:
         ok, unresolved = _remove_favorites(adapter, items)
-    _info("remove done", ok=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), mode=cfg.watchlist_mode)
     return ok, unresolved
