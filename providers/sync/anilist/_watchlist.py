@@ -264,7 +264,7 @@ def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None
     page = (q or {}).get("Page")
     media = page.get("media") if isinstance(page, Mapping) else None
     if not isinstance(media, list) or not media:
-        _dbg("resolve miss", title=title, year=year, reason="no_results")
+        _dbg("resolve_miss", title=title, year=year, reason="no_results")
         return None, {}
 
     best_id: int | None = None
@@ -307,10 +307,10 @@ def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None
                 best_meta["mal"] = int(cm)
 
     if best_id is None or best_score < 85:
-        _dbg("resolve miss", title=title, year=year, reason="low_score", best_score=int(best_score))
+        _dbg("resolve_miss", title=title, year=year, reason="low_score", best_score=int(best_score))
         return None, {}
 
-    _dbg("resolve hit", title=title, year=year, anilist_id=int(best_id), score=int(best_score))
+    _dbg("resolve_hit", title=title, year=year, anilist_id=int(best_id), score=int(best_score))
     return best_id, best_meta
 
 
@@ -331,6 +331,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     shadow = _shadow_load()
     rev = _shadow_rev(shadow)
+    shadow_count = len(shadow)
 
     t0 = time.time()
 
@@ -341,14 +342,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             feature="watchlist:index",
         )
     except Exception as e:
-        _warn("index planning query failed", error_type=e.__class__.__name__, error=str(e), fallback="full list")
+        _warn("http_failed", op="build_index", source="planning_query", error_type=e.__class__.__name__, error=str(e), fallback="full_list")
         data = adapter.client.gql(
             GQL_LIST_FALLBACK,
             {"userId": int(user_id), "type": "ANIME"},
             feature="watchlist:index",
         )
 
-    _dbg("index fetched", dur_ms=int((time.time() - t0) * 1000))
+    _dbg("index_fetch_counts", source="live", dur_ms=int((time.time() - t0) * 1000), shadow_entries=shadow_count)
 
     mlc = (data or {}).get("MediaListCollection")
     lists = mlc.get("lists") if isinstance(mlc, Mapping) else None
@@ -360,6 +361,8 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     done = 0
     shadow_changed = False
+    adopted = 0
+    ignored = 0
 
     for lst in lists:
         if not isinstance(lst, Mapping):
@@ -432,6 +435,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     shadow[src_key]["list_entry_id"] = int(entry_id)
                     shadow[src_key]["updated_at"] = int(time.time())
                     shadow_changed = True
+                adopted += 1
             else:
                 key = adapter.key_of(item)
 
@@ -449,6 +453,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 continue
             if str(src_key) in out:
                 continue
+            ignored += 1
             src_ids = ent.get("source_ids")
             out[str(src_key)] = {
                 "type": str(ent.get("type") or "unknown"),
@@ -474,8 +479,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     if shadow_changed:
         _shadow_save(shadow)
+        _dbg("cache_merged", source="shadow", mode="save")
 
     _tick(prog, done, force=True)
+    if shadow_count:
+        _dbg("cache_merged", source="shadow", entries=shadow_count, adopted=adopted, ignored=ignored)
+    _info("index_done", count=len(out), adopted=adopted, ignored=ignored)
     return out
 
 
@@ -499,6 +508,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
     skipped_keys: list[str] = []
     _seen_ok: set[str] = set()
     _seen_skip: set[str] = set()
+    skipped = 0
 
     for i, it in enumerate(lst, start=1):
         m = id_minimal(it)
@@ -510,6 +520,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
             if src_key and src_key not in _seen_skip:
                 skipped_keys.append(src_key)
                 _seen_skip.add(src_key)
+            skipped += 1
             _tick(prog, i, total=len(lst))
             continue
 
@@ -540,10 +551,11 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
                 ent2["updated_at"] = int(time.time())
                 shadow[src_key] = ent2
                 shadow_changed = True
-            _dbg("skip no match", title=str(m.get('title') or ''), year=_to_int(m.get('year')), reason='not_anime_or_no_match')
+            _dbg("write_item_skipped", op="add", title=str(m.get('title') or ''), year=_to_int(m.get('year')), reason="not_anime_or_no_match")
             if src_key and src_key not in _seen_skip:
                 skipped_keys.append(src_key)
                 _seen_skip.add(src_key)
+            skipped += 1
             _tick(prog, i, total=len(lst))
             continue
 
@@ -585,7 +597,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
                         if src_key and src_key not in _seen_ok:
                             confirmed_keys.append(src_key)
                             _seen_ok.add(src_key)
-                        _dbg('adopt existing entry', media_id=int(mid), src_key=str(src_key))
+                        _dbg("write_prepare", op="add", source="existing_entry", media_id=int(mid), src_key=str(src_key))
                         _tick(prog, i, total=len(lst))
                         continue
             except Exception:
@@ -635,13 +647,16 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
 
     if shadow_changed:
         _shadow_save(shadow)
+        _dbg("cache_merged", source="shadow", mode="save")
 
     if unresolved:
         reasons: dict[str, int] = {}
         for u in unresolved:
             r = str(u.get("_cw_unresolved_reason") or "unknown")
             reasons[r] = reasons.get(r, 0) + 1
-        _warn('add unresolved', count=int(len(unresolved)), by_reason=','.join(f"{k}:{v}" for k, v in sorted(reasons.items())))
+        _warn("write_failed", op="add", count=int(len(unresolved)), by_reason=",".join(f"{k}:{v}" for k, v in sorted(reasons.items())))
+
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=int(ok), skipped=int(skipped), unresolved=len(unresolved))
 
     return {
         "ok": True,
@@ -671,6 +686,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     viewer = adapter.client.viewer()
     user_id = viewer.get("id") if isinstance(viewer, dict) else None
     if not user_id:
+        _info("write_skipped", op="remove", reason="missing_viewer")
         return 0, [_unresolved_item(id_minimal(x), "missing_viewer") for x in lst]
 
     shadow = _shadow_load()
@@ -678,6 +694,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
+    skipped = 0
 
     for i, it in enumerate(lst, start=1):
         m = id_minimal(it)
@@ -688,6 +705,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 shadow.pop(src_key, None)
                 shadow_changed = True
             ok += 1
+            skipped += 1
             _tick(prog, i, total=len(lst))
             continue
 
@@ -742,5 +760,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     if shadow_changed:
         _shadow_save(shadow)
+        _dbg("cache_merged", source="shadow", mode="save")
+
+    if unresolved:
+        reasons: dict[str, int] = {}
+        for u in unresolved:
+            r = str(u.get("_cw_unresolved_reason") or "unknown")
+            reasons[r] = reasons.get(r, 0) + 1
+        _warn("write_failed", op="remove", count=int(len(unresolved)), by_reason=",".join(f"{k}:{v}" for k, v in sorted(reasons.items())))
+
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=int(ok), skipped=int(skipped), unresolved=len(unresolved))
 
     return ok, unresolved
