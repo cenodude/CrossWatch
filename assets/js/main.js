@@ -106,6 +106,12 @@
     const key = String(x.key || "");
     const show = String(x.series_title || x.show_title || "").trim();
     const rawTitle = String(x.title || "").trim();
+    const looksLikeIdLabel = (v) => {
+      const s = String(v || "").trim().toLowerCase();
+      if (!s) return false;
+      if (key && s === key.trim().toLowerCase()) return true;
+      return /^(tmdb|imdb|tvdb|trakt|slug|mdblist|kitsu):/.test(s);
+    };
     const mKey = key.match(/#s(\d{1,3})e(\d{1,3})/i);
     const mRaw = rawTitle.match(/^s(\d{1,3})e(\d{1,3})$/i);
     let season = toInt(x.season), episode = toInt(x.episode), type = String(x.type || "").toLowerCase();
@@ -121,7 +127,9 @@
       const seasonLabel = rawTitle || (toInt(x.season) != null ? `Season ${toInt(x.season)}` : "");
       return show && seasonLabel ? `${show} - ${seasonLabel}` : show || seasonLabel || "item";
     }
+    if ((type === "show" || type === "anime") && show && looksLikeIdLabel(rawTitle)) return show;
     const title = String(x.title || x.name || "").trim();
+    if (show && looksLikeIdLabel(title)) return show;
     return show && title && show.toLowerCase() === title.toLowerCase() ? show : title || x.series_title || x.name || x.key || "item";
   };
 
