@@ -3,8 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from .._log import log as cw_log
-
 import json
 import os
 import time
@@ -16,7 +14,9 @@ from ._common import (
     jf_get_library_roots,
     jf_resolve_library_id,
     jf_scope_ratings,
+    make_logger,
     normalize as jelly_normalize,
+    _now_iso_z,
     _pair_scope,
     _is_capture_mode,
 )
@@ -30,10 +30,6 @@ def _shadow_path() -> str:
 
 def _meta_path() -> str:
     return str(state_file("jellyfin_ratings.meta.json"))
-
-
-def _now_iso_z() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _meta_load() -> dict[str, dict[str, Any]]:
@@ -92,21 +88,7 @@ def _shadow_save(d: Mapping[str, int]) -> None:
         pass
 
 
-# logging
-def _trc(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "ratings", "trace", msg, **fields)
-
-
-def _dbg(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "ratings", "debug", msg, **fields)
-
-
-def _info(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "ratings", "info", msg, **fields)
-
-
-def _warn(msg: str, **fields: Any) -> None:
-    cw_log("JELLYFIN", "ratings", "warn", msg, **fields)
+_dbg, _info, _warn = make_logger("ratings")
 
 
 def _dbg_enabled() -> bool:
@@ -209,10 +191,10 @@ def _rate(http: Any, uid: str, item_id: str, rating: float | None) -> bool:
 
         if not ok2:
             body = _body_snip(r1) if getattr(r1,'status_code',0) not in (200,204) else _body_snip(r2)
-            _warn("rate write failed", user_id=uid, item_id=item_id, status1=getattr(r1,'status_code',None), status2=getattr(r2,'status_code',None), body=body)
+            _warn("write_failed", op="rate", user_id=uid, item_id=item_id, status1=getattr(r1,'status_code',None), status2=getattr(r2,'status_code',None), body=body)
         return ok2
     except Exception as e:
-        _warn("rate write exception", item_id=item_id, err=repr(e))
+        _warn("write_failed", op="rate", item_id=item_id, error=repr(e))
         return False
 
 
@@ -379,10 +361,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                     out[k] = m_shadow
                 added += 1
         if added:
-            _dbg("shadow merged", added=added)
+            _dbg("cache_merged", source="shadow", added=added)
 
     _thaw_if_present(out.keys())
-    _info("index done", count=len(out))
+    _info("index_done", count=len(out))
     if meta_changed:
         _meta_save(meta)
     return out
@@ -459,7 +441,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if meta_changed:
         _meta_save(meta)
 
-    _info("add done", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -521,5 +503,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     if meta_changed:
         _meta_save(meta)
 
-    _info("remove done", ok=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
