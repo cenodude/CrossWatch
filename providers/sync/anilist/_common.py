@@ -65,7 +65,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: Mapping[str, Any], *, indent: int = 2, sort_keys: bool = True) -> None:
-    if _pair_scope() is None:
+    if _is_capture_mode() or _pair_scope() is None:
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
