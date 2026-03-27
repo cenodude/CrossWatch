@@ -53,7 +53,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
                 params=client._user_params({"page": page, "sort_by": "created_at.asc"}),
             )
             if not (200 <= r.status_code < 300):
-                _warn("fetch_failed", path=path, page=page, status=r.status_code)
+                _warn("http_failed", op="build_index", source=path, page=page, status=r.status_code)
                 raise RuntimeError(f"TMDb ratings fetch failed ({path}) ({r.status_code})")
             data = r.json() if (r.text or "").strip() else {}
             if not isinstance(data, Mapping):
@@ -61,7 +61,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
             total_pages = as_int(data.get("total_pages")) or total_pages
             raw_results = data.get("results")
             results: list[Any] = raw_results if isinstance(raw_results, list) else []
-            _dbg("page", path=path, typ=typ, page=page, total_pages=total_pages, batch=len(results))
+            _dbg("index_fetch_counts", source=path, typ=typ, page=page, total_pages=total_pages, batch=len(results))
 
             for raw in results:
                 if not isinstance(raw, Mapping):
@@ -114,12 +114,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
             prog.tick(len(out), total=None)
             page += 1
 
-    _info("build_index", account_id=account_id)
     pull("rated/movies", typ="movie")
     pull("rated/tv", typ="tv")
     pull("rated/tv/episodes", typ="episode")
     prog.done(ok=True)
-    _info("build_index_done", count=len(out))
+    _info("index_done", count=len(out), source="account")
     touch_feature_state(adapter, "ratings", phase="index_done", count=len(out), ts=now_epoch())
     return out
 
@@ -179,9 +178,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if 200 <= r.status_code < 300:
             ok += 1
         else:
+            _warn("write_failed", op="add", type=typ, status=r.status_code)
             unresolved.append(unresolved_item(it, f"http_{r.status_code}"))
 
-    _info("add_done", applied=ok, unresolved=len(unresolved))
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
@@ -230,7 +230,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if 200 <= r.status_code < 300:
             ok += 1
         else:
+            _warn("write_failed", op="remove", type=typ, status=r.status_code)
             unresolved.append(unresolved_item(it, f"http_{r.status_code}"))
 
-    _info("remove_done", applied=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
