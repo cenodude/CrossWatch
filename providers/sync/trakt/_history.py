@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ._common import (
-    build_headers,
     key_of,
     ids_for_trakt,
     pick_trakt_kind,
@@ -20,6 +19,10 @@ from ._common import (
     state_file,
     _pair_scope,
     _is_capture_mode,
+    _now_iso,
+    _last_limit_path,
+    _record_limit_error,
+    headers_for_adapter,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -46,10 +49,6 @@ def _unresolved_path() -> Path:
     return state_file("trakt_history.unresolved.json")
 
 
-def _last_limit_path() -> Path:
-    return state_file("trakt_last_limit_error.json")
-
-
 def _cache_path() -> Path:
     return state_file("trakt_history.index.json")
 
@@ -59,16 +58,11 @@ def _bust_index_cache(reason: str) -> None:
         return
     try:
         p = _cache_path()
-        legacy = _legacy_path(p)
-        removed: list[str] = []
-        for x in (p, legacy):
-            if x and x.exists():
-                x.unlink()
-                removed.append(x.name)
-        if removed:
-            _info("index_cache_bust", reason=reason, removed=removed)
+        if p.exists():
+            p.unlink()
+            _dbg("cache_invalidated", cache="index", reason=reason)
     except Exception as e:
-        _warn("index_cache_bust_failed", reason=reason, error=str(e))
+        _warn("cache_save_failed", cache="index", op="invalidate", reason=reason, error=str(e))
 
 
 
@@ -80,24 +74,6 @@ def _not_found_count(nf: Any) -> int:
         if isinstance(v, list):
             c += len(v)
     return c
-
-def _record_limit_error(feature: str) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    try:
-        _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
-        tmp = _last_limit_path().with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"feature": feature, "ts": _now_iso()},
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            "utf-8",
-        )
-        os.replace(tmp, _last_limit_path())
-    except Exception as e:
-        _warn("limit_error_save_failed", feature=feature, error=str(e))
 
 _PROVIDER = "TRAKT"
 _FEATURE = "history"
@@ -115,36 +91,6 @@ def _warn(event: str, **fields: Any) -> None:
 def _error(event: str, **fields: Any) -> None:
     cw_log(_PROVIDER, _FEATURE, "error", event, **fields)
 
-
-
-def _legacy_path(path: Path) -> Path | None:
-    parts = path.stem.split(".")
-    if len(parts) < 2:
-        return None
-    legacy_name = ".".join(parts[:-1]) + path.suffix
-    legacy = path.with_name(legacy_name)
-    return None if legacy == path else legacy
-
-
-def _migrate_legacy_json(path: Path) -> None:
-    if path.exists():
-        return
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    legacy = _legacy_path(path)
-    if not legacy or not legacy.exists():
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_bytes(legacy.read_bytes())
-        os.replace(tmp, path)
-    except Exception:
-        pass
-
-
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def _iso8601(v: Any) -> str | None:
@@ -235,6 +181,12 @@ def _cfg_num(adapter: Any, key: str, default: Any, cast: Callable[[Any], Any] = 
         return cast(default)
 
 
+def _chunked_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mapping[str, Any]]]:
+    size = max(1, int(n or 1))
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
 def _freeze_enabled(adapter: Any) -> bool:
     v = _cfg_get(adapter, "history_unresolved", False)
     try:
@@ -270,7 +222,6 @@ def _load_unresolved() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
     p = _unresolved_path()
-    _migrate_legacy_json(p)
     try:
         return json.loads(p.read_text("utf-8"))
     except Exception:
@@ -286,7 +237,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, _unresolved_path())
     except Exception as e:
-        _warn("unresolved_save_failed", error=str(e))
+        _warn("cache_save_failed", cache="unresolved", op="save", error=str(e))
 
 
 def _load_cache_doc() -> dict[str, Any]:
@@ -294,7 +245,6 @@ def _load_cache_doc() -> dict[str, Any]:
         return {}
     try:
         p = _cache_path()
-        _migrate_legacy_json(p)
         if not p.exists():
             return {}
         return json.loads(p.read_text("utf-8") or "{}")
@@ -302,17 +252,23 @@ def _load_cache_doc() -> dict[str, Any]:
         return {}
 
 
-def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None) -> None:
+def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None, validated_at: str | None = None) -> None:
     if _is_capture_mode() or _pair_scope() is None:
         return
     try:
-        _cache_path().parent.mkdir(parents=True, exist_ok=True)
-        doc = {"generated_at": _now_iso(), "items": dict(items), "wm": {"watched_at": watched_at or ""}}
-        tmp = _cache_path().with_suffix(".tmp")
+        cache_path = _cache_path()
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        doc = {
+            "generated_at": _now_iso(),
+            "items": dict(items),
+            "wm": {"watched_at": watched_at or ""},
+            "validated_at": _now_iso() if validated_at is None else str(validated_at),
+        }
+        tmp = cache_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, _cache_path())
+        os.replace(tmp, cache_path)
     except Exception as e:
-        _warn("cache_save_failed", error=str(e))
+        _warn("cache_save_failed", cache="index", path=str(_cache_path()), error=str(e))
 
 
 def _cache_merge_from_source_items(adapter: Any, items: Iterable[Mapping[str, Any]]) -> None:
@@ -364,12 +320,59 @@ def _cache_merge_from_source_items(adapter: Any, items: Iterable[Mapping[str, An
 
             wm = _max_iso(wm, w)
 
-        if added:
-            _info("index_cache_merge", added=added, cache_count=len(cache_items))
+        wm = _max_iso(wm, _now_iso())
 
-        _save_cache_doc(cache_items, wm or wm_prev)
+        if added:
+            _dbg("cache_merged", cache="index", count=added, cache_count=len(cache_items))
+
+        _save_cache_doc(cache_items, wm or wm_prev, validated_at="")
     except Exception as e:
-        _warn("index_cache_merge_failed", error=str(e))
+        _warn("cache_save_failed", cache="index", op="merge", error=str(e))
+
+
+def _cache_remove_source_items(adapter: Any, items: Iterable[Mapping[str, Any]]) -> None:
+    if _is_capture_mode() or _pair_scope() is None:
+        return
+    try:
+        doc = _load_cache_doc()
+        cache_items: dict[str, dict[str, Any]] = dict(doc.get("items") or {})
+        wm_prev = str((doc.get("wm") or {}).get("watched_at") or "").strip() or None
+        if not cache_items:
+            return
+
+        base_keys: set[str] = set()
+        raw_ids: set[str] = set()
+        for it in items or []:
+            if not isinstance(it, Mapping):
+                continue
+            m = id_minimal(it)
+            if not isinstance(m, dict):
+                continue
+            k = str(key_of(m) or "").strip()
+            if k:
+                base_keys.add(k)
+            hid = str(it.get("_trakt_history_id") or it.get("history_id") or "").strip()
+            if hid:
+                raw_ids.add(hid)
+
+        if not base_keys and not raw_ids:
+            return
+
+        removed = 0
+        for ek in list(cache_items.keys()):
+            item = cache_items.get(ek) or {}
+            base = str(ek).split("@", 1)[0]
+            hid = str(item.get("_trakt_history_id") or item.get("history_id") or "").strip()
+            if base in base_keys or (hid and hid in raw_ids):
+                cache_items.pop(ek, None)
+                removed += 1
+
+        if removed <= 0:
+            return
+
+        _save_cache_doc(cache_items, wm_prev, validated_at="")
+    except Exception as e:
+        _warn("cache_save_failed", cache="index", op="remove", error=str(e))
 
 
 
@@ -489,7 +492,7 @@ def _fetch_history(
             max_retries=max_retries,
         )
         if r.status_code != 200:
-            _warn("http_page_failed", url=url, page=page, status=r.status_code)
+            _warn("http_failed", op="index", url=url, page=page, status=r.status_code)
             break
         if total_pages is None:
             pc = _hdr_int(r.headers, "X-Pagination-Page-Count")
@@ -545,7 +548,7 @@ def _fetch_history(
         if total_pages is None and len(rows) < per_page:
             break
         if max_pages and page > max_pages:
-            _warn("page_safety_cap", max_pages=max_pages)
+            _warn("index_reconcile", reason="safety_cap_hit", strategy="paged_fetch", max_pages=max_pages)
             break
     return out
 
@@ -554,14 +557,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("history") if callable(prog_mk) else None
     sess = adapter.client.session
-    headers = build_headers(
-        {
-            "trakt": {
-                "client_id": _cfg_get(adapter, "client_id"),
-                "access_token": _cfg_get(adapter, "access_token"),
-            }
-        }
-    )
+    headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     cfg_per_page = int(_cfg_num(adapter, "history_per_page", per_page, int))
@@ -582,20 +578,62 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         a = _as_epoch(_iso8601(remote_wm) or "")
         b = _as_epoch(_iso8601(cached_wm) or "")
         if a is not None and b is not None and a <= b:
-            _info("index_cache_hit", reason="activities_unchanged", count=len(cached_items))
-            if prog:
-                try:
-                    prog.tick(0, total=len(cached_items), force=True)
-                    prog.tick(len(cached_items), total=len(cached_items))
-                    prog.done(ok=True, total=len(cached_items))
-                except Exception:
-                    pass
-            return cached_items
+           
+            _CACHE_VALIDATE_INTERVAL_SEC = 0  # always re-check API counts on cache hits
+            validated_at_str = str((doc.get("validated_at") or "")).strip()
+            validated_epoch = _as_epoch(validated_at_str) if validated_at_str else None
+            due_for_validation = (validated_epoch is None) or ((time.time() - validated_epoch) >= _CACHE_VALIDATE_INTERVAL_SEC)
+            if due_for_validation:
+                api_mov = _preflight_total(sess, headers, URL_HIST_MOV, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
+                api_epi = _preflight_total(sess, headers, URL_HIST_EPI, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
+                if api_mov is not None and api_epi is not None:
+                    api_total = int(api_mov) + int(api_epi)
+                    if api_total != len(cached_items):
+                        _dbg("index_reconcile", reason="count_mismatch_on_cache_hit", strategy="full_fetch", api_total=api_total, cached=len(cached_items))
+                        _bust_index_cache(reason="count_mismatch_on_cache_hit")
+                        # fall through to full fetch
+                    else:
+                        # Count matches 
+                        _save_cache_doc(cached_items, cached_wm, validated_at=_now_iso())
+                        _dbg("index_cache_hit", reason="activities_unchanged", source="cache", count=len(cached_items))
+                        if prog:
+                            try:
+                                prog.tick(0, total=len(cached_items), force=True)
+                                prog.tick(len(cached_items), total=len(cached_items))
+                                prog.done(ok=True, total=len(cached_items))
+                            except Exception:
+                                pass
+                        _info("index_done", count=len(cached_items), source="cache")
+                        return cached_items
+                else:
+                    # preflight failed
+                    _save_cache_doc(cached_items, cached_wm, validated_at=_now_iso())
+                    _dbg("index_cache_hit", reason="activities_unchanged", source="cache", count=len(cached_items))
+                    if prog:
+                        try:
+                            prog.tick(0, total=len(cached_items), force=True)
+                            prog.tick(len(cached_items), total=len(cached_items))
+                            prog.done(ok=True, total=len(cached_items))
+                        except Exception:
+                            pass
+                    _info("index_done", count=len(cached_items), source="cache")
+                    return cached_items
+            else:
+                _dbg("index_cache_hit", reason="activities_unchanged", source="cache", count=len(cached_items))
+                if prog:
+                    try:
+                        prog.tick(0, total=len(cached_items), force=True)
+                        prog.tick(len(cached_items), total=len(cached_items))
+                        prog.done(ok=True, total=len(cached_items))
+                    except Exception:
+                        pass
+                _info("index_done", count=len(cached_items), source="cache")
+                return cached_items
 
         if a is not None and b is not None and a > b:
-            start_at = _iso8601(cached_wm) or cached_wm
-            end_at = _iso8601(remote_wm) or remote_wm
-            _info("index_cache_delta", start_at=start_at, end_at=end_at, cached=len(cached_items))
+            _cached_epoch = _as_epoch(_iso8601(cached_wm) or "")
+            start_at = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime((_cached_epoch or 0) - 300)) if _cached_epoch else cached_wm
+            _dbg("index_reconcile", reason="cache_delta", strategy="delta", start_at=start_at, end_at=remote_wm, cached=len(cached_items))
             try:
                 idx: dict[str, dict[str, Any]] = dict(cached_items)
                 announced_total = None
@@ -614,7 +652,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     timeout=timeout,
                     max_retries=retries,
                     start_at=start_at,
-                    end_at=end_at,
                 )
                 episodes = _fetch_history(
                     sess,
@@ -625,7 +662,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     timeout=timeout,
                     max_retries=retries,
                     start_at=start_at,
-                    end_at=end_at,
                 )
 
                 base_keys_to_unfreeze: set[str] = set()
@@ -665,18 +701,31 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     added += 1
 
                 _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
-                if prog:
-                    try:
-                        prog.done(ok=True, total=len(idx))
-                    except Exception:
-                        pass
-                _info("index_cache_delta_done", added=added, count=len(idx))
-                _save_cache_doc(idx, end_at)
-                return idx
+                _dbg("index_fetch_counts", source="cache_delta", added=added, count=len(idx))
+
+                count_ok = True
+                api_mov = _preflight_total(sess, headers, URL_HIST_MOV, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
+                api_epi = _preflight_total(sess, headers, URL_HIST_EPI, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
+                if api_mov is not None and api_epi is not None:
+                    api_total = int(api_mov) + int(api_epi)
+                    if api_total != len(idx):
+                        _dbg("index_reconcile", reason="count_mismatch_after_delta", strategy="full_fetch", api_total=api_total, cached=len(idx))
+                        _bust_index_cache(reason="count_mismatch_after_delta")
+                        count_ok = False
+
+                if count_ok:
+                    if prog:
+                        try:
+                            prog.done(ok=True, total=len(idx))
+                        except Exception:
+                            pass
+                    _info("index_done", count=len(idx), source="cache_delta")
+                    _save_cache_doc(idx, remote_wm)
+                    return idx
             except Exception as e:
-                _warn("index_cache_delta_failed", error=str(e))
+                _warn("index_reconcile", reason="cache_delta_failed", strategy="delta", error=str(e))
     elif cached_items and not remote_wm:
-        _info("index_cache_hit", reason="activities_unavailable", count=len(cached_items))
+        _dbg("index_cache_hit", reason="activities_unavailable", source="cache", count=len(cached_items))
         if prog:
             try:
                 prog.tick(0, total=len(cached_items), force=True)
@@ -684,6 +733,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                 prog.done(ok=True, total=len(cached_items))
             except Exception:
                 pass
+        _info("index_done", count=len(cached_items), source="cache")
         return cached_items
 
     total_mov = _preflight_total(
@@ -795,15 +845,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                 ek2 = f"{alt_base}@{ts}{suffix}{n}"
                 n += 1
 
-            _warn(
-                "history_key_collision",
-                key=ek,
-                key2=ek2,
-                imdb=imdb_id or None,
-                trakt=trakt_id or None,
-                tmdb=tmdb_id or None,
-                history_id=hid or None,
-            )
+            _warn("index_reconcile", reason="key_collision", key=ek, key2=ek2, imdb=imdb_id or None, trakt=trakt_id or None, tmdb=tmdb_id or None, history_id=hid or None)
             idx[ek2] = m
             base_keys_to_unfreeze.add(alt_base)
         else:
@@ -819,7 +861,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                 prog.done(ok=True, total=len(idx))
         except Exception:
             pass
-    _info("index_done", count=len(idx), movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, max_pages=cfg_max_pages)
+    _dbg("index_fetch_counts", movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, max_pages=cfg_max_pages, source="current")
+    _info("index_done", count=len(idx), movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, max_pages=cfg_max_pages, source="current")
     _save_cache_doc(idx, remote_wm or cached_wm)
     return idx
 
@@ -847,16 +890,6 @@ def _pick_show_path_id(ids: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _trakt_headers_for(adapter: Any) -> dict[str, str]:
-    return build_headers(
-        {
-            "trakt": {
-                "client_id": _cfg_get(adapter, "client_id"),
-                "access_token": _cfg_get(adapter, "access_token"),
-            }
-        }
-    )
-
 
 def _resolve_show_path_id(
     adapter: Any,
@@ -875,7 +908,7 @@ def _resolve_show_path_id(
         _SHOW_PATH_CACHE[skey] = path_id
         return path_id
     sess = adapter.client.session
-    headers = _trakt_headers_for(adapter)
+    headers = headers_for_adapter(adapter)
     for k in ("tmdb", "imdb", "tvdb"):
         v = (show_ids or {}).get(k)
         if not v:
@@ -924,7 +957,7 @@ def _resolve_episode_ids_via_trakt(
     season_key = f"{path_id}|S{s}"
     if season_key not in _SEASON_EP_CACHE:
         sess = adapter.client.session
-        headers = _trakt_headers_for(adapter)
+        headers = headers_for_adapter(adapter)
         url = f"{BASE}/shows/{path_id}/seasons/{s}"
         r = request_with_retries(
             sess,
@@ -954,7 +987,7 @@ def _resolve_episode_ids_via_trakt(
     if cache_key in _EP_RESOLVE_CACHE:
         return dict(_EP_RESOLVE_CACHE[cache_key])
     sess = adapter.client.session
-    headers = _trakt_headers_for(adapter)
+    headers = headers_for_adapter(adapter)
     url = f"{BASE}/shows/{path_id}/seasons/{s}/episodes/{e}"
     r = request_with_retries(
         sess,
@@ -1093,7 +1126,7 @@ def _batch_add(
     # De-dupe guards (Trakt will 409 on item+watched_at conflicts).
     seen_movies: set[tuple[str, str]] = set()
     seen_eps_flat: set[tuple[str, str]] = set()
-    seen_show_eps: dict[tuple[str, int], set[int]] = {}
+    seen_show_eps: set[tuple[str, int, int, str]] = set()
 
     def _show_key(ids: Mapping[str, Any]) -> str:
         return json.dumps(
@@ -1220,10 +1253,10 @@ def _batch_add(
                     continue
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
 
-                seen = seen_show_eps.setdefault((skey, season_i), set())
-                if epn in seen:
+                ep_sig = (skey, season_i, epn, str(when or ""))
+                if ep_sig in seen_show_eps:
                     continue
-                seen.add(epn)
+                seen_show_eps.add(ep_sig)
 
                 ep_obj: dict[str, Any] = {"number": epn}
                 if when:
@@ -1532,21 +1565,16 @@ def _unresolved_from_nf_shows(nf_shows: Any) -> list[dict[str, Any]]:
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]], list[str]]:
     sess = adapter.client.session
-    headers = build_headers(
-        {
-            "trakt": {
-                "client_id": _cfg_get(adapter, "client_id"),
-                "access_token": _cfg_get(adapter, "access_token"),
-            }
-        }
-    )
+    headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     write_timeout = float(_cfg_num(adapter, "history_write_timeout", max(timeout, 60.0), float))
     items_list = list(items)
     body, unresolved, accepted_keys, accepted_minimals, skipped_keys = _batch_add(adapter, items_list)
     if not body:
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved, skipped_keys
+    _dbg("write_prepare", op="add", movies=len(body.get("movies") or []), shows=len(body.get("shows") or []), seasons=len(body.get("seasons") or []), episodes=len(body.get("episodes") or []), ids=len(body.get("ids") or []))
     r = request_with_retries(
         sess,
         "POST",
@@ -1564,8 +1592,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         d = r.json() or {}
         added = d.get("added") or {}
         existing = d.get("existing") or {}
-        added_total = int(added.get("movies") or 0) + int(added.get("episodes") or 0)
-        existing_total = int(existing.get("movies") or 0) + int(existing.get("episodes") or 0)
+        added_total = (
+            int(added.get("movies") or 0)
+            + int(added.get("shows") or 0)
+            + int(added.get("seasons") or 0)
+            + int(added.get("episodes") or 0)
+        )
+        existing_total = (
+            int(existing.get("movies") or 0)
+            + int(existing.get("shows") or 0)
+            + int(existing.get("seasons") or 0)
+            + int(existing.get("episodes") or 0)
+        )
         ok_total = added_total + existing_total
         ok_added = added_total
         nf = d.get("not_found") or {}
@@ -1625,12 +1663,30 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             except Exception:
                 pass
 
-        if nf_count > 0 and ok_total == 0:
-            _bust_index_cache("write:add:not_found")
-
-        if ok_total > 0 or nf_count == 0:
+        if ok_total > 0:
             _unfreeze_keys_if_present(adapter, accepted_keys)
-            _cache_merge_from_source_items(adapter, items_list)
+            unresolved_keys_for_cache: set[str] = set()
+            try:
+                for u in unresolved or []:
+                    obj = u.get("item") if isinstance(u, Mapping) and isinstance(u.get("item"), Mapping) else u
+                    if isinstance(obj, Mapping):
+                        k = str(key_of(id_minimal(obj)) or "").strip()
+                        if k:
+                            unresolved_keys_for_cache.add(k)
+            except Exception:
+                unresolved_keys_for_cache = set()
+
+            confirmed_for_cache: list[Mapping[str, Any]] = []
+            for m in items_list:
+                try:
+                    k = str(key_of(id_minimal(m)) or "").strip()
+                except Exception:
+                    k = ""
+                if not k or k in unresolved_keys_for_cache:
+                    continue
+                confirmed_for_cache.append(m)
+
+            _cache_merge_from_source_items(adapter, confirmed_for_cache)
             if _history_collection_enabled(adapter):
                 coll_body = _history_body_to_collection(body, _history_collection_types(adapter))
                 if coll_body:
@@ -1645,12 +1701,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             max_retries=retries,
                         )
                         if rc.status_code == 420:
-                            _warn("collection_limit", status=420)
+                            _warn("rate_limit", op="add", target="collection", status=420)
                             _record_limit_error("collection")
                         elif rc.status_code not in (200, 201):
-                            _warn("collection_add_failed", status=rc.status_code, body=((rc.text or "")[:200]))
+                            _warn("write_failed", op="add", target="collection", status=rc.status_code, body=((rc.text or "")[:200]))
                     except Exception as e:
-                        _warn("collection_add_exception", error=str(e))
+                        _warn("write_failed", op="add", target="collection", error=str(e))
 
         if existing_total > 0 and added_total == 0 and nf_count == 0:
             try:
@@ -1659,9 +1715,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 pass
 
         elif ok_total == 0 and nf_count == 0 and not unresolved:
-            _warn("write_noop", action="add")
+            _dbg("write_prepare", op="add", reason="noop_response")
     elif r.status_code == 409:
-        _warn("write_duplicate", action="add", status=409, body=((r.text or "")[:200]))
+        _dbg("write_item_skipped", op="add", reason="duplicate", status=409, body=((r.text or "")[:200]))
         ok_total = len(accepted_minimals)
         ok_added = 0
         try:
@@ -1671,61 +1727,84 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         _unfreeze_keys_if_present(adapter, accepted_keys)
         _bust_index_cache("write:add:duplicate")
     elif r.status_code == 420:
-        _warn("write_limit", action="add", status=420)
+        _warn("rate_limit", op="add", status=420)
         _record_limit_error("history")
         for m in accepted_minimals:
             unresolved.append({"item": m, "hint": "trakt_limit"})
+        _info("write_done", op="add", ok=False, applied=0, unresolved=len(unresolved), skipped=len(skipped_keys))
         return 0, unresolved, skipped_keys
     else:
-        _warn("write_failed", action="add", status=r.status_code, body=((r.text or "")[:200]))
+        _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:200]))
         for m in accepted_minimals:
             _freeze_item_if_enabled(adapter, m, action="add", reasons=[f"http:{r.status_code}"])
             unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok_added, unresolved=len(unresolved), skipped=len(skipped_keys))
     return ok_added, unresolved, skipped_keys
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
-    headers = build_headers(
-        {
-            "trakt": {
-                "client_id": _cfg_get(adapter, "client_id"),
-                "access_token": _cfg_get(adapter, "access_token"),
-            }
-        }
-    )
+    headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
-    body, unresolved, accepted_keys, accepted_minimals, raw_id_map = _batch_remove(adapter, items)
-    if not body:
-        return 0, unresolved
-    r = request_with_retries(
-        sess,
-        "POST",
-        URL_REMOVE,
-        headers=headers,
-        json=body,
-        timeout=timeout,
-        max_retries=retries,
-    )
-    ok_added = 0
-    ok_total = 0
-    added_total = 0
-    existing_total = 0
-    if r.status_code in (200, 201):
-        d = r.json() or {}
-        deleted = d.get("deleted") or d.get("removed") or {}
-        ok = int(deleted.get("movies") or 0) + int(deleted.get("episodes") or 0)
-        nf = d.get("not_found") or {}
-        for u in _unresolved_from_not_found(nf, raw_id_map):
-            unresolved.append(u)
-            _freeze_item_if_enabled(adapter, u["item"], action="remove", reasons=["not-found"])
+    chunk_size = int(_cfg_num(adapter, "history_chunk_size", 100, int))
+    items_list = list(items or [])
+    if not items_list:
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=0)
+        return 0, []
 
-        if ok > 0:
-            _unfreeze_keys_if_present(adapter, accepted_keys)
-            _bust_index_cache("write:remove")
-    else:
-        _warn("write_failed", action="remove", status=r.status_code, body=((r.text or "")[:200]))
-        for m in accepted_minimals:
-            _freeze_item_if_enabled(adapter, m, action="remove", reasons=[f"http:{r.status_code}"])
+    ok = 0
+    unresolved: list[dict[str, Any]] = []
+    for part in _chunked_items(items_list, chunk_size):
+        body, part_unresolved, accepted_keys, accepted_minimals, raw_id_map = _batch_remove(adapter, part)
+        unresolved.extend(part_unresolved)
+        if not body:
+            continue
+        _dbg(
+            "write_prepare",
+            op="remove",
+            chunk_size=chunk_size,
+            chunk_items=len(part),
+            movies=len(body.get("movies") or []),
+            shows=len(body.get("shows") or []),
+            seasons=len(body.get("seasons") or []),
+            episodes=len(body.get("episodes") or []),
+            ids=len(body.get("ids") or []),
+        )
+        r = request_with_retries(
+            sess,
+            "POST",
+            URL_REMOVE,
+            headers=headers,
+            json=body,
+            timeout=timeout,
+            max_retries=retries,
+        )
+        if r.status_code in (200, 201):
+            d = r.json() or {}
+            deleted = d.get("deleted") or d.get("removed") or {}
+            part_ok = (
+                int(deleted.get("movies") or 0)
+                + int(deleted.get("shows") or 0)
+                + int(deleted.get("seasons") or 0)
+                + int(deleted.get("episodes") or 0)
+                + int(deleted.get("ids") or 0)
+            )
+            nf = d.get("not_found") or {}
+            nf_unresolved = _unresolved_from_not_found(nf, raw_id_map)
+            for u in nf_unresolved:
+                unresolved.append(u)
+                _freeze_item_if_enabled(adapter, u["item"], action="remove", reasons=["not-found"])
+
+            if part_ok > 0:
+                ok += part_ok
+                _unfreeze_keys_if_present(adapter, accepted_keys)
+                _cache_remove_source_items(adapter, accepted_minimals)
+            elif not nf_unresolved:
+                _dbg("write_prepare", op="remove", reason="noop_response", chunk_items=len(part))
+        else:
+            _warn("write_failed", op="remove", status=r.status_code, body=((r.text or "")[:200]))
+            for m in accepted_minimals:
+                _freeze_item_if_enabled(adapter, m, action="remove", reasons=[f"http:{r.status_code}"])
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
