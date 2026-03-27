@@ -25,7 +25,6 @@ from ._common import (
     as_iso,
     cfg_int,
     cfg_section,
-    coalesce_since,
     get_watermark,
     iso_ok,
     iso_z,
@@ -33,7 +32,6 @@ from ._common import (
     now_iso,
     read_json,
     write_json,
-    pad_since_iso,
     save_watermark,
     update_watermark_if_new,
 )
@@ -87,6 +85,8 @@ def _error(msg: str, **fields: Any) -> None:
 
 def _log(msg: str, **fields: Any) -> None:
     _dbg(msg, **fields)
+
+
 def _cache_path() -> Path:
     return state_file("mdblist_history.index.json")
 
@@ -98,7 +98,6 @@ _iso_z = iso_z
 _as_epoch = as_epoch
 _as_iso = as_iso
 _max_iso = max_iso
-_pad_since_iso = pad_since_iso
 
 
 def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -157,8 +156,9 @@ def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
     normalized, dropped = _normalize_rollups(out)
     if dropped["shows"] or dropped["seasons"]:
         changed = True
-        _info(
-            "history_rollups_pruned",
+        _dbg(
+            "index_reconcile",
+            reason="rollups_pruned",
             shows=dropped["shows"],
             seasons=dropped["seasons"],
             scope="cache",
@@ -194,14 +194,15 @@ def _save_cache(items: Mapping[str, Any]) -> None:
 
 
 def _fetch_last_activities(adapter: Any, *, timeout: float, retries: int) -> dict[str, Any] | None:
-    try:
-        client = getattr(adapter, "client", None)
-        if client and hasattr(client, "last_activities"):
+    client = getattr(adapter, "client", None)
+    if client and hasattr(client, "last_activities"):
+        try:
             data = client.last_activities()
             if isinstance(data, Mapping) and "error" not in data and "status" not in data:
                 return dict(data)
-    except Exception:
-        pass
+        except Exception:
+            pass
+        return None
 
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
@@ -269,12 +270,152 @@ def _merge_event(dst: dict[str, Any], item: Mapping[str, Any]) -> str | None:
         dst[ek] = merged
     return ek
 
+
+def _journal_item(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    if str(row.get("category") or "").strip().lower() != "watched":
+        return None
+    typ = _type_norm(row.get("item_type"))
+    ids = _ids_pick(row.get("ids") or {})
+    if not ids:
+        return None
+    out: dict[str, Any] = {"type": typ}
+    if typ in ("season", "episode"):
+        out["show_ids"] = ids
+        out["ids"] = ids
+        out["season"] = row.get("season")
+        if typ == "episode":
+            out["episode"] = row.get("episode")
+    else:
+        out["ids"] = ids
+    title = str(row.get("title") or row.get("name") or "").strip()
+    show_title = str(row.get("series_title") or row.get("show_title") or row.get("show") or "").strip()
+    if typ == "show" and title:
+        out["title"] = title
+    elif typ == "season":
+        if show_title:
+            out["series_title"] = show_title
+        elif title:
+            out["series_title"] = title
+    elif typ == "episode":
+        if show_title:
+            out["series_title"] = show_title
+        elif title and not re.match(r"^s\d{1,3}e\d{1,3}$", title, flags=re.I):
+            out["series_title"] = title
+        if title:
+            out["title"] = title
+    status = str(row.get("status") or "").strip().lower()
+    value_at = row.get("value_at") or row.get("action_at")
+    if status == "added" and _iso_ok(value_at):
+        out["watched_at"] = _iso_z(value_at)
+    return out
+
+
+def _remove_base_entries(items: dict[str, Any], base_item: Mapping[str, Any]) -> int:
+    typ = _type_norm(base_item.get("type"))
+    show_key = _show_rollup_key(base_item) if typ in ("show", "season", "episode") else None
+    try:
+        season_no = int(base_item.get("season") or 0) if typ == "season" else 0
+    except Exception:
+        season_no = 0
+    try:
+        episode_no = int(base_item.get("episode") or 0) if typ == "episode" else 0
+    except Exception:
+        episode_no = 0
+
+    try:
+        target = _base_key(base_item)
+    except Exception:
+        return 0
+    if not target:
+        return 0
+    removed = 0
+    for key, value in list((items or {}).items()):
+        try:
+            if not isinstance(value, Mapping):
+                current = ""
+                cur_typ = ""
+                cur_show_key = None
+                cur_season_no = 0
+            else:
+                current = _base_key(value)
+                cur_typ = _type_norm(value.get("type"))
+                cur_show_key = _show_rollup_key(value)
+                try:
+                    cur_season_no = int(value.get("season") or 0) if cur_typ in ("season", "episode") else 0
+                except Exception:
+                    cur_season_no = 0
+                try:
+                    cur_episode_no = int(value.get("episode") or 0) if cur_typ == "episode" else 0
+                except Exception:
+                    cur_episode_no = 0
+        except Exception:
+            current = ""
+            cur_typ = ""
+            cur_show_key = None
+            cur_season_no = 0
+            cur_episode_no = 0
+
+        remove = bool(current and current == target)
+        if not remove and typ == "show" and show_key and cur_show_key == show_key:
+            remove = True
+        if (
+            not remove
+            and typ == "season"
+            and show_key
+            and season_no > 0
+            and cur_show_key == show_key
+            and cur_typ in ("season", "episode")
+            and cur_season_no == season_no
+        ):
+            remove = True
+        if (
+            not remove
+            and typ == "episode"
+            and show_key
+            and season_no >= 0
+            and episode_no > 0
+            and cur_show_key == show_key
+            and cur_typ == "episode"
+            and cur_season_no == season_no
+            and cur_episode_no == episode_no
+        ):
+            remove = True
+
+        if remove:
+            items.pop(key, None)
+            removed += 1
+    return removed
+
+
+def _apply_journal_rows(
+    cached: Mapping[str, Any],
+    rows: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, Any], dict[str, int], str | None]:
+    merged: dict[str, Any] = {
+        str(k): dict(v) for k, v in (cached or {}).items() if isinstance(v, Mapping)
+    }
+    stats = {"removed": 0}
+    latest_seen: str | None = None
+
+    def _sort_key(row: Mapping[str, Any]) -> str:
+        return str(row.get("action_at") or row.get("value_at") or "")
+
+    for row in sorted((r for r in (rows or []) if isinstance(r, Mapping)), key=_sort_key):
+        item = _journal_item(row)
+        if not item:
+            continue
+        latest_seen = _max_iso(latest_seen, row.get("action_at") or row.get("value_at"))
+        status = str(row.get("status") or "").strip().lower()
+        if status == "removed":
+            stats["removed"] += _remove_base_entries(merged, item)
+    return merged, stats, latest_seen
+
 def _show_rollup_key(item: Mapping[str, Any]) -> str | None:
     ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else item.get("ids")
     if not isinstance(ids, Mapping):
         return None
     picked = _ids_pick(ids)
-    for k in ("tmdb", "imdb", "trakt", "tvdb", "mdblist", "kitsu"):
+    for k in ("tmdb", "imdb", "trakt", "tvdb", "kitsu"):
         v = picked.get(k)
         if v is not None and v != "":
             return f"{k}:{v}"
@@ -289,16 +430,21 @@ def _normalize_rollups(items: Mapping[str, Any]) -> tuple[dict[str, Any], dict[s
         return {}, {"shows": 0, "seasons": 0}
 
     episode_children: set[tuple[str, int]] = set()
-    show_children: set[str] = set()
+    episode_show_children: set[str] = set()
+    season_children: set[str] = set()
 
     for item in src.values():
         typ = _type_norm(item.get("type"))
-        if typ != "episode":
-            continue
         show_key = _show_rollup_key(item)
         if not show_key:
             continue
-        show_children.add(show_key)
+        if typ == "season":
+            season_children.add(show_key)
+            continue
+        if typ != "episode":
+            continue
+        episode_show_children.add(show_key)
+        season_children.add(show_key)
         try:
             season_no = int(item.get("season") or 0)
         except Exception:
@@ -317,12 +463,15 @@ def _normalize_rollups(items: Mapping[str, Any]) -> tuple[dict[str, Any], dict[s
                 season_no = int(item.get("season") or 0)
             except Exception:
                 season_no = 0
+            if show_key and show_key in episode_show_children:
+                dropped["seasons"] += 1
+                continue
             if show_key and season_no > 0 and (show_key, season_no) in episode_children:
                 dropped["seasons"] += 1
                 continue
         elif typ == "show":
             show_key = _show_rollup_key(item)
-            if show_key and show_key in show_children:
+            if show_key and show_key in season_children:
                 dropped["shows"] += 1
                 continue
         out[key] = item
@@ -341,6 +490,9 @@ def _ids_pick(obj: Mapping[str, Any]) -> dict[str, Any]:
             if not vv:
                 continue
             out[k] = vv
+            continue
+        if k == 'mdblist':
+            out[k] = str(v).strip().lower()
             continue
         if k in ('tmdb', 'tvdb', 'trakt'):
             try:
@@ -520,9 +672,11 @@ def build_index(
     apikey = str(cfg.get("api_key") or "").strip()
     if not apikey:
         if cached:
-            _log("missing api_key - using cached shadow")
+            _dbg("index_cache_hit", source="cache", reason="missing_api_key", count=len(cached))
+            _info("index_done", count=len(cached), source="cache")
         else:
-            _log("missing api_key - empty history snapshot")
+            _dbg("index_reconcile", reason="missing_api_key", strategy="empty")
+            _info("index_done", count=0, source="empty")
         return cached
 
     per_page = _cfg_int(cfg, "history_per_page", per_page)
@@ -549,40 +703,74 @@ def build_index(
         if _iso_ok(candidate):
             acts_watched_iso = _max_iso(acts_watched_iso, _iso_z(candidate))
 
+    journal_ts = acts.get("journal_at") if isinstance(acts, Mapping) else None
+    journal_iso = _iso_z(journal_ts) if _iso_ok(journal_ts) else None
     wm = get_watermark("history")
+    journal_wm = get_watermark("history_journal")
     force_baseline = False
-    if acts_watched_iso and wm:
+
+    if acts_watched_iso and journal_iso and wm and journal_wm:
         a = _as_epoch(acts_watched_iso) or 0
         b = _as_epoch(wm) or 0
-        if a <= b:
-            if cached:
-                _log(f"no-op (watched_at={acts_watched_iso} <= watermark={wm}) - using cached shadow")
-                return cached
-            _log(f"no-op (watched_at={acts_watched_iso} <= watermark={wm}) but cache empty - forcing baseline refresh")
-            force_baseline = True
+        jn = _as_epoch(journal_iso) or 0
+        jw = _as_epoch(journal_wm) or 0
+        if a <= b and jn <= jw:
+            _dbg("index_cache_hit", source="cache", reason="activities_unchanged", watched_at=acts_watched_iso, journal_at=journal_iso, watermark=wm, journal_watermark=journal_wm, count=len(cached))
+            _info("index_done", count=len(cached), source="cache")
+            return cached
+        if cached and jn > jw:
+            journal_limit = max(50, min(per_page, 1000))
+            journal = adapter.fetch_journal(since=journal_wm, limit=journal_limit, category="watched")
+            journal_oldest = str(journal.get("journal_oldest_at") or "").strip()
+            if _iso_ok(journal_oldest) and (_as_epoch(journal_wm) or 0) < (_as_epoch(_iso_z(journal_oldest)) or 0):
+                _warn("index_reconcile", reason="journal_window_stale", strategy="full_replace", journal_oldest_at=journal_oldest, journal_watermark=journal_wm)
+                force_baseline = True
+            if not force_baseline:
+                rows = journal.get("rows") if isinstance(journal.get("rows"), list) else []
+                has_adds = any(
+                    isinstance(row, Mapping)
+                    and str(row.get("category") or "").strip().lower() == "watched"
+                    and str(row.get("status") or "").strip().lower() == "added"
+                    for row in rows
+                )
+                if has_adds:
+                    _dbg(
+                        "index_reconcile",
+                        reason="journal_contains_adds",
+                        strategy="full_merge",
+                        rows=len(rows),
+                        journal_at=journal_iso,
+                        journal_watermark=journal_wm,
+                    )
+                else:
+                    merged_journal, journal_stats, latest_journal_seen = _apply_journal_rows(cached, rows)
+                    normalized_journal, dropped_journal = _normalize_rollups(merged_journal)
+                    if dropped_journal["shows"] or dropped_journal["seasons"]:
+                        _dbg("index_reconcile", reason="rollups_pruned", shows=dropped_journal["shows"], seasons=dropped_journal["seasons"], scope="journal")
+                    _save_cache(normalized_journal)
+                    update_watermark_if_new("history", _max_iso(latest_journal_seen, acts_watched_iso))
+                    update_watermark_if_new("history_journal", journal_iso)
+                    _dbg("index_reconcile", reason="journal_applied", strategy="journal", rows=len(rows), removed=journal_stats["removed"], journal_at=journal_iso, journal_watermark=journal_wm)
+                    _info("index_done", count=len(normalized_journal), source="journal")
+                    return normalized_journal
 
-    if acts_watched_iso and (not wm) and cached:
+    if acts_watched_iso and journal_iso and (not journal_wm) and cached:
+        force_baseline = True
+
+    if acts_watched_iso and (not wm) and cached and not force_baseline:
         save_watermark("history", acts_watched_iso)
-        _log(f"baseline watermark set to {acts_watched_iso} (using cached shadow)")
+        if journal_iso:
+            save_watermark("history_journal", journal_iso)
+        _dbg("index_cache_hit", source="cache", reason="baseline_watermark_set", watermark=acts_watched_iso, count=len(cached))
+        _info("index_done", count=len(cached), source="cache")
         return cached
 
-    cfg_since = str(cfg.get("history_since") or "").strip() or None
-    if not wm and not force_baseline:
-        since_req: str | None = None
-    else:
-        since_wm = START_OF_TIME_ISO if force_baseline else coalesce_since("history", cfg_since, env_any="MDBLIST_HISTORY_SINCE")
-        since_req = _pad_since_iso(since_wm)
+    since_req: str | None = None
 
     if acts_watched_iso:
-        if since_req:
-            _log(f"history changed (watched_at={acts_watched_iso} watermark={wm or '-'}) - delta since={since_req}")
-        else:
-            _log(f"history changed (watched_at={acts_watched_iso} watermark={wm or '-'}) - baseline full fetch (no since)")
+        _dbg("index_reconcile", reason="activities_changed", strategy="full_merge", watched_at=acts_watched_iso, journal_at=journal_iso or "-", watermark=wm or "-", journal_watermark=journal_wm or "-")
     else:
-        if since_req:
-            _log(f"history delta since={since_req}")
-        else:
-            _log("history baseline full fetch (no since)")
+        _dbg("index_reconcile", reason="baseline_fetch", strategy="baseline", journal_at=journal_iso or "-")
 
     prog_factory = getattr(adapter, "progress_factory", None)
     prog: Any = prog_factory("history") if callable(prog_factory) else None
@@ -592,6 +780,7 @@ def build_index(
     offset = 0
     pages = 0
     tick = 0
+    complete_fetch = True
     while True:
         params: dict[str, Any] = {"apikey": apikey, "offset": offset, "limit": per_page}
         if since_req:
@@ -606,11 +795,13 @@ def build_index(
                 max_retries=retries,
             )
         except Exception as e:
-            _log(f"GET watched delta offset {offset} failed: {type(e).__name__}: {e}")
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, offset=offset, error=f"{type(e).__name__}: {e}")
+            complete_fetch = False
             break
 
         if r.status_code != 200:
-            _log(f"GET watched delta offset {offset} -> {r.status_code}: {(r.text or '')[:160]}")
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset, body=(r.text or '')[:160])
+            complete_fetch = False
             break
 
         data = r.json() if (r.text or "").strip() else {}
@@ -655,7 +846,8 @@ def build_index(
 
         pages += 1
         if pages >= max_pages:
-            _log(f"delta.stop safety cap hit max_pages={max_pages}")
+            _warn("index_reconcile", reason="safety_cap_hit", strategy="delta", max_pages=max_pages)
+            complete_fetch = False
             break
 
         pag = data.get("pagination") if isinstance(data, Mapping) else None
@@ -669,31 +861,39 @@ def build_index(
         
     normalized_out, dropped_out = _normalize_rollups(out)
     if dropped_out["shows"] or dropped_out["seasons"]:
-        _info(
-            "history_rollups_pruned",
+        _dbg(
+            "index_reconcile",
+            reason="rollups_pruned",
             shows=dropped_out["shows"],
             seasons=dropped_out["seasons"],
             scope="delta",
         )
 
-    merged = dict(cached)
-    if normalized_out:
-        for k, v in normalized_out.items():
-            merged[str(k)] = dict(v)
+    if normalized_out and (force_baseline or complete_fetch):
+        # /sync/watched is fetched as a full current snapshot here.
+        merged_base = {str(k): dict(v) for k, v in normalized_out.items()}
+    else:
+        merged_base = dict(cached)
+        if normalized_out:
+            for k, v in normalized_out.items():
+                merged_base[str(k)] = dict(v)
 
-    merged, dropped_merged = _normalize_rollups(merged)
+    merged, dropped_merged = _normalize_rollups(merged_base)
     if dropped_merged["shows"] or dropped_merged["seasons"]:
-        _info(
-            "history_rollups_pruned",
+        _dbg(
+            "index_reconcile",
+            reason="rollups_pruned",
             shows=dropped_merged["shows"],
             seasons=dropped_merged["seasons"],
             scope="merged",
         )
 
-    if out or dropped_merged["shows"] or dropped_merged["seasons"]:
+    if out or force_baseline or dropped_merged["shows"] or dropped_merged["seasons"]:
         _save_cache(merged)
 
     update_watermark_if_new("history", latest_seen or acts_watched_iso)
+    if journal_iso:
+        update_watermark_if_new("history_journal", journal_iso)
 
     if prog:
         try:
@@ -701,15 +901,13 @@ def build_index(
         except Exception:
             pass
 
-    _log(
-        f"index size: {len(merged)} delta={len(out)} latest_seen={latest_seen or '-'} "
-        f"watermark={get_watermark('history') or '-'}"
-    )
+    _dbg("index_fetch_counts", count=len(out), latest_seen=latest_seen or "-", watermark=get_watermark("history") or "-", source="current")
+    _info("index_done", count=len(merged), source="current")
     return merged
 
 
 def _stable_show_key(ids: Mapping[str, Any]) -> str:
-    keep = {k: ids.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt", "mdblist") if ids.get(k) is not None}
+    keep = {k: ids.get(k) for k in ("tmdb", "imdb", "tvdb", "trakt") if ids.get(k) is not None}
     return json.dumps(keep, sort_keys=True)
 
 
@@ -751,9 +949,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
         if typ.endswith("s") and typ in ("movies", "shows", "seasons", "episodes"):
             typ = typ[:-1]
         if typ not in ("movie", "show", "season", "episode"):
-            _log(
-                f"skip write: unknown type={typ} item={id_minimal({'type': str(typ_raw or 'unknown'), 'ids': _ids_pick(m)})}"
-            )
+            _dbg("write_item_skipped", reason="unknown_type", item=id_minimal({"type": str(typ_raw or "unknown"), "ids": _ids_pick(m)}))
             continue
         ids = _ids_pick(m)
         show_ids = _ids_pick(m.get("show_ids") or {}) if isinstance(m.get("show_ids"), Mapping) else {}
@@ -761,9 +957,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
         watched_at = m.get("watched_at") or m.get("last_watched_at")
         watched_iso = _iso_z(watched_at) if _iso_ok(watched_at) else None
         if not watched_iso and not unwatch:
-            _log(
-                f"skip write: missing watched_at type={typ} item={id_minimal({'type': typ, 'ids': ids or show_ids})}"
-            )
+            _dbg("write_item_skipped", reason="missing_watched_at", item=id_minimal({"type": typ, "ids": ids or show_ids}))
             continue
 
         if typ == "movie":
@@ -875,7 +1069,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
                 skipped_meta += 1
 
     if skipped_nested or skipped_meta:
-        _log(f"shows_plain filtered nested={skipped_nested} missing_meta={skipped_meta}")
+        _dbg("write_prepare", skipped_nested=skipped_nested, skipped_meta=skipped_meta)
 
     body: dict[str, Any] = {}
     if movies:
@@ -910,9 +1104,11 @@ def _write(
 ) -> tuple[int, list[dict[str, Any]]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
+    items_list = list(items or [])
     if not apikey:
-        _log("write abort: missing api_key")
-        return 0, [{"item": id_minimal(it), "hint": "missing_api_key"} for it in (items or [])]
+        unresolved = [{"item": id_minimal(it), "hint": "missing_api_key"} for it in items_list]
+        _info("write_skipped", op="remove" if unwatch else "add", reason="missing_api_key", unresolved=len(unresolved))
+        return 0, unresolved
 
     sess = adapter.client.session
     tmo = adapter.cfg.timeout
@@ -922,13 +1118,21 @@ def _write(
     delay_ms = _cfg_int(cfg, "history_write_delay_ms", 600)
     max_backoff_ms = _cfg_int(cfg, "history_max_backoff_ms", 8000)
 
-    body, accepted = _bucketize(items, unwatch=unwatch)
+    body, accepted = _bucketize(items_list, unwatch=unwatch)
     if not body:
-        _log("nothing to write (empty body after aggregate)")
+        _info("write_skipped", op="remove" if unwatch else "add", reason="empty_payload", unresolved=0)
         return 0, []
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
+    _dbg(
+        "write_start",
+        op="remove" if unwatch else "add",
+        movies=len(body.get("movies") or []),
+        shows_nested=len(body.get("shows_nested") or []),
+        shows_plain=len(body.get("shows_plain") or []),
+        chunk_size=chunk_size,
+    )
 
     stages: list[tuple[str, str]] = [
         ("movies", "movies"),
@@ -941,9 +1145,7 @@ def _write(
         if not rows:
             continue
 
-        stage = "" if body_key == bucket else f" stage={body_key}"
-        verb = "UNWATCH" if unwatch else "WATCH"
-        _log(f"{verb} bucket={bucket}{stage} rows={len(rows)} chunk={chunk_size}")
+        stage = "" if body_key == bucket else body_key
 
         for part in _chunk(rows, chunk_size):
             payload = {bucket: part}
@@ -976,8 +1178,10 @@ def _write(
                     if unwatch:
                         removed = d.get("removed") or d.get("deleted") or d.get("unwatched") or {}
                         n = sum(int(removed.get(k) or 0) for k in kinds)
-                        if n <= 0:
+                        if r.status_code == 204 and n <= 0:
                             n = len(part)
+                        if n <= 0:
+                            _dbg("write_prepare", op="remove", reason="noop_response", bucket=bucket, stage=stage or bucket, rows=len(part))
                         ok += n
                     else:
                         updated = d.get("updated") or {}
@@ -995,9 +1199,15 @@ def _write(
                     break
 
                 if r.status_code in (429, 503):
-                    _log(
-                        f"{'UNWATCH' if unwatch else 'WATCH'} throttled {r.status_code} "
-                        f"bucket={bucket}{stage} attempt={attempt} backoff_ms={backoff}: {(r.text or '')[:180]}"
+                    _warn(
+                        "rate_limit",
+                        op="remove" if unwatch else "add",
+                        bucket=bucket,
+                        stage=stage or bucket,
+                        status=r.status_code,
+                        attempt=attempt,
+                        backoff_ms=backoff,
+                        body=(r.text or '')[:180],
                     )
                     time.sleep(min(max_backoff_ms, backoff) / 1000.0)
                     attempt += 1
@@ -1012,9 +1222,15 @@ def _write(
                     and len(part) > 1
                 ):
                     preview = [id_minimal({"type": "show", "ids": (x.get("ids") or {})}) for x in part[:3]]
-                    _log(
-                        f"{'UNWATCH' if unwatch else 'WATCH'} retry split 500 bucket={bucket} stage={body_key} "
-                        f"rows={len(part)} preview={preview}"
+                    _warn(
+                        "write_failed",
+                        op="remove" if unwatch else "add",
+                        bucket=bucket,
+                        stage=body_key,
+                        status=500,
+                        reason="retry_split",
+                        rows=len(part),
+                        preview=preview,
                     )
 
                     for single in part:
@@ -1041,9 +1257,13 @@ def _write(
                         )
                     break
 
-                _log(
-                    f"{'UNWATCH' if unwatch else 'WATCH'} failed {r.status_code} "
-                    f"bucket={bucket}{stage}: {(r.text or '')[:200]}"
+                _warn(
+                    "write_failed",
+                    op="remove" if unwatch else "add",
+                    bucket=bucket,
+                    stage=stage or bucket,
+                    status=r.status_code,
+                    body=(r.text or '')[:200],
                 )
                 for x in part:
                     ids = x.get("ids") or {}
@@ -1077,6 +1297,7 @@ def _write(
             newest = _max_iso(newest, it.get("watched_at"))
         update_watermark_if_new("history", newest)
 
+    _info("write_done", op="remove" if unwatch else "add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 
