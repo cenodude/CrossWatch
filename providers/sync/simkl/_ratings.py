@@ -875,48 +875,78 @@ def _write_group(item: Mapping[str, Any]) -> str:
     return "movies" if typ == "movie" else "shows"
 
 
+def _chunk_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mapping[str, Any]]]:
+    size = max(1, int(n or 1))
+    for i in range(0, len(seq), size):
+        yield seq[i : i + size]
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
     hdrs = _headers(adapter)
+    items_list: list[Mapping[str, Any]] = list(items or [])
+    if not items_list:
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=0)
+        return 0, []
 
-    movies: list[dict[str, Any]] = []
-    shows: list[dict[str, Any]] = []
+    chunk_size = max(1, int(getattr(adapter.cfg, "ratings_chunk_size", 100) or 100))
+    ok = 0
     unresolved: list[dict[str, Any]] = []
-    thaw_keys: list[str] = []
-    rshadow_events: list[dict[str, Any]] = []
-    attempted: list[Mapping[str, Any]] = []
+    for part in _chunk_items(items_list, chunk_size):
+        movies: list[dict[str, Any]] = []
+        shows: list[dict[str, Any]] = []
+        thaw_keys: list[str] = []
+        rshadow_events: list[dict[str, Any]] = []
+        attempted: list[Mapping[str, Any]] = []
 
-    for it in items or []:
-        mini = id_minimal(dict(it))
-        key = simkl_key_of(mini)
-        if _is_unknown_key(key):
-            unresolved.append({"item": mini, "hint": "missing_identity"})
-            continue
+        for it in part:
+            mini = id_minimal(dict(it))
+            key = simkl_key_of(mini)
+            if _is_unknown_key(key):
+                unresolved.append({"item": mini, "hint": "missing_identity"})
+                continue
 
-        typ = str(it.get("type") or "").strip().lower()
-        group = _write_group(it)
-        if typ not in {"movie", "show", "season", "episode"}:
-            unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
-            continue
+            typ = str(it.get("type") or "").strip().lower()
+            group = _write_group(it)
+            if typ not in {"movie", "show", "season", "episode"}:
+                unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
+                continue
 
-        if _is_frozen(it):
-            continue
+            if _is_frozen(it):
+                continue
 
-        if typ == "movie" and group == "movies":
-            ent = _movie_entry_add(it)
-            if ent:
-                movies.append(ent)
-                thaw_keys.append(key)
-                attempted.append(it)
-                ev = dict(mini)
-                ev["rating"] = ent["rating"]
-                ev["rated_at"] = ent.get("rated_at", "")
-                rshadow_events.append(ev)
-            else:
-                unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
-            continue
+            if typ == "movie" and group == "movies":
+                ent = _movie_entry_add(it)
+                if ent:
+                    movies.append(ent)
+                    thaw_keys.append(key)
+                    attempted.append(it)
+                    ev = dict(mini)
+                    ev["rating"] = ent["rating"]
+                    ev["rated_at"] = ent.get("rated_at", "")
+                    rshadow_events.append(ev)
+                else:
+                    unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
+                continue
 
-        if typ == "movie" and group == "shows":
+            if typ == "movie" and group == "shows":
+                ent = _show_entry_add(adapter, it)
+                if ent:
+                    shows.append(ent)
+                    thaw_keys.append(key)
+                    attempted.append(it)
+                    ev = dict(mini)
+                    ev["rating"] = ent["rating"]
+                    ev["rated_at"] = ent.get("rated_at", "")
+                    rshadow_events.append(ev)
+                else:
+                    unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
+                continue
+
+            if typ in ("episode", "season"):
+                unresolved.append({"item": mini, "hint": "unsupported_type"})
+                continue
+
             ent = _show_entry_add(adapter, it)
             if ent:
                 shows.append(ent)
@@ -928,143 +958,133 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 rshadow_events.append(ev)
             else:
                 unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
+
+        if not (movies or shows):
             continue
 
-        if typ in ("episode", "season"):
-            unresolved.append({"item": mini, "hint": "unsupported_type"})
-            continue
+        body: dict[str, Any] = {}
+        if movies:
+            body["movies"] = movies
+        if shows:
+            body["shows"] = shows
 
-        ent = _show_entry_add(adapter, it)
-        if ent:
-            shows.append(ent)
-            thaw_keys.append(key)
-            attempted.append(it)
-            ev = dict(mini)
-            ev["rating"] = ent["rating"]
-            ev["rated_at"] = ent.get("rated_at", "")
-            rshadow_events.append(ev)
-        else:
-            unresolved.append({"item": mini, "hint": "missing_ids_or_rating"})
+        try:
+            resp = sess.post(URL_ADD, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
+            if 200 <= resp.status_code < 300:
+                _unfreeze_if_present(thaw_keys)
+                ok += len(movies) + len(shows)
+                try:
+                    _rshadow_put_all(rshadow_events)
+                except Exception as exc:
+                    _warn("cache_save_failed", cache="shadow", op="add", error=str(exc))
+            else:
+                _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
+                for it in attempted:
+                    ids = _maybe_map_tvdb(adapter, _ids_of(it))
+                    rating = _norm_rating(it.get("rating"))
+                    if ids and rating is not None:
+                        _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
+        except Exception as exc:
+            _warn("write_failed", op="add", error=str(exc))
+            for it in attempted:
+                ids = _maybe_map_tvdb(adapter, _ids_of(it))
+                rating = _norm_rating(it.get("rating"))
+                if ids and rating is not None:
+                    _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
 
-    if not (movies or shows):
-        _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
-        return 0, unresolved
-
-    body: dict[str, Any] = {}
-    if movies:
-        body["movies"] = movies
-    if shows:
-        body["shows"] = shows
-
-    try:
-        resp = sess.post(URL_ADD, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
-        if 200 <= resp.status_code < 300:
-            _unfreeze_if_present(thaw_keys)
-            ok = len(movies) + len(shows)
-            try:
-                _rshadow_put_all(rshadow_events)
-            except Exception as exc:
-                _warn("cache_save_failed", cache="shadow", op="add", error=str(exc))
-            _info("write_done", op="add", ok=len(unresolved) == 0 and ok == len(thaw_keys), applied=ok, unresolved=len(unresolved))
-            return ok, unresolved
-        _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
-    except Exception as exc:
-        _warn("write_failed", op="add", error=str(exc))
-
-    for it in attempted:
-        ids = _maybe_map_tvdb(adapter, _ids_of(it))
-        rating = _norm_rating(it.get("rating"))
-        if ids and rating is not None:
-            _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
-
-    _info("write_done", op="add", ok=False, applied=0, unresolved=len(unresolved))
-    return 0, unresolved
+    _info("write_done", op="add", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
+    return ok, unresolved
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     sess = adapter.client.session
     hdrs = _headers(adapter)
+    items_list: list[Mapping[str, Any]] = list(items or [])
+    if not items_list:
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=0)
+        return 0, []
 
-    movies: list[dict[str, Any]] = []
-    shows: list[dict[str, Any]] = []
+    chunk_size = max(1, int(getattr(adapter.cfg, "ratings_chunk_size", 100) or 100))
+    ok = 0
     unresolved: list[dict[str, Any]] = []
-    thaw_keys: list[str] = []
-    attempted: list[Mapping[str, Any]] = []
+    for part in _chunk_items(items_list, chunk_size):
+        movies: list[dict[str, Any]] = []
+        shows: list[dict[str, Any]] = []
+        thaw_keys: list[str] = []
+        attempted: list[Mapping[str, Any]] = []
 
-    for it in items or []:
-        mini = id_minimal(dict(it))
-        key = simkl_key_of(mini)
-        if _is_unknown_key(key):
-            unresolved.append({"item": mini, "hint": "missing_identity"})
+        for it in part:
+            mini = id_minimal(dict(it))
+            key = simkl_key_of(mini)
+            if _is_unknown_key(key):
+                unresolved.append({"item": mini, "hint": "missing_identity"})
+                continue
+
+            if _is_frozen(it):
+                continue
+
+            ids = _ids_of(it) or _show_ids_of_episode(it)
+            ids = _maybe_map_tvdb(adapter, ids)
+            if not ids:
+                unresolved.append({"item": mini, "hint": "missing_ids"})
+                continue
+
+            typ = str(it.get("type") or "").strip().lower()
+            group = _write_group(it)
+            if typ not in {"movie", "show", "season", "episode"}:
+                unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
+                continue
+
+            if typ == "movie" and group == "movies":
+                movies.append({"ids": ids})
+            elif typ == "movie" and group == "shows":
+                shows.append({"ids": ids})
+            elif typ in ("episode", "season"):
+                unresolved.append({"item": mini, "hint": "unsupported_type"})
+                continue
+            else:
+                shows.append({"ids": ids})
+
+            thaw_keys.append(key)
+            attempted.append(it)
+
+        if not (movies or shows):
             continue
 
-        if _is_frozen(it):
-            continue
+        body: dict[str, Any] = {}
+        if movies:
+            body["movies"] = movies
+        if shows:
+            body["shows"] = shows
 
-        ids = _ids_of(it) or _show_ids_of_episode(it)
-        ids = _maybe_map_tvdb(adapter, ids)
-        if not ids:
-            unresolved.append({"item": mini, "hint": "missing_ids"})
-            continue
+        try:
+            resp = sess.post(URL_REMOVE, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
+            if 200 <= resp.status_code < 300:
+                _unfreeze_if_present(thaw_keys)
+                try:
+                    sh = _rshadow_load()
+                    store: dict[str, Any] = dict(sh.get("items") or {})
+                    changed = False
+                    for k in thaw_keys:
+                        if k in store:
+                            store.pop(k, None)
+                            changed = True
+                    if changed:
+                        sh["items"] = store
+                        _rshadow_save(sh)
+                except Exception:
+                    pass
+                ok += len(movies) + len(shows)
+                continue
+            _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
+        except Exception as exc:
+            _warn("write_failed", op="remove", error=str(exc))
 
-        typ = str(it.get("type") or "").strip().lower()
-        group = _write_group(it)
-        if typ not in {"movie", "show", "season", "episode"}:
-            unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
-            continue
+        for it in attempted:
+            ids = _ids_of(it) or _show_ids_of_episode(it)
+            ids = _maybe_map_tvdb(adapter, ids)
+            if ids:
+                _freeze(it, action="remove", reasons=["write_failed"], ids_sent=ids, rating=None)
 
-        if typ == "movie" and group == "movies":
-            movies.append({"ids": ids})
-        elif typ == "movie" and group == "shows":
-            shows.append({"ids": ids})
-        elif typ in ("episode", "season"):
-            unresolved.append({"item": mini, "hint": "unsupported_type"})
-            continue
-        else:
-            shows.append({"ids": ids})
-
-        thaw_keys.append(key)
-        attempted.append(it)
-
-    if not (movies or shows):
-        _info("write_skipped", op="remove", reason="empty_payload", unresolved=len(unresolved))
-        return 0, unresolved
-
-    body: dict[str, Any] = {}
-    if movies:
-        body["movies"] = movies
-    if shows:
-        body["shows"] = shows
-
-    try:
-        resp = sess.post(URL_REMOVE, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
-        if 200 <= resp.status_code < 300:
-            _unfreeze_if_present(thaw_keys)
-            try:
-                sh = _rshadow_load()
-                store: dict[str, Any] = dict(sh.get("items") or {})
-                changed = False
-                for k in thaw_keys:
-                    if k in store:
-                        store.pop(k, None)
-                        changed = True
-                if changed:
-                    sh["items"] = store
-                    _rshadow_save(sh)
-            except Exception:
-                pass
-            ok = len(movies) + len(shows)
-            _info("write_done", op="remove", ok=len(unresolved) == 0 and ok == len(thaw_keys), applied=ok, unresolved=len(unresolved))
-            return ok, unresolved
-        _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
-    except Exception as exc:
-        _warn("write_failed", op="remove", error=str(exc))
-
-    for it in attempted:
-        ids = _ids_of(it) or _show_ids_of_episode(it)
-        ids = _maybe_map_tvdb(adapter, ids)
-        if ids:
-            _freeze(it, action="remove", reasons=["write_failed"], ids_sent=ids, rating=None)
-
-    _info("write_done", op="remove", ok=False, applied=0, unresolved=len(unresolved))
-    return 0, unresolved
+    _info("write_done", op="remove", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
+    return ok, unresolved
