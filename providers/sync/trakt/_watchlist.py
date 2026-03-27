@@ -1,5 +1,5 @@
 # /providers/sync/trakt/_watchlist.py
-# TRAKT Module forn watchlist sync functions
+# TRAKT Module for watchlist sync functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 import os, json, time
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from ._common import (
-    build_headers,
     normalize_watchlist_row,
     key_of,
     ids_for_trakt,
@@ -18,6 +17,11 @@ from ._common import (
     state_file,
     _pair_scope,
     _is_capture_mode,
+    _now_iso,
+    _chunk,
+    _last_limit_path,
+    _record_limit_error,
+    headers_for_adapter,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal
@@ -35,28 +39,6 @@ def _unresolved_path() -> Path:
     return state_file("trakt_watchlist.unresolved.json")
 
 
-def _last_limit_path() -> Path:
-    return state_file("trakt_last_limit_error.json")
-
-
-
-def _record_limit_error(feature: str) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    try:
-        _last_limit_path().parent.mkdir(parents=True, exist_ok=True)
-        tmp = _last_limit_path().with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"feature": feature, "ts": _now_iso()},
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
-            "utf-8",
-        )
-        os.replace(tmp, _last_limit_path())
-    except Exception as e:
-        _warn("limit_error_save_failed", feature=feature, error=str(e))
 
 _PROVIDER = "TRAKT"
 _FEATURE = "watchlist"
@@ -83,32 +65,6 @@ def _warn(event: str, **fields: Any) -> None:
 def _error(event: str, **fields: Any) -> None:
     cw_log(_PROVIDER, _FEATURE, "error", event, **fields)
 
-
-
-def _legacy_path(path: Path) -> Path | None:
-    parts = path.stem.split(".")
-    if len(parts) < 2:
-        return None
-    legacy_name = ".".join(parts[:-1]) + path.suffix
-    legacy = path.with_name(legacy_name)
-    return None if legacy == path else legacy
-
-
-def _migrate_legacy_json(path: Path) -> None:
-    if path.exists():
-        return
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    legacy = _legacy_path(path)
-    if not legacy or not legacy.exists():
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_bytes(legacy.read_bytes())
-        os.replace(tmp, path)
-    except Exception:
-        pass
 
 
 # Config helpers
@@ -168,7 +124,6 @@ def _shadow_load() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {"etag": None, "ts": 0, "items": {}}
     p = _shadow_path()
-    _migrate_legacy_json(p)
     try:
         return json.loads(p.read_text("utf-8"))
     except Exception:
@@ -191,15 +146,10 @@ def _shadow_save(etag: str | None, items: Mapping[str, Any]) -> None:
 
 
 # Unresolved state
-def _now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
 def _load_unresolved() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
     p = _unresolved_path()
-    _migrate_legacy_json(p)
     try:
         return json.loads(p.read_text("utf-8"))
     except Exception:
@@ -215,7 +165,7 @@ def _save_unresolved(data: Mapping[str, Any]) -> None:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
         os.replace(tmp, _unresolved_path())
     except Exception as e:
-        _warn("unresolved_save_failed", error=str(e))
+        _warn("cache_save_failed", cache="unresolved", op="save", error=str(e))
 
 
 def _freeze_item(
@@ -283,9 +233,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     prog = prog_mk("watchlist") if callable(prog_mk) else None
 
     sess = adapter.client.session
-    headers = build_headers(
-        {"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}}
-    )
+    headers = headers_for_adapter(adapter)
 
     acts = fetch_last_activities(
         sess,
@@ -323,15 +271,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         _tick(prog, 0, total=total, force=True)
         _tick(prog, total, total=total)
         _unfreeze_keys_if_present(idx.keys())
+        _info("index_done", count=len(idx), source="shadow")
         return idx
 
     if r.status_code != 200:
-        _warn("index_fetch_failed_using_shadow", status=r.status_code)
+        _warn("http_failed", op="index", method="GET", url=URL_ALL, status=r.status_code)
         idx = dict(sh.get("items") or {})
         total = len(idx)
         _tick(prog, 0, total=total, force=True)
         _tick(prog, total, total=total)
         _unfreeze_keys_if_present(idx.keys())
+        _info("index_done", count=len(idx), source="shadow_fallback")
         return idx
 
     data = r.json() if (r.text or "").strip() else []
@@ -358,7 +308,7 @@ def _batch_payload(
     for it in items or []:
         m = id_minimal(it)
         if _is_frozen(m):
-            _dbg("skip_frozen", title=m.get("title"))
+            _dbg("write_item_skipped", reason="frozen", item=m)
             continue
 
         kind = pick_trakt_kind(m)
@@ -452,11 +402,6 @@ def _freeze_not_found(
                 freeze_minimal(m)
 
 
-def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
-    n = max(1, int(n))
-    for i in range(0, len(seq), n):
-        yield seq[i : i + n]
-
 
 def _payload_from_accepted(accepted_slice: list[dict[str, Any]]) -> dict[str, Any]:
     return build_watchlist_body(accepted_slice)
@@ -474,18 +419,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     capacity = None if wl_limit is None else max(0, wl_limit - current_count)
 
     sess = adapter.client.session
-    headers = build_headers(
-        {"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}}
-    )
+    headers = headers_for_adapter(adapter)
 
     accepted, unresolved = _batch_payload(items)
     if not accepted:
+        _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
 
     if capacity is not None and capacity <= 0:
         for x in accepted:
             unresolved.append({"item": x, "hint": "trakt_limit"})
-        _warn("watchlist_limit_reached", limit=wl_limit, have=current_count)
+        _warn("rate_limit", op="add", reason="watchlist_limit", limit=wl_limit, have=current_count)
+        _info("write_done", op="add", ok=False, applied=0, unresolved=len(unresolved))
         return 0, unresolved
 
     if capacity is not None and capacity < len(accepted):
@@ -494,7 +439,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         for x in rest:
             unresolved.append({"item": x, "hint": "trakt_limit"})
         accepted = keep
-        _warn("watchlist_capacity_partial", capacity=capacity, skipped=len(rest))
+        _dbg("write_prepare", op="add", reason="capacity_partial", capacity=capacity, skipped=len(rest))
 
     ok = 0
     
@@ -522,11 +467,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             ok += sum(int(existing.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action="add", unresolved=unresolved, add_details=freeze_details)
-            if ok == 0 and not unresolved:
-                _warn("write_noop", action="add")
         elif r.status_code == 420:
             upgrade_url = r.headers.get("X-Upgrade-URL")
-            _warn("write_limit", action="add", status=420, upgrade_url=upgrade_url)
+            _warn("rate_limit", op="add", status=420, upgrade_url=upgrade_url)
             _record_limit_error("watchlist")
             for x in sl:
                 unresolved.append(
@@ -537,7 +480,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
             break
         else:
-            _warn("write_failed", action="add", status=r.status_code, body=((r.text or "")[:180]))
+            _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
                 unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
                 _freeze_item(
@@ -546,6 +489,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     reasons=[f"http:{r.status_code}"],
                     details={"status": r.status_code} if freeze_details else None,
                 )
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -555,12 +499,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
 
     sess = adapter.client.session
-    headers = build_headers(
-        {"trakt": {"client_id": adapter.cfg.client_id, "access_token": adapter.cfg.access_token}}
-    )
+    headers = headers_for_adapter(adapter)
 
     accepted, unresolved = _batch_payload(items)
     if not accepted:
+        _info("write_skipped", op="remove", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
 
     ok = 0
@@ -587,7 +530,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             nf = d.get("not_found") or {}
             _freeze_not_found(nf, action="remove", unresolved=unresolved, add_details=freeze_details)
         else:
-            _warn("write_failed", action="remove", status=r.status_code, body=((r.text or "")[:180]))
+            _warn("write_failed", op="remove", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
                 unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
                 _freeze_item(
@@ -597,4 +540,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     details={"status": r.status_code} if freeze_details else None,
                 )
 
+    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
