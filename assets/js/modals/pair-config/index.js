@@ -1042,6 +1042,38 @@ function renderFeaturePanel(state){
       `);
     }
 
+    if (hasSimkl(state)) {
+      const sm = (state.cfgRaw?.simkl) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">SIMKL</div>
+        <details id="cx-sm-wl">
+          <summary class="muted" style="margin-bottom:10px;">SIMKL watchlist controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="sm-wl-batch">Batch size</label>
+              <input id="sm-wl-batch" class="input small" type="number" min="1" max="1000" value="${sm.watchlist_batch_size ?? 500}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasMDBList(state)) {
+      const md = (state.cfgRaw?.mdblist) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">MDBList</div>
+        <details id="cx-md-wl">
+          <summary class="muted" style="margin-bottom:10px;">MDBList watchlist controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="md-wl-batch">Batch size</label>
+              <input id="md-wl-batch" class="input small" type="number" min="1" max="1000" value="${md.watchlist_batch_size ?? 500}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
     right.innerHTML = parts.join("");
     applySubDisable("watchlist");
     return;
@@ -1096,6 +1128,46 @@ function renderFeaturePanel(state){
             <div class="opt-row" style="grid-column:1/-1">
               <label for="tr-rt-chunk">Write chunk size</label>
               <input id="tr-rt-chunk" class="input small" type="number" min="1" max="1000" value="${tr.ratings_chunk_size ?? 100}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasSimkl(state)) {
+      const sm = (state.cfgRaw?.simkl) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">SIMKL</div>
+        <details id="cx-sm-rt">
+          <summary class="muted" style="margin-bottom:10px;">SIMKL ratings controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="sm-rt-chunk">Write chunk size</label>
+              <input id="sm-rt-chunk" class="input small" type="number" min="1" max="1000" value="${sm.ratings_chunk_size ?? 500}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasMDBList(state)) {
+      const md = (state.cfgRaw?.mdblist) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">MDBList</div>
+        <details id="cx-md-rt">
+          <summary class="muted" style="margin-bottom:10px;">MDBList ratings controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="md-rt-perpage">Items per page</label>
+              <input id="md-rt-perpage" class="input small" type="number" min="1" max="5000" value="${md.ratings_per_page ?? 200}">
+            </div>
+            <div class="opt-row">
+              <label for="md-rt-maxpages">Max pages</label>
+              <input id="md-rt-maxpages" class="input small" type="number" min="1" max="2000" value="${md.ratings_max_pages ?? 50}">
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="md-rt-chunk">Write chunk size</label>
+              <input id="md-rt-chunk" class="input small" type="number" min="1" max="1000" value="${md.ratings_chunk_size ?? 500}">
             </div>
           </div>
         </details>
@@ -1230,6 +1302,58 @@ left.innerHTML = `
             <div class="opt-row">
               <label for="cx-tr-hs-unres">Unresolved Freeze</label>
               <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
+            </div>
+            <div class="opt-row">
+              <label for="tr-hs-perpage">Items per page</label>
+              <input id="tr-hs-perpage" class="input small" type="number" min="1" max="500" value="${trCfg.history_per_page ?? 100}">
+            </div>
+            <div class="opt-row">
+              <label for="tr-hs-maxpages">Max pages</label>
+              <input id="tr-hs-maxpages" class="input small" type="number" min="1" max="100000" value="${trCfg.history_max_pages ?? 10000}">
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="tr-hs-chunk">Write chunk size</label>
+              <input id="tr-hs-chunk" class="input small" type="number" min="1" max="1000" value="${trCfg.history_chunk_size ?? 100}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasSimkl(state)) {
+      const sm = (state.cfgRaw?.simkl) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">SIMKL</div>
+        <details id="cx-sm-hs">
+          <summary class="muted" style="margin-bottom:10px;">SIMKL history controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="sm-hs-chunk">Write chunk size</label>
+              <input id="sm-hs-chunk" class="input small" type="number" min="1" max="1000" value="${sm.history_chunk_size ?? 500}">
+            </div>
+          </div>
+        </details>
+      `);
+    }
+
+    if (hasMDBList(state)) {
+      const md = (state.cfgRaw?.mdblist) || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">MDBList</div>
+        <details id="cx-md-hs">
+          <summary class="muted" style="margin-bottom:10px;">MDBList history controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="md-hs-perpage">Items per page</label>
+              <input id="md-hs-perpage" class="input small" type="number" min="1" max="5000" value="${md.history_per_page ?? 1000}">
+            </div>
+            <div class="opt-row">
+              <label for="md-hs-maxpages">Max pages</label>
+              <input id="md-hs-maxpages" class="input small" type="number" min="1" max="2000" value="${md.history_max_pages ?? 250}">
+            </div>
+            <div class="opt-row" style="grid-column:1/-1">
+              <label for="md-hs-chunk">Write chunk size</label>
+              <input id="md-hs-chunk" class="input small" type="number" min="1" max="1000" value="${md.history_chunk_size ?? 500}">
             </div>
           </div>
         </details>
@@ -1753,6 +1877,18 @@ async function saveConfigBits(state){
       });
     }
 
+    if(ID("sm-wl-batch")){
+      cfg.simkl = Object.assign({}, cfg.simkl||{}, {
+        watchlist_batch_size: Math.max(1, parseInt(ID("sm-wl-batch")?.value||"500",10)||500)
+      });
+    }
+
+    if(ID("md-wl-batch")){
+      cfg.mdblist = Object.assign({}, cfg.mdblist||{}, {
+        watchlist_batch_size: Math.max(1, parseInt(ID("md-wl-batch")?.value||"500",10)||500)
+      });
+    }
+
     const hasJF=String(state.src||"").toUpperCase()==="JELLYFIN"||String(state.dst||"").toUpperCase()==="JELLYFIN";
     if(hasJF){
       const jf=Object.assign({},cfg.jellyfin||{});
@@ -1806,12 +1942,52 @@ async function saveConfigBits(state){
       const perEl   = ID("tr-rt-perpage") || ID("tr-rt-page");
       const pagesEl = ID("tr-rt-maxpages")|| ID("tr-rt-pages");
       const chunkEl = ID("tr-rt-chunk");
+      const hsPerEl = ID("tr-hs-perpage");
+      const hsPagesEl = ID("tr-hs-maxpages");
+      const hsChunkEl = ID("tr-hs-chunk");
 
       if (perEl)   tr.ratings_per_page   = clamp(n(perEl.id), 10, 500);
       if (pagesEl) tr.ratings_max_pages  = clamp(n(pagesEl.id), 1, 1000);
       if (chunkEl) tr.ratings_chunk_size = clamp(n(chunkEl.id), 10, 1000);
+      if (hsPerEl)   tr.history_per_page   = clamp(n(hsPerEl.id), 1, 500);
+      if (hsPagesEl) tr.history_max_pages  = clamp(n(hsPagesEl.id), 1, 100000);
+      if (hsChunkEl) tr.history_chunk_size = clamp(n(hsChunkEl.id), 1, 1000);
 
       cfg.trakt=tr;
+    }
+
+    const hasSM = String(state.src||"").toUpperCase()==="SIMKL" || String(state.dst||"").toUpperCase()==="SIMKL";
+    if(hasSM){
+      const sm = Object.assign({}, cfg.simkl||{});
+      const wlBatchEl = ID("sm-wl-batch");
+      const rtChunkEl = ID("sm-rt-chunk");
+      const hsChunkEl = ID("sm-hs-chunk");
+      if (wlBatchEl) sm.watchlist_batch_size = Math.max(1, parseInt(wlBatchEl.value||"500", 10) || 500);
+      if (rtChunkEl) sm.ratings_chunk_size = Math.max(1, parseInt(rtChunkEl.value||"500", 10) || 500);
+      if (hsChunkEl) sm.history_chunk_size = Math.max(1, parseInt(hsChunkEl.value||"500", 10) || 500);
+      cfg.simkl = sm;
+    }
+
+    const hasMD = String(state.src||"").toUpperCase()==="MDBLIST" || String(state.dst||"").toUpperCase()==="MDBLIST";
+    if(hasMD){
+      const md = Object.assign({}, cfg.mdblist||{});
+      const n = x => parseInt((ID(x)?.value||"").trim(), 10);
+      const clamp = (v,min,max)=>Math.min(max,Math.max(min,Number.isFinite(v)?v:min));
+      const wlBatchEl = ID("md-wl-batch");
+      const rtPerEl = ID("md-rt-perpage");
+      const rtPagesEl = ID("md-rt-maxpages");
+      const rtChunkEl = ID("md-rt-chunk");
+      const hsPerEl = ID("md-hs-perpage");
+      const hsPagesEl = ID("md-hs-maxpages");
+      const hsChunkEl = ID("md-hs-chunk");
+      if (wlBatchEl) md.watchlist_batch_size = clamp(n(wlBatchEl.id), 1, 1000);
+      if (rtPerEl) md.ratings_per_page = clamp(n(rtPerEl.id), 1, 5000);
+      if (rtPagesEl) md.ratings_max_pages = clamp(n(rtPagesEl.id), 1, 2000);
+      if (rtChunkEl) md.ratings_chunk_size = clamp(n(rtChunkEl.id), 1, 1000);
+      if (hsPerEl) md.history_per_page = clamp(n(hsPerEl.id), 1, 5000);
+      if (hsPagesEl) md.history_max_pages = clamp(n(hsPagesEl.id), 1, 2000);
+      if (hsChunkEl) md.history_chunk_size = clamp(n(hsChunkEl.id), 1, 1000);
+      cfg.mdblist = md;
     }
 
     const res=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});

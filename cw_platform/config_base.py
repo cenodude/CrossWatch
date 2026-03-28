@@ -321,19 +321,19 @@ DEFAULT_CFG: dict[str, Any] = {
         # Watchlist
         "watchlist_use_etag": True,                     # Use ETag + local shadow to skip unchanged lists
         "watchlist_shadow_ttl_hours": 168,              # Refresh ETag baseline weekly even if 304s keep coming
-        "watchlist_batch_size": 500,                    # Chunk size for add/remove to avoid 429/rate spikes
+        "watchlist_batch_size": 100,                    # Chunk size for add/remove to avoid 429/rate spikes
         "watchlist_log_rate_limits": True,              # Log X-RateLimit-* and Retry-After when present
         "watchlist_freeze_details": True,               # Persist last status & ids in freeze store for debugging
 
         # Ratings
         "ratings_per_page": 100,                        # Items per page when indexing (10–100; clamped to 100)
         "ratings_max_pages": 50,                        # Max pages per type; raise if you have >2k ratings/type
-        "ratings_chunk_size": 500,                      # Batch size for POST/REMOVE
+        "ratings_chunk_size": 100,                      # Batch size for POST/REMOVE
 
         # History
         "history_per_page": 100,                        # Max allowed by Trakt; fastest without spamming
         "history_max_pages": 10000,                     # Safety cap for huge libraries; lower to bound runtime
-        "history_chunk_size": 500,                      # Batch size for history add/remove writes
+        "history_chunk_size": 100,                      # Batch size for history add/remove writes
         "history_unresolved": False,                    # bool, default false (enable the freeze file)
         "history_number_fallback": False,               # episode number fallback (no S/E-based resolution when episode IDs are missing)
 

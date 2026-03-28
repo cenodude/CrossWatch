@@ -163,7 +163,7 @@ export default {
     }
 
     async function ensureAutoSaved() {
-      if (requiresCleanReset || state.step !== "migrate" || state.autoSaveStarted) return;
+      if (requiresCleanReset || state.autoSaveStarted) return;
       state.autoSaveStarted = true;
       state.autoSaveFailed = false;
       state.autoSaveMessage = "Saving the updated config format in the background...";
@@ -213,6 +213,7 @@ export default {
         state.step = "migrate";
         notify("Sign-in saved. CrossWatch is updating the config in the background.");
         render();
+        ensureAutoSaved();
         return;
       } catch (err) {
         state.saving = false;
@@ -412,7 +413,6 @@ export default {
         try { window.cxCloseModal?.(); } catch {}
       });
       ensureNotesLoaded();
-      ensureAutoSaved();
     }
 
     function render() {
@@ -423,6 +423,7 @@ export default {
     }
 
     render();
+    if (!requiresCleanReset && state.authReady) ensureAutoSaved();
   },
 
   unmount() {
