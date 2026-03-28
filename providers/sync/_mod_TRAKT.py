@@ -171,6 +171,13 @@ class TRAKTConfig:
     max_retries: int = 3
     rate_get_per_sec: float = 3.33
     rate_post_per_sec: float = 1.0
+    watchlist_batch_size: int = 100
+    ratings_per_page: int = 100
+    ratings_max_pages: int = 50
+    ratings_chunk_size: int = 100
+    history_per_page: int = 100
+    history_max_pages: int = 10000
+    history_chunk_size: int = 100
     history_number_fallback: bool = False
     history_collection: bool = False
     history_collection_types: list[str] | None = None
@@ -350,6 +357,13 @@ class TRAKTModule:
             max_retries=int(t.get("max_retries", cfg.get("max_retries", 3))),
             rate_get_per_sec=rate_get,
             rate_post_per_sec=rate_post,
+            watchlist_batch_size=int(t.get("watchlist_batch_size", 100) or 100),
+            ratings_per_page=int(t.get("ratings_per_page", 100) or 100),
+            ratings_max_pages=int(t.get("ratings_max_pages", 50) or 50),
+            ratings_chunk_size=int(t.get("ratings_chunk_size", 100) or 100),
+            history_per_page=int(t.get("history_per_page", 100) or 100),
+            history_max_pages=int(t.get("history_max_pages", 10000) or 10000),
+            history_chunk_size=int(t.get("history_chunk_size", 100) or 100),
             history_number_fallback=bool(t.get("history_number_fallback")),
             history_collection=bool(t.get("history_collection")),
             history_collection_types=types or None,
@@ -362,6 +376,7 @@ class TRAKTModule:
 
         self.client = TRAKTClient(self.cfg, cfg).connect()
         self.raw_cfg = cfg
+        self.config = cfg
         self.progress_factory = (
             lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
                 ctx,
