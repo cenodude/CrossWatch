@@ -25,6 +25,7 @@ def _spotlight_items(
     confirmed_keys: Sequence[str],
     *,
     limit: int = 25,
+    fallback_count: int = 0,
 ) -> list[dict[str, Any]]:
     try:
         from ..id_map import canonical_key as _ckey  # type: ignore
@@ -35,8 +36,6 @@ def _spotlight_items(
         return []
 
     key_order = [str(k) for k in confirmed_keys if k]
-    if not key_order:
-        return []
 
     by_key: dict[str, Mapping[str, Any]] = {}
     for item in items or []:
@@ -180,7 +179,36 @@ def _spotlight_items(
 
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for key in key_order:
+    emit_order: list[str] = list(key_order)
+    if not emit_order and int(fallback_count or 0) > 0:
+        fallback = max(0, int(fallback_count))
+        for item in list(items or [])[:fallback]:
+            try:
+                k = str(_ckey(item) or "").strip()
+            except Exception:
+                k = ""
+            if not k:
+                raw_ids = item.get("ids")
+                ids = raw_ids if isinstance(raw_ids, Mapping) else {}
+                for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug"):
+                    v = ids.get(idk)
+                    if v in (None, ""):
+                        continue
+                    k = f"{str(idk).lower()}:{str(v).strip().lower()}"
+                    break
+            if not k:
+                ttl = str(item.get("title") or item.get("name") or item.get("series_title") or item.get("show_title") or "").strip()
+                typ = str(item.get("type") or "").strip().lower()
+                yr = item.get("year")
+                if ttl:
+                    k = f"{typ}|title:{ttl.lower()}|year:{yr or ''}"
+            if k:
+                emit_order.append(k)
+                by_key.setdefault(k, item)
+    if not emit_order:
+        return []
+
+    for key in emit_order:
         item = by_key.get(key)
         if not isinstance(item, Mapping) or key in seen:
             continue
@@ -440,7 +468,11 @@ def apply_add(
         skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
-        spotlight=_spotlight_items(items, cast(Sequence[str], res.get("confirmed_keys") or [])),
+        spotlight=_spotlight_items(
+            items,
+            cast(Sequence[str], res.get("confirmed_keys") or []),
+            fallback_count=_conf,
+        ),
         result=res,
     )
     return res
@@ -484,7 +516,11 @@ def apply_update(
         skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
-        spotlight=_spotlight_items(items, cast(Sequence[str], res.get("confirmed_keys") or [])),
+        spotlight=_spotlight_items(
+            items,
+            cast(Sequence[str], res.get("confirmed_keys") or []),
+            fallback_count=_conf,
+        ),
         result=res,
     )
     return res
@@ -528,7 +564,11 @@ def apply_remove(
         skip_basis=str(res.get("skip_basis") or "provider_keys"),
         unresolved=int(res.get("unresolved", 0)),
         errors=int(res.get("errors", 0)),
-        spotlight=_spotlight_items(items, cast(Sequence[str], res.get("confirmed_keys") or [])),
+        spotlight=_spotlight_items(
+            items,
+            cast(Sequence[str], res.get("confirmed_keys") or []),
+            fallback_count=_conf,
+        ),
         result=res,
     )
     return res
