@@ -129,6 +129,14 @@ def _as_int(v: Any) -> int | None:
         return None
 
 
+def _history_index_semantics(cfg: Mapping[str, Any]) -> str:
+    try:
+        plex = (cfg or {}).get("plex") or {}
+        hist = plex.get("history") or {}
+        return "present" if bool(hist.get("include_marked_watched", True)) else "delta"
+    except Exception:
+        return "present"
+
 
 def _plex_tv_client_id(cfg: Any) -> str:
     v = getattr(cfg, "client_id", None)
@@ -341,7 +349,7 @@ def get_manifest() -> Mapping[str, Any]:
             "bidirectional": True,
             "provides_ids": True,
             "index_semantics": "present",
-            "history": {"index_semantics": "delta"},
+            "history": {"index_semantics": "present", "observed_deletes": True},
             "watchlist": {"writes": "discover_first", "pms_fallback": True},
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
@@ -351,8 +359,6 @@ def get_manifest() -> Mapping[str, Any]:
             },
         },
     }
-
-
 @dataclass
 class PLEXConfig:
     token: str | None = None
@@ -1174,7 +1180,7 @@ class _PlexOPS:
             "bidirectional": True,
             "provides_ids": True,
             "index_semantics": "present",
-            "history": {"index_semantics": "delta"},
+            "history": {"index_semantics": "present", "observed_deletes": True},
             "watchlist": {"writes": "discover_first", "pms_fallback": True},
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
@@ -1183,6 +1189,11 @@ class _PlexOPS:
                 "from_date": False,
             },
         }
+
+    def index_semantics(self, cfg: Mapping[str, Any], *, feature: str) -> str | None:
+        if str(feature).lower() == "history":
+            return _history_index_semantics(cfg)
+        return None
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         c = cfg or {}
