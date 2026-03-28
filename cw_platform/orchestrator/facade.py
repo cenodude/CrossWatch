@@ -291,6 +291,7 @@ class Orchestrator:
         prev_cp = self.prev_checkpoint(provider, feature)
         now_cp = self.module_checkpoint(provider, feature)
         return _coerce(
+            config=self.cfg,
             provider=prov_name,
             ops=ops,
             prev_idx=prev_idx,

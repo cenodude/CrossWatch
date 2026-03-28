@@ -51,6 +51,17 @@ pytestdebug.log
 .nox/
 *.sarif
 .hypothesis/
+node_modules/
+playwright-report/
+test-results/
+.playwright/
+playwright/.auth/
+.env.playwright
+.env.playwright.local
 
 # CrossWatch runtime state
 .cw_state/
+
+# Local test/temp workspaces
+.pytest_tmp*/
+pytest-cache-files-*/

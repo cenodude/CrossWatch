@@ -88,6 +88,68 @@ def keys_for_feature(
     return out
 
 
+def clear_items_for_feature(
+    store: StateStore,
+    dbg: Callable[..., Any],
+    feature: str,
+    items: Iterable[Mapping[str, Any]],
+    *,
+    pair: str | None = None,
+) -> int:
+    if not pair:
+        return 0
+
+    tomb = store.load_tomb()
+    raw = tomb.get("keys") or {}
+    if not isinstance(raw, Mapping):
+        return 0
+
+    ks: dict[str, Any] = dict(raw)
+    scope = str(pair).upper()
+    prefix = f"{str(feature).lower()}:{scope}|"
+
+    tokens: set[str] = set()
+    for item in items or []:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            ck = canonical_key(item)
+            if ck:
+                tokens.add(str(ck))
+        except Exception:
+            pass
+
+        ids = item.get("ids") or {}
+        if isinstance(ids, Mapping):
+            for idk in ID_KEYS:
+                idv = ids.get(idk)
+                if idv is None or str(idv).strip() == "":
+                    continue
+                tokens.add(f"{str(idk).lower()}:{str(idv).strip().lower()}")
+
+        typ = str(item.get("type") or "").lower()
+        ttl = str(item.get("title") or "").strip().lower()
+        yr = item.get("year") or ""
+        if typ or ttl:
+            tokens.add(f"{typ}|title:{ttl}|year:{yr}")
+
+    if not tokens:
+        return 0
+
+    removed = 0
+    for tok in tokens:
+        k = f"{prefix}{tok}"
+        if k in ks:
+            ks.pop(k, None)
+            removed += 1
+
+    if removed:
+        tomb["keys"] = ks
+        store.save_tomb(tomb)
+        dbg("tombstones.cleared", feature=feature, removed=removed, pair=scope, scope="pair")
+    return removed
+
+
 def prune(
     store: StateStore,
     dbg: Callable[..., Any],

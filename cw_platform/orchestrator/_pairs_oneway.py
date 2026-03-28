@@ -16,13 +16,15 @@ from ._snapshots import (
     build_snapshots_for_feature,
     coerce_suspect_snapshot,
     module_checkpoint,
+    provider_index_semantics,
     prev_checkpoint,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._unresolved import load_unresolved_keys, record_unresolved
-from ._planner import diff, diff_ratings, diff_progress
+from ._planner import diff, diff_ratings, diff_progress, _pick_rating
 from ._phantoms import PhantomGuard
+from ._tombstones import clear_items_for_feature
 
 
 from ._pairs_utils import (
@@ -139,19 +141,8 @@ def _filter_items_for_dropped_shows(items: list[dict[str, Any]], dropped_tokens:
     return out, removed
 
 
-def _index_semantics(ops, feature: str) -> str:
-    try:
-        caps = ops.capabilities() or {}
-    except Exception:
-        return "present"
-    if not isinstance(caps, Mapping):
-        return "present"
-    per = caps.get(feature)
-    if isinstance(per, Mapping):
-        sem = per.get("index_semantics")
-        if sem:
-            return str(sem).lower()
-    return str(caps.get("index_semantics", "present")).lower()
+def _index_semantics(ops, feature: str, *, cfg: Mapping[str, Any] | None = None, provider: str = "") -> str:
+    return provider_index_semantics(ops, cfg or {}, feature)
 
 # Enrichment and hydration of index payloads
 def _enrich_index_payload(cur: dict[str, Any], prev: dict[str, Any], feature: str) -> dict[str, Any]:
@@ -482,6 +473,9 @@ def run_one_way_feature(
     except Exception:
         pass
 
+    def _cross_feature_unresolved(feature_name: str) -> bool:
+        return str(feature_name or "").strip().lower() == "history"
+
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
         inst = src_inst if pname == src else (dst_inst if pname == dst else "default")
@@ -720,6 +714,7 @@ def run_one_way_feature(
         prev_cp_src = prev_checkpoint(prev_state, src, feature, src_inst)
         now_cp_src = module_checkpoint(src_ops, cfg, feature)
         eff_src, src_suspect, src_reason = coerce_suspect_snapshot(
+            config=cfg,
             provider=src, ops=src_ops,
             prev_idx=prev_src, cur_idx=src_cur, feature=feature,
             suspect_min_prev=suspect_min_prev, suspect_shrink_ratio=suspect_ratio,
@@ -732,6 +727,7 @@ def run_one_way_feature(
         prev_cp_dst = prev_checkpoint(prev_state, dst, feature, dst_inst)
         now_cp_dst = module_checkpoint(dst_ops, cfg, feature)
         eff_dst, dst_suspect, dst_reason = coerce_suspect_snapshot(
+            config=cfg,
             provider=dst, ops=dst_ops,
             prev_idx=prev_dst, cur_idx=dst_cur, feature=feature,
             suspect_min_prev=suspect_min_prev, suspect_shrink_ratio=suspect_ratio,
@@ -777,8 +773,8 @@ def run_one_way_feature(
     if dst in ("TRAKT", "MDBLIST", "SIMKL") and _provider_ignore_dropped_enabled(cfg, dst, feature):
         dst_dropped_tokens = _load_provider_dropped_tokens(dst_ops, cfg)
 
-    dst_sem = _index_semantics(dst_ops, feature)
-    src_sem = _index_semantics(src_ops, feature)
+    dst_sem = _index_semantics(dst_ops, feature, cfg=ctx.config, provider=dst)
+    src_sem = _index_semantics(src_ops, feature, cfg=ctx.config, provider=src)
 
     dst_full = (dict(prev_dst) | dict(dst_cur)) if dst_sem == "delta" else dict(eff_dst)
     src_idx = (dict(prev_src) | dict(src_cur)) if src_sem == "delta" else dict(eff_src)
@@ -949,22 +945,21 @@ def run_one_way_feature(
 
     removes: list[dict[str, Any]] = []
     if allow_removes:
-        if remove_mode == "mirror":
+        if feature == "ratings":
             removes = list(mirror_removes or [])
-            if feature == "ratings":
-                if removes:
-                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-                    try:
-                        removes = [it for it in removes if _ck(it) in prev_dst]
-                    except Exception:
-                        pass
-            else:
-                if removes:
-                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-                    try:
-                        removes = [it for it in removes if _ck(it) in prev_dst]
-                    except Exception:
-                        pass
+            if removes:
+                removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                if prev_dst:
+                    prev_dst_alias = _alias_index(prev_dst)
+                    removes = [it for it in removes if _present(prev_dst, prev_dst_alias, it)]
+        elif remove_mode == "mirror":
+            removes = list(mirror_removes or [])
+            if removes:
+                removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                try:
+                    removes = [it for it in removes if _ck(it) in prev_dst]
+                except Exception:
+                    pass
         else:
             if include_observed and not src_suspect and src_sem != "delta" and prev_src:
                 src_obs = dict(src_cur or {})
@@ -1020,6 +1015,7 @@ def run_one_way_feature(
             dst=dst,
             feature=feature,
             pair_key=pair_key,
+            cross_feature_unresolved=_cross_feature_unresolved(feature),
             ignore_pair_tomb=(str(feature or "").lower() == "history"),
             emit=emit,
         )
@@ -1044,7 +1040,7 @@ def run_one_way_feature(
             ctx.stats_manual_blocked = int(getattr(ctx, "stats_manual_blocked", 0) or 0) + int(manual_blocked)
 
     try:
-        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+        unresolved_known = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
     except Exception:
         unresolved_known = set()
 
@@ -1141,7 +1137,7 @@ def run_one_way_feature(
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="update", count=len(updates))
             unresolved_new_total += len(updates)
         else:
-            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             upd_res = apply_update(
                 dst_ops=dst_ops,
                 cfg=cfg,
@@ -1154,7 +1150,7 @@ def run_one_way_feature(
                 chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst),
             )
-            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             res_update = {
                 "attempted": int((upd_res or {}).get("attempted", 0)),
                 "confirmed": int((upd_res or {}).get("confirmed", (upd_res or {}).get("count", 0)) or 0),
@@ -1191,7 +1187,7 @@ def run_one_way_feature(
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="add", count=len(adds))
             unresolved_new_total += len(adds)
         else:
-            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            unresolved_before = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             _ = set(load_blackbox_keys(dst, feature) or [])
             add_res = apply_add(
                 dst_ops=dst_ops,
@@ -1205,7 +1201,7 @@ def run_one_way_feature(
                 chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst),
             )
-            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+            unresolved_after = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             res_add = {
                 "attempted": int((add_res or {}).get("attempted", 0)),
                 "confirmed": int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0),
@@ -1249,7 +1245,7 @@ def run_one_way_feature(
            
             if verify_after_write and _apply_verify_after_write_supported(dst_ops):
                 try:
-                    unresolved_again = set(load_unresolved_keys(dst, feature, cross_features=True) or [])
+                    unresolved_again = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature)) or [])
                     confirmed_keys = [k for k in confirmed_keys if k not in unresolved_again]
                 except Exception:
                     pass
@@ -1306,6 +1302,13 @@ def run_one_way_feature(
             
                 if success_keys and not ambiguous_partial:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
+                    clear_items_for_feature(
+                        ctx.state_store,
+                        dbg,
+                        feature,
+                        [key2item[k] for k in success_keys if k in key2item],
+                        pair=pair_key,
+                    )
                 if use_phantoms and guard and success_keys and not ambiguous_partial:
                     guard.record_success(success_keys)
             except Exception:

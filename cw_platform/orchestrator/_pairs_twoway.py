@@ -69,11 +69,12 @@ from ._snapshots import (
     build_snapshots_for_feature,
     coerce_suspect_snapshot,
     module_checkpoint,
+    provider_index_semantics,
     prev_checkpoint,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._tombstones import keys_for_feature
+from ._tombstones import clear_items_for_feature, keys_for_feature
 from ._unresolved import load_unresolved_keys, record_unresolved
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
@@ -108,19 +109,12 @@ _PROVIDER_KEY_MAP = {
     "ANILIST": "anilist",
 }
 
-def _index_semantics(ops, feature: str) -> str:
-    try:
-        caps = ops.capabilities() or {}
-    except Exception:
-        return "present"
-    if not isinstance(caps, Mapping):
-        return "present"
-    per = caps.get(feature)
-    if isinstance(per, Mapping):
-        sem = per.get("index_semantics")
-        if sem:
-            return str(sem).lower()
-    return str(caps.get("index_semantics", "present")).lower()
+def _index_semantics(ops, feature: str, *, cfg: Mapping[str, Any] | None = None, provider: str = "") -> str:
+    return provider_index_semantics(ops, cfg or {}, feature)
+
+
+def _cross_feature_unresolved(feature_name: str) -> bool:
+    return str(feature_name or "").strip().lower() == "history"
 
 def _enrich_index_payload(cur: dict[str, Any], prev: dict[str, Any], feature: str) -> dict[str, Any]:
     if not cur or not prev:
@@ -447,6 +441,7 @@ def _two_way_sync(
 
     if drop_guard:
         A_eff_guard, A_suspect, A_reason = coerce_suspect_snapshot(
+            config=cfg,
             provider=a, ops=aops, prev_idx=prevA, cur_idx=A_cur, feature=feature,
             suspect_min_prev=int((cfg.get("runtime") or {}).get("suspect_min_prev", 20)),
             suspect_shrink_ratio=float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10)),
@@ -456,6 +451,7 @@ def _two_way_sync(
         if A_suspect:
             dbg("snapshot.guard", provider=a, feature=feature, reason=A_reason)
         B_eff_guard, B_suspect, B_reason = coerce_suspect_snapshot(
+            config=cfg,
             provider=b, ops=bops, prev_idx=prevB, cur_idx=B_cur, feature=feature,
             suspect_min_prev=int((cfg.get("runtime") or {}).get("suspect_min_prev", 20)),
             suspect_shrink_ratio=float((cfg.get("runtime") or {}).get("suspect_shrink_ratio", 0.10)),
@@ -469,8 +465,8 @@ def _two_way_sync(
         A_eff_guard, A_suspect = dict(A_cur), False
         B_eff_guard, B_suspect = dict(B_cur), False
 
-    a_sem = _index_semantics(aops, feature)
-    b_sem = _index_semantics(bops, feature)
+    a_sem = _index_semantics(aops, feature, cfg=ctx.config, provider=a)
+    b_sem = _index_semantics(bops, feature, cfg=ctx.config, provider=b)
 
     A_eff = (dict(prevA) | dict(A_cur)) if a_sem == "delta" else dict(A_eff_guard)
     B_eff = (dict(prevB) | dict(B_cur)) if b_sem == "delta" else dict(B_eff_guard)
@@ -710,6 +706,52 @@ def _two_way_sync(
         except Exception:
             pass
         return toks
+
+    def _item_tomb_ts(it: Mapping[str, Any]) -> int | None:
+        hit_ts: int | None = None
+        try:
+            for tok in _tokens(it):
+                ts = tomb_map.get(tok)
+                if ts is None:
+                    continue
+                ts_i = int(ts)
+                hit_ts = ts_i if hit_ts is None else max(hit_ts, ts_i)
+        except Exception:
+            return None
+        return hit_ts
+
+    def _history_ts(it: Mapping[str, Any]) -> int | None:
+        if str(feature or "").lower() != "history":
+            return None
+        for field in ("watched_at", "last_watched_at"):
+            raw = it.get(field)
+            if raw is None or raw == "":
+                continue
+            try:
+                dt = _dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+                return int(dt.timestamp())
+            except Exception:
+                continue
+        return None
+
+    def _tomb_blocks_remove(
+        it: Mapping[str, Any],
+        *,
+        prev_self: Mapping[str, Any] | None = None,
+        prev_self_alias: Mapping[str, str] | None = None,
+    ) -> bool:
+        ts_tomb = _item_tomb_ts(it)
+        if ts_tomb is None:
+            return False
+        try:
+            if prev_self is not None and prev_self_alias is not None and not _prev_had(dict(prev_self), dict(prev_self_alias), it):
+                return False
+        except Exception:
+            pass
+        ts_hist = _history_ts(it)
+        if ts_hist is not None and int(ts_hist) >= int(ts_tomb):
+            return False
+        return True
 
     A_alias = _alias_index(A_eff)
     B_alias = _alias_index(B_eff)
@@ -1212,7 +1254,8 @@ def _two_way_sync(
                     if _present(B_eff, B_alias, v):
                         continue
 
-                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
+                if allow_removals and (tomb_blocks or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or tomb_blocks):
                     rem_from_A.append(_minimal(v))
                 else:
                     add_to_B.append(_minimal(v))
@@ -1232,7 +1275,8 @@ def _two_way_sync(
                     if _present(A_eff, A_alias, v):
                         continue
 
-                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                tomb_blocks = _tomb_blocks_remove(v, prev_self=prevB, prev_self_alias=prevB_alias)
+                if allow_removals and (tomb_blocks or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or tomb_blocks):
                     rem_from_B.append(_minimal(v))
                 else:
                     add_to_A.append(_minimal(v))
@@ -1240,14 +1284,16 @@ def _two_way_sync(
             for _k, v in A_eff.items():
                 if _present(B_eff, B_alias, v):
                     continue
-                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
+                if allow_removals and (tomb_blocks or (_ck(v) in obsB) or (_ck(v) in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or tomb_blocks):
                     rem_from_A.append(_minimal(v))
                 else:
                     add_to_B.append(_minimal(v))
             for _k, v in B_eff.items():
                 if _present(A_eff, A_alias, v):
                     continue
-                if allow_removals and ((_tokens(v) & tombX) or (_ck(v) in tombX) or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or (_tokens(v) & tombX) or (_ck(v) in tombX)):
+                tomb_blocks = _tomb_blocks_remove(v, prev_self=prevB, prev_self_alias=prevB_alias)
+                if allow_removals and (tomb_blocks or (_ck(v) in obsA) or (_ck(v) in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or tomb_blocks):
                     rem_from_B.append(_minimal(v))
                 else:
                     add_to_A.append(_minimal(v))
@@ -1277,8 +1323,8 @@ def _two_way_sync(
         dbg("bootstrap.no-delete", a=a, b=b)
 
     try:
-        unresolved_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
-        unresolved_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+        unresolved_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
+        unresolved_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
 
         preA, preB = len(add_to_A), len(add_to_B)
         add_to_A = [it for it in add_to_A if _ck(it) not in unresolved_A]
@@ -1296,24 +1342,26 @@ def _two_way_sync(
         pass
 
     if feature != "watchlist":
-        add_to_A = apply_blocklist(
-            ctx.state_store,
-            add_to_A,
-            dst=a,
-            feature=feature,
-            pair_key=pair_key,
-            ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
-            emit=emit,
-        )
-        add_to_B = apply_blocklist(
-            ctx.state_store,
-            add_to_B,
-            dst=b,
-            feature=feature,
-            pair_key=pair_key,
-            ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
-            emit=emit,
-        )
+            add_to_A = apply_blocklist(
+                ctx.state_store,
+                add_to_A,
+                dst=a,
+                feature=feature,
+                pair_key=pair_key,
+                cross_feature_unresolved=_cross_feature_unresolved(feature),
+                ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+                emit=emit,
+            )
+            add_to_B = apply_blocklist(
+                ctx.state_store,
+                add_to_B,
+                dst=b,
+                feature=feature,
+                pair_key=pair_key,
+                cross_feature_unresolved=_cross_feature_unresolved(feature),
+                ignore_pair_tomb=(str(feature or "").lower() in ("history", "ratings")),
+                emit=emit,
+            )
 
     manual_blocked = 0
     if manual_blocks_A:
@@ -1493,13 +1541,13 @@ def _two_way_sync(
             unresolved_new_A_total += len(upd_to_A)
         else:
             emit("two:apply:update:A:start", dst=a, feature=feature, count=len(upd_to_A))
-            unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+            unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             resA_upd = apply_update(
                 dst_ops=aops, cfg=cfg, dst_name=a, feature=feature, items=upd_to_A,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
             )
-            unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+            unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_A_raw = (resA_upd or {}).get("unresolved_keys")
             prov_unresolved_keys_A: list[str] = (
                 [str(x) for x in prov_unresolved_keys_A_raw if x] if isinstance(prov_unresolved_keys_A_raw, list) else []
@@ -1533,13 +1581,13 @@ def _two_way_sync(
             unresolved_new_B_total += len(upd_to_B)
         else:
             emit("two:apply:update:B:start", dst=b, feature=feature, count=len(upd_to_B))
-            unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+            unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             resB_upd = apply_update(
                 dst_ops=bops, cfg=cfg, dst_name=b, feature=feature, items=upd_to_B,
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
             )
-            unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+            unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_B_raw = (resB_upd or {}).get("unresolved_keys")
             prov_unresolved_keys_B: list[str] = (
                 [str(x) for x in prov_unresolved_keys_B_raw if x] if isinstance(prov_unresolved_keys_B_raw, list) else []
@@ -1573,7 +1621,7 @@ def _two_way_sync(
             unresolved_new_A_total += len(add_to_A)
         else:
             emit("two:apply:add:A:start", dst=a, feature=feature, count=len(add_to_A))
-            unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+            unresolved_before_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             _ = set(load_blackbox_keys(a, feature, pair=pair_key) or [])
             attempted_A: list[str] = []
             seen_A: set[str] = set()
@@ -1591,7 +1639,7 @@ def _two_way_sync(
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
             )
-            unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+            unresolved_after_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_A_raw = (resA_add or {}).get("unresolved_keys")
             prov_unresolved_keys_A: list[str] = (
                 [str(x) for x in prov_unresolved_keys_A_raw if x] if isinstance(prov_unresolved_keys_A_raw, list) else []
@@ -1629,7 +1677,7 @@ def _two_way_sync(
             ambiguous_partial_A = False
             if verify_after_write and _apply_verify_after_write_supported(aops):
                 try:
-                    unresolved_again = set(load_unresolved_keys(a, feature, cross_features=True) or [])
+                    unresolved_again = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
                     confirmed_A = [k for k in confirmed_A if k not in unresolved_again]
                 except Exception:
                     pass
@@ -1655,6 +1703,13 @@ def _two_way_sync(
             
                 if success_A:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
+                    clear_items_for_feature(
+                        ctx.state_store,
+                        dbg,
+                        feature,
+                        [k2i_A[k] for k in success_A if k in k2i_A],
+                        pair=pair_key,
+                    )
                 if use_phantoms and 'guardA' in locals() and guardA and success_A:
                     guardA.record_success(set(success_A))
             except Exception:
@@ -1682,7 +1737,7 @@ def _two_way_sync(
             unresolved_new_B_total += len(add_to_B)
         else:
             emit("two:apply:add:B:start", dst=b, feature=feature, count=len(add_to_B))
-            unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+            unresolved_before_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             _ = set(load_blackbox_keys(b, feature, pair=pair_key) or [])
             attempted_B: list[str] = []
             seen_B: set[str] = set()
@@ -1700,7 +1755,7 @@ def _two_way_sync(
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
             )
-            unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+            unresolved_after_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
             prov_unresolved_keys_B_raw = (resB_add or {}).get("unresolved_keys")
             prov_unresolved_keys_B: list[str] = (
                 [str(x) for x in prov_unresolved_keys_B_raw if x] if isinstance(prov_unresolved_keys_B_raw, list) else []
@@ -1738,7 +1793,7 @@ def _two_way_sync(
             ambiguous_partial_B = False
             if verify_after_write and _apply_verify_after_write_supported(bops):
                 try:
-                    unresolved_again = set(load_unresolved_keys(b, feature, cross_features=True) or [])
+                    unresolved_again = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
                     confirmed_B = [k for k in confirmed_B if k not in unresolved_again]
                 except Exception:
                     pass
@@ -1764,6 +1819,13 @@ def _two_way_sync(
             
                 if success_B:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
+                    clear_items_for_feature(
+                        ctx.state_store,
+                        dbg,
+                        feature,
+                        [k2i_B[k] for k in success_B if k in k2i_B],
+                        pair=pair_key,
+                    )
                 if use_phantoms and 'guardB' in locals() and guardB and success_B:
                     guardB.record_success(set(success_B))
             except Exception:

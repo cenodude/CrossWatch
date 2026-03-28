@@ -629,6 +629,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         total = len(rows)
         max_seen = 0
         workers = plex_worker_count(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
+        include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", True))
 
         # Optional cursor debugging: show the rows that are considered "new" for this run.
         if eff_since is not None and str(os.environ.get("CW_PLEX_HISTORY_DEBUG_CURSOR", "")).strip().lower() in ("1", "true", "yes"):
@@ -688,6 +689,17 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             if not _keep_in_snapshot(adapter, meta):
                 return None
 
+            if include_marked:
+                rk = str((meta.get("ids") or {}).get("plex") or getattr(raw, "ratingKey", None) or "").strip()
+                if rk:
+                    live_row = _pms_fetch_metadata_row(adapter, rk)
+                    if live_row is not None:
+                        if not _pms_row_is_watched(live_row):
+                            return None
+                        live_ts = _pms_row_watched_ts(live_row)
+                        if live_ts:
+                            ts_i = int(live_ts)
+
             row = dict(meta)
             _force_episode_title(row)
             row["watched"] = True
@@ -727,7 +739,6 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         if out:
             max_seen = max((_as_epoch(r.get("watched_at")) or 0) for r in out.values())
 
-        include_marked = bool(_history_cfg_get(adapter, "include_marked_watched", True))
         include_shadow = bool(_history_cfg_get(adapter, "include_shadow", True))
 
         if include_shadow:

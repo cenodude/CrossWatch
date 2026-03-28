@@ -1125,6 +1125,39 @@ def _write(
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
+
+    def _apply_success(payload_rows: list[dict[str, Any]], bucket_name: str, data: Mapping[str, Any], *, is_unwatch: bool) -> int:
+        kinds = ("movies", "shows", "seasons", "episodes")
+        if is_unwatch:
+            removed = data.get("removed") or data.get("deleted") or data.get("unwatched") or {}
+            n = sum(int(removed.get(k) or 0) for k in kinds)
+            if n <= 0:
+                _dbg("write_prepare", op="remove", reason="noop_response", bucket=bucket_name, rows=len(payload_rows))
+            return n
+
+        not_found = data.get("not_found") or {}
+        for kind in kinds:
+            rows_nf = not_found.get(kind) or []
+            if not isinstance(rows_nf, list):
+                continue
+            item_type = kind[:-1]
+            for row_nf in rows_nf:
+                if not isinstance(row_nf, Mapping):
+                    continue
+                ids_nf = row_nf.get("ids") or {}
+                unresolved.append({"item": id_minimal({"type": item_type, "ids": ids_nf}), "hint": "not_found"})
+
+        updated = data.get("updated") or {}
+        added = data.get("added") or {}
+        existing = data.get("existing") or {}
+        n = 0
+        n += sum(int(updated.get(k) or 0) for k in kinds)
+        n += sum(int(added.get(k) or 0) for k in kinds)
+        n += sum(int(existing.get(k) or 0) for k in kinds)
+        if n <= 0 and not unresolved:
+            _dbg("write_prepare", op="add", reason="noop_response", bucket=bucket_name, rows=len(payload_rows))
+        return n
+
     _dbg(
         "write_start",
         op="remove" if unwatch else "add",
@@ -1173,27 +1206,10 @@ def _write(
                             d = r.json()
                         except Exception:
                             d = {}
-
-                    kinds = ("movies", "shows", "seasons", "episodes")
-                    if unwatch:
-                        removed = d.get("removed") or d.get("deleted") or d.get("unwatched") or {}
-                        n = sum(int(removed.get(k) or 0) for k in kinds)
-                        if r.status_code == 204 and n <= 0:
-                            n = len(part)
-                        if n <= 0:
-                            _dbg("write_prepare", op="remove", reason="noop_response", bucket=bucket, stage=stage or bucket, rows=len(part))
-                        ok += n
-                    else:
-                        updated = d.get("updated") or {}
-                        added = d.get("added") or {}
-                        existing = d.get("existing") or {}
-                        n = 0
-                        n += sum(int(updated.get(k) or 0) for k in kinds)
-                        n += sum(int(added.get(k) or 0) for k in kinds)
-                        n += sum(int(existing.get(k) or 0) for k in kinds)
-                        if n <= 0:
-                            n = len(part)
-                        ok += n
+                    n = _apply_success(part, stage or bucket, d, is_unwatch=unwatch)
+                    if r.status_code == 204 and unwatch and n <= 0:
+                        n = len(part)
+                    ok += n
 
                     time.sleep(max(0.0, delay_ms / 1000.0))
                     break
@@ -1244,7 +1260,18 @@ def _write(
                             max_retries=rr,
                         )
                         if r2.status_code in (200, 201, 204):
-                            ok += 1
+                            d2: dict[str, Any]
+                            if r2.status_code == 204 or not (r2.text or "").strip():
+                                d2 = {}
+                            else:
+                                try:
+                                    d2 = r2.json()
+                                except Exception:
+                                    d2 = {}
+                            n2 = _apply_success([single], body_key, d2, is_unwatch=unwatch)
+                            if r2.status_code == 204 and unwatch and n2 <= 0:
+                                n2 = 1
+                            ok += n2
                             time.sleep(max(0.0, delay_ms / 1000.0))
                             continue
 
