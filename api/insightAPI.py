@@ -1751,7 +1751,7 @@ def register_insights(app: FastAPI) -> None:
         week_floor = now_ts - 7 * 86400
         month_floor = now_ts - 30 * 86400
 
-        def _last_run_lane(feat: str) -> tuple[int, int, int]:
+        def _last_run_lane(feat: str) -> dict[str, Any]:
             for row in rows:
                 try:
                     en = row.get("features_enabled") or {}
@@ -1761,14 +1761,24 @@ def register_insights(app: FastAPI) -> None:
                     lane = feats_map.get(feat) if isinstance(feats_map, dict) else {}
                     if not isinstance(lane, dict):
                         lane = {}
-                    return (
-                        int(lane.get("added") or 0),
-                        int(lane.get("removed") or 0),
-                        int(lane.get("updated") or 0),
-                    )
+                    return {
+                        "added": int(lane.get("added") or 0),
+                        "removed": int(lane.get("removed") or 0),
+                        "updated": int(lane.get("updated") or 0),
+                        "spotlight_add": list(lane.get("spotlight_add") or []),
+                        "spotlight_remove": list(lane.get("spotlight_remove") or []),
+                        "spotlight_update": list(lane.get("spotlight_update") or []),
+                    }
                 except Exception:
                     continue
-            return 0, 0, 0
+            return {
+                "added": 0,
+                "removed": 0,
+                "updated": 0,
+                "spotlight_add": [],
+                "spotlight_remove": [],
+                "spotlight_update": [],
+            }
 
         def _union_now(feat: str) -> int:
             counts = providers_by_feature.get(feat) or {}
@@ -1842,7 +1852,10 @@ def register_insights(app: FastAPI) -> None:
 
         feats_out: dict[str, dict[str, Any]] = {}
         for feat in feature_keys:
-            add_last, rem_last, upd_last = _last_run_lane(feat)
+            last_lane = _last_run_lane(feat)
+            add_last = int(last_lane.get("added") or 0)
+            rem_last = int(last_lane.get("removed") or 0)
+            upd_last = int(last_lane.get("updated") or 0)
             t = week_tot.get(feat)
             if isinstance(t, tuple) and len(t) == 3:
                 wa, wr, wu = t
@@ -1857,6 +1870,9 @@ def register_insights(app: FastAPI) -> None:
                 "added": add_last,
                 "removed": rem_last,
                 "updated": upd_last,
+                "spotlight_add": list(last_lane.get("spotlight_add") or []),
+                "spotlight_remove": list(last_lane.get("spotlight_remove") or []),
+                "spotlight_update": list(last_lane.get("spotlight_update") or []),
                 "series": s,
                 "providers": providers_by_feature.get(feat, {}),
                 "providers_active": active.copy(),
