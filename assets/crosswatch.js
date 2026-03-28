@@ -37,6 +37,52 @@
   if (typeof window.showTab !== "function") window.showTab = showTab;
 
     // UI mode (compact/full)
+  const _cwHasCompactViewport = () => {
+    try {
+      return !!window.matchMedia?.("(max-width: 680px)")?.matches;
+    } catch {}
+    return false;
+  };
+
+  const _cwHasCoarsePointer = () => {
+    try {
+      return !!window.matchMedia?.("(pointer: coarse)")?.matches;
+    } catch {}
+    return false;
+  };
+
+  const _cwHasFinePointer = () => {
+    try {
+      return !!window.matchMedia?.("(pointer: fine)")?.matches;
+    } catch {}
+    return false;
+  };
+
+  const _cwUaLooksMobile = () => {
+    try {
+      const ua = navigator.userAgent || "";
+      return /Android|iPhone|iPad|iPod/i.test(ua);
+    } catch {}
+    return false;
+  };
+
+  const _cwIsLikelyHandheld = () => {
+    try {
+      if (typeof navigator.userAgentData?.mobile === "boolean") return navigator.userAgentData.mobile;
+    } catch {}
+
+    if (_cwUaLooksMobile()) return true;
+
+    try {
+      const points = Number(navigator.maxTouchPoints || 0);
+      if (points > 1 && _cwHasCoarsePointer() && !_cwHasFinePointer() && _cwHasCompactViewport()) return true;
+    } catch {}
+
+    return false;
+  };
+
+  const _cwShouldAutoCompact = () => _cwHasCompactViewport() && _cwIsLikelyHandheld();
+
   const _cwGetUiMode = () => {
     try {
       const url = new URL(window.location.href);
@@ -49,9 +95,7 @@
       const saved = String(localStorage.getItem("cw_ui_mode") || "").toLowerCase();
       if (saved === "compact" || saved === "full") return saved;
 
-      try {
-        if (window.matchMedia?.("(max-width: 680px)")?.matches) return "compact";
-      } catch {}
+      if (_cwShouldAutoCompact()) return "compact";
     } catch {}
     return "full";
   };
@@ -118,10 +162,7 @@
 
     // PWA: install banner (Android prompt and fallback, iOS guidance)
 function _cwIsMobile() {
-  try {
-    if (window.matchMedia?.("(max-width: 680px)")?.matches) return true;
-  } catch {}
-  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  return _cwIsLikelyHandheld();
 }
 
 function _cwIsStandalone() {
@@ -265,6 +306,9 @@ window.cwPwaDiag = function () {
       protocol: location.protocol,
       host: location.hostname,
       mobile: _cwIsMobile(),
+      handheld: _cwIsLikelyHandheld(),
+      compactViewport: _cwHasCompactViewport(),
+      autoCompact: _cwShouldAutoCompact(),
       standalone: _cwIsStandalone(),
       ios: _cwIsIOS(),
       android: _cwIsAndroid(),
