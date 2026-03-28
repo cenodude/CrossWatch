@@ -46,6 +46,22 @@ _dbg, _info, _warn, _error, _log = make_logger("ratings")
 def _emit(evt: dict[str, Any]) -> None:
     emit(evt, default_feature="ratings")
 
+
+def _preferred_pms_token(adapter: Any) -> tuple[str, str]:
+    cli = getattr(adapter, "client", None)
+    srv = getattr(cli, "server", None)
+
+    for source, value in (
+        ("client._pms_token", getattr(cli, "_pms_token", None)),
+        ("cfg.pms_token", getattr(getattr(cli, "cfg", None), "pms_token", None)),
+        ("server._token", getattr(srv, "_token", None)),
+        ("active_pms_token", active_pms_token(adapter)),
+    ):
+        tok = str(value or "").strip()
+        if tok:
+            return tok, source
+    return "", "none"
+
 def _container_from_plex_response(resp: Any) -> Mapping[str, Any] | None:
     try:
         headers = getattr(resp, "headers", None) or {}
@@ -271,7 +287,7 @@ def _rate(srv: Any, rating_key: Any, rating_1to10: int) -> bool:
         return False
 
 def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
-    _, did_switch, _, _ = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
@@ -291,8 +307,10 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         client = getattr(adapter, "client", None)
         ses = getattr(srv, "_session", None) or getattr(client, "session", None)
     
-        tok = str(active_pms_token(adapter) or "").strip()
+        tok, tok_source = _preferred_pms_token(adapter)
         configure_plex_context(baseurl=base, token=tok)
+
+        cli = getattr(adapter, "client", None)
     
     
         if not (base and tok and ses):
@@ -367,7 +385,24 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             except Exception:
                 pass
     
-        for tnum in (1, 2, 3, 4):
+        section_specs: list[tuple[str, tuple[int, ...]]] = []
+        try:
+            for sec in adapter.libraries(types=("movie", "show")) or []:
+                sid = str(getattr(sec, "key", "") or "").strip()
+                if not sid:
+                    continue
+                if allow and sid not in allow:
+                    continue
+                stype = str(getattr(sec, "type", "") or "").strip().lower()
+                if stype == "movie":
+                    section_specs.append((sid, (1,)))
+                elif stype == "show":
+                    section_specs.append((sid, (2, 3, 4)))
+        except Exception:
+            section_specs = []
+
+        def _iter_rating_rows(path: str, tnum: int) -> Iterable[Mapping[str, Any]]:
+            nonlocal total
             start = 0
             while True:
                 params = {
@@ -379,15 +414,15 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     "X-Plex-Container-Size": page_size,
                     "userRating>>": 0,
                 }
-                r = ses.get(f"{base}/library/all", params=params, headers=hdrs, timeout=tmo)
+                r = ses.get(path, params=params, headers=hdrs, timeout=tmo)
                 if not r.ok:
                     raise RuntimeError(f"PLEX ratings fast query failed (status={r.status_code})")
-    
+
                 cont = _container_from_plex_response(r)
                 if not cont:
                     head = (r.text or "")[:140].replace("\n", " ")
                     raise RuntimeError(f"PLEX ratings fast query parse failed (ct={(r.headers or {}).get('Content-Type')}; head={head!r})")
-    
+
                 mc = cont.get("MediaContainer") or {}
                 if start == 0:
                     try:
@@ -395,104 +430,89 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     except Exception:
                         pass
                     _tick(force=True)
-    
+
                 rows = mc.get("Metadata") or []
                 if not rows:
                     break
+                for row in rows:
+                    if isinstance(row, Mapping):
+                        yield cast(Mapping[str, Any], row)
+                if len(rows) < page_size:
+                    break
+                start += len(rows)
 
-                def _process_rating_row(row: Mapping[str, Any]) -> tuple[str, dict[str, Any], int, int] | None:
-                    # /library/all is global; enforce library allow-list here.
-                    sid = row.get("librarySectionID") or row.get("sectionID") or row.get("librarySectionId") or row.get("sectionId")
-                    sid_s = str(sid).strip() if sid is not None else ""
-                    if allow and sid_s and sid_s not in allow:
-                        return None
+        def _consume_rows(rows: list[Mapping[str, Any]], tnum: int) -> bool:
+            nonlocal scanned, added, fb_try, fb_ok
+            def _process_rating_row(row: Mapping[str, Any]) -> tuple[str, dict[str, Any], int, int] | None:
+                # /library/all is global; enforce library allow-list here.
+                sid = row.get("librarySectionID") or row.get("sectionID") or row.get("librarySectionId") or row.get("sectionId")
+                sid_s = str(sid).strip() if sid is not None else ""
+                if allow and sid_s and sid_s not in allow:
+                    return None
 
-                    rating = _norm_rating(row.get("userRating"))
-                    if not rating or rating <= 0:
-                        return None
+                rating = _norm_rating(row.get("userRating"))
+                if not rating or rating <= 0:
+                    return None
 
-                    m = normalize_discover_row(row, token=tok) or {}
-                    if not m:
-                        return None
+                m = normalize_discover_row(row, token=tok) or {}
+                if not m:
+                    return None
 
-                    m = dict(m)
-                    m["rating"] = rating
-                    ts = _as_epoch(row.get("lastRatedAt"))
-                    if ts:
-                        m["rated_at"] = _iso(ts)
-                    m["type"] = str(m.get("type") or type_hint.get(tnum) or "movie").lower()
-    
-                    if m["type"] in ("season", "episode") and not m.get("show_ids"):
-           
-                        show_rk = row.get("parentRatingKey") if m["type"] == "season" else row.get("grandparentRatingKey")
-                        if show_rk is None:
-                            show_rk = row.get("grandparentRatingKey") or row.get("parentRatingKey")
-                        show_ids = _show_ids_for_rating_key(show_rk)
-                        if show_ids:
-                            m["show_ids"] = show_ids
-                            if show_ids.get("imdb"):
-                                ids0 = dict(m.get("ids") or {})
-                                ids0.setdefault("imdb", show_ids["imdb"])
-                                m["ids"] = ids0
+                m = dict(m)
+                m["rating"] = rating
+                ts = _as_epoch(row.get("lastRatedAt"))
+                if ts:
+                    m["rated_at"] = _iso(ts)
+                m["type"] = str(m.get("type") or type_hint.get(tnum) or "movie").lower()
 
-                    # Keep fallback GUID enrichment intact.
-                    fb_try_local = 0
-                    fb_ok_local = 0
-                    if fallback_guid and not has_external_ids(m.get("ids") or {}):
-                        fb_try_local += 1
-                        try:
-                            fb = minimal_from_history_row(row, token=tok, allow_discover=True)
-                        except Exception:
-                            fb = None
-                        if isinstance(fb, Mapping):
-                            ids_fb = dict(fb.get("ids") or {})
-                            show_ids_fb = dict(fb.get("show_ids") or {})
-                        else:
-                            ids_fb = {}
-                            show_ids_fb = {}
-                        if ids_fb or show_ids_fb:
-                            fb_ok_local += 1
+                if m["type"] in ("season", "episode") and not m.get("show_ids"):
+                    show_rk = row.get("parentRatingKey") if m["type"] == "season" else row.get("grandparentRatingKey")
+                    if show_rk is None:
+                        show_rk = row.get("grandparentRatingKey") or row.get("parentRatingKey")
+                    show_ids = _show_ids_for_rating_key(show_rk)
+                    if show_ids:
+                        m["show_ids"] = show_ids
+                        if show_ids.get("imdb"):
                             ids0 = dict(m.get("ids") or {})
-                            ids0.update({k: v for k, v in ids_fb.items() if v})
+                            ids0.setdefault("imdb", show_ids["imdb"])
                             m["ids"] = ids0
-                            if show_ids_fb:
-                                si0 = dict(m.get("show_ids") or {})
-                                si0.update({k: v for k, v in show_ids_fb.items() if v})
-                                m["show_ids"] = si0
-                    _force_episode_title(m)
 
-                    k = canonical_key(m)
-                    if not k:
-                        return None
-                    return k, m, fb_try_local, fb_ok_local
-
-                if workers > 1 and len(rows) > 1:
-                    executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plex-ratings")
+                fb_try_local = 0
+                fb_ok_local = 0
+                if fallback_guid and not has_external_ids(m.get("ids") or {}):
+                    fb_try_local += 1
                     try:
-                        result_iter = executor.map(_process_rating_row, rows)
-                        for result in result_iter:
-                            scanned += 1
-                            if result:
-                                k, m, fb_try_local, fb_ok_local = result
-                                out[k] = m
-                                added += 1
-                                fb_try += fb_try_local
-                                fb_ok += fb_ok_local
-                                if limit is not None and added >= limit:
-                                    if prog is not None:
-                                        try:
-                                            prog.done(ok=True, total=max(total, scanned) if total else None)
-                                        except Exception:
-                                            pass
-                                    _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers, truncated=True, limit=limit)
-                                    return out
-                            _tick()
-                    finally:
-                        executor.shutdown(wait=True, cancel_futures=False)
-                else:
-                    for row in rows:
+                        fb = minimal_from_history_row(row, token=tok, allow_discover=True)
+                    except Exception:
+                        fb = None
+                    if isinstance(fb, Mapping):
+                        ids_fb = dict(fb.get("ids") or {})
+                        show_ids_fb = dict(fb.get("show_ids") or {})
+                    else:
+                        ids_fb = {}
+                        show_ids_fb = {}
+                    if ids_fb or show_ids_fb:
+                        fb_ok_local += 1
+                        ids0 = dict(m.get("ids") or {})
+                        ids0.update({k: v for k, v in ids_fb.items() if v})
+                        m["ids"] = ids0
+                        if show_ids_fb:
+                            si0 = dict(m.get("show_ids") or {})
+                            si0.update({k: v for k, v in show_ids_fb.items() if v})
+                            m["show_ids"] = si0
+                _force_episode_title(m)
+
+                k = canonical_key(m)
+                if not k:
+                    return None
+                return k, m, fb_try_local, fb_ok_local
+
+            if workers > 1 and len(rows) > 1:
+                executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plex-ratings")
+                try:
+                    result_iter = executor.map(_process_rating_row, rows)
+                    for result in result_iter:
                         scanned += 1
-                        result = _process_rating_row(row)
                         if result:
                             k, m, fb_try_local, fb_ok_local = result
                             out[k] = m
@@ -506,12 +526,54 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                                     except Exception:
                                         pass
                                 _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers, truncated=True, limit=limit)
-                                return out
+                                return True
                         _tick()
+                finally:
+                    executor.shutdown(wait=True, cancel_futures=False)
+            else:
+                for row in rows:
+                    scanned += 1
+                    result = _process_rating_row(row)
+                    if result:
+                        k, m, fb_try_local, fb_ok_local = result
+                        out[k] = m
+                        added += 1
+                        fb_try += fb_try_local
+                        fb_ok += fb_ok_local
+                        if limit is not None and added >= limit:
+                            if prog is not None:
+                                try:
+                                    prog.done(ok=True, total=max(total, scanned) if total else None)
+                                except Exception:
+                                    pass
+                            _info("index_done", count=len(out), added=added, scanned=scanned, fb_try=fb_try, fb_ok=fb_ok, workers=workers, truncated=True, limit=limit)
+                            return True
+                    _tick()
+            return False
 
-                if len(rows) < page_size:
-                    break
-                start += len(rows)
+        try:
+            for tnum in (1, 2, 3, 4):
+                rows = list(_iter_rating_rows(f"{base}/library/all", tnum))
+                if _consume_rows(rows, tnum):
+                    return out
+        except RuntimeError as e:
+            if "status=401" not in str(e) and "status=403" not in str(e):
+                raise
+            _warn("fast_query_fallback", mode="section_scan", reason=str(e))
+            if not section_specs:
+                raise
+
+            total = 0
+            if prog is not None:
+                try:
+                    prog.tick(0, total=0, force=True)
+                except Exception:
+                    pass
+            for sid, tnums in section_specs:
+                for tnum in tnums:
+                    rows = list(_iter_rating_rows(f"{base}/library/sections/{sid}/all", tnum))
+                    if _consume_rows(rows, tnum):
+                        return out
     
         if prog is not None:
             try:
