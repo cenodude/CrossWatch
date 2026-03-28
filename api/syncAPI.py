@@ -343,14 +343,12 @@ def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
             for k in _VERBOSE_RESULT_KEYS:
                 res2.pop(k, None)
             out["result"] = res2
-        out.pop("spotlight", None)
         out.pop("confirmed_keys", None)
         return out
 
     if "confirmed_keys" in obj or (isinstance(obj.get("result"), dict) and "confirmed_keys" in obj["result"]):
         out = dict(cast(dict[str, Any], obj))
         out.pop("confirmed_keys", None)
-        out.pop("spotlight", None)
         res = out.get("result")
         if isinstance(res, dict):
             res2 = dict(cast(dict[str, Any], res))
