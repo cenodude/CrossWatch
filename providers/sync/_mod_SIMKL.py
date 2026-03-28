@@ -222,6 +222,9 @@ class SIMKLConfig:
     max_retries: int = 3
     rate_get_per_sec: float = 10.0
     rate_post_per_sec: float = 1.0
+    watchlist_batch_size: int = 100
+    ratings_chunk_size: int = 100
+    history_chunk_size: int = 100
 
 
 class SIMKLClient:
@@ -312,6 +315,9 @@ class SIMKLModule:
             max_retries=int(simkl_cfg.get("max_retries", cfg.get("max_retries", 3))),
             rate_get_per_sec=rate_get,
             rate_post_per_sec=rate_post,
+            watchlist_batch_size=int(simkl_cfg.get("watchlist_batch_size", 100) or 100),
+            ratings_chunk_size=int(simkl_cfg.get("ratings_chunk_size", 100) or 100),
+            history_chunk_size=int(simkl_cfg.get("history_chunk_size", 100) or 100),
         )
         if not self.cfg.api_key or not self.cfg.access_token:
             raise SIMKLError("SIMKL requires both api_key (or client_id) and access_token")
@@ -321,6 +327,7 @@ class SIMKLModule:
 
         self.client = SIMKLClient(self.cfg, simkl_cfg).connect()
         self.raw_cfg = cfg
+        self.config = cfg
         self.progress_factory = (
             lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
                 ctx,
