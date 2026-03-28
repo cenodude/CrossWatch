@@ -22,6 +22,38 @@ from ..modules_registry import load_sync_ops
 SnapIndex = dict[str, dict[str, Any]]
 SnapCache = dict[tuple[str, str, str], tuple[float, SnapIndex]]
 
+
+def provider_index_semantics(
+    ops: InventoryOps,
+    config: Mapping[str, Any],
+    feature: str,
+) -> str:
+    try:
+        dyn = getattr(ops, "index_semantics", None)
+        if callable(dyn):
+            sem = dyn(config, feature=feature)
+            if sem:
+                return str(sem).lower()
+    except Exception:
+        pass
+
+    try:
+        caps_raw = ops.capabilities()  # type: ignore[call-arg]
+    except Exception:
+        return "present"
+
+    if isinstance(caps_raw, Mapping):
+        caps: Mapping[str, Any] = caps_raw
+    else:
+        caps = {}
+
+    per = caps.get(feature)
+    if isinstance(per, Mapping) and per.get("index_semantics") is not None:
+        sem = per.get("index_semantics")
+    else:
+        sem = caps.get("index_semantics", "present")
+    return str(sem).lower()
+
 def _key_rank(k: str) -> int:
     s = str(k or "").strip().lower()
     if not s or ":" not in s:
@@ -642,6 +674,7 @@ def build_snapshots_for_feature(
 
 def coerce_suspect_snapshot(
     *,
+    config: Mapping[str, Any] | None = None,
     provider: str,
     ops: InventoryOps,
     prev_idx: Mapping[str, Any],
@@ -655,22 +688,7 @@ def coerce_suspect_snapshot(
     prev_cp: str | None,
     now_cp: str | None,
 ) -> tuple[dict[str, Any], bool, str]:
-    try:
-        caps_raw = ops.capabilities()  # type: ignore[call-arg]
-    except Exception:
-        caps_raw = {}
-
-    if isinstance(caps_raw, Mapping):
-        caps: Mapping[str, Any] = caps_raw
-    else:
-        caps = {}
-
-    per = caps.get(feature)
-    if isinstance(per, Mapping) and per.get("index_semantics") is not None:
-        sem = per.get("index_semantics")
-    else:
-        sem = caps.get("index_semantics", "present")
-
+    sem = provider_index_semantics(ops, config or {}, feature)
     if str(sem).lower() != "present":
         return dict(cur_idx), False, "semantics:delta"
 
