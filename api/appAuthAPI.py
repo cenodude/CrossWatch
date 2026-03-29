@@ -645,14 +645,14 @@ _LOGIN_PAGE_CSS = """
 *{box-sizing:border-box}
 html,body{min-height:100%}
 body{
-  margin:0;display:grid;place-items:center;min-height:100vh;color:var(--cw-text);
+  margin:0;display:grid;place-items:center;min-height:100vh;min-height:100svh;color:var(--cw-text);
   font-family:"Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;
   background:
     radial-gradient(900px circle at 8% 10%, rgba(140,109,255,.18), transparent 42%),
     radial-gradient(780px circle at 92% 18%, rgba(192,140,255,.18), transparent 40%),
     radial-gradient(760px circle at 50% 110%, rgba(112,92,214,.16), transparent 42%),
     linear-gradient(180deg,#07111b 0%,#03070c 100%);
-  overflow:hidden;
+  overflow-x:hidden;overflow-y:auto;padding:16px;
 }
 body::before{
   content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;background-size:44px 44px;
@@ -785,11 +785,28 @@ body::before{
   .cw-login{padding:24px}
 }
 @media (max-width:560px){
-  .cw-login-shell{width:min(100vw - 18px,1040px);border-radius:24px}
-  .cw-hero,.cw-login{padding:20px}
+  body{display:block;min-height:100svh;padding:10px}
+  .cw-login-shell{width:min(100vw - 20px,1040px);border-radius:22px;margin:0 auto}
+  .cw-hero,.cw-login{padding:18px}
+  .cw-hero::after{display:none}
+  .cw-mark img{width:min(220px,72vw)}
+  .cw-hero h1{margin:16px 0 8px;font-size:clamp(26px,8vw,36px)}
+  .cw-hero p{font-size:13px;line-height:1.5}
+  .cw-metrics{gap:10px;margin-top:18px;max-width:none}
+  .cw-login{gap:14px}
+  .cw-login h2{font-size:24px}
+  .cw-field input,.cw-login .btn{min-height:48px}
+  .cw-remember{padding:9px 10px}
+  .cw-remember span{font-size:11.5px;line-height:1.4}
   .cw-actions{grid-template-columns:1fr;align-items:stretch}
   .cw-action-primary,.cw-action-plex{min-width:100%}
   .cw-login .btn{width:100%}
+}
+@media (max-width:400px){
+  body{padding:8px}
+  .cw-login-shell{width:calc(100vw - 16px);border-radius:20px}
+  .cw-hero,.cw-login{padding:16px}
+  .cw-metrics{display:none}
 }
 """
 

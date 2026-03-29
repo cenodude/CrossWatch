@@ -318,7 +318,22 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
     const q = new URLSearchParams(window.location.search || "");
     const ui = String(q.get("ui") || "").toLowerCase();
     const explicit = ui === "compact" || ui === "full" || q.get("compact") === "1" || q.get("full") === "1";
-    const wantCompact = ui === "compact" || q.get("compact") === "1" || (!explicit && window.matchMedia?.("(max-width: 680px)")?.matches);
+    const hasCompactViewport = !!window.matchMedia?.("(max-width: 680px)")?.matches;
+    const uaLooksMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+    const likelyHandheld = (() => {
+      try {
+        if (typeof navigator.userAgentData?.mobile === "boolean") return navigator.userAgentData.mobile;
+      } catch {}
+      if (uaLooksMobile) return true;
+      try {
+        const coarse = !!window.matchMedia?.("(pointer: coarse)")?.matches;
+        const fine = !!window.matchMedia?.("(pointer: fine)")?.matches;
+        const points = Number(navigator.maxTouchPoints || 0);
+        return points > 1 && coarse && !fine && hasCompactViewport;
+      } catch {}
+      return false;
+    })();
+    const wantCompact = ui === "compact" || q.get("compact") === "1" || (!explicit && hasCompactViewport && likelyHandheld);
     if (wantCompact) document.documentElement.classList.add("cw-compact");
   } catch {}
 })();
@@ -389,10 +404,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 
 <main id="layout">
   <section id="ops-card" class="card cw-main-card cw-main-card--sync">
-    <div class="title">Synchronization</div>
+    <div class="title">Sync Hub</div>
     <div class="ops-header cw-main-card-head">
       <div class="cw-main-card-head-copy">
-        <h2>Synchronization</h2>
+        <h2>Sync Hub</h2>
       </div>
       <div class="cw-main-card-head-side">
         <div id="conn-badges" class="vip-badges"></div>
@@ -678,14 +693,14 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
           <div class="cw-settings-pane-stack cw-settings-providers-stack">
             <div class="section cw-settings-section cw-settings-provider-section" id="sec-auth">
               <div class="head" onclick="toggleSection('sec-auth')">
-                <span class="chev">▶</span><strong>Authentication Providers</strong>
+                <span class="chev">▶</span><strong>Authentication</strong>
                 <span id="auth-providers-icons" class="cw-provider-head-icons">__CW_AUTH_HEADER_ICONS__</span>
               </div>
               <div class="body"><div id="auth-providers"></div></div>
             </div>
 
             <div class="section cw-settings-section cw-settings-provider-section" id="sec-sync">
-              <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization Providers</strong></div>
+              <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization</strong></div>
               <div class="body">
                 <div class="sub">Providers</div><div id="providers_list" class="grid2"></div>
                 <div class="sep"></div><div class="sub">Pairs</div><div id="pairs_list"></div>
@@ -696,7 +711,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               </div>
             </div>
 
-            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" onclick="toggleSection('sec-meta')"><span class="chev">▶</span><strong>Metadata Providers</strong></div><div class="body">
+            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" onclick="toggleSection('sec-meta')"><span class="chev">▶</span><strong>Metadata</strong></div><div class="body">
 <div id="metadata-providers">
   <div class="cw-settings-hub" id="meta_provider_tiles">
     <button type="button" class="cw-hub-tile tmdb" data-provider="tmdb" aria-selected="false">
