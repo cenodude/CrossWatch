@@ -933,6 +933,16 @@ def clear_provider_features(
     except Exception:
         adapter = None
 
+    def _load_current_items(feat: str) -> list[Mapping[str, Any]]:
+        with _capture_mode_env(pid=pid, instance=inst, feat=feat):
+            cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
+        cur_items: list[Mapping[str, Any]] = []
+        if isinstance(cur_raw, Mapping):
+            for v in cur_raw.values():
+                if isinstance(v, Mapping):
+                    cur_items.append(dict(v))
+        return cur_items
+
     for f in features:
         feat = _norm_feature(f)
         if not _feature_enabled(ops, feat):
@@ -942,47 +952,62 @@ def clear_provider_features(
             done["results"][feat] = {"ok": True, "skipped": True, "reason": "unsupported_clear"}
             continue
 
-        with _capture_mode_env(pid=pid, instance=inst, feat=feat):
-            cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
-        cur: list[Mapping[str, Any]] = []
-        if isinstance(cur_raw, Mapping):
-            for v in cur_raw.values():
-                if isinstance(v, Mapping):
-                    cur.append(dict(v))
-
-        # Capture mode
-        if feat == "history":
-            for it in cur:
-                if isinstance(it, dict):
-                    it.setdefault("_cw_tool_clear", True)
-
+        cur = _load_current_items(feat)
+        initial_count = len(cur)
         removed = 0
         unresolved: list[Any] = []
         errors: list[str] = []
+        passes = 0
+        max_passes = 6 if feat == "history" else 1
+        prev_count: int | None = None
 
-        # Prefer a single remove call per feature. 
-        try:
-            with _capture_mode_env(pid=pid, instance=inst, feat=feat):
-                res = (
-                    adapter.remove(feat, cur, dry_run=False)
-                    if adapter
-                    else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
-                ) or {}
-            if isinstance(res, Mapping) and "count" in res:
-                removed = int(res.get("count") or 0)
-            else:
-                removed = len(cur)
-            if isinstance(res, Mapping) and isinstance(res.get("unresolved"), list):
-                unresolved = list(res.get("unresolved") or [])
-        except Exception as e:
-            errors.append(str(e))
+        while cur and passes < max_passes:
+            passes += 1
+
+            if feat == "history":
+                for it in cur:
+                    if isinstance(it, dict):
+                        it.setdefault("_cw_tool_clear", True)
+
+            try:
+                with _capture_mode_env(pid=pid, instance=inst, feat=feat):
+                    res = (
+                        adapter.remove(feat, cur, dry_run=False)
+                        if adapter
+                        else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
+                    ) or {}
+                if isinstance(res, Mapping) and "count" in res:
+                    removed += int(res.get("count") or 0)
+                else:
+                    removed += len(cur)
+                if isinstance(res, Mapping) and isinstance(res.get("unresolved"), list):
+                    unresolved.extend(list(res.get("unresolved") or []))
+            except Exception as e:
+                errors.append(str(e))
+                break
+
+            if feat != "history":
+                break
+
+            remaining = _load_current_items(feat)
+            remaining_count = len(remaining)
+            if remaining_count <= 0:
+                cur = []
+                break
+            if prev_count is not None and remaining_count >= prev_count:
+                cur = remaining
+                break
+            prev_count = remaining_count
+            cur = remaining
 
         ok = len(errors) == 0
         done["ok"] = done["ok"] and ok
         done["results"][feat] = {
             "ok": ok,
             "removed": removed,
-            "count": len(cur),
+            "count": initial_count,
+            "remaining": len(cur),
+            "passes": passes,
             "unresolved": unresolved,
             "unresolved_count": len(unresolved),
             "errors": errors,
