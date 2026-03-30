@@ -159,7 +159,7 @@ def _normalize_features(f: dict | None) -> dict:
             v.setdefault("remove", False)
     return f
 
-_PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN"}
+_PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "CROSSWATCH"}
 
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
     try:
@@ -169,7 +169,7 @@ def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
         if not isinstance(feats, dict) or not feats:
             return
 
-        # Progress is only supported between Plex/Emby/Jellyfin.
+        # Progress is only supported between providers that currently expose progress sync.
         if src not in _PROGRESS_ALLOWED or dst not in _PROGRESS_ALLOWED:
             feats.pop("progress", None)
     except Exception:

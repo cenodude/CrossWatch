@@ -1719,9 +1719,14 @@ function renderSelected() {
 
             const u = (x.unresolved_count != null) ? Number(x.unresolved_count || 0)
               : (Array.isArray(x.unresolved) ? x.unresolved.length : 0);
-            return u > 0
-              ? `${k}: removed ${x.removed || 0} (had ${x.count || 0}, unresolved ${u})`
-              : `${k}: removed ${x.removed || 0} (had ${x.count || 0})`;
+            const passes = Number(x.passes || 0);
+            const remaining = Number(x.remaining || 0);
+            let msg = `${k}: removed ${x.removed || 0} (had ${x.count || 0}`;
+            if (u > 0) msg += `, unresolved ${u}`;
+            if (passes > 1) msg += `, passes ${passes}`;
+            if (remaining > 0) msg += `, remaining ${remaining}`;
+            msg += `)`;
+            return msg;
           });
           out.textContent = parts.join(" * ");
         } else {

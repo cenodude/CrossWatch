@@ -310,7 +310,18 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "year": item.get("year"),
         "ids": {k: ids[k] for k in ID_KEYS if k in ids},
     }
-    for opt in ("watched", "watched_at", "rating", "rated_at", "season", "episode", "series_title"):
+    for opt in (
+        "watched",
+        "watched_at",
+        "rating",
+        "rated_at",
+        "season",
+        "episode",
+        "series_title",
+        "progress_ms",
+        "duration_ms",
+        "progress_at",
+    ):
         if opt in item:
             out[opt] = item.get(opt)
 

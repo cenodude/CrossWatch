@@ -77,7 +77,12 @@
   const runKeyOf = (s) => s?.run_id || s?.run_uuid || s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) : null);
   const defaultEnabledMap = () => ({ ...DEFAULT_ENABLED });
   const getEnabledMap = () => enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
-  const getDisplayFeats = () => (enabledFromPairs?.progress ? [FEAT_BY_KEY.watchlist, FEAT_BY_KEY.ratings, FEAT_BY_KEY.history, FEAT_BY_KEY.progress] : [FEAT_BY_KEY.watchlist, FEAT_BY_KEY.ratings, FEAT_BY_KEY.history, FEAT_BY_KEY.playlists]);
+  const getDisplayFeats = () => {
+    const enabled = getEnabledMap() || defaultEnabledMap();
+    const keys = ["watchlist", "ratings", "history"];
+    keys.push(enabled.progress ? "progress" : "playlists");
+    return keys.map((key) => FEAT_BY_KEY[key]).filter(Boolean);
+  };
   const fmtDelta = (a, r, u) => `+${a || 0} / -${r || 0} / ~${u || 0}`;
 
   const fetchJSON = async (url, fallback = null, signal) => {

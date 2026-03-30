@@ -9,6 +9,9 @@ import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLab
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
 
+const TWO_WAY_WARNING =
+  "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
+
 // Helpers
 const ID=(x,r=document)=>(r.getElementById?r.getElementById(x):r.querySelector("#"+x));
 const Q=(s,r=document)=>r.querySelector(s);
@@ -26,9 +29,11 @@ const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
 const isMDBList=(v)=>same(v,"mdblist");
 const isPlex = (v) => same(v, "plex");
+const isCrossWatch = (v) => same(v, "crosswatch");
 function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
 const isMedia = (v) => isPlex(v) || isEmby(v) || isJelly(v);
-function isProgressPair(state){ return isMedia(state?.src) && isMedia(state?.dst) }
+function providerSupportsProgress(state, name){ return !!(byName(state, name)?.features || {}).progress }
+function isProgressPair(state){ return providerSupportsProgress(state, state?.src) && providerSupportsProgress(state, state?.dst) }
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
@@ -136,7 +141,7 @@ const tpl=()=>`
               <div class="flow-mode-inline">
                 <div class="seg">
                   <input type="radio" name="cx-mode" id="cx-mode-one" value="one"/><label for="cx-mode-one">One-way</label>
-                  <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two">Two-way</label>
+                  <input type="radio" name="cx-mode" id="cx-mode-two" value="two"/><label for="cx-mode-two" title="${TWO_WAY_WARNING}">Two-way</label>
                 </div>
               </div>
             </div>
@@ -169,7 +174,7 @@ function defaultState(){
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
       history:{enable:false,add:false,remove:false},
       playlists:{enable:false,add:true,remove:false},
-      progress:{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:80,propagate_timestamp_updates:false}
+      progress:{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,propagate_timestamp_updates:false}
     },
     pairProviders:{},
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -262,6 +267,7 @@ async function loadProviders(state){
   const list=await getJSON("/api/sync/providers?cb="+Date.now());
   state.providers=Array.isArray(list)?list:[
     {name:"PLEX",label:"Plex",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
+    {name:"CROSSWATCH",label:"CW Tracker",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
@@ -320,12 +326,12 @@ const commonFeatures=(state)=>{
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
   k==="playlists"?{enable:false,add:true,remove:false}:
-  k==="progress"?{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:80,propagate_timestamp_updates:false}:
+  k==="progress"?{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,propagate_timestamp_updates:false}:
   {enable:false,add:false,remove:false};
 function getOpts(state,key){
   if(!state.visited.has(key)){
     if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},state.options.ratings||{});
-    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:80,propagate_timestamp_updates:false},state.options.progress||{});
+    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,propagate_timestamp_updates:false},state.options.progress||{});
     else state.options[key]=state.options[key]??defaultFor(key);
     state.visited.add(key);
   }
@@ -485,6 +491,7 @@ function renderProviderSelects(state){
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
   const providerKind=(name)=>{
     if(isMedia(name)) return "Media server";
+    if(isCrossWatch(name)) return "Tracker";
     if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"tautulli")) return "Tracker";
     if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
     return "Provider";

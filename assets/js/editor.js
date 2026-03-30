@@ -2204,6 +2204,19 @@ function bindFileImport(btn, input, url, done) {
     }
   }
 
+  async function settleStateView(maxAttempts = 3, delayMs = 300) {
+    if (state.source !== "state") return;
+    for (let i = 0; i < maxAttempts; i += 1) {
+      const missingProvider = !String(state.snapshot || "").trim();
+      const hasRows = Array.isArray(state.rows) && state.rows.length > 0;
+      const hasSnapshots = Array.isArray(state.snapshots) && state.snapshots.length > 0;
+      if (!missingProvider && (hasRows || !hasSnapshots)) return;
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await loadSnapshots();
+      await loadState();
+    }
+  }
+
   async function loadState() {
     if (state.source === "pair") {
       const scope = String(state.pair || "").trim();
@@ -2240,6 +2253,13 @@ function bindFileImport(btn, input, url, done) {
       if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
 
       if (state.source === "state") {
+        if (data && typeof data.provider === "string" && data.provider.trim()) {
+          state.snapshot = data.provider.trim();
+          if (snapSel) {
+            snapSel.value = state.snapshot;
+            syncProviderIconSelect(snapSel, true);
+          }
+        }
         state.baselineItems = data.items || {};
         state.manualAdds = data.manual_adds || {};
         state.manualBlocks = Array.isArray(data.manual_blocks) ? data.manual_blocks : [];
@@ -2534,6 +2554,7 @@ function bindFileImport(btn, input, url, done) {
       if (state.source === "tracker") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
+      await settleStateView();
     });
   }
 
@@ -2555,6 +2576,7 @@ function bindFileImport(btn, input, url, done) {
       await loadSnapshots();
       renderRows();
       await loadState();
+      await settleStateView();
     });
   }
 
@@ -2639,6 +2661,7 @@ if (importProviderSel) {
       if (state.source !== "state") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
+      await settleStateView();
     });
   }
 
@@ -2696,6 +2719,7 @@ if (importProviderSel) {
     if (state.source === "tracker") await loadTrackerCounts();
     await loadSnapshots();
     await loadState();
+    await settleStateView();
   })();
   }
 
