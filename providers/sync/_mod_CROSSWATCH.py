@@ -88,6 +88,12 @@ except Exception as e:
     cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="ratings", error=str(e))
 
 try:
+    from .crosswatch import _progress as feat_progress
+except Exception as e:
+    feat_progress = None
+    cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="progress", error=str(e))
+
+try:
     from ._mod_common import make_snapshot_progress
 except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
@@ -102,6 +108,8 @@ if feat_history:
     _FEATURES["history"] = feat_history
 if feat_ratings:
     _FEATURES["ratings"] = feat_ratings
+if feat_progress:
+    _FEATURES["progress"] = feat_progress
 
 
 def _dbg(feature: str, msg: str, **fields: Any) -> None:
@@ -125,6 +133,7 @@ def _features_flags() -> dict[str, bool]:
         "watchlist": "watchlist" in _FEATURES,
         "history": "history" in _FEATURES,
         "ratings": "ratings" in _FEATURES,
+        "progress": "progress" in _FEATURES,
         "playlists": False,
     }
 
@@ -149,6 +158,13 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": {
+                "upsert": True,
+                "remove": True,
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "position": "milliseconds",
+                "timestamp": True,
+            },
             "snapshots": {
                 "root_dir_default": "/config/.cw_provider",
                 "managed_by": "CrossWatch",
@@ -167,6 +183,7 @@ class CROSSWATCHConfig:
     restore_watchlist: str | None = None
     restore_history: str | None = None
     restore_ratings: str | None = None
+    restore_progress: str | None = None
 
     @property
     def base_path(self) -> Path:
@@ -213,6 +230,7 @@ class CROSSWATCHModule:
             restore_watchlist=_restore_id("restore_watchlist"),
             restore_history=_restore_id("restore_history"),
             restore_ratings=_restore_id("restore_ratings"),
+            restore_progress=_restore_id("restore_progress"),
         )
 
         try:
@@ -244,6 +262,7 @@ class CROSSWATCHModule:
             "watchlist": True,
             "history": True,
             "ratings": True,
+            "progress": True,
             "playlists": False,
         }
         present = _features_flags()
@@ -370,6 +389,9 @@ class CROSSWATCHModule:
             "api": {},
         }
 
+    def feature_names(self) -> tuple[str, ...]:
+        return tuple(k for k, v in self.supported_features().items() if v and k in _FEATURES)
+
 class _CrossWatchOPS:
     def name(self) -> str:
         return "CROSSWATCH"
@@ -391,6 +413,13 @@ class _CrossWatchOPS:
                 "upsert": True,
                 "unrate": True,
                 "from_date": False,
+            },
+            "progress": {
+                "upsert": True,
+                "remove": True,
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "position": "milliseconds",
+                "timestamp": True,
             },
         }
 
