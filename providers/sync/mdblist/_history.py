@@ -501,8 +501,6 @@ def _ids_pick(obj: Mapping[str, Any]) -> dict[str, Any]:
                 continue
             continue
         out[k] = str(v)
-    if out.get('imdb') and out.get('tmdb') and out.get('tvdb'):
-        out.pop('tvdb', None)
     return out
 
 
