@@ -106,7 +106,6 @@ _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
-    "ANILIST": "anilist",
 }
 
 def _index_semantics(ops, feature: str, *, cfg: Mapping[str, Any] | None = None, provider: str = "") -> str:
