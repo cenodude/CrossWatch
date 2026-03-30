@@ -93,6 +93,14 @@ function buildPairScopeKeys(pairMap) {
   return out;
 }
 
+function providerInstanceLabel(provider, instance) {
+  const prov = String(provider || "").toUpperCase();
+  const inst = String(instance || "").trim();
+  if (!prov) return "";
+  if (!inst || inst.toLowerCase() === "default") return prov;
+  return `${prov}@${inst}`;
+}
+
 function css() {
   if (Q("#an-css")) return;
   const el = document.createElement("style");
@@ -127,7 +135,8 @@ function css() {
   .an-modal .an-pair-chip{font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));color:#dbe6ff;font-weight:800;letter-spacing:.06em;text-transform:uppercase;box-shadow:0 10px 22px rgba(0,0,0,.16);transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease,background .14s ease;opacity:.92}
   .an-modal .an-pair-chip:hover{transform:translateY(-1px);border-color:rgba(139,92,246,.4);box-shadow:0 14px 28px rgba(0,0,0,.22),0 0 0 1px rgba(139,92,246,.12) inset}
   .an-modal .an-pair-chip.on{background:linear-gradient(180deg,rgba(107,92,255,.28),rgba(58,130,246,.12));border-color:rgba(118,110,255,.5);box-shadow:0 16px 30px rgba(0,0,0,.24),0 0 18px rgba(110,94,255,.14)}
-  .an-modal .an-pair-chip span.dir{opacity:.82}
+  .an-modal .an-pair-chip span.dir{display:inline-flex;align-items:center;justify-content:center;opacity:.82}
+  .an-modal .an-pair-chip span.dir .material-symbols-rounded{font-size:15px;line-height:1;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 20}
   .an-modal .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(230px,1fr) 10px minmax(180px,.8fr);overflow:hidden;padding:10px 14px 0;gap:0}
   .an-modal .an-grid,.an-modal .an-issues{overflow:auto;min-height:0;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(11,16,29,.92),rgba(6,9,16,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 18px 36px rgba(0,0,0,.18)}
   .an-modal .an-grid{border-radius:20px 20px 14px 14px}
@@ -139,12 +148,14 @@ function css() {
   .an-modal .head{position:sticky;top:0;background:linear-gradient(180deg,rgba(17,24,40,.96),rgba(10,14,24,.92));z-index:2;backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.08)}
   .an-modal .row.sel{outline:1px solid rgba(123,147,255,.44);background:linear-gradient(90deg,rgba(111,93,255,.12),rgba(76,145,255,.08));box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)}
   .an-modal .cell,.an-modal .prov,.an-modal .feat,.an-modal .title{min-width:0}
+  .an-modal .title-stack{display:flex;flex-direction:column;justify-content:center;align-self:center;gap:6px}
+  .an-modal .an-grid:not(.show-ids) .title-stack{gap:0;justify-content:center}
   .an-modal .chip{display:inline-flex;align-items:center;border:1px solid rgba(255,255,255,.10);border-radius:999px;padding:3px 7px;margin:2px;background:rgba(255,255,255,.038);color:#dbe8ff}
   .an-modal .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
-  .an-modal .ids{opacity:.84;padding-top:5px}
-  .an-modal .an-grid.show-ids .ids{display:block}
+  .an-modal .ids{opacity:.84;padding-top:0}
+  .an-modal .an-grid.show-ids .ids{display:block;margin-top:6px}
   .an-modal .an-grid .ids{display:none}
-  .an-modal .row .title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;color:#f3f6ff}
+  .an-modal .row .title{display:flex;align-items:center;gap:6px;min-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:700;color:#f3f6ff;line-height:1.2}
   .an-modal .row .title small{opacity:.62;margin-left:6px}
   .an-modal .row .prov{font-weight:800;letter-spacing:.05em;color:#dce7ff;text-transform:uppercase}
   .an-modal .row .feat{opacity:.82;text-transform:capitalize}
@@ -155,6 +166,10 @@ function css() {
   .an-modal .issue{border-radius:18px;padding:14px 15px;margin-bottom:10px;background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.09);box-shadow:0 16px 30px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.03)}
   .an-modal .issue .h{font-weight:800;margin-bottom:6px;letter-spacing:.02em;color:#f4f7ff}
   .an-modal .issue .badge{margin-top:6px}
+  .an-modal .an-collapse{margin-top:6px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.025);padding:8px 10px}
+  .an-modal .an-collapse summary{cursor:pointer;list-style:none;font-weight:800;color:#dbe8ff}
+  .an-modal .an-collapse summary::-webkit-details-marker{display:none}
+  .an-modal .an-collapse ul{margin:8px 0 0 18px;padding:0}
   .an-modal .issue.manual-ids{margin-top:6px}
   .an-modal .ids-edit{display:flex;flex-direction:column;gap:10px;margin-top:8px}
   .an-modal .ids-edit-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
@@ -178,7 +193,7 @@ function css() {
   .an-modal .an-grid::-webkit-scrollbar-track,.an-modal .an-issues::-webkit-scrollbar-track{background:rgba(255,255,255,.03);border-radius:12px}
   .an-modal .an-grid::-webkit-scrollbar-thumb,.an-modal .an-issues::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#8b5cf6 0%,#3b82f6 100%);border-radius:12px;border:2px solid #11141c;box-shadow:inset 0 0 0 1px rgba(139,92,246,.35),0 0 10px rgba(139,92,246,.4)}
   .an-modal .an-grid::-webkit-scrollbar-thumb:hover,.an-modal .an-issues::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#a78bfa 0%,#60a5fa 100%)}
-  .unsync-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:radial-gradient(circle,#ffb0d0,#ff3b7f);box-shadow:0 0 8px rgba(255,59,127,.8);vertical-align:middle}
+  .unsync-dot{display:inline-block;flex:0 0 8px;width:8px;height:8px;border-radius:50%;margin:0;background:radial-gradient(circle,#ffb0d0,#ff3b7f);box-shadow:0 0 8px rgba(255,59,127,.8);align-self:center}
   .blocked-ico{display:inline-block;margin-right:6px;vertical-align:middle;font-size:13px;line-height:1;filter:drop-shadow(0 0 10px rgba(255,90,120,.7))}
   .wait-overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(3,4,10,.74);backdrop-filter:blur(6px);z-index:9999;opacity:1;transition:opacity .18s ease}
   .wait-overlay.hidden{opacity:0;pointer-events:none}
@@ -227,7 +242,7 @@ export default {
           <div class="cx-title">Analyzer</div>
           <button class="pill ghost" id="an-toggle-ids">IDs: hidden</button>
           <button class="pill ghost" id="an-scope">Scope: issues</button>
-          <input id="an-search" type="search" placeholder="title, year, provider, feature…">
+          <input id="an-search" type="search" placeholder="title, year, provider, feature...">
         </div>
         <div class="an-actions">
           <button class="pill" id="an-run" type="button">Analyze</button>
@@ -253,7 +268,8 @@ export default {
       </div>
       <div class="an-footer">
         <div class="count-stack">
-          <span class="mono" id="an-issues-count">Issues: 0</span>
+          <span class="mono" id="an-issues-count" title="Issues are sync delta problems in the selected pairs, like missing peers or blocked items.">Issues: 0</span>
+          <span class="mono" id="an-system-count" title="System findings are analyzer diagnostics about state files, providers, metadata, or other background integrity checks.">System: 0</span>
           <span class="mono" id="an-blocked-count">Blocked: 0</span>
         </div>
         <div class="stats empty" id="an-stats"></div>
@@ -266,7 +282,7 @@ export default {
     wait.innerHTML = `
       <div class="wait-card" role="status" aria-live="assertive">
         <div class="wait-ring"></div>
-        <div class="wait-text" id="an-wait-text">Loading…</div>
+        <div class="wait-text" id="an-wait-text">Loading...</div>
       </div>`;
     root.appendChild(wait);
 
@@ -280,10 +296,10 @@ export default {
       waitShownAt = performance.now();
       const el = Q("#an-wait", root);
       if (el) el.classList.remove("hidden");
-      setWaitText(text || "Working…");
+      setWaitText(text || "Working...");
       clearTimeout(waitSlowTimer);
       waitSlowTimer = setTimeout(
-        () => setWaitText(`${text} (still working…)`),
+        () => setWaitText(`${text} (still working...)`),
         3000
       );
     }
@@ -305,6 +321,7 @@ export default {
     const summaryCopy = Q("#an-summary-copy", root);
     const summaryMeta = Q("#an-summary-meta", root);
     const issuesCount = Q("#an-issues-count", root);
+    const systemCount = Q("#an-system-count", root);
     const blockedCount = Q("#an-blocked-count", root);
     const search = Q("#an-search", root);
     const btnRun = Q("#an-run", root);
@@ -331,6 +348,8 @@ export default {
     let UNSYNCED_REASON = new Map();
     let SCOPE = "issues";
     let NORMALIZATION = [];
+    let EXTRA_FINDINGS = [];
+    let SUMMARY = {};
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
     let BLOCKS_BY_PF = new Map();
@@ -342,7 +361,7 @@ export default {
           : "Showing all scoped items for the selected pairs, including healthy matches.";
       }
       if (summaryMeta) {
-        summaryMeta.innerHTML = `<span class="mini">Scoped ${scoped.length}</span><span class="mini">Visible ${VIEW.length}</span><span class="mini">Issues ${UNSYNCED.size}</span>`;
+        summaryMeta.innerHTML = `<span class="mini" title="Scoped items are rows included by the selected pair filter.">Scoped ${scoped.length}</span><span class="mini" title="Visible items are the rows currently shown in the top table after search and scope filters.">Visible ${VIEW.length}</span><span class="mini" title="Issues are sync delta problems in the selected pairs, such as missing peers.">Issues ${UNSYNCED.size}</span><span class="mini" title="System findings are analyzer diagnostics about files, metadata, providers, or state health.">System ${EXTRA_FINDINGS.length}</span>`;
       }
     };
 
@@ -450,7 +469,7 @@ export default {
 
     function renderHeader() {
       const dirMark = k =>
-        SORT_KEY === k ? (SORT_DIR === "asc" ? "▲" : "▼") : "";
+        SORT_KEY === k ? (SORT_DIR === "asc" ? "^" : "v") : "";
       return `
         <div class="row head" style="grid-template-columns:${gridTemplateFrom(
           COLS
@@ -523,10 +542,10 @@ export default {
           return `<div class="row${SELECTED === tag ? " sel" : ""}" data-tag="${tag}">
             <div class="prov">${r.provider}</div>
             <div class="feat">${r.feature}</div>
-            <div>
+            <div class="title-stack">
               <div class="title">${
                 blk
-                  ? `<span class="blocked-ico" title="Blocked (manual)">⛔</span>`
+                  ? `<span class="blocked-ico" title="Blocked (manual)">[blocked]</span>`
                   : ""
               }${
                 uns
@@ -537,7 +556,7 @@ export default {
                         : "Missing at other provider";
                       const rs = UNSYNCED_REASON.get(tag) || [];
                       const reason = rs.length ? rs[0] : "";
-                      const tip = reason ? `${text} — ${reason}` : text;
+                      const tip = reason ? `${text} - ${reason}` : text;
                       return `<span class="unsync-dot" title="${escHtml(tip)}"></span>`;
                     })()
                   : ""
@@ -616,72 +635,94 @@ export default {
         .replace(/'/g, "&#39;");
     }
 
-    function renderHistoryNormalizationBlocks(list) {
-      if (!Array.isArray(list) || !list.length) return "";
-      return list
-        .map(p => {
-          const src = p && p.source ? String(p.source) : "?";
-          const dst = p && p.target ? String(p.target) : "?";
-          const delta = (p && p.show_delta) || {};
-          const srcCount =
-            typeof delta.source === "number" ? delta.source : 0;
-          const dstCount =
-            typeof delta.target === "number" ? delta.target : 0;
-
-          const extraSource =
-            (Array.isArray(p.extra_source_titles) &&
-            p.extra_source_titles.length
-              ? p.extra_source_titles
-              : p.extra_source) || [];
-          const extraTarget =
-            (Array.isArray(p.extra_target_titles) &&
-            p.extra_target_titles.length
-              ? p.extra_target_titles
-              : p.extra_target) || [];
-
-          const renderList = (items, label) => {
-            if (!items.length) {
-              return `<div>
-                <div class="h" style="font-size:12px">${escHtml(
-                  label
-                )}</div>
-                <div class="mono" style="opacity:.7">—</div>
-              </div>`;
-            }
-            const lis = items
-              .slice(0, 50)
-              .map(x => `<li>${escHtml(String(x))}</li>`)
-              .join("");
-            return `<div>
-              <div class="h" style="font-size:12px">${escHtml(
-                label
-              )}</div>
-              <ul class="mono">${lis}</ul>
-            </div>`;
-          };
-
-          return `
-            <div class="issue">
-              <div class="h">History normalization: ${escHtml(
-                src
-              )} ↔ ${escHtml(dst)}</div>
-              <div class="mono" style="margin-bottom:6px">
-                ${escHtml(src)} has ${srcCount} shows, ${escHtml(
-            dst
-          )} has ${dstCount} shows.
-              </div>
-              <div style="font-size:12px;opacity:.8;margin-bottom:6px">
-                These counts can differ because some shows are split or merged differently between providers.
-              </div>
-              <div class="ids-edit-row">
-                ${renderList(extraSource, `Only in ${src}`)}
-                ${renderList(extraTarget, `Only in ${dst}`)}
-              </div>
-            </div>`;
-        })
-        .join("");
+    function dedupeInfoFindings(list, typeName) {
+      if (!Array.isArray(list) || !list.length) return [];
+      const deduped = [];
+      const grouped = new Map();
+      list.forEach(p => {
+        if (!p || typeof p !== "object") return;
+        const sev = String(p.severity || "info").toLowerCase();
+        const typ = String(p.type || "").toLowerCase();
+        if (!(sev === "info" && typ === typeName)) {
+          deduped.push(p);
+          return;
+        }
+        const idsKey = p.ids && typeof p.ids === "object"
+          ? Object.entries(p.ids)
+              .filter(([, v]) => v != null && String(v) !== "")
+              .map(([k, v]) => `${String(k)}:${String(v)}`)
+              .sort()
+              .join("|")
+          : "";
+        const missingKey = Array.isArray(p.missing)
+          ? p.missing.map(v => String(v)).sort().join("|")
+          : "";
+        const sig = [typ, String(p.message || ""), String(p.item_title || ""), String(p.key || ""), idsKey, missingKey].join("::");
+        const scope = p.provider && p.feature ? `${String(p.provider)} | ${String(p.feature)}` : "";
+        const current = grouped.get(sig);
+        if (current) {
+          if (scope) current.scopes.add(scope);
+          return;
+        }
+        const clone = { ...p, scopes: new Set(scope ? [scope] : []) };
+        grouped.set(sig, clone);
+        deduped.push(clone);
+      });
+      return deduped;
     }
 
+    function dedupeMissingIdInfo(list) {
+      return dedupeInfoFindings(list, "missing_ids");
+    }
+
+    function renderMaybeCollapsedList(items) {
+      if (!items || !items.length) return `<span class="mono">none</span>`;
+      const values = items.map(x => String(x));
+      if (values.length <= 10) {
+        return `<ul>${values.map(x => `<li>${escHtml(x)}</li>`).join("")}</ul>`;
+      }
+      const preview = values.slice(0, 8);
+      const rest = values.slice(8);
+      return `<details class="an-collapse">
+        <summary class="mono">Show ${values.length} items</summary>
+        <ul>${preview.map(x => `<li>${escHtml(x)}</li>`).join("")}</ul>
+        <ul>${rest.map(x => `<li>${escHtml(x)}</li>`).join("")}</ul>
+      </details>`;
+    }
+
+    function renderScopedList(items, label) {
+      return `<div>
+        <div class="h" style="font-size:12px">${escHtml(label)}</div>
+        ${renderMaybeCollapsedList(items)}
+      </div>`;
+    }
+
+    function renderAffectedItems(items, title = "Affected items") {
+      if (!Array.isArray(items) || !items.length) return "";
+      const rows = items.map(entry => {
+        if (!entry || typeof entry !== "object") return "";
+        const parts = [];
+        if (entry.label) parts.push(String(entry.label));
+        if (entry.key && String(entry.key) !== String(entry.label || "")) {
+          parts.push(`Key: ${String(entry.key)}`);
+        }
+        if (entry.type) parts.push(`Type: ${String(entry.type)}`);
+        if (entry.reason) parts.push(`Reason: ${String(entry.reason)}`);
+        if (entry.attempts != null) parts.push(`Attempts: ${String(entry.attempts)}`);
+        if (entry.ids && typeof entry.ids === "object") {
+          const ids = Object.entries(entry.ids)
+            .filter(([, v]) => v != null && String(v) !== "")
+            .map(([k, v]) => `${String(k)}:${String(v)}`);
+          if (ids.length) parts.push(`IDs: ${ids.join(", ")}`);
+        }
+        return `<li>${escHtml(parts.join(" | "))}</li>`;
+      }).filter(Boolean).join("");
+      if (!rows) return "";
+      return `<details class="an-collapse">
+        <summary class="mono">${escHtml(title)} (${items.length})</summary>
+        <ul>${rows}</ul>
+      </details>`;
+    }
     function manualIdsBlock(it) {
       const ids = it.ids || {};
       const inputs = ID_FIELDS.map(name => {
@@ -691,35 +732,40 @@ export default {
         )}"></label>`;
       }).join("");
       return `
-        <div class="issue manual-ids">
-          <div class="h">Manual IDs</div>
-          <div class="ids-edit">
-            <div class="ids-edit-row">
-              ${inputs}
+        <div class="manual-ids">
+          <details class="an-collapse" id="an-manual-ids">
+            <summary class="mono">Edit Manual IDs</summary>
+            <div class="ids-edit" style="margin-top:10px">
+              <div class="ids-edit-row">
+                ${inputs}
+              </div>
+              <div class="ids-edit-actions">
+                <button type="button" class="pill" data-act="patch-ids">Save IDs</button>
+                <button type="button" class="pill ghost" data-act="reset-ids">Reset</button>
+              </div>
             </div>
-            <div class="ids-edit-actions">
-              <button type="button" class="pill" data-act="patch-ids">Save IDs</button>
-              <button type="button" class="pill ghost" data-act="reset-ids">Reset</button>
-            </div>
-          </div>
+          </details>
         </div>`;
     }
 
     function renderNormalizationPanel(list) {
       if (!list || !list.length) return "";
-
-      const renderList = arr => {
-        if (!arr || !arr.length) return `<span class="mono">none</span>`;
-        return `<ul>${arr.map(x => `<li>${x}</li>`).join("")}</ul>`;
-      };
-
-      return list
+      const normalized = dedupeMissingIdInfo(list);
+      return normalized
         .map(p => {
           const src = String(p.source || "").toUpperCase();
           const dst = String(p.target || "").toUpperCase();
+          const sev = String(p.severity || "info").toLowerCase();
+          const badge = sev === "warn" ? "Warning" : sev === "error" ? "Error" : "Info";
           const delta = p.show_delta || {};
+          const gap = p.show_gap || {};
           const srcCount = delta.source ?? "?";
           const dstCount = delta.target ?? "?";
+          const srcOnly = gap.source_only ?? "?";
+          const dstOnly = gap.target_only ?? "?";
+          const ratio = typeof gap.ratio === "number" && Number.isFinite(gap.ratio)
+            ? gap.ratio.toFixed(2)
+            : null;
 
           const srcTitles = p.extra_source_titles || [];
           const dstTitles = p.extra_target_titles || [];
@@ -728,23 +774,109 @@ export default {
 
           const listSrc = srcTitles.length ? srcTitles : srcIds;
           const listDst = dstTitles.length ? dstTitles : dstIds;
+          const detail = p.message ||
+            "These counts can sometimes differ because some shows are split or merged differently between providers.";
 
           return `
           <div class="issue">
-            <div class="h">History normalization: ${src} ↔ ${dst}</div>
+            <div class="h">History normalization: ${src} <-> ${dst}</div>
+            ${sev !== "info" ? `<div><span class="badge mono">${escHtml(badge)}</span></div>` : ""}
             <div>${src} has ${srcCount} shows, ${dst} has ${dstCount} shows.</div>
-            <div>These counts can sometimes differ because some shows are split or merged differently between providers.</div>
+            <div>${escHtml(detail)}</div>
+            <div class="mono" style="opacity:.8;margin-top:6px">Only in ${src}: ${srcOnly} | Only in ${dst}: ${dstOnly}${ratio ? ` | Ratio: ${ratio}x` : ""}</div>
             <div style="margin-top:6px">
-              <div><strong>Only in ${src}:</strong> ${renderList(listSrc)}</div>
-              <div><strong>Only in ${dst}:</strong> ${renderList(listDst)}</div>
+              ${renderScopedList(listSrc, `Only in ${src}`)}
+              ${renderScopedList(listDst, `Only in ${dst}`)}
             </div>
           </div>`;
         })
         .join("");
     }
 
+    function renderGenericFindingBlocks(list) {
+      if (!Array.isArray(list) || !list.length) return "";
+      const normalized = dedupeMissingIdInfo(list);
+      return normalized
+        .map(p => {
+          const sev = String(p.severity || "info").toLowerCase();
+          const badge = sev === "error" ? "Error" : sev === "warn" ? "Warning" : "Info";
+          const title =
+            p.title ||
+            p.message ||
+            p.type ||
+            "Analyzer finding";
+          const parts = [];
+          if (p.message && p.message !== title) parts.push(String(p.message));
+          if (p.item_title) parts.push(`Item: ${String(p.item_title)}`);
+          if (p.key) parts.push(`Key: ${String(p.key)}`);
+          if (p.path) parts.push(`Path: ${String(p.path)}`);
+          if (p.module) parts.push(`Module: ${String(p.module)}`);
+          if (p.scopes instanceof Set && p.scopes.size > 0) {
+            const scopes = Array.from(p.scopes.values());
+            parts.push(`${scopes.length > 1 ? "Scopes" : "Scope"}: ${scopes.join(" | ")}`);
+          }
+          if (!(p.scopes instanceof Set && p.scopes.size > 0) && p.provider && p.feature)
+            parts.push(`Scope: ${String(p.provider)} | ${String(p.feature)}`);
+          if (Array.isArray(p.missing) && p.missing.length)
+            parts.push(`Missing IDs: ${p.missing.map(v => String(v)).join(", ")}`);
+          if (p.id_name)
+            parts.push(`ID field: ${String(p.id_name)}`);
+          if (p.id_value != null)
+            parts.push(`ID value: ${String(p.id_value)}`);
+          if (p.key_base)
+            parts.push(`Key base: ${String(p.key_base)}`);
+          if (p.ids && typeof p.ids === "object") {
+            const idEntries = Object.entries(p.ids)
+              .filter(([, v]) => v != null && String(v) !== "")
+              .map(([k, v]) => `${String(k)}:${String(v)}`);
+            if (idEntries.length) parts.push(`IDs: ${idEntries.join(", ")}`);
+          }
+          if (p.watermark_key)
+            parts.push(`Watermark key: ${String(p.watermark_key)}`);
+          if (p.value != null)
+            parts.push(`Value: ${String(p.value)}`);
+          if (p.kind && !p.provider && !p.feature)
+            parts.push(`Kind: ${String(p.kind)}`);
+          if (p.error) parts.push(`Error: ${String(p.error)}`);
+          const affectedItems = renderAffectedItems(
+            Array.isArray(p.affected_items) ? p.affected_items : [],
+            p.type === "cw_state_blackbox_active"
+              ? "Blocked items"
+              : p.type === "cw_state_unresolved_backlog"
+                ? "Unresolved items"
+                : "Affected items"
+          );
+          return `<div class="issue">
+            <div class="h">${escHtml(title)}</div>
+            ${sev !== "info" ? `<div><span class="badge mono">${escHtml(badge)}</span></div>` : ""}
+            ${parts
+              .map(
+                line =>
+                  `<div class="mono" style="opacity:.8;margin-top:6px">${escHtml(line)}</div>`
+              )
+              .join("")}
+            ${affectedItems}
+          </div>`;
+        })
+        .join("");
+    }
+
+    function renderSystemFindingsSection(title, findings, open = false) {
+      if (!Array.isArray(findings) || !findings.length) return "";
+      const blocks = renderGenericFindingBlocks(findings);
+      if (!blocks) return "";
+      return `<div class="issue">
+        <div class="h">${escHtml(title)}</div>
+        <div style="opacity:.85">System findings are background diagnostics. They don't always mean the selected pair is currently unsynced, but they can still explain risky or inconsistent state.</div>
+        <details class="an-collapse"${open ? " open" : ""}>
+          <summary class="mono">Show ${findings.length} finding${findings.length === 1 ? "" : "s"}</summary>
+          <div style="margin-top:8px">${blocks}</div>
+        </details>
+      </div>`;
+    }
+
     function bindManualIds(provider, feature, key, it) {
-      const box = Q(".issue.manual-ids", issues);
+      const box = Q(".manual-ids", issues);
       if (!box) return;
       const inputs = QA("input[data-idfield]", box);
       const btnSave = Q("button[data-act='patch-ids']", box);
@@ -771,7 +903,7 @@ export default {
         });
         const prev = btnSave.textContent;
         btnSave.disabled = true;
-        btnSave.textContent = "Saving…";
+        btnSave.textContent = "Saving...";
         try {
           const body = {
             provider,
@@ -896,16 +1028,42 @@ export default {
         ? `<span class="badge">${missingLabel}</span>${reasonBadge}${blockedBadge}`
         : `<span class="badge">No analyzer issues</span>${blockedBadge}`;
 
+      const manual = manualIdsBlock(it);
       const header = `<div class="issue">
         <div class="h">${heading}</div>
         <div>${status}</div>
+        ${manual}
       </div>`;
-
-      const manual = manualIdsBlock(it);
       const normalizationBlock = renderNormalizationPanel(NORMALIZATION);
+      const localFindings = EXTRA_FINDINGS.filter(
+        p =>
+          String(p.provider || "").toUpperCase() === provider &&
+          String(p.feature || "").toLowerCase() === String(feature || "").toLowerCase() &&
+          (!p.key || String(p.key) === String(key))
+      );
+      const localFindingKeys = new Set(localFindings.map(p => JSON.stringify(p)));
+      const otherSystemFindings = EXTRA_FINDINGS.filter(
+        p => !localFindingKeys.has(JSON.stringify(p))
+      );
+      const localSystemSection = renderSystemFindingsSection(
+        "System findings for this selection",
+        localFindings,
+        true
+      );
+      const allSystemSection = renderSystemFindingsSection(
+        "Other system findings",
+        otherSystemFindings,
+        false
+      );
       const limitBlock = renderLimitPanel(tag);
       const scopeBlock = renderScopeExclusions();
-      issues.innerHTML = limitBlock + header + normalizationBlock + manual + scopeBlock;
+      issues.innerHTML =
+        limitBlock +
+        header +
+        normalizationBlock +
+        scopeBlock +
+        localSystemSection +
+        allSystemSection;
       issues.scrollTop = 0;
 
       bindManualIds(provider, feature, key, it);
@@ -978,7 +1136,7 @@ function renderScopeExclusions() {
         : "";
 
       return `<div class="mono" style="opacity:.78;margin-top:6px">${escHtml(
-        `${src} → ${dst} • ${feat}: ${countStr}${allowed}`
+        `${src} -> ${dst} | ${feat}: ${countStr}${allowed}`
       )}</div>`;
     })
     .filter(Boolean)
@@ -1050,15 +1208,15 @@ function renderPairs() {
             mode === "bi" ||
             mode === "both" ||
             mode === "mirror"
-              ? "⇄"
-              : "→";
+              ? "swap_horiz"
+              : "arrow_forward";
           const badge = total
             ? `<span class="mono">${unsynced || 0}/${total}</span>`
             : "";
           const cls = `an-pair-chip${on ? " on" : ""}`;
           return `<button type="button" class="${cls}" data-id="${esc(
             String(p.id || "")
-          )}"><span class="mono">${src}</span><span class="dir">${dir}</span><span class="mono">${dst}</span>${badge}</button>`;
+          )}"><span class="mono">${src}</span><span class="dir"><span class="material-symbols-rounded" aria-hidden="true">${dir}</span></span><span class="mono">${dst}</span>${badge}</button>`;
         })
         .join("");
       pairBar.innerHTML = html;
@@ -1112,7 +1270,15 @@ function renderPairs() {
             const src = String(p.source || "").toUpperCase();
             const dst = String(p.target || "").toUpperCase();
             const id = String(p.id || `${src}->${dst}`);
-            return Object.assign({}, p, { source: src, target: dst, id });
+            const srcLabel = providerInstanceLabel(src, p.source_instance);
+            const dstLabel = providerInstanceLabel(dst, p.target_instance);
+            return Object.assign({}, p, {
+              source: src,
+              target: dst,
+              source_label: srcLabel,
+              target_label: dstLabel,
+              id
+            });
           });
         renderPairs();
         for (const p of PAIRS) {
@@ -1121,11 +1287,21 @@ function renderPairs() {
             continue;
           const src = p.source;
           const dst = p.target;
+          const srcLabel = p.source_label || src;
+          const dstLabel = p.target_label || dst;
           const F = p.features || {};
           for (const feat of ["history", "watchlist", "ratings"]) {
             if (!on(F[feat])) continue;
             add(src, feat, dst);
-            if (_isTwoWayMode(p.mode)) add(dst, feat, src);
+            add(src, feat, dstLabel);
+            add(srcLabel, feat, dst);
+            add(srcLabel, feat, dstLabel);
+            if (_isTwoWayMode(p.mode)) {
+              add(dst, feat, src);
+              add(dst, feat, srcLabel);
+              add(dstLabel, feat, src);
+              add(dstLabel, feat, srcLabel);
+            }
           }
         }
         return map;
@@ -1137,9 +1313,9 @@ function renderPairs() {
     async function load() {
       restoreSplit();
       dragY();
-      showWait("Loading pairs…");
+      showWait("Loading pairs...");
       await getActivePairMap();
-      setWaitText("Reading scoped state…");
+      setWaitText("Reading scoped state...");
       let s;
       try {
         s = await fjson(withPairs("/api/analyzer/state"));
@@ -1158,9 +1334,10 @@ function renderPairs() {
       if (!countsText) stats.classList.add("empty");
       else stats.classList.remove("empty");
       issuesCount.textContent = "Issues: 0";
+      if (systemCount) systemCount.textContent = "System: 0";
       if (blockedCount) blockedCount.textContent = "Blocked: 0";
       draw();
-      setWaitText("Analyzing…");
+      setWaitText("Analyzing...");
       try {
         await analyze(true);
       } finally {
@@ -1169,7 +1346,7 @@ function renderPairs() {
     }
 
     async function analyze(silent = false) {
-      if (!silent) showWait("Analyzing…");
+      if (!silent) showWait("Analyzing...");
       const pairMap = await getActivePairMap();
       const [meta, status] = await Promise.all([
         fjson(withPairs("/api/analyzer/problems")).catch(() => ({ problems: [] })),
@@ -1179,6 +1356,7 @@ function renderPairs() {
 
       PAIR_STATS = meta.pair_stats || [];
       PAIR_EXCLUSIONS = meta.pair_exclusions || [];
+      SUMMARY = meta.summary || {};
       PAIR_SCOPE_KEYS = buildPairScopeKeys(pairMap);
       renderPairs();
 
@@ -1187,6 +1365,13 @@ function renderPairs() {
         p => p && p.type === "history_show_normalization"
       );
       NORMALIZATION = normalization;
+      EXTRA_FINDINGS = all.filter(
+        p =>
+          p &&
+          p.type !== "missing_peer" &&
+          p.type !== "blocked_manual" &&
+          p.type !== "history_show_normalization"
+      );
 
       LIMIT_INFO = {};
       LIMIT_AFFECTED = new Map();
@@ -1332,7 +1517,8 @@ function renderPairs() {
       if (per.history) parts.push(`H:${per.history}`);
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
-      issuesCount.textContent = parts.join(" • ");
+      issuesCount.textContent = parts.join(" | ");
+      if (systemCount) systemCount.textContent = `System: ${EXTRA_FINDINGS.length}`;
       if (blockedCount) {
         const scoped = ITEMS.filter(inPairScope);
         const n = scoped.reduce(
@@ -1346,8 +1532,9 @@ function renderPairs() {
 
       if (!keep.length) {
         const notes = renderScopeExclusions();
-        if (NORMALIZATION && NORMALIZATION.length) {
-          issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + notes;
+        const extras = renderGenericFindingBlocks(EXTRA_FINDINGS);
+        if ((NORMALIZATION && NORMALIZATION.length) || extras) {
+          issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + extras + notes;
         } else {
           const ok = `<div class="issue"><div class="h">No issues detected</div><div>The selected source and destination pairs are currently aligned for this scope.</div></div>`;
           issues.innerHTML = notes + ok;
@@ -1369,7 +1556,7 @@ function renderPairs() {
       if (btnRun.disabled) return;
       const prev = btnRun.textContent;
       btnRun.disabled = true;
-      btnRun.textContent = "Analyzing…";
+      btnRun.textContent = "Analyzing...";
       try {
         await analyze(false);
       } finally {
@@ -1399,3 +1586,6 @@ function renderPairs() {
   },
   unmount() {}
 };
+
+
+
