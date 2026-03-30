@@ -3,8 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import importlib
 from collections import defaultdict
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import json
 import re
@@ -21,10 +22,26 @@ router = APIRouter(prefix="/api", tags=["analyzer"])
 STATE_PATH = CONFIG_DIR / "state.json"
 MANUAL_STATE_PATH = CONFIG_DIR / "state.manual.json"
 CWS_DIR = CONFIG_DIR / ".cw_state"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PROVIDERS_SYNC_DIR = REPO_ROOT / "providers" / "sync"
+ORCH_ROOT_DIR = REPO_ROOT / "cw_platform"
+ORCH_DIR = ORCH_ROOT_DIR / "orchestrator"
 _LOCK = threading.Lock()
 
 _DEFAULT_INSTANCE = "default"
 _PROV_TOKEN_SEPS = ("@", "#", ":")
+_CW_STATE_PARSE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?P<provider>[a-z0-9]+)\.watermarks(?:\.(?P<scope>.+))?\.json$", re.I),
+    re.compile(r"^(?P<provider>[a-z0-9]+)[._](?P<feature>[a-z0-9_]+)\.(?P<kind>shadow|index|unresolved|flap|blackbox)(?:\.(?P<scope>.+))?\.json$", re.I),
+    re.compile(r"^(?P<provider>[a-z0-9]+)[._](?P<feature>[a-z0-9_]+)(?:\.(?P<scope>.+))?\.(?P<kind>shadow|index|unresolved|flap|blackbox)\.json$", re.I),
+    re.compile(r"^(?P<provider>[a-z0-9]+)\.(?P<feature>[a-z0-9_]+)\.(?P<kind>shadow|index|unresolved|flap|blackbox)(?:\.(?P<scope>.+))?\.json$", re.I),
+)
+_CW_STATE_WATERMARK_KEYS: dict[str, set[str]] = {
+    "TRAKT": {"history", "ratings", "watchlist"},
+    "SIMKL": {"history", "ratings", "watchlist", "watchlist_removed"},
+    "MDBLIST": {"history", "history_journal", "ratings", "ratings_journal", "watchlist", "watchlist_removed"},
+    "PLEX": {"history"},
+}
 
 def _split_prov_token(v: Any) -> tuple[str, str]:
     raw = str(v or "").strip()
@@ -55,6 +72,113 @@ def _prov_token(prov: str, inst: Any = None) -> str:
 def _norm_prov_token(v: Any) -> str:
     base, inst = _split_prov_token(v)
     return _prov_token(base, inst)
+
+
+def _sev_rank(value: Any) -> int:
+    sev = str(value or "info").strip().lower()
+    return {"error": 0, "warn": 1, "warning": 1, "info": 2}.get(sev, 3)
+
+
+def _problem_sort_key(prob: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        _sev_rank(prob.get("severity")),
+        str(prob.get("category") or ""),
+        str(prob.get("type") or ""),
+        str(prob.get("provider") or prob.get("module") or prob.get("artifact") or ""),
+        str(prob.get("feature") or ""),
+        str(prob.get("key") or ""),
+        str(prob.get("path") or prob.get("source") or ""),
+    )
+
+
+def _rel_repo_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT.resolve())).replace("\\", "/")
+    except Exception:
+        return str(path)
+
+
+def _rel_config_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(CONFIG_DIR.resolve())).replace("\\", "/")
+    except Exception:
+        return str(path)
+
+
+def _json_load_file(path: Path) -> tuple[Any, str | None]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")), None
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def _problem(
+    severity: str,
+    typ: str,
+    message: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {"severity": severity, "type": typ, "message": message, **extra}
+
+
+def _diagnostic_summary(problems: list[dict[str, Any]]) -> dict[str, Any]:
+    by_severity: dict[str, int] = {"error": 0, "warn": 0, "info": 0}
+    by_category: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for prob in problems:
+        sev = str(prob.get("severity") or "info").strip().lower()
+        if sev not in by_severity:
+            by_severity[sev] = 0
+        by_severity[sev] += 1
+        cat = str(prob.get("category") or "general").strip().lower()
+        by_category[cat] = int(by_category.get(cat, 0)) + 1
+        typ = str(prob.get("type") or "unknown").strip().lower()
+        by_type[typ] = int(by_type.get(typ, 0)) + 1
+    return {
+        "total": len(problems),
+        "by_severity": by_severity,
+        "by_category": by_category,
+        "by_type": by_type,
+    }
+
+
+def _artifact_problem(
+    severity: str,
+    typ: str,
+    path: Path,
+    message: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "severity": severity,
+        "category": "artifact",
+        "type": typ,
+        "artifact": path.name,
+        "path": _rel_config_path(path),
+        "message": message,
+        **extra,
+    }
+
+
+def _module_problem(
+    severity: str,
+    typ: str,
+    path: Path,
+    message: str,
+    *,
+    category: str,
+    module: str,
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "severity": severity,
+        "category": category,
+        "type": typ,
+        "module": module,
+        "path": _rel_repo_path(path),
+        "message": message,
+        **extra,
+    }
 
 
 
@@ -258,7 +382,7 @@ def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
             if not isinstance(mpv, dict):
                 continue
 
-            for feat in ("history", "watchlist", "ratings"):
+            for feat in ("history", "watchlist", "ratings", "progress"):
                 merge_feat(mpv, pv, feat)
 
             insts = pv.get("instances")
@@ -277,7 +401,7 @@ def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
                 if not isinstance(dib, dict):
                     dib = {}
                     minst[str(inst_id)] = dib
-                for feat in ("history", "watchlist", "ratings"):
+                for feat in ("history", "watchlist", "ratings", "progress"):
                     merge_feat(dib, blk, feat)
 
     return merged
@@ -335,7 +459,7 @@ def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, An
         if not isinstance(pv, dict):
             continue
 
-        for feat in ("history", "watchlist", "ratings"):
+        for feat in ("history", "watchlist", "ratings", "progress"):
             items = (((pv.get(feat) or {}).get("baseline") or {}).get("items") or {})
             if isinstance(items, dict):
                 for k, it in items.items():
@@ -348,7 +472,7 @@ def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, An
             if not isinstance(blk, dict):
                 continue
             tok = _prov_token(str(prov), inst_id)
-            for feat in ("history", "watchlist", "ratings"):
+            for feat in ("history", "watchlist", "ratings", "progress"):
                 items = (((blk.get(feat) or {}).get("baseline") or {}).get("items") or {})
                 if not isinstance(items, dict):
                     continue
@@ -448,8 +572,8 @@ def _find_item(
 def _counts(s: dict[str, Any]) -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     for prov, feat, _, _ in _iter_items(s):
-        cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "total": 0})
-        if feat in ("history", "watchlist", "ratings"):
+        cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "progress": 0, "total": 0})
+        if feat in ("history", "watchlist", "ratings", "progress"):
             cur[feat] = int(cur.get(feat, 0)) + 1
             cur["total"] = int(cur.get("total", 0)) + 1
     return out
@@ -504,6 +628,897 @@ def _read_cw_state(allowed_scopes: set[str] | None = None) -> dict[str, Any]:
         except Exception:
             out[p.name] = {"_error": "parse_error"}
     return out
+
+
+def _iter_analyzer_artifacts() -> Iterable[Path]:
+    if CONFIG_DIR.exists():
+        for p in sorted(CONFIG_DIR.glob("*.json")):
+            yield p
+        for p in sorted(CONFIG_DIR.glob("*.json.tmp")):
+            yield p
+    if CWS_DIR.exists():
+        for p in sorted(CWS_DIR.glob("*.json")):
+            yield p
+        for p in sorted(CWS_DIR.glob("*.json.tmp")):
+            yield p
+
+
+def _validate_state_document(path: Path, data: Any) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_problem("error", "artifact_schema_mismatch", path, "State document must be an object.")]
+    providers = data.get("providers")
+    if providers is not None and not isinstance(providers, dict):
+        probs.append(_artifact_problem("error", "artifact_schema_mismatch", path, "state.providers must be an object."))
+    last_sync_epoch = data.get("last_sync_epoch")
+    if last_sync_epoch is not None:
+        try:
+            int(last_sync_epoch)
+        except Exception:
+            probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "last_sync_epoch should be numeric."))
+    return probs
+
+
+def _validate_unresolved_document(path: Path, data: Any, *, pending: bool) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_problem("error", "artifact_schema_mismatch", path, "Unresolved artifact must be an object.")]
+
+    if pending:
+        keys = data.get("keys")
+        items = data.get("items")
+        hints = data.get("hints")
+        if keys is not None and not isinstance(keys, list):
+            probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "Pending unresolved keys must be a list."))
+        if items is not None and not isinstance(items, dict):
+            probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "Pending unresolved items must be an object."))
+        if hints is not None and not isinstance(hints, dict):
+            probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "Pending unresolved hints must be an object."))
+        return probs
+
+    bad_rows = 0
+    for _, row in data.items():
+        if not isinstance(row, dict):
+            bad_rows += 1
+    if bad_rows:
+        probs.append(
+            _artifact_problem(
+                "warn",
+                "artifact_schema_mismatch",
+                path,
+                "Unresolved artifact rows should be objects.",
+                bad_rows=bad_rows,
+            )
+        )
+    return probs
+
+
+def _validate_blackbox_document(path: Path, data: Any) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_problem("error", "artifact_schema_mismatch", path, "Blackbox artifact must be an object.")]
+    bad_rows = 0
+    for row in data.values():
+        if row is not None and not isinstance(row, dict):
+            bad_rows += 1
+    if bad_rows:
+        probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "Blackbox entries should be objects.", bad_rows=bad_rows))
+    return probs
+
+
+def _validate_flap_document(path: Path, data: Any) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_problem("error", "artifact_schema_mismatch", path, "Flap artifact must be an object.")]
+    bad_rows = 0
+    for row in data.values():
+        if not isinstance(row, dict):
+            bad_rows += 1
+            continue
+        if "consecutive" in row:
+            try:
+                int(row.get("consecutive") or 0)
+            except Exception:
+                bad_rows += 1
+    if bad_rows:
+        probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "Flap entries should contain numeric counters.", bad_rows=bad_rows))
+    return probs
+
+
+def _validate_tombstones_document(path: Path, data: Any) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_problem("error", "artifact_schema_mismatch", path, "Tombstones document must be an object.")]
+    keys = data.get("keys")
+    if keys is not None and not isinstance(keys, dict):
+        probs.append(_artifact_problem("error", "artifact_schema_mismatch", path, "tombstones.keys must be an object."))
+    return probs
+
+
+def _validate_watchlist_hide_document(path: Path, data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, (list, dict)):
+        return []
+    return [_artifact_problem("warn", "artifact_schema_mismatch", path, "watchlist_hide.json should be a list or object.")]
+
+
+def _validate_last_sync_document(path: Path, data: Any) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_problem("warn", "artifact_schema_mismatch", path, "last_sync.json should be an object.")]
+    timeline = data.get("timeline")
+    if timeline is not None and not isinstance(timeline, dict):
+        probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "last_sync.timeline should be an object."))
+    return probs
+
+
+def _validate_generic_artifact(path: Path, data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, (dict, list)):
+        return []
+    return [_artifact_problem("warn", "artifact_schema_mismatch", path, "JSON artifact should be an object or list.")]
+
+
+def _artifact_schema_problems(path: Path, data: Any) -> list[dict[str, Any]]:
+    name = path.name.lower()
+    if name.endswith(".json.tmp"):
+        return []
+    if name == "state.manual.json":
+        return _validate_generic_artifact(path, data)
+    if name == "state.json" or (name.startswith("state.") and name.endswith(".json")):
+        return _validate_state_document(path, data)
+    if name == "tombstones.json":
+        return _validate_tombstones_document(path, data)
+    if name == "last_sync.json":
+        return _validate_last_sync_document(path, data)
+    if name == "watchlist_hide.json":
+        return _validate_watchlist_hide_document(path, data)
+    if name == "ratings_changes.json":
+        return _validate_generic_artifact(path, data)
+    if ".unresolved.pending." in name or name.endswith(".unresolved.pending.json"):
+        return _validate_unresolved_document(path, data, pending=True)
+    if ".unresolved." in name or name.endswith(".unresolved.json") or name.endswith("_unresolved.json"):
+        return _validate_unresolved_document(path, data, pending=False)
+    if name.endswith(".blackbox.json"):
+        return _validate_blackbox_document(path, data)
+    if name.endswith(".flap.json"):
+        return _validate_flap_document(path, data)
+    return _validate_generic_artifact(path, data)
+
+
+def _artifact_diagnostics() -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    for path in _iter_analyzer_artifacts():
+        if path.name.endswith(".json.tmp"):
+            probs.append(_artifact_problem("warn", "artifact_tmp_leftover", path, "Temporary JSON artifact was left behind."))
+            continue
+        data, err = _json_load_file(path)
+        if err:
+            probs.append(_artifact_problem("error", "artifact_parse_error", path, "Artifact JSON could not be parsed.", error=err))
+            continue
+        probs.extend(_artifact_schema_problems(path, data))
+    return probs
+
+
+def _state_epoch() -> int | None:
+    try:
+        raw = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            value = raw.get("last_sync_epoch")
+            if value is not None:
+                return int(value)
+    except Exception:
+        return None
+    return None
+
+
+def _safe_scope_for_pair(pair: Mapping[str, Any]) -> str:
+    pid = str(pair.get("id") or "").strip()
+    if pid:
+        return _safe_scope(pid)
+    src = _prov_token(
+        str(pair.get("src") or pair.get("source") or ""),
+        pair.get("src_instance") or pair.get("source_instance"),
+    )
+    dst = _prov_token(
+        str(pair.get("dst") or pair.get("target") or ""),
+        pair.get("dst_instance") or pair.get("target_instance"),
+    )
+    mode = str(pair.get("mode") or "one-way").strip().lower() or "one-way"
+    return _safe_scope(f"{mode}_{src}-{dst}")
+
+
+def _active_pairs_by_scope(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, dict) or pair.get("enabled") is False:
+            continue
+        src = str(pair.get("src") or pair.get("source") or "").strip().upper()
+        dst = str(pair.get("dst") or pair.get("target") or "").strip().upper()
+        if not src or not dst:
+            continue
+        feats = pair.get("features") or {}
+        features: list[str] = []
+        if isinstance(feats, dict):
+            for feat_name, feat_cfg in feats.items():
+                if isinstance(feat_cfg, dict):
+                    if feat_cfg.get("enable") or feat_cfg.get("enabled"):
+                        features.append(str(feat_name).lower())
+                elif feat_cfg:
+                    features.append(str(feat_name).lower())
+        out[_safe_scope_for_pair(pair)] = {
+            "id": str(pair.get("id") or "").strip() or None,
+            "source": src,
+            "target": dst,
+            "features": features,
+        }
+    return out
+
+
+def _cw_state_meta(path: Path) -> dict[str, Any]:
+    name = path.name
+    lower = name.lower()
+    if not lower.endswith(".json"):
+        return {"name": name, "kind": None}
+    base = name[:-5]
+    if lower.startswith("state."):
+        return {"name": name, "kind": "pair_state", "scope": base[6:]}
+    if lower == "currently_watching.json":
+        return {"name": name, "kind": "currently_watching"}
+    if lower == "tombstones.json":
+        return {"name": name, "kind": "tombstones"}
+    for rx in _CW_STATE_PARSE_PATTERNS:
+        m = rx.match(name)
+        if not m:
+            continue
+        info = {k: v for k, v in m.groupdict().items() if v is not None}
+        if ".watermarks" in lower:
+            info["kind"] = "watermarks"
+        if "provider" in info:
+            info["provider"] = str(info["provider"]).upper()
+        if "feature" in info:
+            info["feature"] = str(info["feature"]).lower()
+        if "kind" in info:
+            info["kind"] = str(info["kind"]).lower()
+        return {"name": name, **info}
+    return {"name": name, "kind": "generic"}
+
+
+def _parse_epochish(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        s = str(value).strip()
+        if not s:
+            return None
+        if s.isdigit():
+            return int(s)
+        from datetime import datetime
+        return int(datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
+
+
+def _artifact_meta_problem(
+    severity: str,
+    typ: str,
+    path: Path,
+    message: str,
+    meta: Mapping[str, Any],
+    **extra: Any,
+) -> dict[str, Any]:
+    out = _artifact_problem(severity, typ, path, message, **extra)
+    for key in ("provider", "feature", "scope", "kind"):
+        if key in meta:
+            out[key] = meta.get(key)
+    return out
+
+
+def _preview_item_label(item: Mapping[str, Any] | None, key: str) -> str:
+    if not isinstance(item, Mapping):
+        return str(key)
+    typ = str(item.get("type") or "").strip().lower()
+    series = str(item.get("series_title") or item.get("show_title") or item.get("show") or "").strip()
+    title = str(item.get("title") or "").strip()
+    season = item.get("season")
+    episode = item.get("episode")
+    if typ == "episode" and season is not None and episode is not None:
+        base = series or title or str(key)
+        return f"{base} - S{int(season):02d}E{int(episode):02d}"
+    if typ == "season" and season is not None:
+        base = series or title or str(key)
+        return f"{base} - S{int(season):02d}"
+    return title or series or str(key)
+
+
+def _state_preview_for_key(
+    s: Mapping[str, Any] | None,
+    provider: str,
+    feature: str,
+    key: str,
+    item: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    provider_key = str(provider or "").upper()
+    feature_key = str(feature or "").lower()
+    key_str = str(key or "").strip()
+    if not key_str:
+        return {"key": key_str, "label": ""}
+
+    def label_score(src: Mapping[str, Any] | None) -> tuple[int, int]:
+        if not isinstance(src, Mapping):
+            return (0, 0)
+        typ = str(src.get("type") or "").strip().lower()
+        has_series = 1 if str(src.get("series_title") or src.get("show_title") or src.get("show") or "").strip() else 0
+        has_title = 1 if str(src.get("title") or "").strip() else 0
+        if typ == "episode":
+            return (has_series * 3 + has_title, 2)
+        if typ == "season":
+            return (has_series * 3 + has_title, 1)
+        return (has_title * 3 + has_series, 0)
+
+    def pack(found: Mapping[str, Any] | None, found_key: str) -> dict[str, Any]:
+        rec: dict[str, Any] = {
+            "key": key_str,
+            "label": _preview_item_label(found or item, found_key or key_str),
+        }
+        src = found if isinstance(found, Mapping) else item
+        if isinstance(src, Mapping):
+            if src.get("type"):
+                rec["type"] = str(src.get("type"))
+            ids = src.get("ids")
+            if isinstance(ids, Mapping):
+                rec["ids"] = dict(ids)
+        return rec
+
+    if isinstance(s, Mapping):
+        bucket = _bucket(dict(s), provider_key, feature_key) or {}
+        direct = bucket.get(key_str)
+        if isinstance(direct, Mapping):
+            return pack(direct, key_str)
+
+        probe = dict(item or {})
+        probe["_key"] = key_str
+        aliases = set(_alias_keys(probe)) | {key_str}
+        best_same: tuple[tuple[int, int], str, Mapping[str, Any]] | None = None
+        for cand_key, cand in bucket.items():
+            if not isinstance(cand, Mapping):
+                continue
+            probe_cand = dict(cand)
+            probe_cand["_key"] = cand_key
+            if aliases.intersection(_alias_keys(probe_cand)):
+                score = label_score(cand)
+                if best_same is None or score > best_same[0]:
+                    best_same = (score, cand_key, cand)
+        if best_same is not None:
+            return pack(best_same[2], best_same[1])
+
+        best_any: tuple[tuple[int, int, int], str, Mapping[str, Any]] | None = None
+        for prov, feat, cand_key, cand in _iter_items(dict(s)):
+            if not isinstance(cand, Mapping):
+                continue
+            probe_cand = dict(cand)
+            probe_cand["_key"] = cand_key
+            if aliases.intersection(_alias_keys(probe_cand)):
+                same_feat = 1 if feat == feature_key else 0
+                same_prov = 1 if prov == provider_key else 0
+                score2 = (*label_score(cand), same_feat + same_prov)
+                if best_any is None or score2 > best_any[0]:
+                    best_any = (score2, cand_key, cand)
+        if best_any is not None:
+            return pack(best_any[2], best_any[1])
+
+    return pack(item, key_str)
+
+
+def _cw_state_watermark_problems(path: Path, data: Any, meta: Mapping[str, Any], *, now_epoch: int | None) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    provider = str(meta.get("provider") or "").upper()
+    if not isinstance(data, dict):
+        return [_artifact_meta_problem("error", "cw_state_watermark_invalid", path, "Watermark file must be an object.", meta)]
+    allowed = _CW_STATE_WATERMARK_KEYS.get(provider)
+    seen_valid = 0
+    for key, value in data.items():
+        if allowed and str(key) not in allowed:
+            probs.append(_artifact_meta_problem("info", "cw_state_watermark_unknown_feature", path, "Watermark contains a non-standard feature key.", meta, watermark_key=str(key)))
+        ep = _parse_epochish(value)
+        if ep is None:
+            probs.append(_artifact_meta_problem("warn", "cw_state_watermark_invalid", path, "Watermark value could not be parsed as a timestamp.", meta, watermark_key=str(key), value=value))
+            continue
+        seen_valid += 1
+        if now_epoch is not None and ep > now_epoch + 86400:
+            probs.append(_artifact_meta_problem("warn", "cw_state_watermark_future", path, "Watermark timestamp is in the future.", meta, watermark_key=str(key), value=value))
+    if not seen_valid and data:
+        probs.append(_artifact_meta_problem("warn", "cw_state_watermark_empty", path, "Watermark file has keys but no valid timestamps.", meta))
+    return probs
+
+
+def _shadow_entry_count(data: Any, meta: Mapping[str, Any]) -> tuple[int, int | None]:
+    provider = str(meta.get("provider") or "").upper()
+    feature = str(meta.get("feature") or "").lower()
+    if not isinstance(data, dict):
+        return 0, None
+    if provider in {"TRAKT", "SIMKL", "MDBLIST"} and feature in {"watchlist", "activities"}:
+        items = data.get("items")
+        if isinstance(items, dict):
+            ts = _parse_epochish(data.get("ts"))
+            return len(items), ts
+        if provider == "SIMKL" and feature == "activities":
+            payload = data.get("data")
+            ts = _parse_epochish(data.get("ts"))
+            return (1 if isinstance(payload, dict) and payload else 0), ts
+    ts = _parse_epochish(data.get("ts") if isinstance(data, dict) else None)
+    return len(data), ts
+
+
+def _cw_state_shadow_problems(path: Path, data: Any, meta: Mapping[str, Any], *, now_epoch: int | None) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    provider = str(meta.get("provider") or "").upper()
+    feature = str(meta.get("feature") or "").lower()
+    if not isinstance(data, dict):
+        return [_artifact_meta_problem("error", "cw_state_shadow_invalid", path, "Shadow file must be an object.", meta)]
+
+    if provider == "TRAKT" and feature == "watchlist":
+        if "items" not in data or not isinstance(data.get("items"), dict):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Trakt watchlist shadow should contain an items map.", meta))
+        if "etag" in data and not isinstance(data.get("etag"), str):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Trakt watchlist shadow etag should be a string.", meta))
+    elif provider == "SIMKL" and feature == "watchlist":
+        if "items" not in data or not isinstance(data.get("items"), dict):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Simkl watchlist shadow should contain an items map.", meta))
+        buckets = data.get("buckets_seen")
+        if buckets is not None and not isinstance(buckets, dict):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Simkl watchlist shadow buckets_seen should be an object.", meta))
+    elif provider == "SIMKL" and feature == "activities":
+        if not isinstance(data.get("data"), dict):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Simkl activities shadow should contain a data object.", meta))
+    elif provider == "MDBLIST" and feature == "watchlist":
+        if not isinstance(data.get("items"), dict):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "MDBList watchlist shadow should contain an items map.", meta))
+    elif provider in {"JELLYFIN", "EMBY"} and feature in {"history", "ratings"}:
+        bad_rows = 0
+        total_count = 0
+        for row in data.values():
+            if isinstance(row, dict):
+                cnt = row.get("count", row.get("c", row.get("n", 0)))
+                try:
+                    total_count += max(0, int(cnt or 0))
+                except Exception:
+                    bad_rows += 1
+            elif isinstance(row, int):
+                total_count += max(0, int(row))
+            else:
+                bad_rows += 1
+        if bad_rows:
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "Shadow counters should be ints or objects with count fields.", meta, bad_rows=bad_rows))
+        if total_count > 0:
+            probs.append(_artifact_meta_problem("info", "cw_state_shadow_backlog", path, "Shadow file still tracks outstanding mirrored state.", meta, entries=len(data), total_count=total_count))
+
+    entries, ts = _shadow_entry_count(data, meta)
+    if entries > 0 and now_epoch is not None and ts is not None and ts < (now_epoch - 7 * 86400):
+        probs.append(_artifact_meta_problem("warn", "cw_state_shadow_stale", path, "Shadow file still has entries and looks stale.", meta, entries=entries))
+    return probs
+
+
+def _cw_state_unresolved_problems(
+    s: Mapping[str, Any] | None,
+    path: Path,
+    data: Any,
+    meta: Mapping[str, Any],
+    *,
+    now_epoch: int | None,
+) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_meta_problem("error", "cw_state_unresolved_invalid", path, "Unresolved file must be an object.", meta)]
+    pending = ".pending." in path.name.lower()
+    if pending:
+        keys = data.get("keys") or []
+        items = data.get("items") or {}
+        hints = data.get("hints") or {}
+        count = (len(keys) if isinstance(keys, list) else 0) + (len(items) if isinstance(items, dict) else 0)
+        if count > 0:
+            preview: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            if isinstance(keys, list):
+                for raw_key in keys:
+                    key = str(raw_key or "").strip()
+                    if not key or key in seen:
+                        continue
+                    seen.add(key)
+                    item = items.get(key) if isinstance(items, dict) else None
+                    hint = hints.get(key) if isinstance(hints, dict) else None
+                    rec = _state_preview_for_key(
+                        s,
+                        str(meta.get("provider") or ""),
+                        str(meta.get("feature") or ""),
+                        key,
+                        item if isinstance(item, dict) else None,
+                    )
+                    if isinstance(hint, dict) and hint.get("reason"):
+                        rec["reason"] = str(hint.get("reason"))
+                    preview.append(rec)
+                    if len(preview) >= 5:
+                        break
+            probs.append(
+                _artifact_meta_problem(
+                    "info",
+                    "cw_state_unresolved_backlog",
+                    path,
+                    "Pending unresolved entries are waiting to be reconciled.",
+                    meta,
+                    count=count,
+                    affected_items=preview,
+                )
+            )
+        return probs
+    count = 0
+    stale = 0
+    attempts_hot = 0
+    preview: list[dict[str, Any]] = []
+    for row in data.values():
+        if not isinstance(row, dict):
+            continue
+        count += 1
+        ep = _parse_epochish(row.get("ts") or row.get("last_attempt_ts") or row.get("updated") or row.get("since"))
+        if now_epoch is not None and ep is not None and ep < (now_epoch - 7 * 86400):
+            stale += 1
+        tries = row.get("attempts")
+        try:
+            if tries is not None and int(tries) >= 3:
+                attempts_hot += 1
+        except Exception:
+            pass
+    for raw_key, row in list(data.items())[:5]:
+        if not isinstance(row, dict):
+            continue
+        key = str(raw_key or "").strip()
+        item = row.get("item") if isinstance(row.get("item"), dict) else None
+        rec = _state_preview_for_key(
+            s,
+            str(meta.get("provider") or ""),
+            str(meta.get("feature") or ""),
+            key,
+            item if isinstance(item, dict) else None,
+        )
+        if row.get("reason"):
+            rec["reason"] = str(row.get("reason"))
+        elif row.get("error"):
+            rec["reason"] = str(row.get("error"))
+        tries = row.get("attempts")
+        if tries is not None:
+            try:
+                rec["attempts"] = int(tries)
+            except Exception:
+                pass
+        preview.append(rec)
+    if count > 0:
+        probs.append(
+            _artifact_meta_problem(
+                "warn",
+                "cw_state_unresolved_backlog",
+                path,
+                "Unresolved entries still exist for this provider/feature.",
+                meta,
+                count=count,
+                stale=stale,
+                hot=attempts_hot,
+                affected_items=preview,
+            )
+        )
+    return probs
+
+
+def _cw_state_flap_problems(path: Path, data: Any, meta: Mapping[str, Any], *, promote_after: int) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_meta_problem("error", "cw_state_flap_invalid", path, "Flap file must be an object.", meta)]
+    hot = 0
+    active = 0
+    for row in data.values():
+        if not isinstance(row, dict):
+            continue
+        try:
+            cons = int(row.get("consecutive") or 0)
+        except Exception:
+            cons = 0
+        if cons > 0:
+            active += 1
+        if cons >= promote_after:
+            hot += 1
+    if hot:
+        probs.append(_artifact_meta_problem("warn", "cw_state_flap_hot", path, "Some flap counters have reached blackbox promotion threshold.", meta, hot=hot, promote_after=promote_after))
+    elif active:
+        probs.append(_artifact_meta_problem("info", "cw_state_flap_active", path, "Flap counters show recent repeated sync friction.", meta, active=active))
+    return probs
+
+
+def _cw_state_blackbox_problems(
+    s: Mapping[str, Any] | None,
+    path: Path,
+    data: Any,
+    meta: Mapping[str, Any],
+    *,
+    now_epoch: int | None,
+    cooldown_days: int,
+) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(data, dict):
+        return [_artifact_meta_problem("error", "cw_state_blackbox_invalid", path, "Blackbox file must be an object.", meta)]
+    count = len(data)
+    if count <= 0:
+        return probs
+    prunable = 0
+    preview: list[dict[str, Any]] = []
+    if now_epoch is not None and cooldown_days > 0:
+        for row in data.values():
+            if not isinstance(row, dict):
+                continue
+            since = _parse_epochish(row.get("since"))
+            if since is not None and since < (now_epoch - cooldown_days * 86400):
+                prunable += 1
+    for raw_key, row in list(data.items())[:5]:
+        key = str(raw_key or "").strip()
+        rec = _state_preview_for_key(
+            s,
+            str(meta.get("provider") or ""),
+            str(meta.get("feature") or ""),
+            key,
+            None,
+        )
+        if isinstance(row, dict):
+            if row.get("reason"):
+                rec["reason"] = str(row.get("reason"))
+            since = row.get("since")
+            if since is not None:
+                rec["since"] = since
+        preview.append(rec)
+    probs.append(
+        _artifact_meta_problem(
+            "warn",
+            "cw_state_blackbox_active",
+            path,
+            "Blackbox file is actively blocking keys from sync.",
+            meta,
+            count=count,
+            prunable=prunable,
+            affected_items=preview,
+        )
+    )
+    return probs
+
+
+def _cw_state_pair_state_problems(path: Path, data: Any, meta: Mapping[str, Any], *, active_pairs: Mapping[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    scope = str(meta.get("scope") or "")
+    pair = active_pairs.get(scope)
+    if pair is None:
+        probs.append(_artifact_meta_problem("info", "cw_state_pair_state_orphaned", path, "Pair-scoped state file does not map to an enabled pair.", meta))
+        return probs
+    if not isinstance(data, dict):
+        return [_artifact_meta_problem("error", "cw_state_pair_state_invalid", path, "Pair-scoped state file must be an object.", meta)]
+    provs = data.get("providers")
+    if not isinstance(provs, dict):
+        return [_artifact_meta_problem("error", "cw_state_pair_state_invalid", path, "Pair-scoped state file is missing providers.", meta)]
+    missing: list[str] = []
+    for side in ("source", "target"):
+        prov = str(pair.get(side) or "").upper()
+        if prov and prov not in provs:
+            missing.append(prov)
+    if missing:
+        probs.append(_artifact_meta_problem("warn", "cw_state_pair_state_incomplete", path, "Pair-scoped state file is missing one or more pair providers.", meta, missing=missing))
+    return probs
+
+
+def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    try:
+        state = _load_state_at(STATE_PATH) if STATE_PATH.exists() else {}
+    except Exception:
+        state = {}
+    now_epoch = _state_epoch()
+    cfg = _cfg()
+    bb_cfg = ((cfg.get("sync") or {}).get("blackbox") or {}) if isinstance(cfg, dict) else {}
+    try:
+        promote_after = max(1, int(bb_cfg.get("promote_after", 3) or 3))
+    except Exception:
+        promote_after = 3
+    try:
+        cooldown_days = max(0, int(bb_cfg.get("cooldown_days", 30) or 30))
+    except Exception:
+        cooldown_days = 30
+    active_pairs = _active_pairs_by_scope(cfg)
+    for path in sorted(CWS_DIR.glob("*.json")):
+        data, err = _json_load_file(path)
+        if err:
+            continue
+        meta = _cw_state_meta(path)
+        kind = str(meta.get("kind") or "")
+        if kind == "watermarks":
+            probs.extend(_cw_state_watermark_problems(path, data, meta, now_epoch=now_epoch))
+        elif kind == "shadow":
+            probs.extend(_cw_state_shadow_problems(path, data, meta, now_epoch=now_epoch))
+        elif kind == "unresolved":
+            probs.extend(_cw_state_unresolved_problems(state, path, data, meta, now_epoch=now_epoch))
+        elif kind == "flap":
+            probs.extend(_cw_state_flap_problems(path, data, meta, promote_after=promote_after))
+        elif kind == "blackbox":
+            probs.extend(_cw_state_blackbox_problems(state, path, data, meta, now_epoch=now_epoch, cooldown_days=cooldown_days))
+        elif kind == "pair_state":
+            probs.extend(_cw_state_pair_state_problems(path, data, meta, active_pairs=active_pairs))
+    return probs
+
+
+def _validate_manifest_shape(path: Path, module_name: str, manifest: Any, expected_name: str) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    if not isinstance(manifest, dict):
+        return [
+            _module_problem(
+                "error",
+                "provider_manifest_invalid",
+                path,
+                "Provider manifest must be an object.",
+                category="provider",
+                module=module_name,
+                provider=expected_name,
+            )
+        ]
+    if str(manifest.get("name") or "").strip().upper() != expected_name:
+        probs.append(
+            _module_problem(
+                "warn",
+                "provider_manifest_name_mismatch",
+                path,
+                "Provider manifest name does not match the module name.",
+                category="provider",
+                module=module_name,
+                provider=expected_name,
+                manifest_name=manifest.get("name"),
+            )
+        )
+    feats = manifest.get("features")
+    if feats is not None and not isinstance(feats, dict):
+        probs.append(
+            _module_problem(
+                "warn",
+                "provider_manifest_invalid",
+                path,
+                "Provider manifest features should be an object.",
+                category="provider",
+                module=module_name,
+                provider=expected_name,
+            )
+        )
+    return probs
+
+
+def _provider_module_diagnostics() -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    required_ops = ("name", "label", "features", "capabilities", "build_index", "add", "remove")
+    for path in sorted(PROVIDERS_SYNC_DIR.glob("_mod_*.py")):
+        if path.name == "_mod_common.py":
+            continue
+        expected_name = path.stem.removeprefix("_mod_").upper()
+        module_name = f"providers.sync.{path.stem}"
+        try:
+            mod = importlib.import_module(module_name)
+        except Exception as e:
+            probs.append(
+                _module_problem(
+                    "error",
+                    "provider_import_failed",
+                    path,
+                    "Provider module could not be imported.",
+                    category="provider",
+                    module=module_name,
+                    provider=expected_name,
+                    error=f"{type(e).__name__}: {e}",
+                )
+            )
+            continue
+
+        ops = getattr(mod, "OPS", None)
+        if ops is None:
+            probs.append(_module_problem("error", "provider_ops_missing", path, "Provider module does not expose OPS.", category="provider", module=module_name, provider=expected_name))
+        else:
+            missing = [name for name in required_ops if not hasattr(ops, name)]
+            if missing:
+                probs.append(
+                    _module_problem(
+                        "error",
+                        "provider_ops_incomplete",
+                        path,
+                        "Provider OPS is missing required methods.",
+                        category="provider",
+                        module=module_name,
+                        provider=expected_name,
+                        missing=missing,
+                    )
+                )
+            else:
+                try:
+                    ops_name = str(ops.name() or "").strip().upper()
+                except Exception as e:
+                    probs.append(
+                        _module_problem(
+                            "error",
+                            "provider_ops_name_failed",
+                            path,
+                            "Provider OPS.name() raised an exception.",
+                            category="provider",
+                            module=module_name,
+                            provider=expected_name,
+                            error=f"{type(e).__name__}: {e}",
+                        )
+                    )
+                else:
+                    if ops_name != expected_name:
+                        probs.append(
+                            _module_problem(
+                                "warn",
+                                "provider_ops_name_mismatch",
+                                path,
+                                "Provider OPS name does not match the module name.",
+                                category="provider",
+                                module=module_name,
+                                provider=expected_name,
+                                ops_name=ops_name,
+                            )
+                        )
+
+        get_manifest = getattr(mod, "get_manifest", None)
+        if not callable(get_manifest):
+            probs.append(_module_problem("error", "provider_manifest_missing", path, "Provider module does not expose get_manifest().", category="provider", module=module_name, provider=expected_name))
+            continue
+        try:
+            probs.extend(_validate_manifest_shape(path, module_name, get_manifest(), expected_name))
+        except Exception as e:
+            probs.append(
+                _module_problem(
+                    "error",
+                    "provider_manifest_failed",
+                    path,
+                    "Provider manifest could not be evaluated.",
+                    category="provider",
+                    module=module_name,
+                    provider=expected_name,
+                    error=f"{type(e).__name__}: {e}",
+                )
+            )
+    return probs
+
+
+def _orchestrator_module_diagnostics() -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    for path in sorted(ORCH_DIR.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        module_name = f"cw_platform.orchestrator.{path.stem}"
+        try:
+            importlib.import_module(module_name)
+        except Exception as e:
+            probs.append(
+                _module_problem(
+                    "error",
+                    "orchestrator_import_failed",
+                    path,
+                    "Orchestrator module could not be imported.",
+                    category="orchestrator",
+                    module=module_name,
+                    error=f"{type(e).__name__}: {e}",
+                )
+            )
+    return probs
+
+
+def _system_diagnostics() -> list[dict[str, Any]]:
+    probs = []
+    probs.extend(_artifact_diagnostics())
+    probs.extend(_cw_state_semantic_diagnostics())
+    probs.extend(_provider_module_diagnostics())
+    probs.extend(_orchestrator_module_diagnostics())
+    return sorted(probs, key=_problem_sort_key)
 
 
 def _alias_keys(obj: dict[str, Any]) -> list[str]:
@@ -579,9 +1594,12 @@ def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, st
         if isinstance(feats, (list, tuple)):
             feats_list = [str(f).lower() for f in feats]
         elif isinstance(feats, dict):
-            for name in ("history", "watchlist", "ratings"):
+            for name in ("history", "watchlist", "ratings", "progress"):
                 f = feats.get(name)
-                if isinstance(f, dict) and (f.get("enable") or f.get("enabled")):
+                if isinstance(f, bool):
+                    if f:
+                        feats_list.append(name)
+                elif isinstance(f, dict) and (f.get("enable") or f.get("enabled")):
                     feats_list.append(name)
         else:
             feats_list = ["history"]
@@ -675,7 +1693,7 @@ def _pair_type_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[st
         if not isinstance(feats, dict):
             continue
 
-        for feat in ("history", "watchlist", "ratings"):
+        for feat in ("history", "watchlist", "ratings", "progress"):
             fcfg = feats.get(feat)
             if not is_on(fcfg):
                 continue
@@ -789,7 +1807,7 @@ def _pair_lib_filters(cfg: dict[str, Any]) -> dict[tuple[str, str, str], set[str
         if not isinstance(feats, dict):
             continue
 
-        for feat in ("history", "watchlist", "ratings"):
+        for feat in ("history", "watchlist", "ratings", "progress"):
             fcfg = feats.get(feat) or {}
             if not (isinstance(fcfg, dict) and (fcfg.get("enable") or fcfg.get("enabled"))):
                 continue
@@ -857,7 +1875,7 @@ def _has_peer_by_pairs(
     pair_libs: dict[tuple[str, str, str], set[str]] | None = None,
     pair_types: dict[tuple[str, str, str], set[str]] | None = None,
 ) -> bool:
-    if feat not in ("history", "watchlist", "ratings"):
+    if feat not in ("history", "watchlist", "ratings", "progress"):
         return True
 
     prov_key = _norm_prov_token(prov)
@@ -880,8 +1898,37 @@ def _has_peer_by_pairs(
         dst_key = _norm_prov_token(dst)
         idx = idx_cache.get((dst_key, feat_key)) or {}
         if any(k in idx for k in keys):
+            if feat_key == "history" and str(item.get("type") or "").strip().lower() in {"episode", "season"}:
+                if _history_exact_peer_present(s, dst, item):
+                    return True
+                continue
             return True
     return False
+
+
+def _refresh_missing_peer_flags(
+    s: dict[str, Any],
+    pairs: dict[tuple[str, str], list[str]],
+    idx_cache: dict[tuple[str, str], dict[str, str]],
+    pair_libs: dict[tuple[str, str, str], set[str]] | None = None,
+    pair_types: dict[tuple[str, str, str], set[str]] | None = None,
+) -> None:
+    for prov, feat, key, item in _iter_items(s):
+        if feat not in ("history", "watchlist", "ratings", "progress"):
+            continue
+        if not isinstance(item, dict):
+            continue
+        item["_ignore_missing_peer"] = _has_peer_by_pairs(
+            s,
+            pairs,
+            prov,
+            feat,
+            key,
+            item,
+            idx_cache,
+            pair_libs,
+            pair_types,
+        )
 
 def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
     stats: list[dict[str, Any]] = []
@@ -890,6 +1937,7 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
     idx_cache = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
     pair_types = _pair_type_filters(cfg)
+    _refresh_missing_peer_flags(s, pairs, idx_cache, pair_libs, pair_types)
     for (prov, feat), targets in pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         for dst in targets:
@@ -904,10 +1952,7 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
                     continue
 
                 total += 1
-                vv = dict(v)
-                vv["_key"] = k
-                alias_keys = _alias_keys(vv)
-                if any(a in idx for a in alias_keys):
+                if _has_peer_by_pairs(s, pairs, prov, feat, k, v, idx_cache, pair_libs, pair_types):
                     synced += 1
 
             stats.append(
@@ -928,6 +1973,8 @@ def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
     pairs = _pair_map(cfg, s)
     pair_libs = _pair_lib_filters(cfg)
     pair_types = _pair_type_filters(cfg)
+    idx_cache = _indices_for(s)
+    _refresh_missing_peer_flags(s, pairs, idx_cache, pair_libs, pair_types)
     out: list[dict[str, Any]] = []
 
     for (prov, feat), targets in pairs.items():
@@ -1201,15 +2248,37 @@ def _history_normalization_issues(s: dict[str, Any]) -> list[dict[str, Any]]:
             if not only_a and not only_b:
                 continue
 
+            extra_a = len(only_a)
+            extra_b = len(only_b)
+            src_count = len(sa)
+            dst_count = len(sb)
+            larger = max(src_count, dst_count, 1)
+            smaller = min(src_count, dst_count)
+            ratio = (larger / max(smaller, 1)) if smaller else float(larger)
+            drift = max(extra_a, extra_b)
+            severe = drift >= 10 or ratio >= 1.5
+            summary = (
+                "History sets diverge substantially between providers. "
+                "This is larger than a small normalization quirk and usually means one side has many real extra shows."
+                if severe
+                else "These counts can sometimes differ because some shows are split or merged differently between providers."
+            )
+
             issue: dict[str, Any] = {
-                "severity": "info",
+                "severity": "warn" if severe else "info",
                 "type": "history_show_normalization",
                 "feature": "history",
                 "source": a,
                 "target": b,
+                "message": summary,
                 "show_delta": {
-                    "source": len(sa),
-                    "target": len(sb),
+                    "source": src_count,
+                    "target": dst_count,
+                },
+                "show_gap": {
+                    "source_only": extra_a,
+                    "target_only": extra_b,
+                    "ratio": ratio,
                 },
                 "extra_source": only_a,
                 "extra_target": only_b,
@@ -1279,6 +2348,7 @@ def _missing_peer_show_hints(
         bucket = _bucket(s, dst, feat) or {}
         show_episodes = 0
         has_episode = False
+        compat_hint = _target_id_compat_hint(dst, item)
 
         for rec in bucket.values():
             if not isinstance(rec, dict):
@@ -1299,7 +2369,7 @@ def _missing_peer_show_hints(
 
         dst_name = str(dst or "").upper()
         if show_episodes == 0:
-            msg = f"{dst_name} history snapshot has no entries for this item."
+            msg = f"{dst_name} history snapshot has no entries for this item.{compat_hint}"
         elif has_episode:
             msg = (
                 f"{dst_name} history snapshot already has this episode, "
@@ -1310,12 +2380,12 @@ def _missing_peer_show_hints(
                 msg = (
                     f"{dst_name} has this show and {show_episodes} other episodes, "
                     f"but S{int(season):02d}E{int(episode):02d} is not in the "
-                    f"{dst_name} history snapshot."
+                    f"{dst_name} history snapshot.{compat_hint}"
                 )
             else:
                 msg = (
                     f"{dst_name} has this show and {show_episodes} other episodes, "
-                    f"but this entry is not in the {dst_name} history snapshot."
+                    f"but this entry is not in the {dst_name} history snapshot.{compat_hint}"
                 )
 
         out.append(
@@ -1330,6 +2400,94 @@ def _missing_peer_show_hints(
 
     return out
 
+
+def _target_id_compat_hint(dst: str, item: Mapping[str, Any]) -> str:
+    dst_name = str(dst or "").upper()
+    dst_base = dst_name.split("@", 1)[0]
+    ids = _id_view_for_item(item)
+    fallback_ids = _fallback_ids_for_item(item)
+    item_type = str(item.get("type") or "").strip().lower()
+
+    has_tmdb = bool(ids.get("tmdb"))
+    has_imdb = bool(ids.get("imdb"))
+    has_trakt = bool(ids.get("trakt"))
+    has_tvdb = bool(ids.get("tvdb") or fallback_ids.get("tvdb"))
+
+    if dst_base == "TRAKT" and has_tvdb and not (has_tmdb or has_imdb or has_trakt):
+        if item_type == "movie":
+            return (
+                " This item only has a TVDB ID. Trakt movie matching is much weaker "
+                "with TVDB-only IDs and usually needs TMDB, IMDb, or Trakt IDs."
+            )
+        return (
+            " This item only has a TVDB ID. Trakt matching is much weaker with "
+            "TVDB-only IDs and usually needs TMDB, IMDb, or Trakt IDs."
+        )
+
+    return ""
+
+
+def _history_exact_peer_present(s: dict[str, Any], dst: str, item: Mapping[str, Any]) -> bool:
+    typ = str(item.get("type") or "").strip().lower()
+    if typ not in {"episode", "season"}:
+        return False
+
+    sig = _history_show_signature(dict(item))
+    if not sig:
+        return False
+
+    season = item.get("season")
+    episode = item.get("episode")
+    bucket = _bucket(s, dst, "history") or {}
+
+    for rec in bucket.values():
+        if not isinstance(rec, dict):
+            continue
+        if _history_show_signature(rec) != sig:
+            continue
+        rtyp = str(rec.get("type") or "").strip().lower()
+        if typ == "episode":
+            if (
+                rtyp == "episode"
+                and rec.get("season") == season
+                and rec.get("episode") == episode
+            ):
+                return True
+        elif typ == "season":
+            if rtyp == "season" and rec.get("season") == season:
+                return True
+    return False
+
+
+def _item_label(item: Mapping[str, Any], fallback: str = "") -> str:
+    return str(item.get("series_title") or item.get("title") or fallback or "").strip()
+
+
+def _show_ids_of(item: Mapping[str, Any]) -> dict[str, Any]:
+    raw = item.get("show_ids")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _id_view_for_item(item: Mapping[str, Any], ids: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    item_ids = dict(ids or item.get("ids") or {})
+    typ = str(item.get("type") or "").strip().lower()
+    if typ in {"episode", "season"}:
+        show_ids = _show_ids_of(item)
+        if show_ids:
+            return show_ids
+    return item_ids
+
+
+def _fallback_ids_for_item(item: Mapping[str, Any], ids: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    item_ids = dict(ids or item.get("ids") or {})
+    primary_view = _id_view_for_item(item, item_ids)
+    out: dict[str, Any] = {}
+    for ns in ("imdb", "tvdb"):
+        value = primary_view.get(ns) or item_ids.get(ns)
+        if value:
+            out[ns] = value
+    return out
+
 def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     core = ("tmdb", "imdb", "tvdb")
@@ -1339,6 +2497,7 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
     idx_cache = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
     pair_types = _pair_type_filters(cfg)
+    _refresh_missing_peer_flags(s, pairs, idx_cache, pair_libs, pair_types)
     cw_state = _read_cw_state(allowed_scopes)
     manual = _load_manual_state()
     manual_blocks = _manual_add_blocks(manual)
@@ -1426,7 +2585,7 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
             vv["_key"] = k
             alias_keys = _alias_keys(vv)
 
-            if not any(ak in merged_keys for ak in alias_keys):
+            if not _has_peer_by_pairs(s, pairs, prov, feat, k, v, idx_cache, pair_libs, pair_types):
                 blocks = manual_blocks.get((prov, feat))
                 blocked = False
                 if blocks:
@@ -1474,6 +2633,7 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
 
     for p, f, k, it in _iter_items(s):
         ids = it.get("ids") or {}
+        item_label = _item_label(it, k)
         for ns in core:
             v = ids.get(ns)
             rx = _ID_RX.get(ns)
@@ -1485,14 +2645,17 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                         "provider": p,
                         "feature": f,
                         "key": k,
+                        "item_title": item_label,
                         "id_name": ns,
                         "id_value": v,
+                        "message": f"{item_label} has an invalid {ns.upper()} value.",
                     }
                 )
         if ":" in k:
             ns, kid = k.split(":", 1)
             base = kid.split("#", 1)[0].strip()
-            val = str((ids.get(ns) or "")).strip()
+            cmp_src = _id_view_for_item(it, ids) if "#" in kid else dict(ids)
+            val = str((cmp_src.get(ns) or ids.get(ns) or "")).strip()
             if base and val and base != val:
                 probs.append(
                     {
@@ -1501,13 +2664,17 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                         "provider": p,
                         "feature": f,
                         "key": k,
+                        "item_title": item_label,
                         "id_name": ns,
                         "id_value": val,
                         "key_base": base,
+                        "message": f"Key says {ns.upper()} {base}, but the item stores {ns.upper()} {val}.",
                     }
                 )
-        missing = [ns for ns in core if not ids.get(ns)]
-        if missing and ids:
+        id_view = _id_view_for_item(it, ids)
+        tmdb_id = id_view.get("tmdb") or ids.get("tmdb")
+        fallback_ids = _fallback_ids_for_item(it, ids)
+        if not tmdb_id and fallback_ids:
             probs.append(
                 {
                     "severity": "info",
@@ -1515,7 +2682,10 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                     "provider": p,
                     "feature": f,
                     "key": k,
-                    "missing": missing,
+                    "item_title": item_label,
+                    "missing": ["tmdb"],
+                    "ids": fallback_ids,
+                    "message": "Item has fallback IDs but no TMDB ID. Sync may still work, but some providers rely on TMDB for stronger matching.",
                 }
             )
         if ids and not any(ids.get(ns) for ns in core):
@@ -1526,7 +2696,9 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                     "provider": p,
                     "feature": f,
                     "key": k,
+                    "item_title": item_label,
                     "ids": ids,
+                    "message": "Item has IDs, but none of the main cross-provider IDs (TMDB, IMDb, TVDB) are present.",
                 }
             )
 
@@ -1535,7 +2707,12 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
     except Exception:
         pass
 
-    return probs
+    try:
+        probs.extend(_system_diagnostics())
+    except Exception:
+        pass
+
+    return sorted(probs, key=_problem_sort_key)
 
 def _peer_ids(s: dict[str, Any], cur: dict[str, Any]) -> dict[str, str]:
     t = (cur.get("title") or "").strip().lower()
@@ -1778,7 +2955,7 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
     idx = _indices_for(s)
     pair_libs = _pair_lib_filters(cfg)
     pair_types = _pair_type_filters(cfg)
-    it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+    it["_ignore_missing_peer"] = _has_peer_by_pairs(
         s,
         pairs,
         prov,
@@ -1816,8 +2993,10 @@ def api_problems(pairs: str | None = None) -> dict[str, Any]:
     s = _merge_states(handles)
     scopes = {h.get("safe") for h in handles if h.get("safe")}
     allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+    probs = _problems(s, allowed)
     return {
-        "problems": _problems(s, allowed),
+        "problems": probs,
+        "summary": _diagnostic_summary(probs),
         "pair_stats": _pair_stats(s),
         "pair_exclusions": _pair_exclusions(s),
     }
@@ -1881,7 +3060,7 @@ def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, An
         idx = _indices_for(s)
         pair_libs = _pair_lib_filters(cfg)
         pair_types = _pair_type_filters(cfg)
-        it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+        it["_ignore_missing_peer"] = _has_peer_by_pairs(
             s,
             pairs_map,
             payload["provider"],
@@ -1971,7 +3150,7 @@ def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any
         idx = _indices_for(s)
         pair_libs = _pair_lib_filters(cfg)
         pair_types = _pair_type_filters(cfg)
-        it["_ignore_missing_peer"] = not _has_peer_by_pairs(
+        it["_ignore_missing_peer"] = _has_peer_by_pairs(
             s,
             pairs_map,
             payload["provider"],
