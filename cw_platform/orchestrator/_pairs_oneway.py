@@ -56,8 +56,73 @@ _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
-    "ANILIST": "anilist",
 }
+
+
+def _rekey_index_to_match_other_keys(
+    idx0: Mapping[str, Any],
+    other0: Mapping[str, Any],
+    *,
+    typed_tokens: Any,
+    merge_payload: Any,
+) -> dict[str, Any]:
+    if not idx0 or not other0:
+        return dict(idx0 or {})
+
+    def _alias_index_local(idx: Mapping[str, Any]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for ck, it in (idx or {}).items():
+            if not isinstance(it, Mapping):
+                continue
+            for tok in typed_tokens(it):
+                out[str(tok)] = str(ck)
+        return out
+
+    other_alias = _alias_index_local(other0)
+    other_tmdb = {t: k for t, k in other_alias.items() if str(t).startswith("tmdb:")}
+    other_imdb = {t: k for t, k in other_alias.items() if str(t).startswith("imdb:")}
+    other_tvdb = {t: k for t, k in other_alias.items() if str(t).startswith("tvdb:")}
+
+    out: dict[str, Any] = {}
+    for ck, it in (idx0 or {}).items():
+        if not isinstance(it, Mapping):
+            out[str(ck)] = it
+            continue
+
+        ck_s = str(ck)
+        if ck_s in other0:
+            out[ck_s] = dict(it)
+            continue
+
+        toks = typed_tokens(it)
+        mk: str | None = None
+
+        for tok in toks:
+            if str(tok).startswith("tmdb:") and tok in other_tmdb:
+                mk = other_tmdb[tok]
+                break
+        if not mk:
+            for tok in toks:
+                if str(tok).startswith("imdb:") and tok in other_imdb:
+                    mk = other_imdb[tok]
+                    break
+        if not mk:
+            for tok in toks:
+                if str(tok).startswith("tvdb:") and tok in other_tvdb:
+                    mk = other_tvdb[tok]
+                    break
+
+        if not mk:
+            out[ck_s] = dict(it)
+            continue
+
+        existing = out.get(mk)
+        if isinstance(existing, Mapping):
+            out[mk] = merge_payload(existing, it)
+        else:
+            out[mk] = dict(it)
+
+    return out
 
 
 def _provider_ignore_dropped_enabled(cfg: Mapping[str, Any], provider_key: str, feature: str) -> bool:
@@ -1425,12 +1490,59 @@ def run_one_way_feature(
 
             pf["baseline"] = {"items": kept}
 
+        def _merge_payload(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
+            out = dict(base or {})
+            for k, v in (extra or {}).items():
+                if k in ("ids", "show_ids"):
+                    continue
+                if out.get(k) in (None, "") and v not in (None, ""):
+                    out[k] = v
+
+            for fld in ("ids", "show_ids"):
+                b = out.get(fld) if isinstance(out.get(fld), Mapping) else {}
+                e = extra.get(fld) if isinstance(extra.get(fld), Mapping) else {}
+                if b or e:
+                    merged: dict[str, Any] = dict(b or {})
+                    for kk, vv in (e or {}).items():
+                        if merged.get(kk) in (None, "") and vv not in (None, ""):
+                            merged[kk] = vv
+                    if merged:
+                        out[fld] = merged
+
+            if feature == "history":
+                a0 = out.get("watched_at")
+                b0 = extra.get("watched_at")
+                if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                    out["watched_at"] = b0
+            elif feature == "ratings":
+                a0 = out.get("rated_at")
+                b0 = extra.get("rated_at")
+                if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                    out["rated_at"] = b0
+            elif feature == "progress":
+                a0 = out.get("progress_at")
+                b0 = extra.get("progress_at")
+                if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                    out["progress_at"] = b0
+            return out
+
 
         def _commit_checkpoint(pmap, prov, inst, feat, chk):
             if not chk:
                 return
             pf = _ensure_pf(pmap, prov, inst, feat)
             pf["checkpoint"] = chk
+
+        def _rekey_state_to_src_keyspace(idx0: dict[str, Any], src_idx0: dict[str, Any]) -> dict[str, Any]:
+            return _rekey_index_to_match_other_keys(
+                idx0,
+                src_idx0,
+                typed_tokens=_typed_tokens,
+                merge_payload=_merge_payload,
+            )
+
+        if feature in ("history", "ratings", "progress"):
+            dst_full = _rekey_state_to_src_keyspace(dst_full, src_idx)
 
         _commit_baseline(provs_block, src, src_inst, feature, src_idx)
         _commit_baseline(provs_block, dst, dst_inst, feature, dst_full)
