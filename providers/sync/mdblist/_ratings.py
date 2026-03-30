@@ -206,8 +206,6 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             out[key] = int(value)
         except Exception:
             continue
-    if out.get("imdb") and out.get("tmdb") and out.get("tvdb"):
-        out.pop("tvdb", None)
     return out
 
 
