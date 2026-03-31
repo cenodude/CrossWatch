@@ -133,6 +133,47 @@ def _history_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]
 
     return True
 
+
+def _ratings_is_blocked_by_tomb(item: dict[str, Any], tomb_ts: Mapping[str, int]) -> bool:
+    # Allow re-add if the item has a newer rated_at than the tombstone timestamp.
+    rated_ts = _ts_epoch(item.get("rated_at"))
+    tokens: list[str] = []
+    try:
+        ck = canonical_key(item)
+        if ck:
+            tokens.append(ck)
+    except Exception:
+        pass
+
+    ids = item.get("ids") or {}
+    if isinstance(ids, Mapping):
+        for k in ID_KEYS:
+            v = ids.get(k)
+            if v is None or str(v).strip() == "":
+                continue
+            tokens.append(f"{str(k).lower()}:{str(v).lower()}")
+
+    t = str(item.get("type") or "").lower()
+    ttl = str(item.get("title") or "").strip().lower()
+    yr = item.get("year") or ""
+    tokens.append(f"{t}|title:{ttl}|year:{yr}")
+
+    hit_ts: int | None = None
+    for tok in tokens:
+        ts = tomb_ts.get(tok)
+        if ts is None:
+            continue
+        ts_i = int(ts)
+        hit_ts = ts_i if hit_ts is None else max(hit_ts, ts_i)
+
+    if hit_ts is None:
+        return False
+
+    if rated_ts is not None and int(rated_ts) >= int(hit_ts):
+        return False
+
+    return True
+
 def apply_blocklist(
     state_store,
     items: Iterable[dict[str, Any]],
@@ -188,7 +229,8 @@ def apply_blocklist(
     if not items_list or not bl:
         return items_list
 
-    if str(feature or "").lower() != "history":
+    feature_norm = str(feature or "").lower()
+    if feature_norm not in {"history", "ratings"}:
         return filter_with(state_store, items_list, extra_block=bl)
 
     hard = (global_tomb | unresolved | blackbox)
@@ -201,7 +243,12 @@ def apply_blocklist(
     out: list[dict[str, Any]] = []
     for it in items_list:
         try:
-            if _history_is_blocked_by_tomb(it, pmap):
+            blocked = (
+                _history_is_blocked_by_tomb(it, pmap)
+                if feature_norm == "history"
+                else _ratings_is_blocked_by_tomb(it, pmap)
+            )
+            if blocked:
                 continue
         except Exception:
             try:
