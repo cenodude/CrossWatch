@@ -329,6 +329,8 @@ def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
         return out
 
     ev = str(obj.get("event") or "")
+    if ev == "ui:spotlight":
+        return {}
     if "confirmed_keys" in obj and not ev:
         return _slim_counts(cast(dict[str, Any], obj))
 
@@ -370,6 +372,8 @@ def _slim_sync_log_line(line: str) -> str:
     out = _slim_sync_log_obj(obj)
     if out is None:
         return s
+    if out == {}:
+        return ""
     try:
         return json.dumps(out, ensure_ascii=False, separators=(",", ":"), default=str)
     except Exception:
@@ -383,7 +387,9 @@ def _sync_progress_ui(msg: str):
             _parse_sync_line(strip_ansi(msg))
         except Exception as e:
             _append_log("SYNC", f"[!] progress-parse failed: {e}")
-        _append_log("SYNC", _slim_sync_log_line(msg))
+        slim = _slim_sync_log_line(msg)
+        if str(slim or "").strip():
+            _append_log("SYNC", slim)
     except Exception:
         pass
 
@@ -677,6 +683,27 @@ def _parse_sync_line(line: str) -> None:
                         "spotlight_remove": [],
                         "spotlight_update": [],
                     }
+                if ev == "ui:spotlight":
+                    try:
+                        action = str(o.get("action") or "").lower()
+                        bucket = (
+                            "spotlight_add"
+                            if action == "add"
+                            else "spotlight_remove"
+                            if action == "remove"
+                            else "spotlight_update"
+                        )
+                        cur_bucket = F[feat].get(bucket)
+                        if not isinstance(cur_bucket, list):
+                            cur_bucket = []
+                            F[feat][bucket] = cur_bucket
+                        items = o.get("items")
+                        if isinstance(items, list) and items:
+                            _merge_spotlight_items(cur_bucket, items, limit=25)
+                            _summary_set("features", F)
+                    except Exception:
+                        pass
+                    return
                 getc = lambda obj: int(
                     (
                         (obj.get("result") or {}).get("count")

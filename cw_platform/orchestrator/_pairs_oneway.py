@@ -1009,14 +1009,52 @@ def run_one_way_feature(
             adds = pruned
 
     removes: list[dict[str, Any]] = []
+
+    def _observed_source_removes() -> list[dict[str, Any]]:
+        observed_removes: list[dict[str, Any]] = []
+        if not (include_observed and not src_suspect and src_sem != "delta" and prev_src):
+            return observed_removes
+
+        src_obs = dict(src_cur or {})
+        if manual_adds:
+            src_obs = _merge_manual_adds(src_obs, manual_adds)
+        src_obs_alias = _alias_index(src_obs)
+
+        observed: list[Mapping[str, Any]] = []
+        for it in (prev_src or {}).values():
+            if not isinstance(it, Mapping):
+                continue
+            if not _present(src_obs, src_obs_alias, it):
+                observed.append(it)
+
+        if not observed:
+            return observed_removes
+
+        seen: set[str] = set()
+        for it in observed:
+            dv = _find_in_idx(dst_full, dst_alias, it)
+            if not dv:
+                continue
+            rk = _ck(dv) or _ck(it)
+            if rk and rk in seen:
+                continue
+            if rk:
+                seen.add(rk)
+            observed_removes.append(_minimal(dv))
+
+        return observed_removes
+
     if allow_removes:
         if feature == "ratings":
-            removes = list(mirror_removes or [])
-            if removes:
-                removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-                if prev_dst:
-                    prev_dst_alias = _alias_index(prev_dst)
-                    removes = [it for it in removes if _present(prev_dst, prev_dst_alias, it)]
+            if remove_mode == "mirror":
+                removes = list(mirror_removes or [])
+                if removes:
+                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                    if prev_dst:
+                        prev_dst_alias = _alias_index(prev_dst)
+                        removes = [it for it in removes if _present(prev_dst, prev_dst_alias, it)]
+            else:
+                removes = _observed_source_removes()
         elif remove_mode == "mirror":
             removes = list(mirror_removes or [])
             if removes:
@@ -1026,31 +1064,7 @@ def run_one_way_feature(
                 except Exception:
                     pass
         else:
-            if include_observed and not src_suspect and src_sem != "delta" and prev_src:
-                src_obs = dict(src_cur or {})
-                if manual_adds:
-                    src_obs = _merge_manual_adds(src_obs, manual_adds)
-                src_obs_alias = _alias_index(src_obs)
-
-                observed: list[Mapping[str, Any]] = []
-                for it in (prev_src or {}).values():
-                    if not isinstance(it, Mapping):
-                        continue
-                    if not _present(src_obs, src_obs_alias, it):
-                        observed.append(it)
-
-                if observed:
-                    seen: set[str] = set()
-                    for it in observed:
-                        dv = _find_in_idx(dst_full, dst_alias, it)
-                        if not dv:
-                            continue
-                        rk = _ck(dv) or _ck(it)
-                        if rk and rk in seen:
-                            continue
-                        if rk:
-                            seen.add(rk)
-                        removes.append(_minimal(dv))
+            removes = _observed_source_removes()
 
     if not allow_adds:
         adds = []

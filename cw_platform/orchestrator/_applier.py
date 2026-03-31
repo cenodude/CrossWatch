@@ -2,14 +2,10 @@
 # Applier logic for adding/removing items in destination services.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-import threading
 from collections.abc import Sequence, Mapping
 from typing import Any, Callable, cast
 from . import _unresolved as _unresolved_mod
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
-
-_TITLE_CACHE_LOCK = threading.Lock()
-_TITLE_CACHE: dict[str, Any] = {"state_mtime": None, "key_map": {}, "id_map": {}}
 
 def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5) -> Any:
     last = None
@@ -20,7 +16,8 @@ def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5)
             __import__("time").sleep(base_sleep * (2 ** i))
     raise last  # type: ignore
 
-def _spotlight_items(
+
+def _ui_spotlight_items(
     items: Sequence[Mapping[str, Any]],
     confirmed_keys: Sequence[str],
     *,
@@ -32,207 +29,76 @@ def _spotlight_items(
     except Exception:
         _ckey = None  # type: ignore
 
-    if not _ckey:
-        return []
-
-    key_order = [str(k) for k in confirmed_keys if k]
-
-    by_key: dict[str, Mapping[str, Any]] = {}
-    for item in items or []:
-        aliases: list[str] = []
-        try:
-            key = str(_ckey(item) or "")
-        except Exception:
-            key = ""
-        if key:
-            aliases.append(key)
-        for ids_field in ("show_ids", "ids"):
-            raw_ids = item.get(ids_field)
-            ids = raw_ids if isinstance(raw_ids, Mapping) else {}
-            for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug"):
-                v = ids.get(idk)
-                if v in (None, ""):
-                    continue
-                aliases.append(f"{str(idk).lower()}:{str(v).strip().lower()}")
-        for alias in aliases:
-            if alias and alias not in by_key:
-                by_key[alias] = item
-
-    def _get_local_title_maps() -> tuple[dict[str, str], dict[str, str]]:
-        try:
-            from ._state_store import StateStore  # type: ignore
-            from ..config_base import CONFIG_BASE  # type: ignore
-        except Exception:
-            return {}, {}
-
-        try:
-            store = StateStore(CONFIG_BASE())
-            state_path = store.state
-            mtime = state_path.stat().st_mtime if state_path.exists() else None
-        except Exception:
-            state_path = None
-            mtime = None
-
-        with _TITLE_CACHE_LOCK:
-            if mtime is not None and _TITLE_CACHE.get("state_mtime") == mtime:
-                km = _TITLE_CACHE.get("key_map")
-                im = _TITLE_CACHE.get("id_map")
-                if isinstance(km, dict) and isinstance(im, dict):
-                    return cast(dict[str, str], km), cast(dict[str, str], im)
-
-        try:
-            state = store.load_state() if state_path is not None else {}
-        except Exception:
-            state = {}
-
-        key_map: dict[str, str] = {}
-        id_map: dict[str, str] = {}
-
-        def put(dct: dict[str, str], key: Any, title: Any) -> None:
-            k = str(key or "").strip().lower()
-            t = str(title or "").strip()
-            if k and t and k not in dct:
-                dct[k] = t
-
-        def add_ids(ids: Any, title: Any) -> None:
-            if not isinstance(ids, Mapping):
-                return
-            for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug"):
-                v = ids.get(idk)
-                if v not in (None, ""):
-                    put(id_map, f"{str(idk).lower()}:{str(v).strip().lower()}", title)
-
-        provs = (state or {}).get("providers") or {}
-        if isinstance(provs, Mapping):
-            for pdata in provs.values():
-                if not isinstance(pdata, Mapping):
-                    continue
-                nodes: list[Mapping[str, Any]] = []
-                for feat in ("history", "ratings", "watchlist", "playlists", "progress"):
-                    node = pdata.get(feat)
-                    if isinstance(node, Mapping):
-                        nodes.append(node)
-                insts = pdata.get("instances")
-                if isinstance(insts, Mapping):
-                    for idata in insts.values():
-                        if not isinstance(idata, Mapping):
-                            continue
-                        for feat in ("history", "ratings", "watchlist", "playlists", "progress"):
-                            node = idata.get(feat)
-                            if isinstance(node, Mapping):
-                                nodes.append(node)
-
-                for node in nodes:
-                    base = node.get("baseline") if isinstance(node.get("baseline"), Mapping) else node
-                    items_node = base.get("items") if isinstance(base, Mapping) else None
-                    if isinstance(items_node, Mapping):
-                        iterable = items_node.items()
-                    elif isinstance(items_node, list):
-                        iterable = ((it.get("key"), it) for it in items_node if isinstance(it, Mapping))
-                    else:
-                        continue
-                    for raw_key, it in iterable:
-                        if not isinstance(it, Mapping):
-                            continue
-                        title = (
-                            it.get("series_title")
-                            or it.get("show_title")
-                            or it.get("title")
-                            or it.get("name")
-                        )
-                        if not title:
-                            continue
-                        put(key_map, raw_key, title)
-                        put(key_map, it.get("key"), title)
-                        add_ids(it.get("show_ids"), title)
-                        add_ids(it.get("ids"), title)
-
-        with _TITLE_CACHE_LOCK:
-            _TITLE_CACHE["state_mtime"] = mtime
-            _TITLE_CACHE["key_map"] = key_map
-            _TITLE_CACHE["id_map"] = id_map
-        return key_map, id_map
-
-    key_map, id_map = _get_local_title_maps()
-
-    def _lookup_title(key: str, item: Mapping[str, Any]) -> str:
-        for candidate in (
-            str(key or "").strip().lower(),
-            str((item.get("key") or "")).strip().lower(),
-        ):
-            if candidate:
-                title = str(id_map.get(candidate) or key_map.get(candidate) or "").strip()
-                if title:
-                    return title
-        for ids_field in ("show_ids", "ids"):
-            raw_ids = item.get(ids_field)
-            ids = raw_ids if isinstance(raw_ids, Mapping) else {}
-            for idk in ("tmdb", "imdb", "tvdb", "trakt", "mdblist", "slug"):
-                v = ids.get(idk)
-                if v in (None, ""):
-                    continue
-                probe = f"{str(idk).lower()}:{str(v).strip().lower()}"
-                title = str(id_map.get(probe) or key_map.get(probe) or "").strip()
-                if title:
-                    return title
-        return ""
-
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    emit_order: list[str] = list(key_order)
-    if not emit_order and int(fallback_count or 0) > 0:
-        fallback = max(0, int(fallback_count))
-        for item in list(items or [])[:fallback]:
+    by_alias: dict[str, Mapping[str, Any]] = {}
+    if _ckey:
+        for item in items or []:
+            aliases: list[str] = []
             try:
-                k = str(_ckey(item) or "").strip()
+                key = str(_ckey(item) or "").strip()
             except Exception:
-                k = ""
-            if not k:
-                raw_ids = item.get("ids")
+                key = ""
+            if key:
+                aliases.append(key)
+            for ids_field in ("show_ids", "ids"):
+                raw_ids = item.get(ids_field)
                 ids = raw_ids if isinstance(raw_ids, Mapping) else {}
                 for idk in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mdblist", "slug"):
                     v = ids.get(idk)
-                    if v in (None, ""):
-                        continue
-                    k = f"{str(idk).lower()}:{str(v).strip().lower()}"
-                    break
-            if not k:
-                ttl = str(item.get("title") or item.get("name") or item.get("series_title") or item.get("show_title") or "").strip()
-                typ = str(item.get("type") or "").strip().lower()
-                yr = item.get("year")
-                if ttl:
-                    k = f"{typ}|title:{ttl.lower()}|year:{yr or ''}"
-            if k:
-                emit_order.append(k)
-                by_key.setdefault(k, item)
-    if not emit_order:
-        return []
+                    if v not in (None, ""):
+                        aliases.append(f"{str(idk).lower()}:{str(v).strip().lower()}")
+            for alias in aliases:
+                if alias and alias not in by_alias:
+                    by_alias[alias] = item
 
-    for key in emit_order:
-        item = by_key.get(key)
-        if not isinstance(item, Mapping) or key in seen:
+    order = [str(k) for k in (confirmed_keys or []) if k]
+    selected: list[Mapping[str, Any]] = []
+    seen_ids: set[int] = set()
+
+    for key in order:
+        item = by_alias.get(key)
+        if not isinstance(item, Mapping):
             continue
-        slim: dict[str, Any] = {"key": key}
+        ident = id(item)
+        if ident in seen_ids:
+            continue
+        selected.append(item)
+        seen_ids.add(ident)
+        if len(selected) >= int(limit):
+            break
+
+    if not selected and int(fallback_count or 0) > 0:
+        for item in list(items or [])[: max(0, int(fallback_count))]:
+            ident = id(item)
+            if ident in seen_ids:
+                continue
+            selected.append(item)
+            seen_ids.add(ident)
+            if len(selected) >= int(limit):
+                break
+
+    out: list[dict[str, Any]] = []
+    for item in selected:
+        slim: dict[str, Any] = {}
+        try:
+            if _ckey:
+                key = str(_ckey(item) or "").strip()
+                if key:
+                    slim["key"] = key
+        except Exception:
+            pass
         for field in ("type", "title", "name", "year", "season", "episode", "series_title", "show_title"):
             val = item.get(field)
             if val not in (None, ""):
                 slim[field] = val
         raw_ids = item.get("ids")
-        if isinstance(raw_ids, Mapping):
+        if isinstance(raw_ids, Mapping) and raw_ids:
             slim["ids"] = dict(raw_ids)
         raw_show_ids = item.get("show_ids")
-        if isinstance(raw_show_ids, Mapping):
+        if isinstance(raw_show_ids, Mapping) and raw_show_ids:
             slim["show_ids"] = dict(raw_show_ids)
-        if not slim.get("title") and not slim.get("name") and not slim.get("series_title") and not slim.get("show_title"):
-            title = _lookup_title(key, item)
-            if title:
-                if str(slim.get("type") or "").strip().lower() in ("episode", "season"):
-                    slim["series_title"] = title
-                else:
-                    slim["title"] = title
-        out.append(slim)
-        seen.add(key)
-        if len(out) >= limit:
+        if slim:
+            out.append(slim)
+        if len(out) >= int(limit):
             break
     return out
 
@@ -455,26 +321,30 @@ def apply_add(
         chunk_pause_ms=chunk_pause_ms,
     )
     _conf = int(res.get("confirmed", 0))
-    emit(
-        "apply:add:done",
-        dst=dst_name,
-        feature=feature,
-        count=_conf,
-        attempted=int(res.get("attempted", 0)),
-        added=_conf,
-        skipped=int(res.get("skipped", 0)),
-        skipped_exact=int(res.get("skipped_exact", 0)),
-        skipped_inferred=int(res.get("skipped_inferred", 0)),
-        skip_basis=str(res.get("skip_basis") or "provider_keys"),
-        unresolved=int(res.get("unresolved", 0)),
-        errors=int(res.get("errors", 0)),
-        spotlight=_spotlight_items(
+    payload: dict[str, Any] = {
+        "dst": dst_name,
+        "feature": feature,
+        "count": _conf,
+        "attempted": int(res.get("attempted", 0)),
+        "added": _conf,
+        "skipped": int(res.get("skipped", 0)),
+        "skipped_exact": int(res.get("skipped_exact", 0)),
+        "skipped_inferred": int(res.get("skipped_inferred", 0)),
+        "skip_basis": str(res.get("skip_basis") or "provider_keys"),
+        "unresolved": int(res.get("unresolved", 0)),
+        "errors": int(res.get("errors", 0)),
+    }
+    emit("apply:add:done", **payload)
+    try:
+        spotlight = _ui_spotlight_items(
             items,
             cast(Sequence[str], res.get("confirmed_keys") or []),
             fallback_count=_conf,
-        ),
-        result=res,
-    )
+        )
+        if spotlight:
+            emit("ui:spotlight", feature=feature, action="add", items=spotlight, count=len(spotlight))
+    except Exception:
+        pass
     return res
 
 def apply_update(
@@ -503,26 +373,30 @@ def apply_update(
         chunk_pause_ms=chunk_pause_ms,
     )
     _conf = int(res.get("confirmed", 0))
-    emit(
-        "apply:update:done",
-        dst=dst_name,
-        feature=feature,
-        count=_conf,
-        attempted=int(res.get("attempted", 0)),
-        updated=_conf,
-        skipped=int(res.get("skipped", 0)),
-        skipped_exact=int(res.get("skipped_exact", 0)),
-        skipped_inferred=int(res.get("skipped_inferred", 0)),
-        skip_basis=str(res.get("skip_basis") or "provider_keys"),
-        unresolved=int(res.get("unresolved", 0)),
-        errors=int(res.get("errors", 0)),
-        spotlight=_spotlight_items(
+    payload: dict[str, Any] = {
+        "dst": dst_name,
+        "feature": feature,
+        "count": _conf,
+        "attempted": int(res.get("attempted", 0)),
+        "updated": _conf,
+        "skipped": int(res.get("skipped", 0)),
+        "skipped_exact": int(res.get("skipped_exact", 0)),
+        "skipped_inferred": int(res.get("skipped_inferred", 0)),
+        "skip_basis": str(res.get("skip_basis") or "provider_keys"),
+        "unresolved": int(res.get("unresolved", 0)),
+        "errors": int(res.get("errors", 0)),
+    }
+    emit("apply:update:done", **payload)
+    try:
+        spotlight = _ui_spotlight_items(
             items,
             cast(Sequence[str], res.get("confirmed_keys") or []),
             fallback_count=_conf,
-        ),
-        result=res,
-    )
+        )
+        if spotlight:
+            emit("ui:spotlight", feature=feature, action="update", items=spotlight, count=len(spotlight))
+    except Exception:
+        pass
     return res
 
 def apply_remove(
@@ -551,24 +425,28 @@ def apply_remove(
         chunk_pause_ms=chunk_pause_ms,
     )
     _conf = int(res.get("confirmed", 0))
-    emit(
-        "apply:remove:done",
-        dst=dst_name,
-        feature=feature,
-        count=_conf,
-        attempted=int(res.get("attempted", 0)),
-        removed=_conf,
-        skipped=int(res.get("skipped", 0)),
-        skipped_exact=int(res.get("skipped_exact", 0)),
-        skipped_inferred=int(res.get("skipped_inferred", 0)),
-        skip_basis=str(res.get("skip_basis") or "provider_keys"),
-        unresolved=int(res.get("unresolved", 0)),
-        errors=int(res.get("errors", 0)),
-        spotlight=_spotlight_items(
+    payload: dict[str, Any] = {
+        "dst": dst_name,
+        "feature": feature,
+        "count": _conf,
+        "attempted": int(res.get("attempted", 0)),
+        "removed": _conf,
+        "skipped": int(res.get("skipped", 0)),
+        "skipped_exact": int(res.get("skipped_exact", 0)),
+        "skipped_inferred": int(res.get("skipped_inferred", 0)),
+        "skip_basis": str(res.get("skip_basis") or "provider_keys"),
+        "unresolved": int(res.get("unresolved", 0)),
+        "errors": int(res.get("errors", 0)),
+    }
+    emit("apply:remove:done", **payload)
+    try:
+        spotlight = _ui_spotlight_items(
             items,
             cast(Sequence[str], res.get("confirmed_keys") or []),
             fallback_count=_conf,
-        ),
-        result=res,
-    )
+        )
+        if spotlight:
+            emit("ui:spotlight", feature=feature, action="remove", items=spotlight, count=len(spotlight))
+    except Exception:
+        pass
     return res
