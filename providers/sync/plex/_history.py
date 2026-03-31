@@ -322,6 +322,53 @@ def _shadow_add_batch(items: list[Mapping[str, Any]]) -> None:
     except Exception:
         pass
 
+def _shadow_remove(item: Mapping[str, Any]) -> None:
+    try:
+        data = _load_shadow() or {}
+        if not isinstance(data, Mapping) or not data:
+            return
+
+        exact = _UNRES.event_key(item)
+        try:
+            base = canonical_key(id_minimal(item)) or canonical_key(item) or ""
+        except Exception:
+            base = ""
+
+        changed = False
+        for key in list(data.keys()):
+            key_s = str(key or "")
+            if exact and key_s == exact:
+                del data[key]
+                changed = True
+                continue
+            if base and (key_s == base or key_s.startswith(f"{base}@")):
+                del data[key]
+                changed = True
+
+        if changed:
+            _save_shadow(data)
+    except Exception:
+        pass
+
+def _marked_set_unwatched(rating_key: Any, item: Mapping[str, Any]) -> None:
+    try:
+        rk = str(rating_key or ids_from(item).get("plex") or "").strip()
+        if not rk:
+            return
+        st = _load_marked_state() or {}
+        marked0 = st.get("items") or {}
+        marked: dict[str, Any] = dict(marked0) if isinstance(marked0, Mapping) else {}
+        prev = marked.get(rk)
+        entry: dict[str, Any] = dict(prev) if isinstance(prev, Mapping) else dict(id_minimal(item))
+        entry["watched"] = False
+        marked[rk] = entry
+        st = dict(st) if isinstance(st, Mapping) else {}
+        st["items"] = marked
+        st["last_updated_at"] = int(time.time())
+        _save_marked_state(st)
+    except Exception:
+        pass
+
 def _has_external_ids(minimal: Mapping[str, Any]) -> bool:
     ids = minimal.get("ids") or {}
     show_ids = minimal.get("show_ids") or {}
@@ -958,6 +1005,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             if _unscrobble(srv, rating_key):
                 ok += 1
                 _UNRES.unfreeze([_UNRES.event_key(item)])
+                _shadow_remove(item)
+                _marked_set_unwatched(rating_key, item)
             else:
                 _UNRES.freeze(item, action="remove", reasons=["unscrobble_failed"])
                 unresolved.append({"item": id_minimal(item), "hint": "unscrobble_failed"})
