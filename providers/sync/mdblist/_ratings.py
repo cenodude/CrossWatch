@@ -362,6 +362,41 @@ def _apply_journal_rows(
     def _sort_key(row: Mapping[str, Any]) -> str:
         return str(row.get("action_at") or row.get("value_at") or "")
 
+    def _merge_journal_item(prev: Mapping[str, Any] | None, cur: Mapping[str, Any]) -> dict[str, Any]:
+        if not isinstance(prev, Mapping):
+            return dict(cur)
+
+        out: dict[str, Any] = dict(prev)
+
+        prev_ids = prev.get("ids") if isinstance(prev.get("ids"), Mapping) else {}
+        cur_ids = cur.get("ids") if isinstance(cur.get("ids"), Mapping) else {}
+        merged_ids: dict[str, Any] = dict(prev_ids or {})
+        for ik, iv in (cur_ids or {}).items():
+            if iv not in (None, ""):
+                merged_ids[str(ik)] = iv
+        if merged_ids:
+            out["ids"] = merged_ids
+
+        prev_show_ids = prev.get("show_ids") if isinstance(prev.get("show_ids"), Mapping) else {}
+        cur_show_ids = cur.get("show_ids") if isinstance(cur.get("show_ids"), Mapping) else {}
+        merged_show_ids: dict[str, Any] = dict(prev_show_ids or {})
+        for ik, iv in (cur_show_ids or {}).items():
+            if iv not in (None, ""):
+                merged_show_ids[str(ik)] = iv
+        if merged_show_ids:
+            out["show_ids"] = merged_show_ids
+
+        for fk, fv in cur.items():
+            if fk in ("ids", "show_ids"):
+                continue
+            if fv is None:
+                continue
+            if isinstance(fv, str) and not fv.strip():
+                continue
+            out[fk] = fv
+
+        return out
+
     for row in sorted((r for r in (rows or []) if isinstance(r, Mapping)), key=_sort_key):
         item = _journal_item(row)
         if not item:
@@ -375,9 +410,28 @@ def _apply_journal_rows(
                 merged.pop(key, None)
                 stats["removed"] += 1
             continue
-        merged[key] = item
+        merged[key] = _merge_journal_item(merged.get(key), item)
         stats["added"] += 1
     return merged, stats, latest_seen
+
+
+def _partition_journal_rows(
+    rows: Iterable[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    remove_rows: list[dict[str, Any]] = []
+    upsert_rows: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, Mapping):
+            continue
+        item = _journal_item(row)
+        if not item:
+            continue
+        row_dict = dict(row)
+        if item.get("_removed") or item.get("rating") is None:
+            remove_rows.append(row_dict)
+        else:
+            upsert_rows.append(row_dict)
+    return remove_rows, upsert_rows
 
 
 def _row_movie(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -588,12 +642,13 @@ def build_index(
 
     wm = get_watermark("ratings")
     journal_wm = get_watermark("ratings_journal")
-    if acts_ts and journal_ts and wm and journal_wm:
-        a = _as_epoch(acts_ts) or 0
+    if journal_ts and wm and journal_wm:
+        a = (_as_epoch(acts_ts) or 0) if acts_ts else 0
         b = _as_epoch(wm) or 0
         jn = _as_epoch(journal_ts) or 0
         jw = _as_epoch(journal_wm) or 0
-        if a <= b and jn <= jw:
+        acts_unchanged = (not acts_ts) or (a <= b)
+        if acts_unchanged and jn <= jw:
             _dbg("index_cache_hit", source="cache", reason="activities_unchanged", rated_at=acts_ts, journal_at=journal_ts, watermark=wm, journal_watermark=journal_wm, count=len(cached))
             _info("index_done", count=len(cached), source="cache")
             return dict(cached)
@@ -606,15 +661,36 @@ def build_index(
                 force_full = True
             else:
                 rows = journal.get("rows") if isinstance(journal.get("rows"), list) else []
-                merged_journal, journal_stats, latest_journal_seen = _apply_journal_rows(cached, rows)
-                _save_cache(merged_journal)
-                update_watermark_if_new("ratings", _max_iso(latest_journal_seen, acts_ts))
-                update_watermark_if_new("ratings_journal", journal_ts)
-                _dbg("index_reconcile", reason="journal_applied", strategy="journal", rows=len(rows), added=journal_stats["added"], removed=journal_stats["removed"], rated_at=acts_ts or "-", journal_at=journal_ts, journal_watermark=journal_wm)
-                _info("index_done", count=len(merged_journal), source="journal")
-                return merged_journal
+                remove_rows, upsert_rows = _partition_journal_rows(rows)
+                if remove_rows:
+                    cached_after_remove, remove_stats, latest_remove_seen = _apply_journal_rows(cached, remove_rows)
+                    cached = cached_after_remove
+                    _save_cache(cached)
+                    latest_seen_for_remove = _max_iso(latest_remove_seen, acts_ts)
+                    update_watermark_if_new("ratings", latest_seen_for_remove)
+                else:
+                    remove_stats = {"added": 0, "removed": 0}
+                    latest_remove_seen = None
 
-    if acts_ts and journal_ts and (not journal_wm) and cached:
+                if not upsert_rows:
+                    update_watermark_if_new("ratings_journal", journal_ts)
+                    _dbg("index_reconcile", reason="journal_applied", strategy="journal", rows=len(rows), added=remove_stats["added"], removed=remove_stats["removed"], rated_at=acts_ts or "-", journal_at=journal_ts, journal_watermark=journal_wm)
+                    _info("index_done", count=len(cached), source="journal")
+                    return dict(cached)
+
+                _dbg(
+                    "index_reconcile",
+                    reason="journal_contains_upserts",
+                    strategy="delta_after_journal",
+                    rows=len(rows),
+                    journal_removes=len(remove_rows),
+                    journal_upserts=len(upsert_rows),
+                    rated_at=acts_ts or "-",
+                    journal_at=journal_ts,
+                    journal_watermark=journal_wm,
+                )
+
+    if journal_ts and (not journal_wm) and cached:
         force_full = True
 
     if acts_ts and (not wm) and cached and not force_full:
