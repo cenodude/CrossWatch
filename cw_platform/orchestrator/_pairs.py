@@ -374,10 +374,12 @@ def run_pairs(ctx) -> dict[str, Any]:
                             updated_total += int(res.get("upd_to_A", 0)) + int(res.get("upd_to_B", 0))
                             added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
                             removed_total += int(res.get("rem_from_A", 0)) + int(res.get("rem_from_B", 0))
-                            unresolved_total += (
-                                int(res.get("unresolved", 0))
-                                + int(res.get("unresolved_to_A", 0))
-                                + int(res.get("unresolved_to_B", 0))
+                            unresolved_total += int(
+                                res.get(
+                                    "unresolved",
+                                    int(res.get("unresolved_to_A", 0)) + int(res.get("unresolved_to_B", 0)),
+                                )
+                                or 0
                             )
                             skipped_total += (
                                 int(res.get("skipped", 0))

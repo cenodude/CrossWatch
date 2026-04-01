@@ -15,6 +15,7 @@ from ._common import (
     home_scope_enter,
     home_scope_exit,
     item_guid_candidates,
+    plex_cfg_get,
     server_find_rating_key_by_guid,
     make_logger,
     normalize,
@@ -257,6 +258,10 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
         except Exception:
             # If fetchItem fails, still try to use rk for movies.
             return str(rk) if (not is_episode) else None
+
+    strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
+    if strict:
+        return None
 
     # Title fallback
     title = str(it.get("title") or "").strip()
