@@ -967,6 +967,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       const imgUrl=canTMDB ? artUrl(it,"w342") : "";
       const src=imgUrl || "/assets/img/placeholder_poster.svg";
       const d = getDerived(it);
+      const typeLabel = typeLabelFor(it);
       const posterTypeLabel = posterTypeLabelFor(it);
       const relYear = String(it.year || yearFromIso(d.iso) || "").trim();
       const providerCount = providersOf(it).length;
