@@ -99,6 +99,25 @@ def _safe_ver(v: str | None) -> Version:
         return Version("0.0.0")
 
 
+def _set_cfg_version_current(env: dict[str, Any], cfg: dict[str, Any]) -> None:
+    try:
+        base = env.get("cfg_base")
+        cur_fn = getattr(base, "_current_version_norm", None) if base is not None else None
+        if callable(cur_fn):
+            cfg["version"] = str(cur_fn() or "").strip()
+            return
+    except Exception:
+        pass
+
+    try:
+        from api.versionAPI import CURRENT_VERSION as _V
+        raw = str(_V or "").strip()
+    except Exception:
+        raw = str(os.getenv("APP_VERSION") or "").strip()
+
+    cfg["version"] = _norm_ver(raw)
+
+
 @router.get("/config/meta")
 def api_config_meta() -> JSONResponse:
     env = _env()
@@ -364,6 +383,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         if isinstance(ui, dict):
             ui.pop("_autogen", None)
             ui.pop("_pending_upgrade_from_version", None)
+            _set_cfg_version_current(env, cfg)
     except Exception:
         pass
 
@@ -441,6 +461,7 @@ def api_config_migrate() -> dict[str, Any]:
         if isinstance(ui, dict):
             ui.pop("_autogen", None)
             ui.pop("_pending_upgrade_from_version", None)
+            _set_cfg_version_current(env, cfg)
     except Exception:
         pass
 
