@@ -224,6 +224,18 @@ function normalizePairProviders(p){
   return out;
 }
 
+function defaultStrictIdForProvider(providerKey){
+  const key=String(providerKey||"").trim().toLowerCase();
+  return key==="plex" || key==="jellyfin" || key==="emby";
+}
+
+function getPairProviderStrictValue(state, providerKey){
+  const key=String(providerKey||"").trim().toLowerCase();
+  const blk=state?.pairProviders?.[key];
+  if(blk && typeof blk==="object" && "strict_id_matching" in blk) return !!blk.strict_id_matching;
+  return defaultStrictIdForProvider(key);
+}
+
 // Data
 async function getJSON(url){try{const r=await fetch(url,{cache:"no-store"});return r.ok?await r.json():null}catch{return null}}
 
@@ -643,30 +655,33 @@ function getProviderOverrideCount(state, providerKey){
   if (providerKey === "plex") {
     const plex = cfg.plex || {};
     const hist = plex.history || {};
+    const strictDefault = defaultStrictIdForProvider("plex");
     let count = 0;
     if (num("plx-rating-workers", plex.rating_workers ?? 12, 1) !== 12) count++;
     if (num("plx-history-workers", plex.history_workers ?? 12, 1) !== 12) count++;
     if (num("plx-timeout", Number.isFinite(plex.timeout) ? plex.timeout : 10, 1) !== 10) count++;
     if (num("plx-retries", Number.isFinite(plex.max_retries) ? plex.max_retries : 3, 0) !== 3) count++;
     if (checked("plx-fallback-guid", !!plex.fallback_GUID)) count++;
-    if (checked("plx-strict-ids", !!pp.plex?.strict_id_matching)) count++;
+    if (checked("plx-strict-ids", getPairProviderStrictValue(state, "plex")) !== strictDefault) count++;
     if (checked("plx-marked-watched", hist.include_marked_watched ?? true) !== true) count++;
     return count + countProviderLibraries(state, "PLEX");
   }
   if (providerKey === "jellyfin") {
     const jf = cfg.jellyfin || {};
+    const strictDefault = defaultStrictIdForProvider("jellyfin");
     let count = 0;
     if (num("jf-timeout", Number.isFinite(jf.timeout) ? jf.timeout : 15, 1) !== 15) count++;
     if (num("jf-retries", Number.isFinite(jf.max_retries) ? jf.max_retries : 3, 0) !== 3) count++;
-    if (checked("jf-strict-ids", !!pp.jellyfin?.strict_id_matching)) count++;
+    if (checked("jf-strict-ids", getPairProviderStrictValue(state, "jellyfin")) !== strictDefault) count++;
     return count + countProviderLibraries(state, "JELLYFIN");
   }
   if (providerKey === "emby") {
     const em = cfg.emby || {};
+    const strictDefault = defaultStrictIdForProvider("emby");
     let count = 0;
     if (num("em-timeout", Number.isFinite(em.timeout) ? em.timeout : 15, 1) !== 15) count++;
     if (num("em-retries", Number.isFinite(em.max_retries) ? em.max_retries : 3, 0) !== 3) count++;
-    if (checked("em-strict-ids", !!pp.emby?.strict_id_matching)) count++;
+    if (checked("em-strict-ids", getPairProviderStrictValue(state, "emby")) !== strictDefault) count++;
     return count + countProviderLibraries(state, "EMBY");
   }
   return 0;
@@ -701,11 +716,6 @@ function renderFeaturePanel(state){
     const hist=plex.history||{};
     const jf=cfg.jellyfin||{};
     const em=cfg.emby||{};
-    const pp=state.pairProviders||{};
-    const plexPair=pp.plex||{};
-    const jfPair=pp.jellyfin||{};
-    const emPair=pp.emby||{};
-
     if (leftWrap) leftWrap.style.gridColumn = "1 / -1";
     if (rightWrap) rightWrap.style.display = "none";
 
@@ -737,7 +747,7 @@ function renderFeaturePanel(state){
             <div class="opt-row"><label for="plx-history-workers">History workers</label><input id="plx-history-workers" class="input small" type="number" min="1" max="64" step="1" value="${plex.history_workers??12}"></div>
             <div class="opt-row"><label for="plx-timeout">Timeout (s)</label><input id="plx-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(plex.timeout)?plex.timeout:10}"></div>
             <div class="opt-row"><label for="plx-retries">Max retries</label><input id="plx-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(plex.max_retries)?plex.max_retries:3}"></div>
-            <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-strict-ids">Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${plexPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
+            <div class="opt-row"><label for="plx-fallback-guid">Fallback GUID</label><label class="switch"><input id="plx-fallback-guid" type="checkbox" ${plex.fallback_GUID?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-strict-ids">Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${(hist.include_marked_watched??false)?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="plx-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -774,7 +784,7 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="jf-timeout">Timeout (s)</label><input id="jf-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(jf.timeout)?jf.timeout:15}"></div>
             <div class="opt-row"><label for="jf-retries">Max retries</label><input id="jf-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(jf.max_retries)?jf.max_retries:3}"></div>
-            <div class="opt-row"><label for="jf-strict-ids">Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${jfPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div>
+            <div class="opt-row"><label for="jf-strict-ids">Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="jf-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -811,7 +821,7 @@ function renderFeaturePanel(state){
           <div class="grid2 compact" style="padding:8px 0 2px">
             <div class="opt-row"><label for="em-timeout">Timeout (s)</label><input id="em-timeout" class="input small" type="number" min="1" max="120" step="1" value="${Number.isFinite(em.timeout)?em.timeout:15}"></div>
             <div class="opt-row"><label for="em-retries">Max retries</label><input id="em-retries" class="input small" type="number" min="0" max="10" step="1" value="${Number.isFinite(em.max_retries)?em.max_retries:3}"></div>
-            <div class="opt-row"><label for="em-strict-ids">Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${emPair.strict_id_matching?"checked":""}><span class="slider"></span></label></div>
+            <div class="opt-row"><label for="em-strict-ids">Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>
           </div>
           <div class="prov-box" id="em-pair-libs">
             <div class="panel-title small">Pair library whitelist</div>
@@ -2021,9 +2031,9 @@ function buildPayload(state,wrap){
   const useJf=(String(src).toUpperCase()==="JELLYFIN"||String(dst).toUpperCase()==="JELLYFIN");
   const useEm=(String(src).toUpperCase()==="EMBY"||String(dst).toUpperCase()==="EMBY");
   const useTr=(String(src).toUpperCase()==="TRAKT"||String(dst).toUpperCase()==="TRAKT");
-  if(usePlex) prov.plex={strict_id_matching:!!(pp.plex&&pp.plex.strict_id_matching)};
-  if(useJf) prov.jellyfin={strict_id_matching:!!(pp.jellyfin&&pp.jellyfin.strict_id_matching)};
-  if(useEm) prov.emby={strict_id_matching:!!(pp.emby&&pp.emby.strict_id_matching)};
+  if(usePlex) prov.plex={strict_id_matching:getPairProviderStrictValue(state, "plex")};
+  if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin")};
+  if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
   if(useTr){
     const trSrc=pp.trakt||{};
     const colOn=!!trSrc.history_collection;
