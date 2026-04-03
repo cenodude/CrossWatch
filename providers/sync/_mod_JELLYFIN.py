@@ -169,7 +169,7 @@ def get_manifest() -> Mapping[str, Any]:
         "features": {
             "watchlist": True,
             "history": True,
-            "ratings": True,
+            "ratings": False,
             "playlists": False,
             "progress": True,
         },
@@ -368,7 +368,7 @@ class JELLYFINModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": True, "playlists": False, "progress": True}
+        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": False, "progress": True}
         present = _present_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
