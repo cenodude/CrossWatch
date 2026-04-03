@@ -160,6 +160,7 @@ def _normalize_features(f: dict | None) -> dict:
     return f
 
 _PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "CROSSWATCH"}
+_RATINGS_ALLOWED = {"PLEX", "SIMKL", "TRAKT", "TMDB", "MDBLIST", "CROSSWATCH"}
 
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
     try:
@@ -172,6 +173,8 @@ def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
         # Progress is only supported between providers that currently expose progress sync.
         if src not in _PROGRESS_ALLOWED or dst not in _PROGRESS_ALLOWED:
             feats.pop("progress", None)
+        if src not in _RATINGS_ALLOWED or dst not in _RATINGS_ALLOWED:
+            feats.pop("ratings", None)
     except Exception:
         return
 
