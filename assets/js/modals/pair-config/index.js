@@ -282,8 +282,8 @@ async function loadProviders(state){
     {name:"CROSSWATCH",label:"CW Tracker",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
-    {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
+    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:false,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
+    {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:false,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
   ]
 }
 
