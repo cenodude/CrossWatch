@@ -103,6 +103,10 @@ function clearStickyNote(id) {
       "Only scrobble activity for the usernames listed here.",
     "sc-help-watch-server-uuid":
       "Optional filter for one specific server or user identity.",
+    "sc-help-watch-other-filters":
+      "Extra Plex-only route filters for additional filtering options.",
+    "sc-help-watch-ignore-live-tv-dvr":
+      "Ignore Plex Live TV & DVR playback detected via tv.plex.xmltv GUIDs so those sessions are not scrobbled through this route.",
         "sc-help-watch-advanced":
       "Do not alter the Advanced settings unless you fully understand their impact. When in doubt, leave them untouched.",
   };
@@ -586,7 +590,8 @@ serverUUID: async (instanceId) => {
     const whitelist = asArray(filters.username_whitelist || []);
     const serverUuid = String(filters.server_uuid || "").trim();
     const userId = String(filters.user_id || "").trim();
-    return { whitelist, server_uuid: serverUuid, user_id: userId };
+    const ignoreLiveTvDvr = !!filters.ignore_live_tv_dvr;
+    return { whitelist, server_uuid: serverUuid, user_id: userId, ignore_live_tv_dvr: ignoreLiveTvDvr };
   }
 
   function routeFilterSummaryText(route) {
@@ -595,6 +600,7 @@ serverUUID: async (instanceId) => {
     if (filters.whitelist.length) parts.push(`${filters.whitelist.length} user${filters.whitelist.length === 1 ? "" : "s"}`);
     if (String(route?.provider || "").toLowerCase() === "plex") {
       if (filters.server_uuid) parts.push("UUID set");
+      if (filters.ignore_live_tv_dvr) parts.push("Live TV ignored");
     } else if (filters.user_id) {
       parts.push("User ID set");
     }
@@ -1345,11 +1351,12 @@ try {
     modal.open(rid);
   }
 
-  function normalizeRouteFiltersForSave(route, whitelist, rawId) {
+  function normalizeRouteFiltersForSave(route, whitelist, rawId, options = {}) {
     const next = { username_whitelist: asArray(whitelist).map((x) => String(x || "").trim()).filter(Boolean) };
     const value = String(rawId || "").trim();
     if (String(route?.provider || "").toLowerCase() === "plex") {
       next.server_uuid = value;
+      if (options.ignore_live_tv_dvr) next.ignore_live_tv_dvr = true;
     } else if (value) {
       next.user_id = value;
     }
@@ -1390,6 +1397,30 @@ try {
     const idBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
     grid.append(namesBox, idBox);
     card.appendChild(grid);
+
+    const otherFiltersBox = el("div", { style: "display:none;grid-column:1 / -1;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
+    const otherFiltersHead = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
+    otherFiltersHead.append(
+      el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Other Filters" }),
+      helpBtnNode ? helpBtnNode("sc-help-watch-other-filters") : el("span")
+    );
+    const liveTvWrap = el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap" });
+    const liveTvLabelWrap = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
+    const liveTvToggle = el("label", { className: "cx-toggle" });
+    const liveTvInput = el("input", { type: "checkbox" });
+    const liveTvUi = el("span", { className: "cx-toggle-ui" });
+    liveTvUi.setAttribute("aria-hidden", "true");
+    const liveTvText = el("span", { className: "cx-toggle-text", textContent: "Ignore Live TV & DVR" });
+    const liveTvState = el("span", { className: "cx-toggle-state" });
+    liveTvState.setAttribute("aria-hidden", "true");
+    liveTvToggle.append(liveTvInput, liveTvUi, liveTvText, liveTvState);
+    liveTvLabelWrap.append(
+      liveTvToggle,
+      helpBtnNode ? helpBtnNode("sc-help-watch-ignore-live-tv-dvr") : el("span")
+    );
+    liveTvWrap.append(liveTvLabelWrap);
+    otherFiltersBox.append(otherFiltersHead, liveTvWrap);
+    grid.appendChild(otherFiltersBox);
 
     const namesHead = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
     namesHead.append(
@@ -1482,6 +1513,8 @@ try {
       idLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
       idInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
       idInput.value = prov === "plex" ? filters.server_uuid : filters.user_id;
+      otherFiltersBox.style.display = prov === "plex" ? "grid" : "none";
+      liveTvInput.checked = prov === "plex" && !!filters.ignore_live_tv_dvr;
       renderWhitelist();
       bindHelpTips(card);
       overlay.classList.remove("hidden");
@@ -1531,7 +1564,9 @@ try {
       const routes = getRoutes().map((item, index) => normalizeRoute(item, `R${index + 1}`));
       const route = routes.find((item) => item.id === rid);
       if (!route) return closeModal();
-      route.filters = normalizeRouteFiltersForSave(route, modalState.whitelist, idInput.value);
+      route.filters = normalizeRouteFiltersForSave(route, modalState.whitelist, idInput.value, {
+        ignore_live_tv_dvr: liveTvInput.checked,
+      });
       setRoutes(routes);
       await persistCurrentScrobblerState("sc-pms-note");
       closeModal();
