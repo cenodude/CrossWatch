@@ -144,6 +144,18 @@ function cwUiSettingsHubUpdate() {
   const ai = document.getElementById("ui_show_AI");
   if (ai) set("hub_ui_askai", `ASK AI: ${ai.value === "false" ? "Hide" : "Show"}`);
 
+  const quickDesk = document.getElementById("ui_show_quick_add_desktop");
+  const quickMobile = document.getElementById("ui_show_quick_add_mobile");
+  if (quickDesk || quickMobile) {
+    const deskShown = quickDesk ? quickDesk.value !== "false" : false;
+    const mobileShown = quickMobile ? quickMobile.value !== "false" : false;
+    let quickAddLabel = "Hide";
+    if (deskShown && mobileShown) quickAddLabel = "Show";
+    else if (deskShown) quickAddLabel = "Desktop";
+    else if (mobileShown) quickAddLabel = "Mobile";
+    set("hub_ui_quickadd", `Quick Add: ${quickAddLabel}`);
+  }
+
   const proto = document.getElementById("ui_protocol");
   if (proto) set("hub_ui_proto", `Proto: ${String(proto.value || "http").toUpperCase()}`);
 
@@ -264,6 +276,8 @@ function cwUiSettingsHubInit() {
     "ui_show_watchlist_preview",
     "ui_show_playingcard",
     "ui_show_AI",
+    "ui_show_quick_add_desktop",
+    "ui_show_quick_add_mobile",
     "ui_protocol",
     "app_auth_username",
     "app_auth_password",
@@ -1125,6 +1139,20 @@ async function loadConfig() {
         ? !!ui.show_AI
         : true;
       _setSelectValue("ui_show_AI", on ? "true" : "false");
+    }
+
+    {
+      const on = (typeof ui.show_quick_add_desktop === "boolean")
+        ? !!ui.show_quick_add_desktop
+        : true;
+      _setSelectValue("ui_show_quick_add_desktop", on ? "true" : "false");
+    }
+
+    {
+      const on = (typeof ui.show_quick_add_mobile === "boolean")
+        ? !!ui.show_quick_add_mobile
+        : true;
+      _setSelectValue("ui_show_quick_add_mobile", on ? "true" : "false");
     }
 
     {

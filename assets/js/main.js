@@ -666,3 +666,233 @@
   document.addEventListener("tab-changed", () => !isMain() && hidePreview());
   document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && !isMain() && hidePreview());
 })();
+
+(() => {
+  const ROOT_ID = "cw-quick-add";
+  const STYLE_ID = "cw-quick-add-style";
+  const SESSION_KEY = "cw.quick_add.desktop_peek.v1";
+  const DESKTOP_POS_KEY = "cw.quick_add.desktop_top.v1";
+  const MOBILE_POS_KEY = "cw.quick_add.mobile_bottom.v1";
+  const DOC = document.documentElement;
+  let root = null;
+  let closeTimer = 0;
+  let peekTimer = 0;
+  let dragState = null;
+
+  const currentTab = () => String(DOC.dataset.tab || document.body?.dataset?.tab || "main").trim().toLowerCase();
+  const onMainTab = () => currentTab() === "main";
+  const uiCfg = () => (window._cfgCache && typeof window._cfgCache === "object" ? window._cfgCache.ui || {} : {});
+  const desktopEnabled = () => uiCfg().show_quick_add_desktop !== false;
+  const mobileEnabled = () => uiCfg().show_quick_add_mobile !== false;
+  const canOpen = () => typeof window.openManualWatchedModal === "function";
+  const hasTmdbMetadata = () => {
+    const cfg = window._cfgCache && typeof window._cfgCache === "object" ? window._cfgCache : {};
+    const fromBlock = (blk) => {
+      if (!blk || typeof blk !== "object") return false;
+      if (String(blk.api_key || "").trim()) return true;
+      const insts = blk.instances;
+      if (!insts || typeof insts !== "object") return false;
+      return Object.values(insts).some((value) => value && typeof value === "object" && String(value.api_key || "").trim());
+    };
+    return fromBlock(cfg.tmdb);
+  };
+  const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+  const readStoredNumber = (key, fallback) => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      const val = Number.parseFloat(raw || "");
+      return Number.isFinite(val) ? val : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const writeStoredNumber = (key, value) => {
+    try { window.localStorage.setItem(key, String(value)); } catch {}
+  };
+  const isMobileLayout = () => {
+    try {
+      if (window.matchMedia?.("(max-width: 860px)")?.matches) return true;
+      if (window.matchMedia?.("(pointer: coarse)")?.matches) return true;
+    } catch {}
+    return false;
+  };
+
+  const ensureStyle = () => {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = `
+#${ROOT_ID}{position:fixed;z-index:70;pointer-events:none}
+#${ROOT_ID}.hidden{display:none!important}
+#${ROOT_ID} .cw-qa-shell{pointer-events:auto}
+#${ROOT_ID} .cw-qa-desktop{position:fixed;right:0;top:var(--cw-qa-desktop-top,66%);transform:translateY(-50%);display:flex;align-items:center;justify-content:flex-end;filter:drop-shadow(0 14px 26px rgba(0,0,0,.28))}
+#${ROOT_ID} .cw-qa-tab{width:28px;height:60px;padding:0 14px;border-radius:18px 0 0 18px;border:1px solid rgba(255,255,255,.08);border-right:0;background:linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,14,.99));color:#eef2ff;display:flex;align-items:center;justify-content:flex-end;gap:12px;cursor:pointer;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 20px rgba(0,0,0,.16);transition:width .2s ease,background .18s ease,box-shadow .18s ease,border-color .18s ease}
+#${ROOT_ID} .cw-qa-tab:hover,#${ROOT_ID} .cw-qa-tab:focus-visible{background:linear-gradient(180deg,rgba(24,28,40,.985),rgba(10,12,18,.995));border-color:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 10px 24px rgba(0,0,0,.2);outline:none}
+#${ROOT_ID} .cw-qa-tab .cw-qa-grip{font-size:17px;opacity:.38;margin-left:2px;color:rgba(214,221,240,.72)}
+#${ROOT_ID} .cw-qa-tab-text{font-size:14px;font-weight:850;letter-spacing:.015em;white-space:nowrap;color:rgba(241,244,252,.94);opacity:0;transform:translateX(-6px);transition:opacity .16s ease,transform .18s ease}
+#${ROOT_ID}.is-open .cw-qa-tab,#${ROOT_ID}.is-peek .cw-qa-tab{width:156px}
+#${ROOT_ID}.is-open .cw-qa-tab-text,#${ROOT_ID}.is-peek .cw-qa-tab-text{opacity:1;transform:translateX(0)}
+#${ROOT_ID} .cw-qa-fab{position:fixed;right:18px;bottom:var(--cw-qa-mobile-bottom,22px);min-width:0;height:50px;padding:0 16px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(18,22,30,.98),rgba(8,10,16,.995));color:#f3f6ff;display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:850;box-shadow:0 14px 28px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.07);cursor:pointer;pointer-events:auto}
+#${ROOT_ID} .cw-qa-fab:hover,#${ROOT_ID} .cw-qa-fab:focus-visible{background:linear-gradient(180deg,rgba(22,26,36,.99),rgba(9,11,17,.998));border-color:rgba(255,255,255,.12);outline:none}
+#${ROOT_ID} .cw-qa-fab .material-symbols-rounded{font-size:20px;line-height:1;color:rgba(226,232,246,.9)}
+#${ROOT_ID}:not(.is-desktop) .cw-qa-desktop{display:none}
+#${ROOT_ID}:not(.is-mobile) .cw-qa-fab{display:none}
+#${ROOT_ID}.is-dragging .cw-qa-tab,#${ROOT_ID}.is-dragging .cw-qa-fab{cursor:grabbing;transition:none}
+@media (prefers-reduced-motion:reduce){
+  #${ROOT_ID} .cw-qa-tab,#${ROOT_ID} .cw-qa-tab-text{transition:none}
+}
+    `;
+    document.head.appendChild(style);
+  };
+
+  const ensureRoot = () => {
+    if (root && root.isConnected) return root;
+    ensureStyle();
+    root = document.createElement("div");
+    root.id = ROOT_ID;
+    root.className = "hidden";
+    root.innerHTML = `
+      <div class="cw-qa-shell cw-qa-desktop" aria-hidden="true">
+        <button type="button" class="cw-qa-tab" aria-label="Open quick add item" title="Click to Quick Add, drag to move">
+          <span class="cw-qa-tab-text">Quick Add</span>
+          <span class="material-symbols-rounded cw-qa-grip" aria-hidden="true">drag_indicator</span>
+        </button>
+      </div>
+      <button type="button" class="cw-qa-shell cw-qa-fab" aria-label="Quick Add item" title="Click to Quick Add, drag to move">
+        <span class="material-symbols-rounded" aria-hidden="true">add</span>
+        <span>Quick Add</span>
+      </button>
+    `;
+    document.body.appendChild(root);
+
+    const desktop = root.querySelector(".cw-qa-desktop");
+    const tabBtn = root.querySelector(".cw-qa-tab");
+    const fabBtn = root.querySelector(".cw-qa-fab");
+    const gripBtn = root.querySelector(".cw-qa-grip");
+    let suppressClickUntil = 0;
+    const applyStoredPosition = () => {
+      root.style.setProperty("--cw-qa-desktop-top", `${clamp(readStoredNumber(DESKTOP_POS_KEY, 66), 18, 88)}%`);
+      root.style.setProperty("--cw-qa-mobile-bottom", `${clamp(readStoredNumber(MOBILE_POS_KEY, 22), 16, 120)}px`);
+    };
+    const openModal = () => {
+      if (typeof window.openManualWatchedModal === "function") window.openManualWatchedModal();
+    };
+    const openDrawer = () => {
+      clearTimeout(closeTimer);
+      root.classList.add("is-open");
+      root.classList.remove("is-peek");
+    };
+    const queueClose = () => {
+      clearTimeout(closeTimer);
+      closeTimer = window.setTimeout(() => {
+        if (desktop?.contains(document.activeElement)) return;
+        root.classList.remove("is-open");
+      }, 180);
+    };
+    const clearDrag = () => {
+      dragState = null;
+      root.classList.remove("is-dragging");
+    };
+    const beginDrag = (event, kind) => {
+      if (!event.isPrimary) return;
+      const target = kind === "desktop" ? desktop : fabBtn;
+      if (!target) return;
+      dragState = { kind, startX: event.clientX, startY: event.clientY, moved: false, pointerId: event.pointerId };
+      target.setPointerCapture?.(event.pointerId);
+      clearTimeout(closeTimer);
+    };
+    const moveDrag = (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      const dy = event.clientY - dragState.startY;
+      const dx = event.clientX - dragState.startX;
+      if (!dragState.moved && Math.abs(dy) < 4 && Math.abs(dx) < 4) return;
+      if (!dragState.moved) root.classList.add("is-dragging");
+      dragState.moved = true;
+      if (dragState.kind === "desktop") {
+        const pct = clamp((event.clientY / Math.max(window.innerHeight || 1, 1)) * 100, 18, 88);
+        root.style.setProperty("--cw-qa-desktop-top", `${pct}%`);
+      } else {
+        const bottom = clamp((window.innerHeight || 0) - event.clientY - 28, 16, 120);
+        root.style.setProperty("--cw-qa-mobile-bottom", `${bottom}px`);
+      }
+    };
+    const endDrag = (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      const { kind, moved } = dragState;
+      desktop?.releasePointerCapture?.(event.pointerId);
+      fabBtn?.releasePointerCapture?.(event.pointerId);
+      clearDrag();
+      if (moved) {
+        suppressClickUntil = Date.now() + 250;
+        if (kind === "desktop") writeStoredNumber(DESKTOP_POS_KEY, parseFloat(root.style.getPropertyValue("--cw-qa-desktop-top")) || 66);
+        else writeStoredNumber(MOBILE_POS_KEY, parseFloat(root.style.getPropertyValue("--cw-qa-mobile-bottom")) || 22);
+        root.classList.remove("is-open", "is-peek");
+      }
+    };
+    const onOpenClick = (event) => {
+      if (Date.now() < suppressClickUntil) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      openModal();
+    };
+
+    applyStoredPosition();
+    desktop?.addEventListener("mouseenter", openDrawer);
+    desktop?.addEventListener("mouseleave", queueClose);
+    desktop?.addEventListener("focusin", openDrawer);
+    desktop?.addEventListener("focusout", () => window.setTimeout(() => {
+      if (desktop?.contains(document.activeElement)) return;
+      queueClose();
+    }, 0));
+    tabBtn?.addEventListener("click", onOpenClick);
+    gripBtn?.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      beginDrag(event, "desktop");
+    });
+    window.addEventListener("pointermove", moveDrag);
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    fabBtn?.addEventListener("pointerdown", (event) => beginDrag(event, "mobile"));
+    fabBtn?.addEventListener("click", onOpenClick);
+    window.addEventListener("blur", clearDrag);
+    return root;
+  };
+
+  const maybePeek = () => {
+    if (!root || !root.classList.contains("is-desktop") || root.classList.contains("hidden")) return;
+    try {
+      if (sessionStorage.getItem(SESSION_KEY) === "1") return;
+      sessionStorage.setItem(SESSION_KEY, "1");
+    } catch {}
+    clearTimeout(peekTimer);
+    root.classList.add("is-peek");
+    peekTimer = window.setTimeout(() => root?.classList.remove("is-peek"), 2200);
+  };
+
+  const syncVisibility = () => {
+    const el = ensureRoot();
+    const mobile = isMobileLayout();
+    const tmdbReady = hasTmdbMetadata();
+    const showDesktop = !mobile && onMainTab() && desktopEnabled() && tmdbReady;
+    const showMobile = mobile && onMainTab() && mobileEnabled() && tmdbReady;
+    const showAny = showDesktop || showMobile;
+    el.classList.toggle("hidden", !showAny);
+    el.classList.toggle("is-desktop", showDesktop);
+    el.classList.toggle("is-mobile", showMobile);
+    el.classList.toggle("is-ready", canOpen());
+    if (!showDesktop) el.classList.remove("is-open", "is-peek");
+    if (showDesktop) maybePeek();
+  };
+
+  const refreshSoon = () => syncVisibility();
+  window.addEventListener("resize", syncVisibility, { passive: true });
+  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && syncVisibility());
+  document.addEventListener("tab-changed", syncVisibility);
+  document.addEventListener("config-saved", syncVisibility);
+  window.addEventListener("load", syncVisibility, { once: true });
+  window.setInterval(syncVisibility, 1500);
+  refreshSoon();
+})();

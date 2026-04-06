@@ -586,6 +586,8 @@ DEFAULT_CFG: dict[str, Any] = {
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
         "show_playingcard": True,                       # Show Now Playing card on Main tab
         "show_AI": True,                                # Show ASK AI from GitBook
+        "show_quick_add_desktop": True,                 # Show the Main-tab quick add drawer on desktop
+        "show_quick_add_mobile": True,                  # Show the Main-tab quick add floating button on mobile
         "protocol": "http",                             # "http" | "https" (HTTPS uses a self-signed cert by default)
         "tls": {
             "self_signed": True,                        # Auto-generate a self-signed certificate when missing
@@ -1150,6 +1152,8 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui["show_watchlist_preview"] = bool(ui.get("show_watchlist_preview", True))
     ui["show_playingcard"] = bool(ui.get("show_playingcard", True))
     ui["show_AI"] = bool(ui.get("show_AI", True))
+    ui["show_quick_add_desktop"] = bool(ui.get("show_quick_add_desktop", True))
+    ui["show_quick_add_mobile"] = bool(ui.get("show_quick_add_mobile", True))
 
     protocol = str(ui.get("protocol", "http") or "http").strip().lower()
     if protocol not in _ALLOWED_UI_PROTOCOLS:

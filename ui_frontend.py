@@ -826,6 +826,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                     <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
                     <span class="chip" id="hub_ui_playing">Playing: -</span>
                     <span class="chip" id="hub_ui_askai">ASK AI: -</span>
+                    <span class="chip" id="hub_ui_quickadd">Quick Add: -</span>
                     <span class="chip" id="hub_ui_proto">Proto: -</span>
                   </div>
                 </button>
@@ -894,6 +895,22 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         <div>
                           <label for="ui_show_AI">Help ASK AI</label>
                           <select id="ui_show_AI" name="ui_show_AI">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label for="ui_show_quick_add_desktop">Desktop quick add</label>
+                          <select id="ui_show_quick_add_desktop" name="ui_show_quick_add_desktop">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label for="ui_show_quick_add_mobile">Mobile quick add</label>
+                          <select id="ui_show_quick_add_mobile" name="ui_show_quick_add_mobile">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
                           </select>
