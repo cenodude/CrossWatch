@@ -23,6 +23,7 @@ ModalRegistry.register('about',        () => import(_cwVer('./modals/about.js'))
 ModalRegistry.register('analyzer',     () => import(_cwVer('./modals/analyzer/index.js')));
 ModalRegistry.register('exporter',     () => import(_cwVer('./modals/exporter/index.js')));
 ModalRegistry.register('maintenance',  () => import(_cwVer('./modals/maintenance/index.js')));
+ModalRegistry.register('manual-watched', () => import(_cwVer('./modals/manual-watched/index.js')));
 ModalRegistry.register('insight-settings', () => import(_cwVer('./modals/insight-settings/index.js')));
 ModalRegistry.register('tls-cert',     () => import(_cwVer('./modals/tls/index.js')));
 ModalRegistry.register('setup-wizard', () => import(_cwVer('./modals/setup-wizard/index.js')));
@@ -44,6 +45,7 @@ window.openAnalyzer = (props = {}) => ModalRegistry.open('analyzer', props);
 window.openExporter = (props = {}) => ModalRegistry.open('exporter', props);
 
 window.openMaintenanceModal = (props = {}) => ModalRegistry.open('maintenance', props);
+window.openManualWatchedModal = (props = {}) => ModalRegistry.open('manual-watched', props);
 window.openTlsCertModal = (props = {}) => ModalRegistry.open('tls-cert', props);
 
 window.openSetupWizard = (props = {}) => ModalRegistry.open('setup-wizard', props);
