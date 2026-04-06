@@ -267,6 +267,28 @@ def _ids_desc(ids: dict[str, Any] | None) -> str:
     return "none"
 
 
+def _iter_guid_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        s = value.strip()
+        if s:
+            yield s
+        return
+    if isinstance(value, dict):
+        for v in value.values():
+            yield from _iter_guid_strings(v)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            yield from _iter_guid_strings(item)
+
+
+def _is_live_tv_dvr_event(ev: ScrobbleEvent) -> bool:
+    try:
+        return any("tv.plex.xmltv" in guid.lower() for guid in _iter_guid_strings(ev.raw))
+    except Exception:
+        return False
+
+
 def _media_name(ev: ScrobbleEvent) -> str:
     if (ev.media_type or "").lower() == "episode":
         s = ev.season if isinstance(ev.season, int) else None
@@ -722,6 +744,10 @@ class WatchService:
             if cache_key:
                 self._allowed_sessions.add(cache_key)
             return True
+
+        filt = self._active_watch_filters(cfg)
+        if bool(filt.get("ignore_live_tv_dvr")) and _is_live_tv_dvr_event(ev):
+            return False
 
         libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
         if libs:
