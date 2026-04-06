@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, Path as FPath, Query
 from fastapi.responses import JSONResponse
 
 from services.watchlist import (
+    _feat_enabled,
     _find_item_in_state,
     _find_item_in_state_for_provider,
     build_watchlist,
@@ -82,6 +83,29 @@ def _active_providers(cfg: dict[str, Any]) -> list[str]:
         pid = str(it.get("id") or "").strip().upper()
         if pid and pid != "ALL" and bool(it.get("configured")) and pid not in out:
             out.append(pid)
+    return out
+
+
+def _active_pair_watchlist_providers(cfg: dict[str, Any]) -> list[str]:
+    active = set(_active_providers(cfg))
+    pairs = cfg.get("pairs") or []
+    if not isinstance(pairs, list):
+        return []
+
+    out: list[str] = []
+    for pair in pairs:
+        if not isinstance(pair, dict) or pair.get("enabled") is False:
+            continue
+        feats = pair.get("features")
+        if feats and not _feat_enabled(feats if isinstance(feats, dict) else {}, "watchlist"):
+            continue
+        for raw in (
+            pair.get("src") or pair.get("source"),
+            pair.get("dst") or pair.get("target"),
+        ):
+            prov = str(raw or "").strip().upper()
+            if prov and prov in active and prov not in out:
+                out.append(prov)
     return out
 
 
@@ -259,7 +283,7 @@ def remove_across_providers_by_ids(
     if not keys:
         return {"ok": False, "error": "no candidate keys from ids"}
 
-    providers = _active_providers(cfg)
+    providers = _active_pair_watchlist_providers(cfg) or _active_providers(cfg)
     if not providers:
         return {"ok": False, "error": "no connected providers"}
 
