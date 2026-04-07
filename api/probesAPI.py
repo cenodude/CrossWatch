@@ -1533,11 +1533,37 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
-            info_plex = _safe_userinfo(plex_user_info, cfg_plex, max_age_sec=user_age) if plex_ok else {}
-            info_trakt = _safe_userinfo(trakt_user_info, cfg_trakt, max_age_sec=user_age) if trakt_ok else {}
-            info_anilist = _safe_userinfo(anilist_user_info, cfg_anilist, max_age_sec=user_age) if anilist_ok else {}
-            info_emby = _safe_userinfo(emby_user_info, cfg_emby, max_age_sec=user_age) if emby_ok else {}
-            info_mdbl = _safe_userinfo(mdblist_user_info, cfg_mdbl, max_age_sec=user_age) if mdbl_ok else {}
+            userinfo_jobs: dict[str, tuple[Callable[..., dict[str, Any]], dict[str, Any]]] = {}
+            if plex_ok:
+                userinfo_jobs["PLEX"] = (plex_user_info, cfg_plex)
+            if trakt_ok:
+                userinfo_jobs["TRAKT"] = (trakt_user_info, cfg_trakt)
+            if anilist_ok:
+                userinfo_jobs["ANILIST"] = (anilist_user_info, cfg_anilist)
+            if emby_ok:
+                userinfo_jobs["EMBY"] = (emby_user_info, cfg_emby)
+            if mdbl_ok:
+                userinfo_jobs["MDBLIST"] = (mdblist_user_info, cfg_mdbl)
+
+            userinfo: dict[str, dict[str, Any]] = {}
+            if userinfo_jobs:
+                with ThreadPoolExecutor(max_workers=max(1, min(5, len(userinfo_jobs)))) as ex:
+                    futs = {
+                        ex.submit(_safe_userinfo, fn, view, user_age): prov
+                        for prov, (fn, view) in userinfo_jobs.items()
+                    }
+                    for f in as_completed(futs):
+                        prov = futs[f]
+                        try:
+                            userinfo[prov] = f.result() or {}
+                        except Exception:
+                            userinfo[prov] = {}
+
+            info_plex = userinfo.get("PLEX", {})
+            info_trakt = userinfo.get("TRAKT", {})
+            info_anilist = userinfo.get("ANILIST", {})
+            info_emby = userinfo.get("EMBY", {})
+            info_mdbl = userinfo.get("MDBLIST", {})
 
             trakt_block: dict[str, Any] = {"connected": trakt_ok}
             if not trakt_ok:
