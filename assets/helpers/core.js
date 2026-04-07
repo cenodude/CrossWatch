@@ -814,9 +814,10 @@
     if (authSetupPending()) return;
     enforceMainLayout();
     state.lastStatusMs = 0;
-    await refreshStatus(true);
-    await refreshStats(true);
-    await Promise.resolve(window.refreshInsights?.(true));
+    await Promise.allSettled([
+      refreshStatus(false),
+      Promise.resolve(window.refreshInsights?.(true)),
+    ]);
 
     if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
     if (!window.esLogs) queueSafe(() => window.openLogStream?.());
