@@ -3,12 +3,37 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import threading
 from typing import Any
 from fastapi import FastAPI, Query
 
-from cw_platform.config_base import load_config
+from cw_platform.config_base import config_path, load_config
 from services.watchlist import build_watchlist, detect_available_watchlist_providers
-from .syncAPI import _load_state
+from .syncAPI import _load_state, _peek_state_key
+
+
+_WALL_CACHE_LOCK = threading.Lock()
+_WALL_CACHE: dict[str, Any] = {"key": None, "data": None}
+
+
+def _path_key(path: Any) -> tuple[str, int, int]:
+    try:
+        p = path if hasattr(path, "stat") else config_path()
+        st = p.stat()
+        mt = int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1e9)))
+        return (str(p), mt, int(st.st_size))
+    except Exception:
+        return (str(path or ""), 0, 0)
+
+
+def _cache_key(*, both_only: bool, active_only: bool, limit: int) -> tuple[Any, ...]:
+    return (
+        _peek_state_key(),
+        _path_key(config_path()),
+        bool(both_only),
+        bool(active_only),
+        int(limit or 0),
+    )
 
 
 def _tmdb_api_key(cfg: dict[str, Any]) -> str:
@@ -70,6 +95,11 @@ def register_wall(app: FastAPI) -> None:
         active_only: bool = Query(False, description="Keep only items from configured providers"),
         limit: int = Query(0, ge=0, le=100, description="Optional item limit"),
     ) -> dict[str, Any]:
+        key = _cache_key(both_only=both_only, active_only=active_only, limit=limit)
+        with _WALL_CACHE_LOCK:
+            if _WALL_CACHE.get("key") == key and isinstance(_WALL_CACHE.get("data"), dict):
+                return dict(_WALL_CACHE["data"])
+
         cfg = load_config() or {}
         st = _load_state() or {}
         api_key = _tmdb_api_key(cfg)
@@ -90,9 +120,13 @@ def register_wall(app: FastAPI) -> None:
         if limit:
             items = items[:limit]
 
-        return {
+        data = {
             "ok": True,
             "items": items,
             "missing_tmdb_key": not bool(api_key),
             "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
         }
+        with _WALL_CACHE_LOCK:
+            _WALL_CACHE["key"] = key
+            _WALL_CACHE["data"] = data
+        return data
