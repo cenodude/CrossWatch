@@ -339,7 +339,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 })();
 </script>
 
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded" rel="stylesheet" />
+<link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
 </head><body>
 
 <header>
