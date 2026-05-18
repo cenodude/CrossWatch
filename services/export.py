@@ -9,6 +9,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -32,6 +33,19 @@ def _providers_in_state(s: dict[str, Any]) -> list[str]:
 
 
 _DEFAULT_INSTANCE = "default"
+_MEDIA_TYPES = ("movie", "show", "season", "episode")
+_MEDIA_TYPE_ALIASES = {
+    "movies": "movie",
+    "film": "movie",
+    "films": "movie",
+    "tv": "show",
+    "series": "show",
+    "shows": "show",
+    "seasons": "season",
+    "episodes": "episode",
+}
+_DEFAULT_MEDIA_TYPES = ("movie",)
+_LETTERBOXD_MAX_BYTES = 1_000_000
 
 def _prov_block(s: dict[str, Any], provider: str) -> dict[str, Any]:
     p = (s.get("providers") or {}).get(provider)
@@ -100,8 +114,38 @@ def _items_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: s
             return _feature_items(blk, feature)
     return {}
 
+
+def _combined_items_bucket(s: dict[str, Any], provider: str, instance_id: str | None = None) -> dict[str, Any]:
+    history = _items_bucket(s, provider, "history", instance_id=instance_id)
+    ratings = _items_bucket(s, provider, "ratings", instance_id=instance_id)
+    merged: dict[str, dict[str, Any]] = {str(k): dict(v or {}) for k, v in history.items()}
+    for k, rating_item in ratings.items():
+        key = str(k)
+        src = dict(rating_item or {})
+        if key not in merged:
+            merged[key] = src
+            continue
+
+        history_item = merged[key]
+        out = _merge_best(history_item, src)
+ 
+        for fld in ("watched_at", "watchedAt", "viewed_at"):
+            if history_item.get(fld):
+                out[fld] = history_item[fld]
+        for fld in ("rating", "user_rating", "rated_at"):
+            if src.get(fld) not in (None, ""):
+                out[fld] = src[fld]
+        merged[key] = out
+    return merged
+
+
+def _feature_bucket(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> dict[str, Any]:
+    if feature == "combined":
+        return _combined_items_bucket(s, provider, instance_id=instance_id)
+    return _items_bucket(s, provider, feature, instance_id=instance_id)
+
 def _iter_items(s: dict[str, Any], provider: str, feature: str, instance_id: str | None = None) -> Iterable[tuple[str, dict[str, Any]]]:
-    b = _items_bucket(s, provider, feature, instance_id=instance_id)
+    b = _feature_bucket(s, provider, feature, instance_id=instance_id)
     for k, it in (b or {}).items():
         yield str(k), (it or {})
 
@@ -144,8 +188,24 @@ def _pick_year(it: dict[str, Any]) -> str:
     return ""
 
 
+def _norm_media_type(value: Any) -> str:
+    t = str(value or "").strip().lower()
+    return _MEDIA_TYPE_ALIASES.get(t, t)
+
+
+def _parse_media_types(raw: str | None) -> tuple[str, ...]:
+    if raw is None:
+        return _DEFAULT_MEDIA_TYPES
+    vals = []
+    for tok in str(raw).split(","):
+        norm = _norm_media_type(tok)
+        if norm in _MEDIA_TYPES and norm not in vals:
+            vals.append(norm)
+    return tuple(vals) if vals else _DEFAULT_MEDIA_TYPES
+
+
 def _row_base(it: dict[str, Any]) -> tuple[str, str, str, str, dict[str, str]]:
-    t = str(it.get("type") or "")
+    t = _norm_media_type(it.get("type") or "")
     title = _pick_title(it)
     year = _pick_year(it)
     ids = _norm_ids(it.get("ids") or {})
@@ -177,9 +237,21 @@ def _match_query(key: str, it: dict[str, Any], q: str) -> bool:
 
 
 def _filter_keys(s: dict[str, Any], provider: str, feature: str, q: str, instance_id: str | None = None) -> list[str]:
+    return _filter_keys_with_media(s, provider, feature, q, _DEFAULT_MEDIA_TYPES, instance_id=instance_id)
+
+
+def _filter_keys_with_media(
+    s: dict[str, Any],
+    provider: str,
+    feature: str,
+    q: str,
+    media_types: tuple[str, ...],
+    instance_id: str | None = None,
+) -> list[str]:
     keys: list[str] = []
     for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
-        if _match_query(k, it, q):
+        t, *_ = _row_base(it)
+        if t in media_types and _match_query(k, it, q):
             keys.append(k)
     return keys
 
@@ -219,38 +291,233 @@ def _title_type_for_imdb(t: str) -> str:
     return "movie" if t == "movie" else "tvSeries"
 
 
-def _build_letterboxd(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
-    src_iter = ((k, it) for k, it in _iter_items(s, provider, feature, instance_id=instance_id) if (not keys or k in keys))
+def _letterboxd_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    # Letterboxd accepts YYYY-MM-DD, but many providers store ISO timestamps
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", raw)
+    if m:
+        return m.group(1)
+    for fmt in ("%Y/%m/%d", "%d-%m-%Y", "%Y%m%d"):
+        try:
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return ""
+
+
+def _rating_raw(it: dict[str, Any]) -> str:
+    return str(it.get("rating") or it.get("user_rating") or "")
+
+
+def _actual_watched_at(it: dict[str, Any]) -> str:
+    return str(it.get("watched_at") or it.get("watchedAt") or it.get("viewed_at") or "")
+
+
+def _yamtrack_media_type(t: str) -> str:
+    return "tv" if t == "show" else t
+
+
+def _yamtrack_title(it: dict[str, Any], t: str) -> str:
+    if t in {"show", "season", "episode"}:
+        return str(it.get("series_title") or it.get("show_title") or it.get("title") or it.get("name") or "")
+    return _pick_title(it)
+
+
+def _yamtrack_primary_tmdb_id(it: dict[str, Any], t: str, ids: dict[str, str]) -> str:
+    if t in {"season", "episode"}:
+        show_ids = _norm_ids(it.get("show_ids") or {})
+        return show_ids.get("tmdb", "")
+    return ids.get("tmdb", "")
+
+
+def _yamtrack_status(feature: str, t: str, actual_watched: str) -> str:
+    if t == "episode":
+        return ""
+    if feature == "watchlist":
+        return "Planning"
+    if feature in {"history", "combined"} and actual_watched:
+        return "Completed"
+    return ""
+
+
+def _yamtrack_progress(it: dict[str, Any], t: str) -> str:
+    if t == "episode":
+        return ""
+    v = it.get("progress")
+    if v in (None, ""):
+        return ""
+    return str(v)
+
+
+def _letterboxd_rows(
+    feature: str,
+    items: Iterable[tuple[str, dict[str, Any]]],
+    *,
+    include_watched_date: bool = True,
+) -> tuple[list[str], list[list[str]]]:
     if feature == "watchlist":
         header = ["imdbID", "tmdbID", "Title", "Year"]
-        rows = (
+        rows = [
             [ids.get("imdb", ""), ids.get("tmdb", ""), title, year]
-            for k, it in src_iter
-            for _t, title, year, _wd, ids in [_row_base(it)]
-            if _t == "movie"
-        )
-    elif feature == "history":
-        header = ["imdbID", "tmdbID", "Title", "Year", "WatchedDate"]
-        rows = (
-            [ids.get("imdb", ""), ids.get("tmdb", ""), title, year, watched]
-            for k, it in src_iter
-            for _t, title, year, watched, ids in [_row_base(it)]
-        )
-    elif feature == "ratings":
-        header = ["imdbID", "tmdbID", "Title", "Year", "Rating"]
-        rows = (
+            for _k, it in items
+            for t, title, year, _wd, ids in [_row_base(it)]
+            if t == "movie"
+        ]
+        return header, rows
+    if feature == "history":
+        header = ["imdbID", "tmdbID", "Title", "Year"]
+        if include_watched_date:
+            header.append("WatchedDate")
+        rows = [
             [
                 ids.get("imdb", ""),
                 ids.get("tmdb", ""),
                 title,
                 year,
-                str(it.get("rating") or it.get("user_rating") or ""),
+                *([_letterboxd_date(_actual_watched_at(it))] if include_watched_date else []),
             ]
-            for k, it in src_iter
-            for _t, title, year, _wd, ids in [_row_base(it)]
+            for _k, it in items
+            for t, title, year, _watched, ids in [_row_base(it)]
+            if t == "movie"
+        ]
+        return header, rows
+    if feature == "ratings":
+        header = ["imdbID", "tmdbID", "Title", "Year", "Rating"]
+        rows = [
+            [ids.get("imdb", ""), ids.get("tmdb", ""), title, year, _rating_raw(it)]
+            for _k, it in items
+            for t, title, year, _wd, ids in [_row_base(it)]
+            if t == "movie"
+        ]
+        return header, rows
+    if feature == "combined":
+        header = ["imdbID", "tmdbID", "Title", "Year", "Rating"]
+        if include_watched_date:
+            header.append("WatchedDate")
+        rows = [
+            [
+                ids.get("imdb", ""),
+                ids.get("tmdb", ""),
+                title,
+                year,
+                _rating_raw(it),
+                *([_letterboxd_date(_actual_watched_at(it))] if include_watched_date else []),
+            ]
+            for _k, it in items
+            for t, title, year, _watched, ids in [_row_base(it)]
+            if t == "movie"
+        ]
+        return header, rows
+    raise HTTPException(400, "Unsupported feature for Letterboxd")
+
+
+def _csv_bytes(header: list[str] | None, rows: Iterable[list[str]]) -> int:
+    buf = io.StringIO()
+    w = csv.writer(buf, lineterminator="\n")
+    if header:
+        w.writerow(header)
+    for r in rows:
+        w.writerow([str(x) if x is not None else "" for x in r])
+    return len(buf.getvalue().encode("utf-8"))
+
+
+def _target_caps(fmt: str) -> dict[str, Any]:
+    caps: dict[str, dict[str, Any]] = {
+        "letterboxd": {
+            "features": {"watchlist", "history", "ratings", "combined"},
+            "media_types": {"movie"},
+            "label": "Letterboxd",
+        },
+        "imdb": {
+            "features": {"watchlist"},
+            "media_types": set(_MEDIA_TYPES),
+            "label": "IMDb",
+        },
+        "justwatch": {
+            "features": {"watchlist", "history", "ratings"},
+            "media_types": set(_MEDIA_TYPES),
+            "label": "JustWatch",
+        },
+        "yamtrack": {
+            "features": {"watchlist", "history", "combined"},
+            "media_types": set(_MEDIA_TYPES),
+            "label": "Yamtrack",
+        },
+        "tmdb": {
+            "features": {"watchlist", "ratings"},
+            "media_types": set(_MEDIA_TYPES),
+            "label": "TMDB",
+        },
+    }
+    return caps.get(fmt, {"features": set(), "media_types": set(), "label": fmt})
+
+
+def _validate_items(
+    fmt: str,
+    feature: str,
+    items: list[tuple[str, dict[str, Any]]],
+    *,
+    include_watched_date: bool = True,
+) -> tuple[list[tuple[str, dict[str, Any]]], list[str], dict[str, int]]:
+    caps = _target_caps(fmt)
+    warnings: list[str] = []
+    stats = {
+        "matched_total": len(items),
+        "unsupported_media_total": 0,
+        "missing_identity_total": 0,
+        "invalid_watched_date_total": 0,
+    }
+    allowed_media = caps["media_types"]
+    exportable: list[tuple[str, dict[str, Any]]] = []
+
+    for key, it in items:
+        t, title, _year, _watched, ids = _row_base(it)
+        actual_watched = _actual_watched_at(it)
+        if allowed_media and t not in allowed_media:
+            stats["unsupported_media_total"] += 1
+            continue
+        if not title and not ids:
+            stats["missing_identity_total"] += 1
+            continue
+        if (
+            fmt == "letterboxd"
+            and include_watched_date
+            and feature in {"history", "combined"}
+            and actual_watched
+            and not _letterboxd_date(actual_watched)
+        ):
+            stats["invalid_watched_date_total"] += 1
+        exportable.append((key, it))
+
+    label = caps["label"]
+    if stats["unsupported_media_total"]:
+        warnings.append(f"{label} skipped {stats['unsupported_media_total']} row(s) with unsupported media types.")
+    if stats["missing_identity_total"]:
+        warnings.append(f"Skipped {stats['missing_identity_total']} row(s) without a usable title or ID.")
+    if stats["invalid_watched_date_total"]:
+        warnings.append(
+            f"{stats['invalid_watched_date_total']} row(s) had watched dates that could not be normalized to YYYY-MM-DD."
         )
-    else:
-        raise HTTPException(400, "Unsupported feature for Letterboxd")
+    if fmt == "letterboxd":
+        header, rows = _letterboxd_rows(feature, exportable, include_watched_date=include_watched_date)
+        if _csv_bytes(header, rows) > _LETTERBOXD_MAX_BYTES:
+            warnings.append("Letterboxd import files over 1 MB may need to be split before upload.")
+    return exportable, warnings, stats
+
+
+def _build_letterboxd(
+    provider: str,
+    feature: str,
+    s: dict[str, Any],
+    keys: list[str],
+    instance_id: str | None = None,
+    *,
+    include_watched_date: bool = True,
+) -> Response:
+    src_items = [(k, it) for k, it in _iter_items(s, provider, feature, instance_id=instance_id) if (not keys or k in keys)]
+    header, rows = _letterboxd_rows(feature, src_items, include_watched_date=include_watched_date)
     ts = time.strftime("%Y%m%d")
     return _csv_response(f"letterboxd_{feature}_{provider.lower()}_{ts}.csv", header, rows)
 
@@ -283,23 +550,56 @@ def _build_justwatch(provider: str, feature: str, s: dict[str, Any], keys: list[
 
 
 def _build_yamtrack(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
-    header = ["imdbID", "tmdbID", "Title", "Year", "Rating", "WatchedDate", "Feature", "Provider"]
+    header = [
+        "media_id",
+        "source",
+        "media_type",
+        "title",
+        "image",
+        "season_number",
+        "episode_number",
+        "score",
+        "progress",
+        "status",
+        "start_date",
+        "end_date",
+        "notes",
+        "progressed_at",
+    ]
     rows: list[list[str]] = []
     for k, it in _iter_items(s, provider, feature, instance_id=instance_id):
         if keys and k not in keys:
             continue
-        t, title, year, watched, ids = _row_base(it)
-        rating = it.get("rating") or it.get("user_rating") or ""
+        t, title, _year, _fallback_date, ids = _row_base(it)
+        actual_watched = _actual_watched_at(it)
+        if feature == "combined" and not actual_watched:
+            # Yamtrack has no clean native representation for rating-only rows
+            continue
+        tmdb_id = _yamtrack_primary_tmdb_id(it, t, ids)
+        source = "tmdb" if tmdb_id else ""
+        media_type = _yamtrack_media_type(t)
+        native_title = _yamtrack_title(it, t) or title
+        score = "" if t == "episode" else _rating_1_10(it.get("rating") or it.get("user_rating") or "")
+        season_number = str(it.get("season") or "")
+        episode_number = str(it.get("episode") or "")
+        end_date = actual_watched if feature in {"history", "combined"} else ""
+        progressed_at = actual_watched if feature in {"history", "combined"} else ""
         rows.append(
             [
-                ids.get("imdb", ""),
-                ids.get("tmdb", ""),
-                title,
-                year,
-                rating,
-                watched,
-                feature,
-                provider,
+                tmdb_id,
+                source,
+                media_type,
+                native_title,
+                "",
+                season_number,
+                episode_number,
+                score,
+                _yamtrack_progress(it, t),
+                _yamtrack_status(feature, t, actual_watched),
+                "",
+                end_date,
+                "",
+                progressed_at,
             ]
         )
     ts = time.strftime("%Y%m%d")
@@ -515,10 +815,10 @@ def _tmdb_build_simkl_v1(provider: str, feature: str, s: dict[str, Any], keys: l
 def _build_tmdb(provider: str, feature: str, s: dict[str, Any], keys: list[str], instance_id: str | None = None) -> Response:
     p = provider.upper().strip()
     if p == "TRAKT":
-        return _tmdb_build_trakt_v2(provider, feature, s, keys)
+        return _tmdb_build_trakt_v2(provider, feature, s, keys, instance_id=instance_id)
     if p == "SIMKL":
-        return _tmdb_build_simkl_v1(provider, feature, s, keys)
-    return _tmdb_build_imdb_v3(provider, feature, s, keys)
+        return _tmdb_build_simkl_v1(provider, feature, s, keys, instance_id=instance_id)
+    return _tmdb_build_imdb_v3(provider, feature, s, keys, instance_id=instance_id)
 
 
 _BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str], str | None], Response]] = {
@@ -534,7 +834,7 @@ _BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str], str | None],
 def api_export_options() -> dict[str, Any]:
     s = _load_state()
     provs = _providers_in_state(s)
-    features = ["watchlist", "history", "ratings"]
+    features = ["watchlist", "history", "ratings", "combined"]
 
     def insts_for(p: str) -> list[dict[str, str]]:
         blk = _prov_block(s, p)
@@ -549,19 +849,20 @@ def api_export_options() -> dict[str, Any]:
 
     instances: dict[str, list[dict[str, str]]] = {p: insts_for(p) for p in provs}
     counts: dict[str, dict[str, int]] = {
-        p: {f: len(_items_bucket(s, p, f, instance_id="all") or {}) for f in features} for p in provs
+        p: {f: len(_feature_bucket(s, p, f, instance_id="all") or {}) for f in features} for p in provs
     }
     counts_instances: dict[str, dict[str, dict[str, int]]] = {}
     for p in provs:
         counts_instances[p] = {}
         for inst in instances.get(p) or []:
             iid = inst.get("id") or "default"
-            counts_instances[p][iid] = {f: len(_items_bucket(s, p, f, instance_id=iid) or {}) for f in features}
+            counts_instances[p][iid] = {f: len(_feature_bucket(s, p, f, instance_id=iid) or {}) for f in features}
 
     formats = {
         "watchlist": ["letterboxd", "imdb", "justwatch", "yamtrack", "tmdb"],
         "history": ["letterboxd", "justwatch", "yamtrack"],
-        "ratings": ["letterboxd", "yamtrack", "tmdb"],
+        "ratings": ["letterboxd", "tmdb"],
+        "combined": ["letterboxd", "yamtrack"],
     }
     labels = {
         "letterboxd": "Letterboxd",
@@ -570,6 +871,13 @@ def api_export_options() -> dict[str, Any]:
         "yamtrack": "Yamtrack",
         "tmdb": "TMDB (Auto: IMDb/Trakt/SIMKL)",
     }
+    capabilities = {
+        fmt: {
+            "features": sorted(_target_caps(fmt)["features"]),
+            "media_types": sorted(_target_caps(fmt)["media_types"]),
+        }
+        for fmt in labels
+    }
     return {
         "providers": provs,
         "instances": instances,
@@ -577,6 +885,9 @@ def api_export_options() -> dict[str, Any]:
         "counts_instances": counts_instances,
         "formats": formats,
         "labels": labels,
+        "capabilities": capabilities,
+        "media_types": list(_MEDIA_TYPES),
+        "default_media_types": list(_DEFAULT_MEDIA_TYPES),
     }
 
 
@@ -584,23 +895,40 @@ def api_export_options() -> dict[str, Any]:
 def api_export_sample(
     provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
     provider_instance: str = Query("all", description="default|all|<instance_id>"),
-    feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
+    feature: str = Query("watchlist", pattern="^(watchlist|history|ratings|combined)$"),
+    format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
+    media_types: str = Query("movie", description="CSV of movie,show,season,episode"),
+    include_watched_date: bool = Query(True, description="Letterboxd only: include WatchedDate for history exports"),
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
 ) -> dict[str, Any]:
     s = _load_state()
     provider = (provider or "").upper().strip()
     inst = (provider_instance or "all").strip() or "all"
+    fmt = format.lower().strip()
+    media = _parse_media_types(media_types)
     if provider and provider in _providers_in_state(s):
-        keys = _filter_keys(s, provider, feature, q, instance_id=inst)
-        bucket = _items_bucket(s, provider, feature, instance_id=inst)
+        keys = _filter_keys_with_media(s, provider, feature, q, media, instance_id=inst)
+        bucket = _feature_bucket(s, provider, feature, instance_id=inst)
+        matched = [(k, bucket.get(k, {})) for k in keys]
+        exportable, warnings, validation = _validate_items(
+            fmt,
+            feature,
+            matched,
+            include_watched_date=include_watched_date,
+        )
     else:
-        keys = []
-        bucket = {}
+        exportable = []
+        warnings = []
+        validation = {
+            "matched_total": 0,
+            "unsupported_media_total": 0,
+            "missing_identity_total": 0,
+            "invalid_watched_date_total": 0,
+        }
 
     items: list[dict[str, Any]] = []
-    for i, k in enumerate(keys):
-        it = bucket.get(k, {})
+    for i, (k, it) in enumerate(exportable):
         t, title, year, watched, ids = _row_base(it)
         items.append(
             {
@@ -615,15 +943,25 @@ def api_export_sample(
         )
         if i + 1 >= limit:
             break
-    return {"items": items, "total": len(keys)}
+    return {
+        "items": items,
+        "total": len(exportable),
+        "matched_total": validation["matched_total"],
+        "dropped_total": validation["unsupported_media_total"] + validation["missing_identity_total"],
+        "warnings": warnings,
+        "validation": validation,
+        "media_types": list(media),
+    }
 
 
 @router.get("/export/file")
 def api_export_file(
     provider: str = Query("", description="TRAKT|PLEX|EMBY|JELLYFIN|SIMKL|MDBLIST|CROSSWATCH"),
     provider_instance: str = Query("all", description="default|all|<instance_id>"),
-    feature: str = Query("watchlist", pattern="^(watchlist|history|ratings)$"),
+    feature: str = Query("watchlist", pattern="^(watchlist|history|ratings|combined)$"),
     format: str = Query("letterboxd", pattern="^(letterboxd|imdb|justwatch|yamtrack|tmdb)$"),
+    media_types: str = Query("movie", description="CSV of movie,show,season,episode"),
+    include_watched_date: bool = Query(True, description="Letterboxd only: include WatchedDate for history exports"),
     q: str = Query("", description="optional search filter (server-side)"),
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
 ) -> Response:
@@ -633,17 +971,46 @@ def api_export_file(
     feature = feature.lower().strip()
     fmt = format.lower().strip()
     inst = (provider_instance or "all").strip() or "all"
+    media = _parse_media_types(media_types)
 
     if fmt not in _BUILDERS:
         raise HTTPException(400, "Unknown format")
-    if feature not in ("watchlist", "ratings", "history"):
+    if feature not in ("watchlist", "ratings", "history", "combined"):
         raise HTTPException(400, "Unsupported feature")
-    if fmt == "tmdb" and feature == "history":
-        raise HTTPException(400, "TMDB supports watchlist and ratings only")
+    if feature not in _target_caps(fmt)["features"]:
+        raise HTTPException(400, f"{_target_caps(fmt)['label']} does not support {feature} exports")
 
     if ids.strip():
-        keys = [k.strip() for k in ids.split(",") if k.strip()]
+        requested_keys = [k.strip() for k in ids.split(",") if k.strip()]
+        bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst)
+        items = [
+            (k, bucket.get(k, {}))
+            for k in requested_keys
+            if k in bucket and _row_base(bucket.get(k, {}))[0] in media
+        ]
     else:
-        keys = _filter_keys(s, provider_eff, feature, q, instance_id=inst) if provider_eff in _providers_in_state(s) else []
+        requested_keys = (
+            _filter_keys_with_media(s, provider_eff, feature, q, media, instance_id=inst)
+            if provider_eff in _providers_in_state(s)
+            else []
+        )
+        bucket = _feature_bucket(s, provider_eff, feature, instance_id=inst)
+        items = [(k, bucket.get(k, {})) for k in requested_keys]
 
+    exportable, _warnings, _validation = _validate_items(
+        fmt,
+        feature,
+        items,
+        include_watched_date=include_watched_date,
+    )
+    keys = [k for k, _it in exportable]
+    if fmt == "letterboxd":
+        return _build_letterboxd(
+            provider_eff,
+            feature,
+            s,
+            keys,
+            inst,
+            include_watched_date=include_watched_date,
+        )
     return _BUILDERS[fmt](provider_eff, feature, s, keys, inst)
