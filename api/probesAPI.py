@@ -47,6 +47,7 @@ PROVIDERS: tuple[str, ...] = (
     "tmdb",
     "tmdb_sync",
     "mdblist",
+    "publicmetadb",
     "tautulli",
 )
 
@@ -94,6 +95,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "TMDB": "tmdb_sync",
     "TMDB_SYNC": "tmdb_sync",
     "MDBLIST": "mdblist",
+    "PUBLICMETADB": "publicmetadb",
     "TAUTULLI": "tautulli",
 }
 
@@ -814,6 +816,39 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+def _probe_publicmetadb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("publicmetadb", cfg)
+    bust_ts = _consume_bust("publicmetadb")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    p: Mapping[str, Any] = (cfg.get("publicmetadb") or {}) if isinstance(cfg.get("publicmetadb"), Mapping) else {}
+    api_key = str((p.get("api_key") or "")).strip()
+    if not api_key:
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, "PublicMetaDB: missing api_key")
+        return False, "PublicMetaDB: missing api_key"
+
+    base = str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/")
+    url = f"{base}/api/external/lists?page=1&perPage=1"
+    headers = {**UA, "Authorization": f"Bearer {api_key}"}
+    code, body, _ = _http_get_with_headers(url, headers=headers, timeout=max(int(HTTP_TIMEOUT), 6))
+
+    if code != 200:
+        rsn = _reason_http(code, "PublicMetaDB")
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    j = _json_loads(body) or {}
+    ok = isinstance(j, dict) and isinstance(j.get("items"), list)
+    rsn = "" if ok else "PublicMetaDB: invalid response"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
 def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("tautulli", cfg)
     bust_ts = _consume_bust("tautulli")
@@ -1226,6 +1261,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "mdblist":
         return bool(str(blk.get("api_key") or blk.get("key") or "").strip())
 
+    if ck == "publicmetadb":
+        return bool(str(blk.get("api_key") or blk.get("key") or "").strip())
+
     if ck == "tmdb_sync":
         return bool(str(blk.get("api_key") or "").strip() and str(blk.get("session_id") or "").strip())
 
@@ -1296,6 +1334,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "EMBY": _probe_emby_detail,
     "TMDB": _probe_tmdb_detail,
     "MDBLIST": _probe_mdblist_detail,
+    "PUBLICMETADB": _probe_publicmetadb_detail,
     "TAUTULLI": _probe_tautulli_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -1530,6 +1569,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             emby_ok, emby_reason, cfg_emby = _provider_tuple("EMBY")
             tmdb_ok, tmdb_reason, cfg_tmdb = _provider_tuple("TMDB")
             mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
+            publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
@@ -1720,6 +1760,15 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
                 }
+            if "PUBLICMETADB" in active_providers:
+                inst_map, inst_sum = _instances_payload("PUBLICMETADB")
+                providers_out["PUBLICMETADB"] = {
+                    "connected": publicmetadb_ok,
+                    **({} if publicmetadb_ok else {"reason": publicmetadb_reason}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
 
 
 
@@ -1769,6 +1818,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "emby_connected": emby_ok,
                 "tmdb_connected": tmdb_ok,
                 "mdblist_connected": mdbl_ok,
+                "publicmetadb_connected": publicmetadb_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),

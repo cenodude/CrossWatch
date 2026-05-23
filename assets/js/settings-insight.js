@@ -13,7 +13,7 @@
   const Meta = () => w.CW?.ProviderMeta || null;
   const $ = (s, r = d) => r.querySelector(s);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const PROVIDERS = ['plex', 'emby', 'jellyfin', 'trakt', 'simkl', 'mdblist', 'anilist', 'tmdb', 'tautulli'];
+  const PROVIDERS = ['plex', 'emby', 'jellyfin', 'trakt', 'simkl', 'mdblist', 'publicmetadb', 'anilist', 'tmdb', 'tautulli'];
   const EMPTY = {
     auth: '<div class="si-empty"><div class="h1">No authentication providers</div><p class="p">Configure at least one authentication provider to get started. To sync, you need at least two sides in play.</p></div>',
     pairs: '<div class="si-empty"><div class="h1">No synchronization pairs or scrobbler</div><p class="p">Authentication looks good. Next step: add a sync pair or enable the scrobbler.</p></div>'

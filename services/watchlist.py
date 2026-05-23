@@ -84,6 +84,7 @@ def _normalize_label(pid: str) -> str:
         "JELLYFIN": "Jellyfin",
         "EMBY": "Emby",
         "MDBLIST": "MDBList",
+        "PUBLICMETADB": "PublicMetaDB",
         "TMDB": "TMDb",
         "CROSSWATCH": "CrossWatch",
     }
@@ -1360,6 +1361,42 @@ def _delete_on_mdblist_batch(
         )
 
 
+def _delete_on_publicmetadb_batch(
+    items: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> None:
+    ops = load_sync_ops("PUBLICMETADB")
+    if not ops:
+        raise RuntimeError("PUBLICMETADB sync module unavailable")
+    if not str(((cfg or {}).get("publicmetadb") or {}).get("api_key") or "").strip():
+        raise RuntimeError("PUBLICMETADB not configured")
+
+    payload: list[dict[str, Any]] = []
+    for it in items or []:
+        obj = dict(it.get("item") or {}) if isinstance(it.get("item"), dict) else {}
+        ids = _ids_from_key_or_item(str(it.get("key") or ""), obj)
+        if ids:
+            cur_ids_obj = obj.get("ids")
+            cur_ids: dict[str, Any] = dict(cur_ids_obj) if isinstance(cur_ids_obj, dict) else {}
+            obj["ids"] = {**cur_ids, **ids}
+        typ = str(it.get("type") or obj.get("type") or "").strip().lower()
+        if typ in ("show", "tv", "series"):
+            obj["type"] = "show"
+        elif typ == "episode":
+            obj["type"] = "episode"
+        else:
+            obj["type"] = "movie"
+        payload.append(obj)
+
+    if not payload:
+        raise RuntimeError("PUBLICMETADB delete: no items")
+    res = ops.remove(cfg, payload, feature="watchlist", dry_run=False)
+    if not bool(res.get("ok", True)):
+        raise RuntimeError(f"PUBLICMETADB delete failed: {res}")
+    if int(res.get("count") or 0) <= 0 and res.get("unresolved"):
+        raise RuntimeError(f"PUBLICMETADB delete unresolved: {res.get('unresolved')}")
+
+
 # Delete watchlist items
 def delete_watchlist_batch(
     keys: list[str],
@@ -1429,6 +1466,9 @@ def delete_watchlist_batch(
         if p == "MDBLIST":
             _delete_on_mdblist_batch(items, cfg_view.get("mdblist", {}) or {})
             return
+        if p == "PUBLICMETADB":
+            _delete_on_publicmetadb_batch(items, cfg_view)
+            return
         if p == "ANILIST":
             _delete_on_anilist_batch(items, cfg_view)
             return
@@ -1452,7 +1492,7 @@ def delete_watchlist_batch(
                 per_instance[inst] = {"ok": False, "error": str(e)}
         return {"ok": any(v.get("ok") for v in per_instance.values()), "per_instance": per_instance, "removed": len(removed)}
 
-    supported = {"CROSSWATCH", "ANILIST", "PLEX", "SIMKL", "TRAKT", "TMDB", "JELLYFIN", "EMBY", "MDBLIST"}
+    supported = {"CROSSWATCH", "ANILIST", "PLEX", "SIMKL", "TRAKT", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB"}
 
     if prov == "ALL":
         details: dict[str, Any] = {}

@@ -31,7 +31,7 @@ const trailerCss=`#page-watchlist .wl-modal{background:radial-gradient(120% 120%
     const keys = providerMeta().watchlistProviders?.();
     return Array.isArray(keys) && keys.length
       ? keys
-      : ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","JELLYFIN","EMBY","MDBLIST","CROSSWATCH"];
+      : ["PLEX","SIMKL","ANILIST","TRAKT","TMDB","JELLYFIN","EMBY","MDBLIST","PUBLICMETADB","CROSSWATCH"];
   };
   const PROVIDERS = watchlistProviderKeys();
   const visibleProviders = () => PROVIDERS.filter((p) => p !== "CROSSWATCH" || activeProviders.has("CROSSWATCH"));
@@ -1275,6 +1275,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
         if (cfg?.jellyfin?.access_token) active.add("JELLYFIN");
         if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY");
         if (cfg?.mdblist?.api_key) active.add("MDBLIST");
+        if (cfg?.publicmetadb?.api_key) active.add("PUBLICMETADB");
       }
     } catch {}
 

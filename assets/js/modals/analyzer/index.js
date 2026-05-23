@@ -68,7 +68,8 @@ const ID_FIELDS = [
   "plex",
   "simkl",
   "emby",
-  "mdblist"
+  "mdblist",
+  "publicmetadb"
 ];
 
 function buildPairScopeKeys(pairMap) {
@@ -1586,6 +1587,5 @@ function renderPairs() {
   },
   unmount() {}
 };
-
 
 

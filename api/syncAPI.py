@@ -160,7 +160,7 @@ def _normalize_features(f: dict | None) -> dict:
     return f
 
 _PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "CROSSWATCH"}
-_RATINGS_ALLOWED = {"PLEX", "SIMKL", "TRAKT", "TMDB", "MDBLIST", "CROSSWATCH"}
+_RATINGS_ALLOWED = {"PLEX", "SIMKL", "TRAKT", "TMDB", "MDBLIST", "PUBLICMETADB", "CROSSWATCH"}
 
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
     try:
@@ -249,6 +249,7 @@ def _summary_reset() -> None:
                 "trakt_pre": None,
                 "jellyfin_pre": None,
                 "mdblist_pre": None,
+                "publicmetadb_pre": None,
                 "tmdb_pre": None,
                 "crosswatch_pre": None,
                 "plex_post": None,
@@ -256,6 +257,7 @@ def _summary_reset() -> None:
                 "trakt_post": None,
                 "jellyfin_post": None,
                 "mdblist_post": None,
+                "publicmetadb_post": None,
                 "tmdb_post": None,
                 "crosswatch_post": None,
                 "result": "",
@@ -800,7 +802,7 @@ def _parse_sync_line(line: str) -> None:
                 val_i = int(val)
             except Exception:
                 continue
-            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tmdb", "crosswatch"):
+            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "publicmetadb", "tmdb", "crosswatch"):
                 _summary_set(f"{key}_pre", val_i)
         _summary_set_timeline("pre", True)
         return
@@ -815,7 +817,7 @@ def _parse_sync_line(line: str) -> None:
                 val_i = int(val)
             except Exception:
                 continue
-            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tmdb", "crosswatch"):
+            if key in ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "publicmetadb", "tmdb", "crosswatch"):
                 _summary_set(f"{key}_post", val_i)
         mres = re.search(r"(?:→|->|=>)\s*([A-Za-z]+)", rest)
         if mres:
@@ -1907,7 +1909,7 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True) -> dict[str, Any]:
 
 # Provider counts endpoint
 _PROVIDER_COUNTS_CACHE = {"ts": 0.0, "data": None}
-_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST", "TMDB", "CROSSWATCH", "ANILIST")
+_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB", "TMDB", "CROSSWATCH", "ANILIST")
 
 def _counts_from_state(state: dict | None) -> dict | None:
     if not isinstance(state, dict):
@@ -2213,6 +2215,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 snap.get("jellyfin_post"),
                 snap.get("emby_post"),
                 snap.get("mdblist_post"),
+                snap.get("publicmetadb_post"),
                 snap.get("tmdb_post"),
                 snap.get("crosswatch_post"),
                 snap.get("result"),

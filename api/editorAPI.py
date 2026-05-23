@@ -1177,7 +1177,7 @@ def api_editor_state_import_providers() -> dict[str, Any]:
         return {"enabled": False, "providers": []}
 
     cfg = load_config()
-    names = ["PLEX", "SIMKL", "TRAKT", "TMDB", "ANILIST", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"]
+    names = ["PLEX", "SIMKL", "TRAKT", "TMDB", "ANILIST", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB", "TAUTULLI"]
     out: list[dict[str, Any]] = []
 
     for name in names:

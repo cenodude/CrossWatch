@@ -1523,7 +1523,7 @@ def register_insights(app: FastAPI) -> None:
                 state = None
 
         prov_block: dict[str, Any] = (state or {}).get("providers") or {}
-        _PROVIDER_ORDER = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "tmdb", "crosswatch", "anilist")
+        _PROVIDER_ORDER = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "publicmetadb", "tmdb", "crosswatch", "anilist")
         providers_set: set[str] = set(_PROVIDER_ORDER)
         try:
             providers_set.update(

@@ -119,6 +119,7 @@ _AUTH_HEADER_ICONS = (
     {"prov": "SIMKL", "label": "SIMKL"},
     {"prov": "TRAKT", "label": "Trakt"},
     {"prov": "MDBLIST", "label": "MDBList"},
+    {"prov": "PUBLICMETADB", "label": "PublicMetaDB"},
     {"prov": "TMDB", "label": "TMDb", "extra_class": "cw-provider-head-icon--tmdb"},
     {"prov": "TAUTULLI", "label": "TAUTULLI"},
     {"prov": "ANILIST", "label": "AniList"},
