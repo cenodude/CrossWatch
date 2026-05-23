@@ -1250,6 +1250,7 @@ async function loadConfig() {
 
   
   setRaw("mdblist_key",         val(cfg.mdblist?.api_key));
+  setRaw("publicmetadb_key",    val(cfg.publicmetadb?.api_key));
 
   
   setRaw("trakt_client_id",     val(cfg.trakt?.client_id));

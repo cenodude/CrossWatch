@@ -504,7 +504,7 @@ function renderProviderSelects(state){
   const providerKind=(name)=>{
     if(isMedia(name)) return "Media server";
     if(isCrossWatch(name)) return "Tracker";
-    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"tautulli")) return "Tracker";
+    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"tautulli")) return "Tracker";
     if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
     return "Provider";
   };

@@ -38,7 +38,7 @@
   const raf = (fn) => (window.requestAnimationFrame || ((cb) => setTimeout(cb, 0)))(fn);
 
   const PROVIDER_ORDER = META.order || [
-    "CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI"
+    "CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB", "TAUTULLI"
   ];
   const STATUS_PROVIDERS = typeof META.statusProviders === "function" ? META.statusProviders() : [
     { key: "PLEX", badgeId: "badge-plex", legacy: ["plex_connected", "plex"] },
@@ -49,13 +49,14 @@
     { key: "JELLYFIN", badgeId: "badge-jellyfin", legacy: ["jellyfin_connected", "jellyfin"] },
     { key: "EMBY", badgeId: "badge-emby", legacy: ["emby_connected", "emby"] },
     { key: "MDBLIST", badgeId: "badge-mdblist", legacy: ["mdblist_connected", "mdblist"] },
+    { key: "PUBLICMETADB", badgeId: "badge-publicmetadb", legacy: ["publicmetadb_connected", "publicmetadb"] },
     { key: "TAUTULLI", badgeId: "badge-tautulli", legacy: ["tautulli_connected", "tautulli"] },
   ];
   const BADGE_IDS = Object.fromEntries([
     ...STATUS_PROVIDERS.map((p) => [p.key, p.badgeId]),
     ["CROSSWATCH", typeof META.badgeId === "function" ? (META.badgeId("CROSSWATCH") || "badge-crosswatch") : "badge-crosswatch"],
   ]);
-  const PAIR_ACTIVE_KEYS = ["PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "TAUTULLI", "CROSSWATCH"];
+  const PAIR_ACTIVE_KEYS = ["PLEX", "SIMKL", "TRAKT", "ANILIST", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB", "TAUTULLI", "CROSSWATCH"];
   const PROVIDER_ALIASES = typeof META.aliasesMap === "function" ? META.aliasesMap() : {
     CROSSWATCH: ["CROSSWATCH"],
     PLEX: ["PLEX"],
@@ -66,6 +67,7 @@
     JELLYFIN: ["JELLYFIN"],
     EMBY: ["EMBY"],
     MDBLIST: ["MDBLIST", "MDB LIST", "MDB-LIST"],
+    PUBLICMETADB: ["PUBLICMETADB", "PUBLIC META DB", "PUBLIC-META-DB", "PMDB"],
     TAUTULLI: ["TAUTULLI"],
   };
   const SIMPLE_PROVIDER_CHECKS = [
@@ -76,6 +78,7 @@
     { key: "JELLYFIN", paths: [["jellyfin"], ["auth", "jellyfin"]], keys: ["access_token"] },
     { key: "EMBY", paths: [["emby"], ["auth", "emby"]], keys: ["access_token", "api_key", "token"] },
     { key: "MDBLIST", paths: [["mdblist"], ["auth", "mdblist"]], keys: ["api_key"] },
+    { key: "PUBLICMETADB", paths: [["publicmetadb"], ["auth", "publicmetadb"]], keys: ["api_key"] },
   ];
 
   const UI = (window._ui ||= { status: null, summary: null, pairedProviders: null });

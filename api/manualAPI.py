@@ -144,6 +144,7 @@ def _manual_history_targets(cfg: dict[str, Any]) -> list[dict[str, Any]]:
         "JELLYFIN",
         "EMBY",
         "MDBLIST",
+        "PUBLICMETADB",
         "CROSSWATCH",
     ):
         ops = load_sync_ops(provider)

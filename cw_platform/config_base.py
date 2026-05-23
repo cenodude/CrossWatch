@@ -286,6 +286,25 @@ DEFAULT_CFG: dict[str, Any] = {
         "history_max_backoff_ms": 8000,                 # Max backoff time for retries
         "history_since": "1900-01-01T00:00:02Z"         # First-run baseline; watermark overrides after
     },
+
+    "publicmetadb": {
+        "api_key": "",                                  # PublicMetaDB API key (pm-...)
+        "base_url": "https://publicmetadb.com",         # External API base URL
+        "timeout": 15.0,                                # HTTP timeout (seconds)
+        "max_retries": 3,                               # Retry budget
+        "watchlist_list_id": "",                        # Optional list id; empty = discover/create
+        "watchlist_auto_create": True,                  # Create a private CrossWatch watchlist if missing
+        "watchlist_page_size": 100,                     # GET page size for list items
+        "history_per_page": 100,                        # GET page size for watched history
+        "history_max_pages": 1000,                      # Safety cap for watched history fetches
+        "ratings_label": "Overall",                     # PublicMetaDB rating label used by CrossWatch
+        "ratings_submit_per_hour": 200,                 # PublicMetaDB contribution limit for rating creates
+        "ratings_update_per_hour": 100,                 # PublicMetaDB contribution limit for rating updates
+        "rate_limit": {
+            "post_per_sec": 3,
+            "get_per_sec": 20,
+        },
+    },
     
      "tautulli": {
          "server_url": "",                              # http(s)://host:8181
@@ -507,9 +526,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
         "apply_chunk_size": 100,                        # Sweet spot for apply chunking
         "apply_chunk_pause_ms": 50,                     # Small pause between chunks
-        "apply_chunk_size_by_provider": {               # SIMKL/TRAKT/MDBLIST/ANILIST/TMDB/TAUTULLI/TMDB/PLEX/JELLYFIN/EMBY overrides
+        "apply_chunk_size_by_provider": {               # SIMKL/TRAKT/MDBLIST/PUBLICMETADB/ANILIST/TMDB/TAUTULLI/PLEX/JELLYFIN/EMBY overrides
             "SIMKL": 500,
-            "MDBLIST": 500
+            "MDBLIST": 500,
+            "PUBLICMETADB": 500
         },
         
         # suspect guard (shrinking inventories protection)
@@ -634,6 +654,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "simkl": {"access_token", "refresh_token", "client_secret"},
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key"},
+        "publicmetadb": {"api_key"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
@@ -1029,6 +1050,56 @@ def _normalize_mdblist(cfg: dict[str, Any]) -> None:
     rl["post_per_sec"] = int(post_rps) if float(post_rps).is_integer() else float(post_rps)
     rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
 
+
+def _normalize_publicmetadb(cfg: dict[str, Any]) -> None:
+    p0 = cfg.get("publicmetadb")
+    if isinstance(p0, dict):
+        p = p0
+    else:
+        p = {}
+        cfg["publicmetadb"] = p
+    p["base_url"] = str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/")
+    p["watchlist_auto_create"] = bool(p.get("watchlist_auto_create", True))
+
+    def _int_range(name: str, default: int, lo: int, hi: int) -> None:
+        try:
+            n = int(p.get(name, default) or default)
+        except Exception:
+            n = default
+        p[name] = max(lo, min(n, hi))
+
+    _int_range("watchlist_page_size", 100, 1, 500)
+    _int_range("history_per_page", 100, 1, 500)
+    _int_range("history_max_pages", 1000, 1, 100000)
+    _int_range("ratings_submit_per_hour", 200, 1, 200)
+    _int_range("ratings_update_per_hour", 100, 1, 100)
+    p["ratings_label"] = str(p.get("ratings_label") or "Overall").strip() or "Overall"
+
+    rl0 = p.get("rate_limit")
+    if isinstance(rl0, dict):
+        rl = rl0
+    else:
+        rl = {}
+        p["rate_limit"] = rl
+
+    def _rate(name: str, default: float, *, max_v: float) -> float:
+        v = rl.get(name, default)
+        try:
+            f = float(v)
+        except Exception:
+            f = float(default)
+        if f < 0:
+            f = 0.0
+        if f > max_v:
+            f = max_v
+        return f
+
+    post_rps = _rate("post_per_sec", 3.0, max_v=3.0)
+    get_rps = _rate("get_per_sec", 20.0, max_v=20.0)
+    rl["post_per_sec"] = int(post_rps) if float(post_rps).is_integer() else float(post_rps)
+    rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
+
+
 def _is_hhmm(v: str) -> bool:
     s = (v or "").strip()
     if len(s) != 5 or s[2] != ":":
@@ -1295,6 +1366,7 @@ def load_config() -> dict[str, Any]:
     _normalize_trakt(cfg)
     _normalize_simkl(cfg)
     _normalize_mdblist(cfg)
+    _normalize_publicmetadb(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
     pairs = cfg.get("pairs")
@@ -1343,6 +1415,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_trakt(data)
     _normalize_simkl(data)
     _normalize_mdblist(data)
+    _normalize_publicmetadb(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)
     _normalize_ui(data)

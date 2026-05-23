@@ -42,6 +42,7 @@
 #providers_list .prov-card.brand-anilist .prov-watermark::after{width:164%;height:192%;transform:translate(-50%,-50%) scale(1.2)}
 #providers_list .prov-card.brand-emby .prov-watermark::after{width:164%;height:190%;transform:translate(-50%,-50%) scale(1.2)}
 #providers_list .prov-card.brand-jellyfin .prov-watermark::after{width:176%;height:206%;transform:translate(-50%,-50%) scale(1.18)}
+#providers_list .prov-card.brand-publicmetadb .prov-watermark::after{width:176%;height:206%;transform:translate(-50%,-50%) scale(1.08);opacity:.22}
 #providers_list .prov-card.brand-tmdb-sync .prov-watermark::after{width:174%;height:124%;transform:translate(-50%,-50%) scale(1.14)}
 #providers_list .prov-card.brand-tautulli .prov-watermark::after{width:160%;height:188%;transform:translate(-50%,-50%) scale(1.2)}
 #providers_list .prov-main{display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;min-height:92px;gap:10px}

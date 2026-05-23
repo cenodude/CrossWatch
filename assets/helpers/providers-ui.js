@@ -106,6 +106,7 @@
         slot.innerHTML = authHtml;
 
         window.initMDBListAuthUI?.();
+        window.initPublicMetaDBAuthUI?.();
         window.initTautulliAuthUI?.();
         window.initAniListAuthUI?.();
 

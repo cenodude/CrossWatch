@@ -7,7 +7,7 @@ const _cwJSONHeaders = { "Content-Type": "application/json" };
 const _cwSecretIds = [
   "plex_token", "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
-  "tmdb_api_key", "mdblist_key"
+  "tmdb_api_key", "mdblist_key", "publicmetadb_key"
 ];
 
 function _cwEl(id) { return document.getElementById(id); }
@@ -535,10 +535,12 @@ async function saveSettings() {
         simkl: _cwInstBlock(serverCfg?.simkl, _cwSelectedInst("simkl")),
         trakt: _cwInstBlock(serverCfg?.trakt, _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1")),
         anilist: _cwInstBlock(serverCfg?.anilist, _cwSelectedInst("anilist")),
-        mdblist: _cwInstBlock(serverCfg?.mdblist, _cwSelectedInst("mdblist"))
+        mdblist: _cwInstBlock(serverCfg?.mdblist, _cwSelectedInst("mdblist")),
+        publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb"))
       };
       [
         ["mdblist", _cwSelectedInst("mdblist"), [["api_key", _cwReadSecret("mdblist_key", _cwNorm(secrets.mdblist?.api_key))]]],
+        ["publicmetadb", _cwSelectedInst("publicmetadb"), [["api_key", _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key))]]],
         ["plex", _cwSelectedInst("plex"), [["account_token", _cwReadSecret("plex_token", _cwNorm(secrets.plex?.account_token))], ["home_pin", _cwReadSecret("plex_home_pin", _cwNorm(secrets.plex?.home_pin)), ""]]],
         ["simkl", _cwSelectedInst("simkl"), [["client_id", _cwReadSecret("simkl_client_id", _cwNorm(secrets.simkl?.client_id))], ["client_secret", _cwReadSecret("simkl_client_secret", _cwNorm(secrets.simkl?.client_secret))]]],
         ["trakt", _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1"), [["client_id", _cwReadSecret("trakt_client_id", _cwNorm(secrets.trakt?.client_id))], ["client_secret", _cwReadSecret("trakt_client_secret", _cwNorm(secrets.trakt?.client_secret))]]],

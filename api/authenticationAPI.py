@@ -1264,6 +1264,49 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
             return {"ok": False, "error": "internal"}
 
+    @app.post("/api/publicmetadb/save", tags=["auth"])
+    def api_publicmetadb_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+        try:
+            key = str((payload or {}).get("api_key") or "").strip()
+            cfg = load_config()
+            p = ensure_instance_block(cfg, "publicmetadb", instance)
+            if key:
+                if _looks_masked_secret(key):
+                    key = ""
+                else:
+                    p["api_key"] = key
+            p.setdefault("base_url", "https://publicmetadb.com")
+            save_config(cfg)
+            _safe_log(log_fn, "PUBLICMETADB", f"[PUBLICMETADB] api_key saved instance={normalize_instance_id(instance)}")
+            if isinstance(probe_cache, dict):
+                probe_cache["publicmetadb"] = (0.0, False)
+            return {"ok": True, "instance": normalize_instance_id(instance)}
+        except Exception as e:
+            _safe_log(log_fn, "PUBLICMETADB", f"[PUBLICMETADB] ERROR save: {e}")
+            return {"ok": False, "error": "internal"}
+
+    @app.get("/api/publicmetadb/status", tags=["auth"])
+    def api_publicmetadb_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        cfg = load_config()
+        p = ensure_instance_block(cfg, "publicmetadb", instance)
+        has = bool(str(p.get("api_key") or "").strip())
+        return {"connected": has, "instance": normalize_instance_id(instance)}
+
+    @app.post("/api/publicmetadb/disconnect", tags=["auth"])
+    def api_publicmetadb_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            p = ensure_instance_block(cfg, "publicmetadb", instance)
+            p["api_key"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "PUBLICMETADB", f"[PUBLICMETADB] disconnected instance={normalize_instance_id(instance)}")
+            if isinstance(probe_cache, dict):
+                probe_cache["publicmetadb"] = (0.0, False)
+            return {"ok": True, "instance": normalize_instance_id(instance)}
+        except Exception as e:
+            _safe_log(log_fn, "PUBLICMETADB", f"[PUBLICMETADB] ERROR disconnect: {e}")
+            return {"ok": False, "error": "internal"}
+
 
     # TAUTULLI
     @app.post("/api/tautulli/save", tags=["auth"])

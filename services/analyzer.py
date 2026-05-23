@@ -40,6 +40,7 @@ _CW_STATE_WATERMARK_KEYS: dict[str, set[str]] = {
     "TRAKT": {"history", "ratings", "watchlist"},
     "SIMKL": {"history", "ratings", "watchlist", "watchlist_removed"},
     "MDBLIST": {"history", "history_journal", "ratings", "ratings_journal", "watchlist", "watchlist_removed"},
+    "PUBLICMETADB": {"history", "ratings", "watchlist"},
     "PLEX": {"history"},
 }
 
@@ -1039,7 +1040,7 @@ def _shadow_entry_count(data: Any, meta: Mapping[str, Any]) -> tuple[int, int | 
     feature = str(meta.get("feature") or "").lower()
     if not isinstance(data, dict):
         return 0, None
-    if provider in {"TRAKT", "SIMKL", "MDBLIST"} and feature in {"watchlist", "activities"}:
+    if provider in {"TRAKT", "SIMKL", "MDBLIST", "PUBLICMETADB"} and feature in {"watchlist", "activities", "history", "ratings"}:
         items = data.get("items")
         if isinstance(items, dict):
             ts = _parse_epochish(data.get("ts"))
@@ -1076,6 +1077,9 @@ def _cw_state_shadow_problems(path: Path, data: Any, meta: Mapping[str, Any], *,
     elif provider == "MDBLIST" and feature == "watchlist":
         if not isinstance(data.get("items"), dict):
             probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "MDBList watchlist shadow should contain an items map.", meta))
+    elif provider == "PUBLICMETADB" and feature in {"watchlist", "history", "ratings"}:
+        if not isinstance(data.get("items"), dict):
+            probs.append(_artifact_meta_problem("warn", "cw_state_shadow_invalid", path, "PublicMetaDB shadow should contain an items map.", meta))
     elif provider in {"JELLYFIN", "EMBY"} and feature in {"history", "ratings"}:
         bad_rows = 0
         total_count = 0
@@ -1530,7 +1534,7 @@ def _alias_keys(obj: dict[str, Any]) -> list[str]:
     if obj.get("_key"):
         out.append(obj["_key"])
 
-    for ns in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "plex", "emby", "guid", "mdblist"):
+    for ns in ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "plex", "emby", "guid", "mdblist", "publicmetadb"):
         v = ids.get(ns)
         if v:
             vs = str(v)
