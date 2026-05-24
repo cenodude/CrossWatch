@@ -1,3 +1,6 @@
+# /providers/sync/publicmetadb/_ratings.py
+# PUBLICMETADB Module for ratings functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import time

@@ -1,4 +1,6 @@
 # providers/sync/publicmetadb/_common.py
+# PUBLICMETADB Module for common functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import json

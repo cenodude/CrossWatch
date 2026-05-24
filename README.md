@@ -5,7 +5,8 @@
 <p align="center" style="font-size:14px;">
 <b>⭐ Star this repository to get updates</b><br>
 </p>
-<img width="1566" height="631" alt="providers1 (1)" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
+<img width="1975" height="796" alt="ov" src="https://github.com/user-attachments/assets/bcf1d3c0-628c-49e2-8249-c3d853f8b115" />
+
 <p align="center">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&amp;sort=semver&amp;logo=github&amp;label=Latest%20Release&amp;style=for-the-badge" alt="Latest Release">

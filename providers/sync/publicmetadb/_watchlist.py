@@ -1,4 +1,6 @@
 # providers/sync/publicmetadb/_watchlist.py
+# PUBLICMETADB Module for watchlist functions
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
@@ -64,13 +66,19 @@ def _find_watchlist(adapter: Any) -> str | None:
     configured = str(cfg.get("watchlist_list_id") or "").strip()
     if configured:
         return configured
+    configured_name = str(
+        cfg.get("watchlist_name")
+        or getattr(getattr(adapter, "cfg", None), "watchlist_name", "")
+        or "Watchlist"
+    ).strip() or "Watchlist"
+    configured_name_l = configured_name.lower()
 
     data = adapter.client.get_json("/api/external/lists", params={"page": 1, "perPage": 500})
     rows = data.get("items") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
         return None
 
-    preferred: str | None = None
+    typed_watchlist: str | None = None
     fallback: str | None = None
     for row in rows:
         if not isinstance(row, Mapping):
@@ -80,12 +88,13 @@ def _find_watchlist(adapter: Any) -> str | None:
             continue
         typ = str(row.get("type") or "").strip().lower()
         name = str(row.get("name") or "").strip().lower()
+        if name == configured_name_l:
+            return rid
         if typ == "watchlist":
-            preferred = rid
-            break
+            typed_watchlist = typed_watchlist or rid
         if name in ("crosswatch", "crosswatch watchlist", "watchlist"):
             fallback = fallback or rid
-    return preferred or fallback
+    return typed_watchlist or fallback
 
 
 def _ensure_watchlist(adapter: Any) -> str | None:
@@ -95,9 +104,14 @@ def _ensure_watchlist(adapter: Any) -> str | None:
     cfg = cfg_section(adapter)
     if cfg.get("watchlist_auto_create") is False:
         return None
+    name = str(
+        cfg.get("watchlist_name")
+        or getattr(getattr(adapter, "cfg", None), "watchlist_name", "")
+        or "Watchlist"
+    ).strip() or "Watchlist"
     data = adapter.client.post_json(
         "/api/external/lists",
-        json={"name": "CrossWatch Watchlist", "description": "Managed by CrossWatch", "is_public": False, "type": "watchlist"},
+        json={"name": name, "description": "Managed by CrossWatch", "is_public": False, "type": "watchlist"},
     )
     item = data.get("item") if isinstance(data, Mapping) else None
     if isinstance(item, Mapping):

@@ -1,5 +1,6 @@
 # providers/auth/_auth_PUBLICMETADB.py
 # CrossWatch - PublicMetaDB Auth Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
@@ -124,7 +125,7 @@ def html() -> str:
   </style>
 
   <div class="head" onclick="toggleSection && toggleSection('sec-publicmetadb')">
-    <span class="chev">&gt;</span><strong>PublicMetaDB</strong>
+    <span class="chev">▶</span><strong>PublicMetaDB</strong>
   </div>
 
   <div class="body">

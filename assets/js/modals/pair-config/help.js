@@ -29,7 +29,7 @@ export const HELP_TEXT = {
   "cx-md-hs-ignore-dropped": "MDBList: Ignore dropped shows\nWhen enabled, shows marked as dropped on MDBList are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
   "cx-sm-hs-ignore-dropped": "Simkl: Ignore dropped shows\nWhen enabled, shows marked as dropped on Simkl are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
 
-  "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between media servers.",
+  "cx-pr-enable": "Progress: Enable\nSync resume position (where you left off) between providers.",
   "cx-pr-add": "Progress: Add / Update\nWrite resume position to the target.",
   "cx-pr-remove": "Progress: Remove\nClear resume position on the target (rare; Plex may not support).",
   "cx-pr-min": "Progress: Minimum seconds\nIgnore tiny offsets (scrubbing).",
