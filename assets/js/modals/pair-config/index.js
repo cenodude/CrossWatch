@@ -28,6 +28,7 @@ const isSimkl=(v)=>same(v,"simkl");
 const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
 const isMDBList=(v)=>same(v,"mdblist");
+const isPublicMetaDB=(v)=>same(v,"publicmetadb");
 const isPlex = (v) => same(v, "plex");
 const isCrossWatch = (v) => same(v, "crosswatch");
 function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
@@ -38,6 +39,7 @@ function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
 function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
+function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 
 const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]}};
 function ratingsDisabledFor(state){
@@ -448,7 +450,7 @@ function initPairLibraryUI(state){
 function renderWarnings(state){
   const flowBox=ID("cx-flow-warn"),main=Q(".cx-main");
   const HIDE=new Set(["globals","providers"]);
-  const BOTTOM=new Set(["watchlist","ratings","history","playlists"]);
+  const BOTTOM=new Set(["watchlist","ratings","history","progress","playlists"]);
   if(flowBox) flowBox.innerHTML="";
   ID("cx-feat-warn")?.remove();
   if(HIDE.has(state.feature)) return;
@@ -909,6 +911,8 @@ function renderFeaturePanel(state){
     const wl = getOpts(state, "watchlist");
     const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
     const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
+    const pmw = state.pairProviders?.publicmetadb || {};
+    const pmwName = (pmw.watchlist_name || state.cfgRaw?.publicmetadb?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
 
     left.innerHTML = `
@@ -962,6 +966,16 @@ function renderFeaturePanel(state){
           <div class="opt-row" style="grid-column:1/-1">
             <label for="cx-em-wl-pl-name">Name</label>
             <input id="cx-em-wl-pl-name" class="input" type="text" value="${emw.playlist_name||"Watchlist"}" placeholder="Watchlist">
+          </div>
+        </div>
+      `:""}
+
+      ${hasPublicMetaDB(state)?`
+        <div class="panel-title small" style="margin-top:6px">PublicMetaDB specifics</div>
+        <div class="grid2 compact">
+          <div class="opt-row" style="grid-column:1/-1">
+            <label for="cx-pmdb-wl-name">List name</label>
+            <input id="cx-pmdb-wl-name" class="input" type="text" value="${pmwName}" placeholder="Watchlist">
           </div>
         </div>
       `:""}
@@ -1765,6 +1779,13 @@ function bindChangeHandlers(state,root){
       em.watchlist={mode,playlist_name:name,watchlist_query_limit:q,watchlist_write_delay_ms:d,watchlist_guid_priority:gp.length?gp:undefined};
     }
 
+    if(id==="cx-pmdb-wl-name"){
+      state.pairProviders=state.pairProviders||{};
+      const pm=Object.assign({},state.pairProviders.publicmetadb||{});
+      pm.watchlist_name=(ID("cx-pmdb-wl-name")?.value||"").trim()||"Watchlist";
+      state.pairProviders.publicmetadb=pm;
+    }
+
     if (/^(plx-|jf-|em-)/.test(id)) {
       refreshProviderCardSummaries(state);
     }
@@ -2031,9 +2052,15 @@ function buildPayload(state,wrap){
   const useJf=(String(src).toUpperCase()==="JELLYFIN"||String(dst).toUpperCase()==="JELLYFIN");
   const useEm=(String(src).toUpperCase()==="EMBY"||String(dst).toUpperCase()==="EMBY");
   const useTr=(String(src).toUpperCase()==="TRAKT"||String(dst).toUpperCase()==="TRAKT");
+  const usePmdb=(String(src).toUpperCase()==="PUBLICMETADB"||String(dst).toUpperCase()==="PUBLICMETADB");
   if(usePlex) prov.plex={strict_id_matching:getPairProviderStrictValue(state, "plex")};
   if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin")};
   if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
+  if(usePmdb){
+    const pmSrc=pp.publicmetadb||{};
+    const name=(ID("cx-pmdb-wl-name")?.value||pmSrc.watchlist_name||state.cfgRaw?.publicmetadb?.watchlist_name||"Watchlist").trim()||"Watchlist";
+    prov.publicmetadb=Object.assign({},pmSrc,{watchlist_name:name});
+  }
   if(useTr){
     const trSrc=pp.trakt||{};
     const colOn=!!trSrc.history_collection;

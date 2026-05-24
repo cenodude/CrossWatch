@@ -293,10 +293,13 @@ DEFAULT_CFG: dict[str, Any] = {
         "timeout": 15.0,                                # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget
         "watchlist_list_id": "",                        # Optional list id; empty = discover/create
+        "watchlist_name": "Watchlist",                  # Default PublicMetaDB list name; pair config can override
         "watchlist_auto_create": True,                  # Create a private CrossWatch watchlist if missing
         "watchlist_page_size": 100,                     # GET page size for list items
         "history_per_page": 100,                        # GET page size for watched history
         "history_max_pages": 1000,                      # Safety cap for watched history fetches
+        "progress_per_page": 100,                       # GET page size for resume/progress
+        "progress_max_pages": 1000,                     # Safety cap for resume/progress fetches
         "ratings_label": "Overall",                     # PublicMetaDB rating label used by CrossWatch
         "ratings_submit_per_hour": 200,                 # PublicMetaDB contribution limit for rating creates
         "ratings_update_per_hour": 100,                 # PublicMetaDB contribution limit for rating updates
@@ -1059,6 +1062,7 @@ def _normalize_publicmetadb(cfg: dict[str, Any]) -> None:
         p = {}
         cfg["publicmetadb"] = p
     p["base_url"] = str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/")
+    p["watchlist_name"] = str(p.get("watchlist_name") or "Watchlist").strip() or "Watchlist"
     p["watchlist_auto_create"] = bool(p.get("watchlist_auto_create", True))
 
     def _int_range(name: str, default: int, lo: int, hi: int) -> None:
@@ -1071,6 +1075,8 @@ def _normalize_publicmetadb(cfg: dict[str, Any]) -> None:
     _int_range("watchlist_page_size", 100, 1, 500)
     _int_range("history_per_page", 100, 1, 500)
     _int_range("history_max_pages", 1000, 1, 100000)
+    _int_range("progress_per_page", 100, 1, 500)
+    _int_range("progress_max_pages", 1000, 1, 100000)
     _int_range("ratings_submit_per_hour", 200, 1, 200)
     _int_range("ratings_update_per_hour", 100, 1, 100)
     p["ratings_label"] = str(p.get("ratings_label") or "Overall").strip() or "Overall"

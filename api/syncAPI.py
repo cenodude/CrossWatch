@@ -159,7 +159,7 @@ def _normalize_features(f: dict | None) -> dict:
             v.setdefault("remove", False)
     return f
 
-_PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "CROSSWATCH"}
+_PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "PUBLICMETADB", "CROSSWATCH"}
 _RATINGS_ALLOWED = {"PLEX", "SIMKL", "TRAKT", "TMDB", "MDBLIST", "PUBLICMETADB", "CROSSWATCH"}
 
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:

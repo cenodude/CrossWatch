@@ -1,5 +1,6 @@
 # providers/sync/_mod_PUBLICMETADB.py
 # CrossWatch PublicMetaDB sync module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
 import os
@@ -13,6 +14,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from ._log import log as cw_log
 from ._mod_common import HitSession, SimpleRateLimiter, build_session, parse_rate_limit, request_with_retries, safe_json
 from .publicmetadb import _history as feat_history
+from .publicmetadb import _progress as feat_progress
 from .publicmetadb import _ratings as feat_ratings
 from .publicmetadb import _watchlist as feat_watchlist
 
@@ -28,6 +30,8 @@ __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 def _label_publicmetadb(method: str, url: str, kw: Mapping[str, Any]) -> str:
     if "/api/external/lists" in str(url):
         return "watchlist"
+    if "/api/external/resume" in str(url):
+        return "progress"
     if "/api/external/watched" in str(url):
         return "history"
     if "/api/external/ratings" in str(url) or "/api/external/episode-ratings" in str(url):
@@ -53,7 +57,7 @@ def _confirmed_keys(items: Iterable[Mapping[str, Any]], unresolved: Any) -> list
 
 
 def _features_flags() -> dict[str, bool]:
-    return {"watchlist": True, "ratings": True, "history": True, "playlists": False}
+    return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -90,6 +94,15 @@ def get_manifest() -> Mapping[str, Any]:
                 "requires_ids": ["tmdb"],
                 "scale": "1-10",
             },
+            "progress": {
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "upsert": True,
+                "remove": True,
+                "observed_deletes": True,
+                "requires_ids": ["tmdb"],
+                "requires_duration": True,
+                "server_completion_percent": 80,
+            },
         },
     }
 
@@ -100,11 +113,14 @@ class PUBLICMETADBConfig:
     base_url: str = "https://publicmetadb.com"
     timeout: float = 15.0
     max_retries: int = 3
+    watchlist_name: str = "Watchlist"
     rate_get_per_sec: float = 20.0
     rate_post_per_sec: float = 3.0
     watchlist_page_size: int = 100
     history_per_page: int = 100
     history_max_pages: int = 1000
+    progress_per_page: int = 100
+    progress_max_pages: int = 1000
     ratings_label: str = "Overall"
     ratings_submit_per_hour: int = 200
     ratings_update_per_hour: int = 100
@@ -226,11 +242,14 @@ class PUBLICMETADBModule:
             base_url=str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/"),
             timeout=float(p.get("timeout", cfg.get("timeout", 15.0))),
             max_retries=int(p.get("max_retries", cfg.get("max_retries", 3))),
+            watchlist_name=str(p.get("watchlist_name") or "Watchlist").strip() or "Watchlist",
             rate_get_per_sec=_float("get_per_sec", 20.0, 20.0),
             rate_post_per_sec=_float("post_per_sec", 3.0, 3.0),
             watchlist_page_size=int(p.get("watchlist_page_size", 100) or 100),
             history_per_page=int(p.get("history_per_page", 100) or 100),
             history_max_pages=int(p.get("history_max_pages", 1000) or 1000),
+            progress_per_page=int(p.get("progress_per_page", 100) or 100),
+            progress_max_pages=int(p.get("progress_max_pages", 1000) or 1000),
             ratings_label=str(p.get("ratings_label") or "Overall").strip() or "Overall",
             ratings_submit_per_hour=_int_range("ratings_submit_per_hour", 200, 1, 200),
             ratings_update_per_hour=_int_range("ratings_update_per_hour", 100, 1, 100),
@@ -288,13 +307,13 @@ class PUBLICMETADBModule:
             "ok": ok,
             "status": status,
             "latency_ms": latency_ms,
-            "features": {"watchlist": ok, "ratings": ok, "history": ok, "playlists": False},
+            "features": {"watchlist": ok, "ratings": ok, "history": ok, "progress": ok, "playlists": False},
             "details": {"reason": reason} if reason else None,
             "api": {"lists": {"status": code, "rate": rate}},
         }
 
     def feature_names(self) -> tuple[str, ...]:
-        return ("watchlist", "ratings", "history")
+        return ("watchlist", "ratings", "history", "progress")
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if feature == "watchlist":
@@ -303,16 +322,20 @@ class PUBLICMETADBModule:
             return feat_history.build_index(self)
         if feature == "ratings":
             return feat_ratings.build_index(self)
+        if feature == "progress":
+            return feat_progress.build_index(self)
         return {}
 
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         lst = list(items or [])
-        if feature not in ("watchlist", "ratings", "history"):
+        if feature not in ("watchlist", "ratings", "history", "progress"):
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         if feature == "history":
             cnt, unresolved = feat_history.add(self, lst)
+        elif feature == "progress":
+            cnt, unresolved = feat_progress.add(self, lst)
         elif feature == "ratings":
             cnt, unresolved = feat_ratings.add(self, lst)
         else:
@@ -321,12 +344,14 @@ class PUBLICMETADBModule:
 
     def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         lst = list(items or [])
-        if feature not in ("watchlist", "ratings", "history"):
+        if feature not in ("watchlist", "ratings", "history", "progress"):
             return {"ok": True, "count": 0, "unresolved": []}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
         if feature == "history":
             cnt, unresolved = feat_history.remove(self, lst)
+        elif feature == "progress":
+            cnt, unresolved = feat_progress.remove(self, lst)
         elif feature == "ratings":
             cnt, unresolved = feat_ratings.remove(self, lst)
         else:
