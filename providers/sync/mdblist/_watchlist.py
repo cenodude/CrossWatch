@@ -554,18 +554,21 @@ def _payload_from_accepted(accepted_slice: list[dict[str, Any]]) -> dict[str, An
             entry: dict[str, Any] = {}
             imdb = ids.get("imdb")
             tmdb = ids.get("tmdb")
+            mdblist = ids.get("mdblist")
             tvdb = ids.get("tvdb")
             if imdb is not None:
                 entry["imdb"] = imdb
             if tmdb is not None:
                 entry["tmdb"] = tmdb
+            if mdblist is not None:
+                entry["mdblist"] = mdblist
             if not entry and tvdb is not None:
                 entry["tvdb"] = tvdb
             if entry:
                 movies.append(entry)
             continue
 
-        entry = {"imdb": ids.get("imdb"), "tmdb": ids.get("tmdb")}
+        entry = {"imdb": ids.get("imdb"), "tmdb": ids.get("tmdb"), "mdblist": ids.get("mdblist")}
         shows.append(entry)
     movies = [{k: v for k, v in d.items() if v is not None} for d in movies]
     shows = [{k: v for k, v in d.items() if v is not None} for d in shows]
