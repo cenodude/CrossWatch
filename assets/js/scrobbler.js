@@ -197,7 +197,7 @@ function clearStickyNote(id) {
     trakt: { stop_pause_threshold: 80, force_stop_at: 80, regress_tolerance_percent: 5, progress_step: 25 },
   };
 
-  const STATE = { mount: null, webhookIds: null, routeWebhookHooks: [], webhookHost: null, watcherHost: null, cfg: {}, users: [], ui: { scrobbleEnabled: null, scrobbleMode: null, watchAutostart: null }, _noSinkAutostartFixApplied: false };
+  const STATE = { mount: null, webhookIds: null, routeWebhookHooks: [], webhookHost: null, watcherHost: null, cfg: {}, users: [], ui: { scrobbleEnabled: null, scrobbleSources: null, watchAutostart: null }, _noSinkAutostartFixApplied: false };
 
   const deepSet = (o, p, v) =>
     p.split(".").reduce(
@@ -262,6 +262,47 @@ function clearStickyNote(id) {
     deepSet(STATE.cfg, path, v);
     try { w._cfgCache ||= {}; deepSet(w._cfgCache, path, v); } catch {}
     try { syncHiddenServerInputs(); } catch {}
+  }
+
+  function scrobbleSourceState(cfg = STATE.cfg) {
+    const sc = cfg?.scrobble && typeof cfg.scrobble === "object" ? cfg.scrobble : {};
+    const enabled = !!sc.enabled;
+    if (!enabled) return { webhook: false, watcher: false };
+    const src = sc.sources && typeof sc.sources === "object" ? sc.sources : null;
+    if (src) {
+      return {
+        webhook: !!src.webhook,
+        watcher: !!(src.watcher ?? src.watch),
+      };
+    }
+    const mode = String(sc.mode || "").trim().toLowerCase();
+    return {
+      webhook: mode === "webhook",
+      watcher: mode === "watch",
+    };
+  }
+
+  function scrobbleLegacyMode(sources) {
+    return sources?.watcher && !sources?.webhook ? "watch" : "webhook";
+  }
+
+  function writeScrobbleSources(webhook, watcher) {
+    const sources = { webhook: !!webhook, watcher: !!watcher };
+    write("scrobble.sources", sources);
+    write("scrobble.enabled", sources.webhook || sources.watcher);
+    write("scrobble.mode", scrobbleLegacyMode(sources));
+    STATE.ui.scrobbleEnabled = sources.webhook || sources.watcher;
+    STATE.ui.scrobbleSources = { ...sources };
+    return sources;
+  }
+
+  function refreshHybridWarning() {
+    const sources = scrobbleSourceState();
+    if (sources.webhook && sources.watcher) {
+      setStickyNote("sc-webhook-warning", "Watcher and webhooks are both enabled. Use watcher for local servers and webhook URLs for remote servers. If the same server sends events through both, duplicate scrobbles may occur.", "warn");
+    } else {
+      setStickyNote("sc-webhook-warning", "These legacy webhooks scrobble only to Trakt. For Trakt/SIMKL/MDBList routes and better controls, use Watcher.", "warn");
+    }
   }
 
   const asArray = (v) => (Array.isArray(v) ? v.slice() : v == null || v === "" ? [] : [String(v)]);
@@ -1634,10 +1675,9 @@ function chip(text, onRemove, onClick) {
   }
 
   function applyModeDisable() {
-  const enabled = !!read("scrobble.enabled", false);
-  const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
-  const useWebhook = enabled && mode === "webhook";
-  const useWatch = enabled && mode === "watch";
+  const sources = scrobbleSourceState();
+  const useWebhook = !!sources.webhook;
+  const useWatch = !!sources.watcher;
 
   const webRoot = STATE.webhookHost;
   const watchRoot = STATE.watcherHost;
@@ -2213,20 +2253,26 @@ function chip(text, onRemove, onClick) {
         try { delete STATE._routesCache; } catch {}
 
         const uiEnabled = STATE.ui?.scrobbleEnabled;
-        const uiModeRaw = String(STATE.ui?.scrobbleMode || "").toLowerCase().trim();
+        const uiSources = STATE.ui?.scrobbleSources;
         const uiAutostart = STATE.ui?.watchAutostart;
 
         const backendEnabled = !!fresh?.scrobble?.enabled;
-        const backendMode = String(fresh?.scrobble?.mode || "webhook").toLowerCase().trim();
+        const backendSources = scrobbleSourceState(fresh);
         const backendAutostart = !!fresh?.scrobble?.watch?.autostart;
 
         if (typeof uiEnabled === "boolean") {
           if (backendEnabled === uiEnabled) STATE.ui.scrobbleEnabled = null;
           else deepSet(STATE.cfg, "scrobble.enabled", uiEnabled);
         }
-        if (uiModeRaw) {
-          if (backendMode === uiModeRaw) STATE.ui.scrobbleMode = null;
-          else deepSet(STATE.cfg, "scrobble.mode", uiModeRaw);
+        if (uiSources && typeof uiSources === "object") {
+          const nextSources = { webhook: !!uiSources.webhook, watcher: !!uiSources.watcher };
+          if (backendSources.webhook === nextSources.webhook && backendSources.watcher === nextSources.watcher) {
+            STATE.ui.scrobbleSources = null;
+          } else {
+            deepSet(STATE.cfg, "scrobble.sources", nextSources);
+            deepSet(STATE.cfg, "scrobble.enabled", nextSources.webhook || nextSources.watcher);
+            deepSet(STATE.cfg, "scrobble.mode", scrobbleLegacyMode(nextSources));
+          }
         }
         if (typeof uiAutostart === "boolean") {
           if (backendAutostart === uiAutostart) STATE.ui.watchAutostart = null;
@@ -2249,10 +2295,9 @@ function chip(text, onRemove, onClick) {
       renderRoutesUi().catch(() => {});
     }
   } catch {}
-  const enabled = !!read("scrobble.enabled", false);
-  const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
-  const useWebhook = enabled && mode === "webhook";
-  const useWatch = enabled && mode === "watch";
+  const sources = scrobbleSourceState();
+  const useWebhook = !!sources.webhook;
+  const useWatch = !!sources.watcher;
   const prov = provider();
 
   const whEl = $("#sc-enable-webhook", STATE.mount);
@@ -2261,6 +2306,7 @@ function chip(text, onRemove, onClick) {
   if (whEl) whEl.checked = useWebhook;
   ["#sc-enable-webhook-jf", "#sc-enable-webhook-emby", "#sc-enable-webhook-adv"].forEach((id) => { const n = $(id, STATE.mount); if (n) n.checked = useWebhook; });
   if (waEl) waEl.checked = useWatch;
+  refreshHybridWarning();
 
   const wlWeb = asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
   const hostWB = $("#sc-whitelist-webhook", STATE.mount);
@@ -2594,7 +2640,7 @@ async function hydrateJellyfin() {
 
   function wire() {
     ensureHiddenServerInputs();
-    setNote("sc-webhook-warning", "These legacy webhooks scrobble only to Trakt and will be removed in a future release; they're no longer maintained or supported, please switch to Watcher ASAP.", "warn");
+    refreshHybridWarning();
     // Copy the displayed webhook URL
     function getCodeText(id) {
       const n = $(id, STATE.mount);
@@ -2757,8 +2803,8 @@ async function hydrateJellyfin() {
           if (mute) return;
           mute = true;
           master.checked = !!c.checked;
-          master.dispatchEvent(new Event("change", { bubbles: true }));
           mute = false;
+          master.dispatchEvent(new Event("change", { bubbles: true }));
         });
       });
       on(master, "change", sync);
@@ -2792,38 +2838,35 @@ async function hydrateJellyfin() {
       });
     }
 
-    const syncExclusive = async (src) => {
+    const syncSources = async (src) => {
       const webOn = !!wh?.checked;
       const watOn = !!wa?.checked;
-      if (src === "webhook" && webOn && wa) wa.checked = false;
-      if (src === "watch" && watOn && wh) wh.checked = false;
+      const sources = writeScrobbleSources(webOn, watOn);
 
-      write("scrobble.enabled", (!!wh?.checked) || (!!wa?.checked));
-      write("scrobble.mode", (!!wa?.checked) ? "watch" : "webhook");
-
-      if (src === "watch" && !wa.checked) {
+      if (src === "watch" && !watOn) {
         write("scrobble.watch.autostart", false);
         const auto = $("#sc-autostart", STATE.mount);
         if (auto) auto.checked = false;
       }
       applyModeDisable();
+      refreshHybridWarning();
 
-      const enabled = (!!wh?.checked) || (!!wa?.checked);
-      const mode = (!!wa?.checked) ? "watch" : "webhook";
+      const enabled = sources.webhook || sources.watcher;
+      const mode = scrobbleLegacyMode(sources);
       const pairs = [
         ["scrobble.enabled", enabled],
+        ["scrobble.sources.webhook", sources.webhook],
+        ["scrobble.sources.watcher", sources.watcher],
         ["scrobble.mode", mode],
       ];
-      if (src === "watch" && !wa.checked) pairs.push(["scrobble.watch.autostart", false]);
-      const noteId = mode === "watch" ? "sc-pms-note" : "sc-endpoint-note";
-      STATE.ui.scrobbleEnabled = enabled;
-      STATE.ui.scrobbleMode = mode;
-      if (src === "watch" && !wa.checked) STATE.ui.watchAutostart = false;
+      if (src === "watch" && !watOn) pairs.push(["scrobble.watch.autostart", false]);
+      const noteId = src === "watch" ? "sc-pms-note" : "sc-endpoint-note";
+      if (src === "watch" && !watOn) STATE.ui.watchAutostart = false;
       await persistConfigPaths(pairs, noteId);
     };
 
-    if (wh) on(wh, "change", () => syncExclusive("webhook"));
-    if (wa) on(wa, "change", () => syncExclusive("watch"));
+    if (wh) on(wh, "change", () => syncSources("webhook"));
+    if (wa) on(wa, "change", () => syncSources("watch"));
 
     on($("#sc-autostart", STATE.mount), "change", (e) => {
       const v = !!e.target.checked;
@@ -2875,8 +2918,9 @@ async function hydrateJellyfin() {
   commitAdvancedInputsWebhook();
   commitAdvancedInputsTrakt();
 
-  const enabled = !!read("scrobble.enabled", false);
-  const mode = String(read("scrobble.mode", "webhook")).toLowerCase();
+  const sources = scrobbleSourceState();
+  const enabled = !!(sources.webhook || sources.watcher);
+  const mode = scrobbleLegacyMode(sources);
   const prov = provider();
 
   const wlWebHost = $("#sc-whitelist-webhook", STATE.mount);
@@ -2930,6 +2974,10 @@ if (dups.length) {
   return {
     enabled,
     mode: mode === "watch" ? "watch" : "webhook",
+    sources: {
+      webhook: !!sources.webhook,
+      watcher: !!sources.watcher,
+    },
     delete_plex: !!read("scrobble.delete_plex", false),
     delete_plex_types: read("scrobble.delete_plex_types", ["movie"]),
 
@@ -3053,5 +3101,3 @@ async function init(opts = {}) {
     init({ mountId: "scrobble-mount" });
   });
 })(window, document);
-
-

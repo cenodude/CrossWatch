@@ -29,6 +29,7 @@ from providers.scrobble.scrobble import (
     mask_account as _mask_account,
 )
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
+from providers.scrobble.sources import source_enabled
 
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
@@ -1018,8 +1019,7 @@ class WatchService:
         if t in ("timeline", "progress"):
             try:
                 cfg = self._active_cfg()
-                sc = (cfg.get("scrobble") or {})
-                if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+                if not source_enabled(cfg, "watcher"):
                     return
                 self._ingest_progress_from_alert(alert, cfg)
             except Exception:
@@ -1033,8 +1033,7 @@ class WatchService:
             except Exception:
                 server_uuid = None
             cfg = self._active_cfg()
-            sc = (cfg.get("scrobble") or {})
-            if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+            if not source_enabled(cfg, "watcher"):
                 return
 
             try:
@@ -1246,8 +1245,7 @@ class WatchService:
     def start(self) -> None:
         self._stop.clear()
         cfg = self._cfg_provider() or {}
-        sc = (cfg.get("scrobble") or {})
-        if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+        if not source_enabled(cfg, "watcher"):
             self._log("Watcher disabled by config; not starting", "INFO")
             return
         lvl = "DEBUG" if self._quiet_startup else "INFO"
@@ -1322,7 +1320,7 @@ def autostart_from_config() -> WatchService | None:
     global _AUTO_WATCH
     cfg = _cfg() or {}
     sc = (cfg.get("scrobble") or {})
-    if not (sc.get("enabled") and str(sc.get("mode") or "").lower() == "watch"):
+    if not source_enabled(cfg, "watcher"):
         return None
     if not ((sc.get("watch") or {}).get("autostart")):
         return None
@@ -1630,7 +1628,7 @@ def process_rating_webhook(
 ) -> dict[str, Any]:
     cfg = cfg_override or _cfg() or {}
     sc = (cfg.get("scrobble") or {})
-    if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+    if not source_enabled(cfg, "watcher"):
         return {"ok": True, "ignored": True}
 
     watch_cfg = (sc.get("watch") or {})

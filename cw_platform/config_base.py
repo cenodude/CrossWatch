@@ -549,13 +549,13 @@ DEFAULT_CFG: dict[str, Any] = {
     # --- Scrobble ------------------------------------------------------------
     "scrobble": {
         "enabled": False,                               # Master toggle
-        "mode": "watch",                                # "watch" | "webhook"
+        "mode": "watch",                                # Legacy fallback: "watch" | "webhook"; new saves use scrobble.sources for independent toggles
         "delete_plex": False,                           # Old name but still valid. Auto-remove movies from all your Watchlists, for all media servers
         "delete_plex_types": ["movie"],                 # Old name but still valid. Movie/show/episode
 
         # Watcher settings
         "watch": {
-            "autostart": False,                         # Start watcher on boot if enabled+mode=watch
+            "autostart": False,                         # Start watcher on boot if the watcher source is enabled
             "routes": [],                               # Route-based config
             "plex_simkl_ratings": False,                # Watch mode: forward Plex ratings to SIMKL
             "plex_trakt_ratings": False,                # Watch mode: forward Plex ratings to Trakt

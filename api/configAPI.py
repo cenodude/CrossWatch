@@ -13,6 +13,7 @@ from packaging.version import InvalidVersion, Version
 
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
+from providers.scrobble.sources import source_enabled
 
 def _env() -> dict[str, Any]:
     try:
@@ -57,7 +58,51 @@ def _nostore(res: JSONResponse) -> JSONResponse:
 
 router = APIRouter(prefix="/api", tags=["config"])
 
+_LAST_SCROBBLE_SOURCE_LOG: tuple[bool, bool, bool] | None = None
+
+
+def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None:
+    global _LAST_SCROBBLE_SOURCE_LOG
+    try:
+        sc = cfg.get("scrobble") if isinstance(cfg.get("scrobble"), dict) else {}
+        enabled = bool((sc or {}).get("enabled"))
+        webhook = source_enabled(cfg, "webhook")
+        watcher = source_enabled(cfg, "watcher")
+        state = (enabled, webhook, watcher)
+        if state == _LAST_SCROBBLE_SOURCE_LOG:
+            return
+        _LAST_SCROBBLE_SOURCE_LOG = state
+
+        cw = env.get("CW")
+        logger_cls = getattr(cw, "_UIHostLogger", None) if cw is not None else None
+        base_log = getattr(cw, "LOG", None) if cw is not None else None
+        logger = logger_cls("SCROBBLE", "SCROBBLE") if callable(logger_cls) else None
+
+        def emit(message: str, level: str = "INFO") -> None:
+            if callable(base_log):
+                base_log(message, level=level, module="SCROBBLE")
+                return
+            if callable(logger):
+                logger(message, level=level)
+
+        if webhook and watcher:
+            emit(
+                "WARNING: both Webhook and Watcher are enabled; duplicate events are possible if the same server sends both",
+                level="WARN",
+            )
+        elif webhook:
+            emit("webhook endpoints enabled; waiting for Plex/Jellyfin/Emby events")
+        elif watcher:
+            emit("watcher source enabled")
+        else:
+            emit("scrobble sources disabled")
+    except Exception:
+        pass
+
+
 def _after_config_save(env: dict[str, Any], cfg: dict[str, Any]) -> None:
+    _log_scrobble_source_state(env, cfg)
+
     try:
         pc = env["probes_cache"]; ps = env["probes_status_cache"]
         if isinstance(pc, dict):
@@ -367,7 +412,7 @@ def api_config_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
     features = cfg.setdefault("features", {})
     watch_feat = features.setdefault("watch", {})
-    watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and sc.get("watch", {}).get("autostart", False))
+    watch_feat["enabled"] = bool(source_enabled(cfg, "watcher") and sc.get("watch", {}).get("autostart", False))
 
     try:
         env["prune"](cfg)
@@ -443,7 +488,7 @@ def api_config_migrate() -> dict[str, Any]:
 
     features = cfg.setdefault("features", {})
     watch_feat = features.setdefault("watch", {})
-    watch_feat["enabled"] = bool(sc_enabled and mode == "watch" and sc.get("watch", {}).get("autostart", False))
+    watch_feat["enabled"] = bool(source_enabled(cfg, "watcher") and sc.get("watch", {}).get("autostart", False))
 
     try:
         env["prune"](cfg)

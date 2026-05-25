@@ -16,6 +16,7 @@ except Exception:
 from cw_platform.config_base import load_config
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
+from providers.scrobble.sources import source_enabled
 
 TRAKT_API = "https://api.trakt.tv"
 _HTTP = requests.Session()
@@ -1168,8 +1169,7 @@ class EmbyWatchService:
     def start(self) -> None:
         self._stop.clear()
         cfg = self._active_cfg() or {}
-        sc = (cfg.get("scrobble") or {})
-        if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+        if not source_enabled(cfg, "watcher"):
             self._log("Watcher disabled by config; not starting", "INFO")
             return
         if self._disabled:

@@ -641,7 +641,22 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         cfg = load_config() or {}
         sc = (cfg.get("scrobble") or {}) or {}
         watch = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
-        want_autostart = bool(sc.get("enabled")) and str(sc.get("mode") or "").lower() == "watch" and bool(watch.get("autostart"))
+        from providers.scrobble.sources import source_enabled
+        want_webhooks = source_enabled(cfg, "webhook")
+        want_autostart = source_enabled(cfg, "watcher") and bool(watch.get("autostart"))
+
+        if want_webhooks:
+            LOG(
+                "webhook endpoints enabled; waiting for Plex/Jellyfin/Emby events",
+                level="INFO",
+                module="WEBHOOK",
+            )
+        if want_webhooks and source_enabled(cfg, "watcher"):
+            LOG(
+                "WARNING: both Webhook and Watcher are enabled; avoid sending the same server through both",
+                level="WARN",
+                module="SCROBBLE",
+            )
 
         if want_autostart:
             try:
