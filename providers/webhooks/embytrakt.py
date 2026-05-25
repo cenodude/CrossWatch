@@ -19,6 +19,7 @@ except Exception:
 from providers.scrobble.currently_watching import update_from_payload as _cw_update
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import mask_account as _mask_account
+from providers.scrobble.sources import source_enabled
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except Exception:
@@ -846,7 +847,7 @@ def process_webhook(
     try:
         cfg = _ensure_scrobble(_load_config())
         sc = cfg.get("scrobble") or {}
-        if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "webhook":
+        if not source_enabled(cfg, "webhook"):
             _emit(logger, "scrobble webhook disabled", "DEBUG")
             return {"ok": True, "ignored": True}
         if not payload:

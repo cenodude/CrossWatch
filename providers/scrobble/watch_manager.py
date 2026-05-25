@@ -17,6 +17,7 @@ except Exception:
 from cw_platform.config_base import load_config
 from providers.scrobble.routes import build_route_cfg, build_route_cfg_by_id, find_route, normalize_routes
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent
+from providers.scrobble.sources import source_enabled
 
 
 def _log(msg: str, level: str = "INFO") -> None:
@@ -234,8 +235,7 @@ class WatchManager:
             self.stop_all()
 
             cfg = load_config() or {}
-            sc = (cfg.get("scrobble") or {}) or {}
-            if not bool(sc.get("enabled")) or str(sc.get("mode") or "").lower() != "watch":
+            if not source_enabled(cfg, "watcher"):
                 self._app.state.watch_groups = {}
                 return self.status()
 

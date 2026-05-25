@@ -20,6 +20,7 @@ from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
+from providers.scrobble.sources import scrobble_sources
 
 try:
     from providers.scrobble.currently_watching import state_file as _cw_state_file
@@ -246,9 +247,12 @@ def api_scrobble_event_routes() -> dict[str, Any]:
     sc = (cfg.get("scrobble") or {}) if isinstance(cfg.get("scrobble"), dict) else {}
     enabled = bool(sc.get("enabled"))
     mode = str(sc.get("mode") or "").strip().lower()
+    sources = scrobble_sources(sc)
+    watcher_enabled = bool(sources.get("watcher"))
+    webhook_enabled = bool(sources.get("webhook"))
 
     watcher_routes: list[dict[str, Any]] = []
-    if enabled and mode == "watch":
+    if watcher_enabled:
         for raw in normalize_routes(cfg):
             if not isinstance(raw, dict) or not bool(raw.get("enabled")):
                 continue
@@ -268,7 +272,7 @@ def api_scrobble_event_routes() -> dict[str, Any]:
             watcher_routes.append(route)
 
     webhook_routes: list[dict[str, Any]] = []
-    if enabled and mode == "webhook":
+    if webhook_enabled:
         for provider in ("plex", "jellyfin", "emby"):
             webhook_routes.append({
                 "id": provider,
@@ -282,8 +286,9 @@ def api_scrobble_event_routes() -> dict[str, Any]:
         "ok": True,
         "enabled": enabled,
         "mode": mode,
-        "watcher_enabled": enabled and mode == "watch",
-        "webhook_enabled": enabled and mode == "webhook",
+        "sources": sources,
+        "watcher_enabled": watcher_enabled,
+        "webhook_enabled": webhook_enabled,
         "watcher_routes": watcher_routes,
         "webhook_routes": webhook_routes,
     }
