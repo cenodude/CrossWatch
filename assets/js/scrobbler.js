@@ -103,6 +103,14 @@ function clearStickyNote(id) {
       "Only scrobble activity for the usernames listed here.",
     "sc-help-watch-server-uuid":
       "Optional filter for one specific server or user identity.",
+    "sc-help-watch-server-uuid-allow":
+      "Accept watcher events only from these Plex server UUIDs. Leave empty to accept all servers unless they are blacklisted.",
+    "sc-help-watch-server-uuid-block":
+      "Ignore watcher events from these Plex server UUIDs. The blacklist wins over the allowlist.",
+    "sc-help-webhook-server-uuid-allow":
+      "Accept Plex webhook events only from these server UUIDs. Leave empty to accept all servers unless they are blacklisted.",
+    "sc-help-webhook-server-uuid-block":
+      "Ignore Plex webhook events from these server UUIDs. The blacklist wins over the allowlist.",
     "sc-help-watch-other-filters":
       "Extra Plex-only route filters for additional filtering options.",
     "sc-help-watch-ignore-live-tv-dvr":
@@ -187,8 +195,9 @@ function clearStickyNote(id) {
     d.head.appendChild(s);
     const t = d.createElement("style");
     t.id = "sc-styles-tweaks";
-    t.textContent = `.sc-shell #sc-server-required:empty,.sc-shell #sc-note:empty,.sc-shell #sc-endpoint-note:empty,.sc-shell #sc-webhook-warning:empty{display:none!important}.sc-shell .cc-head>div:first-child{display:inline-flex;align-items:center;gap:10px;min-width:0}.sc-shell .cx-switch-wrap,.sc-shell .sc-opt-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sc-shell .cx-switch-wrap .sc-toggle,.sc-shell .sc-opt-row .muted{display:inline-flex;align-items:center;min-height:40px;margin:0}.sc-shell .cx-switch-wrap .cx-help,.sc-shell .sc-opt-row .cx-help{display:inline-flex;align-items:center;justify-content:center;align-self:center;margin:0}.sc-shell .sc-inline-head{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.sc-shell .sc-route-select-host{display:block;width:100%}.sc-shell .sc-route-select-host>.cw-icon-select{width:100%}.sc-shell .sc-route-table .cw-icon-select-btn{min-height:34px;padding:0 10px;border-radius:14px}.sc-shell .sc-route-table .cw-icon-select-label{font-size:13px}.sc-shell #sc-filters.sc-filters-enhanced>.body{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}.sc-shell #sc-filters.sc-filters-enhanced #sc-route-filter-wrap{display:grid;gap:10px;width:100%;max-width:none;margin:0!important;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:stretch}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid>div{display:grid;gap:10px;align-content:start;min-width:0;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced #sc-whitelist{min-height:44px;align-content:flex-start}.sc-shell #sc-filters.sc-filters-enhanced #sc-users-note,.sc-shell #sc-filters.sc-filters-enhanced #sc-uuid-note{min-height:18px}.sc-shell .sc-filter-input-row{display:grid!important;align-items:center;gap:8px}.sc-shell .sc-filter-input-row--actions{grid-template-columns:minmax(0,1fr) 84px 84px}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:block;min-height:1px}.sc-shell .sc-filter-input-row .btn{width:100%}.sc-shell #sc-advanced .body{display:block}.sc-shell .sc-advanced-header{display:flex;align-items:center;margin:0 0 16px}.sc-shell .sc-advanced-title{display:inline-flex;align-items:center;gap:8px;min-height:28px;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-shell .sc-advanced-title .cx-help{margin:0}.sc-shell .sc-advanced-fields{display:grid;gap:16px}.sc-shell .sc-advanced-note{margin-top:12px}.sc-shell .sc-adv-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) 36px 112px;align-items:center;min-height:88px}.sc-shell .sc-adv-grid .field input{width:112px}.sc-shell .sc-adv-grid .field label{line-height:1.35}.sc-shell .sc-adv-grid .field .cx-help{justify-self:center;transform:none}@media (max-width:1180px){.sc-shell .sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:980px){.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:1fr}}@media (max-width:640px){.sc-shell .sc-filter-input-row,.sc-shell .sc-filter-input-row--actions,.sc-shell .sc-filter-input-row--fetch{grid-template-columns:minmax(0,1fr)!important}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:none}.sc-shell .sc-adv-grid{grid-template-columns:1fr}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) auto}.sc-shell .sc-adv-grid .field input{grid-column:1 / -1;width:100%}}`;
-    t.textContent += `.sc-user-pop{z-index:10050!important}.cw-media-user-picker{z-index:10060!important}.sc-route-modal-card{scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.92) rgba(255,255,255,.06)}.sc-route-modal-card::-webkit-scrollbar{width:12px}.sc-route-modal-card::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}.sc-route-modal-card::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,92,255,.95),rgba(86,60,180,.92));border-radius:999px;border:2px solid rgba(7,9,14,.88)}.sc-route-modal-card::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(145,116,255,.98),rgba(104,79,206,.95))}`;
+    t.textContent = `.sc-shell #sc-server-required:empty,.sc-shell #sc-note:empty,.sc-shell #sc-endpoint-note:empty,.sc-shell #sc-webhook-warning:empty{display:none!important}.sc-shell .cc-head>div:first-child{display:inline-flex;align-items:center;gap:10px;min-width:0}.sc-shell .cx-switch-wrap,.sc-shell .sc-opt-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sc-shell .cx-switch-wrap .sc-toggle,.sc-shell .sc-opt-row .muted{display:inline-flex;align-items:center;min-height:40px;margin:0}.sc-shell .cx-switch-wrap .cx-help,.sc-shell .sc-opt-row .cx-help{display:inline-flex;align-items:center;justify-content:center;align-self:center;margin:0}.sc-shell .sc-inline-head{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.sc-shell .sc-webhook-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.sc-shell .sc-webhook-filter-grid>div{align-content:start}.sc-shell .sc-webhook-filter-grid .chips{min-height:32px}.sc-shell .sc-route-select-host{display:block;width:100%}.sc-shell .sc-route-select-host>.cw-icon-select{width:100%}.sc-shell .sc-route-table .cw-icon-select-btn{min-height:34px;padding:0 10px;border-radius:14px}.sc-shell .sc-route-table .cw-icon-select-label{font-size:13px}.sc-shell #sc-filters.sc-filters-enhanced>.body{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}.sc-shell #sc-filters.sc-filters-enhanced #sc-route-filter-wrap{display:grid;gap:10px;width:100%;max-width:none;margin:0!important;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:stretch}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid>div{display:grid;gap:10px;align-content:start;min-width:0;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced #sc-whitelist{min-height:44px;align-content:flex-start}.sc-shell #sc-filters.sc-filters-enhanced #sc-users-note,.sc-shell #sc-filters.sc-filters-enhanced #sc-uuid-note{min-height:18px}.sc-shell .sc-filter-input-row{display:grid!important;align-items:center;gap:8px}.sc-shell .sc-filter-input-row--actions{grid-template-columns:minmax(0,1fr) 84px 84px}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:block;min-height:1px}.sc-shell .sc-filter-input-row .btn{width:100%}.sc-shell #sc-advanced .body{display:block}.sc-shell .sc-advanced-header{display:flex;align-items:center;margin:0 0 16px}.sc-shell .sc-advanced-title{display:inline-flex;align-items:center;gap:8px;min-height:28px;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-shell .sc-advanced-title .cx-help{margin:0}.sc-shell .sc-advanced-fields{display:grid;gap:16px}.sc-shell .sc-advanced-note{margin-top:12px}.sc-shell .sc-adv-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) 36px 112px;align-items:center;min-height:88px}.sc-shell .sc-adv-grid .field input{width:112px}.sc-shell .sc-adv-grid .field label{line-height:1.35}.sc-shell .sc-adv-grid .field .cx-help{justify-self:center;transform:none}@media (max-width:1180px){.sc-shell .sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-shell .sc-webhook-filter-grid{grid-template-columns:1fr}}@media (max-width:980px){.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:1fr}}@media (max-width:640px){.sc-shell .sc-filter-input-row,.sc-shell .sc-filter-input-row--actions,.sc-shell .sc-filter-input-row--fetch{grid-template-columns:minmax(0,1fr)!important}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:none}.sc-shell .sc-adv-grid{grid-template-columns:1fr}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) auto}.sc-shell .sc-adv-grid .field input{grid-column:1 / -1;width:100%}}`;
+    t.textContent += `.sc-user-pop{z-index:10050!important}.cw-media-user-picker{z-index:10060!important}.sc-route-modal-card{scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.92) rgba(255,255,255,.06)}.sc-route-modal-card::-webkit-scrollbar{width:12px}.sc-route-modal-card::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}.sc-route-modal-card::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,92,255,.95),rgba(86,60,180,.92));border-radius:999px;border:2px solid rgba(7,9,14,.88)}.sc-route-modal-card::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(145,116,255,.98),rgba(104,79,206,.95))}.sc-route-modal .chips{min-width:0}.sc-route-modal .chip{display:inline-grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:6px;max-width:100%;min-width:0;white-space:nowrap;overflow:hidden}.sc-route-modal .chip>span:first-child{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sc-route-modal .chip .rm{display:inline-flex;align-items:center;justify-content:center;min-width:16px}.sc-route-filter-uuid-list .chip{width:100%}.sc-route-filter-uuid-list .chip>span:first-child{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}`;
+    t.textContent += `@media (max-width:980px){.sc-route-filter-grid{grid-template-columns:1fr!important}}`;
     d.head.appendChild(t);
   }
 
@@ -306,6 +315,17 @@ function clearStickyNote(id) {
   }
 
   const asArray = (v) => (Array.isArray(v) ? v.slice() : v == null || v === "" ? [] : [String(v)]);
+  const uniqStrings = (values) => {
+    const out = [];
+    const seen = new Set();
+    asArray(values).forEach((value) => {
+      const clean = String(value || "").trim();
+      if (!clean || seen.has(clean)) return;
+      seen.add(clean);
+      out.push(clean);
+    });
+    return out;
+  };
   const clamp100 = (n) => Math.min(100, Math.max(1, Math.round(Number(n))));
   const norm100 = (n, dflt) => clamp100(Number.isFinite(+n) ? +n : dflt);
   const clampRange = (n, min, max) => Math.min(max, Math.max(min, Math.round(Number(n))));
@@ -629,10 +649,22 @@ serverUUID: async (instanceId) => {
   function routeFilters(route) {
     const filters = (route && typeof route.filters === "object" && route.filters) ? route.filters : {};
     const whitelist = asArray(filters.username_whitelist || []);
-    const serverUuid = String(filters.server_uuid || "").trim();
+    const serverUuidAllow = uniqStrings([
+      ...asArray(filters.server_uuid_whitelist || []),
+      String(filters.server_uuid || "").trim(),
+    ]);
+    const serverUuidBlock = uniqStrings(filters.server_uuid_blacklist || []);
+    const serverUuid = serverUuidAllow[0] || "";
     const userId = String(filters.user_id || "").trim();
     const ignoreLiveTvDvr = !!filters.ignore_live_tv_dvr;
-    return { whitelist, server_uuid: serverUuid, user_id: userId, ignore_live_tv_dvr: ignoreLiveTvDvr };
+    return {
+      whitelist,
+      server_uuid: serverUuid,
+      server_uuid_whitelist: serverUuidAllow,
+      server_uuid_blacklist: serverUuidBlock,
+      user_id: userId,
+      ignore_live_tv_dvr: ignoreLiveTvDvr,
+    };
   }
 
   function routeFilterSummaryText(route) {
@@ -640,7 +672,8 @@ serverUUID: async (instanceId) => {
     const parts = [];
     if (filters.whitelist.length) parts.push(`${filters.whitelist.length} user${filters.whitelist.length === 1 ? "" : "s"}`);
     if (String(route?.provider || "").toLowerCase() === "plex") {
-      if (filters.server_uuid) parts.push("UUID set");
+      if (filters.server_uuid_whitelist.length) parts.push(`${filters.server_uuid_whitelist.length} UUID allow`);
+      if (filters.server_uuid_blacklist.length) parts.push(`${filters.server_uuid_blacklist.length} UUID block`);
       if (filters.ignore_live_tv_dvr) parts.push("Live TV ignored");
     } else if (filters.user_id) {
       parts.push("User ID set");
@@ -1396,7 +1429,11 @@ try {
     const next = { username_whitelist: asArray(whitelist).map((x) => String(x || "").trim()).filter(Boolean) };
     const value = String(rawId || "").trim();
     if (String(route?.provider || "").toLowerCase() === "plex") {
-      next.server_uuid = value;
+      const allow = uniqStrings(options.server_uuid_whitelist || []);
+      const block = uniqStrings(options.server_uuid_blacklist || []);
+      next.server_uuid = allow[0] || value || "";
+      next.server_uuid_whitelist = allow.length ? allow : (value ? [value] : []);
+      next.server_uuid_blacklist = block;
       if (options.ignore_live_tv_dvr) next.ignore_live_tv_dvr = true;
     } else if (value) {
       next.user_id = value;
@@ -1413,7 +1450,7 @@ try {
     });
     const card = el("div", {
       className: "sc-route-modal-card",
-      style: "width:min(760px,calc(100vw - 32px));max-height:min(88vh,820px);overflow:auto;border-radius:22px;background:linear-gradient(180deg,rgba(12,14,23,.98),rgba(6,8,12,.99));border:1px solid rgba(255,255,255,.10);box-shadow:0 24px 60px rgba(0,0,0,.45);padding:18px 18px 16px",
+      style: "width:min(1080px,calc(100vw - 32px));max-height:min(88vh,820px);overflow:auto;border-radius:22px;background:linear-gradient(180deg,rgba(12,14,23,.98),rgba(6,8,12,.99));border:1px solid rgba(255,255,255,.10);box-shadow:0 24px 60px rgba(0,0,0,.45);padding:18px 18px 16px",
     });
     overlay.appendChild(card);
 
@@ -1433,10 +1470,12 @@ try {
     });
     card.appendChild(note);
 
-    const grid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:16px" });
+    const grid = el("div", { className: "sc-route-filter-grid", style: "display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px" });
     const namesBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
     const idBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
-    grid.append(namesBox, idBox);
+    const uuidAllowBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
+    const uuidBlockBox = el("div", { style: "display:grid;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
+    grid.append(namesBox, idBox, uuidAllowBox, uuidBlockBox);
     card.appendChild(grid);
 
     const otherFiltersBox = el("div", { style: "display:none;grid-column:1 / -1;gap:10px;padding:16px 18px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015))" });
@@ -1496,19 +1535,86 @@ try {
     idRow.append(idInput, fetchBtn);
     idBox.append(idHead, idNote, idRow);
 
+    const uuidAllowHead = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
+    uuidAllowHead.append(
+      el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Server UUID allowlist" }),
+      helpBtnNode ? helpBtnNode("sc-help-watch-server-uuid-allow") : el("span")
+    );
+    const uuidAllowChips = el("div", { className: "chips sc-route-filter-uuid-list", style: "display:flex;flex-wrap:wrap;gap:6px;min-height:32px;align-content:flex-start" });
+    const uuidAllowNote = el("div", { className: "micro-note", style: "min-height:18px" });
+    const uuidAllowRow = el("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) 78px 78px;gap:8px;align-items:center" });
+    const uuidAllowInput = el("input", {
+      id: "sc-route-filter-uuid-allow-input",
+      name: "route_filter_uuid_allow",
+      className: "input",
+      placeholder: "Add server UUID...",
+    });
+    const uuidAllowAdd = el("button", { type: "button", className: "btn small", textContent: "Add" });
+    const uuidAllowFetch = el("button", { type: "button", className: "btn small", textContent: "Fetch" });
+    uuidAllowRow.append(uuidAllowInput, uuidAllowAdd, uuidAllowFetch);
+    uuidAllowBox.append(uuidAllowHead, uuidAllowChips, uuidAllowNote, uuidAllowRow);
+
+    const uuidBlockHead = el("div", { style: "display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap" });
+    uuidBlockHead.append(
+      el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Server UUID blacklist" }),
+      helpBtnNode ? helpBtnNode("sc-help-watch-server-uuid-block") : el("span")
+    );
+    const uuidBlockChips = el("div", { className: "chips sc-route-filter-uuid-list", style: "display:flex;flex-wrap:wrap;gap:6px;min-height:32px;align-content:flex-start" });
+    const uuidBlockNote = el("div", { className: "micro-note", style: "min-height:18px" });
+    const uuidBlockRow = el("div", { style: "display:grid;grid-template-columns:minmax(0,1fr) 78px 78px;gap:8px;align-items:center" });
+    const uuidBlockInput = el("input", {
+      id: "sc-route-filter-uuid-block-input",
+      name: "route_filter_uuid_block",
+      className: "input",
+      placeholder: "Add server UUID...",
+    });
+    const uuidBlockAdd = el("button", { type: "button", className: "btn small", textContent: "Add" });
+    const uuidBlockFetch = el("button", { type: "button", className: "btn small", textContent: "Fetch" });
+    uuidBlockRow.append(uuidBlockInput, uuidBlockAdd, uuidBlockFetch);
+    uuidBlockBox.append(uuidBlockHead, uuidBlockChips, uuidBlockNote, uuidBlockRow);
+
     const foot = el("div", { style: "display:flex;justify-content:flex-end;gap:10px;margin-top:16px" });
     const cancel = el("button", { type: "button", className: "btn small", textContent: "Cancel" });
     const save = el("button", { type: "button", className: "btn small", textContent: "Save" });
     foot.append(cancel, save);
     card.appendChild(foot);
 
-    const modalState = { rid: "", provider: "plex", instance: "default", whitelist: [] };
+    const modalState = { rid: "", provider: "plex", instance: "default", whitelist: [], uuidAllow: [], uuidBlock: [] };
 
     const closeModal = () => {
       overlay.classList.add("hidden");
       overlay.style.display = "none";
       overlay.dataset.rid = "";
       modalState.rid = "";
+    };
+
+    const renderUuidList = (host, values, removeFn) => {
+      host.innerHTML = "";
+      values.forEach((value) => host.append(chip(value, removeFn)));
+    };
+
+    const addUuidValue = (target, value, source = "added") => {
+      const clean = String(value || "").trim();
+      if (!clean) return;
+      const key = target === "block" ? "uuidBlock" : "uuidAllow";
+      const note = target === "block" ? uuidBlockNote : uuidAllowNote;
+      const host = target === "block" ? uuidBlockChips : uuidAllowChips;
+      const input = target === "block" ? uuidBlockInput : uuidAllowInput;
+      if (modalState[key].includes(clean)) {
+        note.textContent = `${clean} already added`;
+        return;
+      }
+      modalState[key] = [...modalState[key], clean];
+      renderUuidList(host, modalState[key], (item) => removeUuidValue(target, item));
+      input.value = "";
+      note.textContent = source === "fetched" ? `Fetched ${clean}` : `Added ${clean}`;
+    };
+
+    const removeUuidValue = (target, value) => {
+      const key = target === "block" ? "uuidBlock" : "uuidAllow";
+      const host = target === "block" ? uuidBlockChips : uuidAllowChips;
+      modalState[key] = modalState[key].filter((item) => item !== value);
+      renderUuidList(host, modalState[key], (item) => removeUuidValue(target, item));
     };
 
     const renderWhitelist = () => {
@@ -1543,6 +1649,8 @@ try {
       modalState.provider = prov;
       modalState.instance = String(route.provider_instance || "default");
       modalState.whitelist = filters.whitelist.slice();
+      modalState.uuidAllow = filters.server_uuid_whitelist.slice();
+      modalState.uuidBlock = filters.server_uuid_blacklist.slice();
       overlay.dataset.rid = route.id;
       title.textContent = `Route Filters - ${route.id}`;
       subtitle.textContent = routeLabel(route);
@@ -1553,10 +1661,20 @@ try {
         : "Optional. Fetch gets the user ID for the configured instance.";
       idLabel.textContent = prov === "plex" ? "Server UUID" : "User ID";
       idInput.placeholder = prov === "plex" ? "e.g. abcd1234..." : "e.g. 80ee72c0...";
-      idInput.value = prov === "plex" ? filters.server_uuid : filters.user_id;
+      idInput.value = prov === "plex" ? "" : filters.user_id;
+      uuidAllowInput.value = "";
+      uuidBlockInput.value = "";
+      uuidAllowNote.textContent = "";
+      uuidBlockNote.textContent = "";
+      grid.style.gridTemplateColumns = prov === "plex" ? "repeat(3,minmax(0,1fr))" : "1fr 1fr";
+      idBox.style.display = prov === "plex" ? "none" : "grid";
+      uuidAllowBox.style.display = prov === "plex" ? "grid" : "none";
+      uuidBlockBox.style.display = prov === "plex" ? "grid" : "none";
       otherFiltersBox.style.display = prov === "plex" ? "grid" : "none";
       liveTvInput.checked = prov === "plex" && !!filters.ignore_live_tv_dvr;
       renderWhitelist();
+      renderUuidList(uuidAllowChips, modalState.uuidAllow, (item) => removeUuidValue("allow", item));
+      renderUuidList(uuidBlockChips, modalState.uuidBlock, (item) => removeUuidValue("block", item));
       bindHelpTips(card);
       overlay.classList.remove("hidden");
       overlay.style.display = "flex";
@@ -1579,11 +1697,43 @@ try {
         onPick: (u) => addWhitelistName(u?.name, "picked"),
       });
     });
+    const fetchRouteUuid = async () => {
+      if (modalState.rid) setActiveRouteFromUi(modalState.rid);
+      const result = await API.serverUUID(modalState.instance);
+      return String(result?.server_uuid || result?.uuid || result?.id || "").trim();
+    };
+    const fetchIntoUuidList = async (target) => {
+      const note = target === "block" ? uuidBlockNote : uuidAllowNote;
+      try {
+        const value = await fetchRouteUuid();
+        if (!value) {
+          note.textContent = "No server UUID";
+          return;
+        }
+        addUuidValue(target, value, "fetched");
+      } catch {
+        note.textContent = "Fetch failed";
+      }
+    };
+    on(uuidAllowAdd, "click", () => addUuidValue("allow", uuidAllowInput.value, "added"));
+    on(uuidAllowInput, "keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addUuidValue("allow", uuidAllowInput.value, "added");
+      }
+    });
+    on(uuidAllowFetch, "click", () => fetchIntoUuidList("allow"));
+    on(uuidBlockAdd, "click", () => addUuidValue("block", uuidBlockInput.value, "added"));
+    on(uuidBlockInput, "keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addUuidValue("block", uuidBlockInput.value, "added");
+      }
+    });
+    on(uuidBlockFetch, "click", () => fetchIntoUuidList("block"));
     on(fetchBtn, "click", async () => {
       try {
-        if (modalState.rid) setActiveRouteFromUi(modalState.rid);
-        const result = await API.serverUUID(modalState.instance);
-        const value = String(result?.server_uuid || result?.uuid || result?.id || "").trim();
+        const value = await fetchRouteUuid();
         if (!value) {
           idNote.textContent = modalState.provider === "plex" ? "No server UUID" : "No user ID";
           return;
@@ -1607,6 +1757,8 @@ try {
       if (!route) return closeModal();
       route.filters = normalizeRouteFiltersForSave(route, modalState.whitelist, idInput.value, {
         ignore_live_tv_dvr: liveTvInput.checked,
+        server_uuid_whitelist: modalState.uuidAllow,
+        server_uuid_blacklist: modalState.uuidBlock,
       });
       setRoutes(routes);
       await persistCurrentScrobblerState("sc-pms-note");
@@ -1632,6 +1784,8 @@ try {
 function chip(text, onRemove, onClick) {
     const c = el("span", { className: "chip" });
     const t = el("span", { textContent: text });
+    c.title = String(text || "");
+    t.title = String(text || "");
     if (onClick) {
       t.style.cursor = "pointer";
       t.title = "Click to select";
@@ -1839,7 +1993,7 @@ function chip(text, onRemove, onClick) {
     injectStyles();
 
         if (STATE.webhookHost) {
-      STATE.webhookHost.innerHTML = `<div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="webhook"><div class="cw-panel-head"><div class="cw-panel-head-main"><div class="cw-panel-title">Webhooks</div><div class="muted">Legacy endpoints that scrobble to Trakt.</div></div><div class="cw-subtiles" aria-label="Webhook sections"><button type="button" class="cw-subtile active" data-sub="plex">Plex</button><button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button><button type="button" class="cw-subtile" data-sub="emby">Emby</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button></div></div><div id="sc-webhook-warning" class="micro-note" style="margin-top:10px"></div><div id="sc-endpoint-note" class="micro-note"></div><div class="cw-subpanels" style="gap:8px"><div class="cw-subpanel active" data-sub="plex"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("plex")}<code id="sc-webhook-url-plex"></code><button id="sc-copy-plex" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div><div class="sc-subbox"><div class="head">Filters</div><div class="body"><div class="sc-filter-grid"><div><div class="muted">Username whitelist</div><div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div><div id="sc-users-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;margin-top:6px"><input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1"><button id="sc-add-user-webhook" class="btn small">Add</button><button id="sc-load-users-webhook" class="btn small">Pick</button></div></div><div><div class="muted">Server UUID</div><div id="sc-uuid-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="sc-server-uuid-webhook" class="input" placeholder="e.g. abcd1234..." style="flex:1"><button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button></div></div></div></div></div><div class="sc-subbox"><div class="head">Plex settings</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>${helpBtn("sc-help-webhook-plex-ratings")}</span></div></div></div><div class="cw-subpanel" data-sub="jellyfin"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-jf"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("jellyfin")}<code id="sc-webhook-url-jf"></code><button id="sc-copy-jf" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-jf"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="emby"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-emby"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("emby")}<code id="sc-webhook-url-emby"></code><button id="sc-copy-emby" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-emby"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="advanced"><div class="row" style="justify-content:flex-start;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-adv"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div><div class="sc-subbox"><div class="head">Advanced</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-stop-pause-webhook", "Stop pause >=", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1-100.</div></div></div></div></div></div></div>`;
+      STATE.webhookHost.innerHTML = `<div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="webhook"><div class="cw-panel-head"><div class="cw-panel-head-main"><div class="cw-panel-title">Webhooks</div><div class="muted">Legacy endpoints that scrobble to Trakt.</div></div><div class="cw-subtiles" aria-label="Webhook sections"><button type="button" class="cw-subtile active" data-sub="plex">Plex</button><button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button><button type="button" class="cw-subtile" data-sub="emby">Emby</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button></div></div><div id="sc-webhook-warning" class="micro-note" style="margin-top:10px"></div><div id="sc-endpoint-note" class="micro-note"></div><div class="cw-subpanels" style="gap:8px"><div class="cw-subpanel active" data-sub="plex"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("plex")}<code id="sc-webhook-url-plex"></code><button id="sc-copy-plex" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div><div class="sc-subbox"><div class="head">Filters</div><div class="body"><div class="sc-filter-grid"><div><div class="muted">Username whitelist</div><div id="sc-whitelist-webhook" class="chips" style="margin-top:4px"></div><div id="sc-users-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;margin-top:6px"><input id="sc-user-input-webhook" class="input" placeholder="Add username..." style="flex:1"><button id="sc-add-user-webhook" class="btn small">Add</button><button id="sc-load-users-webhook" class="btn small">Pick</button></div></div><div style="display:grid;gap:14px"><div><div class="muted">Server UUID allowlist</div><div id="sc-server-uuid-allow-webhook" class="chips" style="margin-top:4px"></div><div id="sc-uuid-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="sc-server-uuid-allow-input-webhook" class="input" placeholder="Add server UUID..." style="flex:1"><button id="sc-add-server-uuid-allow-webhook" class="btn small">Add</button><button id="sc-fetch-uuid-allow-webhook" class="btn small">Fetch</button></div></div><div><div class="muted">Server UUID blacklist</div><div id="sc-server-uuid-block-webhook" class="chips" style="margin-top:4px"></div><div id="sc-uuid-block-note-webhook" class="micro-note"></div><div style="display:flex;gap:8px;align-items:center;margin-top:6px"><input id="sc-server-uuid-block-input-webhook" class="input" placeholder="Add server UUID..." style="flex:1"><button id="sc-add-server-uuid-block-webhook" class="btn small">Add</button><button id="sc-fetch-uuid-webhook" class="btn small">Fetch</button></div></div></div></div></div></div><div class="sc-subbox"><div class="head">Plex settings</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-webhook-plex-ratings"><span class="one-line">Enable ratings</span></label>${helpBtn("sc-help-webhook-plex-ratings")}</span></div></div></div><div class="cw-subpanel" data-sub="jellyfin"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-jf"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("jellyfin")}<code id="sc-webhook-url-jf"></code><button id="sc-copy-jf" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-jf"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="emby"><div class="row" style="justify-content:space-between;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-emby"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label><div class="codepair right" style="margin-left:auto">${providerLogImg("emby")}<code id="sc-webhook-url-emby"></code><button id="sc-copy-emby" class="btn small">Copy</button></div></div><div class="sc-subbox"><div class="head">Options</div><div class="body"><span class="cx-switch-wrap"><label class="sc-toggle"><input type="checkbox" id="sc-delete-plex-webhook-emby"><span class="one-line">Auto-remove from Watchlists</span></label>${helpBtn("sc-help-auto-remove")}</span></div></div></div><div class="cw-subpanel" data-sub="advanced"><div class="row" style="justify-content:flex-start;align-items:center;margin-top:6px"><label class="cx-toggle"><input type="checkbox" id="sc-enable-webhook-adv"><span class="cx-toggle-ui" aria-hidden="true"></span><span class="cx-toggle-text">Enable</span><span class="cx-toggle-state" aria-hidden="true"></span></label></div><div class="sc-subbox"><div class="head">Advanced</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-stop-pause-webhook", "Stop pause >=", "sc-help-adv-stop-pause", DEFAULTS.trakt.stop_pause_threshold)}${buildAdvField("sc-force-stop-webhook", "Force stop", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1-100.</div></div></div></div></div></div></div>`;
 
       STATE.webhookHost.querySelector(".cw-panel")?.classList.add("sc-shell");
       enhanceWebhookFiltersUI(STATE.webhookHost);
@@ -2119,6 +2273,17 @@ function chip(text, onRemove, onClick) {
       .filter(Boolean);
   }
 
+  function webhookServerUuidAllowlist() {
+    return uniqStrings([
+      ...asArray(read("scrobble.webhook.filters_plex.server_uuid_whitelist", [])),
+      String(read("scrobble.webhook.filters_plex.server_uuid", "") || "").trim(),
+    ]);
+  }
+
+  function webhookServerUuidBlacklist() {
+    return uniqStrings(read("scrobble.webhook.filters_plex.server_uuid_blacklist", []));
+  }
+
   const scUserPicker = w.CW?.ScrobblerUserPicker?.create({
     STATE,
     el,
@@ -2315,9 +2480,16 @@ function chip(text, onRemove, onClick) {
     wlWeb.forEach((u) => hostWB.append(chip(u, removeUserWebhook)));
   }
 
-  const suWeb = read("scrobble.webhook.filters_plex.server_uuid", "");
-  const suInpWB = $("#sc-server-uuid-webhook", STATE.mount);
-  if (suInpWB) suInpWB.value = suWeb || "";
+  const suAllowHost = $("#sc-server-uuid-allow-webhook", STATE.mount);
+  if (suAllowHost) {
+    suAllowHost.innerHTML = "";
+    webhookServerUuidAllowlist().forEach((uuid) => suAllowHost.append(chip(uuid, removeWebhookServerUuidAllow)));
+  }
+  const suBlockHost = $("#sc-server-uuid-block-webhook", STATE.mount);
+  if (suBlockHost) {
+    suBlockHost.innerHTML = "";
+    webhookServerUuidBlacklist().forEach((uuid) => suBlockHost.append(chip(uuid, removeWebhookServerUuidBlock)));
+  }
 
   const base = location.origin;
   const plexCode = $("#sc-webhook-url-plex", STATE.mount);
@@ -2574,47 +2746,68 @@ function chip(text, onRemove, onClick) {
   }
 
 
-  async function fetchServerUUIDBase(noteId, path, endpoint, successText, emptyText, post) {
-    try {
-      const x = await endpoint();
-      const v = x?.server_uuid || x?.uuid || x?.id || "";
-      const inp = $(path.input, STATE.mount);
-      if (!inp || !v) return setNote(noteId, emptyText, "err");
-      inp.value = v;
-      for (const p of path.write) write(p, v);
-      if (typeof post === "function") post(v);
-      setNote(noteId, successText);
-    } catch {
-      setNote(noteId, "Fetch failed", "err");
-    }
-  }
-
   const watchChipClick = () => undefined;
   function redrawWhitelist(hostSel, path, removeFn, onClick) {
     const host = $(hostSel, STATE.mount);
     if (!host) return;
     host.innerHTML = "";
-    asArray(read(path, [])).forEach((v) => host.append(chip(v, removeFn, onClick)));
+    uniqStrings(read(path, [])).forEach((v) => host.append(chip(v, removeFn, onClick)));
+  }
+  function addToWhitelist(hostSel, path, name, removeFn, onClick) {
+    const clean = String(name || "").trim();
+    if (!clean) return false;
+    const cur = uniqStrings(read(path, []));
+    if (cur.includes(clean)) return false;
+    write(path, [...cur, clean]);
+    const host = $(hostSel, STATE.mount);
+    if (host) host.append(chip(clean, removeFn, onClick));
+    return true;
   }
   function addWhitelistInput(inputSel, hostSel, path, removeFn, onClick) {
     const inp = $(inputSel, STATE.mount);
     const v = String(inp?.value || "").trim();
-    if (!v || !addToWhitelist(hostSel, path, v, removeFn, onClick)) return;
+    if (!v || !addToWhitelist(hostSel, path, v, removeFn, onClick)) return false;
     if (inp) inp.value = "";
+    return true;
   }
   function removeWhitelistItem(value, hostSel, path, removeFn, onClick) {
     write(path, asArray(read(path, [])).filter((x) => String(x) !== String(value)));
     redrawWhitelist(hostSel, path, removeFn, onClick);
   }
-  async function fetchServerUUIDWebhook() {
-    await fetchServerUUIDBase(
-      "sc-uuid-note-webhook",
-      { input: "#sc-server-uuid-webhook", write: ["scrobble.webhook.filters_plex.server_uuid"] },
-      () => j("/api/plex/server_uuid"),
-      "Server UUID fetched",
-      "No server UUID"
-    );
+  async function fetchServerUUIDToWebhookList({ hostSel, path, removeFn, noteId, targetName, syncAllowLegacy = false }) {
+    try {
+      const x = await j("/api/plex/server_uuid");
+      const v = String(x?.server_uuid || x?.uuid || x?.id || "").trim();
+      if (!v) return setNote(noteId, "No server UUID", "err");
+      const added = addToWhitelist(hostSel, path, v, removeFn);
+      if (syncAllowLegacy) {
+        const allow = webhookServerUuidAllowlist();
+        write("scrobble.webhook.filters_plex.server_uuid", allow[0] || "");
+      }
+      setNote(noteId, added ? `Server UUID added to ${targetName}` : `Server UUID already in ${targetName}`);
+    } catch {
+      setNote(noteId, "Fetch failed", "err");
+    }
   }
+
+  const fetchServerUUIDWebhookAllow = () =>
+    fetchServerUUIDToWebhookList({
+      hostSel: "#sc-server-uuid-allow-webhook",
+      path: "scrobble.webhook.filters_plex.server_uuid_whitelist",
+      removeFn: removeWebhookServerUuidAllow,
+      noteId: "sc-uuid-note-webhook",
+      targetName: "allowlist",
+      syncAllowLegacy: true,
+    });
+
+  const fetchServerUUIDWebhookBlock = () =>
+    fetchServerUUIDToWebhookList({
+      hostSel: "#sc-server-uuid-block-webhook",
+      path: "scrobble.webhook.filters_plex.server_uuid_blacklist",
+      removeFn: removeWebhookServerUuidBlock,
+      noteId: "sc-uuid-block-note-webhook",
+      targetName: "blacklist",
+    });
 
   function onAddUserWebhook() {
     addWhitelistInput("#sc-user-input-webhook", "#sc-whitelist-webhook", "scrobble.webhook.filters_plex.username_whitelist", removeUserWebhook);
@@ -2622,6 +2815,48 @@ function chip(text, onRemove, onClick) {
 
   function removeUserWebhook(u) {
     removeWhitelistItem(u, "#sc-whitelist-webhook", "scrobble.webhook.filters_plex.username_whitelist", removeUserWebhook);
+  }
+
+  function onAddWebhookServerUuidAllow() {
+    const added = addWhitelistInput(
+      "#sc-server-uuid-allow-input-webhook",
+      "#sc-server-uuid-allow-webhook",
+      "scrobble.webhook.filters_plex.server_uuid_whitelist",
+      removeWebhookServerUuidAllow
+    );
+    if (added) {
+      const allow = webhookServerUuidAllowlist();
+      write("scrobble.webhook.filters_plex.server_uuid", allow[0] || "");
+    }
+  }
+
+  function onAddWebhookServerUuidBlock() {
+    addWhitelistInput(
+      "#sc-server-uuid-block-input-webhook",
+      "#sc-server-uuid-block-webhook",
+      "scrobble.webhook.filters_plex.server_uuid_blacklist",
+      removeWebhookServerUuidBlock
+    );
+  }
+
+  function removeWebhookServerUuidAllow(uuid) {
+    const allow = webhookServerUuidAllowlist().filter((x) => String(x) !== String(uuid));
+    write("scrobble.webhook.filters_plex.server_uuid_whitelist", allow);
+    write("scrobble.webhook.filters_plex.server_uuid", allow[0] || "");
+    const host = $("#sc-server-uuid-allow-webhook", STATE.mount);
+    if (host) {
+      host.innerHTML = "";
+      allow.forEach((value) => host.append(chip(value, removeWebhookServerUuidAllow)));
+    }
+  }
+
+  function removeWebhookServerUuidBlock(uuid) {
+    removeWhitelistItem(
+      uuid,
+      "#sc-server-uuid-block-webhook",
+      "scrobble.webhook.filters_plex.server_uuid_blacklist",
+      removeWebhookServerUuidBlock
+    );
   }
 
   async function hydrateEmby() {
@@ -2763,8 +2998,22 @@ async function hydrateJellyfin() {
       e.preventDefault();
       openUserPicker("webhook", e.currentTarget);
     });
-    on($("#sc-fetch-uuid-webhook", STATE.mount), "click", fetchServerUUIDWebhook);
-    on($("#sc-server-uuid-webhook", STATE.mount), "input", (e) => write("scrobble.webhook.filters_plex.server_uuid", String(e.target.value || "").trim()));
+    on($("#sc-add-server-uuid-allow-webhook", STATE.mount), "click", onAddWebhookServerUuidAllow);
+    on($("#sc-add-server-uuid-block-webhook", STATE.mount), "click", onAddWebhookServerUuidBlock);
+    on($("#sc-server-uuid-allow-input-webhook", STATE.mount), "keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onAddWebhookServerUuidAllow();
+      }
+    });
+    on($("#sc-server-uuid-block-input-webhook", STATE.mount), "keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        onAddWebhookServerUuidBlock();
+      }
+    });
+    on($("#sc-fetch-uuid-allow-webhook", STATE.mount), "click", fetchServerUUIDWebhookAllow);
+    on($("#sc-fetch-uuid-webhook", STATE.mount), "click", fetchServerUUIDWebhookBlock);
 
     bindPercentInput("#sc-pause-debounce", "scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds);
     bindPercentInput("#sc-suppress-start", "scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at);
@@ -2925,10 +3174,17 @@ async function hydrateJellyfin() {
 
   const wlWebHost = $("#sc-whitelist-webhook", STATE.mount);
   const wlWeb = wlWebHost ? namesFromChips("#sc-whitelist-webhook") : asArray(read("scrobble.webhook.filters_plex.username_whitelist", []));
-  const suWeb = String($("#sc-server-uuid-webhook", STATE.mount)?.value ?? read("scrobble.webhook.filters_plex.server_uuid", "")).trim();
+  const suAllowHost = $("#sc-server-uuid-allow-webhook", STATE.mount);
+  const suAllow = uniqStrings(suAllowHost ? namesFromChips("#sc-server-uuid-allow-webhook") : webhookServerUuidAllowlist());
+  const suBlockHost = $("#sc-server-uuid-block-webhook", STATE.mount);
+  const suBlock = uniqStrings(suBlockHost ? namesFromChips("#sc-server-uuid-block-webhook") : webhookServerUuidBlacklist());
 
   const wlWatch = asArray(read("scrobble.watch.filters.username_whitelist", []));
-  const suWatch = String(read("scrobble.watch.filters.server_uuid", "") || "").trim();
+  const suWatchAllow = uniqStrings([
+    ...asArray(read("scrobble.watch.filters.server_uuid_whitelist", [])),
+    String(read("scrobble.watch.filters.server_uuid", "") || "").trim(),
+  ]);
+  const suWatchBlock = uniqStrings(read("scrobble.watch.filters.server_uuid_blacklist", []));
   const userIdWatch = String(read("scrobble.watch.filters.user_id", "") || "").trim();
 
   let filtersWatch = {
@@ -2936,9 +3192,11 @@ async function hydrateJellyfin() {
   };
 
   if (prov === "plex") {
-    filtersWatch.server_uuid = suWatch || "";
+    filtersWatch.server_uuid = suWatchAllow[0] || "";
+    filtersWatch.server_uuid_whitelist = suWatchAllow;
+    filtersWatch.server_uuid_blacklist = suWatchBlock;
   } else {
-    const uid = suWatch || userIdWatch || "";
+    const uid = userIdWatch || "";
     if (uid) filtersWatch.user_id = uid;
   }
 
@@ -2987,7 +3245,9 @@ if (dups.length) {
       plex_trakt_ratings: !!read("scrobble.webhook.plex_trakt_ratings", false),
       filters_plex: {
         username_whitelist: wlWeb,
-        server_uuid: suWeb || "",
+        server_uuid: suAllow[0] || "",
+        server_uuid_whitelist: suAllow,
+        server_uuid_blacklist: suBlock,
       },
       filters_jellyfin: read("scrobble.webhook.filters_jellyfin", {}) || { username_whitelist: [] },
     },

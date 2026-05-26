@@ -18,7 +18,7 @@
     auth: '<div class="si-empty"><div class="h1">No authentication providers</div><p class="p">Configure at least one authentication provider to get started. To sync, you need at least two sides in play.</p></div>',
     pairs: '<div class="si-empty"><div class="h1">No synchronization pairs or scrobbler</div><p class="p">Authentication looks good. Next step: add a sync pair or enable the scrobbler.</p></div>'
   };
-  const css = `#cw-settings-insight{display:block;min-width:0;--si-bg:linear-gradient(180deg,rgba(9,12,18,.96),rgba(4,6,10,.98));--si-panel:linear-gradient(180deg,rgba(12,15,22,.94),rgba(6,8,12,.97));--si-panel-hover:linear-gradient(180deg,rgba(15,18,26,.96),rgba(8,10,15,.98));--si-border:rgba(255,255,255,.075);--si-border-strong:rgba(255,255,255,.12);--si-shadow:0 22px 44px rgba(0,0,0,.40),inset 0 1px 0 rgba(255,255,255,.03);--si-fg:#f3f5ff;--si-soft:rgba(196,204,223,.74)}.si-card{position:relative;border:1px solid var(--si-border);border-radius:22px;overflow:hidden;background:radial-gradient(125% 140% at 0% 0%,rgba(84,92,132,.08),transparent 36%),radial-gradient(120% 140% at 100% 100%,rgba(50,56,84,.06),transparent 44%),var(--si-bg);box-shadow:var(--si-shadow);backdrop-filter:blur(16px) saturate(118%);-webkit-backdrop-filter:blur(16px) saturate(118%)}.si-card::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(255,255,255,.024),transparent 22%,rgba(255,255,255,.01) 100%)}.si-header{position:relative;padding:14px 16px 12px;border-bottom:1px solid rgba(255,255,255,.055)}.si-header-kicker{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--si-soft);line-height:1.2}#cw-si-scroll{overflow:auto;overscroll-behavior:contain}.si-body{padding:10px;display:grid;gap:8px}.si-row{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;align-items:start;padding:12px 12px 11px;border-radius:16px;border:1px solid var(--si-border);background:var(--si-panel);box-shadow:0 10px 20px rgba(0,0,0,.16);cursor:pointer;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}.si-row::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(135deg,rgba(255,255,255,.03),transparent 56%);opacity:.78}.si-row:hover{transform:translateY(-1px);border-color:var(--si-border-strong);background:var(--si-panel-hover);box-shadow:0 14px 24px rgba(0,0,0,.22)}.si-ic{display:flex;align-items:center;justify-content:center;min-height:18px}.si-ic .material-symbols-rounded{font-size:18px;color:rgba(230,235,248,.84)}.si-col{min-width:0}.si-h{margin:0 0 5px;color:var(--si-fg);font-weight:800;font-size:13px;line-height:1.18}.si-one{color:var(--si-soft);font-size:11px;line-height:1.42}.si-one b,.si-one strong{color:var(--si-fg)}.si-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.si-sep{color:rgba(196,204,223,.38);font-weight:800}.si-status{color:var(--si-fg);font-weight:700}.si-text,.si-inline-text{display:inline-flex;align-items:center}.si-to{color:rgba(196,204,223,.66);font-weight:700}.si-pchips,.si-inline-logos{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.si-pchip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);font-size:11px;font-weight:800;color:#e7ecfb;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}.si-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);font-size:10px;line-height:1}.si-logo{height:17px;width:auto;display:block;opacity:.95;flex:0 0 auto;filter:saturate(.92) brightness(.98)}.si-empty{padding:18px 16px;color:var(--si-soft)}.si-empty .h1{font-size:15px;font-weight:800;color:#e7ecfb;margin-bottom:8px}.si-empty .p{font-size:12px;line-height:1.5;margin:0 0 10px}`;
+  const css = `#cw-settings-insight{display:block;min-width:0;--si-bg:linear-gradient(180deg,rgba(9,12,18,.96),rgba(4,6,10,.98));--si-panel:linear-gradient(180deg,rgba(12,15,22,.94),rgba(6,8,12,.97));--si-panel-hover:linear-gradient(180deg,rgba(15,18,26,.96),rgba(8,10,15,.98));--si-border:rgba(255,255,255,.075);--si-border-strong:rgba(255,255,255,.12);--si-shadow:0 22px 44px rgba(0,0,0,.40),inset 0 1px 0 rgba(255,255,255,.03);--si-fg:#f3f5ff;--si-soft:rgba(196,204,223,.74)}.si-card{position:relative;border:1px solid var(--si-border);border-radius:22px;overflow:hidden;background:radial-gradient(125% 140% at 0% 0%,rgba(84,92,132,.08),transparent 36%),radial-gradient(120% 140% at 100% 100%,rgba(50,56,84,.06),transparent 44%),var(--si-bg);box-shadow:var(--si-shadow);backdrop-filter:blur(16px) saturate(118%);-webkit-backdrop-filter:blur(16px) saturate(118%)}.si-card::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(255,255,255,.024),transparent 22%,rgba(255,255,255,.01) 100%)}.si-header{position:relative;padding:14px 16px 12px;border-bottom:1px solid rgba(255,255,255,.055)}.si-header-kicker{display:block;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--si-soft);line-height:1.2}#cw-si-scroll{overflow:auto;overscroll-behavior:contain}.si-body{padding:10px;display:grid;gap:8px}.si-row{position:relative;display:grid;grid-template-columns:18px minmax(0,1fr);gap:10px;align-items:start;padding:12px 12px 11px;border-radius:16px;border:1px solid var(--si-border);background:var(--si-panel);box-shadow:0 10px 20px rgba(0,0,0,.16);cursor:pointer;transition:transform .14s ease,border-color .14s ease,background .14s ease,box-shadow .14s ease}.si-row::before{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:linear-gradient(135deg,rgba(255,255,255,.03),transparent 56%);opacity:.78}.si-row:hover{transform:translateY(-1px);border-color:var(--si-border-strong);background:var(--si-panel-hover);box-shadow:0 14px 24px rgba(0,0,0,.22)}.si-ic{display:flex;align-items:center;justify-content:center;min-height:18px}.si-ic .material-symbols-rounded{font-size:18px;color:rgba(230,235,248,.84)}.si-col{min-width:0}.si-h{margin:0 0 5px;color:var(--si-fg);font-weight:800;font-size:13px;line-height:1.18}.si-one{color:var(--si-soft);font-size:11px;line-height:1.42}.si-one b,.si-one strong{color:var(--si-fg)}.si-stack{display:grid;gap:4px}.si-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.si-sep{color:rgba(196,204,223,.38);font-weight:800}.si-status{color:var(--si-fg);font-weight:700}.si-text,.si-inline-text{display:inline-flex;align-items:center}.si-to{color:rgba(196,204,223,.66);font-weight:700}.si-pchips,.si-inline-logos{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.si-pchip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);font-size:11px;font-weight:800;color:#e7ecfb;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)}.si-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);font-size:10px;line-height:1}.si-logo{height:17px;width:auto;display:block;opacity:.95;flex:0 0 auto;filter:saturate(.92) brightness(.98)}.si-empty{padding:18px 16px;color:var(--si-soft)}.si-empty .h1{font-size:15px;font-weight:800;color:#e7ecfb;margin-bottom:8px}.si-empty .p{font-size:12px;line-height:1.5;margin:0 0 10px}`;
 
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
   const has = (v) => typeof v === 'string' ? v.trim().length > 0 : !!v;
@@ -73,6 +73,7 @@
   const logosHTML = (list) => (list = uniq(list)).length ? `<span class="si-inline-logos">${list.map(providerIcon).join('')}</span>` : '';
   const badgeHTML = (provider, count) => `<span class="si-pchip" title="${esc(providerMeta(provider).label)}: ${count}">${providerIcon(provider)}<span class="si-count">${count}</span></span>`;
   const line = (...items) => `<div class="si-line">${items.filter(Boolean).join('')}</div>`;
+  const stack = (...rows) => `<div class="si-stack">${rows.filter(Boolean).join('')}</div>`;
   const kv = (k, v) => `<span class="si-status">${k}</span><span class="si-text">${v}</span>`;
   const sep = (s = '•') => `<span class="si-sep">${s}</span>`;
   const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
@@ -164,12 +165,16 @@
 
   async function getScrobblerSummary(cfg, force) {
     const sc = cfg?.scrobble || {}, enabled = !!sc.enabled, mode = String(sc.mode || 'webhook').toLowerCase();
-    const out = { enabled, mode: enabled ? mode : '', watcher: { alive: false }, providers: [], sinks: [] };
+    const rawSources = sc?.sources && typeof sc.sources === 'object' ? sc.sources : null;
+    const sources = rawSources
+      ? { webhook: !!rawSources.webhook, watcher: !!(rawSources.watcher ?? rawSources.watch) }
+      : { webhook: mode === 'webhook', watcher: mode === 'watch' };
+    const out = { enabled, mode: enabled ? mode : '', sources, watcher: { alive: false }, providers: [], sinks: [] };
     if (!enabled) return out;
     const routes = Array.isArray(sc?.watch?.routes) ? sc.watch.routes : [];
     out.providers = uniq(routes.map((r) => r?.provider));
     out.sinks = uniq(routes.map((r) => r?.sink));
-    if (mode !== 'watch') return out;
+    if (!sources.watcher) return out;
     try {
       const st = await API()?.Watch?.status(force);
       out.watcher.alive = !!st?.alive;
@@ -196,10 +201,15 @@
     );
   function scrobblerHTML(scrob) {
     if (!scrob?.enabled) return 'Disabled';
-    const mode = scrob.mode === 'watch' ? 'Watcher' : 'Webhook';
-    const status = scrob.mode === 'watch' ? (scrob.watcher.alive ? 'Running' : 'Stopped') : 'Listening';
+    const sources = scrob.sources || { webhook: scrob.mode !== 'watch', watcher: scrob.mode === 'watch' };
     const route = [logosHTML(scrob.providers), logosHTML(scrob.sinks)].filter(Boolean);
-    return line(`<span class="si-text">${mode}</span>`, sep('|'), `<span class="si-status">${status}:</span>`, route[0] || route[1] ? `${route[0] || ''}${route[0] && route[1] ? '<span class="si-to">to</span>' : ''}${route[1] || ''}` : '<span class="si-inline-text">No routes configured</span>');
+    const routeHtml = route[0] || route[1]
+      ? `${route[0] || ''}${route[0] && route[1] ? '<span class="si-to">to</span>' : ''}${route[1] || ''}`
+      : '<span class="si-inline-text">No routes configured</span>';
+    return stack(
+      sources.webhook && line('<span class="si-text">Webhook</span>', '<span class="si-status">Listening</span>'),
+      sources.watcher && line('<span class="si-text">Watcher</span>', `<span class="si-status">${scrob.watcher.alive ? 'Running' : 'Stopped'}</span>`, sep('|'), routeHtml)
+    );
   }
 
   function row(icon, title, body, pane, target) {
@@ -220,7 +230,9 @@
   }
 
   async function openScrobblerSection(mode) {
-    const isWatch = String(mode || '').toLowerCase() === 'watch';
+    const scrob = state.liveData?.scrob || {};
+    const sources = scrob.sources || {};
+    const isWatch = sources.watcher && !sources.webhook ? true : String(mode || '').toLowerCase() === 'watch';
     const sectionId = isWatch ? 'sc-sec-watch' : 'sc-sec-webhook';
     const hostId = isWatch ? 'scrob-watcher' : 'scrob-webhook';
     const sub = isWatch ? 'watcher' : 'plex';

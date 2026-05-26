@@ -76,26 +76,26 @@ def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None
         cw = env.get("CW")
         logger_cls = getattr(cw, "_UIHostLogger", None) if cw is not None else None
         base_log = getattr(cw, "LOG", None) if cw is not None else None
-        logger = logger_cls("SCROBBLE", "SCROBBLE") if callable(logger_cls) else None
-
-        def emit(message: str, level: str = "INFO") -> None:
+        def emit(message: str, level: str = "INFO", module: str = "SCROBBLE") -> None:
             if callable(base_log):
-                base_log(message, level=level, module="SCROBBLE")
+                base_log(message, level=level, module=module)
                 return
+            logger = logger_cls(module, module) if callable(logger_cls) else None
             if callable(logger):
                 logger(message, level=level)
 
+        if webhook:
+            emit("Webhook listening; endpoints ready for Plex/Jellyfin/Emby events", module="WEBHOOK")
+        if watcher:
+            emit("Watcher source enabled", module="WATCH")
         if webhook and watcher:
             emit(
                 "WARNING: both Webhook and Watcher are enabled; duplicate events are possible if the same server sends both",
                 level="WARN",
+                module="SCROBBLE",
             )
-        elif webhook:
-            emit("webhook endpoints enabled; waiting for Plex/Jellyfin/Emby events")
-        elif watcher:
-            emit("watcher source enabled")
-        else:
-            emit("scrobble sources disabled")
+        if not webhook and not watcher:
+            emit("Scrobble sources disabled")
     except Exception:
         pass
 

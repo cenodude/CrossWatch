@@ -647,7 +647,7 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
 
         if want_webhooks:
             LOG(
-                "webhook endpoints enabled; waiting for Plex/Jellyfin/Emby events",
+                "Webhook listening; endpoints ready for Plex/Jellyfin/Emby events",
                 level="INFO",
                 module="WEBHOOK",
             )

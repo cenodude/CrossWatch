@@ -41,10 +41,18 @@
     card.style.minHeight = "100%";
   };
 
-  const styleFilterActionRow = (row, input) => {
+  const compactFilterCard = (card) => {
+    if (!card) return;
+    card.style.display = "grid";
+    card.style.gridTemplateRows = "auto auto auto auto";
+    card.style.alignContent = "start";
+    card.style.minHeight = "";
+  };
+
+  const styleFilterActionRow = (row, input, columns = FILTER_ACTION_COLS) => {
     if (!row || !input) return;
     row.style.display = "grid";
-    row.style.gridTemplateColumns = FILTER_ACTION_COLS;
+    row.style.gridTemplateColumns = columns;
     row.style.alignItems = "center";
     row.style.gap = "8px";
     row.style.alignSelf = "end";
@@ -228,32 +236,51 @@
     }
 
     const whitelistLabel = root.querySelector("#sc-whitelist-webhook")?.previousElementSibling;
-    const uuidLabel = root.querySelector("#sc-server-uuid-webhook")?.closest("div")?.previousElementSibling?.previousElementSibling;
+    const uuidAllowLabel = root.querySelector("#sc-server-uuid-allow-webhook")?.previousElementSibling;
+    const uuidBlockLabel = root.querySelector("#sc-server-uuid-block-webhook")?.previousElementSibling;
     styleFilterLabel(whitelistLabel, "sc-help-watch-username-whitelist");
-    styleFilterLabel(uuidLabel, "sc-help-watch-server-uuid");
+    styleFilterLabel(uuidAllowLabel, "sc-help-webhook-server-uuid-allow");
+    styleFilterLabel(uuidBlockLabel, "sc-help-webhook-server-uuid-block");
 
+    const filterGrid = root.querySelector("#sc-whitelist-webhook")?.closest(".sc-filter-grid");
     const userInput = root.querySelector("#sc-user-input-webhook");
     const userAdd = root.querySelector("#sc-add-user-webhook");
     const userPick = root.querySelector("#sc-load-users-webhook");
     const userRow = userInput?.parentElement;
     const whitelistCard = userRow?.parentElement || whitelistLabel?.parentElement;
-    styleFilterCard(whitelistCard, "auto auto auto 1fr auto");
+    compactFilterCard(whitelistCard);
     if (userRow && userInput && userAdd && userPick) {
       styleFilterActionRow(userRow, userInput);
     }
 
-    const uuidInput = root.querySelector("#sc-server-uuid-webhook");
+    const uuidAllowInput = root.querySelector("#sc-server-uuid-allow-input-webhook");
+    const uuidAllowAdd = root.querySelector("#sc-add-server-uuid-allow-webhook");
+    const uuidAllowFetch = root.querySelector("#sc-fetch-uuid-allow-webhook");
+    const uuidAllowRow = uuidAllowInput?.parentElement;
+    const uuidAllowCard = uuidAllowRow?.parentElement || uuidAllowLabel?.parentElement;
+    compactFilterCard(uuidAllowCard);
+    if (uuidAllowRow && uuidAllowInput && uuidAllowAdd && uuidAllowFetch) {
+      styleFilterActionRow(uuidAllowRow, uuidAllowInput);
+    }
+
+    const uuidInput = root.querySelector("#sc-server-uuid-block-input-webhook");
     const uuidFetch = root.querySelector("#sc-fetch-uuid-webhook");
+    const uuidAdd = root.querySelector("#sc-add-server-uuid-block-webhook");
     const uuidRow = uuidInput?.parentElement;
-    const uuidNote = root.querySelector("#sc-uuid-note-webhook");
-    const uuidCard = uuidRow?.parentElement || uuidLabel?.parentElement;
-    styleFilterCard(uuidCard, "auto auto auto 1fr auto");
-    ensureCardSpacer(uuidCard, "sc-filter-chips-spacer", "40px", uuidNote || uuidRow);
-    if (uuidRow && uuidInput && uuidFetch) {
+    const uuidCard = uuidRow?.parentElement || uuidBlockLabel?.parentElement;
+    compactFilterCard(uuidCard);
+    if (uuidRow && uuidInput && uuidAdd && uuidFetch) {
       styleFilterActionRow(uuidRow, uuidInput);
-      ensureRowSpacer(uuidRow);
-      ensureCardSpacer(uuidCard, "sc-filter-grow", "1px", uuidRow);
-      alignRowsToSameTrack(userRow, uuidRow);
+    }
+
+    if (filterGrid && whitelistCard && uuidAllowCard && uuidCard) {
+      filterGrid.classList.add("sc-webhook-filter-grid");
+      const uuidStack = uuidAllowCard.parentElement !== filterGrid ? uuidAllowCard.parentElement : null;
+      if (uuidAllowCard.parentElement !== filterGrid) filterGrid.appendChild(uuidAllowCard);
+      if (uuidCard.parentElement !== filterGrid) filterGrid.appendChild(uuidCard);
+      if (uuidStack && uuidStack !== whitelistCard && uuidStack !== uuidAllowCard && uuidStack !== uuidCard && !uuidStack.children.length) {
+        uuidStack.remove();
+      }
     }
   }
 
