@@ -45,7 +45,12 @@ _PAT_TVDB = re.compile(r"(?:com\.plexapp\.agents\.thetvdb|thetvdb|tvdb)://(\d+)"
 _DEF_WEBHOOK: dict[str, Any] = {
     "pause_debounce_seconds": 5,
     "suppress_start_at": 99,
-    "filters_plex": {"username_whitelist": [], "server_uuid": ""},
+    "filters_plex": {
+        "username_whitelist": [],
+        "server_uuid": "",
+        "server_uuid_whitelist": [],
+        "server_uuid_blacklist": [],
+    },
     "probe_session_progress": True,
     "plex_trakt_ratings": False,
 }
@@ -190,6 +195,12 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
     if "server_uuid" not in flt:
         flt["server_uuid"] = ""
         changed = True
+    if "server_uuid_whitelist" not in flt:
+        flt["server_uuid_whitelist"] = []
+        changed = True
+    if "server_uuid_blacklist" not in flt:
+        flt["server_uuid_blacklist"] = []
+        changed = True
 
     for k, dv in _DEF_TRAKT.items():
         if k not in trk:
@@ -199,6 +210,21 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
     if changed:
         _save_config(cfg)
     return cfg
+
+
+def _as_filter_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    items = list(value) if isinstance(value, (list, tuple, set)) else [value]
+    out: set[str] = set()
+    for item in items:
+        if item is None:
+            continue
+        for part in re.split(r"[\s,]+", str(item)):
+            clean = part.strip()
+            if clean:
+                out.add(clean)
+    return out
 
 
 def _tokens(cfg: dict[str, Any]) -> dict[str, str]:
@@ -1107,7 +1133,11 @@ def process_webhook(
     enable_ratings = bool(wh.get("plex_trakt_ratings", False))
     flt = (wh.get("filters_plex") or {})
     allow_users = {str(x).strip() for x in (flt.get("username_whitelist") or []) if str(x).strip()}
-    srv_uuid_cfg = (flt.get("server_uuid") or "").strip() or ((cfg.get("plex") or {}).get("server_uuid") or "").strip()
+    srv_uuid_allow = _as_filter_set(flt.get("server_uuid_whitelist"))
+    legacy_srv_uuid = str(flt.get("server_uuid") or "").strip()
+    if legacy_srv_uuid:
+        srv_uuid_allow.add(legacy_srv_uuid)
+    srv_uuid_block = _as_filter_set(flt.get("server_uuid_blacklist"))
 
     tset = (sc.get("trakt") or {})
     stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
@@ -1137,8 +1167,12 @@ def process_webhook(
 
     _emit(logger, f"incoming '{event}' user='{_mask_account(acc_title)}' server='{srv_uuid_evt}' media='{media_name_dbg}'", "DEBUG")
 
-    if srv_uuid_cfg and srv_uuid_evt and srv_uuid_evt != srv_uuid_cfg:
-        _emit(logger, f"ignored server '{srv_uuid_evt}' (expect '{srv_uuid_cfg}')", "DEBUG")
+    if srv_uuid_evt and srv_uuid_evt in srv_uuid_block:
+        _emit(logger, f"ignored blacklisted server '{srv_uuid_evt}'", "DEBUG")
+        return {"ok": True, "ignored": True}
+
+    if srv_uuid_allow and (not srv_uuid_evt or srv_uuid_evt not in srv_uuid_allow):
+        _emit(logger, f"ignored server '{srv_uuid_evt or 'none'}' (allowed={sorted(srv_uuid_allow)})", "DEBUG")
         return {"ok": True, "ignored": True}
 
     if not _account_matches(allow_users, payload, logger=logger):

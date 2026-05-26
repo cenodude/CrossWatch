@@ -10,6 +10,10 @@
     blank=()=>({enabled:false,title:"",state:null,streams:0,items:[],index:0}),
     clear=n=>S.timers[n]&&(clearTimeout(S.timers[n]),S.timers[n]=null),
     scrobMode=()=>String(S.cfg?.scrobble?.mode||"webhook").toLowerCase(),
+    scrobSources=()=>{
+      const sc=S.cfg?.scrobble||{}, mode=scrobMode(), src=sc?.sources&&typeof sc.sources==="object"?sc.sources:null;
+      return src?{webhook:!!src.webhook,watcher:!!(src.watcher??src.watch)}:{webhook:mode==="webhook",watcher:mode==="watch"};
+    },
     schedulingOn=c=>!!((c?.scheduling||c||{}).enabled||(c?.scheduling||c||{})?.advanced?.enabled),
     advancedOn=c=>!!((c?.scheduling||c||{})?.advanced?.enabled),
     activeCaptureJobs=c=>(((c?.scheduling||c||{})?.advanced?.capture_jobs)||((c?.scheduling||c||{})?.advanced?.captureJobs)||[])
@@ -163,11 +167,11 @@
     emit("watcher",watchLive?{title:watchItem.title,progress:Number(watchItem.progress)||0,state:watchItem.state||"playing",_streams_count:S.watch.streams}:{state:"stopped"});
 
     paint(hook,!S.hook.enabled?{show:false}:{
-      value:hookLive?(hookItem.title||"Watching"):"enabled",
+      value:hookLive?(hookItem.title||"Watching"):"listening",
       meta:"",
       badges:S.hook.streams>1?[S.hook.streams]:[],
-      live:hookLive, idle:!hookLive,
-      tip:hookLive?tooltipFor(`Webhook • ${S.hook.streams} active stream${S.hook.streams===1?"":"s"}`,S.hook.items):"Webhook enabled"
+      live:hookLive, ok:true, idle:false,
+      tip:hookLive?tooltipFor(`Webhook • ${S.hook.streams} active stream${S.hook.streams===1?"":"s"}`,S.hook.items):"Webhook listening"
     });
     emit("webhook",hookLive?{title:hookItem.title,progress:Number(hookItem.progress)||0,state:hookItem.state||"playing",_streams_count:S.hook.streams}:{state:"stopped"});
 
@@ -193,10 +197,10 @@
 
   async function pollScrob(force=false){
     clear("scrob");
-    const sc=S.cfg?.scrobble||{}, mode=scrobMode(), enabled=!!sc.enabled;
+    const sc=S.cfg?.scrobble||{}, sources=scrobSources(), enabled=!!sc.enabled;
     const prevWatchIndex=Number(S.watch?.index)||0, prevHookIndex=Number(S.hook?.index)||0;
-    S.watch={...blank(),enabled:enabled&&mode==="watch",alive:false,index:prevWatchIndex};
-    S.hook={...blank(),enabled:enabled&&mode==="webhook",index:prevHookIndex};
+    S.watch={...blank(),enabled:enabled&&sources.watcher,alive:false,index:prevWatchIndex};
+    S.hook={...blank(),enabled:enabled&&sources.webhook,index:prevHookIndex};
     if (!enabled) { clear("rotate"); return render(); }
     if (document.hidden) return scheduleScrob();
     try {
@@ -219,7 +223,7 @@
   }
 
   const scheduleSched=()=>S.sched.enabled&&(S.timers.sched=setTimeout(()=>pollSched(false),30000)),
-    scheduleScrob=()=>S.cfg?.scrobble?.enabled&&(S.timers.scrob=setTimeout(()=>pollScrob(false),scrobMode()==="watch"?15000:60000)),
+    scheduleScrob=()=>S.cfg?.scrobble?.enabled&&(S.timers.scrob=setTimeout(()=>pollScrob(false),scrobSources().watcher?15000:60000)),
     stop=()=>["sched","scrob","rotate"].forEach(clear);
 
   function scheduleRotate(){

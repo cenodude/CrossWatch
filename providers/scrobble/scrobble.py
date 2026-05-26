@@ -72,6 +72,35 @@ def _norm_user(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
 
 
+def _as_filter_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    items = list(value) if isinstance(value, (list, tuple, set)) else [value]
+    out: set[str] = set()
+    for item in items:
+        if item is None:
+            continue
+        for part in re.split(r"[\s,]+", str(item)):
+            clean = part.strip()
+            if clean:
+                out.add(clean)
+    return out
+
+
+def _server_uuid_allowed(filt: dict[str, Any], server_uuid: str | None) -> bool:
+    got = str(server_uuid or "").strip()
+    allow = _as_filter_set(filt.get("server_uuid_whitelist"))
+    legacy = str(filt.get("server_uuid") or "").strip()
+    if legacy:
+        allow.add(legacy)
+    block = _as_filter_set(filt.get("server_uuid_blacklist"))
+    if got and got in block:
+        return False
+    if allow and (not got or got not in allow):
+        return False
+    return True
+
+
 def mask_account(value: Any) -> str:
     s = str(value or "").strip()
     if not s:
@@ -359,9 +388,8 @@ class Dispatcher:
             filt = {}
 
         wl = filt.get("username_whitelist")
-        want_server = filt.get("server_uuid")
         want_user = str(filt.get("user_id") or "").strip().lower()
-        if want_server and ev.server_uuid and str(ev.server_uuid) != str(want_server):
+        if not _server_uuid_allowed(filt, ev.server_uuid):
             return False
 
         def find_user_id(o: Any) -> str:

@@ -1408,6 +1408,40 @@ def _server_allowed(want_uuid: str, payload: dict[str, Any]) -> bool:
     return (not got) or got == want_uuid
 
 
+def _as_filter_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    items = list(value) if isinstance(value, (list, tuple, set)) else [value]
+    out: set[str] = set()
+    for item in items:
+        if item is None:
+            continue
+        for part in re.split(r"[\s,]+", str(item)):
+            clean = part.strip()
+            if clean:
+                out.add(clean)
+    return out
+
+
+def _server_uuid_from_payload(payload: dict[str, Any]) -> str:
+    srv = payload.get("Server") or {}
+    return str((srv.get("uuid") if isinstance(srv, dict) else "") or "").strip()
+
+
+def _server_filters_allowed(filt: dict[str, Any], payload: dict[str, Any]) -> bool:
+    got = _server_uuid_from_payload(payload)
+    allow = _as_filter_set(filt.get("server_uuid_whitelist"))
+    legacy = str(filt.get("server_uuid") or "").strip()
+    if legacy:
+        allow.add(legacy)
+    block = _as_filter_set(filt.get("server_uuid_blacklist"))
+    if got and got in block:
+        return False
+    if allow and (not got or got not in allow):
+        return False
+    return True
+
+
 def _gather_guid_candidates(md: dict[str, Any]) -> list[str]:
     cand: list[str] = []
     for k in ("guid", "grandparentGuid", "parentGuid"):
@@ -1674,9 +1708,9 @@ def process_rating_webhook(
     filt_raw = watch_cfg.get("filters")
     filt: dict[str, Any] = filt_raw if isinstance(filt_raw, dict) else {}
     wl = filt.get("username_whitelist")
-    want_uuid = str((filt.get("server_uuid") or (cfg.get("plex") or {}).get("server_uuid") or "")).strip()
-
-    if want_uuid and not _server_allowed(want_uuid, payload):
+    if "server_uuid" not in filt and not filt.get("server_uuid_whitelist") and (cfg.get("plex") or {}).get("server_uuid"):
+        filt = {**filt, "server_uuid": (cfg.get("plex") or {}).get("server_uuid")}
+    if not _server_filters_allowed(filt, payload):
         return {"ok": True, "ignored": True}
 
     if not _account_allowed(wl, payload):

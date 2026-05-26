@@ -564,7 +564,9 @@ DEFAULT_CFG: dict[str, Any] = {
             "suppress_start_at": 99,                    # Kill near-end "start" flaps (credits)
             "filters": {
                 "username_whitelist": [],               # ["name", "id:123", "uuid:abcd…"]
-                "server_uuid": ""                       # Restrict to a specific server
+                "server_uuid": "",                      # Legacy single-server allow filter
+                "server_uuid_whitelist": [],            # Accept only these Plex server UUIDs (empty = allow all unless blacklisted)
+                "server_uuid_blacklist": []             # Always ignore these Plex server UUIDs
             }
         },
 
@@ -578,7 +580,9 @@ DEFAULT_CFG: dict[str, Any] = {
             # Plex-only filters
             "filters_plex": {
                 "username_whitelist": [],               # Restrict accepted Account.title values (empty = allow all)
-                "server_uuid": ""                       # Restrict to a specific server
+                "server_uuid": "",                      # Legacy single-server allow filter
+                "server_uuid_whitelist": [],            # Accept only these Plex server UUIDs (empty = allow all unless blacklisted)
+                "server_uuid_blacklist": []             # Always ignore these Plex server UUIDs
             }
         },
 
