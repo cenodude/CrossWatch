@@ -245,23 +245,30 @@ def html() -> str:
     #sec-jellyfin .btn.danger:hover{ filter:brightness(1.08) }
 
     /* matrix */
-    #sec-jellyfin .lm-head{display:grid;grid-template-columns:1fr auto auto auto auto auto;gap:10px;align-items:center;margin-bottom:8px}
+    #sec-jellyfin .lm-head{
+      --lm-hist-col:76px;--lm-rate-col:76px;--lm-scr-col:104px;
+      display:grid;grid-template-columns:minmax(0,1fr) var(--lm-hist-col) var(--lm-rate-col) var(--lm-scr-col);
+      gap:6px;align-items:center;margin-bottom:8px;padding:0 24px 0 8px;box-sizing:border-box
+    }
     #sec-jellyfin .lm-head .title{font-weight:700}
+    #sec-jellyfin .lm-head .title,#sec-jellyfin .lm-head .lm-filter{grid-column:1;grid-row:1}
+    #sec-jellyfin .lm-head .lm-filter{justify-self:end;width:min(280px,55%)}
     #sec-jellyfin .lm-rows{
       display:grid;gap:6px;max-height:280px;min-height:200px;
       overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;background:#090b10
     }
-    #sec-jellyfin .lm-row{display:grid;grid-template-columns:1fr 40px 40px 40px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
+    #sec-jellyfin .lm-row{display:grid;grid-template-columns:minmax(0,1fr) 76px 76px 104px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
     #sec-jellyfin .lm-row.hide{display:none}
     #sec-jellyfin .lm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #sec-jellyfin .lm-dot{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;background:transparent;cursor:pointer;display:inline-block;vertical-align:middle}
+    #sec-jellyfin .lm-dot{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;background:transparent;cursor:pointer;display:inline-block;vertical-align:middle;justify-self:center}
     #sec-jellyfin .lm-dot.hist{color:#b066ff;box-shadow:0 0 6px rgba(176,102,255,.55)}
     #sec-jellyfin .lm-dot.hist.on{background:#b066ff;box-shadow:0 0 10px rgba(176,102,255,.95)}
     #sec-jellyfin .lm-dot.rate{color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
     #sec-jellyfin .lm-dot.rate.on{background:#00d1ff;box-shadow:0 0 10px rgba(0,209,255,.95)}
     #sec-jellyfin .lm-dot.scr{color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
     #sec-jellyfin .lm-dot.scr.on{background:#35ff8f;box-shadow:0 0 10px rgba(53,255,143,.95)}
-    #sec-jellyfin .lm-col{display:flex;align-items:center;gap:6px}
+    #sec-jellyfin .lm-col{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
+    #sec-jellyfin .lm-col .sub{position:absolute;left:calc(50% + 14px);white-space:nowrap}
     #sec-jellyfin .lm-filter{min-width:160px}
     #sec-jellyfin select.lm-hidden{display:none}
 

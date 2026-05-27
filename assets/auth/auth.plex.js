@@ -224,16 +224,26 @@ sel.name = "plex_instance";
 
   let __plexHydrateWatch = null;
   let __plexHydrateTimer = null;
+  let __plexHydrateBusy = false;
   function schedulePlexHydrate(delayMs = 0) {
     try { if (__plexHydrateTimer) clearTimeout(__plexHydrateTimer); } catch {}
     __plexHydrateTimer = setTimeout(async () => {
       try { ensurePlexInstanceUI(); } catch {}
       try { mountPlexAuthTabs(); } catch {}
       if (!$("plex_token") || !$("plex_server_url") || !$("plex_username")) return;
+      if (__plexHydrateBusy) return;
+      __plexHydrateBusy = true;
       try { await hydratePlexFromConfigRaw(); } catch {}
       try { mountPlexLibraryMatrix(); } catch {}
       try { mountPlexUserPicker(); } catch {}
       try { schedulePlexPmsProbe(250); } catch {}
+      __plexHydrateBusy = false;
+      try {
+        if (__plexHydrateWatch && getPlexState().hydrated) {
+          __plexHydrateWatch.disconnect();
+          __plexHydrateWatch = null;
+        }
+      } catch {}
     }, Math.max(0, delayMs | 0));
   }
 
@@ -522,8 +532,8 @@ async function plexDeleteToken() {
       set("plex_username", p.username || "");
       const aid = (p.account_id != null ? String(p.account_id).trim() : "");
       set("plex_account_id", aid || "");
-      // If account_id is missing (or still the legacy placeholder), resolve via /api/plex/pickusers.
-      await resolvePlexAccountIdFromUsers({ bustCache: true });
+      // If account_id is missing, resolve it once from /api/plex/pickusers.
+      await resolvePlexAccountIdFromUsers();
       try { const cb = $("plex_verify_ssl"); if (cb) cb.checked = !!p.verify_ssl; } catch {}
 
       const st = getPlexState();
@@ -531,6 +541,7 @@ async function plexDeleteToken() {
       st.rate = new Set((p.ratings?.libraries || []).map(x => String(x)));
       st.scr  = new Set((p.scrobble?.libraries || []).map(x => String(x)));
       st.hydrated = true;
+      w.__plexHydrated = true;
 
       ["plex_lib_history", "plex_lib_ratings", "plex_lib_scrobble"].forEach(id => {
         const el = $(id); if (!el) return;
@@ -802,7 +813,7 @@ const tags = [
         }
       } catch {}
 
-      // Resolve account_id via /api/plex/pickusers if missing/legacy.
+      // Resolve account_id via /api/plex/pickusers if missing.
       await resolvePlexAccountIdFromUsers({ bustCache: true });
 } catch (e) {
       console.warn("[plex] Auto-Fetch failed", e);
@@ -820,8 +831,9 @@ const tags = [
       const userEl = $("plex_username");
       const wantUser = String(opts.username ?? (userEl?.value || "")).trim().toLowerCase();
       const currId = String(idEl.value || "").trim();
-      const needsResolve = !currId;
-      if (!(needsResolve || wantUser)) return;
+      const currNum = parseInt(currId, 10);
+      const needsResolve = !(Number.isFinite(currNum) && currNum > 0);
+      if (!needsResolve) return;
 
       if (opts.bustCache) {
         try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
