@@ -80,7 +80,9 @@ def _unauthorized() -> JSONResponse:
 
 def _require_authenticated(request: Request, cfg: dict[str, Any]) -> str | None:
     token = request.cookies.get(app_auth.COOKIE_NAME)
-    if app_auth.auth_required(cfg) and not app_auth.is_authenticated(cfg, token):
+    if not app_auth.auth_required(cfg):
+        return None
+    if not app_auth.is_authenticated(cfg, token):
         return None
     return token
 
@@ -89,7 +91,7 @@ def _require_authenticated(request: Request, cfg: dict[str, Any]) -> str | None:
 def api_plex_status(request: Request) -> JSONResponse:
     cfg = load_config()
     token = request.cookies.get(app_auth.COOKIE_NAME)
-    authed = (not app_auth.auth_required(cfg)) or app_auth.is_authenticated(cfg, token)
+    authed = app_auth.auth_required(cfg) and app_auth.is_authenticated(cfg, token)
     st = authPlex.get_status(cfg)
     payload = {
         "enabled": bool(st["enabled"]),
@@ -106,6 +108,12 @@ def api_plex_status(request: Request) -> JSONResponse:
 @router.post("/start")
 def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)) -> JSONResponse:
     cfg = load_config()
+    if not app_auth.auth_required(cfg):
+        return JSONResponse(
+            {"ok": False, "error": "Authentication setup required"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
     if not authPlex.login_available(cfg):
         return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
 
@@ -131,6 +139,12 @@ def api_plex_start(request: Request, payload: dict[str, Any] | None = Body(None)
 @router.post("/check")
 def api_plex_check(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
     cfg = load_config()
+    if not app_auth.auth_required(cfg):
+        return JSONResponse(
+            {"ok": False, "error": "Authentication setup required"},
+            status_code=403,
+            headers={"Cache-Control": "no-store"},
+        )
     if not authPlex.login_available(cfg):
         return JSONResponse({"ok": False, "error": "Plex sign-in is not linked yet"}, status_code=400, headers={"Cache-Control": "no-store"})
 

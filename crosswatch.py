@@ -19,6 +19,7 @@ import threading
 import time
 import uvicorn
 import asyncio
+import json
 
 # Mute Unverified HTTPS request warnings from requests/urllib3
 import urllib3
@@ -235,6 +236,37 @@ _PUBLIC_HEALTH_PATHS = {
     "/healthz",
 }
 
+def _version_key_text(v: Any) -> tuple[int, ...]:
+    raw = str(v or "").strip()
+    if raw.lower().startswith("v"):
+        raw = raw[1:]
+    out: list[int] = []
+    for part in raw.split("."):
+        try:
+            out.append(int(part))
+        except Exception:
+            out.append(0)
+    return tuple(out or [0])
+
+def _setup_clean_reset_allowed() -> bool:
+    cfg_path = CONFIG_DIR / "config.json"
+    if not cfg_path.exists():
+        return False
+    try:
+        raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    pending_ver = ""
+    ui_raw = raw.get("ui")
+    if isinstance(ui_raw, dict):
+        pending_ver = str(ui_raw.get("_pending_upgrade_from_version") or "").strip()
+    ver = pending_ver or str(raw.get("version") or "").strip()
+    if not ver:
+        return True
+    return _version_key_text(ver) < _version_key_text("0.9.12")
+
 def _redact_query_string(query: str) -> str:
     q = (query or "").strip()
     if not q:
@@ -411,18 +443,13 @@ async def app_auth_gate(request: Request, call_next):
     if path in _PUBLIC_HEALTH_PATHS:
         return await call_next(request)
     
-    if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
-        return await call_next(request)
-    
     # exclude webhooks from auth
     if path.startswith("/webhook/"):
         return await call_next(request)
 
-    # exclude callback paths
-    if path == "/callback" or path.startswith("/callback/"):
-        return await call_next(request)
-
     if app_auth_setup_lock_required(cfg):
+        if path == "/api/maintenance/reset-all-default" and _setup_clean_reset_allowed():
+            return await call_next(request)
         if path in _APP_AUTH_SETUP_ALLOWED_PATHS:
             return await call_next(request)
         if path.startswith("/api/"):
@@ -432,6 +459,13 @@ async def app_auth_gate(request: Request, call_next):
                 headers={"Cache-Control": "no-store"},
             )
         return RedirectResponse(url="/", status_code=302)
+
+    if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
+        return await call_next(request)
+
+    # exclude callback paths
+    if path == "/callback" or path.startswith("/callback/"):
+        return await call_next(request)
 
     if not app_auth_required(cfg):
         return await call_next(request)

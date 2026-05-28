@@ -432,8 +432,7 @@ async function _cwFetchBootstrapAuthState() {
     const status = statusResp.ok ? await statusResp.json() : null;
     const blocked = !!(
       status
-      && !status.authenticated
-      && (status.reset_required || !status.configured || meta?.auth_reset_required || meta?.first_run || meta?.autogen)
+      && (status.setup_required || status.reset_required || !status.configured || meta?.auth_setup_required || meta?.auth_reset_required || meta?.first_run || meta?.autogen)
     );
     window.__cwAuthSetupPending = blocked;
     window.__cwAuthBootstrapState = { meta, status, blocked };

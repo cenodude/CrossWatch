@@ -304,7 +304,7 @@ def provider_cache_status() -> dict[str, Any]:
 
 
 @router.post("/reset-all-default")
-def reset_all_to_default() -> dict[str, Any]:
+def reset_all_to_default(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
     _, CONFIG_DIR, *_rest = _cw()
 
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -354,6 +354,14 @@ def reset_all_to_default() -> dict[str, Any]:
             else:
                 report["ok"] = False
                 report["errors"].append(f"remove_failed: {name}")
+
+    if report["ok"] and bool((payload or {}).get("restart")):
+        report["restart_scheduled"] = True
+
+        def _kill() -> None:
+            os._exit(0)
+
+        threading.Timer(0.75, _kill).start()
 
     return report
 

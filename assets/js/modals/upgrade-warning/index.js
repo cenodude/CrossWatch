@@ -45,26 +45,24 @@ async function _runConfigMigration() {
 }
 
 async function _runFullReset() {
-  return postJson("/api/maintenance/reset-all-default", {});
+  return postJson("/api/maintenance/reset-all-default", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ restart: true }),
+  });
 }
 
-async function _restartAfterMigration() {
+async function _waitForScheduledRestart() {
   try {
     window.cxCloseModal?.();
   } catch {}
 
-  setTimeout(() => {
-    try {
-      if (window.cwRestartCrossWatchWithOverlay) {
-        window.cwRestartCrossWatchWithOverlay();
-        return;
-      }
-    } catch {}
+  try {
+    window.cwShowApplyOverlay?.("Restarting CrossWatch", "Restarting container / service...", 12);
+  } catch {}
 
-    fetch("/api/maintenance/restart", { method: "POST", cache: "no-store" }).finally(() => {
-      window.location.reload();
-    });
-  }, 150);
+  setTimeout(() => {
+    try { window.location.reload(); } catch {}
+  }, 12000);
 }
 
 async function runCleanupAndRestart(btn) {
@@ -85,7 +83,7 @@ async function runCleanupAndRestart(btn) {
     notify(res && res.backup
       ? `Cleanup completed. Config backup created: ${res.backup}`
       : "Cleanup completed. CrossWatch will restart now.");
-    await _restartAfterMigration();
+    await _waitForScheduledRestart();
   } catch (e) {
     console.warn("[upgrade-warning] cleanup failed", e);
     notify("Cleanup failed. Check logs.");
