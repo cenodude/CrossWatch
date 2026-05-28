@@ -26,6 +26,7 @@ __all__ = [
     "AUTH_TTL_SEC",
     "MIN_PASSWORD_LENGTH",
     "auth_required",
+    "credentials_configured",
     "is_authenticated",
     "reset_pending",
     "setup_lock_required",
@@ -262,10 +263,8 @@ def _sync_legacy_session(a: dict[str, Any], sessions: list[dict[str, Any]]) -> N
     s["expires_at"] = int(last.get("expires_at") or 0)
 
 
-def auth_required(cfg: dict[str, Any]) -> bool:
+def credentials_configured(cfg: dict[str, Any]) -> bool:
     a = _cfg_auth(cfg)
-    if not bool(a.get("enabled")):
-        return False
     if not str(a.get("username") or "").strip():
         return False
     p = _cfg_pwd(a)
@@ -274,6 +273,11 @@ def auth_required(cfg: dict[str, Any]) -> bool:
     if not str(p.get("salt") or "").strip():
         return False
     return True
+
+
+def auth_required(cfg: dict[str, Any]) -> bool:
+    a = _cfg_auth(cfg)
+    return bool(a.get("enabled")) and credentials_configured(cfg)
 
 
 def reset_pending(cfg: dict[str, Any]) -> bool:
@@ -317,7 +321,7 @@ def _config_needs_upgrade(cfg: dict[str, Any]) -> bool:
 def setup_lock_required(cfg: dict[str, Any]) -> bool:
     if reset_pending(cfg):
         return True
-    return (not auth_required(cfg)) and _config_needs_upgrade(cfg)
+    return not auth_required(cfg)
 
 
 def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None:
@@ -365,7 +369,7 @@ def _public_session_state(a: dict[str, Any], token: str | None) -> tuple[dict[st
 
 def is_authenticated(cfg: dict[str, Any], token: str | None) -> bool:
     if not auth_required(cfg):
-        return True
+        return False
     a = _cfg_auth(cfg)
     return _find_session(a, token) is not None
 
@@ -997,9 +1001,10 @@ def api_status(request: Request) -> JSONResponse:
         plex_st = authPlex.get_status(cfg)
     except Exception:
         plex_st = {"enabled": False, "linked": False}
-    configured = bool(str(a.get("username") or "").strip() and str(p.get("hash") or "").strip() and str(p.get("salt") or "").strip())
+    configured = credentials_configured(cfg)
     enabled = bool(a.get("enabled"))
     pending_setup = setup_lock_required(cfg)
+    active = auth_required(cfg)
     token = request.cookies.get(COOKIE_NAME)
     s = _find_session(a, token)
     current_session, other_sessions = _public_session_state(a, token)
@@ -1007,8 +1012,9 @@ def api_status(request: Request) -> JSONResponse:
         {
             "enabled": enabled,
             "configured": configured,
+            "setup_required": pending_setup,
             "username": str(a.get("username") or "") if (enabled and s is not None) else "",
-            "authenticated": (s is not None) if auth_required(cfg) else (not pending_setup),
+            "authenticated": (s is not None) if active else False,
             "session_expires_at": int((s or {}).get("expires_at") or 0),
             "current_session": current_session,
             "other_sessions": other_sessions,

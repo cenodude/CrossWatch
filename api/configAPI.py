@@ -250,8 +250,9 @@ def api_config_meta() -> JSONResponse:
         needs_upgrade = False
         is_legacy_pre_070 = False
 
+    auth_setup_required = bool(auth_reset_required or not auth_configured)
     auth_reset_deferred_to_upgrade = bool(needs_upgrade and auth_reset_required)
-    setup_wizard_required = bool(auth_reset_required and not needs_upgrade)
+    setup_wizard_required = bool(auth_setup_required and not needs_upgrade)
 
     mtime = None
     size = None
@@ -270,6 +271,7 @@ def api_config_meta() -> JSONResponse:
                 "first_run": first_run,
                 "autogen": autogen,
                 "auth_configured": auth_configured,
+                "auth_setup_required": auth_setup_required,
                 "auth_reset_required": auth_reset_required,
                 "auth_reset_deferred_to_upgrade": auth_reset_deferred_to_upgrade,
                 "setup_wizard_required": setup_wizard_required,
