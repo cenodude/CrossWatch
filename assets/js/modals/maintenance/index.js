@@ -28,6 +28,7 @@ const SIMPLE_OPS = {
   state: "/api/maintenance/clear-state",
   cache: "/api/maintenance/clear-cache",
   metadata: "/api/maintenance/clear-metadata-cache",
+  activity: "/api/maintenance/clear-activity-log",
   stats: "/api/maintenance/reset-stats",
   playing: "/api/maintenance/reset-currently-watching",
 };
@@ -69,6 +70,14 @@ const OPS = [
         <label><input type="checkbox" id="cxm-cw-snaps"><span>All snapshots</span></label>
       </div>
     `,
+  },
+  {
+    key: "activity",
+    kind: "activity",
+    icon: "fact_check",
+    title: "Clear activity log",
+    tag: "local only",
+    desc: "Clears CrossWatch's local Recent Activity list. Provider watch history is not changed.",
   },
   {
     key: "stats",
@@ -436,6 +445,9 @@ function injectCSS() {
   .cw-maint .action-row[data-op="playing"] .action-icon {
     border-color: rgba(190,196,255,.16);
   }
+  .cw-maint .action-row[data-op="activity"] .action-icon {
+    border-color: rgba(124,242,176,.16);
+  }
 
   .cw-maint .action-row[data-op="defaults"] .action-icon {
     border-color: rgba(255,106,106,.18);
@@ -528,6 +540,7 @@ export default {
       () => post(SIMPLE_OPS.state),
       () => post(SIMPLE_OPS.cache),
       () => post(SIMPLE_OPS.metadata),
+      () => post(SIMPLE_OPS.activity),
       () => post("/api/maintenance/crosswatch-tracker/clear", { clear_state: true, clear_snapshots: true }),
       () => post(SIMPLE_OPS.stats, {}),
       () => post(SIMPLE_OPS.playing),
@@ -681,6 +694,10 @@ export default {
           return;
         }
 
+        if (kind === "activity") {
+          try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
+        }
+
         if (kind === "cache" || kind === "tracker") {
           await refreshSummary();
         }
@@ -716,6 +733,7 @@ export default {
         btn.textContent = "Cleaning...";
         try {
           for (const op of cleanAllOps) await op();
+          try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
 
           await refreshSummary();
           setStatus("Clean Everything completed.", "ok");

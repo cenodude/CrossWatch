@@ -7,6 +7,7 @@ from .configAPI import router as config_router
 from .healthAPI import router as health_router
 from .tlsAPI import router as tls_router
 from .maintenanceAPI import router as maintenance_router
+from .activityAPI import router as activity_router
 from .metaAPI import router as meta_router
 from .manualAPI import router as manual_router
 from .insightAPI import register_insights
@@ -39,6 +40,7 @@ __all__ = [
     "health_router",
     "tls_router",
     "maintenance_router",
+    "activity_router",
     "meta_router",
     "manual_router",
     "watchlist_router",
@@ -77,6 +79,7 @@ def register(
     app.include_router(watchlist_router)
     app.include_router(snapshots_router)
     app.include_router(maintenance_router)
+    app.include_router(activity_router)
     app.include_router(scheduling_router)
     app.include_router(scrobble_router)
     app.include_router(sync_router)

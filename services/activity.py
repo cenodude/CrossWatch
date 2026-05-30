@@ -1,0 +1,297 @@
+# /services/activity.py
+# CrossWatch - Local Recent Activity Log
+# Copyright (c) 2025-2026 CrossWatch / Cenodude
+from __future__ import annotations
+
+import hashlib
+import json
+import threading
+import time
+from pathlib import Path
+from typing import Any, Iterable, Mapping
+
+LOG_VERSION = 1
+DEFAULT_LIMIT = 1000
+LOG_FILE_NAME = "activity_history.json"
+_LOCK = threading.RLock()
+
+
+def state_dir() -> Path:
+    base = Path("/config/.cw_state") if Path("/config/config.json").exists() else Path(".cw_state")
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return base
+
+
+def activity_path() -> Path:
+    return state_dir() / LOG_FILE_NAME
+
+
+def _now() -> int:
+    return int(time.time())
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        return int(float(text))
+    except Exception:
+        return None
+
+
+def _compact_dict(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in value.items():
+        key = str(k or "").strip()
+        if not key or v in (None, ""):
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            out[key] = v
+    return out
+
+
+def _read_payload() -> dict[str, Any]:
+    path = activity_path()
+    if not path.exists():
+        return {"v": LOG_VERSION, "items": []}
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw) if raw.strip() else {}
+    except Exception:
+        return {"v": LOG_VERSION, "items": []}
+    if isinstance(data, list):
+        return {"v": LOG_VERSION, "items": [x for x in data if isinstance(x, dict)]}
+    if isinstance(data, dict):
+        items = data.get("items")
+        return {"v": LOG_VERSION, "items": [x for x in (items or []) if isinstance(x, dict)]}
+    return {"v": LOG_VERSION, "items": []}
+
+
+def _write_payload(payload: Mapping[str, Any]) -> None:
+    path = activity_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    tmp = path.with_name(f"{path.name}.{time.time_ns()}.{threading.get_ident()}.tmp")
+    data = {"v": LOG_VERSION, "items": list(payload.get("items") or [])}
+    tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _event_id(item: Mapping[str, Any]) -> str:
+    stable = {
+        "kind": item.get("kind"),
+        "method": item.get("method"),
+        "source": item.get("source"),
+        "source_instance": item.get("source_instance"),
+        "target": item.get("target"),
+        "target_instance": item.get("target_instance"),
+        "media_type": item.get("media_type"),
+        "title": item.get("title"),
+        "year": item.get("year"),
+        "season": item.get("season"),
+        "episode": item.get("episode"),
+        "status": item.get("status"),
+        "event": item.get("event"),
+        "watched_at": item.get("watched_at"),
+        "ids": item.get("ids"),
+    }
+    raw = json.dumps(stable, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def add_event(event: Mapping[str, Any], *, limit: int = DEFAULT_LIMIT) -> dict[str, Any] | None:
+    media_type = str(event.get("media_type") or "").strip().lower()
+    if media_type not in {"movie", "episode"}:
+        return None
+
+    captured_at = _as_int(event.get("captured_at")) or _now()
+    item: dict[str, Any] = {
+        "kind": str(event.get("kind") or "activity").strip().lower() or "activity",
+        "method": str(event.get("method") or "").strip().lower(),
+        "event": str(event.get("event") or "").strip().lower(),
+        "status": str(event.get("status") or "ok").strip().lower() or "ok",
+        "source": str(event.get("source") or "").strip().lower(),
+        "source_instance": str(event.get("source_instance") or "default").strip() or "default",
+        "target": str(event.get("target") or "").strip().lower(),
+        "target_instance": str(event.get("target_instance") or "default").strip() or "default",
+        "media_type": media_type,
+        "title": str(event.get("title") or "").strip(),
+        "year": _as_int(event.get("year")),
+        "season": _as_int(event.get("season")) if media_type == "episode" else None,
+        "episode": _as_int(event.get("episode")) if media_type == "episode" else None,
+        "progress": _as_int(event.get("progress")),
+        "account": str(event.get("account") or "").strip(),
+        "watched_at": _as_int(event.get("watched_at")) or captured_at,
+        "captured_at": captured_at,
+        "ids": _compact_dict(event.get("ids")),
+    }
+
+    if not item["title"]:
+        item["title"] = "Untitled"
+
+    item["id"] = str(event.get("id") or "").strip() or _event_id(item)
+
+    with _LOCK:
+        payload = _read_payload()
+        items = [x for x in list(payload.get("items") or []) if isinstance(x, dict)]
+        items = [x for x in items if str(x.get("id") or "") != item["id"]]
+        items.insert(0, item)
+        cap = max(1, int(limit or DEFAULT_LIMIT))
+        payload["items"] = items[:cap]
+        _write_payload(payload)
+    return item
+
+
+def record_scrobble_event(
+    ev: Any,
+    *,
+    source: str,
+    target: str,
+    status: str = "ok",
+    target_instance: str = "default",
+    source_instance: str = "default",
+    progress: Any = None,
+    captured_at: int | None = None,
+) -> dict[str, Any] | None:
+    action = str(getattr(ev, "action", "") or "").strip().lower()
+    if action != "stop":
+        return None
+    media_type = str(getattr(ev, "media_type", "") or "").strip().lower()
+    if media_type not in {"movie", "episode"}:
+        return None
+    return add_event(
+        {
+            "kind": "scrobble",
+            "method": "watcher",
+            "event": "scrobble_stop",
+            "status": status,
+            "source": source,
+            "source_instance": source_instance,
+            "target": target,
+            "target_instance": target_instance,
+            "media_type": media_type,
+            "title": getattr(ev, "title", None),
+            "year": getattr(ev, "year", None),
+            "season": getattr(ev, "season", None),
+            "episode": getattr(ev, "number", None),
+            "progress": progress if progress is not None else getattr(ev, "progress", None),
+            "account": getattr(ev, "account", None),
+            "watched_at": captured_at or _now(),
+            "captured_at": captured_at or _now(),
+            "ids": getattr(ev, "ids", None) or {},
+        }
+    )
+
+
+def list_events(
+    *,
+    limit: int = 100,
+    offset: int = 0,
+    media_type: str = "all",
+    status: str = "all",
+    query: str = "",
+    since: int | None = None,
+) -> dict[str, Any]:
+    with _LOCK:
+        items = [x for x in list(_read_payload().get("items") or []) if isinstance(x, dict)]
+
+    mt = str(media_type or "all").strip().lower()
+    st = str(status or "all").strip().lower()
+    q = str(query or "").strip().lower()
+    since_ts = _as_int(since)
+
+    def keep(item: Mapping[str, Any]) -> bool:
+        if since_ts is not None:
+            ts = _as_int(item.get("captured_at")) or _as_int(item.get("watched_at")) or 0
+            if ts < since_ts:
+                return False
+        if mt in {"movie", "episode"} and str(item.get("media_type") or "").lower() != mt:
+            return False
+        if st in {"ok", "failed", "error"}:
+            want = "failed" if st == "error" else st
+            got = str(item.get("status") or "").lower()
+            if got != want:
+                return False
+        if q:
+            hay = " ".join(
+                str(item.get(k) or "")
+                for k in ("title", "source", "target", "account", "media_type", "event", "method")
+            ).lower()
+            hay += " " + " ".join(
+                str(item.get(k) or "")
+                for k in ("source_instance", "target_instance")
+            ).lower()
+            if q not in hay:
+                return False
+        return True
+
+    filtered = [x for x in items if keep(x)]
+    start = max(0, int(offset or 0))
+    cap = max(1, min(500, int(limit or 100)))
+    page = filtered[start:start + cap]
+    return {
+        "ok": True,
+        "items": page,
+        "total": len(filtered),
+        "offset": start,
+        "limit": cap,
+        "has_more": start + cap < len(filtered),
+        "path": str(activity_path()),
+    }
+
+
+def clear_events() -> dict[str, Any]:
+    path = activity_path()
+    existed = path.exists()
+    with _LOCK:
+        try:
+            path.unlink(missing_ok=True)
+            return {"ok": True, "path": str(path), "existed": bool(existed), "removed": 1 if existed else 0}
+        except Exception as e:
+            return {"ok": False, "error": "clear_activity_failed", "path": str(path), "existed": bool(existed), "detail": str(e)}
+
+
+def record_history_sync_items(
+    items: Iterable[Mapping[str, Any]],
+    *,
+    source: str,
+    target: str,
+    status: str = "ok",
+    target_instance: str = "default",
+    source_instance: str = "default",
+) -> None:
+    for item in items or []:
+        if not isinstance(item, Mapping):
+            continue
+        media_type = str(item.get("type") or item.get("media_type") or "").strip().lower()
+        if media_type not in {"movie", "episode"}:
+            continue
+        add_event(
+            {
+                "kind": "history_sync",
+                "event": "history_add",
+                "status": status,
+                "source": source,
+                "source_instance": source_instance,
+                "target": target,
+                "target_instance": target_instance,
+                "media_type": media_type,
+                "title": item.get("title") or item.get("series_title") or item.get("show_title"),
+                "year": item.get("year") or item.get("series_year"),
+                "season": item.get("season"),
+                "episode": item.get("episode") or item.get("number"),
+                "progress": 100,
+                "watched_at": item.get("watched_at"),
+                "ids": item.get("ids") or item.get("show_ids") or {},
+            }
+        )

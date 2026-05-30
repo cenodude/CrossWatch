@@ -130,7 +130,7 @@ html.cw-compact #page-settings,html.cw-compact #stats-card #stat-providers .tile
 .cw-disabled{opacity:.55;filter:grayscale(.15);pointer-events:none}
 .section{border:1px solid var(--border);border-radius:16px;background:var(--panel2);overflow:hidden;margin-bottom:12px}
 .section.open .chev{transform:rotate(90deg)}
-.section>.body{display:grid;gap:12px;padding:0 14px;max-height:0;overflow:hidden;transition:max-height .35s ease,padding .35s ease}
+.section>.body{display:grid;gap:12px;padding:0 14px;max-height:0;overflow:hidden;transition:max-height .18s ease,padding .18s ease}
 .section.open>.body{padding:12px 14px;max-height:850px;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
 #cfg-conn .row{display:flex;align-items:center;gap:14px}
 #cfg-conn .fe-row:last-child{border-bottom:none}

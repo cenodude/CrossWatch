@@ -21,6 +21,7 @@ from cw_platform.provider_instances import build_provider_config_view, normalize
 from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.sources import scrobble_sources
+from services.activity import add_event as _activity_add_event
 
 try:
     from providers.scrobble.currently_watching import state_file as _cw_state_file
@@ -454,6 +455,43 @@ def _emit_scheduler_webhook_event(provider: str, payload: dict[str, Any], result
         import crosswatch as CW
 
         CW.scheduler_handle_event(_scheduler_event_webhook_payload(provider, payload or {}, result))
+    except Exception:
+        pass
+
+
+def _emit_activity_webhook_event(provider: str, payload: dict[str, Any], result: dict[str, Any]) -> None:
+    if not isinstance(result, dict):
+        return
+    if result.get("error") or result.get("ignored") or result.get("debounced") or result.get("suppressed") or result.get("dedup"):
+        return
+    action = str(result.get("action") or "").strip().lower()
+    if action not in {"/scrobble/stop", "stop"}:
+        return
+
+    try:
+        event = _scheduler_event_webhook_payload(provider, payload or {}, result)
+        media_type = str(event.get("media_type") or "").strip().lower()
+        if media_type not in {"movie", "episode"}:
+            return
+        _activity_add_event(
+            {
+                "kind": "scrobble",
+                "method": "webhook",
+                "event": "scrobble_stop",
+                "status": "ok",
+                "source": provider,
+                "source_instance": "default",
+                "target": "trakt",
+                "target_instance": "default",
+                "media_type": media_type,
+                "title": event.get("title"),
+                "progress": event.get("progress"),
+                "account": event.get("account"),
+                "watched_at": event.get("ts"),
+                "captured_at": event.get("ts"),
+                "ids": event.get("ids") or {},
+            }
+        )
     except Exception:
         pass
 
@@ -1180,6 +1218,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
         "DEBUG",
     )
     _emit_scheduler_webhook_event("jellyfin", payload, res)
+    _emit_activity_webhook_event("jellyfin", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
@@ -1332,6 +1371,7 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
         "DEBUG",
     )
     _emit_scheduler_webhook_event("emby", payload, res)
+    _emit_activity_webhook_event("emby", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
@@ -1456,6 +1496,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
         "DEBUG",
     )
     _emit_scheduler_webhook_event("plex", payload, res)
+    _emit_activity_webhook_event("plex", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,

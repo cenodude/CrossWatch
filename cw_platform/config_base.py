@@ -612,6 +612,11 @@ DEFAULT_CFG: dict[str, Any] = {
     "ui": {
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
         "show_playingcard": True,                       # Show Now Playing card on Main tab
+        "show_recent_activity": True,                   # Show Recent Activity card on Main tab
+        "recent_activity_display": "count:3",           # "count:3|4|5" | "hours:24|48|72"
+        "recent_activity_limit": 3,                     # Recent Activity rows on Main tab
+        "recent_syncs_display": "count:3",              # "count:3|4|5" | "hours:24|48|72"
+        "recent_syncs_limit": 3,                        # Recent Sync rows on Main tab
         "show_AI": True,                                # Show ASK AI from GitBook
         "show_quick_add_desktop": True,                 # Show the Main-tab quick add drawer on desktop
         "show_quick_add_mobile": True,                  # Show the Main-tab quick add floating button on mobile
@@ -1232,9 +1237,46 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
 
     ui["show_watchlist_preview"] = bool(ui.get("show_watchlist_preview", True))
     ui["show_playingcard"] = bool(ui.get("show_playingcard", True))
+    ui["show_recent_activity"] = bool(ui.get("show_recent_activity", True))
     ui["show_AI"] = bool(ui.get("show_AI", True))
     ui["show_quick_add_desktop"] = bool(ui.get("show_quick_add_desktop", True))
     ui["show_quick_add_mobile"] = bool(ui.get("show_quick_add_mobile", True))
+
+    def _ui_limit(name: str, default: int = 3) -> int:
+        try:
+            n = int(ui.get(name, default) or default)
+        except Exception:
+            n = default
+        ui[name] = max(3, min(n, 5))
+        return int(ui[name])
+
+    def _ui_display(display_name: str, limit_name: str) -> None:
+        legacy_limit = _ui_limit(limit_name)
+        raw = str(ui.get(display_name) or "").strip().lower()
+        mode, _, value = raw.partition(":")
+        if mode == "count":
+            try:
+                n = int(value)
+            except Exception:
+                n = legacy_limit
+            n = max(3, min(n, 5))
+            ui[display_name] = f"count:{n}"
+            ui[limit_name] = n
+            return
+        if mode == "hours":
+            try:
+                n = int(value)
+            except Exception:
+                n = 24
+            if n not in {24, 48, 72}:
+                n = 24
+            ui[display_name] = f"hours:{n}"
+            ui[limit_name] = 5
+            return
+        ui[display_name] = f"count:{legacy_limit}"
+
+    _ui_display("recent_activity_display", "recent_activity_limit")
+    _ui_display("recent_syncs_display", "recent_syncs_limit")
 
     protocol = str(ui.get("protocol", "http") or "http").strip().lower()
     if protocol not in _ALLOWED_UI_PROTOCOLS:

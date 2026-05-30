@@ -24,6 +24,7 @@ except Exception:
     AUTH_TRAKT = None  # type: ignore[misc]
 
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
+from services.activity import record_scrobble_event
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -463,6 +464,13 @@ def _media_name(ev: ScrobbleEvent) -> str:
     return ev.title or "?"
 
 
+def _route_source(cfg: dict[str, Any]) -> tuple[str, str]:
+    watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, dict) else {}
+    source = str(watch.get("route_provider") or watch.get("provider") or "watcher").strip().lower() or "watcher"
+    source_instance = str(watch.get("route_provider_instance") or watch.get("provider_instance") or "default").strip() or "default"
+    return source, source_instance
+
+
 def _extract_skeleton_from_body(b: dict[str, Any]) -> dict[str, Any]:
     out = dict(b)
     out.pop("progress", None)
@@ -854,6 +862,18 @@ class TraktSink(ScrobbleSink):
                     "ts": time.time(),
                 }
                 if action == "stop" and p_send >= comp_thr:
+                    src, src_inst = _route_source(cfg)
+                    try:
+                        record_scrobble_event(
+                            ev,
+                            source=src,
+                            source_instance=src_inst,
+                            target="trakt",
+                            target_instance=self._instance_id,
+                            progress=p_send,
+                        )
+                    except Exception:
+                        pass
                     _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
                 self._a_sess[(sk, mk)] = action
                 if action == "start" and step > 1 and bucket is not None:
@@ -895,6 +915,18 @@ class TraktSink(ScrobbleSink):
                         "ts": time.time(),
                     }
                     if action == "stop" and p_send >= comp_thr:
+                        src, src_inst = _route_source(cfg)
+                        try:
+                            record_scrobble_event(
+                                ev,
+                                source=src,
+                                source_instance=src_inst,
+                                target="trakt",
+                                target_instance=self._instance_id,
+                                progress=p_send,
+                            )
+                        except Exception:
+                            pass
                         _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
                     self._a_sess[(sk, mk)] = action
                     if action == "start" and step > 1 and bucket is not None:
@@ -913,6 +945,18 @@ class TraktSink(ScrobbleSink):
         ):
             _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
             if p_send >= comp_thr:
+                src, src_inst = _route_source(cfg)
+                try:
+                    record_scrobble_event(
+                        ev,
+                        source=src,
+                        source_instance=src_inst,
+                        target="trakt",
+                        target_instance=self._instance_id,
+                        progress=p_send,
+                    )
+                except Exception:
+                    pass
                 _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
             return
 

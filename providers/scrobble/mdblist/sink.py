@@ -13,6 +13,7 @@ import requests
 
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id
+from services.activity import record_scrobble_event
 
 try:
     from _logging import log as BASE_LOG
@@ -485,6 +486,12 @@ class MDBListSink(ScrobbleSink):
         self._last_intent_prog: dict[str, int] = {}
         self._warn_no_key = False
 
+    def _route_source(self, cfg: dict[str, Any]) -> tuple[str, str]:
+        watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, dict) else {}
+        source = str(watch.get("route_provider") or watch.get("provider") or "watcher").strip().lower() or "watcher"
+        source_instance = str(watch.get("route_provider_instance") or watch.get("provider_instance") or "default").strip() or "default"
+        return source, source_instance
+
     def _mkey(self, ev: Any) -> str:
         ids = getattr(ev, "ids", {}) or {}
         parts: list[str] = []
@@ -756,4 +763,16 @@ class MDBListSink(ScrobbleSink):
                 pass
 
         if sent_ok and action == "stop" and int(p_send) >= comp_thr:
+            src, src_inst = self._route_source(cfg)
+            try:
+                record_scrobble_event(
+                    ev,
+                    source=src,
+                    source_instance=src_inst,
+                    target="mdblist",
+                    target_instance=self._instance_id,
+                    progress=p_send,
+                )
+            except Exception:
+                pass
             _auto_remove_across(ev, cfg, scope=f"mdblist:{self._instance_id}")

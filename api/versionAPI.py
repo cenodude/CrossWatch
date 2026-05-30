@@ -1,4 +1,4 @@
-# _versionAPI.py
+# /api/versionAPI.py
 # CrossWatch - Version Management API
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 
@@ -19,7 +19,7 @@ __all__ = ["router"]
 
 router = APIRouter(prefix="/api", tags=["version"])
 
-CURRENT_VERSION = os.getenv("APP_VERSION", "v0.9.20")
+CURRENT_VERSION = os.getenv("APP_VERSION", "v0.9.21")
 REPO = os.getenv("GITHUB_REPO", "cenodude/CrossWatch")
 
 

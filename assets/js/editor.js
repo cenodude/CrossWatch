@@ -20,6 +20,7 @@
   ensureStyle("editor-styles", css);
   ensureStyle("editor-scrollbars",".cw-table-wrap{scrollbar-width:thin;scrollbar-color:#8b5cf6 #10131a}.cw-table-wrap::-webkit-scrollbar{height:10px;width:10px}.cw-table-wrap::-webkit-scrollbar-track{background:rgba(255,255,255,.03);border-radius:12px}.cw-table-wrap::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#8b5cf6 0%,#3b82f6 100%);border-radius:12px;border:2px solid #11141c;box-shadow:inset 0 0 0 1px rgba(139,92,246,.35),0 0 10px rgba(139,92,246,.4)}.cw-table-wrap::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#a78bfa 0%,#60a5fa 100%)}");
   ensureStyle("editor-icon-select-styles",".cw-editor-icon-select{min-width:200px;flex:1}.cw-editor-icon-select .cw-icon-select-btn{min-height:40px}.cw-editor-icon-select .cw-icon-select-icon{width:16px;height:16px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}.cw-editor-icon-select .cw-icon-select-label{font-size:13px}");
+  ensureStyle("editor-import-styles",".cw-import-panel,.cw-policy-panel{width:100%}.cw-import-summary{display:flex!important;align-items:center;justify-content:space-between;gap:10px;padding:2px 0 4px;cursor:pointer;font-weight:800;user-select:none}.cw-import-title{min-width:0;color:var(--cw-fg);font-weight:900;letter-spacing:-.01em}.cw-import-help{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);color:rgba(220,228,246,.78);font-size:17px;line-height:1}.cw-import-help:hover{border-color:rgba(133,140,255,.24);background:rgba(133,140,255,.10);color:#fff}.cw-import-body,.cw-policy-body{display:grid!important;gap:12px!important;width:100%!important;margin-top:10px!important}.cw-import-fields{display:grid!important;grid-template-columns:1fr!important;gap:10px!important;align-items:stretch!important}.cw-import-field{display:grid!important;gap:6px!important;width:100%!important;margin:0!important;min-width:0!important}.cw-import-field-label{font-size:10px;font-weight:900;letter-spacing:.10em;text-transform:uppercase;color:rgba(204,213,229,.62)}.cw-import-field .cw-select,.cw-import-field .cw-icon-select{width:100%!important;min-width:0!important;flex:none!important}.cw-import-actions{display:grid!important;grid-template-columns:1fr!important;gap:10px!important;align-items:stretch!important}.cw-import-features{display:flex;flex-wrap:wrap;gap:8px}.cw-import-feature{display:inline-flex!important;align-items:center;gap:7px;min-height:34px;margin:0!important;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);color:rgba(225,232,246,.78);font-size:12px;font-weight:800}.cw-import-feature input{flex:0 0 auto}.cw-import-run-row{display:flex!important;justify-content:flex-end!important;gap:8px!important}.cw-import-run-row .cw-btn{min-width:112px}.cw-import-progress-row{width:100%}.cw-policy-row{width:100%;padding-top:0!important}.cw-policy-copy{font-size:12px;line-height:1.45;color:rgba(204,213,229,.68)}.cw-policy-actions{display:grid;grid-template-columns:1fr;gap:8px}.cw-policy-actions .cw-btn{width:100%;justify-content:center}.cw-policy-action{display:grid;gap:5px;padding:10px;border-radius:18px;border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.025)}.cw-policy-action span{font-size:10px;font-weight:900;letter-spacing:.10em;text-transform:uppercase;color:rgba(204,213,229,.56)}@media(max-width:760px){.cw-import-run-row{justify-content:stretch!important}.cw-import-run-row .cw-btn{width:100%}}");
 
   let cwEditorBooted = false;
   let cwEditorBootRetryWired = false;
@@ -233,6 +234,125 @@
     bulkBlockTypeBtn: "cw-bulk-block-type",
     bulkUnblockTypeBtn: "cw-bulk-unblock-type",
   });
+
+  function decorateImportPanel() {
+    const details = document.getElementById("cw-import-details");
+    if (!details || details.dataset.decorated === "1") return;
+    details.dataset.decorated = "1";
+    details.classList.add("cw-import-panel");
+
+    const summary = details.querySelector("summary");
+    if (summary) {
+      summary.classList.add("cw-import-summary");
+      summary.innerHTML =
+        '<span class="cw-import-title">Import provider state</span>' +
+        '<span class="cw-import-help material-symbol" title="Imports selected Watchlist, History, Ratings, or Progress data from a configured provider profile into Current State. Replace baseline refreshes those datasets from the provider; Merge keeps existing baseline rows and adds or updates provider rows. Provider accounts are not changed." aria-label="Import provider state help">help</span>';
+    }
+
+    const body = summary ? summary.nextElementSibling : null;
+    if (body instanceof HTMLElement) {
+      body.classList.add("cw-import-body");
+      body.style.cssText = "";
+      const rows = Array.from(body.children).filter(el => el instanceof HTMLElement);
+      const fields = rows[0];
+      const actions = rows[1];
+      if (fields instanceof HTMLElement) {
+        fields.classList.add("cw-import-fields");
+        fields.style.cssText = "";
+      }
+      if (actions instanceof HTMLElement) {
+        actions.classList.add("cw-import-actions");
+        actions.style.cssText = "";
+      }
+    }
+
+    const wrapField = (el, label) => {
+      if (!(el instanceof HTMLElement) || el.parentElement?.classList.contains("cw-import-field")) return;
+      const field = document.createElement("label");
+      field.className = "cw-import-field";
+      const text = document.createElement("span");
+      text.className = "cw-import-field-label";
+      text.textContent = label;
+      el.parentNode.insertBefore(field, el);
+      field.append(text, el);
+    };
+
+    wrapField(importProviderSel, "Provider");
+    wrapField(importInstanceSel, "Profile");
+    wrapField(importModeSel, "Mode");
+
+    const featureWrap = document.createElement("div");
+    featureWrap.className = "cw-import-features";
+    [importWatchlistWrap, importHistoryWrap, importRatingsWrap, importProgressFeatWrap].forEach(wrap => {
+      if (!(wrap instanceof HTMLElement)) return;
+      wrap.classList.add("cw-import-feature");
+      wrap.style.cssText = "";
+      featureWrap.append(wrap);
+    });
+
+    const runRow = document.createElement("div");
+    runRow.className = "cw-import-run-row";
+    if (importRunBtn) runRow.append(importRunBtn);
+
+    const actions = details.querySelector(".cw-import-actions");
+    if (actions) {
+      actions.textContent = "";
+      actions.append(featureWrap, runRow);
+    }
+
+    if (importProgressWrap) importProgressWrap.classList.add("cw-import-progress-row");
+  }
+
+  decorateImportPanel();
+
+  function decoratePolicyBackupPanel() {
+    if (!stateBackupCard || stateBackupCard.dataset.decorated === "1") return;
+    stateBackupCard.dataset.decorated = "1";
+    stateBackupCard.className = "ins-row cw-policy-row";
+    if (importRow && importRow.parentNode && stateBackupCard.parentNode !== importRow.parentNode) {
+      importRow.insertAdjacentElement("afterend", stateBackupCard);
+    }
+
+    const details = document.createElement("details");
+    details.id = "cw-policy-details";
+    details.className = "cw-collapse cw-policy-panel";
+    details.style.width = "100%";
+
+    const summary = document.createElement("summary");
+    summary.className = "cw-import-summary";
+    summary.innerHTML =
+      '<span class="cw-import-title">Policy backup</span>' +
+      '<span class="cw-import-help material-symbol" title="Exports or imports the local Current State policy JSON used by manual baseline edits and block rules. It does not change provider accounts." aria-label="Policy backup help">help</span>';
+
+    const body = document.createElement("div");
+    body.className = "cw-policy-body";
+
+    const copy = document.createElement("div");
+    copy.className = "cw-policy-copy";
+    copy.textContent = "Export or import the local Current State policy as JSON.";
+
+    const actions = document.createElement("div");
+    actions.className = "cw-policy-actions";
+
+    const exportAction = document.createElement("div");
+    exportAction.className = "cw-policy-action";
+    exportAction.innerHTML = "<span>Export</span>";
+    if (stateDownloadBtn) exportAction.append(stateDownloadBtn);
+
+    const importAction = document.createElement("div");
+    importAction.className = "cw-policy-action";
+    importAction.innerHTML = "<span>Import</span>";
+    if (stateUploadBtn) importAction.append(stateUploadBtn);
+    if (stateUploadInput) importAction.append(stateUploadInput);
+
+    actions.append(exportAction, importAction);
+    body.append(copy, actions);
+    details.append(summary, body);
+    stateBackupCard.textContent = "";
+    stateBackupCard.append(details);
+  }
+
+  decoratePolicyBackupPanel();
   const sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
   const providerMeta = window.CW?.ProviderMeta || {};
   const providerKey = (name) => String(name || "").trim().toUpperCase();
@@ -462,7 +582,9 @@
         state.importProviderInstance = nextInst;
         persistUIState();
       }
-      importInstanceSel.style.display = state.importProvider ? "" : "none";
+      const instanceField = importInstanceSel.closest(".cw-import-field");
+      if (instanceField) instanceField.style.display = state.importProvider ? "" : "none";
+      else importInstanceSel.style.display = state.importProvider ? "" : "none";
     }
 
     const setCb = (wrap, cb, key) => {
@@ -700,15 +822,18 @@
     if (pairLabel) pairLabel.style.display = isPair ? "" : "none";
     if (pairSel) pairSel.style.display = isPair ? "" : "none";
     if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
-    if (instanceLabel) instanceLabel.style.display = isState ? "" : "none";
-    if (instanceSel) instanceSel.style.display = isState ? "" : "none";
+    if (instanceLabel) instanceLabel.style.display = "";
+    if (instanceSel) instanceSel.style.display = "";
     if (backupCard) backupCard.style.display = isState ? "none" : "";
     if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
     if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
 
-    if (!isState && state.instance && state.instance !== "default") {
-      state.instance = "default";
-      persistUIState();
+    if (!isState) {
+      const nextInst = renderInstanceOptions(instanceSel, [{ id: "default", label: "Default" }], "default");
+      if (state.instance !== nextInst) {
+        state.instance = nextInst;
+        persistUIState();
+      }
     }
 
     if (!isState && state.blockedOnly) {
@@ -1980,8 +2105,8 @@
     const isState = state.source === "state";
     const isPair = state.source === "pair";
     if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
-    if (instanceLabel) instanceLabel.style.display = isState ? "" : "none";
-    if (instanceSel) instanceSel.style.display = isState ? "" : "none";
+    if (instanceLabel) instanceLabel.style.display = "";
+    if (instanceSel) instanceSel.style.display = "";
 
     if (isState || isPair) {
       const list = Array.isArray(state.snapshots) ? state.snapshots : [];
