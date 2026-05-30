@@ -10,7 +10,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, TypeGuard
 
+import requests
+
 from .._log import log as cw_log
+from ._auth import is_configured as auth_configured
+from ._auth import request_with_auth as mdblist_request_with_auth
 
 STATE_DIR = Path("/config/.cw_state")
 WATERMARK_PATH = STATE_DIR / "mdblist.watermarks.json"
@@ -78,6 +82,35 @@ def cfg_section(adapter: Any) -> Mapping[str, Any]:
     except Exception:
         pass
     return {}
+
+
+def instance_id(adapter: Any) -> str | None:
+    inst = getattr(adapter, "instance_id", None)
+    if inst:
+        return str(inst)
+    return None
+
+
+def has_auth(data: Mapping[str, Any]) -> bool:
+    return auth_configured(data)
+
+
+def mdblist_request(adapter: Any, method: str, url: str, **kwargs: Any):
+    cfg = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None) or {}
+    client = getattr(adapter, "client", None)
+    session = getattr(client, "session", None) or requests.Session()
+    timeout = kwargs.pop("timeout", getattr(getattr(adapter, "cfg", None), "timeout", 10.0))
+    retries = kwargs.pop("max_retries", getattr(getattr(adapter, "cfg", None), "max_retries", 3))
+    return mdblist_request_with_auth(
+        session,
+        method,
+        url,
+        cfg=cfg,
+        instance_id=instance_id(adapter),
+        timeout=timeout,
+        max_retries=retries,
+        **kwargs,
+    )
 
 
 def cfg_int(data: Mapping[str, Any], key: str, default: int) -> int:

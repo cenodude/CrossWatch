@@ -56,6 +56,12 @@ def _cfg() -> dict[str, Any]:
         return {}
 
 
+def _provider_auth():
+    from providers.auth import runtime as provider_auth
+
+    return provider_auth
+
+
 def _is_debug() -> bool:
     try:
         return bool((_cfg().get("runtime") or {}).get("debug"))
@@ -539,12 +545,19 @@ class MDBListSink(ScrobbleSink):
 
     def _post(self, path: str, body: dict[str, Any], api_key: str, cfg: dict[str, Any]) -> requests.Response:
         headers = {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": APP_AGENT}
-        return requests.post(
+        session = requests.Session()
+        return _provider_auth().request_with_auth(
+            "mdblist",
+            session,
+            "POST",
             f"{MDBLIST_API}{path}",
+            cfg=cfg,
+            instance_id=self._instance_id,
             headers=headers,
             params={"apikey": api_key},
             json=body,
             timeout=_timeout(cfg),
+            max_retries=1,
         )
 
     def _send_http(self, path: str, body: dict[str, Any], api_key: str, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -607,9 +620,9 @@ class MDBListSink(ScrobbleSink):
         m = cfg.get("mdblist") or {}
         api_key = str(m.get("api_key") or "").strip()
 
-        if not api_key:
+        if not _provider_auth().is_configured("mdblist", m):
             if not self._warn_no_key:
-                _log("Missing mdblist.api_key in config.json — skipping scrobble", "ERROR")
+                _log("Missing MDBList authentication in config.json - skipping scrobble", "ERROR")
                 self._warn_no_key = True
             return
 

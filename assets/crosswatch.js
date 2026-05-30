@@ -367,6 +367,7 @@ function _cwHasConfiguredValue(v) {
       "anilist.client_secret",
       "anilist.access_token",
       "mdblist.api_key",
+      "mdblist.access_token",
       "tautulli.server_url",
       "tautulli.api_key",
       "tautulli.history.user_id",

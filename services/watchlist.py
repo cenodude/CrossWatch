@@ -7,9 +7,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlencode
 
 import requests
-from urllib.parse import urlencode
 
 from cw_platform.config_base import CONFIG
 from cw_platform.modules_registry import MODULES as MR_MODULES, load_sync_ops
@@ -1319,12 +1319,19 @@ def _delete_on_plex_batch(
 _MDBLIST_REMOVE = "https://api.mdblist.com/watchlist/items/remove"
 
 
+def _provider_auth():
+    from providers.auth import runtime as provider_auth
+
+    return provider_auth
+
+
 def _delete_on_mdblist_batch(
     items: list[dict[str, Any]],
     cfg: dict[str, Any],
 ) -> None:
-    api_key = (cfg.get("api_key") or cfg.get("apikey") or "").strip()
-    if not api_key:
+    md_cfg = (cfg.get("mdblist") or cfg) if isinstance(cfg, dict) else {}
+    provider_auth = _provider_auth()
+    if not provider_auth.is_configured("mdblist", md_cfg):
         raise RuntimeError("MDBLIST not configured")
     payload: dict[str, list[dict[str, Any]]] = {"movies": [], "shows": []}
     for it in items or []:
@@ -1353,8 +1360,19 @@ def _delete_on_mdblist_batch(
     payload = {k: v for k, v in payload.items() if v}
     if not payload:
         raise RuntimeError("MDBLIST delete: no resolvable IDs")
-    url = f"{_MDBLIST_REMOVE}?{urlencode({'apikey': api_key})}"
-    r = requests.post(url, json=payload, timeout=45)
+    session = requests.Session()
+    cfg_full = cfg if isinstance(cfg.get("mdblist"), dict) else {"mdblist": md_cfg}
+    r = provider_auth.request_with_auth(
+        "mdblist",
+        session,
+        "POST",
+        _MDBLIST_REMOVE,
+        cfg=cfg_full,
+        params={"apikey": str(md_cfg.get("api_key") or md_cfg.get("apikey") or "").strip()},
+        json=payload,
+        timeout=45,
+        max_retries=1,
+    )
     if not r.ok:
         raise RuntimeError(
             f"MDBLIST delete failed: {getattr(r, 'text', 'no response')}"
@@ -1464,7 +1482,7 @@ def delete_watchlist_batch(
             _delete_on_emby_batch(items, cfg_view.get("emby", {}) or {})
             return
         if p == "MDBLIST":
-            _delete_on_mdblist_batch(items, cfg_view.get("mdblist", {}) or {})
+            _delete_on_mdblist_batch(items, cfg_view)
             return
         if p == "PUBLICMETADB":
             _delete_on_publicmetadb_batch(items, cfg_view)

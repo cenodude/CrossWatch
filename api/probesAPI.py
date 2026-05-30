@@ -13,12 +13,19 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Mapping
 
+import requests
 from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import load_config as _load_config
 
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
+
+
+def _provider_auth():
+    from providers.auth import runtime as provider_auth
+
+    return provider_auth
 
 try:
     from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH_PROVIDER
@@ -198,8 +205,13 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
 
     if p == "mdblist":
         m = cfg.get("mdblist") or {}
-        key = str((m.get("api_key") or m.get("key") or "")).strip()
-        return f"mdblist|key:{_secret_cache_tag(key)}" if key else "mdblist|unconfigured"
+        method = _provider_auth().active_method("mdblist", m)
+        if method == "api_key":
+            key = str((m.get("api_key") or m.get("key") or "")).strip()
+            return f"mdblist|api:{_secret_cache_tag(key)}" if key else "mdblist|unconfigured"
+        tok = str(m.get("access_token") or "").strip()
+        exp = str(m.get("expires_at") or "0")
+        return f"mdblist|device:{_secret_cache_tag(tok)}|exp:{exp}" if tok else "mdblist|unconfigured"
 
     if p == "tautulli":
         t = cfg.get("tautulli") or {}
@@ -335,9 +347,10 @@ def _http_post_json(
     data = json.dumps(dict(payload)).encode("utf-8")
     return _http_post_with_headers(url, headers=h, data=data, timeout=timeout)
 
-def _json_loads(b: bytes) -> dict[str, Any]:
+def _json_loads(b: bytes | str) -> Any:
     try:
-        return json.loads(b.decode("utf-8", errors="ignore"))
+        text = b.decode("utf-8", errors="ignore") if isinstance(b, bytes) else b
+        return json.loads(text)
     except Exception:
         return {}
 
@@ -791,17 +804,33 @@ def _probe_mdblist_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
         return cached[1], cached[2]
 
     m: Mapping[str, Any] = (cfg.get("mdblist") or {}) if isinstance(cfg.get("mdblist"), Mapping) else {}
-    api_key = str((m.get("api_key") or m.get("key") or "")).strip()
-    if not api_key:
+    if not _provider_auth().is_configured("mdblist", m):
         with _CACHE_LOCK:
-            PROBE_DETAIL_CACHE[key] = (now, False, "MDBList: missing api_key")
-        return False, "MDBList: missing api_key"
+            PROBE_DETAIL_CACHE[key] = (now, False, "MDBList: missing authentication")
+        return False, "MDBList: missing authentication"
 
-    from urllib.parse import quote
-
-    url = f"https://api.mdblist.com/user?apikey={quote(api_key)}"
     timeout = max(int(HTTP_TIMEOUT), 6)
-    code, body, _ = _http_get_with_headers(url, headers=UA, timeout=timeout)
+    try:
+        sess = requests.Session()
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        r = _provider_auth().request_with_auth(
+            "mdblist",
+            sess,
+            "GET",
+            "https://api.mdblist.com/user",
+            cfg=cfg,
+            instance_id=inst,
+            headers=UA,
+            timeout=timeout,
+            max_retries=1,
+        )
+        code = int(r.status_code)
+        body = r.text or ""
+    except Exception as e:
+        code = 0
+        body = ""
+        _set_http_error(str(e))
 
     if code != 200:
         rsn = _reason_http(code, "MDBList")
@@ -1012,16 +1041,29 @@ def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
         return cached[1]
 
     md = (cfg.get("mdblist") or cfg.get("MDBLIST") or {}) or {}
-    api_key = str((md.get("api_key") or md.get("key") or "")).strip()
-    if not api_key:
+    if not _provider_auth().is_configured("mdblist", md):
         with _CACHE_LOCK:
             _USERINFO_CACHE[key] = (now, {})
         return {}
 
-    from urllib.parse import quote
-
-    url = f"https://api.mdblist.com/user?apikey={quote(api_key)}"
-    code, body = _http_get(url, headers=UA, timeout=6)
+    try:
+        sess = requests.Session()
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        r = _provider_auth().request_with_auth(
+            "mdblist",
+            sess,
+            "GET",
+            "https://api.mdblist.com/user",
+            cfg=cfg,
+            instance_id=inst,
+            headers=UA,
+            timeout=6,
+            max_retries=1,
+        )
+        code, body = int(r.status_code), r.text or ""
+    except Exception:
+        code, body = 0, ""
 
     out: dict[str, Any] = {}
     if code == 200:
@@ -1259,7 +1301,7 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
         return bool(str(blk.get("server") or "").strip() and str(blk.get("access_token") or blk.get("token") or blk.get("api_key") or "").strip())
 
     if ck == "mdblist":
-        return bool(str(blk.get("api_key") or blk.get("key") or "").strip())
+        return _provider_auth().is_configured("mdblist", blk)
 
     if ck == "publicmetadb":
         return bool(str(blk.get("api_key") or blk.get("key") or "").strip())

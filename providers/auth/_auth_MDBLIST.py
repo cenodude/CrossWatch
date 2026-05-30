@@ -10,12 +10,14 @@ import requests
 
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import get_provider_block, ensure_instance_block, normalize_instance_id
+from cw_platform.provider_instances import ensure_instance_block, get_provider_block, normalize_instance_id
+from providers.sync.mdblist import _auth as mdblist_auth
 
 try:
     from _logging import log as _real_log
 except ImportError:
     _real_log = None
+
 
 def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
     try:
@@ -26,10 +28,12 @@ def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
     except Exception:
         pass
 
+
 API_BASE = "https://api.mdblist.com"
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 10
-__VERSION__ = "2.0.0"
+__VERSION__ = "2.1.0"
+
 
 def _load_config() -> dict[str, Any]:
     try:
@@ -37,17 +41,26 @@ def _load_config() -> dict[str, Any]:
     except Exception:
         return {}
 
+
 def _block(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
     return get_provider_block(cfg or {}, "mdblist", instance_id)
 
+
 def _get(cfg: Mapping[str, Any], path: str, *, instance_id: Any = None, timeout: int = HTTP_TIMEOUT) -> tuple[int, dict[str, Any]]:
-    b = _block(cfg, instance_id)
-    key = str(b.get("api_key") or "").strip()
-    if not key:
+    if not mdblist_auth.is_configured(_block(cfg, instance_id)):
         return 0, {}
-    url = f"{API_BASE}{path}?apikey={key}"
     try:
-        r = requests.get(url, headers={"Accept": "application/json", "User-Agent": UA}, timeout=timeout)
+        session = requests.Session()
+        r = mdblist_auth.request_with_auth(
+            session,
+            "GET",
+            f"{API_BASE}{path}",
+            cfg=cfg,
+            instance_id=instance_id,
+            timeout=timeout,
+            max_retries=1,
+            headers={"Accept": "application/json", "User-Agent": UA},
+        )
     except Exception:
         return 0, {}
     try:
@@ -56,6 +69,7 @@ def _get(cfg: Mapping[str, Any], path: str, *, instance_id: Any = None, timeout:
         j = {}
     return r.status_code, j
 
+
 class MDBListAuth(AuthProvider):
     name = "MDBLIST"
 
@@ -63,18 +77,25 @@ class MDBListAuth(AuthProvider):
         return AuthManifest(
             name="MDBLIST",
             label="MDBList",
-            flow="api_keys",
+            flow="device_code",
             fields=[
+                {
+                    "key": "mdblist.client_id",
+                    "label": "Client ID",
+                    "type": "text",
+                    "required": False,
+                    "placeholder": "MDBList Device Code client_id",
+                },
                 {
                     "key": "mdblist.api_key",
                     "label": "API Key",
                     "type": "password",
-                    "required": True,
-                    "placeholder": "••••••••",
-                }
+                    "required": False,
+                    "placeholder": "********",
+                },
             ],
-            actions={"start": False, "finish": True, "refresh": False, "disconnect": True},
-            notes="Generate your API key in mdblist.com > Preferences.",
+            actions={"start": True, "finish": True, "refresh": True, "disconnect": True},
+            notes="Device Code is preferred. API key remains available as a legacy option.",
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -82,34 +103,52 @@ class MDBListAuth(AuthProvider):
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
-        b = _block(cfg, inst)
-        has = bool(str(b.get("api_key") or "").strip())
+        status = mdblist_auth.status_for_block(_block(cfg, inst))
         label = "MDBList" if inst == "default" else f"MDBList ({inst})"
-        return AuthStatus(connected=has, label=label, user=None)
+        return AuthStatus(
+            connected=bool(status.get("connected")),
+            label=label,
+            user=str(status.get("username") or "") or None,
+            expires_at=int(status.get("expires_at") or 0) or None,
+        )
 
     def start(self, cfg: MutableMapping[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None) -> dict[str, Any]:
-        return {}
+        cfgd = dict(cfg or _load_config() or {})
+        return mdblist_auth.start_device_code(cfgd, instance_id=instance_id)
 
     def finish(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None, **payload: Any) -> AuthStatus:
         cfgd = dict(cfg or _load_config() or {})
         b = ensure_instance_block(cfgd, "mdblist", instance_id)
-        key = str(payload.get("api_key") or payload.get("mdblist.api_key") or "").strip()
-        b["api_key"] = key
+        method = mdblist_auth.normalize_auth_method(payload.get("auth_method") or b.get("auth_method"), b)
+        if method == "api_key":
+            b["api_key"] = str(payload.get("api_key") or payload.get("mdblist.api_key") or "").strip()
+            mdblist_auth.set_active_method(b, "api_key")
+        else:
+            if payload.get("client_id"):
+                b["client_id"] = str(payload.get("client_id") or "").strip()
+            mdblist_auth.set_active_method(b, "device_code")
         save_config(cfgd)
-        log(f"MDBList API key saved (instance={normalize_instance_id(instance_id)}).", module="AUTH")
+        log(f"MDBList auth saved (method={method}, instance={normalize_instance_id(instance_id)}).", module="AUTH")
         return self.get_status(cfgd, instance_id=instance_id)
 
     def refresh(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        try:
+            mdblist_auth.refresh_token(dict(cfg or _load_config() or {}), instance_id=instance_id)
+        except Exception:
+            pass
         return self.get_status(cfg, instance_id=instance_id)
 
     def disconnect(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
         cfgd = dict(cfg or _load_config() or {})
         b = ensure_instance_block(cfgd, "mdblist", instance_id)
         b["api_key"] = ""
+        mdblist_auth.clear_oauth(b)
         save_config(cfgd)
         log(f"MDBList disconnected (instance={normalize_instance_id(instance_id)}).", module="AUTH")
         return self.get_status(cfgd, instance_id=instance_id)
 
+
+PROVIDER = MDBListAuth()
 
 
 def html() -> str:
@@ -123,22 +162,24 @@ def html() -> str:
     #sec-mdblist .inline .msg.hidden{display:none}
     #sec-mdblist .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
     #sec-mdblist .btn.danger:hover{ filter:brightness(1.08) }
-    
-    /* MDBList Connect  */
-    #sec-mdblist #mdblist_save{
+    #sec-mdblist .mdblist-action-row{display:flex;gap:12px;align-items:stretch}
+    #sec-mdblist .mdblist-action-row input{flex:1 1 auto;min-width:0}
+    #sec-mdblist .mdblist-action-row .btn{flex:0 0 auto;white-space:nowrap;min-height:44px}
+    #sec-mdblist #mdblist_save,#sec-mdblist #mdblist_device_start{
       background: linear-gradient(135deg,#00e084,#2ea859);
       border-color: rgba(0,224,132,.45);
       box-shadow: 0 0 14px rgba(0,224,132,.35);
       color: #fff;
+      min-width: 146px;
     }
-    #sec-mdblist #mdblist_save:hover{
+    #sec-mdblist #mdblist_save:hover,#sec-mdblist #mdblist_device_start:hover{
       filter: brightness(1.06);
       box-shadow: 0 0 18px rgba(0,224,132,.5);
     }
   </style>
 
   <div class="head" onclick="toggleSection && toggleSection('sec-mdblist')">
-    <span class="chev">▶</span><strong>MDBList</strong>
+    <span class="chev">&#9654;</span><strong>MDBList</strong>
   </div>
 
   <div class="body">
@@ -147,7 +188,7 @@ def html() -> str:
         <div class="cw-panel-head">
           <div>
             <div class="cw-panel-title">MDBList</div>
-            <div class="muted">Connect and verify your MDBList API key.</div>
+            <div class="muted">Connect with Device Code or use a legacy API key.</div>
           </div>
         </div>
 
@@ -158,27 +199,64 @@ def html() -> str:
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
-                  <div>
-                    <label for="mdblist_key">API Key</label>
-                    <div style="display:flex;gap:8px">
-                      <input id="mdblist_key" name="mdblist_key" type="password" placeholder="••••••••" />
-                      <button id="mdblist_save" class="btn">Connect</button>
-                    </div>
-                    <div id="mdblist_hint" class="msg warn" style="margin-top:8px">
-                      You need an MDBList API key. Create one at
-                      <a href="https://mdblist.com/preferences/#api" target="_blank" rel="noopener">MDBList Preferences</a>.
-                    </div>
-                  </div>
-            
-                  <div>
-                    <div class="field-label">Status</div>
-                    <div class="inline">
-                      <button id="mdblist_verify" class="btn">Verify</button>
-                      <button id="mdblist_disconnect" class="btn danger">Disconnect</button>
-                      <div id="mdblist_msg" class="msg ok hidden" aria-live="polite"></div>
-                    </div>
+              <div>
+                <label for="mdblist_auth_method">Authentication Method</label>
+                <select id="mdblist_auth_method" name="mdblist_auth_method">
+                  <option value="device_code">Device Code</option>
+                  <option value="api_key">API Key</option>
+                </select>
+              </div>
+              <div id="mdblist_client_id_wrap">
+                <label for="mdblist_client_id">Device Code Client ID</label>
+                <input id="mdblist_client_id" name="mdblist_client_id" placeholder="MDBList app client_id" autocomplete="off" />
+              </div>
+            </div>
+
+            <div id="mdblist_device_panel" style="margin-top:10px">
+              <div class="sep"></div>
+              <div class="grid2">
+                <div>
+                  <div class="field-label">Current token</div>
+                  <div class="mdblist-action-row">
+                    <input id="mdblist_access_token" readonly placeholder="empty = not set" />
+                    <button id="mdblist_copy_token" class="btn copy">Copy</button>
                   </div>
                 </div>
+                <div>
+                  <div class="field-label">Link code (PIN)</div>
+                  <div class="mdblist-action-row">
+                    <input id="mdblist_device_code" readonly placeholder="" />
+                    <button id="mdblist_copy_code" class="btn copy">Copy</button>
+                  </div>
+                </div>
+              </div>
+              <div class="inline" style="margin-top:10px">
+                <button id="mdblist_device_start" class="btn">Connect MDBList</button>
+                <button id="mdblist_disconnect_device" class="btn danger">Delete</button>
+                <div class="sub">A browser window opens so you can enter your code.</div>
+              </div>
+            </div>
+
+            <div id="mdblist_api_panel" style="margin-top:10px">
+              <div class="grid2">
+                <div>
+                  <label for="mdblist_key">API Key</label>
+                  <div class="mdblist-action-row">
+                    <input id="mdblist_key" name="mdblist_key" type="password" placeholder="********" />
+                    <button id="mdblist_save" class="btn">Connect MDBList</button>
+                    <button id="mdblist_disconnect_api" class="btn danger">Delete</button>
+                  </div>
+                  <div id="mdblist_hint" class="msg warn" style="margin-top:8px">
+                    You need an MDBList API key. Create one at
+                    <a href="https://mdblist.com/preferences/#api" target="_blank" rel="noopener">MDBList Preferences</a>.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="inline" style="margin-top:10px;justify-content:flex-end">
+              <div id="mdblist_msg" class="msg ok hidden" aria-live="polite"></div>
+            </div>
           </div>
         </div>
       </div>

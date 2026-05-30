@@ -1020,7 +1020,7 @@ function findSharedSinkProfileProviderConflicts(routes) {
     const ov = overlayCfgFor(s, r?.sink_instance);
     if (s === "trakt") return !!String(ov.access_token || "").trim();
     if (s === "simkl") return !!String(ov.access_token || "").trim();
-    if (s === "mdblist") return !!String(ov.api_key || "").trim();
+    if (s === "mdblist") return !!String(ov.api_key || ov.access_token || "").trim();
     return false;
   }
 
@@ -1894,7 +1894,7 @@ function chip(text, onRemove, onClick) {
 
   const traktTokenOk = !!String(traktCfg?.access_token || read("trakt.access_token", "") || "").trim();
   const simklTokenOk = !!String(simklCfg?.access_token || read("simkl.access_token", "") || "").trim();
-  const mdblTokenOk = !!String(mdblCfg?.api_key || read("mdblist.api_key", "") || "").trim();
+  const mdblTokenOk = !!String(mdblCfg?.api_key || mdblCfg?.access_token || read("mdblist.api_key", "") || read("mdblist.access_token", "") || "").trim();
 
   let sinkOk = true;
   let sinkErr = "";

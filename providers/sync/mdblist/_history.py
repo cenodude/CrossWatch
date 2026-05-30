@@ -26,8 +26,10 @@ from ._common import (
     cfg_int,
     cfg_section,
     get_watermark,
+    has_auth,
     iso_ok,
     iso_z,
+    mdblist_request,
     max_iso,
     now_iso,
     read_json,
@@ -211,8 +213,8 @@ def _fetch_last_activities(adapter: Any, *, timeout: float, retries: int) -> dic
 
     sess = adapter.client.session
     try:
-        r = request_with_retries(
-            sess,
+        r = mdblist_request(
+            adapter,
             "GET",
             URL_LAST_ACTIVITIES,
             params={"apikey": apikey},
@@ -668,12 +670,12 @@ def build_index(
     }
 
     apikey = str(cfg.get("api_key") or "").strip()
-    if not apikey:
+    if not has_auth(cfg):
         if cached:
-            _dbg("index_cache_hit", source="cache", reason="missing_api_key", count=len(cached))
+            _dbg("index_cache_hit", source="cache", reason="missing_auth", count=len(cached))
             _info("index_done", count=len(cached), source="cache")
         else:
-            _dbg("index_reconcile", reason="missing_api_key", strategy="empty")
+            _dbg("index_reconcile", reason="missing_auth", strategy="empty")
             _info("index_done", count=0, source="empty")
         return cached
 
@@ -784,8 +786,8 @@ def build_index(
         if since_req:
             params["since"] = since_req
         try:
-            r = request_with_retries(
-                sess,
+            r = mdblist_request(
+                adapter,
                 "GET",
                 URL_LIST,
                 params=params,
@@ -1103,9 +1105,9 @@ def _write(
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
     items_list = list(items or [])
-    if not apikey:
-        unresolved = [{"item": id_minimal(it), "hint": "missing_api_key"} for it in items_list]
-        _info("write_skipped", op="remove" if unwatch else "add", reason="missing_api_key", unresolved=len(unresolved))
+    if not has_auth(cfg):
+        unresolved = [{"item": id_minimal(it), "hint": "missing_auth"} for it in items_list]
+        _info("write_skipped", op="remove" if unwatch else "add", reason="missing_auth", unresolved=len(unresolved))
         return 0, unresolved
 
     sess = adapter.client.session
@@ -1185,8 +1187,8 @@ def _write(
             backoff = delay_ms
 
             while True:
-                r = request_with_retries(
-                    sess,
+                r = mdblist_request(
+                    adapter,
                     "POST",
                     url,
                     params={"apikey": apikey},
@@ -1248,8 +1250,8 @@ def _write(
                     )
 
                     for single in part:
-                        r2 = request_with_retries(
-                            sess,
+                        r2 = mdblist_request(
+                            adapter,
                             "POST",
                             url,
                             params={"apikey": apikey},
