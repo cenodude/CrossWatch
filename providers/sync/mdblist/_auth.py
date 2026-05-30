@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Mapping, MutableMapping
 from typing import Any
@@ -16,6 +17,8 @@ API_BASE = "https://api.mdblist.com"
 OAUTH_TOKEN_URL = f"{API_BASE}/oauth/token/"
 OAUTH_DEVICE_URL = f"{API_BASE}/oauth/device-authorization/"
 VERIFY_URL = "https://mdblist.com/oauth/device/"
+DEFAULT_CLIENT_ID = "4A5MNaWPLOLSHws7JCQXOtATBOs2AmYJsqcwT7Uj"
+CLIENT_ID_ENV = "CROSSWATCH_MDBLIST_CLIENT_ID"
 SCOPE = "write"
 REFRESH_SKEW_SEC = 300
 UA = "CrossWatch/MDBListAuth"
@@ -29,13 +32,20 @@ def now() -> int:
     return int(time.time())
 
 
+def app_client_id() -> str:
+    return str(os.environ.get(CLIENT_ID_ENV) or DEFAULT_CLIENT_ID).strip()
+
+
 def normalize_auth_method(value: Any, block: Mapping[str, Any] | None = None) -> str:
     b = block or {}
     has_api_key = bool(str(b.get("api_key") or b.get("key") or "").strip())
     has_oauth = bool(str(b.get("access_token") or "").strip() or str(b.get("refresh_token") or "").strip())
+    has_pending_device = isinstance(b.get("_pending_device"), Mapping)
     if has_api_key and not has_oauth:
+        if has_pending_device:
+            return "device_code"
         return "api_key"
-    if has_oauth:
+    if has_oauth or has_pending_device:
         return "device_code"
 
     raw = str(value or "").strip().lower().replace("-", "_")
@@ -106,7 +116,7 @@ def is_configured(block: Mapping[str, Any] | None) -> bool:
     b = block or {}
     if active_method(b) == "api_key":
         return bool(str(b.get("api_key") or b.get("key") or "").strip())
-    return bool(str(b.get("access_token") or "").strip() and str(b.get("client_id") or "").strip())
+    return bool(str(b.get("access_token") or "").strip())
 
 
 def status_for_block(block: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -117,7 +127,7 @@ def status_for_block(block: Mapping[str, Any] | None) -> dict[str, Any]:
         "connected": is_configured(b),
         "api_key_configured": bool(str(b.get("api_key") or b.get("key") or "").strip()),
         "device_configured": bool(str(b.get("access_token") or "").strip()),
-        "client_id_configured": bool(str(b.get("client_id") or "").strip()),
+        "client_id_configured": bool(app_client_id()),
         "expires_at": int(b.get("expires_at") or 0) if method == "device_code" else 0,
         "username": str(b.get("username") or ""),
     }
@@ -166,11 +176,11 @@ def start_device_code(
     cfgd = cfg if isinstance(cfg, dict) else _load_full_cfg()
     inst = normalize_instance_id(instance_id)
     block = writable_block(cfgd, inst)
-    cid = str(client_id or block.get("client_id") or "").strip()
+    cid = app_client_id()
     if not cid:
         return {"ok": False, "error": "missing_client_id", "instance": inst}
 
-    block["client_id"] = cid
+    block.pop("client_id", None)
     set_active_method(block, "device_code")
 
     try:
@@ -207,6 +217,7 @@ def start_device_code(
         "expires_at": expires_at,
         "created_at": now(),
     }
+    block["auth_method"] = "device_code"
     _save_full_cfg(cfgd)
     return {
         "ok": True,
@@ -229,7 +240,7 @@ def poll_device_code(
     cfgd = cfg if isinstance(cfg, dict) else _load_full_cfg()
     inst = normalize_instance_id(instance_id)
     block = writable_block(cfgd, inst)
-    cid = str(block.get("client_id") or "").strip()
+    cid = app_client_id()
     pend = block.get("_pending_device") if isinstance(block.get("_pending_device"), Mapping) else {}
     dc = str(device_code or (pend or {}).get("device_code") or "").strip()
     if not cid:
@@ -297,10 +308,8 @@ def refresh_token(
     full = _load_full_cfg()
     inst = normalize_instance_id(instance_id)
     block = writable_block(full, inst)
-    cid = str(block.get("client_id") or "").strip()
+    cid = app_client_id()
     rt = str(block.get("refresh_token") or "").strip()
-    if not cid and isinstance(cfg, Mapping):
-        cid = str(provider_block(cfg, inst).get("client_id") or "").strip()
     if not rt and isinstance(cfg, Mapping):
         rt = str(provider_block(cfg, inst).get("refresh_token") or "").strip()
     if not cid or not rt:
@@ -338,7 +347,6 @@ def refresh_token(
         {
             "auth_method": "device_code",
             "api_key": "",
-            "client_id": cid,
             "access_token": access_token,
             "refresh_token": str(tok.get("refresh_token") or rt).strip(),
             "token_type": str(tok.get("token_type") or block.get("token_type") or "Bearer").strip() or "Bearer",

@@ -80,13 +80,6 @@ class MDBListAuth(AuthProvider):
             flow="device_code",
             fields=[
                 {
-                    "key": "mdblist.client_id",
-                    "label": "Client ID",
-                    "type": "text",
-                    "required": False,
-                    "placeholder": "MDBList Device Code client_id",
-                },
-                {
                     "key": "mdblist.api_key",
                     "label": "API Key",
                     "type": "password",
@@ -124,8 +117,7 @@ class MDBListAuth(AuthProvider):
             b["api_key"] = str(payload.get("api_key") or payload.get("mdblist.api_key") or "").strip()
             mdblist_auth.set_active_method(b, "api_key")
         else:
-            if payload.get("client_id"):
-                b["client_id"] = str(payload.get("client_id") or "").strip()
+            b.pop("client_id", None)
             mdblist_auth.set_active_method(b, "device_code")
         save_config(cfgd)
         log(f"MDBList auth saved (method={method}, instance={normalize_instance_id(instance_id)}).", module="AUTH")
@@ -205,10 +197,6 @@ def html() -> str:
                   <option value="device_code">Device Code</option>
                   <option value="api_key">API Key</option>
                 </select>
-              </div>
-              <div id="mdblist_client_id_wrap">
-                <label for="mdblist_client_id">Device Code Client ID</label>
-                <input id="mdblist_client_id" name="mdblist_client_id" placeholder="MDBList app client_id" autocomplete="off" />
               </div>
             </div>
 
