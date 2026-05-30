@@ -1265,7 +1265,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             provider_auth = _provider_auth()
             method = provider_auth.normalize_auth_method("mdblist", (payload or {}).get("auth_method") or "api_key")
             key = str((payload or {}).get("api_key") or "").strip()
-            client_id = str((payload or {}).get("client_id") or "").strip()
             cfg = load_config()
             m = ensure_instance_block(cfg, "mdblist", inst)
             if method == "api_key":
@@ -1277,8 +1276,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     m["api_key"] = key
                 provider_auth.set_active_method("mdblist", m, "api_key")
             else:
-                if client_id:
-                    m["client_id"] = client_id
+                m.pop("client_id", None)
                 provider_auth.set_active_method("mdblist", m, "device_code")
             save_config(cfg)
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] auth saved method={method} instance={inst}")
@@ -1294,8 +1292,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
-            client_id = str((payload or {}).get("client_id") or "").strip()
-            res = _provider_auth().start_device_code("mdblist", cfg, instance_id=inst, client_id=client_id)
+            res = _provider_auth().start_device_code("mdblist", cfg, instance_id=inst)
             if isinstance(probe_cache, dict):
                 probe_cache["mdblist"] = (0.0, False)
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] device start instance={inst} ok={bool(res.get('ok'))}")

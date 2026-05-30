@@ -146,10 +146,8 @@
         window.CW?.IconSelect?.enhance(sel, sel.__cwIconSelectCfg || { className: "cw-plain-select" });
       } catch (_) {}
     }
-    const cidWrap = el("mdblist_client_id_wrap") || el("mdblist_client_id")?.closest("div");
     const dev = el("mdblist_device_panel");
     const api = el("mdblist_api_panel");
-    if (cidWrap) cidWrap.style.display = m === "device_code" ? "" : "none";
     if (dev) dev.style.display = m === "device_code" ? "" : "none";
     if (api) api.style.display = m === "api_key" ? "" : "none";
   }
@@ -273,8 +271,6 @@
     const blk = getMDBListCfgBlock(cfg);
     const method = methodOverride || activeMethodFromBlock(blk);
     setMethodUI(method);
-    const cid = el("mdblist_client_id");
-    if (cid) cid.value = txt(blk?.client_id || "");
     setReadonlySecret("mdblist_access_token", !!txt(blk?.access_token));
     const hasApiKey = !!txt(blk?.api_key);
     maskInput(el("mdblist_key"), hasApiKey);
@@ -294,7 +290,7 @@
     methodOverride = method === "device_code" ? "device_code" : "";
     setMethodUI(method);
     try {
-      await saveAuth({ auth_method: method, client_id: txt(el("mdblist_client_id")?.value) });
+      await saveAuth({ auth_method: method });
       await refresh(false);
     } catch {
       note("MDBList method switch failed");
@@ -358,8 +354,6 @@
   }
 
   async function onDeviceStart() {
-    const clientId = txt(el("mdblist_client_id")?.value);
-    if (!clientId) { note("Enter your MDBList Client ID"); return; }
     let win = null;
     try { win = window.open("about:blank", "_blank"); } catch (_) {}
     try {
@@ -367,7 +361,7 @@
       const r = await fetchJSON(mdblApi("/api/mdblist/device/start"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: clientId }),
+        body: "{}",
         cache: "no-store"
       });
       const data = r.data || {};
@@ -523,8 +517,6 @@
 
     const method = el("mdblist_auth_method")?.value === "api_key" ? "api_key" : "device_code";
     target.auth_method = method;
-    const clientId = txt(el("mdblist_client_id")?.value);
-    if (clientId) target.client_id = clientId;
     const keyState = readSecretField(el("mdblist_key"));
     if (method === "api_key" && keyState.value) target.api_key = keyState.value;
   });

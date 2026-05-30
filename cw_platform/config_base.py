@@ -254,7 +254,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
     "mdblist": {
         "auth_method": "",                              # "", "device_code" (default when new), or "api_key" (legacy/manual)
-        "client_id": "",                                # MDBList Device Code app client_id
+        "client_id": "",                                # Deprecated; CrossWatch MDBList app client_id is supplied internally
         "access_token": "",                             # OAuth access token (Device Code)
         "refresh_token": "",                            # OAuth refresh token (Device Code)
         "token_type": "Bearer",                         # OAuth token type
@@ -1047,9 +1047,12 @@ def _normalize_mdblist(cfg: dict[str, Any]) -> None:
     def _norm_method(block: dict[str, Any]) -> str:
         has_api = bool(str(block.get("api_key") or block.get("key") or "").strip())
         has_oauth = bool(str(block.get("access_token") or "").strip() or str(block.get("refresh_token") or "").strip())
+        has_pending_device = isinstance(block.get("_pending_device"), dict)
         if has_api and not has_oauth:
+            if has_pending_device:
+                return "device_code"
             return "api_key"
-        if has_oauth:
+        if has_oauth or has_pending_device:
             return "device_code"
         raw = str(block.get("auth_method") or "").strip().lower().replace("-", "_")
         if raw in ("api", "apikey", "api_key", "key"):
@@ -1065,8 +1068,10 @@ def _normalize_mdblist(cfg: dict[str, Any]) -> None:
         # Do not let a passive UI/config save destroy an existing API key just
         # because the default method is Device Code. The API key becomes
         # inactive once Device Code has real token state, and is cleared after
-        # MDBList returns tokens. A pending device flow is not active auth yet.
-        if method == "device_code" and has_api_before and not has_oauth_before:
+        # MDBList returns tokens. A pending device flow is an explicit switch
+        # in progress, so keep it selected while the user approves the login.
+        has_pending_before = isinstance(block.get("_pending_device"), dict)
+        if method == "device_code" and has_api_before and not has_oauth_before and not has_pending_before:
             method = "api_key"
         block["auth_method"] = method
         block["client_id"] = str(block.get("client_id") or "").strip()
