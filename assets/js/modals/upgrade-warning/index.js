@@ -111,7 +111,7 @@ export default {
     const shell = hostEl.closest(".cx-modal-shell");
     const state = {
       authReady: false,
-      step: requiresCleanReset ? "cleanup" : "intro",
+      step: "intro",
       username: "admin",
       password: "",
       password2: "",
@@ -128,19 +128,21 @@ export default {
       notesUrl: "https://github.com/cenodude/CrossWatch/releases",
     };
 
-    if (!requiresCleanReset) {
-      try {
-        const authStatus = await fetchAppAuthStatus();
-        state.authReady = !!(
-          authStatus
-          && !authStatus.reset_required
-          && hasEnabledAppAuth(authStatus)
-        );
-        state.step = state.authReady ? "migrate" : "intro";
-      } catch {
-        state.authReady = false;
-        state.step = "intro";
-      }
+    try {
+      const authStatus = await fetchAppAuthStatus();
+      state.authReady = !!(
+        authStatus
+        && !authStatus.reset_required
+        && hasEnabledAppAuth(authStatus)
+        && (requiresCleanReset ? authStatus.authenticated === true : true)
+      );
+    } catch {
+      state.authReady = false;
+    }
+    if (requiresCleanReset) {
+      state.step = state.authReady ? "cleanup" : "credentials";
+    } else {
+      state.step = state.authReady ? "migrate" : "intro";
     }
 
     async function ensureNotesLoaded() {
@@ -208,10 +210,12 @@ export default {
         state.error = "";
         state.password = "";
         state.password2 = "";
-        state.step = "migrate";
-        notify("Sign-in saved. CrossWatch is updating the config in the background.");
+        state.step = requiresCleanReset ? "cleanup" : "migrate";
+        notify(requiresCleanReset
+          ? "Sign-in saved. You can now run the clean reset."
+          : "Sign-in saved. CrossWatch is updating the config in the background.");
         render();
-        ensureAutoSaved();
+        if (!requiresCleanReset) ensureAutoSaved();
         return;
       } catch (err) {
         state.saving = false;
@@ -361,11 +365,15 @@ export default {
       hostEl.innerHTML = layout(`
         <div class="card">
           <div class="h">Create admin credentials</div>
-          <div class="p">You must finish this step before the supported upgrade flow can continue.</div>
+          <div class="p">${requiresCleanReset
+            ? "You must finish this step before CrossWatch can run the clean reset."
+            : "You must finish this step before the supported upgrade flow can continue."}</div>
         </div>
         <div class="card">
-          <div class="h">Background save will start afterwards</div>
-          <div class="p">As soon as sign-in is configured, CrossWatch saves the new config keys automatically.</div>
+          <div class="h">${requiresCleanReset ? "Clean reset will unlock afterwards" : "Background save will start afterwards"}</div>
+          <div class="p">${requiresCleanReset
+            ? "As soon as sign-in is configured, the reset action uses your authenticated session instead of a public setup endpoint."
+            : "As soon as sign-in is configured, CrossWatch saves the new config keys automatically."}</div>
         </div>
         <div class="card">
           ${renderAppAuthFields({

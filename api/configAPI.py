@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 from packaging.version import InvalidVersion, Version
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from providers.scrobble.sources import source_enabled
 
@@ -164,7 +164,7 @@ def _set_cfg_version_current(env: dict[str, Any], cfg: dict[str, Any]) -> None:
 
 
 @router.get("/config/meta")
-def api_config_meta() -> JSONResponse:
+def api_config_meta(request: Request) -> JSONResponse:
     env = _env()
     base = env.get("cfg_base")
     try:
@@ -264,29 +264,41 @@ def api_config_meta() -> JSONResponse:
         except Exception:
             pass
 
-    return _nostore(
-        JSONResponse(
+    authenticated = False
+    try:
+        from . import appAuthAPI as app_auth
+
+        token = request.cookies.get(app_auth.COOKIE_NAME)
+        authenticated = app_auth.auth_required(raw) and app_auth.is_authenticated(raw, token)
+    except Exception:
+        authenticated = False
+
+    payload = {
+        "exists": exists,
+        "first_run": first_run,
+        "autogen": autogen,
+        "auth_configured": auth_configured,
+        "auth_setup_required": auth_setup_required,
+        "auth_reset_required": auth_reset_required,
+        "auth_reset_deferred_to_upgrade": auth_reset_deferred_to_upgrade,
+        "setup_wizard_required": setup_wizard_required,
+        "current_version": cur_ver,
+        "config_version": effective_cfg_ver,
+        "stored_config_version": cfg_ver,
+        "pending_upgrade_from_version": pending_upgrade_from_ver,
+        "needs_upgrade": needs_upgrade,
+        "legacy_pre_070": is_legacy_pre_070,
+    }
+    if authenticated:
+        payload.update(
             {
-                "exists": exists,
-                "first_run": first_run,
-                "autogen": autogen,
-                "auth_configured": auth_configured,
-                "auth_setup_required": auth_setup_required,
-                "auth_reset_required": auth_reset_required,
-                "auth_reset_deferred_to_upgrade": auth_reset_deferred_to_upgrade,
-                "setup_wizard_required": setup_wizard_required,
                 "path": str(p) if p is not None else None,
                 "size": size,
                 "mtime": mtime,
-                "current_version": cur_ver,
-                "config_version": effective_cfg_ver,
-                "stored_config_version": cfg_ver,
-                "pending_upgrade_from_version": pending_upgrade_from_ver,
-                "needs_upgrade": needs_upgrade,
-                "legacy_pre_070": is_legacy_pre_070,
             }
         )
-    )
+
+    return _nostore(JSONResponse(payload))
 
 @router.get("/config")
 def api_config() -> JSONResponse:
