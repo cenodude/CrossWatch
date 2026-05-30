@@ -253,6 +253,13 @@ DEFAULT_CFG: dict[str, Any] = {
     },
 
     "mdblist": {
+        "auth_method": "",                              # "", "device_code" (default when new), or "api_key" (legacy/manual)
+        "client_id": "",                                # MDBList Device Code app client_id
+        "access_token": "",                             # OAuth access token (Device Code)
+        "refresh_token": "",                            # OAuth refresh token (Device Code)
+        "token_type": "Bearer",                         # OAuth token type
+        "scope": "write",                               # MDBList OAuth scope
+        "expires_at": 0,                                # Epoch when access_token expires
         "api_key": "",                                  # Your MDBList API key
         "timeout": 10,                                  # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget
@@ -665,7 +672,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "plex": {"account_token", "pms_token", "home_pin", "webhook_secret"},
         "simkl": {"access_token", "refresh_token", "client_secret"},
         "anilist": {"access_token", "client_secret"},
-        "mdblist": {"api_key"},
+        "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
@@ -1036,6 +1043,72 @@ def _normalize_mdblist(cfg: dict[str, Any]) -> None:
     else:
         m = {}
         cfg["mdblist"] = m
+
+    def _norm_method(block: dict[str, Any]) -> str:
+        has_api = bool(str(block.get("api_key") or block.get("key") or "").strip())
+        has_oauth = bool(str(block.get("access_token") or "").strip() or str(block.get("refresh_token") or "").strip())
+        if has_api and not has_oauth:
+            return "api_key"
+        if has_oauth:
+            return "device_code"
+        raw = str(block.get("auth_method") or "").strip().lower().replace("-", "_")
+        if raw in ("api", "apikey", "api_key", "key"):
+            return "api_key"
+        if raw in ("device", "device_code", "oauth", "oauth_device", "bearer"):
+            return "device_code"
+        return "device_code"
+
+    def _normalize_auth_block(block: dict[str, Any]) -> None:
+        method = _norm_method(block)
+        has_api_before = bool(str(block.get("api_key") or block.get("key") or "").strip())
+        has_oauth_before = bool(str(block.get("access_token") or "").strip() or str(block.get("refresh_token") or "").strip())
+        # Do not let a passive UI/config save destroy an existing API key just
+        # because the default method is Device Code. The API key becomes
+        # inactive once Device Code has real token state, and is cleared after
+        # MDBList returns tokens. A pending device flow is not active auth yet.
+        if method == "device_code" and has_api_before and not has_oauth_before:
+            method = "api_key"
+        block["auth_method"] = method
+        block["client_id"] = str(block.get("client_id") or "").strip()
+        block["access_token"] = str(block.get("access_token") or "").strip()
+        block["refresh_token"] = str(block.get("refresh_token") or "").strip()
+        block["token_type"] = str(block.get("token_type") or "Bearer").strip() or "Bearer"
+        block["scope"] = str(block.get("scope") or "write").strip() or "write"
+        try:
+            block["expires_at"] = int(block.get("expires_at") or 0)
+        except Exception:
+            block["expires_at"] = 0
+        block["api_key"] = str(block.get("api_key") or block.get("key") or "").strip()
+        if method == "api_key":
+            block["access_token"] = ""
+            block["refresh_token"] = ""
+            block["expires_at"] = 0
+        else:
+            block["api_key"] = ""
+        pend = block.get("_pending_device")
+        if isinstance(pend, dict):
+            pend["device_code"] = str(pend.get("device_code") or "").strip()
+            pend["user_code"] = str(pend.get("user_code") or "").strip()
+            pend["verification_uri"] = str(pend.get("verification_uri") or pend.get("verification_url") or "https://mdblist.com/oauth/device/").strip()
+            try:
+                pend["interval"] = int(pend.get("interval") or 5)
+            except Exception:
+                pend["interval"] = 5
+            try:
+                pend["expires_at"] = int(pend.get("expires_at") or 0)
+            except Exception:
+                pend["expires_at"] = 0
+            try:
+                pend["created_at"] = int(pend.get("created_at") or 0)
+            except Exception:
+                pend["created_at"] = 0
+
+    _normalize_auth_block(m)
+    insts = m.get("instances")
+    if isinstance(insts, dict):
+        for inst in insts.values():
+            if isinstance(inst, dict):
+                _normalize_auth_block(inst)
 
     rl0 = m.get("rate_limit")
     if isinstance(rl0, dict):

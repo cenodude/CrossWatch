@@ -384,6 +384,16 @@ async function saveSettings() {
   const fromFab = !!document.activeElement?.closest?.("#save-fab");
   const readToggle = (id) => _cwTruthy(_cwEl(id)?.value || "");
   let schedChanged = false;
+  const schedulingPaneActive = () => {
+    try {
+      const active = document.querySelector("#page-settings .cw-settings-pane.active, #page-settings .cw-settings-panel.active");
+      const key = _cwNorm(active?.dataset?.pane || active?.dataset?.tab || window.__cwSettingsPane).toLowerCase();
+      if (key === "scheduling") return true;
+      return !!document.activeElement?.closest?.("#sec-scheduling");
+    } catch {
+      return false;
+    }
+  };
   const schedulingSaveError = (message) => {
     const msg = _cwNorm(message) || "Fix the scheduling errors before saving.";
     try {
@@ -674,8 +684,13 @@ async function saveSettings() {
       if (_cwFn("getSchedulingPatch", window)) {
         const validation = _cwFn("getSchedulingValidation", window)?.() || {};
         const issues = Array.isArray(validation.issues) ? validation.issues.filter(Boolean) : [];
-        if (issues.length) schedulingSaveError(issues[0]);
-        sched = window.getSchedulingPatch({ strict: true }) || sched;
+        if (issues.length) {
+          if (schedulingPaneActive()) schedulingSaveError(issues[0]);
+          console.warn("saveSettings: scheduling has validation issues; preserving existing scheduling config", issues[0]);
+          sched = serverCfg?.scheduling || sched;
+        } else {
+          sched = window.getSchedulingPatch({ strict: true }) || sched;
+        }
       }
       if (!same(sched, serverCfg?.scheduling || {})) {
         cfg.scheduling = sched;

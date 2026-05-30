@@ -55,6 +55,12 @@ def _cfg(ttl: float = _CFG_TTL_SEC) -> dict[str, Any]:
     return cfg2
 
 
+def _provider_auth():
+    from providers.auth import runtime as provider_auth
+
+    return provider_auth
+
+
 def _is_debug_cfg(cfg: dict[str, Any]) -> bool:
     try:
         v = ((cfg.get("runtime") or {}).get("debug"))
@@ -1586,8 +1592,9 @@ def _simkl_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: d
 def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg: dict[str, Any], logger: Callable[..., None] | None) -> dict[str, Any]:
     md_cfg = (cfg.get("mdblist") or {}) if isinstance(cfg, dict) else {}
     apikey = str(md_cfg.get("api_key") or "").strip()
-    if not apikey:
-        return {"ok": False, "error": "missing_api_key"}
+    provider_auth = _provider_auth()
+    if not provider_auth.is_configured("mdblist", md_cfg):
+        return {"ok": False, "error": "missing_auth"}
     if media_type not in ("movie", "show"):
         return {"ok": True, "ignored": True}
     bucket = "movies" if media_type == "movie" else "shows"
@@ -1616,7 +1623,19 @@ def _mdblist_send_rating(media_type: str, ids: dict[str, Any], rating: int, cfg:
     r: requests.Response | None = None
     for attempt in range(max_retries):
         try:
-            r = requests.post(url, params={"apikey": apikey}, json=body, timeout=tmo)
+            sess = requests.Session()
+            r = provider_auth.request_with_auth(
+                "mdblist",
+                sess,
+                "POST",
+                url,
+                cfg=cfg,
+                instance_id=(cfg.get("scrobble") or {}).get("watch", {}).get("route_sink_instance") if isinstance((cfg.get("scrobble") or {}).get("watch"), Mapping) else None,
+                params={"apikey": apikey},
+                json=body,
+                timeout=tmo,
+                max_retries=1,
+            )
         except Exception as e:
             if attempt >= max_retries - 1:
                 _emit(logger, f"mdblist rating request failed: {type(e).__name__}: {e}", "ERROR")

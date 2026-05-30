@@ -1325,7 +1325,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
         if (cfg?.tmdb_sync?.api_key && cfg?.tmdb_sync?.session_id) active.add("TMDB");
         if (cfg?.jellyfin?.access_token) active.add("JELLYFIN");
         if (cfg?.emby?.access_token || cfg?.emby?.api_key || cfg?.emby?.token) active.add("EMBY");
-        if (cfg?.mdblist?.api_key) active.add("MDBLIST");
+        if (cfg?.mdblist?.api_key || cfg?.mdblist?.access_token) active.add("MDBLIST");
         if (cfg?.publicmetadb?.api_key) active.add("PUBLICMETADB");
       }
     } catch {}

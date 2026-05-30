@@ -12,6 +12,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._log import log as cw_log
 from .mdblist._common import read_json as mdblist_read_json, state_file as mdblist_state_file, write_json as mdblist_write_json
+from .mdblist import _auth as mdblist_auth
 
 from ._mod_common import (
     HitSession,
@@ -201,6 +202,7 @@ def get_manifest() -> Mapping[str, Any]:
 @dataclass
 class MDBLISTConfig:
     api_key: str
+    auth_method: str = "device_code"
     timeout: float = 15.0
     max_retries: int = 3
     rate_get_per_sec: float = 10.0
@@ -215,12 +217,23 @@ class MDBLISTAuthError(MDBLISTError):
     pass
 
 
+def _pick_instance_id() -> str:
+    src_p = str(os.getenv("CW_PAIR_SRC") or "").upper().strip()
+    dst_p = str(os.getenv("CW_PAIR_DST") or "").upper().strip()
+    if src_p == "MDBLIST":
+        return str(os.getenv("CW_PAIR_SRC_INSTANCE") or "default").strip() or "default"
+    if dst_p == "MDBLIST":
+        return str(os.getenv("CW_PAIR_DST_INSTANCE") or "default").strip() or "default"
+    return str(os.getenv("CW_PROVIDER_INSTANCE") or os.getenv("CW_INSTANCE_ID") or "default").strip() or "default"
+
+
 class MDBLISTClient:
     BASE = "https://api.mdblist.com"
 
-    def __init__(self, cfg: MDBLISTConfig, raw_cfg: Mapping[str, Any]):
+    def __init__(self, cfg: MDBLISTConfig, raw_cfg: Mapping[str, Any], *, instance_id: Any = None):
         self.cfg = cfg
         self.raw_cfg = raw_cfg
+        self.instance_id = mdblist_auth.normalize_instance_id_value(instance_id)
         self.session: HitSession = build_session("MDBLIST", ctx, feature_label=_label_mdblist)
 
         try:
@@ -238,8 +251,8 @@ class MDBLISTClient:
             pass
 
     def connect(self) -> MDBLISTClient:
-        if not self.cfg.api_key:
-            raise MDBLISTAuthError("Missing MDBList api_key")
+        if not mdblist_auth.is_configured(mdblist_auth.provider_block(self.raw_cfg, self.instance_id)):
+            raise MDBLISTAuthError("Missing MDBList authentication")
         try:
             self.session.trust_env = False
         except Exception:
@@ -252,22 +265,30 @@ class MDBLISTClient:
         return self
 
     def get(self, url: str, **kw: Any):
-        return request_with_retries(
+        timeout = float(kw.pop("timeout", self.cfg.timeout))
+        max_retries = int(kw.pop("max_retries", self.cfg.max_retries))
+        return mdblist_auth.request_with_auth(
             self.session,
             "GET",
             url,
-            timeout=self.cfg.timeout,
-            max_retries=self.cfg.max_retries,
+            cfg=self.raw_cfg,
+            instance_id=self.instance_id,
+            timeout=timeout,
+            max_retries=max_retries,
             **kw,
         )
 
     def post(self, url: str, **kw: Any):
-        return request_with_retries(
+        timeout = float(kw.pop("timeout", self.cfg.timeout))
+        max_retries = int(kw.pop("max_retries", self.cfg.max_retries))
+        return mdblist_auth.request_with_auth(
             self.session,
             "POST",
             url,
-            timeout=self.cfg.timeout,
-            max_retries=self.cfg.max_retries,
+            cfg=self.raw_cfg,
+            instance_id=self.instance_id,
+            timeout=timeout,
+            max_retries=max_retries,
             **kw,
         )
 
@@ -306,6 +327,7 @@ class MDBLISTClient:
 class MDBLISTModule:
     def __init__(self, cfg: Mapping[str, Any]):
         m = dict(cfg.get("mdblist") or {})
+        self.instance_id = _pick_instance_id()
         rl = m.get("rate_limit")
         if not isinstance(rl, dict):
             rl = {}
@@ -320,18 +342,19 @@ class MDBLISTModule:
 
         self.cfg = MDBLISTConfig(
             api_key=str(m.get("api_key") or "").strip(),
+            auth_method=mdblist_auth.active_method(m),
             timeout=float(m.get("timeout", cfg.get("timeout", 15.0))),
             max_retries=int(m.get("max_retries", cfg.get("max_retries", 3))),
             rate_get_per_sec=get_rps,
             rate_post_per_sec=post_rps,
         )
-        if not self.cfg.api_key:
-            raise MDBLISTAuthError("Missing MDBList api_key")
+        if not mdblist_auth.is_configured(m):
+            raise MDBLISTAuthError("Missing MDBList authentication")
 
         if m.get("debug") in (True, "1", 1):
             os.environ.setdefault("CW_MDBLIST_DEBUG", "1")
 
-        self.client = MDBLISTClient(self.cfg, cfg).connect()
+        self.client = MDBLISTClient(self.cfg, cfg, instance_id=self.instance_id).connect()
         self.raw_cfg = cfg
         self.config = cfg
 
@@ -391,9 +414,7 @@ class MDBLISTModule:
         user_err: str | None = None
         user_reason: str | None = None
         try:
-            r = request_with_retries(
-                sess,
-                "GET",
+            r = self.client.get(
                 f"{base}/user",
                 params={"apikey": self.cfg.api_key},
                 timeout=tmo,
@@ -720,12 +741,11 @@ class _MDBLISTOPS:
         try:
             c = cfg or {}
             m = c.get("mdblist") or {}
-            apikey = str(m.get("api_key") or m.get("apikey") or "").strip()
-            if not apikey:
+            if not mdblist_auth.is_configured(m):
                 return {}
 
             now = time.time()
-            memo_key = apikey[-6:] if len(apikey) >= 6 else apikey
+            memo_key = str(m.get("auth_method") or "") + ":" + str(m.get("api_key") or m.get("access_token") or "")[-6:]
             ent = self._acts_memo.get(memo_key)
             if ent and (now - float(ent[0])) < 10.0:
                 return dict(ent[1])
@@ -763,11 +783,13 @@ class _MDBLISTOPS:
             except Exception:
                 pass
 
-            r = request_with_retries(
+            r = mdblist_auth.request_with_auth(
                 sess,
                 "GET",
                 f"{MDBLISTClient.BASE}/sync/last_activities",
-                params={"apikey": apikey},
+                cfg=c,
+                instance_id=_pick_instance_id(),
+                params={"apikey": str(m.get("api_key") or "").strip()},
                 timeout=8.0,
                 max_retries=1,
             )
@@ -815,8 +837,7 @@ class _MDBLISTOPS:
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         c = cfg or {}
         m = c.get("mdblist") or {}
-        key = m.get("api_key") or m.get("apikey") or ""
-        return bool(str(key).strip())
+        return mdblist_auth.is_configured(m)
 
     def _adapter(self, cfg: Mapping[str, Any]) -> MDBLISTModule:
         return MDBLISTModule(cfg)

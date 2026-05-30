@@ -38,6 +38,12 @@ import providers.sync.plex._utils as plex_utils
 
 __all__ = ["register_auth"]
 
+
+def _provider_auth():
+    from providers.auth import runtime as provider_auth
+
+    return provider_auth
+
 # Helpers
 def _status_from_msg(msg: str) -> int:
     m = (msg or "").lower()
@@ -66,6 +72,36 @@ def _looks_masked_secret(value: Any) -> bool:
     if text in {"••••••••", "********", "**********"}:
         return True
     return len(text) >= 3 and all(ch in {"•", "*"} for ch in text)
+
+
+def _validate_mdblist_api_key(api_key: str, *, timeout: float = 12.0) -> tuple[bool, str]:
+    key = str(api_key or "").strip()
+    if not key:
+        return False, "api_key_required"
+    try:
+        r = requests.get(
+            "https://api.mdblist.com/user",
+            params={"apikey": key},
+            headers={"Accept": "application/json", "User-Agent": "CrossWatch/MDBListAuth"},
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        return False, "validation_timeout"
+    except requests.RequestException:
+        return False, "validation_failed"
+    if r.status_code in (401, 403):
+        return False, "invalid_api_key"
+    if r.status_code >= 400:
+        return False, f"validation_http_{int(r.status_code)}"
+    try:
+        data = r.json() or {}
+    except ValueError:
+        return False, "validation_bad_response"
+    if not isinstance(data, dict) or not (data.get("user_id") or data.get("username")):
+        return False, "invalid_api_key"
+    return True, ""
+
+
 def _defaults_for_provider(provider_key: str) -> dict[str, Any]:
     blk = DEFAULT_CFG.get(provider_key)
     return copy.deepcopy(blk) if isinstance(blk, dict) else {}
@@ -1224,42 +1260,98 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     @app.post("/api/mdblist/save", tags=["auth"])
     def api_mdblist_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
         try:
+            provider_auth = _provider_auth()
+            method = provider_auth.normalize_auth_method("mdblist", (payload or {}).get("auth_method") or "api_key")
             key = str((payload or {}).get("api_key") or "").strip()
+            client_id = str((payload or {}).get("client_id") or "").strip()
             cfg = load_config()
-            m = ensure_instance_block(cfg, "mdblist", instance)
-            if key:
-                if _looks_masked_secret(key):
-                    key = ""
-                else:
+            m = ensure_instance_block(cfg, "mdblist", inst)
+            if method == "api_key":
+                if not _looks_masked_secret(key):
+                    ok, reason = _validate_mdblist_api_key(key)
+                    if not ok:
+                        _safe_log(log_fn, "MDBLIST", f"[MDBLIST] api_key validation failed reason={reason} instance={inst}")
+                        return {"ok": False, "error": reason, "instance": inst}
                     m["api_key"] = key
+                provider_auth.set_active_method("mdblist", m, "api_key")
+            else:
+                if client_id:
+                    m["client_id"] = client_id
+                provider_auth.set_active_method("mdblist", m, "device_code")
             save_config(cfg)
-            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] api_key saved instance={normalize_instance_id(instance)}")
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] auth saved method={method} instance={inst}")
             if isinstance(probe_cache, dict):
                 probe_cache["mdblist"] = (0.0, False)
-            return {"ok": True, "instance": normalize_instance_id(instance)}
+            return {"ok": True, "instance": inst, "auth_method": method}
         except Exception as e:
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR save: {e}")
             return {"ok": False, "error": "internal"}
 
+    @app.post("/api/mdblist/device/start", tags=["auth"])
+    def api_mdblist_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            client_id = str((payload or {}).get("client_id") or "").strip()
+            res = _provider_auth().start_device_code("mdblist", cfg, instance_id=inst, client_id=client_id)
+            if isinstance(probe_cache, dict):
+                probe_cache["mdblist"] = (0.0, False)
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] device start instance={inst} ok={bool(res.get('ok'))}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR device start: {e}")
+            return {"ok": False, "error": "internal", "instance": inst}
+
+    @app.post("/api/mdblist/device/poll", tags=["auth"])
+    def api_mdblist_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().poll_device_code("mdblist", cfg, instance_id=inst, device_code=str((payload or {}).get("device_code") or "").strip() or None)
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["mdblist"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR device poll: {e}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
+    @app.post("/api/mdblist/refresh", tags=["auth"])
+    def api_mdblist_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("mdblist", cfg, instance_id=inst)
+            if res.get("ok") and isinstance(probe_cache, dict):
+                probe_cache["mdblist"] = (0.0, False)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR refresh: {e}")
+            return {"ok": False, "status": "internal", "instance": inst}
+
     @app.get("/api/mdblist/status", tags=["auth"])
     def api_mdblist_status(instance: str | None = Query(None)) -> dict[str, Any]:
         cfg = load_config()
-        m = ensure_instance_block(cfg, "mdblist", instance)
-        has = bool(str(m.get("api_key") or "").strip())
-        return {"connected": has, "instance": normalize_instance_id(instance)}
+        inst = normalize_instance_id(instance)
+        m = ensure_instance_block(cfg, "mdblist", inst)
+        out = _provider_auth().status_for_block("mdblist", m)
+        out["instance"] = inst
+        return out
 
     @app.post("/api/mdblist/disconnect", tags=["auth"])
     def api_mdblist_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
-            m = ensure_instance_block(cfg, "mdblist", instance)
+            m = ensure_instance_block(cfg, "mdblist", inst)
             m["api_key"] = ""
+            _provider_auth().clear_oauth("mdblist", m)
             save_config(cfg)
-            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] disconnected instance={normalize_instance_id(instance)}")
+            _safe_log(log_fn, "MDBLIST", f"[MDBLIST] disconnected instance={inst}")
             if isinstance(probe_cache, dict):
                 probe_cache["mdblist"] = (0.0, False)
-            return {"ok": True, "instance": normalize_instance_id(instance)}
+            return {"ok": True, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "MDBLIST", f"[MDBLIST] ERROR disconnect: {e}")
             return {"ok": False, "error": "internal"}

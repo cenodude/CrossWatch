@@ -22,8 +22,10 @@ from ._common import (
     cfg_int,
     cfg_section,
     get_watermark,
+    has_auth,
     iso_ok,
     iso_z,
+    mdblist_request,
     now_iso,
     read_json,
     save_watermark,
@@ -154,8 +156,8 @@ def _fetch_last_activities(adapter: Any, *, apikey: str, timeout: float, retries
             pass
         return None
     try:
-        r = request_with_retries(
-            adapter.client.session,
+        r = mdblist_request(
+            adapter,
             "GET",
             URL_LAST_ACTIVITIES,
             params={"apikey": apikey},
@@ -377,8 +379,8 @@ def _parse_rows_and_total(data: Any) -> tuple[list[Mapping[str, Any]], int | Non
 
 def _peek_live(adapter: Any, apikey: str, timeout: float, retries: int) -> tuple[str | None, int | None]:
     try:
-        r = request_with_retries(
-            adapter.client.session,
+        r = mdblist_request(
+            adapter,
             "GET",
             URL_LIST,
             params={"apikey": apikey, "limit": 1, "offset": 0, "unified": "true"},
@@ -407,12 +409,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     apikey = _as_str(cfg.get("api_key")) or ""
     shadow = _shadow_load()
     cached: dict[str, dict[str, Any]] = dict(shadow.get("items") or {})
-    if not apikey:
+    if not has_auth(cfg):
         if cached:
-            _dbg("index_cache_hit", source="shadow", reason="missing_api_key", count=len(cached))
+            _dbg("index_cache_hit", source="shadow", reason="missing_auth", count=len(cached))
             _info("index_done", count=len(cached), source="shadow")
         else:
-            _dbg("index_reconcile", reason="missing_api_key", strategy="empty")
+            _dbg("index_reconcile", reason="missing_auth", strategy="empty")
             _info("index_done", count=0, source="empty")
         return cached
 
@@ -472,7 +474,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     while True:
         params = {"apikey": apikey, "limit": limit, "offset": offset, "unified": "true"}
-        r = request_with_retries(sess, "GET", URL_LIST, params=params, timeout=timeout, max_retries=retries)
+        r = mdblist_request(adapter, "GET", URL_LIST, params=params, timeout=timeout, max_retries=retries)
         if r.status_code != 200:
             _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset)
             break
@@ -617,9 +619,9 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
     cfg = _cfg(adapter)
     apikey = _as_str(cfg.get("api_key")) or ""
     items_list = list(items or [])
-    if not apikey:
-        unresolved = [{"item": id_minimal(it), "hint": "missing_api_key"} for it in items_list]
-        _info("write_skipped", op=action, reason="missing_api_key", unresolved=len(unresolved))
+    if not has_auth(cfg):
+        unresolved = [{"item": id_minimal(it), "hint": "missing_auth"} for it in items_list]
+        _info("write_skipped", op=action, reason="missing_auth", unresolved=len(unresolved))
         return 0, unresolved
 
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
@@ -640,8 +642,8 @@ def _write(adapter: Any, action: str, items: Iterable[Mapping[str, Any]]) -> tup
                 unresolved.append({"item": minimal, "hint": "missing_write_ids"})
             continue
 
-        r = request_with_retries(
-            sess,
+        r = mdblist_request(
+            adapter,
             "POST",
             URL_MODIFY.format(action=action),
             params={"apikey": apikey},
