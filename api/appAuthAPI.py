@@ -355,9 +355,11 @@ def _public_session_entry(s: dict[str, Any]) -> dict[str, Any]:
 def _public_session_state(a: dict[str, Any], token: str | None) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     sessions = _prune_sessions(_iter_sessions(a))
     current = _find_session(a, token)
+    if current is None:
+        return None, []
     current_token_hash = str((current or {}).get("token_hash") or "").strip()
 
-    current_public = _public_session_entry(current) if current is not None else None
+    current_public = _public_session_entry(current)
     other_public: list[dict[str, Any]] = []
     for session in sessions:
         token_hash = str(session.get("token_hash") or "").strip()
