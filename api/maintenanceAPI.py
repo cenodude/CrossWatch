@@ -16,6 +16,7 @@ from fastapi import APIRouter, Body
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 CW_STATE_KEEP_DIRS = {"id"}
+CW_STATE_KEEP_FILES = {"activity_history.json"}
 
 
 def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -48,6 +49,8 @@ def _clear_cw_state_files() -> list[str]:
                 continue
             continue
         if p.is_file():
+            if p.name in CW_STATE_KEEP_FILES:
+                continue
             try:
                 p.unlink(missing_ok=True)
                 removed.append(p.name)
@@ -109,6 +112,8 @@ def _scan_provider_cache() -> dict[str, Any]:
 
     files: list[dict[str, Any]] = []
     for p in CW_STATE_DIR.glob("*.json"):
+        if p.name in CW_STATE_KEEP_FILES:
+            continue
         if p.is_file():
             files.append(_file_meta(p))
 
@@ -412,6 +417,24 @@ def reset_currently_watching() -> dict[str, Any]:
             "path": str(path),
             "existed": bool(existed),
         }
+
+@router.post("/clear-activity-log")
+def clear_activity_log() -> dict[str, Any]:
+    try:
+        from services.activity import clear_events
+
+        res = clear_events()
+        _, _, _, _, _, _append_log = _cw()
+        try:
+            _append_log(
+                "TRBL",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Cleared local activity log.",
+            )
+        except Exception:
+            pass
+        return res
+    except Exception as e:
+        return {"ok": False, "error": "clear_activity_log_failed", "detail": str(e)}
 
 # --- statistics reset / recalculation ---
 @router.post("/reset-stats")

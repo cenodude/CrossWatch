@@ -9,6 +9,7 @@
   const providerMeta = w.CW?.ProviderMeta || {};
   const FEAT_LABEL = featureMeta.labels || { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
   const FEATS = featureMeta.order || Object.keys(FEAT_LABEL);
+  const DEFAULT_RECENT_SYNCS_LIMIT = 3;
   const PREF_KEY = "insights.settings.v1";
   const $ = (s, r = d) => r.querySelector(s), $$ = (s, r = d) => [...r.querySelectorAll(s)], lc = s => String(s || "").toLowerCase();
   const featureLabel = v => featureMeta.label?.(v) || FEAT_LABEL[lc(v)] || String(v || "");
@@ -65,6 +66,20 @@
     const out = FEATS.filter(k => (p?.features || {})[k] !== false);
     return out.length ? out : ["watchlist"];
   };
+
+  function recentSyncsDisplay() {
+    const ui = w._cfgCache && typeof w._cfgCache.ui === "object" ? w._cfgCache.ui : {};
+    const raw = String(ui.recent_syncs_display || "").trim().toLowerCase();
+    const countMatch = /^count:(3|4|5)$/.exec(raw);
+    if (countMatch) return { mode: "count", limit: Number(countMatch[1]), hours: 0, sinceMs: 0 };
+    const hoursMatch = /^hours:(24|48|72)$/.exec(raw);
+    if (hoursMatch) {
+      const hours = Number(hoursMatch[1]);
+      return { mode: "hours", limit: 5, hours, sinceMs: Date.now() - (hours * 3600 * 1000) };
+    }
+    const rawLimit = Number(ui.recent_syncs_limit);
+    return { mode: "count", limit: Math.max(3, Math.min(5, Number.isFinite(rawLimit) ? rawLimit : DEFAULT_RECENT_SYNCS_LIMIT)), hours: 0, sinceMs: 0 };
+  }
 
   function selectionDiffers(p, instancesByProvider = {}) {
     const inst = p?.instances || {};
@@ -434,8 +449,13 @@
     }
     const list = $(".list", wrap);
     if (!list) return;
-    const rows = (Array.isArray(hist) ? hist : []).slice().sort((a, b) => new Date(b.finished_at || b.started_at || 0) - new Date(a.finished_at || a.started_at || 0)).filter(row => row?.features_enabled?.[_feature] !== false).slice(0, +(localStorage.getItem("insights.history.limit") || 4));
-    if (!rows.length) return void (list.innerHTML = '<div class="history-item"><div class="history-meta muted">No runs for this feature</div></div>');
+    const display = recentSyncsDisplay();
+    const rows = (Array.isArray(hist) ? hist : []).slice()
+      .sort((a, b) => new Date(b.finished_at || b.started_at || 0) - new Date(a.finished_at || a.started_at || 0))
+      .filter(row => row?.features_enabled?.[_feature] !== false)
+      .filter(row => display.mode !== "hours" || ((rowTs(row) || 0) >= display.sinceMs))
+      .slice(0, display.limit);
+    if (!rows.length) return void (list.innerHTML = `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? `No runs in the last ${display.hours} hours` : "No runs for this feature"}</div></div>`);
     list.innerHTML = rows.map(row => {
       const t = totalsFor(_feature, row), cls = typeof row?.exit_code === "number" && row.exit_code !== 0 ? "err" : String(row?.result || "").toUpperCase() === "EQUAL" || t.sum === 0 ? "ok" : "warn";
       return `<div class="history-item ${cls}"><div class="history-main"><div class="history-meta"><span class="history-time">${fmtWhen(row)}</span><span class="badge ${cls}">${row?.result || "—"}${typeof row?.exit_code === "number" ? ` · ${row.exit_code}` : ""}</span></div><div class="history-sub">${featureLabel(_feature)} • ${fmtDur(row?.duration_sec)}</div></div><div class="history-badges"><span class="badge add">+${t.a}</span><span class="badge del">-${t.r}</span>${t.u ? `<span class="badge micro">~${t.u}</span>` : ""}</div></div>`;

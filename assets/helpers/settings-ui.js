@@ -141,6 +141,20 @@ function cwUiSettingsHubUpdate() {
   const pc = document.getElementById("ui_show_playingcard");
   if (pc) set("hub_ui_playing", `Playing: ${pc.value === "false" ? "Hide" : "Show"}`);
 
+  const displaySummary = (value) => {
+    const text = String(value || "count:3");
+    if (text.startsWith("hours:")) return `${text.slice(6)}h`;
+    if (text.startsWith("count:")) return text.slice(6);
+    return "3";
+  };
+
+  const recentActivity = document.getElementById("ui_show_recent_activity");
+  const recentActivityDisplay = document.getElementById("ui_recent_activity_display");
+  if (recentActivity) {
+    const suffix = recentActivityDisplay ? `, ${displaySummary(recentActivityDisplay.value)}` : "";
+    set("hub_ui_activity", `Activity: ${recentActivity.value === "false" ? "Hide" : "Show"}${suffix}`);
+  }
+
   const ai = document.getElementById("ui_show_AI");
   if (ai) set("hub_ui_askai", `ASK AI: ${ai.value === "false" ? "Hide" : "Show"}`);
 
@@ -275,6 +289,9 @@ function cwUiSettingsHubInit() {
   const ids = [
     "ui_show_watchlist_preview",
     "ui_show_playingcard",
+    "ui_show_recent_activity",
+    "ui_recent_activity_display",
+    "ui_recent_syncs_display",
     "ui_show_AI",
     "ui_show_quick_add_desktop",
     "ui_show_quick_add_mobile",
@@ -1133,6 +1150,24 @@ async function loadConfig() {
         : true;
       _setSelectValue("ui_show_playingcard", on ? "true" : "false");
     }
+
+    {
+      const on = (typeof ui.show_recent_activity === "boolean")
+        ? !!ui.show_recent_activity
+        : true;
+      _setSelectValue("ui_show_recent_activity", on ? "true" : "false");
+    }
+
+    const normalizeDisplay = (value, fallbackLimit) => {
+      const raw = String(value || "").trim().toLowerCase();
+      const allowed = new Set(["count:3", "count:4", "count:5", "hours:24", "hours:48", "hours:72"]);
+      if (allowed.has(raw)) return raw;
+      const limit = Math.max(3, Math.min(5, Number.isFinite(fallbackLimit) ? Number(fallbackLimit) : 3));
+      return `count:${limit}`;
+    };
+
+    _setSelectValue("ui_recent_activity_display", normalizeDisplay(ui.recent_activity_display, Number(ui.recent_activity_limit)));
+    _setSelectValue("ui_recent_syncs_display", normalizeDisplay(ui.recent_syncs_display, Number(ui.recent_syncs_limit)));
 
     {
       const on = (typeof ui.show_AI === "boolean")

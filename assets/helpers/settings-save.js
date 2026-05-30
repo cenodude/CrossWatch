@@ -470,22 +470,49 @@ async function saveSettings() {
       if (!Number.isNaN(ttl) && ttl !== prevMetaTTL) { ensureObj(cfg, "metadata").ttl_hours = Math.max(1, ttl); mark(); }
     }
 
+    const normalizeUiDisplay = (value, fallbackLimit) => {
+      const raw = _cwNorm(value).toLowerCase();
+      const allowed = new Set(["count:3", "count:4", "count:5", "hours:24", "hours:48", "hours:72"]);
+      if (allowed.has(raw)) return raw;
+      const limit = Math.max(3, Math.min(5, Number.isFinite(fallbackLimit) ? Number(fallbackLimit) : 3));
+      return `count:${limit}`;
+    };
+    const displayLimit = (value) => {
+      const raw = normalizeUiDisplay(value, 3);
+      if (raw.startsWith("count:")) return Math.max(3, Math.min(5, parseInt(raw.slice(6), 10) || 3));
+      return 5;
+    };
+
     const prevUi = {
       show_watchlist_preview: typeof serverCfg?.ui?.show_watchlist_preview === "boolean" ? !!serverCfg.ui.show_watchlist_preview : true,
       show_playingcard: typeof serverCfg?.ui?.show_playingcard === "boolean" ? !!serverCfg.ui.show_playingcard : true,
+      show_recent_activity: typeof serverCfg?.ui?.show_recent_activity === "boolean" ? !!serverCfg.ui.show_recent_activity : true,
+      recent_activity_display: normalizeUiDisplay(serverCfg?.ui?.recent_activity_display, Number(serverCfg?.ui?.recent_activity_limit)),
+      recent_syncs_display: normalizeUiDisplay(serverCfg?.ui?.recent_syncs_display, Number(serverCfg?.ui?.recent_syncs_limit)),
       show_AI: typeof serverCfg?.ui?.show_AI === "boolean" ? !!serverCfg.ui.show_AI : true,
       show_quick_add_desktop: typeof serverCfg?.ui?.show_quick_add_desktop === "boolean" ? !!serverCfg.ui.show_quick_add_desktop : true,
       show_quick_add_mobile: typeof serverCfg?.ui?.show_quick_add_mobile === "boolean" ? !!serverCfg.ui.show_quick_add_mobile : true,
       protocol: _cwNorm(serverCfg?.ui?.protocol).toLowerCase() === "https" ? "https" : "http"
     };
 
-    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_AI", "show_AI"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
+    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_AI", "show_AI"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
       const el = _cwEl(id);
       if (!el) return;
       const next = el.value !== "false";
       if (next === prevUi[key]) return;
       ensureObj(cfg, "ui")[key] = next;
       if (key === "show_AI") try { window.__cwAskAiChanged = { from: prevUi.show_AI, to: next }; } catch {}
+      mark();
+    });
+
+    [["ui_recent_activity_display", "recent_activity_display", "recent_activity_limit"], ["ui_recent_syncs_display", "recent_syncs_display", "recent_syncs_limit"]].forEach(([id, key, limitKey]) => {
+      const el = _cwEl(id);
+      if (!el) return;
+      const next = normalizeUiDisplay(el.value, 3);
+      if (next === prevUi[key]) return;
+      const uiCfg = ensureObj(cfg, "ui");
+      uiCfg[key] = next;
+      uiCfg[limitKey] = displayLimit(next);
       mark();
     });
 

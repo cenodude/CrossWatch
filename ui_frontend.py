@@ -110,7 +110,7 @@ _HELPER_SCRIPTS = (
 )
 _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "main-status.js", "settings-insight.js", "scrobbler.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "main-status.js", "settings-insight.js", "scrobbler.js",
     "editor.js", "snapshots.js",
 )
 _AUTH_HEADER_ICONS = (
@@ -252,6 +252,14 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-nav-card{background:radial-gradient(120% 150% at 0% 0%,rgba(68,76,120,.07),transparent 34%),var(--cw-ov-shell-soft)!important;opacity:.94}
 #page-settings .cw-settings-nav-btn{background:linear-gradient(180deg,rgba(255,255,255,.024),rgba(255,255,255,.012))!important;border-color:rgba(255,255,255,.07)!important}
 #page-settings .cw-settings-nav-btn.active{background:radial-gradient(860px 240px at 4% 0%,rgba(124,92,255,.18),transparent 52%),linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,13,.99))!important;border-color:rgba(156,140,255,.22)!important;box-shadow:0 0 0 1px rgba(124,92,255,.12),0 12px 22px rgba(0,0,0,.22)!important}
+#page-settings #ui_settings_hub .cw-hub-tile{--hub-accent:124,92,255}
+#page-settings #ui_settings_hub .cw-hub-tile[data-tab="ui"]{--hub-accent:124,92,255}
+#page-settings #ui_settings_hub .cw-hub-tile[data-tab="security"]{--hub-accent:132,116,255}
+#page-settings #ui_settings_hub .cw-hub-tile[data-tab="tracker"]{--hub-accent:45,161,255}
+#page-settings #ui_settings_hub .cw-hub-tile.active,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"]{border-color:rgba(var(--hub-accent),.62)!important;box-shadow:0 0 0 2px rgba(var(--hub-accent),.20),0 18px 38px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.08)!important;transform:translateY(-1px)}
+#page-settings #ui_settings_hub .cw-hub-tile.active::after,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"]::after{content:"Open";position:absolute;right:16px;top:14px;z-index:2;display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 10px;border-radius:999px;border:1px solid rgba(var(--hub-accent),.36);background:rgba(var(--hub-accent),.15);color:#f5f7ff;font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;box-shadow:0 0 18px rgba(var(--hub-accent),.12)}
+#page-settings #ui_settings_hub .cw-hub-tile.active .cw-hub-icon,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"] .cw-hub-icon{border-color:rgba(var(--hub-accent),.36);background:linear-gradient(180deg,rgba(var(--hub-accent),.22),rgba(255,255,255,.035));box-shadow:0 0 0 1px rgba(var(--hub-accent),.12),0 10px 22px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.08)}
+#page-settings #ui_settings_hub .cw-hub-tile.active .cw-hub-title,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"] .cw-hub-title{color:#fff}
 #page-settings .cw-settings-setup-step.is-done{background:radial-gradient(900px 220px at 0% 0%,rgba(44,144,110,.18),transparent 58%),var(--cw-ov-shell)!important;border-color:rgba(76,176,136,.26)!important}
 #page-settings .cw-settings-setup-step.is-active{background:radial-gradient(900px 220px at 0% 0%,rgba(124,92,255,.18),transparent 58%),var(--cw-ov-shell)!important;border-color:rgba(150,132,255,.24)!important}
 #page-settings input,#page-settings select,#page-settings textarea{background:rgba(4,6,10,.94)!important;border:1px solid rgba(255,255,255,.08)!important;color:var(--cw-ov-fg)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)!important}
@@ -293,6 +301,16 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout,#page-settings .cw-settings-shell #btn-auth-logout-others{min-width:144px;background:linear-gradient(135deg,rgba(86,60,180,.42),rgba(56,106,208,.42))!important;border-color:rgba(124,92,255,.24)!important;box-shadow:0 14px 28px rgba(22,24,40,.24)}
 #page-settings .cw-settings-shell .btn.primary:hover,#page-settings .cw-settings-shell #btn-auth-logout:hover,#page-settings .cw-settings-shell #btn-auth-logout-others:hover{filter:brightness(1.05)}
 #page-settings .cw-settings-inline-action{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#page-settings .cw-panel-title-row{display:flex;align-items:center;gap:8px;margin-top:10px}
+#page-settings .cw-panel-title-row .cw-panel-title{margin-top:0!important}
+#page-settings .cw-title-help{appearance:none;display:inline-grid;place-items:center;width:28px;height:28px;flex:0 0 28px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);color:rgba(226,232,248,.78);cursor:help;padding:0;line-height:1;box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+#page-settings .cw-title-help:hover,#page-settings .cw-title-help:focus-visible{color:#fff;border-color:rgba(124,92,255,.30);background:rgba(124,92,255,.10);outline:none}
+#page-settings .cw-title-help.material-symbols-rounded{font-size:19px;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24}
+#page-settings .cw-field-label-row{display:flex;align-items:center;gap:7px;margin:0 0 6px}
+#page-settings .cw-field-label-row label,#page-settings .cw-field-label-row strong{margin:0!important}
+#page-settings .cw-field-help{appearance:none;display:inline-grid;place-items:center;width:22px;height:22px;flex:0 0 22px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.035);color:rgba(226,232,248,.70);cursor:help;padding:0;line-height:1}
+#page-settings .cw-field-help:hover,#page-settings .cw-field-help:focus-visible{color:#fff;border-color:rgba(124,92,255,.30);background:rgba(124,92,255,.10);outline:none}
+#page-settings .cw-field-help.material-symbols-rounded{font-size:16px;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 20}
 #page-settings .cw-settings-panel.cw-settings-shell[data-tab="security"]{background:radial-gradient(120% 140% at 0% 0%,rgba(124,92,255,.16),transparent 38%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
 #page-settings .cw-settings-panel.cw-settings-shell[data-tab="tracker"]{background:radial-gradient(120% 140% at 0% 0%,rgba(45,161,255,.14),transparent 38%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
 #page-settings .cw-settings-hub{gap:14px;align-items:start}
@@ -503,6 +521,11 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
     </div>
 
     <div class="stat-tiles" id="stat-providers"></div>
+
+    <div class="stat-block" id="recent-activity-block">
+      <div class="stat-block-header"><span class="pill plain">Recent Activity</span><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
+      <div id="recent-activity" class="history-list"></div>
+    </div>
 
     <div class="stat-block">
       <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights" onclick="refreshInsights()" title="Refresh">⟲</button></div>
@@ -826,6 +849,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                   <div class="chips">
                     <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
                     <span class="chip" id="hub_ui_playing">Playing: -</span>
+                    <span class="chip" id="hub_ui_activity">Activity: -</span>
                     <span class="chip" id="hub_ui_askai">ASK AI: -</span>
                     <span class="chip" id="hub_ui_quickadd">Quick Add: -</span>
                     <span class="chip" id="hub_ui_proto">Proto: -</span>
@@ -868,7 +892,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <div class="cw-settings-panel cw-settings-shell active" data-tab="ui">
                   <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-panel-title" style="margin-top:10px">User Interface</div>
+                      <div class="cw-panel-title-row">
+                        <div class="cw-panel-title">User Interface</div>
+                        <button type="button" class="cw-title-help material-symbols-rounded" title="User Interface: Choose dashboard widgets, quick-add controls, AI helper visibility, and the protocol used to serve the UI." aria-label="User Interface help">help</button>
+                      </div>
                       <div class="sub cw-settings-copy">Choose which dashboard elements stay visible and how CrossWatch serves the UI.</div>
                     </div>
                   </div>
@@ -878,7 +905,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Visibility</div>
                       <div class="cw-settings-2col">
                         <div>
-                          <label for="ui_show_watchlist_preview">Watchlist</label>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_watchlist_preview">Watchlist</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist: Shows or hides the dashboard watchlist preview card on the Main screen." aria-label="Watchlist setting help">help</button>
+                          </div>
                           <select id="ui_show_watchlist_preview" name="ui_show_watchlist_preview">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
@@ -886,7 +916,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div>
-                          <label for="ui_show_playingcard">Playing card</label>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_playingcard">Playing card</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Playing card: Shows or hides the currently playing card on the Main screen." aria-label="Playing card setting help">help</button>
+                          </div>
                           <select id="ui_show_playingcard" name="ui_show_playingcard">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
@@ -894,7 +927,51 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div>
-                          <label for="ui_show_AI">Help ASK AI</label>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_recent_activity">Recent activity</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent activity: Shows or hides the Main screen list of locally recorded scrobbled movies and episodes." aria-label="Recent activity setting help">help</button>
+                          </div>
+                          <select id="ui_show_recent_activity" name="ui_show_recent_activity">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_recent_activity_display">Recent activity display</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent activity display: Choose a fixed number of rows, or show items from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent activity display setting help">help</button>
+                          </div>
+                          <select id="ui_recent_activity_display" name="ui_recent_activity_display">
+                            <option value="count:3">Last 3 items</option>
+                            <option value="count:4">Last 4 items</option>
+                            <option value="count:5">Last 5 items</option>
+                            <option value="hours:24">Last 24 hours, max 5</option>
+                            <option value="hours:48">Last 48 hours, max 5</option>
+                            <option value="hours:72">Last 72 hours, max 5</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_recent_syncs_display">Recent syncs display</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent syncs display: Choose a fixed number of rows, or show runs from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent syncs display setting help">help</button>
+                          </div>
+                          <select id="ui_recent_syncs_display" name="ui_recent_syncs_display">
+                            <option value="count:3">Last 3 items</option>
+                            <option value="count:4">Last 4 items</option>
+                            <option value="count:5">Last 5 items</option>
+                            <option value="hours:24">Last 24 hours, max 5</option>
+                            <option value="hours:48">Last 48 hours, max 5</option>
+                            <option value="hours:72">Last 72 hours, max 5</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_AI">Help ASK AI</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Help ASK AI: Shows or hides the in-app AI help entry point." aria-label="Help ASK AI setting help">help</button>
+                          </div>
                           <select id="ui_show_AI" name="ui_show_AI">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
@@ -902,7 +979,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div>
-                          <label for="ui_show_quick_add_desktop">Desktop quick add</label>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_quick_add_desktop">Desktop quick add</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Desktop quick add: Shows or hides the quick-add control on larger screens." aria-label="Desktop quick add setting help">help</button>
+                          </div>
                           <select id="ui_show_quick_add_desktop" name="ui_show_quick_add_desktop">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
@@ -910,7 +990,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div>
-                          <label for="ui_show_quick_add_mobile">Mobile quick add</label>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_quick_add_mobile">Mobile quick add</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Mobile quick add: Shows or hides the compact quick-add control on mobile layouts." aria-label="Mobile quick add setting help">help</button>
+                          </div>
                           <select id="ui_show_quick_add_mobile" name="ui_show_quick_add_mobile">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
@@ -922,7 +1005,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                     <div class="cw-settings-block">
                       <div class="cw-settings-block-title">Protocol</div>
                       <div>
-                        <label for="ui_protocol">UI protocol</label>
+                        <div class="cw-field-label-row">
+                          <label for="ui_protocol">UI protocol</label>
+                          <button type="button" class="cw-field-help material-symbols-rounded" title="UI protocol: HTTP is simplest. HTTPS serves CrossWatch with a self-signed certificate for encrypted browser traffic." aria-label="UI protocol setting help">help</button>
+                        </div>
                         <div class="cw-settings-inline-action">
                           <select id="ui_protocol" name="ui_protocol" style="min-width:220px;flex:1">
                             <option value="http">HTTP</option>
@@ -942,7 +1028,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <div class="cw-settings-panel cw-settings-shell" data-tab="security">
                   <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-panel-title" style="margin-top:10px">Security</div>
+                      <div class="cw-panel-title-row">
+                        <div class="cw-panel-title">Security</div>
+                        <button type="button" class="cw-title-help material-symbols-rounded" title="Security: Manage CrossWatch sign-in, optional Plex login, remembered sessions, active browser sessions, and trusted reverse proxies for rate limiting." aria-label="Security help">help</button>
+                      </div>
                       <div class="sub cw-settings-copy">
                         Manage your sign-in details, session persistence, and reverse-proxy trust settings from one place.
                       </div>
@@ -954,19 +1043,28 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Sign-in</div>
                       <div class="cw-settings-stack">
                         <div>
-                          <label for="app_auth_username">Username</label>
+                          <div class="cw-field-label-row">
+                            <label for="app_auth_username">Username</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Username: The local CrossWatch username used on the login screen." aria-label="Username setting help">help</button>
+                          </div>
                           <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
                         </div>
 
                         <div class="cw-settings-2col">
                           <div>
-                            <label for="app_auth_password">New password</label>
+                            <div class="cw-field-label-row">
+                              <label for="app_auth_password">New password</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="New password: Enter a new local CrossWatch password. Leave it blank to keep the current password." aria-label="New password setting help">help</button>
+                            </div>
                             <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
                             <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
                           </div>
 
                           <div>
-                            <label for="app_auth_password2">Confirm password</label>
+                            <div class="cw-field-label-row">
+                              <label for="app_auth_password2">Confirm password</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Confirm password: Repeat the new password exactly so CrossWatch can verify it before saving." aria-label="Confirm password setting help">help</button>
+                            </div>
                             <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
                             <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
                           </div>
@@ -978,7 +1076,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Session</div>
                       <div class="cw-settings-split">
                         <div>
-                          <label for="app_auth_remember_enabled">Session caching</label>
+                          <div class="cw-field-label-row">
+                            <label for="app_auth_remember_enabled">Session caching</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Session caching: Keeps you signed in across browser restarts. Browser session only signs out when the browser session ends." aria-label="Session caching setting help">help</button>
+                          </div>
                           <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
                             <option value="true">Enabled</option>
                             <option value="false">Browser session only</option>
@@ -987,7 +1088,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div id="app_auth_remember_days_wrap">
-                          <label for="app_auth_remember_days">Cached for days</label>
+                          <div class="cw-field-label-row">
+                            <label for="app_auth_remember_days">Cached for days</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Cached for days: Number of days a remembered login remains valid when session caching is enabled." aria-label="Cached for days setting help">help</button>
+                          </div>
                           <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
                           <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
                           <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
@@ -999,7 +1103,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Plex sign-in</div>
                       <div class="cw-settings-stack">
                         <div>
-                          <strong>Linked Plex account</strong>
+                          <div class="cw-field-label-row">
+                            <strong>Linked Plex account</strong>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Linked Plex account: Adds optional Sign in with Plex on the login screen while keeping the local password as fallback." aria-label="Linked Plex account help">help</button>
+                          </div>
                           <div class="sub" id="app_auth_plex_state">Not linked</div>
                         </div>
                         <div class="cw-settings-inline-action">
@@ -1014,7 +1121,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 
                     <div class="cw-settings-statusrow">
                       <div class="cw-settings-status">
-                        <strong>Current session</strong>
+                        <div class="cw-field-label-row">
+                          <strong>Current session</strong>
+                          <button type="button" class="cw-field-help material-symbols-rounded" title="Current session: Shows the browser session you are using now and lets you log it out." aria-label="Current session help">help</button>
+                        </div>
                         <div class="sub" id="app_auth_state">&mdash;</div>
                       </div>
                       <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
@@ -1022,7 +1132,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 
                     <div class="cw-settings-statusrow">
                       <div class="cw-settings-status">
-                        <strong>Other browser sessions</strong>
+                        <div class="cw-field-label-row">
+                          <strong>Other browser sessions</strong>
+                          <button type="button" class="cw-field-help material-symbols-rounded" title="Other browser sessions: Shows remembered logins from other browsers or devices and lets you revoke them." aria-label="Other browser sessions help">help</button>
+                        </div>
                         <div class="sub" id="app_auth_other_sessions_state">Logged in from: 0 browser sessions</div>
                         <div class="sub" id="app_auth_other_sessions_detail"></div>
                       </div>
@@ -1031,7 +1144,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 
                     <div class="cw-settings-block">
                       <div class="cw-settings-block-title">Reverse proxy</div>
-                      <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
+                      <div class="cw-field-label-row">
+                        <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
+                        <button type="button" class="cw-field-help material-symbols-rounded" title="Trusted reverse proxies: Enter proxy IPs or CIDR ranges so CrossWatch can read the real client IP for login rate limiting." aria-label="Trusted reverse proxies setting help">help</button>
+                      </div>
                       <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
                       <div class="sub" style="margin-top:0.35rem">
                         Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
@@ -1045,7 +1161,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <div class="cw-settings-panel cw-settings-shell" data-tab="tracker">
                   <div class="cw-panel-head cw-settings-head">
                     <div>
-                      <div class="cw-panel-title" style="margin-top:10px">CW Tracker</div>
+                      <div class="cw-panel-title-row">
+                        <div class="cw-panel-title">CW Tracker</div>
+                        <button type="button" class="cw-title-help material-symbols-rounded" title="CW Tracker: Stores local snapshots of provider data before writes so you can inspect or restore Watchlist, Ratings, and History state." aria-label="CW Tracker help">help</button>
+                      </div>
                       <div class="sub cw-settings-copy">
                         Local backup tracker for Watchlist, Ratings and History snapshots stored under <code>/config/.cw_provider</code>.
                       </div>
@@ -1057,7 +1176,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Retention and capture</div>
                       <div class="cw-settings-2col">
                         <div>
-                          <label for="cw_enabled">Enabled</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_enabled">Enabled</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Enabled: Turns the local CW Tracker snapshot system on or off." aria-label="CW Tracker enabled setting help">help</button>
+                          </div>
                           <select id="cw_enabled" name="cw_enabled">
                             <option value="true">Enabled</option>
                             <option value="false">Disabled</option>
@@ -1065,13 +1187,19 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div>
-                          <label for="cw_retention_days">Retention (days)</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_retention_days">Retention (days)</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Retention days: How long snapshot files are kept before cleanup. Set 0 to keep snapshots forever." aria-label="Retention days setting help">help</button>
+                          </div>
                           <input id="cw_retention_days" name="cw_retention_days" type="number" min="0" step="1" placeholder="30">
                           <div class="sub" style="margin-top:0.35rem">0 = keep snapshots forever.</div>
                         </div>
 
                         <div>
-                          <label for="cw_auto_snapshot">Auto snapshot</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_auto_snapshot">Auto snapshot</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Auto snapshot: Saves a tracker snapshot before CrossWatch writes provider changes, giving you a local restore point." aria-label="Auto snapshot setting help">help</button>
+                          </div>
                           <select id="cw_auto_snapshot" name="cw_auto_snapshot">
                             <option value="true">On (before writes)</option>
                             <option value="false">Off</option>
@@ -1079,7 +1207,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                         </div>
 
                         <div>
-                          <label for="cw_max_snapshots">Max snapshots per feature</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_max_snapshots">Max snapshots per feature</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Max snapshots per feature: Limits how many Watchlist, Ratings, and History snapshots are kept. Set 0 for unlimited." aria-label="Max snapshots per feature setting help">help</button>
+                          </div>
                           <input id="cw_max_snapshots" name="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
                           <div class="sub" style="margin-top:0.35rem">0 = unlimited.</div>
                         </div>
@@ -1090,17 +1221,26 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                       <div class="cw-settings-block-title">Restore snapshots</div>
                       <div class="cw-settings-2col" id="cw_restore_fields">
                         <div>
-                          <label for="cw_restore_watchlist">Watchlist snapshot</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_restore_watchlist">Watchlist snapshot</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist snapshot: Select which local watchlist snapshot should be used for restore or tracker-backed reads." aria-label="Watchlist snapshot setting help">help</button>
+                          </div>
                           <select id="cw_restore_watchlist" name="cw_restore_watchlist"></select>
                         </div>
 
                         <div>
-                          <label for="cw_restore_history">History snapshot</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_restore_history">History snapshot</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="History snapshot: Select which local history snapshot should be used for restore or tracker-backed reads." aria-label="History snapshot setting help">help</button>
+                          </div>
                           <select id="cw_restore_history" name="cw_restore_history"></select>
                         </div>
 
                         <div>
-                          <label for="cw_restore_ratings">Ratings snapshot</label>
+                          <div class="cw-field-label-row">
+                            <label for="cw_restore_ratings">Ratings snapshot</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Ratings snapshot: Select which local ratings snapshot should be used for restore or tracker-backed reads." aria-label="Ratings snapshot setting help">help</button>
+                          </div>
                           <select id="cw_restore_ratings" name="cw_restore_ratings"></select>
                         </div>
                       </div>
