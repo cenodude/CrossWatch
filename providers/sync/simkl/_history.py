@@ -564,6 +564,7 @@ def _fetch_all_items(
     params: dict[str, str] = {
         "extended": "full_anime_seasons",
         "episode_watched_at": "yes",
+        "include_all_episodes": "yes",
     }
     if since_iso:
         params["date_from"] = since_iso
