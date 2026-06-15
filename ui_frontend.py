@@ -135,11 +135,13 @@ def _asset_block() -> str:
         '<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>',
         app_tags,
+        '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__"></script>',
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>',
         '<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
+        '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
     ))
 
 
@@ -232,6 +234,24 @@ def _get_index_html_static() -> str:
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+(() => {
+  try {
+    const raw = localStorage.getItem("cw.ui.theme") || "flat-dark";
+    const theme = raw === "flat-light" ? "flat-light" : raw === "original" ? "original" : "flat-dark";
+    if (theme === "original") {
+      delete document.documentElement.dataset.cwTheme;
+    } else {
+      document.documentElement.dataset.cwTheme = theme;
+    }
+    document.documentElement.classList.toggle("cw-theme-light", theme === "flat-light");
+    document.documentElement.classList.toggle("cw-theme-dark", theme === "flat-dark");
+    document.documentElement.classList.toggle("cw-theme-original", theme === "original");
+  } catch {
+    document.documentElement.dataset.cwTheme = "flat-dark";
+  }
+})();
+</script>
 
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
@@ -252,14 +272,6 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-nav-card{background:radial-gradient(120% 150% at 0% 0%,rgba(68,76,120,.07),transparent 34%),var(--cw-ov-shell-soft)!important;opacity:.94}
 #page-settings .cw-settings-nav-btn{background:linear-gradient(180deg,rgba(255,255,255,.024),rgba(255,255,255,.012))!important;border-color:rgba(255,255,255,.07)!important}
 #page-settings .cw-settings-nav-btn.active{background:radial-gradient(860px 240px at 4% 0%,rgba(124,92,255,.18),transparent 52%),linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,13,.99))!important;border-color:rgba(156,140,255,.22)!important;box-shadow:0 0 0 1px rgba(124,92,255,.12),0 12px 22px rgba(0,0,0,.22)!important}
-#page-settings #ui_settings_hub .cw-hub-tile{--hub-accent:124,92,255}
-#page-settings #ui_settings_hub .cw-hub-tile[data-tab="ui"]{--hub-accent:124,92,255}
-#page-settings #ui_settings_hub .cw-hub-tile[data-tab="security"]{--hub-accent:132,116,255}
-#page-settings #ui_settings_hub .cw-hub-tile[data-tab="tracker"]{--hub-accent:45,161,255}
-#page-settings #ui_settings_hub .cw-hub-tile.active,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"]{border-color:rgba(var(--hub-accent),.62)!important;box-shadow:0 0 0 2px rgba(var(--hub-accent),.20),0 18px 38px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.08)!important;transform:translateY(-1px)}
-#page-settings #ui_settings_hub .cw-hub-tile.active::after,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"]::after{content:"Open";position:absolute;right:16px;top:14px;z-index:2;display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 10px;border-radius:999px;border:1px solid rgba(var(--hub-accent),.36);background:rgba(var(--hub-accent),.15);color:#f5f7ff;font-size:10px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;box-shadow:0 0 18px rgba(var(--hub-accent),.12)}
-#page-settings #ui_settings_hub .cw-hub-tile.active .cw-hub-icon,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"] .cw-hub-icon{border-color:rgba(var(--hub-accent),.36);background:linear-gradient(180deg,rgba(var(--hub-accent),.22),rgba(255,255,255,.035));box-shadow:0 0 0 1px rgba(var(--hub-accent),.12),0 10px 22px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.08)}
-#page-settings #ui_settings_hub .cw-hub-tile.active .cw-hub-title,#page-settings #ui_settings_hub .cw-hub-tile[aria-selected="true"] .cw-hub-title{color:#fff}
 #page-settings .cw-settings-setup-step.is-done{background:radial-gradient(900px 220px at 0% 0%,rgba(44,144,110,.18),transparent 58%),var(--cw-ov-shell)!important;border-color:rgba(76,176,136,.26)!important}
 #page-settings .cw-settings-setup-step.is-active{background:radial-gradient(900px 220px at 0% 0%,rgba(124,92,255,.18),transparent 58%),var(--cw-ov-shell)!important;border-color:rgba(150,132,255,.24)!important}
 #page-settings input,#page-settings select,#page-settings textarea{background:rgba(4,6,10,.94)!important;border:1px solid rgba(255,255,255,.08)!important;color:var(--cw-ov-fg)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)!important}
@@ -317,9 +329,6 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-hub-tile{position:relative;overflow:hidden;min-height:148px;padding:18px;border-radius:24px;display:grid;align-content:start}
 #page-settings .cw-hub-tile::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(135deg,rgba(255,255,255,.05),transparent 42%)}
 #page-settings .cw-hub-tile>*{position:relative;z-index:1}
-#page-settings .cw-hub-tile[data-tab="ui"]{background:radial-gradient(125% 145% at 0% 0%,rgba(92,96,182,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
-#page-settings .cw-hub-tile[data-tab="security"]{background:radial-gradient(125% 145% at 0% 0%,rgba(124,92,255,.18),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
-#page-settings .cw-hub-tile[data-tab="tracker"]{background:radial-gradient(125% 145% at 0% 0%,rgba(45,161,255,.16),transparent 40%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important}
 #page-settings .cw-hub-top{display:flex;align-items:flex-start;gap:14px}
 #page-settings .cw-hub-icon{width:44px;height:44px;flex:0 0 44px;display:grid;place-items:center;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.03));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
 #page-settings .cw-hub-icon .material-symbols-rounded{font-size:21px;line-height:1;color:#f1f5ff}
@@ -386,7 +395,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               aria-haspopup="menu" aria-expanded="false"
               onclick="window.cwToggleSettingsMenu(event)">
         <span>Settings</span>
-        <span class="tab-caret" aria-hidden="true">▾</span>
+        <span class="tab-caret" aria-hidden="true"></span>
       </button>
       <div class="cw-menu hidden" id="cw-settings-menu" role="menu" aria-labelledby="tab-settings">
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('overview')">Settings overview</button>
@@ -406,7 +415,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               aria-haspopup="menu" aria-expanded="false"
               onclick="window.cwToggleAboutMenu(event)">
         <span>About</span>
-        <span class="tab-caret" aria-hidden="true">▾</span>
+        <span class="tab-caret" aria-hidden="true"></span>
       </button>
       <div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')">About</button>
@@ -451,7 +460,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
       <div class="action-buttons">
         <div class="cw-split-run" id="cw-sync-split">
         <button id="run" class="btn acc cw-split-main" onclick="runSync()"><span class="label">Synchronize</span><span class="spinner" aria-hidden="true"></span></button>
-        <button id="run-menu" class="btn acc cw-split-edge" type="button" title="Sync options" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSyncMenu(event)">▾</button>
+        <button id="run-menu" class="btn acc cw-split-edge" type="button" title="Sync options" aria-label="Sync options" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSyncMenu(event)"><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></button>
         <div class="cw-menu cw-sync-menu hidden" id="cw-sync-menu" role="menu" aria-labelledby="run-menu"></div>
       </div>
         <button class="btn" onclick="toggleDetails()">View details</button>
@@ -490,10 +499,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
         <div class="det-right">
           <div class="meta-card">
             <div class="meta-grid">
-              <div class="meta-label">Module</div><div class="meta-value"><span id="det-cmd" class="pillvalue truncate">–</span></div>
-              <div class="meta-label">Version</div><div class="meta-value"><span id="det-ver" class="pillvalue">–</span></div>
-              <div class="meta-label">Started</div><div class="meta-value"><span id="det-start" class="pillvalue mono">–</span></div>
-              <div class="meta-label">Finished</div><div class="meta-value"><span id="det-finish" class="pillvalue mono">–</span></div>
+              <div class="meta-label">Module</div><div class="meta-value"><span id="det-cmd" class="pillvalue truncate">-</span></div>
+              <div class="meta-label">Version</div><div class="meta-value"><span id="det-ver" class="pillvalue">-</span></div>
+              <div class="meta-label">Started</div><div class="meta-value"><span id="det-start" class="pillvalue mono">-</span></div>
+              <div class="meta-label">Finished</div><div class="meta-value"><span id="det-finish" class="pillvalue mono">-</span></div>
             </div>
             <div class="meta-actions"><button class="btn" onclick="copySummary(this)">Copy summary</button></div>
           </div>
@@ -528,7 +537,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
     </div>
 
     <div class="stat-block">
-      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights" onclick="refreshInsights()" title="Refresh">⟲</button></div>
+      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights" onclick="refreshInsights()" title="Refresh">R</button></div>
       <div id="sync-history" class="history-list"></div>
     </div>
   </section>
@@ -540,12 +549,12 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
         <div class="cw-main-card-kicker">Watchlist Preview</div>
       </div>
     </div>
-    <div id="wall-msg" class="wall-msg">Loading…</div>
+    <div id="wall-msg" class="wall-msg">Loading...</div>
     <div class="wall-wrap">
       <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
       <div id="poster-row" class="row-scroll" aria-label="Watchlist preview"></div>
-      <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left">‹</button>
-      <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">›</button>
+      <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
+      <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
     </div>
   </section>
 
@@ -716,15 +725,15 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
           </div>
           <div class="cw-settings-pane-stack cw-settings-providers-stack">
             <div class="section cw-settings-section cw-settings-provider-section" id="sec-auth">
-              <div class="head" onclick="toggleSection('sec-auth')">
-                <span class="chev">▶</span><strong>Authentication</strong>
+              <div class="head" data-toggle-section="sec-auth">
+                <span class="chev"></span><strong>Authentication</strong>
                 <span id="auth-providers-icons" class="cw-provider-head-icons">__CW_AUTH_HEADER_ICONS__</span>
               </div>
               <div class="body"><div id="auth-providers"></div></div>
             </div>
 
             <div class="section cw-settings-section cw-settings-provider-section" id="sec-sync">
-              <div class="head" onclick="toggleSection('sec-sync')"><span class="chev">▶</span><strong>Synchronization</strong></div>
+              <div class="head" data-toggle-section="sec-sync"><span class="chev"></span><strong>Synchronization</strong></div>
               <div class="body">
                 <div class="sub">Providers</div><div id="providers_list" class="grid2"></div>
                 <div class="sep"></div><div class="sub">Pairs</div><div id="pairs_list"></div>
@@ -735,7 +744,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               </div>
             </div>
 
-            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" onclick="toggleSection('sec-meta')"><span class="chev">▶</span><strong>Metadata</strong></div><div class="body">
+            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" data-toggle-section="sec-meta"><span class="chev"></span><strong>Metadata</strong></div><div class="body">
 <div id="metadata-providers">
   <div class="cw-settings-hub" id="meta_provider_tiles">
     <button type="button" class="cw-hub-tile tmdb" data-provider="tmdb" aria-selected="false">
@@ -743,7 +752,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
         <div class="cw-hub-title">TMDb</div>
         <span class="auth-dot" id="meta-tmdb-dot" aria-hidden="true"></span>
       </div>
-      <span class="hidden" id="hub_tmdb_key" aria-hidden="true">API key: —</span>
+      <span class="hidden" id="hub_tmdb_key" aria-hidden="true">API key: -</span>
     </button>
   </div>
 
@@ -769,13 +778,13 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
             </div>
           </div>
           <div class="section open cw-settings-section" id="sec-scheduling" data-accordion="off">
-            <div class="head"><span class="chev">▶</span><strong>Scheduling</strong></div>
+            <div class="head"><span class="chev"></span><strong>Scheduling</strong></div>
             <div class="body">
               <div id="sched-provider-panel" class="cw-panel hidden"></div>
               <div id="sched-provider-raw" class="hidden">
                 <div class="grid2">
                   <div><label for="schEnabled">Enable</label><select id="schEnabled" name="schEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select></div>
-                  <div><label for="schMode">Frequency</label><select id="schMode" name="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at…</option><option value="custom_interval">Custom</option></select></div>
+                  <div><label for="schMode">Frequency</label><select id="schMode" name="schMode"><option value="hourly">Every hour</option><option value="every_n_hours">Every N hours</option><option value="daily_time">Daily at...</option><option value="custom_interval">Custom</option></select></div>
                   <div><label for="schN">Every N hours</label><input id="schN" name="schN" type="number" min="2" value="12"></div>
                   <div><label for="schTime">Time</label><input id="schTime" name="schTime" type="time" value="03:30"></div>
                   <div><label for="schCustomValue">Custom interval</label><input id="schCustomValue" name="schCustomValue" type="number" min="15" step="15" value="60"></div>
@@ -802,14 +811,14 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
           <div id="sec-scrobbler" class="cw-settings-pane-stack cw-settings-scrobbler-stack" data-accordion="off">
             <div id="scrobble-mount" class="cw-settings-pane-stack cw-settings-scrobbler-stack-inner">
               <div class="section cw-settings-section cw-settings-provider-section" id="sc-sec-webhook">
-                <div class="head" onclick="toggleSection('sc-sec-webhook')">
-                  <span class="chev">▶</span><strong>Webhook</strong>
+                <div class="head" data-toggle-section="sc-sec-webhook">
+                  <span class="chev"></span><strong>Webhook</strong>
                 </div>
                 <div class="body"><div id="scrob-webhook"></div></div>
               </div>
               <div class="section open cw-settings-section cw-settings-provider-section" id="sc-sec-watch">
-                <div class="head" onclick="toggleSection('sc-sec-watch')">
-                  <span class="chev">▶</span><strong>Watcher</strong>
+                <div class="head" data-toggle-section="sc-sec-watch">
+                  <span class="chev"></span><strong>Watcher</strong>
                 </div>
                 <div class="body"><div id="scrob-watcher"></div></div>
               </div>
@@ -832,59 +841,10 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
           </div>
           <div class="section open cw-settings-section" id="sec-ui" data-accordion="off">
             <div class="head" style="display:flex;align-items:center">
-              <span class="chev">▶</span>
+              <span class="chev"></span>
               <strong>Settings (UI / Security / CW Tracker)</strong>
             </div>
             <div class="body">
-
-              <div class="cw-settings-hub" id="ui_settings_hub">
-                <button type="button" class="cw-hub-tile active" data-tab="ui" onclick="cwUiSettingsSelect?.('ui')">
-                  <div class="cw-hub-top">
-                    <div class="cw-hub-icon" aria-hidden="true"><span class="material-symbols-rounded">palette</span></div>
-                    <div class="cw-hub-copy">
-                      <div class="cw-hub-title">User Interface</div>
-                      <div class="cw-hub-desc">Dashboard visuals</div>
-                    </div>
-                  </div>
-                  <div class="chips">
-                    <span class="chip" id="hub_ui_watchlist">Watchlist: -</span>
-                    <span class="chip" id="hub_ui_playing">Playing: -</span>
-                    <span class="chip" id="hub_ui_activity">Activity: -</span>
-                    <span class="chip" id="hub_ui_askai">ASK AI: -</span>
-                    <span class="chip" id="hub_ui_quickadd">Quick Add: -</span>
-                    <span class="chip" id="hub_ui_proto">Proto: -</span>
-                  </div>
-                </button>
-
-                <button type="button" class="cw-hub-tile" data-tab="security" onclick="cwUiSettingsSelect?.('security')">
-                  <div class="cw-hub-top">
-                    <div class="cw-hub-icon" aria-hidden="true"><span class="material-symbols-rounded">shield_lock</span></div>
-                    <div class="cw-hub-copy">
-                      <div class="cw-hub-title">Security</div>
-                      <div class="cw-hub-desc">Protect CrossWatch</div>
-                    </div>
-                  </div>
-                  <div class="chips">
-                    <span class="chip" id="hub_sec_auth">Auth: -</span>
-                    <span class="chip" id="hub_sec_session">Session: -</span>
-                    <span class="chip" id="hub_sec_proxy">Proxy: -</span>
-                  </div>
-                </button>
-
-                <button type="button" class="cw-hub-tile" data-tab="tracker" onclick="cwUiSettingsSelect?.('tracker')">
-                  <div class="cw-hub-top">
-                    <div class="cw-hub-icon" aria-hidden="true"><span class="material-symbols-rounded">inventory_2</span></div>
-                    <div class="cw-hub-copy">
-                      <div class="cw-hub-title">CW Tracker</div>
-                      <div class="cw-hub-desc">Local snapshots</div>
-                    </div>
-                  </div>
-                  <div class="chips">
-                    <span class="chip" id="hub_cw_enabled">Tracker: -</span>
-                    <span class="chip" id="hub_cw_retention">Retention: -</span>
-                  </div>
-                </button>
-              </div>
 
               <div class="cw-settings-panels" id="ui_settings_panels">
 
@@ -999,6 +959,21 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                             <option value="false">Hide</option>
                           </select>
                         </div>
+                      </div>
+                    </div>
+
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Theme</div>
+                      <div>
+                        <div class="cw-field-label-row">
+                          <label for="ui_theme">Theme</label>
+                          <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
+                        </div>
+                        <select id="ui_theme" name="ui_theme" style="min-width:220px;max-width:360px">
+                          <option value="flat-dark">Flat dark</option>
+                          <option value="flat-light">Flat light</option>
+                          <option value="original">Original</option>
+                        </select>
                       </div>
                     </div>
 
@@ -1265,7 +1240,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
             </div>
           </div>
           <div class="section open cw-settings-section" id="sec-troubleshoot" data-accordion="off">
-            <div class="head"><span class="chev">▶</span><strong>Maintenance</strong></div>
+            <div class="head"><span class="chev"></span><strong>Maintenance</strong></div>
             <div class="body">
               <div>
                 <label for="debug">Debug</label>
@@ -1280,7 +1255,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
                 <button class="btn danger" onclick="openMaintenanceModal()">Maintenance Tools</button>
                 <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
               </div>
-              <div id="tb_msg" class="msg ok hidden">Done ✓</div>
+              <div id="tb_msg" class="msg ok hidden">Done </div>
             </div>
           </div>
         </section>
@@ -1306,9 +1281,9 @@ __CW_ASSET_BLOCK__
 <script>document.addEventListener('DOMContentLoaded',()=>{try{if(typeof openSummaryStream==='function')openSummaryStream()}catch(e){}});</script>
 
 <div id="save-frost" class="hidden" aria-hidden="true"></div>
-<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-ic">✔</span> <span class="btn-label">Save</span></button></div>
+<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-label">SAVE</span></button></div>
 
-<script>(()=>{const list=p=>[...p.querySelectorAll(':scope>.section')].filter(s=>s.dataset.accordion!=='off'),set=(s,on)=>{s.classList.toggle('open',!!on);s.querySelector('.head')?.setAttribute('aria-expanded',String(!!on));const c=s.querySelector('.chev');if(c)c.textContent=on?'▼':'▶'},siblings=s=>s?.parentElement?list(s.parentElement):[];window.toggleSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;const on=!s.classList.contains('open');siblings(s).forEach(x=>set(x,x===s&&on))};window.openSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;siblings(s).forEach(x=>set(x,x===s))};document.addEventListener('DOMContentLoaded',()=>[...new Set([...document.querySelectorAll('.section')].map(s=>s.parentElement).filter(Boolean))].forEach(p=>{const open=list(p).find(s=>s.classList.contains('open'));list(p).forEach(s=>set(s,s===open))}),{once:true})})();</script>
+<script>(()=>{const list=p=>[...p.querySelectorAll(':scope>.section')].filter(s=>s.dataset.accordion!=='off'),set=(s,on)=>{s.classList.toggle('open',!!on);s.querySelector('.head')?.setAttribute('aria-expanded',String(!!on));const c=s.querySelector('.chev');if(c)c.textContent=''},siblings=s=>s?.parentElement?list(s.parentElement):[];window.toggleSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;const on=!s.classList.contains('open');siblings(s).forEach(x=>set(x,x===s&&on))};window.openSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;siblings(s).forEach(x=>set(x,x===s))};document.addEventListener('click',e=>{const h=e.target?.closest?.('[data-toggle-section]');if(!h)return;e.preventDefault();window.toggleSection?.(h.dataset.toggleSection)},true);document.addEventListener('DOMContentLoaded',()=>[...new Set([...document.querySelectorAll('.section')].map(s=>s.parentElement).filter(Boolean))].forEach(p=>{const open=list(p).find(s=>s.classList.contains('open'));list(p).forEach(s=>set(s,s===open))}),{once:true})})();</script>
 
 
 <script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
@@ -1466,13 +1441,13 @@ __CW_ASSET_BLOCK__
   document.addEventListener("DOMContentLoaded", () => render({}), { once: true });
 })();
 </script>
-<script>(()=>{window.cwScrobblerJump=sectionId=>(window.cwSettingsSelect?.('scrobbler'),setTimeout(()=>{window.openSection?.(sectionId);document.getElementById(sectionId)?.scrollIntoView({behavior:'smooth',block:'start'})},0));window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{window.cwUiSettingsSelect?.(tab);document.querySelector(`#ui_settings_hub .cw-hub-tile[data-tab="${String(tab||'').trim().toLowerCase()}"]`)?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'})},0))})();</script>
+<script>(()=>{window.cwScrobblerJump=sectionId=>(window.cwSettingsSelect?.('scrobbler'),setTimeout(()=>{window.openSection?.(sectionId);document.getElementById(sectionId)?.scrollIntoView({behavior:'smooth',block:'start'})},0));window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{const t=String(tab||'').trim().toLowerCase();window.cwUiSettingsSelect?.(t);document.querySelector(`#ui_settings_panels .cw-settings-panel[data-tab="${t}"]`)?.scrollIntoView({behavior:'smooth',block:'start'})},0))})();</script>
 
 <script>(()=>{const origFetch=window.fetch;if(typeof origFetch!=='function'||origFetch.__cwAuthPendingWrapped)return;const pending=()=>window.cwIsAuthSetupPending?.()===true,allowPath=p=>p.startsWith('/api/app-auth/')||p==='/api/config/meta'||p.startsWith('/api/config/meta?')||p.startsWith('/assets/')||p==='/favicon.svg';const emptyJson=(body='{}')=>new Response(body,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});window.fetch=Object.assign(async function(resource,init){try{if(!pending())return await origFetch(resource,init);const url=typeof resource==='string'?resource:String(resource?.url||'');const u=new URL(url,location.origin);if(u.origin!==location.origin||!u.pathname.startsWith('/api/')||allowPath(u.pathname)||allowPath(u.pathname+u.search))return await origFetch(resource,init);const method=String(init?.method||resource?.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD')return await origFetch(resource,init);if(u.pathname.startsWith('/api/config'))return emptyJson('{}');if(u.pathname.startsWith('/api/status'))return emptyJson('{"providers":{}}');if(u.pathname.startsWith('/api/pairs'))return emptyJson('[]');if(u.pathname.startsWith('/api/scheduling'))return emptyJson('{}');if(u.pathname.startsWith('/api/insights'))return emptyJson('{}');if(u.pathname.startsWith('/api/watch/'))return emptyJson('{}');if(u.pathname.startsWith('/api/webhooks/'))return emptyJson('{}');return emptyJson('{}')}catch{return await origFetch(resource,init)}},{__cwAuthPendingWrapped:true})})();</script>
 
 <script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),visible=()=>{if(!page)return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
 
-<script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved ✓';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-ic">✔</span> <span class="btn-label">Save</span>';btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
+<script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-label">SAVE</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-label">SAVE</span>';btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
 </body></html>
 
 """
