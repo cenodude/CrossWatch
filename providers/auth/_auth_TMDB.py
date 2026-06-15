@@ -43,7 +43,7 @@ class TMDbAuth(AuthProvider):
                     "label": "API Key (v3)",
                     "type": "password",
                     "required": True,
-                    "placeholder": "••••••••",
+                    "placeholder": "********",
                 },
                 {
                     "key": "tmdb_sync.session_id",
@@ -60,7 +60,7 @@ class TMDbAuth(AuthProvider):
     def capabilities(self) -> dict[str, Any]:
         return {"watchlist": True, "ratings": True}
 
-    def get_status(self, cfg: Mapping[str, Any], instance_id: str | None = None) -> AuthStatus:
+    def get_status(self, cfg: Mapping[str, Any], *, instance_id: str | None = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
         tm: Mapping[str, Any] = {}
         base = cfg.get("tmdb_sync") if isinstance(cfg, Mapping) else None
@@ -76,10 +76,10 @@ class TMDbAuth(AuthProvider):
         has_sess = bool(str(tm.get("session_id") or "").strip())
         return AuthStatus(connected=bool(has_key and has_sess), label="TMDb", user=None)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str) -> dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str | None = None, *, instance_id: str | None = None) -> dict[str, Any]:
         return {}
 
-    def finish(self, cfg: MutableMapping[str, Any], instance_id: str | None = None, **payload: Any) -> AuthStatus:
+    def finish(self, cfg: MutableMapping[str, Any], *, instance_id: str | None = None, **payload: Any) -> AuthStatus:
         key = (payload.get("api_key") or payload.get("tmdb_sync.api_key") or "").strip()
         sess = (payload.get("session_id") or payload.get("tmdb_sync.session_id") or "").strip()
 
@@ -97,12 +97,12 @@ class TMDbAuth(AuthProvider):
                 tm["session_id"] = sess
 
         log(f"TMDb sync credentials saved ({inst}).", module="AUTH")
-        return self.get_status(cfg, inst)
+        return self.get_status(cfg, instance_id=inst)
 
-    def refresh(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
-        return self.get_status(cfg, instance_id)
+    def refresh(self, cfg: MutableMapping[str, Any], *, instance_id: str | None = None) -> AuthStatus:
+        return self.get_status(cfg, instance_id=instance_id)
 
-    def disconnect(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
+    def disconnect(self, cfg: MutableMapping[str, Any], *, instance_id: str | None = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
         if isinstance(cfg, dict):
             ensure_provider_block(cfg, "tmdb_sync")
@@ -121,7 +121,7 @@ class TMDbAuth(AuthProvider):
                 tm.pop("username", None)
 
         log(f"TMDb disconnected ({inst}).", module="AUTH")
-        return self.get_status(cfg, inst)
+        return self.get_status(cfg, instance_id=inst)
 
     def html(self) -> str:
         return _tmdb_sync_html()
@@ -153,8 +153,8 @@ def _tmdb_sync_html() -> str:
     }
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-tmdb-sync')">
-    <span class="chev">▶</span><strong>TMDb (Sync)</strong>
+  <div class="head" data-toggle-section="sec-tmdb-sync">
+    <span class="chev"></span><strong>TMDb (Sync)</strong>
   </div>
 
   <div class="body">
@@ -178,10 +178,7 @@ def _tmdb_sync_html() -> str:
                 <div class="grid2">
                   <div>
                     <label for="tmdb_sync_api_key">API Key (v3)</label>
-                    <div style="display:flex;gap:8px">
-                      <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="off" placeholder="••••••••" />
-                      <button id="tmdb_sync_connect" class="btn">Connect</button>
-                    </div>
+                    <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="off" placeholder="********" />
                     <div id="tmdb_sync_hint" class="msg warn" style="margin-top:8px">
                       You need an TMDb API key. Create one at
                       <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb Preferences</a>
@@ -199,7 +196,7 @@ def _tmdb_sync_html() -> str:
                 <div style="margin-top:10px">
                   <div class="field-label">Status</div>
                   <div class="inline">
-                    <button id="tmdb_sync_verify" class="btn">Verify</button>
+                    <button id="tmdb_sync_connect" class="btn">Connect</button>
                     <button id="tmdb_sync_disconnect" class="btn danger">Disconnect</button>
                     <div id="tmdb_sync_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto"></div>
                   </div>

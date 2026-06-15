@@ -54,7 +54,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.0"
+__VERSION__ = "0.1"
 os.environ.setdefault("CW_ANILIST_VERSION", __VERSION__)
 os.environ.setdefault("CW_ANILIST_UA", f"CrossWatch/{__VERSION__} (AniList)")
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]

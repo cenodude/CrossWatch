@@ -102,6 +102,77 @@ def _validate_mdblist_api_key(api_key: str, *, timeout: float = 12.0) -> tuple[b
     return True, ""
 
 
+def _validate_publicmetadb_api_key(api_key: str, *, base_url: str = "https://publicmetadb.com", timeout: float = 12.0) -> tuple[bool, str]:
+    key = str(api_key or "").strip()
+    if not key:
+        return False, "api_key_required"
+    base = str(base_url or "https://publicmetadb.com").strip().rstrip("/") or "https://publicmetadb.com"
+    try:
+        r = requests.get(
+            f"{base}/api/external/lists",
+            params={"page": 1, "perPage": 1},
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {key}",
+                "User-Agent": "CrossWatch/PublicMetaDBAuth",
+            },
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        return False, "validation_timeout"
+    except requests.RequestException:
+        return False, "validation_failed"
+    if r.status_code in (401, 403):
+        return False, "invalid_api_key"
+    if r.status_code >= 400:
+        return False, f"validation_http_{int(r.status_code)}"
+    try:
+        data = r.json() or {}
+    except ValueError:
+        return False, "validation_bad_response"
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return False, "validation_bad_response"
+    return True, ""
+
+
+def _validate_tautulli_credentials(server_url: str, api_key: str, *, timeout: float = 12.0, verify_ssl: bool = True) -> tuple[bool, str]:
+    server = str(server_url or "").strip().rstrip("/")
+    key = str(api_key or "").strip()
+    if not server:
+        return False, "server_url_required"
+    if not key:
+        return False, "api_key_required"
+    if not server.startswith(("http://", "https://")):
+        server = "http://" + server
+    try:
+        r = requests.get(
+            f"{server}/api/v2",
+            params={"apikey": key, "cmd": "get_server_info"},
+            headers={"Accept": "application/json", "User-Agent": "CrossWatch/TautulliAuth"},
+            timeout=timeout,
+            verify=bool(verify_ssl),
+        )
+    except requests.Timeout:
+        return False, "validation_timeout"
+    except requests.RequestException:
+        return False, "validation_failed"
+    if r.status_code in (401, 403):
+        return False, "invalid_api_key"
+    if r.status_code >= 400:
+        return False, f"validation_http_{int(r.status_code)}"
+    try:
+        data = r.json() or {}
+    except ValueError:
+        return False, "validation_bad_response"
+    resp = data.get("response") if isinstance(data, dict) else None
+    if isinstance(resp, dict) and str(resp.get("result") or "").lower() == "success":
+        return True, ""
+    msg = str((resp or {}).get("message") or "").strip().lower() if isinstance(resp, dict) else ""
+    if "apikey" in msg or "api key" in msg:
+        return False, "invalid_api_key"
+    return False, "validation_bad_response"
+
+
 def _defaults_for_provider(provider_key: str) -> dict[str, Any]:
     blk = DEFAULT_CFG.get(provider_key)
     return copy.deepcopy(blk) if isinstance(blk, dict) else {}
@@ -1363,6 +1434,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 if _looks_masked_secret(key):
                     key = ""
                 else:
+                    base_url = str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/")
+                    ok, reason = _validate_publicmetadb_api_key(key, base_url=base_url)
+                    if not ok:
+                        _safe_log(log_fn, "PUBLICMETADB", f"[PUBLICMETADB] api_key validation failed reason={reason} instance={normalize_instance_id(instance)}")
+                        return {"ok": False, "error": reason, "instance": normalize_instance_id(instance)}
                     p["api_key"] = key
             p.setdefault("base_url", "https://publicmetadb.com")
             save_config(cfg)
@@ -1378,8 +1454,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def api_publicmetadb_status(instance: str | None = Query(None)) -> dict[str, Any]:
         cfg = load_config()
         p = ensure_instance_block(cfg, "publicmetadb", instance)
-        has = bool(str(p.get("api_key") or "").strip())
-        return {"connected": has, "instance": normalize_instance_id(instance)}
+        key = str(p.get("api_key") or "").strip()
+        if not key:
+            return {"connected": False, "instance": normalize_instance_id(instance), "reason": "api_key_required"}
+        ok, reason = _validate_publicmetadb_api_key(
+            key,
+            base_url=str(p.get("base_url") or "https://publicmetadb.com").strip().rstrip("/"),
+        )
+        return {"connected": bool(ok), "instance": normalize_instance_id(instance), **({} if ok else {"reason": reason})}
 
     @app.post("/api/publicmetadb/disconnect", tags=["auth"])
     def api_publicmetadb_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1434,6 +1516,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             raise HTTPException(status_code=400, detail="server_url required")
         if not final_key:
             raise HTTPException(status_code=400, detail="api_key required")
+        ok, reason = _validate_tautulli_credentials(final_server, final_key, verify_ssl=bool(t.get("verify_ssl", True)))
+        if not ok:
+            _safe_log(log_fn, "TAUTULLI", f"[TAUTULLI] validation failed reason={reason} instance={inst}")
+            return {"ok": False, "error": reason, "instance": inst}
 
         save_config(cfg)
         _safe_log(log_fn, "TAUTULLI", f"[TAUTULLI] saved instance={inst}")
@@ -1455,38 +1541,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         if not verify:
             return {"connected": True, "instance": inst}
 
-        if server and not server.startswith(("http://", "https://")):
-            server = "http://" + server
-
-        try:
-            r = requests.get(
-                f"{server}/api/v2",
-                params={"apikey": key, "cmd": "get_server_info"},
-                headers={"Accept": "application/json"},
-                timeout=float(t.get("timeout", 10) or 10),
-                verify=bool(t.get("verify_ssl", True)),
-            )
-            j = {}
-            try:
-                j = r.json() if r.ok else {}
-            except Exception:
-                j = {}
-            resp = j.get("response") if isinstance(j, dict) else None
-            ok = bool(
-                r.ok
-                and isinstance(resp, dict)
-                and str(resp.get("result") or "").lower() == "success"
-            )
-            if ok:
-                return {"connected": True, "instance": inst}
-            reason = "verify_failed"
-            if isinstance(resp, dict):
-                reason = str(resp.get("message") or reason)
-            elif not r.ok:
-                reason = f"HTTP {r.status_code}"
-            return {"connected": False, "instance": inst, "reason": reason}
-        except Exception:
-            return {"connected": False, "instance": inst, "reason": "verify_failed"}
+        ok, reason = _validate_tautulli_credentials(
+            server,
+            key,
+            timeout=float(t.get("timeout", 10) or 10),
+            verify_ssl=bool(t.get("verify_ssl", True)),
+        )
+        return {"connected": bool(ok), "instance": inst, **({} if ok else {"reason": reason})}
 
     @app.post("/api/tautulli/disconnect", tags=["auth"])
     def api_tautulli_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1839,10 +1900,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 return PlainTextResponse("SIMKL token exchange failed.", 400)
 
             simkl_cfg["access_token"] = str(tokens.get("access_token") or "").strip()
-            if tokens.get("refresh_token"):
-                simkl_cfg["refresh_token"] = str(tokens.get("refresh_token") or "").strip()
-            if tokens.get("expires_in"):
-                simkl_cfg["token_expires_at"] = int(time.time()) + int(tokens["expires_in"])
+            simkl_cfg.pop("refresh_token", None)
+            simkl_cfg.pop("token_expires_at", None)
             save_config(cfg)
 
             SIMKL_STATE.pop(state, None)
@@ -2015,12 +2074,5 @@ def simkl_exchange_code(cfg: dict[str, Any], instance_id: Any, client_id: str, c
     access = str(s.get("access_token") or "").strip()
     if not access:
         return None
-    refresh = str(s.get("refresh_token") or "").strip()
-    exp_at = int(s.get("token_expires_at", 0) or 0)
-    expires_in = max(0, exp_at - int(time.time())) if exp_at else 0
     out: dict[str, Any] = {"access_token": access}
-    if refresh:
-        out["refresh_token"] = refresh
-    if expires_in:
-        out["expires_in"] = expires_in
     return out

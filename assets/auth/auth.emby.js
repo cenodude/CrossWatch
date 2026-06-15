@@ -3,6 +3,7 @@
   "use strict";
 
   // --- utils
+  const Shared = window.CW && window.CW.AuthShared;
   const Q = (s, r = document) => r.querySelector(s);
   const Qa = (s, r = document) => Array.from(r.querySelectorAll(s) || []);
   const ESC = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -13,149 +14,44 @@
   let R = new Set(); // ratings lib ids
   let S = new Set(); // scrobble lib ids
   let hydrated = false;
+  let connected = false;
 
   const EMBY_SUBTAB_KEY = "cw.ui.emby.auth.subtab.v1";
 
-  const EMBY_INSTANCE_KEY = "cw.ui.emby.auth.instance.v1";
+  const embyProfile = Shared.createProfileAdapter({
+    provider: "emby",
+    configKey: "emby",
+    label: "Emby",
+    sectionId: "sec-emby",
+    selectId: "emby_instance",
+    storageKey: "cw.ui.emby.auth.instance.v1",
+    title: "Select which Emby server/account this config applies to.",
+  });
 
   function getEmbyInstance() {
-    const el = Q("#emby_instance");
-    let v = el ? String(el.value || "").trim() : "";
-    if (!v) { try { v = localStorage.getItem(EMBY_INSTANCE_KEY) || ""; } catch {} }
-    v = (v || "").trim() || "default";
-    return v.toLowerCase() === "default" ? "default" : v;
+    return embyProfile ? embyProfile.getInstance() : "default";
   }
 
   function setEmbyInstance(v) {
-    const id = (String(v || "").trim() || "default");
-    try { localStorage.setItem(EMBY_INSTANCE_KEY, id); } catch {}
-    const el = Q("#emby_instance");
-    if (el) el.value = id;
+    if (embyProfile) embyProfile.setInstance(v);
   }
 
   function embyApi(path) {
-    const p = String(path || "");
-    const sep = p.includes("?") ? "&" : "?";
-    return p + sep + "instance=" + encodeURIComponent(getEmbyInstance()) + "&ts=" + Date.now();
+    return embyProfile ? embyProfile.api(path) : String(path || "");
   }
 
   function getEmbyCfgBlock(cfg) {
-    cfg = cfg || {};
-    const base = (cfg.emby && typeof cfg.emby === "object") ? cfg.emby : (cfg.emby = {});
-    const inst = getEmbyInstance();
-    if (inst === "default") return base;
-    if (!base.instances || typeof base.instances !== "object") base.instances = {};
-    if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
-    return base.instances[inst];
+    return embyProfile ? embyProfile.cfgBlock(cfg, true) : {};
   }
 
   async function refreshEmbyInstanceOptions(preserve = true) {
-    const sel = Q("#emby_instance");
-    if (!sel) return;
-    let want = preserve ? getEmbyInstance() : "default";
-    try {
-      const r = await fetch("/api/provider-instances/emby?ts=" + Date.now(), { cache: "no-store" });
-      const arr = await r.json().catch(() => []);
-      const opts = Array.isArray(arr) ? arr : [];
-
-      sel.innerHTML = "";
-      const addOpt = (id, label) => {
-        const o = document.createElement("option");
-        o.value = String(id);
-        o.textContent = String(label || id);
-        sel.appendChild(o);
-      };
-
-      addOpt("default", "Default");
-      opts.forEach((o) => { if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
-
-      if (!Array.from(sel.options).some(o => o.value === want)) want = "default";
-      sel.value = want;
-      setEmbyInstance(want);
-    } catch {}
+    if (embyProfile) await embyProfile.refreshOptions(preserve);
   }
 
   function ensureEmbyInstanceUI() {
-    const panel = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]');
-    const head = panel ? Q(".cw-panel-head", panel) : null;
-    if (!head || head.__embyInstanceUI) return;
-    head.__embyInstanceUI = true;
-
-    const wrap = document.createElement("div");
-    wrap.className = "inline";
-    wrap.style.display = "flex";
-    wrap.style.gap = "8px";
-    wrap.style.alignItems = "center";
-    wrap.title = "Select which Emby server/account this config applies to.";
-
-    const lab = document.createElement("span");
-    lab.className = "muted";
-    lab.textContent = "Profile";
-
-    const sel = document.createElement("select");
-    sel.id = "emby_instance";
-sel.name = "emby_instance";
-    sel.className = "input";
-    sel.style.minWidth = "160px";
-
-    const btnNew = document.createElement("button");
-    btnNew.type = "button";
-    btnNew.className = "btn secondary";
-    btnNew.id = "emby_instance_new";
-    btnNew.textContent = "New";
-
-    const btnDel = document.createElement("button");
-    btnDel.type = "button";
-    btnDel.className = "btn secondary";
-    btnDel.id = "emby_instance_del";
-    btnDel.textContent = "Delete";
-
-    wrap.appendChild(lab);
-    wrap.appendChild(sel);
-    wrap.appendChild(btnNew);
-    wrap.appendChild(btnDel);
-    head.appendChild(wrap);
-
-    refreshEmbyInstanceOptions(true);
-
-    sel.addEventListener("change", async () => {
-      setEmbyInstance(sel.value);
+    embyProfile?.ensureUI(async () => {
       try { hydrated = false; } catch {}
       try { await hydrateFromConfig(true); } catch {}
-    });
-
-    btnNew.addEventListener("click", async () => {
-      try {
-        const r = await fetch(`/api/provider-instances/emby/next?ts=${Date.now()}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        const id = String(j?.id || "").trim();
-        if (!r.ok || j?.ok === false || !id) throw new Error(String(j?.error || "create_failed"));
-        setEmbyInstance(id);
-        await refreshEmbyInstanceOptions(true);
-        sel.value = id;
-        hydrated = false;
-        try { await hydrateFromConfig(true); } catch {}
-      } catch (e) {
-        (window.notify || console.log)("Could not create profile: " + (e?.message || e));
-      }
-    });
-
-    btnDel.addEventListener("click", async () => {
-      const id = getEmbyInstance();
-      if (id === "default") return (window.notify || console.log)("Default profile cannot be deleted.");
-      if (!confirm(`Delete Emby profile "${id}"?`)) return;
-      try {
-        const r = await fetch(`/api/provider-instances/emby/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok || j?.ok === false) throw new Error(String(j?.error || "delete_failed"));
-        setEmbyInstance("default");
-        await refreshEmbyInstanceOptions(false);
-        sel.value = "default";
-        hydrated = false;
-        try { await hydrateFromConfig(true); } catch {}
-      } catch (e) {
-        (window.notify || console.log)("Could not delete profile: " + (e?.message || e));
-      }
     });
   }
 
@@ -206,15 +102,17 @@ sel.name = "emby_instance";
 
   // helpers
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
-  const maskToken = (has) => { const el = Q("#emby_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
 
   function setMsgBanner(msg, kind, text) {
-    if (!msg) return;
-    msg.classList.remove('hidden', 'ok', 'warn');
-    if (!kind) { msg.classList.add('hidden'); msg.textContent = ''; return; }
-    msg.classList.add(kind);
-    msg.textContent = text || '';
+    return Shared.setStatusPill(msg, kind, text);
+  }
+
+  function setConnected(has) {
+    connected = !!has;
+    const msg = Q("#emby_msg");
+    if (connected) setMsgBanner(msg, "ok", "Connected");
+    else setMsgBanner(msg, null, "");
   }
 
   // libraries UI
@@ -280,8 +178,7 @@ sel.name = "emby_instance";
   function embySectionLooksEmpty() {
     const s1 = Q("#emby_server") || Q("#emby_server_url");
     const u1 = Q("#emby_user") || Q("#emby_username");
-    const tok = Q("#emby_tok");
-    const vals = [s1, u1, tok].map(el => el ? String(el.value || "").trim() : "");
+    const vals = [s1, u1].map(el => el ? String(el.value || "").trim() : "");
     return vals.every(v => !v);
   }
 
@@ -300,7 +197,7 @@ sel.name = "emby_instance";
       const v1 = Q("#emby_verify_ssl"), v2 = Q("#emby_verify_ssl_dup");
       if (v1) v1.checked = !!em.verify_ssl;
       if (v2) v2.checked = !!em.verify_ssl;
-      maskToken(!!(em.access_token || "").trim());
+      setConnected(!!(em.access_token || "").trim());
 
       H = new Set((em.history?.libraries || []).map(String));
       R = new Set((em.ratings?.libraries || []).map(String));
@@ -375,8 +272,8 @@ sel.name = "emby_instance";
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) throw new Error(String(j?.error || j?.detail || `HTTP ${r.status}`));
 
-      setMsgBanner(msg, "ok", "Signed in.");
-      maskToken(true);
+      setConnected(true);
+      setMsgBanner(msg, "ok", "Connected");
       hydrated = false;
       try { await hydrateFromConfig(true); } catch {}
     } catch (e) {
@@ -398,8 +295,8 @@ sel.name = "emby_instance";
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) throw new Error(String(j?.error || `HTTP ${r.status}`));
-      setMsgBanner(msg, "ok", "Deleted.");
-      maskToken(false);
+      setConnected(false);
+      setMsgBanner(msg, "ok", "Disconnected");
       hydrated = false;
       try { await hydrateFromConfig(true); } catch {}
     } catch (e) {
@@ -497,38 +394,11 @@ sel.name = "emby_instance";
 
   document.addEventListener("input", (ev) => { if (ev.target?.id === "emby_lib_filter") applyFilter(); }, true);
 
-  function _normPickText(t) {
-    return String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
-  }
-
   function findEmbyPickUserButton() {
     const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby");
     if (!root) return null;
     const settings = root.querySelector('.cw-subpanel[data-sub="settings"]') || root;
-
-    let btn = settings.querySelector("#emby_pick_user");
-    if (btn) return btn;
-
-    btn = settings.querySelector('[data-cw-emby="pick-user"]');
-    if (btn) return btn;
-
-    const uid = settings.querySelector("#emby_user_id");
-    if (!uid) return null;
-
-    // Look for a nearby button with matching text.
-    const candidates = [];
-    const p1 = uid.parentElement;
-    const p2 = p1 ? p1.parentElement : null;
-    [p1, p2].filter(Boolean).forEach((p) => p.querySelectorAll("button").forEach((b) => candidates.push(b)));
-
-    const hit = candidates.find((b) => {
-      const txt = _normPickText(b.textContent);
-      if (!txt || !(txt.includes("pick") && txt.includes("user"))) return false;
-      const box = b.closest("div") || b.parentElement;
-      return !!(box && box.contains(uid));
-    });
-
-    return hit || null;
+    return settings.querySelector("#emby_pick_user") || settings.querySelector('[data-cw-emby="pick-user"]');
   }
 
   function wireEmbyPickUserButton() {
@@ -537,36 +407,12 @@ sel.name = "emby_instance";
     const settings = root.querySelector('.cw-subpanel[data-sub="settings"]') || root;
     if (!settings) return;
 
-    let btn = findEmbyPickUserButton();
-    const uid = settings.querySelector("#emby_user_id");
-
-    // If template doesn't have a button yet, inject one next to the user id input.
-    if (!btn && uid) {
-      btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn";
-      btn.id = "emby_pick_user";
-      btn.textContent = "Pick user";
-      btn.dataset.cwEmby = "pick-user";
-
-      const row = uid.closest(".inp-row") || uid.parentElement;
-      if (row) {
-        row.classList.add("inp-row");
-        uid.classList.add("grow");
-        row.appendChild(btn);
-      } else {
-        uid.insertAdjacentElement("afterend", btn);
-      }
-    }
-
+    const btn = findEmbyPickUserButton();
     if (!btn || btn.__cwEmbyPickWired) return;
     btn.__cwEmbyPickWired = true;
     if (!btn.id) btn.id = "emby_pick_user";
     try { btn.dataset.cwEmby = btn.dataset.cwEmby || "pick-user"; } catch {}
     btn.addEventListener("click", embyPickUser, true);
-    if (!btn.getAttribute("onclick")) {
-      btn.setAttribute("onclick", "try{window.embyPickUser&&window.embyPickUser(event);}catch(_){;}");
-    }
   }
 
   async function embyPickUser(ev) {
@@ -596,24 +442,21 @@ sel.name = "emby_instance";
   }
 
   document.addEventListener("click", (ev) => {
-    let btn = ev?.target?.closest ? ev.target.closest('#emby_pick_user,[data-cw-emby="pick-user"]') : null;
-
-    // Fallback for older markup: no id/dataset, but button is next to the user id input.
-    if (!btn) {
-      const b = ev?.target?.closest ? ev.target.closest("button") : null;
-      if (b) {
-        const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby");
-        const settings = root ? (root.querySelector('.cw-subpanel[data-sub="settings"]') || root) : null;
-        const uid = settings ? settings.querySelector("#emby_user_id") : null;
-        const txt = _normPickText(b.textContent);
-        if (uid && settings && settings.classList.contains("active") && settings.contains(b) && txt.includes("pick") && txt.includes("user")) {
-          const box = b.closest("div") || b.parentElement;
-          if (box && box.contains(uid)) btn = b;
-        }
-      }
-    }
-
+    const btn = ev?.target?.closest ? ev.target.closest('#emby_pick_user,[data-cw-emby="pick-user"]') : null;
     if (btn) embyPickUser(ev);
+    const t = ev?.target;
+    if (t && t.id === "btn-emby-login") embyLogin();
+    if (t && t.id === "btn-emby-delete") embyDeleteToken();
+    if (t && t.id === "btn-emby-auto") embyAuto();
+    if (t && t.id === "btn-emby-load-libraries") embyLoadLibraries();
+  }, true);
+
+  document.addEventListener("change", (ev) => {
+    const t = ev?.target;
+    if (t && t.id === "emby_verify_ssl_dup") {
+      const primary = Q("#emby_verify_ssl");
+      if (primary) primary.checked = !!t.checked;
+    }
   }, true);
 
   // expose

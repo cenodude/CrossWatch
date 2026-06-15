@@ -3,175 +3,50 @@
   if (window._publicMetaDBPatched) return;
   window._publicMetaDBPatched = true;
 
-  const el = (id) => document.getElementById(id);
-  const txt = (v) => (typeof v === "string" ? v : "").trim();
-  const note = (m) => (typeof window.notify === "function" ? window.notify(m) : void 0);
-
-  function isMaskedSecret(v) {
-    const value = txt(v);
-    if (!value) return false;
-    if (value === "********" || value === "**********") return true;
-    return /^[*]{3,}$/.test(value);
-  }
-
-  function readSecretField(i) {
-    const raw = txt(i && i.value);
-    const masked = !!(i && (i.dataset.masked === "1" || isMaskedSecret(raw)));
-    if (!raw && !masked) return { hasValue: false, masked: false, value: "" };
-    if (masked) return { hasValue: true, masked: true, value: "" };
-    return { hasValue: true, masked: false, value: raw };
-  }
-
-  const INSTANCE_KEY = "cw.ui.publicmetadb.auth.instance.v1";
+  const Shared = window.CW.AuthShared;
+  const el = Shared.el;
+  const txt = Shared.txt;
+  const note = Shared.notify;
+  const readSecretField = Shared.readSecretField;
+  const profile = Shared.createProfileAdapter({
+    provider: "publicmetadb",
+    configKey: "publicmetadb",
+    label: "PublicMetaDB",
+    sectionId: "sec-publicmetadb",
+    selectId: "publicmetadb_instance",
+    storageKey: "cw.ui.publicmetadb.auth.instance.v1",
+  });
 
   function getInstance() {
-    var s = el("publicmetadb_instance");
-    var v = s ? txt(s.value) : "";
-    if (!v) { try { v = localStorage.getItem(INSTANCE_KEY) || ""; } catch (_) {} }
-    v = txt(v) || "default";
-    return v.toLowerCase() === "default" ? "default" : v;
+    return profile ? profile.getInstance() : "default";
   }
 
   function setInstance(v) {
-    var id = txt(String(v || "")) || "default";
-    try { localStorage.setItem(INSTANCE_KEY, id); } catch (_) {}
-    var s = el("publicmetadb_instance");
-    if (s) s.value = id;
+    if (profile) profile.setInstance(v);
   }
 
   function api(path) {
-    var p = String(path || "");
-    var sep = p.indexOf("?") >= 0 ? "&" : "?";
-    return p + sep + "instance=" + encodeURIComponent(getInstance()) + "&ts=" + Date.now();
+    return profile ? profile.api(path) : String(path || "");
   }
 
   async function fetchJSON(url, opts) {
-    const r = await fetch(url, opts || {});
-    let j = null; try { j = await r.json(); } catch {}
-    return { ok: r.ok, data: j };
+    return Shared.fetchJSON(url, opts);
   }
 
   async function getCfg() {
-    const r = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
-    return r.ok ? (r.data || {}) : {};
+    return Shared.getConfig();
   }
 
   function cfgBlock(cfg) {
-    cfg = cfg || {};
-    var base = (cfg.publicmetadb && typeof cfg.publicmetadb === "object") ? cfg.publicmetadb : (cfg.publicmetadb = {});
-    var inst = getInstance();
-    if (inst === "default") return base;
-    if (!base.instances || typeof base.instances !== "object") base.instances = {};
-    if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
-    return base.instances[inst];
+    return profile ? profile.cfgBlock(cfg, true) : {};
   }
 
   async function refreshInstanceOptions(preserve) {
-    var sel = el("publicmetadb_instance");
-    if (!sel) return;
-    var want = preserve === false ? "default" : getInstance();
-    try {
-      var r = await fetch("/api/provider-instances/publicmetadb?ts=" + Date.now(), { cache: "no-store" });
-      var arr = await r.json().catch(function(){ return []; });
-      var opts = Array.isArray(arr) ? arr : [];
-      sel.innerHTML = "";
-      function addOpt(id, label) {
-        var o = document.createElement("option");
-        o.value = String(id);
-        o.textContent = String(label || id);
-        sel.appendChild(o);
-      }
-      addOpt("default", "Default");
-      opts.forEach(function(o){ if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
-      if (!Array.from(sel.options).some(function(o){ return o.value === want; })) want = "default";
-      sel.value = want;
-      setInstance(want);
-    } catch (_) {}
+    if (profile) await profile.refreshOptions(preserve);
   }
 
   function ensureInstanceUI() {
-    var panel = document.querySelector('#sec-publicmetadb .cw-meta-provider-panel[data-provider="publicmetadb"]') || document.querySelector('#sec-publicmetadb');
-    var head = panel ? panel.querySelector('.cw-panel-head') : null;
-    if (!head || head.__publicmetadbInstanceUI) return;
-    head.__publicmetadbInstanceUI = true;
-
-    var wrap = document.createElement('div');
-    wrap.className = 'inline';
-    wrap.style.display = 'flex';
-    wrap.style.gap = '8px';
-    wrap.style.alignItems = 'center';
-    wrap.style.marginLeft = 'auto';
-    wrap.style.flexWrap = 'nowrap';
-
-    var lab = document.createElement('span');
-    lab.className = 'muted';
-    lab.textContent = 'Profile';
-
-    var sel = document.createElement('select');
-    sel.id = 'publicmetadb_instance';
-    sel.name = 'publicmetadb_instance';
-    sel.className = 'input';
-    sel.style.minWidth = '160px';
-    sel.style.width = 'auto';
-    sel.style.maxWidth = '220px';
-    sel.style.flex = '0 0 auto';
-
-    var btnNew = document.createElement('button');
-    btnNew.type = 'button';
-    btnNew.className = 'btn secondary';
-    btnNew.id = 'publicmetadb_instance_new';
-    btnNew.textContent = 'New';
-
-    var btnDel = document.createElement('button');
-    btnDel.type = 'button';
-    btnDel.className = 'btn secondary';
-    btnDel.id = 'publicmetadb_instance_del';
-    btnDel.textContent = 'Delete';
-
-    wrap.appendChild(lab);
-    wrap.appendChild(sel);
-    wrap.appendChild(btnNew);
-    wrap.appendChild(btnDel);
-    head.appendChild(wrap);
-
-    refreshInstanceOptions(true);
-    sel.addEventListener("change", function () {
-      setInstance(sel.value);
-      void hydrate();
-    });
-    btnNew.addEventListener("click", async function () {
-      try {
-        var r = await fetch("/api/provider-instances/publicmetadb/next?ts=" + Date.now(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-          cache: "no-store"
-        });
-        var j = await r.json().catch(function(){ return {}; });
-        var id = txt((j && j.id) || "");
-        if (!r.ok || (j && j.ok === false) || !id) throw new Error(String((j && j.error) || "create_failed"));
-        setInstance(id);
-        await refreshInstanceOptions(true);
-        void hydrate();
-      } catch (e) {
-        note("Could not create profile: " + (e && e.message ? e.message : e));
-      }
-    });
-    btnDel.addEventListener("click", async function () {
-      var id = getInstance();
-      if (id === "default") return note("Default profile cannot be deleted.");
-      if (!confirm('Delete PublicMetaDB profile "' + id + '"?')) return;
-      try {
-        var r = await fetch("/api/provider-instances/publicmetadb/" + encodeURIComponent(id), { method: "DELETE", cache: "no-store" });
-        var j = await r.json().catch(function(){ return {}; });
-        if (!r.ok || (j && j.ok === false)) throw new Error(String((j && j.error) || "delete_failed"));
-        setInstance("default");
-        await refreshInstanceOptions(false);
-        void hydrate();
-      } catch (e) {
-        note("Could not delete profile: " + (e && e.message ? e.message : e));
-      }
-    });
+    profile?.ensureUI(() => { void hydrate(); });
   }
 
   async function saveKey(key) {
@@ -180,23 +55,35 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: key })
     });
-    if (!r.ok || (r.data && r.data.ok === false)) throw new Error("save_failed");
+    if (!r.ok || (r.data && r.data.ok === false)) throw new Error(friendlyError((r.data && r.data.error) || "save_failed"));
+  }
+
+  function friendlyError(code) {
+    switch (String(code || "")) {
+      case "api_key_required": return "Enter your PublicMetaDB API key";
+      case "invalid_api_key": return "Invalid PublicMetaDB API key";
+      case "validation_timeout": return "PublicMetaDB validation timed out";
+      case "validation_failed": return "Could not validate PublicMetaDB API key";
+      case "validation_bad_response": return "PublicMetaDB validation returned an unexpected response";
+      default:
+        if (String(code || "").startsWith("validation_http_")) {
+          return "PublicMetaDB validation failed";
+        }
+        return "Saving PublicMetaDB key failed";
+    }
   }
 
   function setConn(ok, msg) {
-    const m = el("publicmetadb_msg");
-    if (!m) return;
-    m.textContent = ok ? (msg || "Connected.") : (msg || "Not connected");
-    m.classList.remove("hidden", "ok", "warn");
-    m.classList.add(ok ? "ok" : "warn");
+    return Shared.setStatus("publicmetadb_msg", ok, msg);
   }
 
   async function refresh() {
     try {
       const r = await fetchJSON(api("/api/publicmetadb/status"), { cache: "no-store" });
       const ok = !!(r.ok && r.data && r.data.connected);
-      setConn(ok);
-      note(ok ? "PublicMetaDB verified" : "PublicMetaDB not connected");
+      const reason = String((r.data && r.data.reason) || "");
+      setConn(ok, ok || reason === "api_key_required" ? "" : friendlyError(reason));
+      note(ok ? "PublicMetaDB connected" : "PublicMetaDB not connected");
     } catch {
       setConn(false, "PublicMetaDB verify failed");
       note("PublicMetaDB verify failed");
@@ -204,13 +91,7 @@
   }
 
   function maskInput(i, has) {
-    if (!i) return;
-    if (has) { i.value = "********"; i.dataset.masked = "1"; }
-    else { i.value = ""; i.dataset.masked = "0"; }
-    i.dataset.loaded = "1";
-    i.dataset.touched = "";
-    i.dataset.clear = "";
-    i.dataset.hasKey = has ? "1" : "";
+    return Shared.maskSecret(i, has);
   }
 
   async function hydrate() {
@@ -236,8 +117,10 @@
       el("publicmetadb_hint")?.classList.add("hidden");
       note("PublicMetaDB key saved");
       await refresh();
-    } catch {
-      note("Saving PublicMetaDB key failed");
+    } catch (e) {
+      const msg = e && e.message ? e.message : "Saving PublicMetaDB key failed";
+      setConn(false, msg);
+      note(msg);
     }
   }
 
@@ -257,27 +140,11 @@
   function wire() {
     const s = el("publicmetadb_save");
     if (s && !s.__wired) { s.addEventListener("click", onSave); s.__wired = true; }
-    const v = el("publicmetadb_verify");
-    if (v && !v.__wired) { v.addEventListener("click", refresh); v.__wired = true; }
     const d = el("publicmetadb_disconnect");
     if (d && !d.__wired) { d.addEventListener("click", onDisc); d.__wired = true; }
     const k = el("publicmetadb_key");
     if (k && !k.__wiredSecret) {
-      const clearMask = () => {
-        if (k.dataset.masked === "1") {
-          k.value = "";
-          k.dataset.masked = "0";
-          k.dataset.touched = "1";
-          k.dataset.hasKey = "";
-        }
-      };
-      k.addEventListener("focus", clearMask);
-      k.addEventListener("beforeinput", clearMask);
-      k.addEventListener("input", () => {
-        k.dataset.masked = isMaskedSecret(k.value) ? "1" : "0";
-        k.dataset.touched = "1";
-        if (k.dataset.masked !== "1") k.dataset.hasKey = "";
-      });
+      Shared.wireSecretInput(k);
       k.__wiredSecret = true;
     }
   }

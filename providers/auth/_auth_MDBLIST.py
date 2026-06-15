@@ -170,7 +170,7 @@ def html() -> str:
     }
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-mdblist')">
+  <div class="head" data-toggle-section="sec-mdblist">
     <span class="chev">&#9654;</span><strong>MDBList</strong>
   </div>
 
@@ -202,20 +202,11 @@ def html() -> str:
 
             <div id="mdblist_device_panel" style="margin-top:10px">
               <div class="sep"></div>
-              <div class="grid2">
-                <div>
-                  <div class="field-label">Current token</div>
-                  <div class="mdblist-action-row">
-                    <input id="mdblist_access_token" readonly placeholder="empty = not set" />
-                    <button id="mdblist_copy_token" class="btn copy">Copy</button>
-                  </div>
-                </div>
-                <div>
-                  <div class="field-label">Link code (PIN)</div>
-                  <div class="mdblist-action-row">
-                    <input id="mdblist_device_code" readonly placeholder="" />
-                    <button id="mdblist_copy_code" class="btn copy">Copy</button>
-                  </div>
+              <div>
+                <div class="field-label">Link code (PIN)</div>
+                <div class="mdblist-action-row">
+                  <input id="mdblist_device_code" readonly placeholder="" />
+                  <button id="mdblist_copy_code" class="btn copy">Copy</button>
                 </div>
               </div>
               <div class="inline" style="margin-top:10px">

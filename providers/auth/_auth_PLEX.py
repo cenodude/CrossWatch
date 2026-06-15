@@ -63,9 +63,17 @@ class PlexAuth(AuthProvider):
             "entity_types": ["movie", "show"],
         }
 
-    def get_status(self, cfg: Mapping[str, Any]) -> AuthStatus:
-        token = str(((cfg.get("plex") or {}) if isinstance(cfg, Mapping) else {}).get("account_token") or "").strip()
-        return AuthStatus(connected=bool(token), label="Plex")
+    def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        inst = normalize_instance_id(instance_id)
+        base = (cfg.get("plex") or {}) if isinstance(cfg, Mapping) else {}
+        block: Mapping[str, Any] = base if isinstance(base, Mapping) else {}
+        if inst != "default":
+            insts = block.get("instances")
+            inst_block = insts.get(inst) if isinstance(insts, Mapping) else None
+            block = inst_block if isinstance(inst_block, Mapping) else {}
+        token = str(block.get("account_token") or "").strip()
+        label = "Plex" if inst == "default" else f"Plex ({inst})"
+        return AuthStatus(connected=bool(token), label=label)
 
     def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: Any = None) -> dict[str, Any]:
         inst = normalize_instance_id(instance_id)
@@ -133,8 +141,8 @@ class PlexAuth(AuthProvider):
             log(f"Plex[{inst}]: token stored", level="SUCCESS", module="AUTH")
         return AuthStatus(connected=bool(str(plex.get("account_token") or "").strip()), label="Plex")
 
-    def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        return self.get_status(cfg)
+    def refresh(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        return self.get_status(cfg, instance_id=instance_id)
 
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
@@ -214,7 +222,7 @@ def html() -> str:
     #sec-plex details.settings summary .title{font-weight:700;letter-spacing:.2px;position:relative;top:3.5px}
     #sec-plex details.settings summary .hint{opacity:.7;font-size:.92em;margin-left:auto;text-align:right;padding-right:26px}
     #sec-plex details.settings summary::after{
-      content:'▸';color:#b066ff;text-shadow:0 0 8px rgba(176,102,255,.65);
+      content:'>';color:#b066ff;text-shadow:0 0 8px rgba(176,102,255,.65);
       position:absolute;right:10px;top:50%;transform:translateY(-50%);transition:transform .18s ease,color .18s ease,text-shadow .18s ease
     }
     #sec-plex details.settings[open] > summary::after{transform:translateY(-50%) rotate(90deg);color:#00d1ff;text-shadow:0 0 10px rgba(0,209,255,.85)}
@@ -223,40 +231,6 @@ def html() -> str:
       box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 0 18px rgba(176,102,255,.25),0 0 18px rgba(0,209,255,.25);
       transform:translateY(-1px)
     }
-
-    /* matrix */
-    #sec-plex .lm-head{
-      --lm-hist-col:76px;--lm-rate-col:76px;--lm-scr-col:104px;
-      display:grid;grid-template-columns:minmax(0,1fr) var(--lm-hist-col) var(--lm-rate-col) var(--lm-scr-col);
-      gap:6px;align-items:center;margin-bottom:8px;padding:0 24px 0 8px;box-sizing:border-box
-    }
-    #sec-plex .lm-head .title{font-weight:700}
-    #sec-plex .lm-head .title,#sec-plex .lm-head .lm-filter{grid-column:1;grid-row:1}
-    #sec-plex .lm-head .lm-filter{justify-self:end;width:min(280px,55%)}
-    #sec-plex .lm-rows{display:grid;gap:6px;max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:10px;padding:6px;background:#090b10}
-    #sec-plex .lm-row{display:grid;grid-template-columns:minmax(0,1fr) 76px 76px 104px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
-    #sec-plex .lm-row.hide{display:none}
-    #sec-plex .lm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #sec-plex .lm-id{opacity:.5;margin-left:6px}
-    #sec-plex .lm-dot{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;background:transparent;cursor:pointer;display:inline-block;vertical-align:middle;justify-self:center}
-    #sec-plex .lm-dot.hist{color:#b066ff;box-shadow:0 0 6px rgba(176,102,255,.55)}
-    #sec-plex .lm-dot.hist.on{background:#b066ff;box-shadow:0 0 10px rgba(176,102,255,.95)}
-    #sec-plex .lm-dot.rate{color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
-    #sec-plex .lm-dot.rate.on{background:#00d1ff;box-shadow:0 0 10px rgba(0,209,255,.95)}
-    #sec-plex .lm-dot.scr{color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
-    #sec-plex .lm-dot.scr.on{background:#35ff8f;box-shadow:0 0 10px rgba(53,255,143,.95)}
-    #sec-plex .lm-col{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
-    #sec-plex .lm-col .sub{position:absolute;left:calc(50% + 14px);white-space:nowrap}
-    #sec-plex .lm-filter{min-width:160px}
-    #sec-plex select.lm-hidden{display:none}
-
-    /* neon scrollbar (matrix) */
-    #sec-plex .lm-rows{scrollbar-width:thin;scrollbar-color:#b066ff #0b0d12}
-    #sec-plex .lm-rows::-webkit-scrollbar{width:10px}
-    #sec-plex .lm-rows::-webkit-scrollbar-track{background:#0b0d12;border-radius:10px}
-    #sec-plex .lm-rows::-webkit-scrollbar-thumb{border-radius:10px;border:2px solid #0b0d12;background:linear-gradient(180deg,#b066ff 0%,#00d1ff 100%);box-shadow:0 0 8px rgba(176,102,255,.55),0 0 8px rgba(0,209,255,.55)}
-    #sec-plex .lm-rows::-webkit-scrollbar-thumb:hover{filter:brightness(1.08);box-shadow:0 0 10px rgba(176,102,255,.85),0 0 10px rgba(0,209,255,.85)}
-    #sec-plex .lm-rows::-webkit-scrollbar-thumb:active{filter:brightness(1.15)}
 
     /* user picker */
     #sec-plex .userpick{position:relative;display:inline-block}
@@ -333,8 +307,8 @@ def html() -> str:
 
   </style>
 
-  <div class="head" onclick="toggleSection('sec-plex')">
-    <span class="chev">▶</span><strong>Plex</strong>
+  <div class="head" data-toggle-section="sec-plex">
+    <span class="chev"></span><strong>Plex</strong>
   </div>
 
   <div class="body">
@@ -355,26 +329,17 @@ def html() -> str:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
-            <div class="grid2">
-              <div>
-                <label for="plex_token">Current token</label>
-                <div class="inline">
-                  <input id="plex_token" name="plex_token" placeholder="empty = not set">
-                  <button class="btn copy" onclick="copyInputValue('plex_token', this)">Copy</button>
-                </div>
-              </div>
-              <div>
-                <label for="plex_pin">Link code (PIN)</label>
-                <div class="inline">
-                  <input id="plex_pin" name="plex_pin" placeholder="" readonly>
-                  <button class="btn copy" onclick="copyInputValue('plex_pin', this)">Copy</button>
-                </div>
+            <div>
+              <label for="plex_pin">Link code (PIN)</label>
+              <div class="inline">
+                <input id="plex_pin" name="plex_pin" placeholder="" readonly>
+                <button id="btn-copy-plex-pin" type="button" class="btn copy">Copy</button>
               </div>
             </div>
 
             <div class="inline pinrow">
-              <button class="btn" onclick="requestPlexPin()">Connect PLEX</button>
-              <button class="btn danger" onclick="try{ plexDeleteToken && plexDeleteToken(); }catch(_){;}">Delete</button>
+              <button id="btn-connect-plex" class="btn" type="button">Connect PLEX</button>
+              <button id="btn-delete-plex" class="btn danger" type="button">Delete</button>
               <div class="hint">Opens plex.tv/link to complete sign-in.</div>
               <div class="plexmsg">
                 <div id="plex_msg" class="msg ok hidden">PIN</div>
@@ -407,7 +372,7 @@ def html() -> str:
                 <button class="btn" id="plex_user_pick_btn" title="Choose from server users">Pick</button>
                 <div id="plex_user_pop" class="userpop hidden">
                   <div class="pophead">
-                    <input id="plex_user_filter" placeholder="Filter users…">
+                    <input id="plex_user_filter" placeholder="Filter users...">
                     <button type="button" class="btn" id="plex_user_close">Close</button>
                   </div>
                   <div id="plex_user_list" class="userlist"></div>
@@ -423,7 +388,7 @@ def html() -> str:
               <div class="sub">Only needed if the selected Plex Home user is PIN-protected.</div>
 
               <div class="plex-btnrow">
-                <button class="btn" title="Fetch Server URL, Username, Account ID" onclick="plexAuto()">Auto-Fetch</button>
+                <button id="btn-plex-auto" class="btn" type="button" title="Fetch Server URL, Username, Account ID">Auto-Fetch</button>
                 <span class="sub" style="align-self:center">Edit values before Save if needed.</span>
               </div>
             </div>
@@ -432,13 +397,13 @@ def html() -> str:
           <div class="cw-subpanel" data-sub="whitelist">
             <div style="max-width:980px">
               <div class="plex-btnrow" style="margin-top:0;margin-bottom:12px">
-                <button class="btn" title="Load Plex libraries" onclick="refreshPlexLibraries()">Load libraries</button>
+                <button id="btn-plex-load-libraries" class="btn" type="button" title="Load Plex libraries">Load libraries</button>
                 <span class="sub" style="align-self:center">Refresh after changing Server URL / token.</span>
               </div>
 
               <div class="lm-head">
                 <div class="title">Whitelist Libraries</div>
-                <input id="plex_lib_filter" class="lm-filter" placeholder="Filter…">
+                <input id="plex_lib_filter" class="lm-filter" placeholder="Filter...">
                 <div class="lm-col"><button id="plex_hist_all" type="button" class="lm-dot hist" title="Toggle all History"></button><span class="sub">History</span></div>
                 <div class="lm-col"><button id="plex_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings"></button><span class="sub">Ratings</span></div>
                 <div class="lm-col"><button id="plex_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble"></button><span class="sub">Scrobble</span></div>
@@ -455,178 +420,4 @@ def html() -> str:
     </div>
   </div>
 
-  <script>
-  (function(){
-    const $ = (id)=>document.getElementById(id);
-    const esc = (s)=>String(s||"").replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;","&gt;":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
-    let __users = null;
-    let __pickerTries = 0;
-
-    const PLEX_INSTANCE_KEY = "cw.ui.plex.auth.instance.v1";
-
-    function getInst(){
-      let v = (document.getElementById("plex_instance")?.value || "").trim();
-      if (!v) { try { v = localStorage.getItem(PLEX_INSTANCE_KEY) || ""; } catch {} }
-      v = (v || "").trim() || "default";
-      return v.toLowerCase() === "default" ? "default" : v;
-    }
-
-    function getPlexBlk(cfg, opts){
-      cfg = cfg || {};
-      opts = opts || {};
-      const createBase = opts.createBase === true;
-      const base = (cfg.plex && typeof cfg.plex === "object") ? cfg.plex : (createBase ? (cfg.plex = {}) : null);
-      if (!base) return null;
-      const inst = getInst();
-      if (inst === "default") return base;
-      return (base.instances && typeof base.instances === "object" && base.instances[inst] && typeof base.instances[inst] === "object")
-        ? base.instances[inst]
-        : null;
-    }
-
-    (async ()=>{
-      try{
-        const r = await fetch("/api/config",{cache:"no-store"});
-        const cfg = await r.json();
-        const blk = getPlexBlk(cfg);
-        const on = !!(blk?.verify_ssl);
-        const cb = $("plex_verify_ssl"); if (cb) cb.checked = on;
-      }catch{}
-    })();
-
-    document.addEventListener("settings-collect",(ev)=>{
-      try{
-        const cfg = ev?.detail?.cfg || (window.__cfg ||= {});
-        const blk = getPlexBlk(cfg, { createBase: true });
-        if (!blk) return;
-        blk.verify_ssl = !!$("plex_verify_ssl")?.checked;
-      }catch{}
-    }, true);
-
-    async function fetchUsers(){
-      if (Array.isArray(__users) && __users.length) return __users;
-      try{
-        const inst = (document.getElementById("plex_instance")?.value || "default").trim() || "default";
-        const r = await fetch("/api/plex/users?instance="+encodeURIComponent(inst)+"&ts="+Date.now(), { cache:"no-store" });
-        const j = await r.json();
-        __users = Array.isArray(j?.users) ? j.users : [];
-      }catch{ __users = []; }
-      return __users;
-    }
-
-    function renderUsers(){
-      const box = $("plex_user_list"); if (!box) return;
-      const q = ($("plex_user_filter")?.value || "").trim().toLowerCase();
-      const list = (__users||[]).filter(u=>{
-        const hay = [u.title,u.username,u.email,u.type].filter(Boolean).join(" ").toLowerCase();
-        return !q || hay.includes(q);
-      });
-      box.innerHTML = list.length ? list.map(u => `
-        <button type="button" class="userrow" data-uid="${esc(u.id)}" data-username="${esc(u.username||"")}">
-          <div class="row1">
-            <strong>${esc(u.title||u.username||("User #"+u.id))}</strong>
-            <span class="sub">@${esc(u.username||"")}</span>
-            <span class="tag ${u.type==='owner'?'owner':'friend'}">${esc(u.type||"")}</span>
-          </div>
-          ${u.email ? `<div class="sub">${esc(u.email)}</div>` : ""}
-        </button>
-      `).join("") : '<div class="sub">No users found.</div>';
-    }
-
-    function openPicker(){
-      const pop = $("plex_user_pop"); if (!pop) return;
-      pop.classList.remove("hidden");
-      fetchUsers().then(renderUsers);
-      $("plex_user_filter")?.focus();
-    }
-    function closePicker(){ $("plex_user_pop")?.classList.add("hidden"); }
-
-    function attachOnce(){
-      // Prefer the shared JS implementation from assets/auth/auth.plex.js.
-      // It supports instances and uses the richer /api/plex/pickusers endpoint.
-      if (typeof window.mountPlexUserPicker === "function") {
-        try { window.mountPlexUserPicker(); } catch {}
-        return;
-      }
-      // auth_loader might load after this inline script; give it a moment.
-      if (__pickerTries++ < 40) return setTimeout(attachOnce, 100);
-
-      const pick = $("plex_user_pick_btn");
-      if (pick && !pick.__wired){ pick.__wired = true; pick.addEventListener("click", openPicker); }
-      const close = $("plex_user_close");
-      if (close && !close.__wired){ close.__wired = true; close.addEventListener("click", closePicker); }
-      const filter = $("plex_user_filter");
-      if (filter && !filter.__wired){ filter.__wired = true; filter.addEventListener("input", renderUsers); }
-      const list = $("plex_user_list");
-      if (list && !list.__wired){
-        list.__wired = true;
-        list.addEventListener("click", (e)=>{
-          const row = e.target.closest(".userrow"); if (!row) return;
-          const uname = row.dataset.username || "";
-          const uid   = row.dataset.uid || "";
-          const uEl = $("plex_username"); if (uEl) uEl.value = uname;
-          const aEl = $("plex_account_id"); if (aEl) aEl.value = uid;
-          closePicker();
-          try{ document.dispatchEvent(new CustomEvent("settings-collect",{detail:{section:"plex-users"}})); }catch{}
-        });
-      }
-      if (!document.__plexUserAway){
-        document.__plexUserAway = true;
-        document.addEventListener("click",(e)=>{
-          const pop = $("plex_user_pop");
-          if (!pop || pop.classList.contains("hidden")) return;
-          if (pop.contains(e.target) || e.target.id==="plex_user_pick_btn") return;
-          pop.classList.add("hidden");
-        });
-      }
-    }
-
-    attachOnce();
-    document.addEventListener("tab-changed", ()=>attachOnce());
-
-    async function refreshPlexLibraries(){
-      try{
-        const host = document.getElementById("plex_lib_matrix");
-        if (host) host.innerHTML = '<div class="sub">Loading libraries…</div>';
-      }catch{}
-
-      let usedHelpers = false;
-      try{
-        if (typeof window.hydratePlexFromConfigRaw === "function") { await window.hydratePlexFromConfigRaw(); usedHelpers = true; }
-      }catch{}
-      try{
-        if (typeof window.plexLoadLibraries === "function") { await window.plexLoadLibraries(); usedHelpers = true; }
-      }catch{}
-      try{
-        if (typeof window.mountPlexLibraryMatrix === "function") { window.mountPlexLibraryMatrix(); usedHelpers = true; }
-      }catch{}
-
-      if (usedHelpers) return;
-
-      try{
-        const r = await fetch("/api/plex/libraries?ts="+Date.now(), { cache:"no-store" });
-        const j = await r.json();
-        const libs = Array.isArray(j?.libraries) ? j.libraries : [];
-        const fill = (id)=>{
-          const el = document.getElementById(id); if (!el) return;
-          const keep = new Set(Array.from(el.selectedOptions||[]).map(o=>o.value));
-          el.innerHTML = "";
-          libs.forEach(it=>{
-            const o = document.createElement("option");
-            o.value = String(it.key);
-            o.textContent = `${it.title} (${it.type||"lib"}) — #${it.key}`;
-            if (keep.has(o.value)) o.selected = true;
-            el.appendChild(o);
-          });
-        };
-        fill("plex_lib_history"); fill("plex_lib_ratings");
-        const host = document.getElementById("plex_lib_matrix");
-        if (host) host.innerHTML = '<div class="sub">Libraries loaded.</div>';
-      }catch{}
-    }
-
-    window.refreshPlexLibraries = refreshPlexLibraries;
-
-  })();
-  </script>
 </div>'''

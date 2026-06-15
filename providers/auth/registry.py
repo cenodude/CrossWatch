@@ -3,13 +3,14 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import dataclasses
 import importlib
 import inspect
 import pkgutil
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+from ._auth_base import manifest_to_dict
 
 
 PKG_NAME: str = __package__ or "providers.auth"
@@ -83,12 +84,7 @@ def _provider_from_module(mod: ModuleType) -> Any | None:
 
 
 def _manifest_to_dict(man: Any) -> dict[str, Any]:
-    if dataclasses.is_dataclass(man):
-        return dataclasses.asdict(man)  # type: ignore[arg-type]
-    if isinstance(man, dict):
-        return dict(man)
-    d = getattr(man, "__dict__", None)
-    return dict(d) if isinstance(d, dict) else {"name": str(man)}
+    return manifest_to_dict(man)
 
 
 def auth_providers_manifests() -> list[dict[str, Any]]:
@@ -176,7 +172,7 @@ def auth_providers_html() -> str:
         body = "".join(items) if items else '<div class="sub">No providers.</div>'
         return (
             f'<div class="section open" id="{gid}">'
-            f'  <div class="head" onclick="toggleSection(\'{gid}\')"><span class="chev">▶</span><strong>{title}</strong></div>'
+            f'  <div class="head" data-toggle-section="{gid}"><span class="chev"></span><strong>{title}</strong></div>'
             f'  <div class="body">{body}</div>'
             f'</div>'
         )

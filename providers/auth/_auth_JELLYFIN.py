@@ -133,7 +133,7 @@ class JellyfinAuth(AuthProvider):
         user = (jf.get("user") or jf.get("username") or "").strip() or None
         return AuthStatus(connected=bool(server and token), label="Jellyfin", user=user)
 
-    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str, instance_id: Any = None) -> dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any], redirect_uri: str | None = None, *, instance_id: Any = None) -> dict[str, Any]:
         import requests
         from requests import exceptions as rx
 
@@ -210,11 +210,11 @@ class JellyfinAuth(AuthProvider):
         log("Jellyfin: access token stored", level="SUCCESS", module="AUTH")
         return {"ok": True, "mode": "user_token", "user_id": jf.get("user_id") or ""}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        return self.get_status(cfg)
+    def finish(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None, **payload: Any) -> AuthStatus:
+        return self.get_status(cfg, instance_id)
 
-    def refresh(self, cfg: MutableMapping[str, Any]) -> AuthStatus:
-        return self.get_status(cfg)
+    def refresh(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
+        return self.get_status(cfg, instance_id)
 
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
@@ -244,34 +244,6 @@ def html() -> str:
     #sec-jellyfin .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
     #sec-jellyfin .btn.danger:hover{ filter:brightness(1.08) }
 
-    /* matrix */
-    #sec-jellyfin .lm-head{
-      --lm-hist-col:76px;--lm-rate-col:76px;--lm-scr-col:104px;
-      display:grid;grid-template-columns:minmax(0,1fr) var(--lm-hist-col) var(--lm-rate-col) var(--lm-scr-col);
-      gap:6px;align-items:center;margin-bottom:8px;padding:0 24px 0 8px;box-sizing:border-box
-    }
-    #sec-jellyfin .lm-head .title{font-weight:700}
-    #sec-jellyfin .lm-head .title,#sec-jellyfin .lm-head .lm-filter{grid-column:1;grid-row:1}
-    #sec-jellyfin .lm-head .lm-filter{justify-self:end;width:min(280px,55%)}
-    #sec-jellyfin .lm-rows{
-      display:grid;gap:6px;max-height:280px;min-height:200px;
-      overflow:auto;border:1px solid var(--border);border-radius:10px;padding:8px;background:#090b10
-    }
-    #sec-jellyfin .lm-row{display:grid;grid-template-columns:minmax(0,1fr) 76px 76px 104px;gap:6px;align-items:center;background:#0b0d12;border-radius:8px;padding:6px 8px}
-    #sec-jellyfin .lm-row.hide{display:none}
-    #sec-jellyfin .lm-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #sec-jellyfin .lm-dot{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;background:transparent;cursor:pointer;display:inline-block;vertical-align:middle;justify-self:center}
-    #sec-jellyfin .lm-dot.hist{color:#b066ff;box-shadow:0 0 6px rgba(176,102,255,.55)}
-    #sec-jellyfin .lm-dot.hist.on{background:#b066ff;box-shadow:0 0 10px rgba(176,102,255,.95)}
-    #sec-jellyfin .lm-dot.rate{color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
-    #sec-jellyfin .lm-dot.rate.on{background:#00d1ff;box-shadow:0 0 10px rgba(0,209,255,.95)}
-    #sec-jellyfin .lm-dot.scr{color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
-    #sec-jellyfin .lm-dot.scr.on{background:#35ff8f;box-shadow:0 0 10px rgba(53,255,143,.95)}
-    #sec-jellyfin .lm-col{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;min-width:0}
-    #sec-jellyfin .lm-col .sub{position:absolute;left:calc(50% + 14px);white-space:nowrap}
-    #sec-jellyfin .lm-filter{min-width:160px}
-    #sec-jellyfin select.lm-hidden{display:none}
-
     #sec-jellyfin .inline .msg{margin-left:auto}
     #sec-jellyfin .inline .msg.hidden{display:none}
 
@@ -288,8 +260,8 @@ def html() -> str:
     }
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-jellyfin')">
-    <span class="chev">▶</span><strong>Jellyfin</strong>
+  <div class="head" data-toggle-section="sec-jellyfin">
+    <span class="chev"></span><strong>Jellyfin</strong>
   </div>
 
   <div class="body">
@@ -311,31 +283,27 @@ def html() -> str:
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
             <div class="grid2">
-              <div>
+              <div style="grid-column:1 / -1">
                 <label for="jfy_server">Server URL</label>
                 <div class="inp-row">
                   <input id="jfy_server" name="jfy_server" class="grow" placeholder="http://host:8096/">
                   <label class="verify"><input id="jfy_verify_ssl" type="checkbox"> Verify SSL</label>
                 </div>
               </div>
+            </div>
+            <div class="grid2" style="margin-top:8px">
               <div>
                 <label for="jfy_user">Username</label>
                 <input id="jfy_user" name="jfy_user" placeholder="username">
               </div>
-            </div>
-            <div class="grid2" style="margin-top:8px">
               <div>
                 <label for="jfy_pass">Password</label>
                 <input id="jfy_pass" name="jfy_pass" type="password" placeholder="********">
               </div>
-              <div>
-                <label for="jfy_tok">Access Token</label>
-                <input id="jfy_tok" name="jfy_tok" readonly placeholder="empty = not set">
-              </div>
             </div>
             <div class="inline" style="margin-top:10px">
-              <button class="btn jellyfin" onclick="try{ jfyLogin && jfyLogin(); }catch(_){;}">Sign in</button>
-              <button class="btn danger" onclick="try{ jfyDeleteToken && jfyDeleteToken(); }catch(_){;}">Delete</button>
+              <button id="btn-jfy-login" class="btn jellyfin" type="button">Sign in</button>
+              <button id="btn-jfy-delete" class="btn danger" type="button">Delete</button>
               <div id="jfy_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
             </div>
           </div>
@@ -345,7 +313,7 @@ def html() -> str:
               <label for="jfy_server_url">Server URL</label>
               <div class="inp-row">
                 <input id="jfy_server_url" name="jfy_server_url" class="grow" placeholder="http://host:8096/">
-                <label class="verify"><input id="jfy_verify_ssl_dup" type="checkbox" onclick="(function(){var a=document.getElementById('jfy_verify_ssl'); if(a) a.checked = document.getElementById('jfy_verify_ssl_dup').checked;})();"> Verify SSL</label>
+                <label class="verify"><input id="jfy_verify_ssl_dup" type="checkbox"> Verify SSL</label>
               </div>
               <div class="sub">Leave blank to discover.</div>
 
@@ -357,10 +325,10 @@ def html() -> str:
                 <input id="jfy_user_id" name="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
                 <button id="jfy_pick_user" class="btn" type="button">Pick user</button>
               </div>
-              <div class="sub">Uses your current token. Admin tokens show all users; otherwise you'll only see yourself.</div>
+              <div class="sub">Uses your signed-in account. Admin accounts show all users; otherwise you'll only see yourself.</div>
 
               <div class="inline" style="gap:12px;margin-top:12px">
-                <button class="btn" onclick="(window.jfyAuto||function(){})();">Auto-Fetch</button>
+                <button id="btn-jfy-auto" class="btn" type="button">Auto-Fetch</button>
                 <span class="sub" style="margin-left:auto">Edit values before Save if needed.</span>
               </div>
             </div>
@@ -369,13 +337,13 @@ def html() -> str:
           <div class="cw-subpanel" data-sub="whitelist">
             <div style="max-width:980px">
               <div class="inline" style="gap:12px;margin-top:0;margin-bottom:12px">
-                <button class="btn" title="Load Jellyfin libraries" onclick="(window.jfyLoadLibraries||function(){})();">Load libraries</button>
-                <span class="sub" style="margin-left:auto">Refresh after changing Server URL / token.</span>
+                <button id="btn-jfy-load-libraries" class="btn" type="button" title="Load Jellyfin libraries">Load libraries</button>
+                <span class="sub" style="margin-left:auto">Refresh after changing Server URL.</span>
               </div>
 
               <div class="lm-head">
                 <div class="title">Whitelist Libraries</div>
-                <input id="jfy_lib_filter" name="jfy_lib_filter" class="lm-filter" placeholder="Filter…">
+                <input id="jfy_lib_filter" name="jfy_lib_filter" class="lm-filter" placeholder="Filter...">
                 <div class="lm-col"><span class="sub">Select all:</span></div>
                 <div class="lm-col"><button id="jfy_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
                 <div class="lm-col"><button id="jfy_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>

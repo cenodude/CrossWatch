@@ -4,209 +4,61 @@
   window._traktPatched = true;
 
   // Utils
-  function _notify(msg) { try { if (typeof window.notify === "function") window.notify(msg); } catch (_) {} }
-  function _el(id) { return document.getElementById(id); }
+  const Shared = window.CW.AuthShared;
+  const traktProfile = Shared.createProfileAdapter({
+    provider: "trakt",
+    configKey: "trakt",
+    label: "Trakt",
+    sectionId: "sec-trakt",
+    selectId: "trakt_instance",
+    storageKey: "cw.ui.trakt.auth.instance.v1",
+    panelSelector: '#sec-trakt .cw-meta-provider-panel[data-provider="trakt"], .cw-meta-provider-panel[data-provider="trakt"]',
+    title: "Select which Trakt account this config applies to.",
+  });
+  function _notify(msg) { Shared.notify(msg); }
+  function _el(id) { return Shared.el(id); }
   function _setVal(id, v) { var el = _el(id); if (el) el.value = v == null ? "" : String(v); }
-  function _str(x) { return (typeof x === "string" ? x : "").trim(); }
+  function _str(x) { return Shared.txt(x); }
   function _isMaskedSecret(v) {
-    var value = _str(v);
-    if (!value) return false;
-    if (value === '••••••••' || value === '********' || value === '**********') return true;
-    return /^[•*]{3,}$/.test(value);
+    return Shared.isMaskedSecret(v);
   }
   function _markSecretField(el, value) {
-    if (!el) return;
-    var text = _str(value);
-    el.value = text;
-    el.dataset.masked = _isMaskedSecret(text) ? '1' : '0';
-    el.dataset.loaded = '1';
-    if (!el.dataset.touched) el.dataset.touched = '';
+    return Shared.markSecretField(el, value);
   }
   function _wireSecretField(el, onChange) {
-    if (!el || el.__cwSecretWired) return;
-    var clearMask = function () {
-      if (el.dataset.masked === '1') {
-        el.value = '';
-        el.dataset.masked = '0';
-      }
-    };
-    el.addEventListener('beforeinput', function () {
-      clearMask();
-    });
-    el.addEventListener('paste', function () {
-      clearMask();
-      el.dataset.touched = '1';
-      if (typeof onChange === 'function') onChange();
-    });
-    el.addEventListener('input', function () {
-      if (_isMaskedSecret(el.value)) el.dataset.masked = '1';
-      else if (el.dataset.masked === '1') el.dataset.masked = '0';
-      el.dataset.touched = '1';
-      if (typeof onChange === 'function') onChange();
-    });
-    el.__cwSecretWired = true;
+    return Shared.wireSecretInput(el, { onInput: onChange });
   }
   function _readSecretField(el) {
-    var raw = _str(el ? el.value : '');
-    var masked = !!(el && (el.dataset.masked === '1' || _isMaskedSecret(raw)));
-    if (!raw && !masked) return { hasValue: false, masked: false, value: '' };
-    if (masked) return { hasValue: true, masked: true, value: '' };
-    return { hasValue: true, masked: false, value: raw };
+    return Shared.readSecretField(el);
   }
 
-  const TRAKT_INSTANCE_KEY = "cw.ui.trakt.auth.instance.v1";
+  var traktConnected = false;
 
   function getTraktInstance() {
-    var el = _el("trakt_instance");
-    var v = el ? _str(el.value) : "";
-    if (!v) { try { v = localStorage.getItem(TRAKT_INSTANCE_KEY) || ""; } catch (_) {} }
-    v = _str(v) || "default";
-    return v.toLowerCase() === "default" ? "default" : v;
+    return traktProfile ? traktProfile.getInstance() : "default";
   }
 
   function setTraktInstance(v) {
-    var id = _str(String(v || "")) || "default";
-    try { localStorage.setItem(TRAKT_INSTANCE_KEY, id); } catch (_) {}
-    var el = _el("trakt_instance");
-    if (el) el.value = id;
+    if (traktProfile) traktProfile.setInstance(v);
   }
 
   function traktApi(path) {
-    var p = String(path || "");
-    var sep = p.indexOf("?") >= 0 ? "&" : "?";
-    return p + sep + "instance=" + encodeURIComponent(getTraktInstance()) + "&ts=" + Date.now();
+    return traktProfile ? traktProfile.api(path) : String(path || "");
   }
 
   function getTraktCfgBlock(cfg) {
-    cfg = cfg || {};
-    var base = (cfg.trakt && typeof cfg.trakt === "object") ? cfg.trakt : (cfg.trakt = {});
-    var inst = getTraktInstance();
-    if (inst === "default") return base;
-    if (!base.instances || typeof base.instances !== "object") base.instances = {};
-    if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
-    return base.instances[inst];
+    return traktProfile ? traktProfile.cfgBlock(cfg, true) : {};
   }
 
   async function refreshTraktInstanceOptions(preserve) {
-    var sel = _el("trakt_instance");
-    if (!sel) return;
-    var want = preserve === false ? "default" : getTraktInstance();
-    try {
-      var r = await fetch("/api/provider-instances/trakt?ts=" + Date.now(), { cache: "no-store" });
-      var arr = await r.json().catch(function(){ return []; });
-      var opts = Array.isArray(arr) ? arr : [];
-      sel.innerHTML = "";
-      function addOpt(id, label) {
-        var o = document.createElement("option");
-        o.value = String(id);
-        o.textContent = String(label || id);
-        sel.appendChild(o);
-      }
-      addOpt("default", "Default");
-      opts.forEach(function(o){ if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
-      if (!Array.from(sel.options).some(function(o){ return o.value === want; })) want = "default";
-      sel.value = want;
-      setTraktInstance(want);
-    } catch (_) {}
+    if (traktProfile) await traktProfile.refreshOptions(preserve);
   }
 
   function ensureTraktInstanceUI() {
-    var panel = document.querySelector('#sec-trakt .cw-meta-provider-panel[data-provider="trakt"]') || document.querySelector('.cw-meta-provider-panel[data-provider="trakt"]') || document.querySelector('#sec-trakt .cw-meta-provider-panel') || document.querySelector('#sec-trakt') || document.querySelector('[data-provider="trakt"]');
-    if (!panel) return;
-    if (panel.querySelector('#trakt_instance')) return;
-    var head = panel.querySelector('.cw-panel-head') || panel.querySelector('.panel-head') || panel.querySelector('header') || panel;
-    if (head.__traktInstanceUI) return;
-    head.__traktInstanceUI = true;
-
-    var wrap = document.createElement('div');
-    wrap.className = 'inline';
-    wrap.style.display = 'flex';
-    wrap.style.gap = '8px';
-    wrap.style.alignItems = 'center';
-    try { head.style.flexWrap = 'wrap'; } catch (_) {}
-    wrap.title = 'Select which Trakt account this config applies to.';
-
-    var lab = document.createElement('span');
-    lab.className = 'muted';
-    lab.textContent = 'Profile';
-
-    var sel = document.createElement('select');
-    sel.id = 'trakt_instance';
-sel.name = 'trakt_instance';
-    sel.className = 'input';
-    sel.style.minWidth = '140px';
-    sel.style.width = 'auto';
-    sel.style.maxWidth = '220px';
-    sel.style.flex = '0 0 auto';
-
-    var btnNewEl = document.createElement('button');
-    btnNewEl.type = 'button';
-    btnNewEl.className = 'btn secondary';
-    btnNewEl.id = 'trakt_instance_new';
-    btnNewEl.textContent = 'New';
-
-    var btnDelEl = document.createElement('button');
-    btnDelEl.type = 'button';
-    btnDelEl.className = 'btn secondary';
-    btnDelEl.id = 'trakt_instance_del';
-    btnDelEl.textContent = 'Delete';
-
-    wrap.appendChild(lab);
-    wrap.appendChild(sel);
-    wrap.appendChild(btnNewEl);
-    wrap.appendChild(btnDelEl);
-    if (head === panel) panel.insertBefore(wrap, panel.firstChild);
-    else head.appendChild(wrap);
-
-    refreshTraktInstanceOptions(true);
-
-    var sel = _el('trakt_instance');
-    if (sel && !sel._wired) {
-      sel._wired = true;
-      sel.addEventListener('change', function(){
-        setTraktInstance(sel.value);
-        void hydrateAuthFromConfig();
-        try { startTraktTokenPoll(); } catch (_) {}
-      });
-    }
-
-    var btnNew = _el('trakt_instance_new');
-    if (btnNew && !btnNew._wired) {
-      btnNew._wired = true;
-      btnNew.addEventListener('click', async function(){
-        try {
-          var r = await fetch('/api/provider-instances/trakt/next?ts=' + Date.now(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', cache: 'no-store' });
-          var j = await r.json().catch(function(){ return {}; });
-          var id = _str((j && j.id) || '');
-          if (!r.ok || (j && j.ok === false) || !id) throw new Error(String((j && j.error) || 'create_failed'));
-          setTraktInstance(id);
-          await refreshTraktInstanceOptions(true);
-          void hydrateAuthFromConfig();
-        } catch (e) {
-          _notify('Could not create profile: ' + (e && e.message ? e.message : e));
-        }
-      });
-    }
-
-    var btnDel = _el('trakt_instance_del');
-    if (btnDel && !btnDel._wired) {
-      btnDel._wired = true;
-      btnDel.addEventListener('click', async function(){
-        var id = getTraktInstance();
-        if (id === 'default') return _notify('Default profile cannot be deleted.');
-        if (!confirm('Delete Trakt profile "' + id + '"?')) return;
-        try {
-          var r = await fetch('/api/provider-instances/trakt/' + encodeURIComponent(id), { method: 'DELETE', cache: 'no-store' });
-          var j = await r.json().catch(function(){ return {}; });
-          if (!r.ok || (j && j.ok === false)) throw new Error(String((j && j.error) || 'delete_failed'));
-          setTraktInstance('default');
-          await refreshTraktInstanceOptions(false);
-          void hydrateAuthFromConfig();
-        } catch (e) {
-          _notify('Could not delete profile: ' + (e && e.message ? e.message : e));
-        }
-      });
-    }
+    traktProfile?.ensureUI(() => {
+      void hydrateAuthFromConfig();
+      try { startTraktTokenPoll(); } catch (_) {}
+    });
   }
 
   async function persistTraktClientFields() {
@@ -229,16 +81,15 @@ sel.name = 'trakt_instance';
       var msg = _el('trakt_msg');
       if (!msg) return;
       var pinEl = _el('trakt_pin'); var pin = _str(pinEl ? pinEl.value : '');
-      var tokEl = _el('trakt_token'); var tok = _str(tokEl ? tokEl.value : '');
-      msg.classList.remove('hidden', 'ok', 'warn');
-      if (tok) { msg.classList.add('ok'); msg.textContent = 'Connected.'; return; }
-      if (pin) { msg.classList.add('warn'); msg.textContent = 'Code: ' + pin; return; }
-      msg.classList.add('hidden'); msg.textContent = '';
+      if (traktConnected) return Shared.setStatusPill(msg, "ok", "Connected");
+      if (pin) return Shared.setStatusPill(msg, "warn", "Code: " + pin);
+      return Shared.setStatusPill(msg, null);
     } catch (_) {}
   }
   // status banner
   function setTraktSuccess(show) {
     try {
+      traktConnected = !!show;
       if (show) updateTraktBanner();
       else { var el = _el('trakt_msg'); if (el) { el.classList.add('hidden'); el.textContent = ''; el.classList.remove('ok','warn'); } }
     } catch (_) {}
@@ -256,21 +107,6 @@ sel.name = 'trakt_instance';
   }
 
   // Hydrate
-  async function hydratePlexFromConfigRaw() {
-    var cfg = await fetchConfig(); if (!cfg) return;
-    var tok = _str(cfg.plex && cfg.plex.account_token);
-    if (tok) _setVal("plex_token", tok);
-  }
-
-  async function hydrateSimklFromConfigRaw() {
-    var cfg = await fetchConfig(); if (!cfg) return;
-    var s = cfg.simkl || {};
-    var a = (cfg.auth && cfg.auth.simkl) || {};
-    _setVal("simkl_client_id",     _str(s.client_id));
-    _setVal("simkl_client_secret", _str(s.client_secret));
-    _setVal("simkl_access_token",  _str(s.access_token || a.access_token));
-  }
-
   async function hydrateAuthFromConfig() {
     try {
       var cfg = await fetchConfig(); if (!cfg) return;
@@ -279,7 +115,7 @@ sel.name = 'trakt_instance';
             var isDefault = (getTraktInstance() === "default");
       _markSecretField(_el("trakt_client_id"),     _str(t.client_id || (isDefault ? (cfg.trakt && cfg.trakt.client_id) : "")));
       _markSecretField(_el("trakt_client_secret"), _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
-      _setVal("trakt_token",         _str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : '')));
+      traktConnected = !!_str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : ''));
       _setVal("trakt_pin",           _str((t._pending_device && t._pending_device.user_code) || ''));
       updateTraktHint();
       updateTraktBanner();
@@ -289,8 +125,6 @@ sel.name = 'trakt_instance';
   }
 
   async function hydrateAllSecretsRaw() {
-    try { await hydratePlexFromConfigRaw(); } catch (_) {}
-    try { await hydrateSimklFromConfigRaw(); } catch (_) {}
     try { await hydrateAuthFromConfig(); } catch (_) {}
   }
 
@@ -309,37 +143,8 @@ sel.name = 'trakt_instance';
 
   // Copy helpers
   async function _copyText(text, btn) {
-    if (!text) return false;
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        var ta = document.createElement("textarea");
-        ta.value = text;
-        ta.setAttribute("readonly", "");
-        ta.style.position = "fixed";
-        ta.style.top = "-9999px";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      if (btn) {
-        btn.classList.add("copied");
-        setTimeout(function(){ btn.classList.remove("copied"); }, 1200);
-      }
-      return true;
-    } catch (e) {
-      console.warn("Copy failed", e);
-      return false;
-    }
+    return Shared.copyText(text, btn, { failureMessage: false });
   }
-
-  window.copyInputValue = async function (inputId, btn) {
-    var el = document.getElementById(inputId);
-    if (!el) return;
-    await _copyText(el.value || "", btn);
-  };
 
   window.copyTraktRedirect = async function () {
     var code = document.getElementById("trakt_redirect_uri_preview");
@@ -347,30 +152,9 @@ sel.name = 'trakt_instance';
     await _copyText(text);
   };
 
-  window.copyRedirect = async function () {
-    var code = document.getElementById("redirect_uri_preview");
-    var text = ((code && code.textContent) || (code && code.value) || "").trim();
-    await _copyText(text);
-  };
-
   var __traktInitDone = false;
   function initTraktAuthUI() {
-    if (__traktInitDone) return;
-    __traktInitDone = true;
-
-    [
-      ["btn-copy-trakt-pin",   "trakt_pin"],
-      ["btn-copy-trakt-token", "trakt_token"],
-      ["btn-copy-plex-pin",    "plex_pin"],
-      ["btn-copy-plex-token",  "plex_token"]
-    ].forEach(function (pair) {
-      var btnId = pair[0], inputId = pair[1];
-      var b = document.getElementById(btnId);
-      if (b && !b._copyHooked) {
-        b.addEventListener("click", function () { window.copyInputValue(inputId, this); });
-        b._copyHooked = true;
-      }
-    });
+    Shared.wireCopyButton("btn-copy-trakt-pin", "trakt_pin");
 
     try {
       ensureTraktInstanceUI();
@@ -381,6 +165,13 @@ sel.name = 'trakt_instance';
       if (idEl)  idEl.addEventListener('change', function(){ void persistTraktClientFields(); });
       if (secEl) secEl.addEventListener('change', function(){ void persistTraktClientFields(); });
 
+      var copyRedirect = _el("btn-copy-trakt-redirect");
+      if (copyRedirect && !copyRedirect.__wired) { copyRedirect.addEventListener("click", () => window.copyTraktRedirect()); copyRedirect.__wired = true; }
+      var connectBtn = _el("btn-connect-trakt");
+      if (connectBtn && !connectBtn.__wired) { connectBtn.addEventListener("click", requestTraktPin); connectBtn.__wired = true; }
+      var deleteBtn = _el("btn-delete-trakt");
+      if (deleteBtn && !deleteBtn.__wired) { deleteBtn.addEventListener("click", traktDeleteToken); deleteBtn.__wired = true; }
+
       updateTraktHint();
       updateTraktBanner();
       hydrateAllSecretsRaw();
@@ -388,6 +179,9 @@ sel.name = 'trakt_instance';
     } catch (e) {
       console.warn("[trakt] init failed", e);
     }
+
+    if (__traktInitDone) return;
+    __traktInitDone = true;
 
     try {
       if (!window.__traktBannerTick) {
@@ -437,9 +231,8 @@ sel.name = 'trakt_instance';
     try { if (window._traktVisPollCfg) document.removeEventListener("visibilitychange", window._traktVisPollCfg); } catch (_){}
     window._traktVisPollCfg = null;
 
-    var tokenNow = _str(_el("trakt_token")?.value);
     var pinNow = _str(_el("trakt_pin")?.value);
-    if (tokenNow || !pinNow) {
+    if (traktConnected || !pinNow) {
       window._traktPollCfg = null;
       return;
     }
@@ -483,7 +276,6 @@ sel.name = 'trakt_instance';
         tok = _str(t && t.access_token) || (getTraktInstance() === 'default' ? tok : '');
       } catch (_) {}
       if (tok) {
-        _setVal("trakt_token", tok);
         setTraktSuccess(true);
         cleanup();
         return;
@@ -565,7 +357,7 @@ sel.name = 'trakt_instance';
       }
 
       if (code) {
-        try { await navigator.clipboard.writeText(code); } catch (_) {}
+        try { await Shared.copyText(code, null, { failureMessage: false }); } catch (_) {}
         try { startTraktDevicePoll(); } catch (_) {}
         try { startTraktTokenPoll(); } catch (_) {}
       }
@@ -580,7 +372,7 @@ sel.name = 'trakt_instance';
     }
   }
 
-  // Delete Trakt access token via backend endpoint
+  // Disconnect Trakt via backend endpoint
   async function traktDeleteToken() {
     var btn = document.querySelector('#sec-trakt .btn.danger');
     var msg = document.getElementById('trakt_msg');
@@ -595,8 +387,8 @@ sel.name = 'trakt_instance';
       });
       var j = await r.json().catch(()=>({}));
       if (r.ok && (j.ok !== false)) {
-        _setVal('trakt_token',''); _setVal('trakt_pin',''); setTraktSuccess(false);
-        if (msg) msg.textContent = 'Access token removed.';
+        _setVal('trakt_pin',''); setTraktSuccess(false);
+        if (msg) msg.textContent = 'Disconnected';
       } else {
         if (msg) { msg.classList.add('warn'); msg.textContent = 'Could not remove token.'; }
       }
@@ -632,11 +424,9 @@ sel.name = 'trakt_instance';
     window.updateTraktHint              = updateTraktHint;
     window.flushTraktCreds              = flushTraktCreds;
     window.hydrateAuthFromConfig        = hydrateAuthFromConfig;
-    window.hydratePlexFromConfigRaw     = hydratePlexFromConfigRaw;
-    window.hydrateSimklFromConfigRaw    = hydrateSimklFromConfigRaw;
     window.hydrateSecretsRaw            = hydrateAllSecretsRaw;
     window.requestTraktPin              = requestTraktPin;
-    window.startTraktTokenPoll          = startTraktTokenPoll;       // legacy/fallback
+    window.startTraktTokenPoll          = startTraktTokenPoll;
     window.startTraktDevicePoll         = startTraktDevicePoll;
     window.traktDeleteToken             = traktDeleteToken;
   } catch (_) {}
