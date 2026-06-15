@@ -229,8 +229,6 @@ DEFAULT_CFG: dict[str, Any] = {
 
     "simkl": {
         "access_token": "",                             # OAuth2 access token
-        "refresh_token": "",                            # OAuth2 refresh token
-        "token_expires_at": 0,                          # Epoch when access_token expires
         "client_id": "",                                # From your Simkl app
         "client_secret": "",                            # From your Simkl app
         "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
@@ -617,6 +615,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
     # --- User Interface ------------------------------------------------------
     "ui": {
+        "theme": "flat-dark",                           # "flat-dark" | "flat-light" | "original"
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
         "show_playingcard": True,                       # Show Now Playing card on Main tab
         "show_recent_activity": True,                   # Show Recent Activity card on Main tab
@@ -670,7 +669,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     # Provider-specific secret fields
     provider_secret_keys: dict[str, set[str]] = {
         "plex": {"account_token", "pms_token", "home_pin", "webhook_secret"},
-        "simkl": {"access_token", "refresh_token", "client_secret"},
+        "simkl": {"access_token", "client_secret"},
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
@@ -1312,6 +1311,11 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
 
 def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui = _ensure_dict(cfg, "ui")
+
+    theme = str(ui.get("theme", "flat-dark") or "flat-dark").strip().lower()
+    if theme not in {"flat-dark", "flat-light", "original"}:
+        theme = "flat-dark"
+    ui["theme"] = theme
 
     ui["show_watchlist_preview"] = bool(ui.get("show_watchlist_preview", True))
     ui["show_playingcard"] = bool(ui.get("show_playingcard", True))
