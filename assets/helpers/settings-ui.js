@@ -93,28 +93,12 @@ async function loadCrossWatchSnapshots(cfg) {
 
 const UI_SETTINGS_TAB_KEY = "cw.ui.settings.tab.v1";
 
-function _uiDaysLeftFromEpochSeconds(epochSeconds) {
-  if (!epochSeconds || !Number.isFinite(epochSeconds)) return null;
-  const ms = epochSeconds * 1000;
-  const diffMs = ms - Date.now();
-  if (diffMs <= 0) return 0;
-  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-}
-
 function cwUiSettingsSelect(tab, opts = {}) {
   const t = String(tab || "ui").toLowerCase();
   const persist = opts.persist !== false;
 
-  const hub = document.getElementById("ui_settings_hub");
   const panels = document.getElementById("ui_settings_panels");
-  if (!hub || !panels) return;
-
-  const tiles = hub.querySelectorAll(".cw-hub-tile");
-  tiles.forEach((btn) => {
-    const k = String(btn.dataset.tab || "").toLowerCase();
-    btn.classList.toggle("active", k === t);
-    btn.setAttribute("aria-selected", k === t ? "true" : "false");
-  });
+  if (!panels) return;
 
   const ps = panels.querySelectorAll(".cw-settings-panel");
   ps.forEach((p) => {
@@ -130,92 +114,8 @@ function cwUiSettingsSelect(tab, opts = {}) {
 }
 
 function cwUiSettingsHubUpdate() {
-  const set = (id, text) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = text;
-  };
-
-  const wl = document.getElementById("ui_show_watchlist_preview");
-  if (wl) set("hub_ui_watchlist", `Watchlist: ${wl.value === "false" ? "Hide" : "Show"}`);
-
-  const pc = document.getElementById("ui_show_playingcard");
-  if (pc) set("hub_ui_playing", `Playing: ${pc.value === "false" ? "Hide" : "Show"}`);
-
-  const displaySummary = (value) => {
-    const text = String(value || "count:3");
-    if (text.startsWith("hours:")) return `${text.slice(6)}h`;
-    if (text.startsWith("count:")) return text.slice(6);
-    return "3";
-  };
-
-  const recentActivity = document.getElementById("ui_show_recent_activity");
-  const recentActivityDisplay = document.getElementById("ui_recent_activity_display");
-  if (recentActivity) {
-    const suffix = recentActivityDisplay ? `, ${displaySummary(recentActivityDisplay.value)}` : "";
-    set("hub_ui_activity", `Activity: ${recentActivity.value === "false" ? "Hide" : "Show"}${suffix}`);
-  }
-
-  const ai = document.getElementById("ui_show_AI");
-  if (ai) set("hub_ui_askai", `ASK AI: ${ai.value === "false" ? "Hide" : "Show"}`);
-
-  const quickDesk = document.getElementById("ui_show_quick_add_desktop");
-  const quickMobile = document.getElementById("ui_show_quick_add_mobile");
-  if (quickDesk || quickMobile) {
-    const deskShown = quickDesk ? quickDesk.value !== "false" : false;
-    const mobileShown = quickMobile ? quickMobile.value !== "false" : false;
-    let quickAddLabel = "Hide";
-    if (deskShown && mobileShown) quickAddLabel = "Show";
-    else if (deskShown) quickAddLabel = "Desktop";
-    else if (mobileShown) quickAddLabel = "Mobile";
-    set("hub_ui_quickadd", `Quick Add: ${quickAddLabel}`);
-  }
-
-  const proto = document.getElementById("ui_protocol");
-  if (proto) set("hub_ui_proto", `Proto: ${String(proto.value || "http").toUpperCase()}`);
-
-  const aaEnabled = true;
   const aaRememberEnabled = (document.getElementById("app_auth_remember_enabled")?.value || "").toString() === "true";
-  const st = window._appAuthStatus || null;
-
-  if (st && st.configured && st.authenticated) {
-    set("hub_sec_auth", "Auth: On");
-    if (!aaRememberEnabled) {
-      set("hub_sec_session", "Session: browser");
-    } else {
-      const days = _uiDaysLeftFromEpochSeconds(st.session_expires_at);
-      set("hub_sec_session", days == null ? "Session: active" : `Session: ${days}d`);
-    }
-  } else if (st && st.enabled && !st.configured) {
-    set("hub_sec_auth", "Auth: On");
-    set("hub_sec_session", "Set password");
-  } else {
-    set("hub_sec_auth", "Auth: On");
-    set("hub_sec_session", "Locked");
-  }
-
-  // Trusted reverse proxies indicator
-  try {
-    const raw = (document.getElementById("trusted_proxies")?.value || "").toString().trim();
-    let on = false;
-    if (raw) {
-      on = raw.split(/[;\n,]+/).map(s => s.trim()).filter(Boolean).length > 0;
-    } else {
-      const tp = window._cfgCache?.security?.trusted_proxies;
-      on = Array.isArray(tp) && tp.length > 0;
-    }
-    set("hub_sec_proxy", `Proxy: ${on ? "On" : "Off"}`);
-  } catch {
-    set("hub_sec_proxy", "Proxy: —");
-  }
-
   const cwEnabled = (document.getElementById("cw_enabled")?.value || "").toString() !== "false";
-  set("hub_cw_enabled", `Tracker: ${cwEnabled ? "On" : "Off"}`);
-
-  const retRaw = (document.getElementById("cw_retention_days")?.value || "").toString().trim();
-  const ret = retRaw === "" ? null : parseInt(retRaw, 10);
-  if (ret == null || Number.isNaN(ret)) set("hub_cw_retention", "Retention: —");
-  else if (ret === 0) set("hub_cw_retention", "Retention: ∞");
-  else set("hub_cw_retention", `Retention: ${ret}d`);
 
   const authFields = document.getElementById("app_auth_fields");
   if (authFields) authFields.classList.remove("cw-disabled");
@@ -295,6 +195,7 @@ function cwUiSettingsHubInit() {
     "ui_show_AI",
     "ui_show_quick_add_desktop",
     "ui_show_quick_add_mobile",
+    "ui_theme",
     "ui_protocol",
     "app_auth_username",
     "app_auth_password",
@@ -1170,6 +1071,18 @@ async function loadConfig() {
     _setSelectValue("ui_recent_syncs_display", normalizeDisplay(ui.recent_syncs_display, Number(ui.recent_syncs_limit)));
 
     {
+      const theme = String(ui.theme || "flat-dark").trim().toLowerCase();
+      let storedTheme = "";
+      try {
+        const raw = localStorage.getItem("cw.ui.theme");
+        if (raw === "flat-light" || raw === "flat-dark" || raw === "original") storedTheme = raw;
+      } catch {}
+      const normalizedTheme = storedTheme || ((theme === "flat-light" || theme === "original") ? theme : "flat-dark");
+      _setSelectValue("ui_theme", normalizedTheme);
+      try { window.CWTheme?.apply?.(normalizedTheme, { persist: true }); } catch {}
+    }
+
+    {
       const on = (typeof ui.show_AI === "boolean")
         ? !!ui.show_AI
         : true;
@@ -1267,18 +1180,15 @@ async function loadConfig() {
   };
 
   
-  setRaw("plex_token",    val(cfg.plex?.account_token));
   setRaw("plex_home_pin", val(cfg.plex?.home_pin));
 
   
   setRaw("simkl_client_id",     val(cfg.simkl?.client_id));
   setRaw("simkl_client_secret", val(cfg.simkl?.client_secret));
-  setRaw("simkl_access_token",  val(cfg.simkl?.access_token) || val(cfg.auth?.simkl?.access_token));
 
   
   setRaw("anilist_client_id",     val(cfg.anilist?.client_id));
   setRaw("anilist_client_secret", val(cfg.anilist?.client_secret));
-  setRaw("anilist_access_token",  val(cfg.anilist?.access_token) || val(cfg.auth?.anilist?.access_token));
 
   
   setRaw("tmdb_api_key",        val(cfg.tmdb?.api_key));
@@ -1290,7 +1200,6 @@ async function loadConfig() {
   
   setRaw("trakt_client_id",     val(cfg.trakt?.client_id));
   setRaw("trakt_client_secret", val(cfg.trakt?.client_secret));
-  setRaw("trakt_token",         val(cfg.trakt?.access_token) || val(cfg.auth?.trakt?.access_token));
 })(cfg);
 
   try { cwMetaSettingsHubUpdate(); } catch {}
