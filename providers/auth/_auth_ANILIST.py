@@ -119,8 +119,8 @@ class AniListAuth(AuthProvider):
         log("ANILIST: start OAuth", extra={"redirect_uri": redirect_uri})
         return {"url": url}
 
-    def finish(self, cfg: MutableMapping[str, Any], **payload: Any) -> AuthStatus:
-        inst = payload.get("instance_id")
+    def finish(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None, **payload: Any) -> AuthStatus:
+        inst = instance_id if instance_id is not None else payload.get("instance_id")
         _, _, s = _blocks(cfg, inst)
         code = str(payload.get("code") or "").strip()
         redirect_uri = str(payload.get("redirect_uri") or "").strip()
@@ -163,17 +163,18 @@ def html() -> str:
     #sec-anilist .btn.danger{background:#a8182e;border-color:rgba(255,107,107,.4)}
     #sec-anilist .btn.danger:hover{filter:brightness(1.08)}
     #sec-anilist #btn-connect-anilist{
-      background: linear-gradient(135deg,#6d5dfc,#a855f7);
-      border-color: rgba(168,85,247,.45);
-      box-shadow: 0 0 12px rgba(168,85,247,.35);
+      background: linear-gradient(135deg,#00e084,#2ea859);
+      border-color: rgba(0,224,132,.45);
+      box-shadow: 0 0 14px rgba(0,224,132,.35);
+      color: #fff;
     }
-    #sec-anilist #btn-connect-anilist:hover{filter:brightness(1.06);box-shadow: 0 0 18px rgba(168,85,247,.5)}
+    #sec-anilist #btn-connect-anilist:hover{filter:brightness(1.06);box-shadow: 0 0 18px rgba(0,224,132,.5)}
   
     #sec-anilist .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-anilist')">
-    <span class="chev">▶</span><strong>AniList</strong>
+  <div class="head" data-toggle-section="sec-anilist">
+    <span class="chev"></span><strong>AniList</strong>
   </div>
 
   <div class="body">
@@ -195,11 +196,11 @@ def html() -> str:
             <div class="grid2">
                   <div>
                     <label for="anilist_client_id">Client ID</label>
-                    <input id="anilist_client_id" name="anilist_client_id" placeholder="Your AniList client_id" autocomplete="off" oninput="updateAniListButtonState()" />
+                    <input id="anilist_client_id" name="anilist_client_id" placeholder="Your AniList client_id" autocomplete="off" />
                   </div>
                   <div>
                     <label for="anilist_client_secret">Client Secret</label>
-                    <input id="anilist_client_secret" name="anilist_client_secret" placeholder="Your AniList client_secret" type="password" autocomplete="off" oninput="updateAniListButtonState()" />
+                    <input id="anilist_client_secret" name="anilist_client_secret" placeholder="Your AniList client_secret" type="password" autocomplete="off" />
                   </div>
                 </div>
             
@@ -207,19 +208,14 @@ def html() -> str:
                 You need an AniList API key. Create one at
                 <a href="https://anilist.co/settings/developer" target="_blank" rel="noopener">AniList Developer</a>.
                 Set the Redirect URL to <code id="redirect_uri_preview_anilist"></code>.
-                <button class="btn" style="margin-left:8px" onclick="copyAniListRedirect()">Copy Redirect URL</button>
+                <button id="btn-copy-anilist-redirect" class="btn" type="button" style="margin-left:8px">Copy Redirect URL</button>
                 </div>
             
             
                 <div class="inline" style="margin-top:10px">
-                  <button class="btn" id="btn-connect-anilist" onclick="startAniList()">Connect AniList</button>
-                  <button class="btn danger" onclick="anilistDeleteToken()">Disconnect</button>
+                  <button class="btn" id="btn-connect-anilist" type="button">Connect AniList</button>
+                  <button class="btn danger" id="btn-delete-anilist" type="button">Disconnect</button>
                   <span class="msg ok hidden" id="anilist_msg" role="status" aria-live="polite"></span>
-                </div>
-            
-                <div style="margin-top:10px">
-                  <label for="anilist_access_token">Access Token</label>
-                  <input id="anilist_access_token" name="anilist_access_token" placeholder="(auto-filled after auth)" autocomplete="off" />
                 </div>
           </div>
         </div>

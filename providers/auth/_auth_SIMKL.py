@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import time
 from collections.abc import Mapping, MutableMapping
 from typing import Any
 from urllib.parse import urlencode
@@ -55,7 +54,7 @@ class SimklAuth(AuthProvider):
                     "required": True,
                 },
             ],
-            actions={"start": True, "finish": False, "refresh": True, "disconnect": True},
+            actions={"start": True, "finish": False, "refresh": False, "disconnect": True},
             notes="Authorize with SIMKL; you'll be redirected back to the app.",
         )
 
@@ -87,16 +86,10 @@ class SimklAuth(AuthProvider):
                     blk = sub
 
         ok = bool((blk.get("access_token") or "").strip())
-        try:
-            exp = int(blk.get("token_expires_at") or 0) or None
-        except Exception:
-            exp = None
-
         return AuthStatus(
             connected=ok,
             label="SIMKL",
             user=blk.get("account") or None,
-            expires_at=exp,
             scopes=blk.get("scopes") or None,
         )
 
@@ -104,7 +97,7 @@ class SimklAuth(AuthProvider):
         inst = normalize_instance_id(instance_id)
         if isinstance(cfg, dict):
             base = ensure_provider_block(cfg, "simkl")
-            view_like = inst != "default" and "instances" not in base and any(k in base for k in ("access_token", "refresh_token", "token_expires_at"))
+            view_like = inst != "default" and "instances" not in base and bool(str(base.get("access_token") or "").strip())
             if view_like:
                 blk = base
             else:
@@ -129,20 +122,6 @@ class SimklAuth(AuthProvider):
     def _apply_token_response(self, target: MutableMapping[str, Any], j: dict[str, Any]) -> None:
         if j.get("access_token"):
             target["access_token"] = j["access_token"]
-        if "refresh_token" in j and j.get("refresh_token") is not None:
-            target["refresh_token"] = j["refresh_token"]
-
-        exp_in = j.get("expires_in")
-        if isinstance(exp_in, (int, float)) and exp_in > 0:
-            target["token_expires_at"] = int(time.time()) + int(exp_in)
-        else:
-            for k in ("token_expires_at", "expires_at"):
-                if k in j:
-                    try:
-                        target["token_expires_at"] = int(j[k])
-                        break
-                    except Exception:
-                        pass
 
         if j.get("scope"):
             target["scopes"] = j["scope"]
@@ -153,7 +132,7 @@ class SimklAuth(AuthProvider):
             "response_type": "code",
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "scope": "public write offline_access",
+            "scope": "public write",
         }
         url = f"{SIMKL_AUTH}?{urlencode(params)}"
         inst = normalize_instance_id(instance_id)
@@ -194,44 +173,14 @@ class SimklAuth(AuthProvider):
 
     def refresh(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
-        client_id, client_secret, target = self._resolve_creds(cfg, inst)
-
-        if not (target.get("refresh_token") or "").strip():
-            log("SIMKL: no refresh token", level="WARNING", module="AUTH", extra={"instance": inst})
-            return self.get_status(cfg, inst)
-
-        data = {
-            "grant_type": "refresh_token",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": target.get("refresh_token", ""),
-        }
-        headers = {
-            "User-Agent": UA,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "simkl-api-key": client_id,
-        }
-        log("SIMKL: refresh token", level="INFO", module="AUTH", extra={"instance": inst})
-        r = requests.post(SIMKL_TOKEN, json=data, headers=headers, timeout=12)
-        r.raise_for_status()
-        j = r.json() or {}
-
-        self._apply_token_response(target, j)
-        try:
-            if isinstance(cfg, dict):
-                save_config(dict(cfg))
-        except Exception:
-            pass
-
-        log("SIMKL: refresh ok", level="SUCCESS", module="AUTH", extra={"instance": inst})
+        log("SIMKL: refresh skipped; access tokens are long-lived", level="INFO", module="AUTH", extra={"instance": inst})
         return self.get_status(cfg, inst)
 
     def disconnect(self, cfg: MutableMapping[str, Any], instance_id: str | None = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
         if isinstance(cfg, dict):
             base = ensure_provider_block(cfg, "simkl")
-            view_like = inst != "default" and "instances" not in base and any(k in base for k in ("access_token", "refresh_token", "token_expires_at"))
+            view_like = inst != "default" and "instances" not in base and bool(str(base.get("access_token") or "").strip())
             target = base if view_like else ensure_instance_block(cfg, "simkl", inst)
         else:
             target = cfg.setdefault("simkl", {})  # type: ignore[assignment]
@@ -281,8 +230,8 @@ def html() -> str:
     #sec-simkl .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-simkl')">
-    <span class="chev">▶</span><strong>SIMKL</strong>
+  <div class="head" data-toggle-section="sec-simkl">
+    <span class="chev"></span><strong>SIMKL</strong>
   </div>
 
   <div class="body">
@@ -304,11 +253,11 @@ def html() -> str:
             <div class="grid2">
                   <div>
                     <label for="simkl_client_id">Client ID</label>
-                    <input id="simkl_client_id" name="simkl_client_id" placeholder="Your SIMKL client id" oninput="updateSimklButtonState()">
+                    <input id="simkl_client_id" name="simkl_client_id" placeholder="Your SIMKL client id">
                   </div>
                   <div>
                     <label for="simkl_client_secret">Client Secret</label>
-                    <input id="simkl_client_secret" name="simkl_client_secret" placeholder="Your SIMKL client secret" oninput="updateSimklButtonState()" type="password">
+                    <input id="simkl_client_secret" name="simkl_client_secret" placeholder="Your SIMKL client secret" type="password">
                   </div>
                 </div>
             
@@ -316,22 +265,15 @@ def html() -> str:
                   You need a SIMKL API key. Create one at
                   <a href="https://simkl.com/settings/developer/" target="_blank" rel="noopener">SIMKL Developer</a>.
                   Set the Redirect URL to <code id="redirect_uri_preview"></code>.
-                  <button class="btn" style="margin-left:8px" onclick="copyRedirect()">Copy Redirect URL</button>
+                  <button id="btn-copy-simkl-redirect" class="btn" type="button" style="margin-left:8px">Copy Redirect URL</button>
                 </div>
             
                 <div class="inline" style="margin-top:8px">
-                  <button id="btn-connect-simkl" class="btn" onclick="startSimkl()">Connect SIMKL</button>
-                  <button class="btn danger" onclick="try{ simklDeleteToken && simklDeleteToken(); }catch(_){;}">Delete</button>
+                  <button id="btn-connect-simkl" class="btn" type="button">Connect SIMKL</button>
+                  <button id="btn-delete-simkl" class="btn danger" type="button">Delete</button>
                   <span id="simkl-countdown" style="min-width:60px;"></span>
                   <div id="simkl-status" class="text-sm" style="color:var(--muted)">Opens SIMKL authorize; callback returns here</div>
-                  <div id="simkl_msg" class="msg ok hidden">Successfully retrieved token</div>
-                </div>
-            
-                <div class="grid2" style="margin-top:8px">
-                  <div>
-                    <label for="simkl_access_token">Access token</label>
-                    <input id="simkl_access_token" name="simkl_access_token" readonly placeholder="empty = not set">
-                  </div>
+                  <div id="simkl_msg" class="msg ok hidden">Connected</div>
                 </div>
             
                 <div class="sep"></div>

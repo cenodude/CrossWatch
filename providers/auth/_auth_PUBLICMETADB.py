@@ -45,6 +45,35 @@ def _block(cfg: Mapping[str, Any], instance_id: Any = None) -> dict[str, Any]:
     return get_provider_block(cfg or {}, "publicmetadb", instance_id)
 
 
+def validate_api_key(api_key: str, *, base_url: str = API_BASE, timeout: float = HTTP_TIMEOUT) -> tuple[bool, str]:
+    key = str(api_key or "").strip()
+    if not key:
+        return False, "api_key_required"
+    base = str(base_url or API_BASE).strip().rstrip("/") or API_BASE
+    try:
+        r = requests.get(
+            f"{base}/api/external/lists",
+            params={"page": 1, "perPage": 1},
+            headers={"Accept": "application/json", "Authorization": f"Bearer {key}", "User-Agent": UA},
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        return False, "validation_timeout"
+    except requests.RequestException:
+        return False, "validation_failed"
+    if r.status_code in (401, 403):
+        return False, "invalid_api_key"
+    if r.status_code >= 400:
+        return False, f"validation_http_{int(r.status_code)}"
+    try:
+        data = r.json() or {}
+    except ValueError:
+        return False, "validation_bad_response"
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return False, "validation_bad_response"
+    return True, ""
+
+
 def _status_from_key(cfg: Mapping[str, Any], instance_id: Any = None) -> AuthStatus:
     inst = normalize_instance_id(instance_id)
     b = _block(cfg, inst)
@@ -88,6 +117,9 @@ class PublicMetaDBAuth(AuthProvider):
         b = ensure_instance_block(cfgd, "publicmetadb", instance_id)
         key = str(payload.get("api_key") or payload.get("publicmetadb.api_key") or "").strip()
         if key:
+            ok, reason = validate_api_key(key, base_url=str(b.get("base_url") or API_BASE).strip().rstrip("/"))
+            if not ok:
+                raise ValueError(reason)
             b["api_key"] = key
         save_config(cfgd)
         log(f"PublicMetaDB API key saved (instance={normalize_instance_id(instance_id)}).", module="AUTH")
@@ -124,8 +156,8 @@ def html() -> str:
     }
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-publicmetadb')">
-    <span class="chev">▶</span><strong>PublicMetaDB</strong>
+  <div class="head" data-toggle-section="sec-publicmetadb">
+    <span class="chev"></span><strong>PublicMetaDB</strong>
   </div>
 
   <div class="body">
@@ -160,7 +192,6 @@ def html() -> str:
               <div>
                 <div class="field-label">Status</div>
                 <div class="inline">
-                  <button id="publicmetadb_verify" class="btn">Verify</button>
                   <button id="publicmetadb_disconnect" class="btn danger">Disconnect</button>
                   <div id="publicmetadb_msg" class="msg ok hidden" aria-live="polite"></div>
                 </div>

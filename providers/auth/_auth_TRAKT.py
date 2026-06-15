@@ -10,6 +10,7 @@ from typing import Any
 
 import requests
 
+from ._auth_base import AuthManifest, AuthStatus
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 
@@ -111,19 +112,41 @@ class _TraktProvider:
     name = "TRAKT"
     label = "Trakt"
 
-    def manifest(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "label": self.label,
-            "flow": "device_pin",
-            "fields": [
+    def manifest(self) -> AuthManifest:
+        return AuthManifest(
+            name=self.name,
+            label=self.label,
+            flow="device_pin",
+            fields=[
                 {"key": "trakt.client_id", "label": "Client ID", "type": "text", "required": True},
                 {"key": "trakt.client_secret", "label": "Client Secret", "type": "password", "required": True},
             ],
-            "actions": {"start": True, "finish": True, "refresh": True, "disconnect": True},
-            "verify_url": VERIFY_URL,
-            "notes": "Open Trakt, enter the code, then return here. Client ID/Secret are required.",
+            actions={"start": True, "finish": True, "refresh": True, "disconnect": True},
+            verify_url=VERIFY_URL,
+            notes="Open Trakt, enter the code, then return here. Client ID/Secret are required.",
+        )
+
+    def capabilities(self) -> dict[str, Any]:
+        return {
+            "watchlist": True,
+            "ratings": True,
+            "history": True,
+            "device_code": True,
+            "refresh": True,
         }
+
+    def get_status(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        cfg = cfg or _load_config()
+        inst, _, tr = _blocks(cfg, instance_id)
+        token = str(tr.get("access_token") or "").strip()
+        label = "Trakt" if inst == "default" else f"Trakt ({inst})"
+        return AuthStatus(
+            connected=bool(token),
+            label=label,
+            user=str(tr.get("username") or "") or None,
+            expires_at=int(tr.get("expires_at") or 0) or None,
+            scopes=[str(tr.get("scope") or "public")],
+        )
 
     def html(self, cfg: dict[str, Any] | None = None) -> str:
         # HTML is static; multi-profile UI is injected by auth.trakt.js
@@ -147,8 +170,8 @@ class _TraktProvider:
     }
   </style>
 
-  <div class="head" onclick="toggleSection && toggleSection('sec-trakt')">
-    <span class="chev">▶</span><strong>Trakt</strong>
+  <div class="head" data-toggle-section="sec-trakt">
+    <span class="chev"></span><strong>Trakt</strong>
   </div>
 
   <div class="body">
@@ -170,15 +193,11 @@ class _TraktProvider:
             <div class="grid2">
               <div>
                 <label for="trakt_client_id">Client ID</label>
-                <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID"
-                  oninput="updateTraktHint()"
-                  onchange="try{saveSetting('trakt.client_id', this.value); updateTraktHint();}catch(_){}">
+                <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID">
               </div>
               <div>
                 <label for="trakt_client_secret">Client Secret</label>
-                <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret"
-                  oninput="updateTraktHint()"
-                  onchange="try{saveSetting('trakt.client_secret', this.value); updateTraktHint();}catch(_){}">
+                <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret">
               </div>
             </div>
 
@@ -186,31 +205,22 @@ class _TraktProvider:
               You need a Trakt API application. Create one at
               <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Trakt Applications</a>.
               Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>.
-              <button class="btn" style="margin-left:8px" onclick="copyTraktRedirect()">Copy Redirect URL</button>
+              <button id="btn-copy-trakt-redirect" class="btn" type="button" style="margin-left:8px">Copy Redirect URL</button>
             </div>
 
             <div class="sep"></div>
 
-            <div class="grid2">
-              <div>
-                <div class="field-label">Current token</div>
-                <div style="display:flex;gap:8px">
-                  <input id="trakt_token" placeholder="empty = not set" readonly>
-                  <button id="btn-copy-trakt-token" class="btn copy" onclick="copyInputValue('trakt_token', this)">Copy</button>
-                </div>
-              </div>
-              <div>
-                <div class="field-label">Link code (PIN)</div>
-                <div style="display:flex;gap:8px">
-                  <input id="trakt_pin" placeholder="" readonly>
-                  <button id="btn-copy-trakt-pin" class="btn copy" onclick="copyInputValue('trakt_pin', this)">Copy</button>
-                </div>
+            <div>
+              <div class="field-label">Link code (PIN)</div>
+              <div style="display:flex;gap:8px">
+                <input id="trakt_pin" placeholder="" readonly>
+                <button id="btn-copy-trakt-pin" class="btn copy" type="button">Copy</button>
               </div>
             </div>
 
             <div class="inline" style="margin-top:10px">
-              <button id="btn-connect-trakt" class="btn" onclick="requestTraktPin()">Connect TRAKT</button>
-              <button class="btn danger" onclick="try{ traktDeleteToken && traktDeleteToken(); }catch(_){;}">Delete</button>
+              <button id="btn-connect-trakt" class="btn" type="button">Connect TRAKT</button>
+              <button id="btn-delete-trakt" class="btn danger" type="button">Delete</button>
               <div class="sub">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
               <div id="trakt_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
             </div>
@@ -401,6 +411,15 @@ class _TraktProvider:
         _save_config(cfg)
         log("TRAKT: refresh ok", level="SUCCESS", module="AUTH")
         return {"ok": True, "status": "ok"}
+
+    def disconnect(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        cfg = cfg or _load_config()
+        inst, _, tr = _blocks(cfg, instance_id)
+        for key in ("access_token", "refresh_token", "scope", "token_type", "expires_at", "_pending_device"):
+            tr.pop(key, None)
+        _save_config(cfg)
+        log(f"TRAKT[{inst}]: disconnected", level="INFO", module="AUTH")
+        return self.get_status(cfg, instance_id=inst)
 
 
 PROVIDER = _TraktProvider()
