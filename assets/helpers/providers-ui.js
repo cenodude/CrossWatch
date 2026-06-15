@@ -20,15 +20,29 @@
   function bindCopyButton(btnId, inputId) {
     const btn = document.getElementById(btnId);
     if (!btn || btn.__cwBound) return;
-    btn.addEventListener("click", (e) => window.copyInputValue?.(inputId, e.currentTarget));
+    if (btn.getAttribute("onclick")) {
+      btn.__cwBound = true;
+      return;
+    }
+    btn.addEventListener("click", (e) => window.CW.AuthShared.copyField(inputId, e.currentTarget));
     btn.__cwBound = true;
   }
 
   function wireCopyButtons() {
     bindCopyButton("btn-copy-plex-pin", "plex_pin");
-    bindCopyButton("btn-copy-plex-token", "plex_token");
     bindCopyButton("btn-copy-trakt-pin", "trakt_pin");
-    bindCopyButton("btn-copy-trakt-token", "trakt_token");
+  }
+
+  function initMountedAuthSections(root, tries = 0) {
+    if (!root) return;
+    if (typeof window.cwEnsureAuthSection !== "function") {
+      if (tries < 20) setTimeout(() => initMountedAuthSections(root, tries + 1), 50);
+      return;
+    }
+    const sections = Array.from(root.querySelectorAll(".section.open[id]"));
+    sections.forEach((sec) => {
+      try { window.cwEnsureAuthSection(sec.id).catch(() => {}); } catch {}
+    });
   }
 
   function collapseAuthSections(root) {
@@ -43,7 +57,7 @@
       if (!want.some((w) => text.startsWith(w))) return;
       sec.classList.remove("open");
       const chev = sec.querySelector(":scope > .head .chev");
-      if (chev) chev.textContent = "▶";
+      if (chev) chev.textContent = "";
     });
     root.querySelectorAll("details").forEach((det) => {
       const text = (det.querySelector(":scope > summary")?.textContent || "").trim().toLowerCase();
@@ -111,6 +125,7 @@
         window.initAniListAuthUI?.();
 
         collapseAuthSections(slot);
+        initMountedAuthSections(slot);
         wireCopyButtons();
 
         ["trakt_client_id", "trakt_client_secret"].forEach((id) => {
