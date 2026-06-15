@@ -5,9 +5,9 @@
 
 const _cwJSONHeaders = { "Content-Type": "application/json" };
 const _cwSecretIds = [
-  "plex_token", "plex_home_pin", "simkl_client_id", "simkl_client_secret",
+  "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
-  "tmdb_api_key", "mdblist_key", "publicmetadb_key"
+  "tmdb_api_key", "mdblist_key", "publicmetadb_key", "tautulli_key"
 ];
 
 function _cwEl(id) { return document.getElementById(id); }
@@ -290,6 +290,60 @@ function _cwReadSecret(id, previousValue) {
   return raw !== previousValue ? { changed: true, set: raw } : { changed: false };
 }
 
+function _cwProviderAuthError(provider, code) {
+  const key = _cwNorm(code);
+  if (provider === "tautulli") {
+    if (key === "server_url_required") return "Enter Tautulli server URL";
+    if (key === "api_key_required") return "Enter your Tautulli API key";
+    if (key === "invalid_api_key") return "Invalid Tautulli API key";
+    if (key === "validation_timeout") return "Tautulli validation timed out";
+    if (key === "validation_failed") return "Could not connect to Tautulli";
+    if (key === "validation_bad_response") return "Tautulli validation returned an unexpected response";
+    if (key.startsWith("validation_http_")) return "Tautulli validation failed";
+    return "Saving Tautulli failed";
+  }
+  if (provider === "publicmetadb") {
+    if (key === "api_key_required") return "Enter your PublicMetaDB API key";
+    if (key === "invalid_api_key") return "Invalid PublicMetaDB API key";
+    if (key === "validation_timeout") return "PublicMetaDB validation timed out";
+    if (key === "validation_failed") return "Could not validate PublicMetaDB API key";
+    if (key === "validation_bad_response") return "PublicMetaDB validation returned an unexpected response";
+    if (key.startsWith("validation_http_")) return "PublicMetaDB validation failed";
+    return "Saving PublicMetaDB key failed";
+  }
+  return "Provider authentication failed";
+}
+
+async function _cwValidateProviderSecret(provider, inst, change) {
+  if (provider !== "publicmetadb" || !change?.changed || !change?.set) return;
+  const url = `/api/publicmetadb/save?instance=${encodeURIComponent(_cwNormInst(inst))}`;
+  const resp = await _cwRequest(url, {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify({ api_key: change.set })
+  }, 15000);
+  const body = await _cwReadBody(resp);
+  if (!resp?.ok || body?.ok === false) {
+    _cwAbortSave(_cwProviderAuthError(provider, body?.error || `http_${resp?.status || 0}`));
+  }
+}
+
+async function _cwValidateTautulliSecret(inst, payload) {
+  const server = _cwNorm(payload?.server_url);
+  const apiKey = _cwNorm(payload?.api_key);
+  if (!server && !apiKey) return;
+  const url = `/api/tautulli/save?instance=${encodeURIComponent(_cwNormInst(inst))}`;
+  const resp = await _cwRequest(url, {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify(payload || {})
+  }, 15000);
+  const body = await _cwReadBody(resp);
+  if (!resp?.ok || body?.ok === false) {
+    _cwAbortSave(_cwProviderAuthError("tautulli", body?.error || body?.detail || `http_${resp?.status || 0}`));
+  }
+}
+
 async function _cwSaveAppAuth(serverCfg) {
   const MIN_PASSWORD_LENGTH = 8;
   const wantEnabled = true;
@@ -502,6 +556,10 @@ async function saveSettings() {
       show_AI: typeof serverCfg?.ui?.show_AI === "boolean" ? !!serverCfg.ui.show_AI : true,
       show_quick_add_desktop: typeof serverCfg?.ui?.show_quick_add_desktop === "boolean" ? !!serverCfg.ui.show_quick_add_desktop : true,
       show_quick_add_mobile: typeof serverCfg?.ui?.show_quick_add_mobile === "boolean" ? !!serverCfg.ui.show_quick_add_mobile : true,
+      theme: (() => {
+        const theme = _cwNorm(serverCfg?.ui?.theme).toLowerCase();
+        return theme === "flat-light" || theme === "original" ? theme : "flat-dark";
+      })(),
       protocol: _cwNorm(serverCfg?.ui?.protocol).toLowerCase() === "https" ? "https" : "http"
     };
 
@@ -525,6 +583,17 @@ async function saveSettings() {
       uiCfg[limitKey] = displayLimit(next);
       mark();
     });
+
+    const themeEl = _cwEl("ui_theme");
+    if (themeEl) {
+      const rawTheme = _cwNorm(themeEl.value).toLowerCase();
+      const nextTheme = rawTheme === "flat-light" || rawTheme === "original" ? rawTheme : "flat-dark";
+      if (nextTheme !== prevUi.theme) {
+        ensureObj(cfg, "ui").theme = nextTheme;
+        try { window.CWTheme?.apply?.(nextTheme, { persist: true }); } catch {}
+        mark();
+      }
+    }
 
     const protoEl = _cwEl("ui_protocol");
     if (protoEl) {
@@ -575,10 +644,13 @@ async function saveSettings() {
         mdblist: _cwInstBlock(serverCfg?.mdblist, _cwSelectedInst("mdblist")),
         publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb"))
       };
+      const publicmetadbInst = _cwSelectedInst("publicmetadb");
+      const publicmetadbKey = _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key));
+      await _cwValidateProviderSecret("publicmetadb", publicmetadbInst, publicmetadbKey);
       [
         ["mdblist", _cwSelectedInst("mdblist"), [["api_key", _cwReadSecret("mdblist_key", _cwNorm(secrets.mdblist?.api_key))]]],
-        ["publicmetadb", _cwSelectedInst("publicmetadb"), [["api_key", _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key))]]],
-        ["plex", _cwSelectedInst("plex"), [["account_token", _cwReadSecret("plex_token", _cwNorm(secrets.plex?.account_token))], ["home_pin", _cwReadSecret("plex_home_pin", _cwNorm(secrets.plex?.home_pin)), ""]]],
+        ["publicmetadb", publicmetadbInst, [["api_key", publicmetadbKey]]],
+        ["plex", _cwSelectedInst("plex"), [["home_pin", _cwReadSecret("plex_home_pin", _cwNorm(secrets.plex?.home_pin)), ""]]],
         ["simkl", _cwSelectedInst("simkl"), [["client_id", _cwReadSecret("simkl_client_id", _cwNorm(secrets.simkl?.client_id))], ["client_secret", _cwReadSecret("simkl_client_secret", _cwNorm(secrets.simkl?.client_secret))]]],
         ["trakt", _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1"), [["client_id", _cwReadSecret("trakt_client_id", _cwNorm(secrets.trakt?.client_id))], ["client_secret", _cwReadSecret("trakt_client_secret", _cwNorm(secrets.trakt?.client_secret))]]],
         ["anilist", _cwSelectedInst("anilist"), [["client_id", _cwReadSecret("anilist_client_id", _cwNorm(secrets.anilist?.client_id))], ["client_secret", _cwReadSecret("anilist_client_secret", _cwNorm(secrets.anilist?.client_secret))]]],
@@ -591,8 +663,36 @@ async function saveSettings() {
         changes.forEach(([prop, ch, clearValue]) => _cwApplySecret(target, prop, ch, clearValue));
         mark();
       });
+
+      const tautulliInst = _cwSelectedInst("tautulli");
+      const tautulliPrev = _cwInstBlock(serverCfg?.tautulli, tautulliInst);
+      const tautulliServer = _cwNorm(_cwEl("tautulli_server")?.value || "");
+      const tautulliKey = _cwReadSecret("tautulli_key", _cwNorm(tautulliPrev?.api_key));
+      const tautulliUserEl = _cwEl("tautulli_user_id");
+      const tautulliUser = _cwNorm(tautulliUserEl?.value || "");
+      const tautulliUserTouched = !!tautulliUserEl?.dataset?.touched;
+      const tautulliPayload = {};
+      const tautulliServerChanged = !!tautulliServer && tautulliServer !== _cwNorm(tautulliPrev?.server_url);
+      if (tautulliServer) tautulliPayload.server_url = tautulliServer;
+      if (tautulliKey.changed && tautulliKey.set) tautulliPayload.api_key = tautulliKey.set;
+      if (tautulliUser || tautulliUserTouched) tautulliPayload.user_id = tautulliUser;
+      if (tautulliServerChanged || (tautulliKey.changed && tautulliKey.set)) {
+        await _cwValidateTautulliSecret(tautulliInst, tautulliPayload);
+      }
+      if (tautulliServerChanged || tautulliKey.changed || tautulliUser || tautulliUserTouched) {
+        cfg.tautulli = cfg.tautulli && typeof cfg.tautulli === "object" ? cfg.tautulli : {};
+        const ttarget = _cwEnsureInstBlock(cfg.tautulli, tautulliInst);
+        if (tautulliServer) ttarget.server_url = tautulliServer;
+        if (tautulliKey.changed) _cwApplySecret(ttarget, "api_key", tautulliKey);
+        if (tautulliUser || tautulliUserTouched) {
+          ttarget.history = ttarget.history && typeof ttarget.history === "object" ? ttarget.history : {};
+          ttarget.history.user_id = tautulliUser;
+        }
+        mark();
+      }
     } catch (e) {
       console.warn("saveSettings: secret merge failed", e);
+      if (e?.__cwAbortSave) throw e;
     }
 
     try {
