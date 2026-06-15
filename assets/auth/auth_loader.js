@@ -29,6 +29,7 @@
   };
 
   const loaded = new Map();
+  let sharedPromise = null;
 
   function _prefetch(host) {
     try {
@@ -38,6 +39,23 @@
 
   function _ver() {
     return String(w.__CW_VERSION__ || "").trim();
+  }
+
+  function loadShared() {
+    if (w.CW?.AuthShared) return Promise.resolve(true);
+    if (sharedPromise) return sharedPromise;
+    const url = new URL("/assets/auth/auth.shared.js", d.baseURI);
+    const v = _ver();
+    if (v) url.searchParams.set("v", v);
+    sharedPromise = new Promise((resolve, reject) => {
+      const s = d.createElement("script");
+      s.src = url.toString();
+      s.async = true;
+      s.onload = () => resolve(true);
+      s.onerror = () => reject(new Error("Failed to load shared auth helpers"));
+      d.head.appendChild(s);
+    });
+    return sharedPromise;
   }
 
   function load(provider) {
@@ -51,7 +69,7 @@
     const v = _ver();
     if (v) url.searchParams.set("v", v);
 
-    const p = new Promise((resolve, reject) => {
+    const p = loadShared().then(() => new Promise((resolve, reject) => {
       const s = d.createElement("script");
       s.src = url.toString();
       // Dynamic scripts: let them execute as soon as they load.
@@ -59,7 +77,7 @@
       s.onload = () => resolve(true);
       s.onerror = () => reject(new Error(`Failed to load auth script: ${key}`));
       d.head.appendChild(s);
-    });
+    }));
 
     loaded.set(key, p);
     return p;
@@ -131,7 +149,7 @@
   if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", attach, { once: true });
   else attach();
 
-  w.cwAuthLoader = { load, ensureSection };
+  w.cwAuthLoader = { load, ensureSection, loadShared };
   w.cwLoadAuth = load;
   w.cwEnsureAuthSection = ensureSection;
 })(window, document);
