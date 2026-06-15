@@ -2,6 +2,7 @@
 (function () {
   "use strict";
 
+  const Shared = window.CW && window.CW.AuthShared;
   const Q = (s, r = document) => r.querySelector(s);
   const Qa = (s, r = document) => Array.from(r.querySelectorAll(s) || []);
   const ESC = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -12,147 +13,47 @@
   let R = new Set();
   let S = new Set();
   let hydrated = false;
+  let connected = false;
 
   const JFY_SUBTAB_KEY = "cw.ui.jellyfin.auth.subtab.v1";
 
-  const JFY_INSTANCE_KEY = "cw.ui.jellyfin.auth.instance.v1";
-  const _notify = (m) => { try { if (typeof window.notify === "function") window.notify(m); } catch {} };
+  const _notify = Shared.notify;
+  const jfyProfile = Shared.createProfileAdapter({
+    provider: "jellyfin",
+    configKey: "jellyfin",
+    label: "Jellyfin",
+    sectionId: "sec-jellyfin",
+    selectId: "jellyfin_instance",
+    storageKey: "cw.ui.jellyfin.auth.instance.v1",
+    title: "Select which Jellyfin server/account this config applies to.",
+  });
 
   function getJfyInstance() {
-    const el = Q("#jellyfin_instance");
-    let v = el ? String(el.value || "").trim() : "";
-    if (!v) { try { v = localStorage.getItem(JFY_INSTANCE_KEY) || ""; } catch {} }
-    v = (v || "").trim() || "default";
-    return v.toLowerCase() === "default" ? "default" : v;
+    return jfyProfile ? jfyProfile.getInstance() : "default";
   }
 
   function setJfyInstance(v) {
-    const id = (String(v || "").trim() || "default");
-    try { localStorage.setItem(JFY_INSTANCE_KEY, id); } catch {}
-    const el = Q("#jellyfin_instance");
-    if (el) el.value = id;
+    if (jfyProfile) jfyProfile.setInstance(v);
   }
 
   function jfyApi(path) {
-    const p = String(path || "");
-    const sep = p.includes("?") ? "&" : "?";
-    return p + sep + "instance=" + encodeURIComponent(getJfyInstance()) + "&ts=" + Date.now();
+    return jfyProfile ? jfyProfile.api(path) : String(path || "");
   }
 
   function getJfyCfgBlock(cfg) {
-    cfg = cfg || {};
-    const base = (cfg.jellyfin && typeof cfg.jellyfin === "object") ? cfg.jellyfin : (cfg.jellyfin = {});
-    const inst = getJfyInstance();
-    if (inst === "default") return base;
-    if (!base.instances || typeof base.instances !== "object") base.instances = {};
-    if (!base.instances[inst] || typeof base.instances[inst] !== "object") base.instances[inst] = {};
-    return base.instances[inst];
+    return jfyProfile ? jfyProfile.cfgBlock(cfg, true) : {};
   }
 
   async function refreshJfyInstanceOptions(preserve = true) {
-    const sel = Q("#jellyfin_instance");
-    if (!sel) return;
-    let want = preserve ? getJfyInstance() : "default";
-    try {
-      const r = await fetch("/api/provider-instances/jellyfin?ts=" + Date.now(), { cache: "no-store" });
-      const arr = await r.json().catch(() => []);
-      const opts = Array.isArray(arr) ? arr : [];
-
-      sel.innerHTML = "";
-      const addOpt = (id, label) => {
-        const o = document.createElement("option");
-        o.value = String(id);
-        o.textContent = String(label || id);
-        sel.appendChild(o);
-      };
-
-      addOpt("default", "Default");
-      opts.forEach((o) => { if (o && o.id && o.id !== "default") addOpt(o.id, o.label || o.id); });
-
-      if (!Array.from(sel.options).some(o => o.value === want)) want = "default";
-      sel.value = want;
-      setJfyInstance(want);
-    } catch {}
+    if (jfyProfile) await jfyProfile.refreshOptions(preserve);
   }
 
   function ensureJfyInstanceUI() {
-    const panel = Q('#sec-jellyfin .cw-meta-provider-panel[data-provider="jellyfin"]');
-    const head = panel ? Q(".cw-panel-head", panel) : null;
-    if (!head || head.__jfyInstanceUI) return;
-    head.__jfyInstanceUI = true;
-
-    const wrap = document.createElement("div");
-    wrap.className = "inline";
-    wrap.style.display = "flex";
-    wrap.style.gap = "8px";
-    wrap.style.alignItems = "center";
-
-    const lab = document.createElement("span");
-    lab.className = "muted";
-    lab.textContent = "Profile";
-
-    const sel = document.createElement("select");
-    sel.id = "jellyfin_instance";
-sel.name = "jellyfin_instance";
-    sel.className = "input";
-    sel.style.minWidth = "160px";
-
-    const btnNew = document.createElement("button");
-    btnNew.type = "button";
-    btnNew.className = "btn secondary";
-    btnNew.textContent = "New";
-
-    const btnDel = document.createElement("button");
-    btnDel.type = "button";
-    btnDel.className = "btn secondary";
-    btnDel.textContent = "Delete";
-
-    wrap.appendChild(lab);
-    wrap.appendChild(sel);
-    wrap.appendChild(btnNew);
-    wrap.appendChild(btnDel);
-
-    head.appendChild(wrap);
-
-    sel.addEventListener("change", () => {
-      setJfyInstance(sel.value);
+    jfyProfile?.ensureUI(() => {
       hydrated = false;
       hydrateFromConfig(true);
       jfyLoadLibraries?.();
     });
-
-    btnNew.addEventListener("click", async () => {
-      try {
-        const r = await fetch(`/api/provider-instances/jellyfin/next?ts=${Date.now()}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        const id = String((j && j.id) || "").trim();
-        if (!r.ok || (j && j.ok === false) || !id) { _notify("Could not create profile"); return; }
-        setJfyInstance(id);
-        await refreshJfyInstanceOptions(true);
-        sel.value = id;
-        hydrated = false;
-        hydrateFromConfig(true);
-      } catch { _notify("Could not create profile"); }
-    });
-
-    btnDel.addEventListener("click", async () => {
-      const id = getJfyInstance();
-      if (id === "default") { _notify("Default profile cannot be deleted"); return; }
-      if (!confirm(`Delete Jellyfin profile '${id}'?`)) return;
-      try {
-        const r = await fetch(`/api/provider-instances/jellyfin/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
-        const j = await r.json().catch(() => ({}));
-        if (!(j && j.ok)) { _notify("Could not delete profile"); return; }
-        await refreshJfyInstanceOptions(false);
-        setJfyInstance("default");
-        sel.value = "default";
-        hydrated = false;
-        hydrateFromConfig(true);
-      } catch { _notify("Could not delete profile"); }
-    });
-
-    refreshJfyInstanceOptions(true);
-    setTimeout(() => { try { sel.value = getJfyInstance(); } catch {} }, 0);
   }
 
 
@@ -199,15 +100,17 @@ sel.name = "jellyfin_instance";
 
 
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
-  const maskToken = (has) => { const el = Q("#jfy_tok"); if (el) { el.value = has ? "••••••••" : ""; el.dataset.masked = has ? "1" : "0"; } };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
 
   function setMsgBanner(msg, kind, text) {
-    if (!msg) return;
-    msg.classList.remove('hidden', 'ok', 'warn');
-    if (!kind) { msg.classList.add('hidden'); msg.textContent = ''; return; }
-    msg.classList.add(kind);
-    msg.textContent = text || '';
+    return Shared.setStatusPill(msg, kind, text);
+  }
+
+  function setConnected(has) {
+    connected = !!has;
+    const msg = Q("#jfy_msg");
+    if (connected) setMsgBanner(msg, "ok", "Connected");
+    else setMsgBanner(msg, null, "");
   }
 
   function applyFilter() {
@@ -279,8 +182,7 @@ sel.name = "jellyfin_instance";
   function jfySectionLooksEmpty() {
     const s1 = Q("#jfy_server") || Q("#jfy_server_url");
     const u1 = Q("#jfy_user") || Q("#jfy_username");
-    const tok = Q("#jfy_tok");
-    const vals = [s1, u1, tok].map(el => el ? String(el.value || "").trim() : "");
+    const vals = [s1, u1].map(el => el ? String(el.value || "").trim() : "");
     return vals.every(v => !v);
   }
 
@@ -299,7 +201,7 @@ sel.name = "jellyfin_instance";
       const v1 = Q("#jfy_verify_ssl"), v2 = Q("#jfy_verify_ssl_dup");
       if (v1) v1.checked = !!jf.verify_ssl;
       if (v2) v2.checked = !!jf.verify_ssl;
-      maskToken(!!(jf.access_token || "").trim());
+      setConnected(!!(jf.access_token || "").trim());
 
       H = new Set((jf.history?.libraries || []).map(String));
       R = new Set((jf.ratings?.libraries || []).map(String));
@@ -365,8 +267,8 @@ sel.name = "jellyfin_instance";
       if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', 'Login failed'); return; }
       put("#jfy_server_url", server); put("#jfy_username", username);
       if (j?.user_id) put("#jfy_user_id", j.user_id);
-      maskToken(true); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
-      setMsgBanner(msg, 'ok', 'Connected.');
+      setConnected(true); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
+      setMsgBanner(msg, 'ok', 'Connected');
       await jfyLoadLibraries();
     } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
   }
@@ -385,9 +287,9 @@ sel.name = "jellyfin_instance";
       });
       const j = await r.json().catch(() => ({}));
       if (r.ok && (j.ok !== false)) {
-        const tok = document.querySelector('#jfy_tok'); if (tok) { tok.value = ''; tok.dataset.masked = '0'; }
         const pass = document.querySelector('#jfy_pass'); if (pass) pass.value = '';
-        if (msg) { msg.className = 'msg'; msg.textContent = 'Access token removed.'; }
+        setConnected(false);
+        if (msg) { msg.className = 'msg'; msg.textContent = 'Disconnected'; }
       } else {
         if (msg) { msg.className = 'msg warn'; msg.textContent = 'Could not remove token.'; }
       }
@@ -510,6 +412,18 @@ sel.name = "jellyfin_instance";
   document.addEventListener("click", (ev) => {
     const t = ev?.target;
     if (t && t.id === "jfy_pick_user") jfyPickUser(ev);
+    if (t && t.id === "btn-jfy-login") jfyLogin();
+    if (t && t.id === "btn-jfy-delete") jfyDeleteToken();
+    if (t && t.id === "btn-jfy-auto") jfyAuto();
+    if (t && t.id === "btn-jfy-load-libraries") jfyLoadLibraries();
+  }, true);
+
+  document.addEventListener("change", (ev) => {
+    const t = ev?.target;
+    if (t && t.id === "jfy_verify_ssl_dup") {
+      const primary = Q("#jfy_verify_ssl");
+      if (primary) primary.checked = !!t.checked;
+    }
   }, true);
 
   window.jfyAuto = jfyAuto;
@@ -521,4 +435,3 @@ sel.name = "jellyfin_instance";
   window.registerSettingsCollector?.(mergeJellyfinIntoCfg);
   document.addEventListener("settings-collect", (e) => { try { mergeJellyfinIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);
 })();
-
