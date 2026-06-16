@@ -19,10 +19,12 @@ WORKDIR /app
 
 # --- runtime user ---
 ARG APP_USER=appuser
+ARG APP_GROUP
 ARG APP_UID=1000
 ARG APP_GID=1000
-RUN groupadd -g "${APP_GID}" "${APP_USER}" \
- && useradd -m -u "${APP_UID}" -g "${APP_GID}" -s /bin/bash "${APP_USER}"
+RUN APP_GROUP="${APP_GROUP:-${APP_USER}}" \
+ && groupadd -g "${APP_GID}" "${APP_GROUP}" \
+ && useradd -m -u "${APP_UID}" -g "${APP_GROUP}" -s /bin/bash "${APP_USER}"
 
 # --- deps
 COPY requirements.txt /app/requirements.txt
