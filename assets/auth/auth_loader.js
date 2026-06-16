@@ -29,6 +29,8 @@
   };
 
   const loaded = new Map();
+  const initialized = new WeakSet();
+  const pendingSections = new WeakMap();
   let sharedPromise = null;
 
   function _prefetch(host) {
@@ -86,9 +88,24 @@
   async function ensureSection(secId) {
     const key = SECTION_TO_PROVIDER[String(secId || "")];
     if (!key) return false;
-    await load(key);
-    try { w.cwAuth?.[key]?.init?.(); } catch (_) {}
-    return true;
+    const sec = d.getElementById(String(secId || ""));
+    if (sec && initialized.has(sec)) return true;
+    if (sec && pendingSections.has(sec)) return pendingSections.get(sec);
+
+    const run = (async () => {
+      await load(key);
+      try { w.cwAuth?.[key]?.init?.(); } catch (_) {}
+      if (sec) initialized.add(sec);
+      return true;
+    })();
+
+    if (sec) {
+      pendingSections.set(sec, run);
+      run.finally(() => {
+        try { pendingSections.delete(sec); } catch (_) {}
+      }).catch(() => {});
+    }
+    return run;
   }
 
   function _isSettingsTab(ev) {
@@ -101,7 +118,7 @@
   function _scanOpen(host) {
     try {
       host.querySelectorAll(".section.open").forEach((sec) => {
-        if (sec?.id) ensureSection(sec.id).catch(() => {});
+        if (sec?.id && !initialized.has(sec) && !pendingSections.has(sec)) ensureSection(sec.id).catch(() => {});
       });
     } catch (_) {}
   }
