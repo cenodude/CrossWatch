@@ -8,7 +8,7 @@ const _cwV = (() => {
 const _cwVer = (u) => u + (u.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(String(_cwV));
 
 const { getJson } = await import(_cwVer("../core/net.js"));
-const { ROOT_HTML, CSS } = await import(_cwVer("./layout.js"));
+const { ROOT_HTML, CSS, THEME_CSS } = await import(_cwVer("./layout.js"));
 const Q = (s, r = document) => r.querySelector(s);
 const QA = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -26,7 +26,7 @@ const css = () => {
     el.id = "cc-css";
     document.head.appendChild(el);
   }
-  el.textContent = CSS;
+  el.textContent = CSS + (THEME_CSS || "");
 };
 
 function kindOf(r) {
