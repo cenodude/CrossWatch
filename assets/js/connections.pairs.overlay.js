@@ -133,15 +133,6 @@
 }
 #pairs_list .icon-btn .ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 #pairs_list .icon-btn.danger:hover{color:#ff6b72;border-color:rgba(255,107,114,.30);box-shadow:0 10px 24px rgba(0,0,0,.28),0 0 18px rgba(255,107,114,.16)}
-#pairs_list .icon-btn.power:not(.off){
-  color:#12d68c;background:rgba(18,214,140,.12);border-color:rgba(18,214,140,.35);
-  box-shadow:0 6px 16px rgba(18,214,140,.16), inset 0 1px 0 rgba(255,255,255,.06)
-}
-#pairs_list .icon-btn.power:not(.off):hover{background:rgba(18,214,140,.18)}
-#pairs_list .icon-btn.power.off{
-  color:#ff6b72;background:rgba(255,90,94,.12);border-color:rgba(255,90,94,.35);
-  box-shadow:0 6px 16px rgba(255,90,94,.16), inset 0 1px 0 rgba(255,255,255,.06)
-}
 #pairs_list .sr-only{
   position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;border:0!important;white-space:nowrap!important
 }
@@ -154,6 +145,176 @@
   box-shadow:0 12px 26px rgba(0,0,0,.34);opacity:0;transform:translateY(6px);transition:opacity .10s ease, transform .10s ease
 }
 #pairs_list .cx-tip.on{opacity:1;transform:none}
+#pairs_list .pair-card,
+#pairs_list .ord-badge,
+#pairs_list .pair-pill,
+#pairs_list .pair-actions,
+#pairs_list .feat-beads,
+#pairs_list .icon-btn,
+#pairs_list .cx-tip{
+  background:#20242d!important;
+  border-color:rgba(255,255,255,.14)!important;
+  box-shadow:none!important;
+  text-shadow:none!important;
+  filter:none!important;
+}
+#pairs_list .pair-card::before,
+#pairs_list .pair-pill::before{
+  content:none!important;
+  display:none!important;
+  background:none!important;
+  box-shadow:none!important;
+}
+#pairs_list .prov-watermark::after{
+  filter:none!important;
+  mix-blend-mode:normal!important;
+  opacity:.12!important;
+}
+#pairs_list .pair-card:hover,
+#pairs_list .icon-btn:hover{
+  background:#2b313d!important;
+  border-color:rgba(255,255,255,.19)!important;
+  box-shadow:none!important;
+  filter:none!important;
+  transform:none!important;
+}
+#pairs_list .bead,
+#pairs_list .bead.on{
+  box-shadow:none!important;
+  filter:none!important;
+  text-shadow:none!important;
+}
+#pairs_list .pair-card.pair-disabled{
+  background:#1a1e26!important;
+  border-color:rgba(148,163,184,.12)!important;
+}
+#pairs_list .pair-card.pair-disabled .pair-left,
+#pairs_list .pair-card.pair-disabled .feat-beads{
+  opacity:.52!important;
+  filter:grayscale(.45)!important;
+}
+#pairs_list .pair-card.pair-disabled .icon-btn:not(.power):not(.danger){
+  opacity:.62!important;
+}
+#pairs_list .icon-btn.power:not(.off){
+  color:#dfffee!important;
+  background:#1f4f3a!important;
+  border-color:rgba(87,181,138,.58)!important;
+}
+#pairs_list .icon-btn.power:not(.off):hover{
+  background:#256244!important;
+  border-color:rgba(103,206,156,.72)!important;
+}
+#pairs_list .icon-btn.power.off{
+  color:#ffe8ec!important;
+  background:#5a2630!important;
+  border-color:rgba(216,102,114,.58)!important;
+}
+#pairs_list .icon-btn.power.off:hover{
+  background:#6a2b37!important;
+  border-color:rgba(232,126,139,.72)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-card,
+html[data-cw-theme="flat-light"] #pairs_list .ord-badge,
+html[data-cw-theme="flat-light"] #pairs_list .pair-pill,
+html[data-cw-theme="flat-light"] #pairs_list .pair-actions,
+html[data-cw-theme="flat-light"] #pairs_list .feat-beads,
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn,
+html[data-cw-theme="flat-light"] #pairs_list .cx-tip{
+  background:#ffffff!important;
+  border-color:rgba(21,31,48,.18)!important;
+  color:#172033!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-card{
+  background:
+    radial-gradient(110% 160% at 0% 50%,rgba(var(--src-rgb),.19),transparent 52%),
+    radial-gradient(110% 160% at 100% 50%,rgba(var(--dst-rgb),.18),transparent 56%),
+    linear-gradient(180deg,#ffffff,#e9eef6)!important;
+  border-color:rgba(16,24,40,.22)!important;
+  box-shadow:0 10px 26px rgba(15,23,42,.08)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .ord-badge{
+  background:#ffffff!important;
+  border-color:rgba(16,24,40,.20)!important;
+  color:#111827!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-pill.src{
+  background:
+    radial-gradient(120% 170% at 0% 50%,rgba(var(--src-rgb),.20),rgba(var(--src-rgb),.08) 45%,transparent 78%),
+    linear-gradient(180deg,#ffffff,#eef3f8)!important;
+  border-color:rgba(var(--src-rgb),.36)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-pill.dst{
+  background:
+    radial-gradient(120% 170% at 100% 50%,rgba(var(--dst-rgb),.20),rgba(var(--dst-rgb),.08) 45%,transparent 78%),
+    linear-gradient(180deg,#ffffff,#eef3f8)!important;
+  border-color:rgba(var(--dst-rgb),.36)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-pill.mode{
+  background:linear-gradient(180deg,#ffffff,#eef3f8)!important;
+  border-color:rgba(16,24,40,.20)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-pill-text{
+  color:#111827!important;
+  text-shadow:none!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .prov-watermark::after{
+  opacity:.24!important;
+  filter:saturate(1.35) contrast(1.16) brightness(.88)!important;
+  mix-blend-mode:multiply!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-actions,
+html[data-cw-theme="flat-light"] #pairs_list .feat-beads{
+  background:rgba(255,255,255,.76)!important;
+  border-color:rgba(16,24,40,.18)!important;
+  box-shadow:none!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn{
+  background:#ffffff!important;
+  border-color:rgba(16,24,40,.18)!important;
+  color:#172033!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .arrow{
+  background:#ffffff!important;
+  border-color:rgba(70,86,166,.22)!important;
+  color:#4656a6!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-card:hover{
+  background:
+    radial-gradient(110% 160% at 0% 50%,rgba(var(--src-rgb),.24),transparent 52%),
+    radial-gradient(110% 160% at 100% 50%,rgba(var(--dst-rgb),.22),transparent 56%),
+    linear-gradient(180deg,#ffffff,#dfe7f1)!important;
+  border-color:rgba(21,31,48,.28)!important;
+  box-shadow:0 14px 32px rgba(15,23,42,.12)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn:hover{
+  background:#edf3fa!important;
+  border-color:rgba(21,31,48,.26)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .pair-card.pair-disabled{
+  background:#e6ecf4!important;
+  border-color:rgba(16,24,40,.14)!important;
+  filter:saturate(.82)!important;
+  opacity:.74!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power:not(.off){
+  color:#ffffff!important;
+  background:#177245!important;
+  border-color:rgba(23,114,69,.42)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power:not(.off):hover{
+  background:#125c38!important;
+  border-color:rgba(23,114,69,.56)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off{
+  color:#ffffff!important;
+  background:#a93f4d!important;
+  border-color:rgba(169,63,77,.42)!important;
+}
+html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
+  background:#842936!important;
+  border-color:rgba(169,63,77,.56)!important;
+}
 @media (max-width:1280px){
   #pairs_list .pair-left{flex-basis:100%}
   #pairs_list .pair-actions{width:100%;justify-content:flex-end}
@@ -299,6 +460,7 @@
         const card = (inputEl && inputEl.closest(".pair-card")) || document.querySelector(`#pairs_list .pair-card[data-id="${id}"]`);
         const btn = card?.querySelector(".icon-btn.power");
         if (btn) btn.classList.toggle("off", !on);
+        if (card) card.classList.toggle("pair-disabled", !on);
         const list = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
         const it = list.find((p) => String(p.id) === String(id)); if (it) it.enabled = !!on;
         await fetch(`/api/pairs/${id}`, {
@@ -353,7 +515,7 @@
       const dstTone = brandTone(dst);
 
       return `
-        <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
+        <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
           <div class="pair-row">
             <div class="pair-left">
               <span class="ord-badge" data-tip="Order position">${i + 1}</span>

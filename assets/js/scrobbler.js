@@ -1,4 +1,4 @@
-﻿/* assets/js/scrobbler.js */
+/* assets/js/scrobbler.js */
 /* refactored */
 /* Scrobbler configuration UI and logic. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
@@ -3294,7 +3294,7 @@ async function init(opts = {}) {
         const className = ["section", "cw-settings-section", "cw-settings-provider-section"];
         if (id === "sc-sec-watch") className.push("open");
         const sec = el("div", { className: className.join(" "), id });
-        sec.innerHTML = `<div class="head" onclick="toggleSection('${id}')"><span class="chev">></span><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
+        sec.innerHTML = `<div class="head" data-toggle-section="${id}"><span class="chev">></span><strong>${title}</strong></div><div class="body"><div id="${id === "sc-sec-webhook" ? "scrob-webhook" : "scrob-watcher"}"></div></div>`;
         root.append(sec);
       };
       if (!STATE.webhookHost) {
