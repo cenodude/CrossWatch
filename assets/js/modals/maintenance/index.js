@@ -522,6 +522,100 @@ function injectCSS() {
     cursor: wait;
     box-shadow: none;
   }
+  html[data-cw-theme="flat-dark"] .cw-maint,
+  html[data-cw-theme="flat-dark"] .cw-maint .cx-head,
+  html[data-cw-theme="flat-dark"] .cw-maint .head-icon,
+  html[data-cw-theme="flat-dark"] .cw-maint .close-btn,
+  html[data-cw-theme="flat-dark"] .cw-maint .summary-card,
+  html[data-cw-theme="flat-dark"] .cw-maint .summary-pill,
+  html[data-cw-theme="flat-dark"] .cw-maint .action-row,
+  html[data-cw-theme="flat-dark"] .cw-maint .action-icon,
+  html[data-cw-theme="flat-dark"] .cw-maint .action-desc code,
+  html[data-cw-theme="flat-dark"] .cw-maint .action-options label,
+  html[data-cw-theme="flat-dark"] .cw-maint .action-options input,
+  html[data-cw-theme="flat-dark"] .cw-maint .run-btn,
+  html[data-cw-theme="flat-dark"] .cw-maint .status,
+  html[data-cw-theme="flat-dark"] .cw-maint .status::before,
+  html[data-cw-theme="flat-dark"] #cw-clean-all {
+    background: #20242d !important;
+    border-color: rgba(255,255,255,.14) !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+    filter: none !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint .close-btn:hover,
+  html[data-cw-theme="flat-dark"] .cw-maint .action-row:hover,
+  html[data-cw-theme="flat-dark"] .cw-maint .run-btn:hover,
+  html[data-cw-theme="flat-dark"] #cw-clean-all:hover {
+    background: #2b313d !important;
+    border-color: rgba(255,255,255,.19) !important;
+    box-shadow: none !important;
+    filter: none !important;
+    transform: none !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint .status.ok::before,
+  html[data-cw-theme="flat-dark"] .cw-maint .status.err::before,
+  html[data-cw-theme="flat-dark"] .cw-maint .status.busy::before {
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint #cw-clean-all,
+  html[data-cw-theme="flat-dark"] #cw-clean-all {
+    background: #43272e !important;
+    border-color: rgba(216,102,114,.42) !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint .cx-body {
+    scrollbar-color: #3a414c #151821 !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint .cx-body::-webkit-scrollbar-track {
+    background: #151821 !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint .cx-body::-webkit-scrollbar-thumb {
+    background: #3a414c !important;
+    border-color: #151821 !important;
+    box-shadow: none !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint,
+  html[data-cw-theme="flat-light"] .cw-maint .cx-head,
+  html[data-cw-theme="flat-light"] .cw-maint .head-icon,
+  html[data-cw-theme="flat-light"] .cw-maint .close-btn,
+  html[data-cw-theme="flat-light"] .cw-maint .summary-card,
+  html[data-cw-theme="flat-light"] .cw-maint .summary-pill,
+  html[data-cw-theme="flat-light"] .cw-maint .action-row,
+  html[data-cw-theme="flat-light"] .cw-maint .action-icon,
+  html[data-cw-theme="flat-light"] .cw-maint .action-desc code,
+  html[data-cw-theme="flat-light"] .cw-maint .action-options label,
+  html[data-cw-theme="flat-light"] .cw-maint .action-options input,
+  html[data-cw-theme="flat-light"] .cw-maint .run-btn,
+  html[data-cw-theme="flat-light"] .cw-maint .status,
+  html[data-cw-theme="flat-light"] .cw-maint .status::before {
+    background: #ffffff !important;
+    border-color: rgba(21,31,48,.14) !important;
+    color: #172033 !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .close-btn:hover,
+  html[data-cw-theme="flat-light"] .cw-maint .action-row:hover,
+  html[data-cw-theme="flat-light"] .cw-maint .run-btn:hover {
+    background: #eef2f7 !important;
+    border-color: rgba(21,31,48,.20) !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint #cw-clean-all,
+  html[data-cw-theme="flat-light"] #cw-clean-all {
+    background: #f7dde2 !important;
+    border-color: rgba(201,79,97,.36) !important;
+    color: #7f1d2d !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .cx-body {
+    scrollbar-color: #c4ccd8 #eef2f7 !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .cx-body::-webkit-scrollbar-track {
+    background: #eef2f7 !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .cx-body::-webkit-scrollbar-thumb {
+    background: #c4ccd8 !important;
+    border-color: #eef2f7 !important;
+  }
   `;
   document.head.appendChild(el);
 }

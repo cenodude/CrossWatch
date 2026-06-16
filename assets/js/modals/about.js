@@ -207,7 +207,7 @@ function view(info, mods, logo) {
         <div class="logoWrap" aria-hidden="true"><img class="logo" src="${escapeHtml(logo)}" alt="" /></div>
         <div>
           <div class="title">About CrossWatch</div>
-          <div class="sub">Version, modules, and useful project info</div>
+          <div class="sub">Version and modules info</div>
         </div>
         <div class="actions">
           <span class="chip accent"><span class="material-symbols-rounded" aria-hidden="true">bolt</span>Engine v${escapeHtml(info.current || "-")}</span>
@@ -228,9 +228,7 @@ function view(info, mods, logo) {
           </section>
         ` : ""}
         <section class="card">
-          <div class="badge"><span class="dot" aria-hidden="true"></span><span style="font-weight:900">Local-first sync</span></div>
-          <div class="headline">Fast runs with good controls</div>
-          <div class="lede">CrossWatch syncs Plex, Jellyfin, Emby, MDBList, AniList, Tautulli, TMDb, SIMKL, and Trakt. Keep it behind your network edge and avoid exposing it directly to the internet.</div>
+          <div class="lede">CrossWatch syncs Plex, Jellyfin, Emby, MDBList, AniList, Tautulli, TMDb, SIMKL, PublicMetaDB and Trakt. Keep it behind your network edge and avoid exposing it directly to the internet.</div>
         </section>
         ${_fold("Authentication providers", _providerRows(mods.groups?.AUTH))}
         ${_fold("Synchronization providers", _providerRows(mods.groups?.SYNC))}
