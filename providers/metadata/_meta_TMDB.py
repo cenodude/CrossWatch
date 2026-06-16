@@ -1,4 +1,4 @@
-# providers/metadata/_meta_TMDB.py
+﻿# providers/metadata/_meta_TMDB.py
 # CrossWatch - TMDb Metadata Provider
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
@@ -585,7 +585,7 @@ def html() -> str:
     #sec-tmdb details.advanced .adv-wrap { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   </style>
 
-  <div class="head" onclick="toggleSection('sec-tmdb')">
+  <div class="head" data-toggle-section="sec-tmdb">
     <span class="chev"></span><strong>The Movie Database (TMDb)</strong>
   </div>
 
