@@ -99,6 +99,16 @@
     const row = document.getElementById("poster-row");
     if (!row || row.__cwWallWired) return;
     row.addEventListener("scroll", updateEdges, { passive: true });
+    row.addEventListener("click", (event) => {
+      const link = event.target?.closest?.("a.poster");
+      if (!link || !row.contains(link)) return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const key = link.dataset.previewKey || link.dataset.key || "";
+      const item = window.__cwWallPreviewItems?.get?.(key);
+      if (!item) return;
+      event.preventDefault();
+      void openPreviewDrawer(item);
+    }, true);
     row.addEventListener("wheel", (e) => {
       if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
       e.preventDefault();
@@ -115,6 +125,433 @@
   }
 
   const providerLogoPath = (name) => window.CW?.ProviderMeta?.logoPath?.(name) || "";
+  const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
+  const previewMetaCache = new Map();
+  const previewMetaInflight = new Map();
+  let activePreviewDrawerKey = "";
+
+  function mediaTypeOf(item) {
+    const raw = String(item?.type || item?.entity || item?.media_type || "").toLowerCase();
+    return raw === "movie" ? "movie" : "show";
+  }
+
+  function artTypeOf(item) {
+    return mediaTypeOf(item) === "movie" ? "movie" : "tv";
+  }
+
+  function mediaLabelOf(item) {
+    const raw = String(item?.type || item?.entity || item?.media_type || "").toLowerCase();
+    if (raw === "movie") return "Movie";
+    if (raw === "anime") return "Anime";
+    return "Show";
+  }
+
+  function tmdbIdOf(item, meta = null) {
+    return item?.tmdb || item?.tmdb_id || item?.ids?.tmdb || item?.ids?.tmdb_show || meta?.ids?.tmdb || "";
+  }
+
+  function imdbIdOf(item, meta = null) {
+    const ids = { ...(item?.ids || {}), ...(meta?.ids || {}) };
+    return ids.imdb || ids.imdb_id || ids.imdb_show || "";
+  }
+
+  function previewItemKey(item) {
+    return item?.key || `${mediaTypeOf(item)}:${tmdbIdOf(item)}:${item?.title || ""}:${item?.year || ""}`;
+  }
+
+  function previewMetaKey(item) {
+    const tmdb = tmdbIdOf(item);
+    return tmdb ? `${mediaTypeOf(item)}:${tmdb}` : "";
+  }
+
+  function backdropUrl(item, meta = null) {
+    const tmdb = tmdbIdOf(item, meta);
+    if (!tmdb) return "";
+    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}`;
+  }
+
+  function runtimeLabel(mins) {
+    const total = Number(mins) || 0;
+    if (!total) return "";
+    const h = Math.floor(total / 60);
+    const m = total % 60;
+    return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+  }
+
+  function yearFromIso(value) {
+    const raw = String(value || "");
+    return /^\d{4}/.test(raw) ? raw.slice(0, 4) : "";
+  }
+
+  function dateLabel(value) {
+    const raw = String(value || "");
+    if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return "";
+    const dt = new Date(`${raw.slice(0, 10)}T00:00:00Z`);
+    if (Number.isNaN(dt.getTime())) return "";
+    try {
+      return new Intl.DateTimeFormat(navigator.language || "en-US", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }).format(dt);
+    } catch {
+      return raw.slice(0, 10);
+    }
+  }
+
+  function scoreValue(meta) {
+    const raw = Number(meta?.score ?? meta?.vote_average);
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    return raw <= 10 ? Math.round(raw * 10) : Math.round(raw);
+  }
+
+  function tmdbUrl(item, meta = null) {
+    const tmdb = tmdbIdOf(item, meta);
+    if (!tmdb) return "";
+    return `https://www.themoviedb.org/${mediaTypeOf(item) === "movie" ? "movie" : "tv"}/${encodeURIComponent(String(tmdb))}`;
+  }
+
+  function imdbUrl(item, meta = null) {
+    const imdb = String(imdbIdOf(item, meta) || "").trim();
+    if (!imdb) return "";
+    const clean = imdb.startsWith("tt") ? imdb : `tt${imdb}`;
+    return `https://www.imdb.com/title/${encodeURIComponent(clean)}`;
+  }
+
+  async function getPreviewMeta(item) {
+    const cacheKey = previewMetaKey(item);
+    if (!cacheKey) return null;
+    if (previewMetaCache.has(cacheKey)) return previewMetaCache.get(cacheKey);
+    if (previewMetaInflight.has(cacheKey)) return previewMetaInflight.get(cacheKey);
+
+    const tmdb = tmdbIdOf(item);
+    const type = mediaTypeOf(item);
+    const req = (async () => {
+      try {
+        const res = await fetch("/api/metadata/bulk?overview=full", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            items: [{ type, tmdb }],
+            need: { overview: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1, certification: 1, score: 1, release: 1, backdrop: 1 },
+            concurrency: 1,
+          }),
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        const first = Object.values(data?.results || {})[0];
+        const meta = first?.ok ? (first.meta || null) : null;
+        if (meta) previewMetaCache.set(cacheKey, meta);
+        return meta;
+      } catch {
+        return null;
+      } finally {
+        previewMetaInflight.delete(cacheKey);
+      }
+    })();
+    previewMetaInflight.set(cacheKey, req);
+    return req;
+  }
+
+  function ensurePreviewDrawerStyles() {
+    if (document.getElementById("cw-wall-preview-detail-style")) return;
+    const style = document.createElement("style");
+    style.id = "cw-wall-preview-detail-style";
+    style.textContent = `
+      #cw-wall-preview-detail{
+        --wpd-bg:rgba(24,29,39,.94);
+        --wpd-bg-strong:rgba(11,14,21,.92);
+        --wpd-border:rgba(148,163,184,.22);
+        --wpd-border-strong:rgba(148,163,184,.30);
+        --wpd-text:#f4f7ff;
+        --wpd-muted:rgba(207,216,232,.72);
+        --wpd-chip:rgba(255,255,255,.07);
+        --wpd-shadow:0 24px 68px rgba(0,0,0,.48);
+        position:fixed;
+        left:50%;
+        bottom:max(18px,env(safe-area-inset-bottom));
+        width:min(860px,calc(100vw - 32px));
+        color:var(--wpd-text);
+        border:1px solid var(--wpd-border);
+        border-radius:24px;
+        background:var(--wpd-bg);
+        box-shadow:var(--wpd-shadow);
+        overflow:hidden;
+        isolation:isolate;
+        transform:translate(-50%,calc(100% + 28px)) scale(.985);
+        opacity:0;
+        pointer-events:none;
+        transition:transform .28s cubic-bezier(.2,.8,.2,1),opacity .22s ease,border-color .18s ease;
+        z-index:10025;
+      }
+      #cw-wall-preview-detail.show{
+        transform:translate(-50%,0) scale(1);
+        opacity:1;
+        pointer-events:auto;
+      }
+      html[data-tab!="main"] #cw-wall-preview-detail{display:none!important}
+      #cw-wall-preview-detail::before{
+        content:"";
+        position:absolute;
+        inset:0;
+        z-index:0;
+        pointer-events:none;
+        background:
+          linear-gradient(90deg,rgba(18,23,33,.98) 0%,rgba(18,23,33,.92) 48%,rgba(18,23,33,.80) 100%),
+          var(--wpd-backdrop,none);
+        background-size:100% 100%,cover;
+        background-position:center center,center center;
+        background-repeat:no-repeat,no-repeat;
+      }
+      #cw-wall-preview-detail .wpd-inner{
+        position:relative;
+        z-index:1;
+        display:grid;
+        grid-template-columns:118px minmax(0,1fr) 150px;
+        gap:16px;
+        align-items:stretch;
+        padding:16px;
+      }
+      #cw-wall-preview-detail .wpd-poster{
+        width:118px;
+        aspect-ratio:2/3;
+        border-radius:16px;
+        object-fit:cover;
+        border:1px solid var(--wpd-border);
+        background:var(--wpd-bg-strong);
+        box-shadow:0 18px 34px rgba(0,0,0,.28);
+      }
+      #cw-wall-preview-detail .wpd-main{min-width:0;display:flex;flex-direction:column}
+      #cw-wall-preview-detail .wpd-title-row{display:flex;gap:12px;align-items:flex-start}
+      #cw-wall-preview-detail .wpd-title{
+        flex:1;
+        min-width:0;
+        font-size:22px;
+        font-weight:850;
+        line-height:1.12;
+        letter-spacing:0;
+      }
+      #cw-wall-preview-detail .wpd-year{color:var(--wpd-muted);font-weight:760}
+      #cw-wall-preview-detail .wpd-close{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        width:40px;
+        height:40px;
+        border-radius:999px;
+        border:1px solid var(--wpd-border);
+        background:var(--wpd-chip);
+        color:var(--wpd-text);
+        cursor:pointer;
+      }
+      #cw-wall-preview-detail .wpd-close:hover{border-color:var(--wpd-border-strong);background:rgba(255,255,255,.10)}
+      #cw-wall-preview-detail .wpd-close .material-symbol{font-size:22px}
+      #cw-wall-preview-detail .wpd-meta,
+      #cw-wall-preview-detail .wpd-sources{
+        display:flex;
+        align-items:center;
+        flex-wrap:wrap;
+        gap:7px;
+      }
+      #cw-wall-preview-detail .wpd-meta{margin-top:10px}
+      #cw-wall-preview-detail .wpd-sources{margin-top:auto;padding-top:12px}
+      #cw-wall-preview-detail .wpd-chip,
+      #cw-wall-preview-detail .wpd-source{
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        min-height:27px;
+        padding:0 10px;
+        border-radius:999px;
+        border:1px solid var(--wpd-border);
+        background:var(--wpd-chip);
+        color:var(--wpd-text);
+        font-size:11px;
+        font-weight:820;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+      }
+      #cw-wall-preview-detail .wpd-source{width:34px;padding:0}
+      #cw-wall-preview-detail .wpd-source img{display:block;height:16px;max-width:23px;object-fit:contain}
+      #cw-wall-preview-detail .wpd-overview{
+        margin-top:12px;
+        color:var(--wpd-muted);
+        font-size:14px;
+        line-height:1.48;
+        max-height:4.5em;
+        overflow:hidden;
+        display:-webkit-box;
+        -webkit-line-clamp:3;
+        -webkit-box-orient:vertical;
+      }
+      #cw-wall-preview-detail .wpd-side{
+        display:flex;
+        flex-direction:column;
+        align-items:stretch;
+        justify-content:flex-start;
+        gap:9px;
+      }
+      #cw-wall-preview-detail .wpd-score{
+        --wpd-score:0deg;
+        --wpd-score-color:#49d391;
+        position:relative;
+        align-self:flex-end;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        width:64px;
+        height:64px;
+        border-radius:50%;
+        background:conic-gradient(var(--wpd-score-color) var(--wpd-score),rgba(148,163,184,.18) 0);
+        font-size:18px;
+        font-weight:880;
+      }
+      #cw-wall-preview-detail .wpd-score::before{
+        content:"";
+        position:absolute;
+        inset:5px;
+        border-radius:50%;
+        background:var(--wpd-bg-strong);
+      }
+      #cw-wall-preview-detail .wpd-score span{position:relative}
+      #cw-wall-preview-detail .wpd-score-label{
+        align-self:flex-end;
+        margin-top:-3px;
+        color:var(--wpd-muted);
+        font-size:11px;
+        font-weight:720;
+      }
+      #cw-wall-preview-detail .wpd-link{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        min-height:36px;
+        padding:0 12px;
+        border-radius:999px;
+        border:1px solid var(--wpd-border);
+        background:var(--wpd-chip);
+        color:var(--wpd-text);
+        text-decoration:none;
+        font-size:12px;
+        font-weight:820;
+      }
+      #cw-wall-preview-detail .wpd-link:hover{border-color:var(--wpd-border-strong);background:rgba(255,255,255,.10)}
+      #placeholder-card .poster{cursor:pointer}
+      html[data-cw-theme="flat-light"] #cw-wall-preview-detail{
+        --wpd-bg:rgba(255,255,255,.96);
+        --wpd-bg-strong:rgba(246,248,252,.96);
+        --wpd-border:rgba(15,23,42,.16);
+        --wpd-border-strong:rgba(15,23,42,.26);
+        --wpd-text:#172033;
+        --wpd-muted:rgba(51,65,85,.78);
+        --wpd-chip:rgba(241,245,249,.86);
+        --wpd-shadow:0 24px 60px rgba(15,23,42,.18);
+      }
+      html[data-cw-theme="flat-light"] #cw-wall-preview-detail::before{
+        background:
+          linear-gradient(90deg,rgba(255,255,255,.98) 0%,rgba(255,255,255,.93) 50%,rgba(255,255,255,.78) 100%),
+          var(--wpd-backdrop,none);
+      }
+      @media (max-width:720px){
+        #cw-wall-preview-detail{width:calc(100vw - 18px);bottom:max(10px,env(safe-area-inset-bottom));border-radius:20px}
+        #cw-wall-preview-detail .wpd-inner{grid-template-columns:78px minmax(0,1fr);gap:12px;padding:12px}
+        #cw-wall-preview-detail .wpd-poster{width:78px;border-radius:12px}
+        #cw-wall-preview-detail .wpd-title{font-size:17px}
+        #cw-wall-preview-detail .wpd-side{grid-column:1 / -1;flex-direction:row;align-items:center;flex-wrap:wrap}
+        #cw-wall-preview-detail .wpd-score{width:48px;height:48px;font-size:14px;align-self:center}
+        #cw-wall-preview-detail .wpd-score-label{display:none}
+        #cw-wall-preview-detail .wpd-overview{-webkit-line-clamp:2;font-size:13px}
+        #cw-wall-preview-detail .wpd-link{flex:1;min-width:120px}
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensurePreviewDrawer() {
+    ensurePreviewDrawerStyles();
+    let drawer = document.getElementById("cw-wall-preview-detail");
+    if (drawer) return drawer;
+
+    drawer = document.createElement("aside");
+    drawer.id = "cw-wall-preview-detail";
+    drawer.setAttribute("aria-live", "polite");
+    drawer.setAttribute("aria-label", "Watchlist preview details");
+    document.body.appendChild(drawer);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closePreviewDrawer();
+    }, true);
+    return drawer;
+  }
+
+  function closePreviewDrawer() {
+    activePreviewDrawerKey = "";
+    document.getElementById("cw-wall-preview-detail")?.classList.remove("show");
+  }
+
+  function sourceMarkup(item) {
+    return providersForItem(item).slice(0, 6).map((name) => {
+      const src = providerLogoPath(name);
+      const label = providerLabel(name);
+      return src
+        ? `<span class="wpd-source" title="${esc(label)}"><img src="${src}" alt="${esc(label)} logo"></span>`
+        : `<span class="wpd-source" title="${esc(label)}">${esc(providerShortLabel(name).slice(0, 2))}</span>`;
+    }).join("");
+  }
+
+  function renderPreviewDrawer(item, meta = null, loading = false) {
+    const drawer = ensurePreviewDrawer();
+    const poster = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
+    const backdrop = backdropUrl(item, meta);
+    const releaseIso = mediaTypeOf(item) === "movie"
+      ? (meta?.detail?.release_date || meta?.release?.date || item?.release_date || "")
+      : (meta?.detail?.first_air_date || meta?.release?.date || item?.first_air_date || "");
+    const title = item?.title || meta?.title || "Unknown title";
+    const year = String(item?.year || meta?.year || yearFromIso(releaseIso) || "").trim();
+    const genres = (Array.isArray(meta?.genres) ? meta.genres : Array.isArray(meta?.detail?.genres) ? meta.detail.genres : Array.isArray(item?.genres) ? item.genres : []).slice(0, 3);
+    const chips = [
+      mediaLabelOf(item),
+      year,
+      runtimeLabel(meta?.runtime_minutes),
+      dateLabel(releaseIso),
+      meta?.certification || meta?.release?.cert || meta?.detail?.certification || "",
+      ...genres,
+    ].filter(Boolean);
+    const overview = meta?.overview || meta?.detail?.overview || meta?.detail?.tagline || (loading ? "Loading details..." : "No description available.");
+    const score = scoreValue(meta);
+    const scoreColor = score == null ? "#94a3b8" : score >= 70 ? "#49d391" : score >= 45 ? "#e4b85a" : "#e66b7a";
+    const tmdb = tmdbUrl(item, meta);
+    const imdb = imdbUrl(item, meta);
+
+    drawer.style.setProperty("--wpd-backdrop", backdrop ? `url("${backdrop}")` : "none");
+    drawer.innerHTML = `
+      <div class="wpd-inner">
+        <img class="wpd-poster" src="${poster}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+        <div class="wpd-main">
+          <div class="wpd-title-row">
+            <div class="wpd-title">${esc(title)}${year ? ` <span class="wpd-year">${esc(year)}</span>` : ""}</div>
+            <button type="button" class="wpd-close" aria-label="Close details"><span class="material-symbol">close</span></button>
+          </div>
+          <div class="wpd-meta">${chips.map((chip) => `<span class="wpd-chip">${esc(chip)}</span>`).join("")}</div>
+          <div class="wpd-overview">${esc(overview)}</div>
+          <div class="wpd-sources" aria-label="Providers">${sourceMarkup(item)}</div>
+        </div>
+        <div class="wpd-side">
+          ${score == null ? "" : `<div class="wpd-score" style="--wpd-score:${Math.max(0, Math.min(100, score)) * 3.6}deg;--wpd-score-color:${scoreColor}"><span>${score}%</span></div><div class="wpd-score-label">User Score</div>`}
+          ${tmdb ? `<a class="wpd-link" href="${tmdb}" target="_blank" rel="noopener">View on TMDb</a>` : ""}
+          ${imdb ? `<a class="wpd-link" href="${imdb}" target="_blank" rel="noopener">View on IMDb</a>` : ""}
+        </div>
+      </div>
+    `;
+    drawer.querySelector(".wpd-close")?.addEventListener("click", closePreviewDrawer, true);
+    drawer.classList.add("show");
+  }
+
+  async function openPreviewDrawer(item) {
+    if (!item) return;
+    const activeKey = previewItemKey(item);
+    activePreviewDrawerKey = activeKey;
+    renderPreviewDrawer(item, null, true);
+    const meta = await getPreviewMeta(item);
+    const drawer = document.getElementById("cw-wall-preview-detail");
+    if (!drawer?.classList.contains("show") || activePreviewDrawerKey !== activeKey) return;
+    renderPreviewDrawer(item, meta || null, false);
+  }
   const previewGate = async () => {
     const [wlEnabled, hasKey, uiAllowed] = await Promise.all([
       Promise.resolve(window.isWatchlistEnabledInPairs?.() ?? true).catch(() => false),
@@ -166,8 +603,8 @@
     const shortLabel = providerShortLabel(name);
     const shell = `display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);`;
     return src
-      ? `<span title="${label}" style="${shell}width:26px;height:26px;padding:0 6px;"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:14px;max-width:16px;object-fit:contain;filter:brightness(1.02)"></span>`
-      : `<span title="${label}" style="${shell}min-width:26px;height:26px;padding:0 8px;font-size:10px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${shortLabel}</span>`;
+      ? `<span title="${label}" style="${shell}width:28px;height:28px;padding:0 5px;"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:16px;max-width:20px;object-fit:contain;filter:brightness(1.05)"></span>`
+      : `<span title="${label}" style="${shell}min-width:28px;height:28px;padding:0 7px;font-size:11px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${shortLabel}</span>`;
   }
 
   function wallSignature(items, epoch) {
@@ -219,20 +656,27 @@
 
     const frag = document.createDocumentFragment();
     let renderedCount = 0;
+    const itemMap = new Map();
 
     for (const item of wallItems) {
       if (!item?.tmdb) continue;
       const link = document.createElement("a");
       const source = isDeleted(item) ? "deleted" : (item.status || "");
       const pill = pillFor(source);
+      const itemKey = previewItemKey(item);
+      itemMap.set(itemKey, item);
 
       link.className = "poster";
       link.href = `https://www.themoviedb.org/${isTV(item.type) ? "tv" : "movie"}/${item.tmdb}`;
       link.target = "_blank";
       link.rel = "noopener";
+      link.style.cursor = "pointer";
+      link.title = `Show details for ${item.title || "this item"}`;
+      link.setAttribute("aria-label", `Show details for ${item.title || "this item"}`);
       link.dataset.type = item.type || "";
       link.dataset.tmdb = String(item.tmdb);
       link.dataset.key = item.key || "";
+      link.dataset.previewKey = itemKey;
       link.dataset.source = source;
 
       const img = document.createElement("img");
@@ -243,7 +687,7 @@
       link.appendChild(img);
 
       const overlay = document.createElement("div");
-      const currentProviders = providersForItem(item).slice(0, 3);
+      const currentProviders = providersForItem(item).slice(0, 5);
       const synced = String(source).toLowerCase() === "both";
       overlay.className = "ovr";
       overlay.style.left = "8px";
@@ -279,6 +723,7 @@
     }
 
     window._lastSyncEpoch = lastSyncEpoch || null;
+    window.__cwWallPreviewItems = itemMap;
     row.replaceChildren(frag);
     row.classList.remove("hidden");
     msg.classList.add("hidden");

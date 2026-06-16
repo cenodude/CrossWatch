@@ -182,10 +182,40 @@
     }
   }
 
+  function updateConn(wrap, { name, connected, vip, detail, key }) {
+    const pill = wrap?.querySelector?.(".conn-pill");
+    if (!pill) return;
+    const provKey = up(key || name);
+    const text = pill.querySelector(".conn-text");
+    const dot = pill.querySelector(".dot");
+    const brand = pill.querySelector(".conn-brand");
+    const hasSlot = !!pill.querySelector(".conn-slot");
+
+    wrap.dataset.prov = provKey;
+    pill.dataset.prov = provKey;
+    pill.classList.toggle("ok", !!connected);
+    pill.classList.toggle("no", !connected);
+    pill.classList.toggle("has-vip", !!vip);
+    pill.ariaLabel = `${name} ${connected ? "connected" : "disconnected"}`;
+    if (detail) pill.title = detail;
+    else pill.removeAttribute("title");
+    if (text && text.textContent !== name) text.textContent = name;
+    if (dot) {
+      dot.classList.toggle("ok", !!connected);
+      dot.classList.toggle("no", !connected);
+    }
+    if (brand && vip && !hasSlot) {
+      brand.insertAdjacentHTML("beforeend", `<span class="conn-slot">${CROWN}</span>`);
+    } else if (brand && !vip && hasSlot) {
+      brand.querySelector(".conn-slot")?.remove();
+    }
+  }
+
   function makeConn({ name, connected, vip, detail, key }) {
     const wrap = document.createElement("div");
     const pill = document.createElement("div");
     wrap.className = "conn-item";
+    wrap.dataset.prov = up(key || name);
     pill.className = `conn-pill ${connected ? "ok" : "no"}${vip ? " has-vip" : ""}`;
     pill.dataset.prov = up(key || name);
     pill.role = "status";
@@ -198,7 +228,17 @@
     }" aria-hidden="true"></span>`;
     pill.querySelector(".conn-text").textContent = name;
     wrap.appendChild(pill);
+    updateConn(wrap, { name, connected, vip, detail, key });
     return wrap;
+  }
+
+  function placeConnItems(host, items) {
+    let anchor = null;
+    for (const item of items) {
+      const next = anchor ? anchor.nextSibling : host.firstChild;
+      if (next !== item) host.insertBefore(item, next);
+      anchor = item;
+    }
   }
 
   function renderProviders() {
@@ -210,7 +250,6 @@
 
     host.classList.add("vip-badges");
     if (btn && host.contains(btn)) host.removeChild(btn);
-    host.querySelectorAll(".conn-item").forEach((n) => n.remove());
 
     const keys = Object.keys(providers).filter((k) => isProviderConfigured(k, cfg)).sort();
     const none = !keys.length;
@@ -221,7 +260,15 @@
       return;
     }
 
-    keys
+    const wanted = new Set(keys.map(up));
+    const existingByKey = new Map();
+    host.querySelectorAll(".conn-item").forEach((node) => {
+      const provKey = up(node.dataset.prov);
+      if (!wanted.has(provKey)) node.remove();
+      else existingByKey.set(provKey, node);
+    });
+
+    const items = keys
       .map((key) => {
         const data = providers[key] || {};
         const name = providerLabel(key) || titleCase(key);
@@ -229,9 +276,13 @@
         const detail =
           [instancesDetail(data), meta.detail, usageDetail(data)].filter(Boolean).join("\n") ||
           `${name} ${data?.connected ? "connected" : "not connected"}`;
-        return makeConn({ name, connected: !!data.connected, vip: meta.vip, detail, key });
-      })
-      .forEach((el) => host.appendChild(el));
+        const provKey = up(key);
+        const existing = existingByKey.get(provKey);
+        const item = existing || makeConn({ name, connected: !!data.connected, vip: meta.vip, detail, key });
+        updateConn(item, { name, connected: !!data.connected, vip: meta.vip, detail, key });
+        return item;
+      });
+    placeConnItems(host, items);
   }
 
   function applyStatusProviders(providers) {

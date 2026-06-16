@@ -668,7 +668,8 @@ const actionCss=`#page-watchlist .wl-action-head{justify-content:space-between}#
       const brand = src
         ? `<span class="wl-provider-brand"><img src="${src}" alt="${esc(label)} logo"></span>`
         : `<span class="wl-provider-brand"><span class="wl-badge">${esc(shortLabel)}</span></span>`;
-      return `<div class="wl-provider-card ${count ? "is-live" : "is-idle"}" title="${esc(`${label}: ${count}/${visible || 0}`)}">
+      const providerClass = `provider-${String(p || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}`;
+      return `<div class="wl-provider-card ${providerClass} ${count ? "is-live" : "is-idle"}" data-provider="${esc(p)}" title="${esc(`${label}: ${count}/${visible || 0}`)}">
         <div class="wl-provider-top">${brand}<strong>${count}</strong></div>
         <div class="wl-provider-name">${esc(label)}</div>
         <div class="wl-provider-sub">${pct}% coverage${hint}</div>
