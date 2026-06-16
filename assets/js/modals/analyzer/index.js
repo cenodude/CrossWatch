@@ -203,6 +203,79 @@ function css() {
   .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23d5ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
   .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px rgba(122,107,255,.28)}
   @keyframes wait-spin{to{transform:rotate(360deg)}}
+  html[data-cw-theme="flat-dark"] .an-modal,
+  html[data-cw-theme="flat-dark"] .an-modal .cx-head,
+  html[data-cw-theme="flat-dark"] .an-modal .an-intro,
+  html[data-cw-theme="flat-dark"] .an-modal .an-intro-meta .mini,
+  html[data-cw-theme="flat-dark"] .an-modal .pill,
+  html[data-cw-theme="flat-dark"] .an-modal .close-btn,
+  html[data-cw-theme="flat-dark"] .an-modal .badge,
+  html[data-cw-theme="flat-dark"] .an-modal input[type=search],
+  html[data-cw-theme="flat-dark"] .an-modal .an-pairs,
+  html[data-cw-theme="flat-dark"] .an-modal .an-pair-chip,
+  html[data-cw-theme="flat-dark"] .an-modal .an-grid,
+  html[data-cw-theme="flat-dark"] .an-modal .an-issues,
+  html[data-cw-theme="flat-dark"] .an-modal .row.head,
+  html[data-cw-theme="flat-dark"] .an-modal .issue,
+  html[data-cw-theme="flat-dark"] .an-modal .an-collapse,
+  html[data-cw-theme="flat-dark"] .an-modal .ids-edit-row label,
+  html[data-cw-theme="flat-dark"] .an-modal .ids-edit-row input,
+  html[data-cw-theme="flat-dark"] .an-modal .an-footer,
+  html[data-cw-theme="flat-dark"] .an-modal .an-footer .count-stack > span,
+  html[data-cw-theme="flat-dark"] .an-modal .an-footer .prov-stat,
+  html[data-cw-theme="flat-dark"] .wait-card{background:#20242d!important;border-color:rgba(255,255,255,.14)!important;box-shadow:none!important;text-shadow:none!important;filter:none!important}
+  html[data-cw-theme="flat-dark"] .an-modal::before,
+  html[data-cw-theme="flat-dark"] .an-modal .an-split::after{content:none!important;display:none!important;background:none!important;box-shadow:none!important}
+  html[data-cw-theme="flat-dark"] .an-modal .pill:hover,
+  html[data-cw-theme="flat-dark"] .an-modal .close-btn:hover,
+  html[data-cw-theme="flat-dark"] .an-modal .an-pair-chip:hover,
+  html[data-cw-theme="flat-dark"] .an-modal .row:not(.head):hover{background:#2b313d!important;border-color:rgba(255,255,255,.19)!important;box-shadow:none!important;filter:none!important;transform:none!important}
+  html[data-cw-theme="flat-dark"] .unsync-dot,
+  html[data-cw-theme="flat-dark"] .blocked-ico,
+  html[data-cw-theme="flat-dark"] .wait-ring,
+  html[data-cw-theme="flat-dark"] .wait-text{box-shadow:none!important;filter:none!important;text-shadow:none!important}
+  html[data-cw-theme="flat-dark"] .an-modal #an-run,
+  html[data-cw-theme="flat-dark"] .an-modal .an-pair-chip.on{background:#252b3d!important;border-color:rgba(125,134,201,.45)!important;box-shadow:none!important}
+  html[data-cw-theme="flat-dark"] .an-modal .an-grid,
+  html[data-cw-theme="flat-dark"] .an-modal .an-issues{scrollbar-color:#3a414c #151821!important}
+  html[data-cw-theme="flat-dark"] .an-modal .an-grid::-webkit-scrollbar-track,
+  html[data-cw-theme="flat-dark"] .an-modal .an-issues::-webkit-scrollbar-track{background:#151821!important}
+  html[data-cw-theme="flat-dark"] .an-modal .an-grid::-webkit-scrollbar-thumb,
+  html[data-cw-theme="flat-dark"] .an-modal .an-issues::-webkit-scrollbar-thumb{background:#3a414c!important;border-color:#151821!important;box-shadow:none!important}
+  html[data-cw-theme="flat-light"] .an-modal,
+  html[data-cw-theme="flat-light"] .an-modal .cx-head,
+  html[data-cw-theme="flat-light"] .an-modal .an-intro,
+  html[data-cw-theme="flat-light"] .an-modal .an-intro-meta .mini,
+  html[data-cw-theme="flat-light"] .an-modal .pill,
+  html[data-cw-theme="flat-light"] .an-modal .close-btn,
+  html[data-cw-theme="flat-light"] .an-modal .badge,
+  html[data-cw-theme="flat-light"] .an-modal input[type=search],
+  html[data-cw-theme="flat-light"] .an-modal .an-pairs,
+  html[data-cw-theme="flat-light"] .an-modal .an-pair-chip,
+  html[data-cw-theme="flat-light"] .an-modal .an-grid,
+  html[data-cw-theme="flat-light"] .an-modal .an-issues,
+  html[data-cw-theme="flat-light"] .an-modal .row.head,
+  html[data-cw-theme="flat-light"] .an-modal .issue,
+  html[data-cw-theme="flat-light"] .an-modal .an-collapse,
+  html[data-cw-theme="flat-light"] .an-modal .ids-edit-row label,
+  html[data-cw-theme="flat-light"] .an-modal .ids-edit-row input,
+  html[data-cw-theme="flat-light"] .an-modal .an-footer,
+  html[data-cw-theme="flat-light"] .an-modal .an-footer .count-stack > span,
+  html[data-cw-theme="flat-light"] .an-modal .an-footer .prov-stat,
+  html[data-cw-theme="flat-light"] .wait-card{background:#ffffff!important;border-color:rgba(21,31,48,.14)!important;color:#172033!important}
+  html[data-cw-theme="flat-light"] .an-modal .pill:hover,
+  html[data-cw-theme="flat-light"] .an-modal .close-btn:hover,
+  html[data-cw-theme="flat-light"] .an-modal .an-pair-chip:hover,
+  html[data-cw-theme="flat-light"] .an-modal .row:not(.head):hover{background:#eef2f7!important;border-color:rgba(21,31,48,.20)!important}
+  html[data-cw-theme="flat-light"] .an-modal #an-run,
+  html[data-cw-theme="flat-light"] .an-modal .an-pair-chip.on{background:#e9ecf7!important;border-color:rgba(88,101,168,.34)!important;color:#172033!important;-webkit-text-fill-color:#172033!important}
+  html[data-cw-theme="flat-light"] .an-modal .an-pair-chip.on *{color:#172033!important;-webkit-text-fill-color:#172033!important;opacity:1!important}
+  html[data-cw-theme="flat-light"] .an-modal .an-grid,
+  html[data-cw-theme="flat-light"] .an-modal .an-issues{scrollbar-color:#c4ccd8 #eef2f7!important}
+  html[data-cw-theme="flat-light"] .an-modal .an-grid::-webkit-scrollbar-track,
+  html[data-cw-theme="flat-light"] .an-modal .an-issues::-webkit-scrollbar-track{background:#eef2f7!important}
+  html[data-cw-theme="flat-light"] .an-modal .an-grid::-webkit-scrollbar-thumb,
+  html[data-cw-theme="flat-light"] .an-modal .an-issues::-webkit-scrollbar-thumb{background:#c4ccd8!important;border-color:#eef2f7!important}
   @media (max-width:980px){
     .cx-modal-shell.analyzer-modal-shell{width:min(var(--cxModalMaxW,960px),calc(100vw - 24px))!important;max-width:min(var(--cxModalMaxW,960px),calc(100vw - 24px))!important;height:min(var(--cxModalMaxH,86vh),calc(100vh - 24px))!important}
     .an-modal .cx-head{grid-template-columns:1fr}
@@ -1587,5 +1660,3 @@ function renderPairs() {
   },
   unmount() {}
 };
-
-
