@@ -100,7 +100,12 @@ class AniListAuth(AuthProvider):
         )
 
     def capabilities(self) -> dict[str, Any]:
-        return {"features": {"watchlist": {"read": True, "write": True}}}
+        return {
+            "features": {
+                "watchlist": {"read": True, "write": True},
+                "ratings": {"read": True, "write": True},
+            }
+        }
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
         s = _read(cfg, instance_id)
