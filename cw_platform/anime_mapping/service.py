@@ -12,7 +12,7 @@ from .descriptors import descriptor_candidates_for_id, parse_descriptor
 from .storage import paths, query_edges, read_state
 
 ANIME_NATIVE_PROVIDERS = {"anilist"}
-DEFAULT_FEATURES = {"watchlist"}
+DEFAULT_FEATURES = {"watchlist", "ratings"}
 OUTPUT_KEYS = ("anilist", "mal", "anidb", "tmdb", "tvdb", "imdb")
 PAIR_FEATURE_OPTIONS_KEY = "_cw_pair_feature_options"
 _MEDIA_KIND_KEYS: dict[str, str] = {
@@ -78,13 +78,14 @@ def anime_mapping_pair_feature_options(
     anime_only_default: bool = False,
 ) -> dict[str, Any]:
     feature_name = str(feature or "").strip().lower()
-    base_enabled = mapping_enabled_for_feature(cfg, feature_name) and mapping_enabled_for_pair(cfg, *providers)
+    pair_enabled = mapping_enabled_for_pair(cfg, *providers)
+    base_enabled = mapping_enabled_for_feature(cfg, feature_name) and pair_enabled
     opts = _pair_feature_options(feature_cfg)
 
     if "use_anime_mapping" not in dict(feature_cfg or {}):
         opts["use_anime_mapping"] = bool(base_enabled)
     else:
-        opts["use_anime_mapping"] = bool(base_enabled and opts.get("use_anime_mapping"))
+        opts["use_anime_mapping"] = bool(pair_enabled and opts.get("use_anime_mapping"))
 
     if not opts["use_anime_mapping"]:
         opts["anime_only_sync"] = False
