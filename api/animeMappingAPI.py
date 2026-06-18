@@ -19,6 +19,10 @@ from cw_platform.config_base import load_config, save_config
 router = APIRouter(prefix="/api/anime-mapping", tags=["anime-mapping"])
 
 
+def _client_error_message(action: str) -> str:
+    return f"Anime Mapping {action} failed. Check the server logs for details."
+
+
 def _release_tag(payload: dict[str, Any] | None = None) -> str:
     cfg = load_config() or {}
     data: dict[str, Any] = payload if isinstance(payload, dict) else {}
@@ -125,7 +129,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
                     },
                 )
             except Exception as boot_e:
-                bootstrap_error = str(boot_e)
+                bootstrap_error = _client_error_message("bootstrap")
                 st["error"] = boot_e.__class__.__name__
                 st["message"] = bootstrap_error
                 log(
@@ -135,7 +139,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
                     extra={
                         "release_tag": str(block.get("release_tag") or "v3"),
                         "error_type": boot_e.__class__.__name__,
-                        "error": bootstrap_error,
+                        "error": str(boot_e),
                     },
                 )
         try:
@@ -147,7 +151,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
                 module="ANIME_MAPPING",
                 extra={"error_type": sched_e.__class__.__name__, "error": str(sched_e)},
             )
-            st["auto_update_error"] = str(sched_e)
+            st["auto_update_error"] = _client_error_message("auto-update refresh")
         st["auto_update_status"] = auto_update_status()
         return JSONResponse(
             {
@@ -165,7 +169,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
             module="ANIME_MAPPING",
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
-        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": str(e)}, status_code=500)
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("settings update")}, status_code=500)
 
 
 @router.post("/update")
@@ -183,7 +187,7 @@ def api_anime_mapping_update(payload: dict[str, Any] | None = Body(default=None)
             module="ANIME_MAPPING",
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
-        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": str(e)}, status_code=500)
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("manual update")}, status_code=500)
 
 
 @router.post("/rebuild-index")
@@ -211,4 +215,4 @@ def api_anime_mapping_rebuild_index(payload: dict[str, Any] | None = Body(defaul
             module="ANIME_MAPPING",
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
-        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": str(e)}, status_code=500)
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("index rebuild")}, status_code=500)

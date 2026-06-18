@@ -16,7 +16,15 @@ import requests
 
 from _logging import log
 
-from .storage import normalize_release_tag, paths, read_state, rebuild_sqlite_from_mappings, write_json_atomic, write_state
+from .storage import (
+    normalize_release_tag,
+    paths,
+    read_state,
+    rebuild_sqlite_from_mappings,
+    write_json_atomic,
+    write_state,
+    _safe_existing_path,
+)
 
 BASE_URL = "https://github.com/anibridge/anibridge-mappings/releases/download"
 UA = "CrossWatch AnimeMapping/1.0"
@@ -43,8 +51,10 @@ def _download_json(url: str, *, timeout: float = 30.0) -> tuple[dict[str, Any], 
 
 
 def _download_file_atomic(url: str, dest: Path, *, timeout: float = 120.0) -> dict[str, Any]:
+    dest = _safe_existing_path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{dest.name}.", suffix=".tmp", dir=str(dest.parent))
+    tmp_path = _safe_existing_path(Path(tmp_name), base=dest.parent)
     size = 0
     headers: dict[str, str] = {}
     try:
@@ -59,16 +69,16 @@ def _download_file_atomic(url: str, dest: Path, *, timeout: float = 120.0) -> di
                     size += len(chunk)
 
         # Validate before swapping.
-        with open(tmp_name, "r", encoding="utf-8") as f:
+        with open(tmp_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
             raise ValueError("AniBridge mappings payload must be a JSON object")
-        os.replace(tmp_name, dest)
+        os.replace(tmp_path, dest)
         return {"size": size, "headers": headers}
     finally:
         try:
-            if os.path.exists(tmp_name):
-                os.unlink(tmp_name)
+            if tmp_path.exists():
+                tmp_path.unlink()
         except Exception:
             pass
 
@@ -77,11 +87,14 @@ def status(*, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
     am = _cfg_block(cfg)
     tag = normalize_release_tag(am.get("release_tag"))
     pp = paths(tag)
+    stats_path = _safe_existing_path(pp["stats"])
+    mappings_path = _safe_existing_path(pp["mappings"])
+    db_path = _safe_existing_path(pp["db"])
     st = read_state(tag)
     stats = {}
-    if pp["stats"].exists():
+    if stats_path.exists():
         try:
-            stats = json.loads(pp["stats"].read_text("utf-8"))
+            stats = json.loads(stats_path.read_text("utf-8"))
         except Exception:
             stats = {}
     meta = stats.get("meta") if isinstance(stats, dict) else {}
@@ -101,9 +114,9 @@ def status(*, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
         except Exception:
             age_hours = None
 
-    mapping_size = pp["mappings"].stat().st_size if pp["mappings"].exists() else 0
-    db_size = pp["db"].stat().st_size if pp["db"].exists() else 0
-    installed = bool(pp["mappings"].exists() and pp["db"].exists())
+    mapping_size = mappings_path.stat().st_size if mappings_path.exists() else 0
+    db_size = db_path.stat().st_size if db_path.exists() else 0
+    installed = bool(mappings_path.exists() and db_path.exists())
     return {
         "ok": True,
         "enabled": bool(am.get("enabled", False)),
@@ -111,7 +124,7 @@ def status(*, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
         "provider": str(am.get("provider") or "anibridge"),
         "release_tag": tag,
         "installed": installed,
-        "index_ready": bool(pp["db"].exists() and st.get("index_ready", False)),
+        "index_ready": bool(db_path.exists() and st.get("index_ready", False)),
         "status": "installed" if installed else "missing",
         "dataset_generated_on": generated_on,
         "age_hours": age_hours,
@@ -137,7 +150,11 @@ def update(*, release_tag: str = "v3", force: bool = False) -> dict[str, Any]:
 def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str, Any]:
     tag = normalize_release_tag(release_tag)
     pp = paths(tag)
-    pp["root"].mkdir(parents=True, exist_ok=True)
+    root = _safe_existing_path(pp["root"])
+    mappings_path = _safe_existing_path(pp["mappings"])
+    db_path = _safe_existing_path(pp["db"])
+    stats_path = _safe_existing_path(pp["stats"])
+    root.mkdir(parents=True, exist_ok=True)
     now = int(time.time())
 
     stats_url = _asset_url(tag, "stats.json")
@@ -147,9 +164,9 @@ def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str,
     generated_on = str((meta or {}).get("generated_on") or "")
     previous = read_state(tag)
     previous_generated = str(previous.get("dataset_generated_on") or "")
-    changed = force or not pp["mappings"].exists() or not pp["db"].exists() or (generated_on and generated_on != previous_generated)
+    changed = force or not mappings_path.exists() or not db_path.exists() or (generated_on and generated_on != previous_generated)
 
-    write_json_atomic(pp["stats"], stats_data)
+    write_json_atomic(stats_path, stats_data)
     write_state(
         tag,
         {
@@ -175,7 +192,7 @@ def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str,
         return {"ok": True, "updated": False, **status(cfg={"anime_mapping": {"release_tag": tag, "enabled": True}})}
 
     log("download_started", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag})
-    dl = _download_file_atomic(mappings_url, pp["mappings"])
+    dl = _download_file_atomic(mappings_url, mappings_path)
     log(
         "download_finished",
         level="debug",

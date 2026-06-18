@@ -19,6 +19,7 @@ from .descriptors import Descriptor, parse_descriptor
 
 SCHEMA_VERSION = 1
 _RELEASE_TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_PROVIDER = "anibridge"
 
 
 def normalize_release_tag(value: Any = "v3") -> str:
@@ -26,23 +27,48 @@ def normalize_release_tag(value: Any = "v3") -> str:
     return tag if _RELEASE_TAG_RE.fullmatch(tag) else "v3"
 
 
+def _base_root() -> Path:
+    return (CONFIG_BASE() / ".cw_cache" / "anime_mapping" / _PROVIDER).resolve()
+
+
+def _safe_child(base: Path, *parts: str) -> Path:
+    root = base.resolve()
+    candidate = root.joinpath(*parts).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Invalid anime mapping path") from exc
+    return candidate
+
+
+def _safe_existing_path(path: Path, *, base: Path | None = None) -> Path:
+    root = (base or _base_root()).resolve()
+    candidate = Path(path).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Invalid anime mapping path") from exc
+    return candidate
+
+
 def cache_root(release_tag: str = "v3") -> Path:
     tag = normalize_release_tag(release_tag)
-    return CONFIG_BASE() / ".cw_cache" / "anime_mapping" / "anibridge" / tag
+    return _safe_child(_base_root(), tag)
 
 
 def paths(release_tag: str = "v3") -> dict[str, Path]:
     root = cache_root(release_tag)
     return {
         "root": root,
-        "stats": root / "stats.json",
-        "mappings": root / "mappings.min.json",
-        "db": root / "anime_mapping.sqlite",
-        "state": root / "state.json",
+        "stats": _safe_child(root, "stats.json"),
+        "mappings": _safe_child(root, "mappings.min.json"),
+        "db": _safe_child(root, "anime_mapping.sqlite"),
+        "state": _safe_child(root, "state.json"),
     }
 
 
 def read_json(path: Path) -> dict[str, Any]:
+    path = _safe_existing_path(path)
     try:
         data = json.loads(path.read_text("utf-8"))
         return data if isinstance(data, dict) else {}
@@ -51,6 +77,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    path = _safe_existing_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
@@ -78,6 +105,7 @@ def write_state(release_tag: str, patch: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
+    db_path = _safe_existing_path(db_path)
     con = sqlite3.connect(str(db_path))
     con.row_factory = sqlite3.Row
     return con
@@ -147,20 +175,21 @@ def rebuild_sqlite_from_mappings(
     db_path: Path | None = None,
 ) -> dict[str, Any]:
     pp = paths(release_tag)
-    mappings_path = mappings_path or pp["mappings"]
-    db_path = db_path or pp["db"]
+    root = pp["root"]
+    mappings_path = _safe_existing_path(mappings_path or pp["mappings"], base=root)
+    db_path = _safe_existing_path(db_path or pp["db"], base=root)
     if not mappings_path.exists():
-        raise FileNotFoundError(str(mappings_path))
+        raise FileNotFoundError("AniBridge mappings file is missing")
 
     data = json.loads(mappings_path.read_text("utf-8"))
     if not isinstance(data, dict):
         raise ValueError("AniBridge mappings payload must be a JSON object")
 
-    root = db_path.parent
-    root.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{db_path.name}.", suffix=".tmp", dir=str(root))
+    db_dir = db_path.parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{db_path.name}.", suffix=".tmp", dir=str(db_dir))
     os.close(fd)
-    tmp = Path(tmp_name)
+    tmp = _safe_existing_path(Path(tmp_name), base=db_dir)
     rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int]] = []
     edge_count = 0
     source_count = 0
@@ -228,7 +257,7 @@ def rebuild_sqlite_from_mappings(
 
 
 def query_edges(release_tag: str, provider: str, ident: str) -> list[dict[str, Any]]:
-    db = paths(release_tag)["db"]
+    db = _safe_existing_path(paths(release_tag)["db"])
     if not db.exists():
         return []
     p = str(provider or "").strip().lower()
