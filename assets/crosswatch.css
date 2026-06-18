@@ -797,7 +797,7 @@ to{left:6px}
 .cw-main-card-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(185,193,230,.74)}
 .cw-main-card-head-copy h2{margin:4px 0 0;font-size:24px;line-height:1.04;font-weight:850;letter-spacing:-.02em}
 .cw-main-card-head-copy p{margin:8px 0 0;color:rgba(185,193,230,.78);max-width:560px}
-.cw-main-card-head-side{margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;min-width:0;max-width:min(100%,880px)}
+.cw-main-card-head-side{margin-left:auto;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;justify-content:flex-end;gap:8px;min-width:0;max-width:min(100%,880px)}
 .cw-main-card-head-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
 #ops-card.card.cw-main-card{padding:18px 18px 22px}
 #placeholder-card.cw-main-card,#stats-card.card.cw-main-card{padding:18px}
@@ -1095,17 +1095,69 @@ html[data-cw-theme=flat-light] #placeholder-card .nav:hover{background:#e9edf5;b
 #page-settings #auth-providers>.section>.body>.section>.body{padding:0 18px;max-height:0;overflow:hidden}
 #page-settings #auth-providers>.section>.body>.section.open>.body{padding:12px 18px 18px;max-height:2200px;overflow:visible}
 #page-settings #auth-providers>.section>.head,#page-settings .cw-settings-pane-stack>.cw-settings-section:not(.cw-settings-provider-section)>.head,#page-settings .cw-settings-provider-section>.head{gap:12px}
+#page-settings #sec-anilist .anilist-mapping-rec{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:14px 16px;border:1px solid rgba(var(--anilist-rgb),.22);border-radius:14px;background:linear-gradient(135deg,rgba(var(--anilist-rgb),.12),rgba(34,197,94,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+#page-settings #sec-anilist .anilist-mapping-rec.hidden{display:none!important}
+#page-settings #sec-anilist .anilist-mapping-rec-copy{min-width:0;display:grid;gap:4px}
+#page-settings #sec-anilist .anilist-mapping-rec-kicker{font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(176,212,255,.88)}
+#page-settings #sec-anilist .anilist-mapping-rec-copy strong{display:block;color:var(--fg);font-size:15px;line-height:1.2}
+#page-settings #sec-anilist .anilist-mapping-rec-state{font-size:12px;font-weight:750;color:#ffe2a7}
+#page-settings #sec-anilist .anilist-mapping-rec-state.hidden{display:none!important}
+#page-settings #sec-anilist .anilist-mapping-rec-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+#page-settings #sec-anilist .anilist-mapping-rec.busy .btn{pointer-events:none;opacity:.72}
 @media(max-width:980px){#page-settings #auth-providers .section>.body .section>.head,#page-settings #auth-providers .section>.head,#page-settings #cw-settings-left.section>.head{padding-left:16px!important}
 #page-settings #auth-providers>.section>.body>.section.open>.body,#page-settings #auth-providers>.section>.body>.section>.head{padding-left:16px!important;padding-right:16px!important}
 }
-#page-settings #sec-meta #meta_provider_tiles{grid-template-columns:1fr;justify-content:stretch}
-#page-settings #sec-meta .cw-hub-tile.tmdb{width:100%;min-height:68px;border:1px solid rgba(255,255,255,.08);border-radius:18px;padding:16px 18px;display:flex;align-items:center;background:radial-gradient(680px 180px at 0 0,rgba(124,92,255,.08),transparent 52%),linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,.008));box-shadow:0 12px 24px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.02);transform:none}
-#page-settings #sec-meta .cw-hub-tile.tmdb:hover{border-color:rgba(255,255,255,.12);background:radial-gradient(680px 180px at 0 0,rgba(124,92,255,.1),transparent 52%),linear-gradient(180deg,rgba(255,255,255,.028),rgba(255,255,255,.010));box-shadow:0 14px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.03);transform:translateY(-1px)}
-#page-settings #sec-meta .cw-hub-tile.tmdb.active{border-color:rgba(124,92,255,.45);background:radial-gradient(720px 200px at 0 0,rgba(124,92,255,.14),transparent 54%),linear-gradient(180deg,rgba(255,255,255,.032),rgba(255,255,255,.012));box-shadow:0 0 0 1px rgba(124,92,255,.16),0 14px 30px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.03)}
-#page-settings #sec-meta .cw-hub-tile.tmdb::after,#page-settings #sec-meta .cw-hub-tile.tmdb::before{content:none;display:none}
-#page-settings #sec-meta .cw-hub-tile.tmdb .cw-meta-provider-row{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px}
-#page-settings #sec-meta .cw-hub-tile.tmdb .cw-hub-title{font-size:15px;font-weight:800;letter-spacing:-.01em}
-#page-settings #sec-meta .cw-hub-tile.tmdb #meta-tmdb-dot{margin-left:auto;flex:0 0 auto}
+@media(max-width:760px){#page-settings #sec-anilist .anilist-mapping-rec{align-items:stretch}#page-settings #sec-anilist .anilist-mapping-rec-actions{width:100%;justify-content:flex-start}#page-settings #sec-anilist .anilist-mapping-rec-actions .btn{flex:1 1 180px}}
+#page-settings #sec-meta .cw-meta-provider-stack{display:grid;gap:18px}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel{margin:0;border:1px solid rgba(255,255,255,.08);border-radius:18px;background:radial-gradient(680px 180px at 0 0,rgba(124,92,255,.08),transparent 52%),linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,.008));box-shadow:0 12px 24px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.02);overflow:hidden}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel>.head{min-height:68px;padding:16px 18px!important;align-items:center;background:0 0;gap:12px}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel>.head:hover{background:rgba(255,255,255,.025)}
+#page-settings #sec-meta .cw-meta-provider-head-copy{min-width:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel>.head strong{font-size:15px;line-height:1.2;letter-spacing:-.01em}
+#page-settings #sec-meta .cw-meta-provider-help{display:inline-flex;align-items:center;justify-content:center;color:rgba(185,193,230,.78);line-height:1;cursor:help}
+#page-settings #sec-meta .cw-meta-provider-help-icon{flex:0 0 auto;font-size:17px;line-height:1;color:rgba(185,193,230,.9)}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel>.head .auth-dot{margin-left:auto;flex:0 0 auto}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel>.body{padding:0 18px;max-height:0;overflow:hidden}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel.open>.body{padding:12px 18px 18px;max-height:2200px;overflow:visible}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel .cw-panel-head{margin-bottom:10px}
+#page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel>.body>.cw-subtiles{margin-top:0}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping]>.body>.auth-card{margin:8px 0 0}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-head{align-items:center}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .cw-panel-head-main{min-width:0}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-card{display:grid;gap:14px}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:14px;align-items:center}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-summary>div{min-width:0}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-summary strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-inline-toggle{margin-top:6px;justify-content:flex-start}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status{min-width:0;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(0,0,0,.14)}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status span{display:block;margin-bottom:5px;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--fg)}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-toggle{justify-self:end}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-actions{margin-top:0}
+#page-settings #sec-meta #anime_mapping_error:empty{display:none}
+#page-settings #sec-meta #anime_mapping_error:not(:empty){color:rgba(255,186,194,.96)}
+@media(max-width:900px){#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-summary{grid-template-columns:1fr}#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-toggle{justify-self:start}}
+@media(max-width:760px){#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status-grid{grid-template-columns:1fr}#page-settings #sec-meta .cw-meta-provider-head-copy{gap:6px}}
+html[data-cw-theme=flat-dark] #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .auth-card{background:#20242d!important;background-image:none!important;border-color:rgba(255,255,255,.13)!important;box-shadow:none!important;color:#eef1f6!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel{background:#171a22!important;background-image:none!important;border-color:rgba(255,255,255,.13)!important;box-shadow:none!important;color:#eef1f6!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status{background:#171a22!important;border-color:rgba(255,255,255,.14)!important;color:#dbe1eb!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-meta .cw-meta-provider-help{color:#aeb6c6!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-meta .cw-meta-provider-help-icon{color:#c6cde0!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-meta #anime_mapping_error:not(:empty){color:#ffd9df!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-anilist .anilist-mapping-rec{background:#20242d!important;background-image:none!important;border-color:rgba(2,169,255,.28)!important;box-shadow:none!important;color:#eef1f6!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-anilist .anilist-mapping-rec-kicker{color:#9dccff!important}
+html[data-cw-theme=flat-dark] #page-settings #sec-anilist .anilist-mapping-rec-state{color:#ffe2a7!important}
+html[data-cw-theme=flat-light] #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .auth-card{background:#fff!important;background-image:none!important;border-color:rgba(21,31,48,.14)!important;box-shadow:none!important;color:#172033!important}
+html[data-cw-theme=flat-light] #page-settings #sec-meta .cw-meta-provider-stack .cw-meta-provider-panel{background:#fff!important;background-image:none!important;border-color:rgba(21,31,48,.14)!important;box-shadow:none!important;color:#172033!important}
+html[data-cw-theme=flat-light] #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status{background:#f3f6fb!important;border-color:rgba(21,31,48,.14)!important;color:#344054!important}
+html[data-cw-theme=flat-light] #page-settings #sec-meta .cw-meta-provider-help{color:#667085!important}
+html[data-cw-theme=flat-light] #page-settings #sec-meta .cw-meta-provider-help-icon{color:#475467!important}
+html[data-cw-theme=flat-light] #page-settings #sec-meta #anime_mapping_error:not(:empty){color:#7f1d2d!important}
+html[data-cw-theme=flat-light] #page-settings #sec-anilist .anilist-mapping-rec{background:#f6fbff!important;background-image:none!important;border-color:rgba(2,114,174,.22)!important;box-shadow:none!important;color:#172033!important}
+html[data-cw-theme=flat-light] #page-settings #sec-anilist .anilist-mapping-rec-kicker{color:#075985!important}
+html[data-cw-theme=flat-light] #page-settings #sec-anilist .anilist-mapping-rec-state{color:#7a4a00!important}
 #conn-badges.vip-badges{--crown-size:21px!important;--rail-pad:4px!important;--vip-rail:calc(var(--crown-size) + (2*var(--rail-pad)))!important;gap:6px!important}
 #conn-badges .conn-pill{height:30px!important;padding:0 8px!important;gap:6px!important;border-radius:14px!important}
 #conn-badges .conn-text{font-size:12px!important;line-height:1!important;flex:1 1 auto!important;text-align:center!important}

@@ -282,7 +282,7 @@
       if (def.paths.some((path) => hasAnyConfigValue(pathGet(cfg, path), def.keys))) set.add(def.key);
     }
 
-    if ([cfg?.tmdb_sync, cfg?.tmdb, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
+    if ([cfg?.tmdb_sync, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
     if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
 
     const crosswatch = cfg?.crosswatch || cfg?.CrossWatch || {};

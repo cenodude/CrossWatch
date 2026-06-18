@@ -614,8 +614,10 @@ try {
 const META_SETTINGS_TAB_KEY = "cw.ui.metadata.tab.v1";
 const META_PROVIDER_STATE_KEY = "cw.ui.meta.provider.v1";
 const TMDB_META_SUBTAB_KEY = "cw.ui.meta.tmdb.sub.v1";
+const ANIME_MAPPING_PROVIDER = "anime-mapping";
 
 let activeMetaProvider = null;
+let animeMappingBusy = false;
 
 function cwMetaProviderUpdateChips() {
   try { cwMetaSettingsHubUpdate?.(); } catch {}
@@ -624,25 +626,15 @@ function cwMetaProviderUpdateChips() {
 function cwMetaProviderSelect(provider, opts = {}) {
   const want = provider ? String(provider).toLowerCase() : null;
 
-  const tilesHost = document.getElementById("meta_provider_tiles");
   const panelHost = document.getElementById("meta-provider-panel");
-  if (!tilesHost || !panelHost) return;
-
-  const tiles = tilesHost.querySelectorAll("[data-provider]");
-  tiles.forEach((btn) => {
-    const k = String(btn.dataset.provider || "").toLowerCase();
-    const on = !!(want && k === want);
-    btn.classList.toggle("active", on);
-    btn.setAttribute("aria-selected", on ? "true" : "false");
-  });
+  if (!panelHost) return;
 
   activeMetaProvider = want;
-  panelHost.classList.toggle("hidden", !want);
+  panelHost.classList.remove("hidden");
 
   const panels = panelHost.querySelectorAll(".cw-meta-provider-panel");
   panels.forEach((p) => {
-    const k = String(p.dataset.provider || "").toLowerCase();
-    p.classList.toggle("active", !!(want && k === want));
+    p.classList.add("active");
   });
 
   if (opts.persist !== false) {
@@ -677,22 +669,12 @@ function cwMetaProviderInit() {
 }
 
 function cwMetaProviderEnsure() {
-  const tilesHost = document.getElementById("meta_provider_tiles");
   const panelHost = document.getElementById("meta-provider-panel");
-  if (!tilesHost || !panelHost) return;
-
-  tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
-    if (btn.__cwMetaWired) return;
-    btn.addEventListener("click", () => {
-      const want = String(btn.dataset.provider || "").toLowerCase();
-      if (want && activeMetaProvider === want) cwMetaProviderSelect(null);
-      else cwMetaProviderSelect(btn.dataset.provider || null);
-    });
-    btn.__cwMetaWired = true;
-  });
+  if (!panelHost) return;
 
   if (!panelHost.dataset.__cwMetaBuilt) {
     try { cwBuildTmdbPanel(); } catch {}
+    try { cwBuildAnimeMappingPanel(); } catch {}
     panelHost.dataset.__cwMetaBuilt = "1";
   }
 
@@ -706,6 +688,255 @@ function cwMetaProviderEnsure() {
 
   try { cwMetaProviderInit(); } catch {}
   try { cwMetaProviderUpdateChips(); } catch {}
+  try { cwAnimeMappingRefreshStatus(); } catch {}
+}
+
+function _cwSetText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = String(value ?? "");
+}
+
+function _cwSetChecked(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.checked = !!value;
+}
+
+function _cwFormatUtc(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "-";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toISOString().replace("T", " ").slice(0, 16) + " UTC";
+}
+
+function _cwAnimeMappingUseForLabel() {
+  const cfg = window._cfgCache || {};
+  const block = cfg.anime_mapping || {};
+  const raw = Array.isArray(block.use_for_pairs) ? block.use_for_pairs : ["anilist"];
+  const vals = raw.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean);
+  if (!vals.length || vals.includes("anilist")) return "AniList pairs";
+  return vals.map((x) => x.toUpperCase()).join(", ");
+}
+
+function _cwAnimeMappingSetBusy(on, label = "") {
+  animeMappingBusy = !!on;
+  ["anime_mapping_enabled", "anime_mapping_auto_update", "btn-anime-mapping-update", "btn-anime-mapping-rebuild"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = !!on;
+  });
+  if (on) {
+    _cwSetText("anime_mapping_dataset", label || "Updating");
+  }
+}
+
+function cwAnimeMappingRenderStatus(st = {}) {
+  const cfg = window._cfgCache || {};
+  const block = cfg.anime_mapping || {};
+  const err = String(st.error || st.message || "").trim();
+  const installed = !!st.installed;
+  const ready = !!st.index_ready;
+  const enabled = st.enabled !== undefined ? !!st.enabled : !!block.enabled;
+  const autoUpdate = st.auto_update !== undefined ? !!st.auto_update : block.auto_update !== false;
+  const dataset = err ? "Error" : (animeMappingBusy ? "Updating" : (installed ? "Installed" : "Missing"));
+  const index = ready ? "Ready" : "Missing";
+
+  _cwSetChecked("anime_mapping_enabled", enabled);
+  _cwSetChecked("anime_mapping_auto_update", autoUpdate);
+  _cwSetText("anime_mapping_used_for", _cwAnimeMappingUseForLabel());
+  _cwSetText("anime_mapping_auto_update_state", autoUpdate ? "Daily" : "Manual");
+  _cwSetText("anime_mapping_dataset", dataset);
+  _cwSetText("anime_mapping_generated", _cwFormatUtc(st.dataset_generated_on));
+  _cwSetText("anime_mapping_index", index);
+  _cwSetText("anime_mapping_counts", installed ? `${Number(st.source_count || 0).toLocaleString()} sources | ${Number(st.edge_count || 0).toLocaleString()} edges` : "-");
+  _cwSetText("anime_mapping_error", err);
+
+  const dot = document.getElementById("anime-mapping-dot");
+  if (dot) {
+    dot.classList.toggle("on", !!(enabled && installed && ready && !err));
+    dot.classList.toggle("off", !!(!enabled || !installed || !ready || err));
+  }
+}
+
+async function cwAnimeMappingRefreshStatus() {
+  try {
+    const r = await fetch("/api/anime-mapping/status", { cache: "no-store", credentials: "same-origin" });
+    if (!r.ok) throw new Error(`GET /api/anime-mapping/status ${r.status}`);
+    const st = await r.json();
+    window.__animeMappingStatus = st || {};
+    cwAnimeMappingRenderStatus(st || {});
+    return st;
+  } catch (e) {
+    cwAnimeMappingRenderStatus({ error: e?.message || "Status failed" });
+    return null;
+  }
+}
+
+async function cwAnimeMappingSaveSettings() {
+  const enabled = !!document.getElementById("anime_mapping_enabled")?.checked;
+  const autoUpdate = !!document.getElementById("anime_mapping_auto_update")?.checked;
+  const st0 = window.__animeMappingStatus || {};
+  const needsBootstrap = enabled && !(st0.installed && st0.index_ready);
+  _cwAnimeMappingSetBusy(true, needsBootstrap ? "Downloading" : "Saving");
+  try {
+    const r = await fetch("/api/anime-mapping/settings", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled,
+        auto_update: autoUpdate,
+        provider: "anibridge",
+        use_for_pairs: ["anilist"],
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `Settings failed (${r.status})`);
+    window._cfgCache ||= {};
+    window._cfgCache.anime_mapping = data.anime_mapping || {
+      ...(window._cfgCache.anime_mapping || {}),
+      enabled,
+      auto_update: autoUpdate,
+      provider: "anibridge",
+      use_for_pairs: ["anilist"],
+    };
+    if (data.status) window.__animeMappingStatus = data.status;
+    cwAnimeMappingRenderStatus(data.status || window.__animeMappingStatus || {});
+    if (data.bootstrap_error) throw new Error(data.bootstrap_error);
+    try { window.CW?.DOM?.showToast?.(needsBootstrap ? "Anime mapping enabled and downloaded" : "Anime ID Mapping saved", true); } catch {}
+  } catch (e) {
+    cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || "Save failed" });
+    try { window.CW?.DOM?.showToast?.(e?.message || "Anime ID Mapping save failed", false); } catch {}
+  } finally {
+    _cwAnimeMappingSetBusy(false);
+    try { await cwAnimeMappingRefreshStatus(); } catch {}
+  }
+}
+
+async function cwAnimeMappingRun(action) {
+  const update = action === "update";
+  _cwAnimeMappingSetBusy(true, update ? "Updating" : "Rebuilding");
+  try {
+    const r = await fetch(update ? "/api/anime-mapping/update" : "/api/anime-mapping/rebuild-index", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update ? { force: false } : {}),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `${update ? "Update" : "Rebuild"} failed (${r.status})`);
+    cwAnimeMappingRenderStatus(data.status || data || {});
+    try { window.CW?.DOM?.showToast?.(update ? "Anime mapping updated" : "Anime mapping index rebuilt", true); } catch {}
+  } catch (e) {
+    cwAnimeMappingRenderStatus({ ...(window.__animeMappingStatus || {}), error: e?.message || "Action failed" });
+    try { window.CW?.DOM?.showToast?.(e?.message || "Anime mapping action failed", false); } catch {}
+  } finally {
+    _cwAnimeMappingSetBusy(false);
+    try { await cwAnimeMappingRefreshStatus(); } catch {}
+  }
+}
+
+function cwBuildAnimeMappingPanel() {
+  const panelHost = document.getElementById("meta-provider-panel");
+  if (!panelHost) return;
+  if (panelHost.querySelector(`.cw-meta-provider-panel[data-provider="${ANIME_MAPPING_PROVIDER}"]`)) return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "section cw-settings-section cw-settings-provider-section cw-meta-provider-panel active";
+  wrap.id = "sec-meta-anime-mapping";
+  wrap.dataset.provider = ANIME_MAPPING_PROVIDER;
+  wrap.innerHTML = `
+    <div class="head" data-toggle-section="sec-meta-anime-mapping">
+      <span class="chev"></span>
+      <div class="cw-meta-provider-head-copy">
+        <strong>Anime ID Mapping</strong>
+        <span class="cw-meta-provider-help" title="Only needed for anime-specific providers such as AniList." aria-label="Only needed for anime-specific providers such as AniList.">
+          <span class="material-symbols-rounded cw-meta-provider-help-icon" aria-hidden="true">info</span>
+        </span>
+      </div>
+      <span class="auth-dot" id="anime-mapping-dot" aria-hidden="true"></span>
+    </div>
+    <div class="body">
+    <div class="cw-panel-head anime-mapping-head">
+      <div class="cw-panel-head-main">
+        <div class="cw-panel-title">Anime ID Mapping</div>
+        <div class="muted">Local anime ID index for AniList watchlist pairs.</div>
+      </div>
+      <label class="cx-toggle anime-mapping-toggle">
+        <input type="checkbox" id="anime_mapping_enabled">
+        <span class="cx-toggle-ui" aria-hidden="true"></span>
+        <span class="cx-toggle-text">Enable</span>
+        <span class="cx-toggle-state" aria-hidden="true"></span>
+      </label>
+    </div>
+    <div class="auth-card anime-mapping-card">
+      <div class="anime-mapping-summary">
+        <div>
+          <div class="muted">Used for</div>
+          <strong id="anime_mapping_used_for">AniList pairs</strong>
+        </div>
+        <div>
+          <div class="muted">Auto-update</div>
+          <label class="cx-toggle anime-mapping-inline-toggle">
+            <input type="checkbox" id="anime_mapping_auto_update">
+            <span class="cx-toggle-ui" aria-hidden="true"></span>
+            <span class="cx-toggle-text" id="anime_mapping_auto_update_state">Daily</span>
+            <span class="cx-toggle-state" aria-hidden="true"></span>
+          </label>
+        </div>
+      </div>
+      <div class="anime-mapping-status-grid">
+        <div class="anime-mapping-status">
+          <span>Dataset</span>
+          <strong id="anime_mapping_dataset">-</strong>
+        </div>
+        <div class="anime-mapping-status">
+          <span>Index</span>
+          <strong id="anime_mapping_index">-</strong>
+        </div>
+        <div class="anime-mapping-status">
+          <span>Generated</span>
+          <strong class="mono" id="anime_mapping_generated">-</strong>
+        </div>
+        <div class="anime-mapping-status">
+          <span>Size</span>
+          <strong id="anime_mapping_counts">-</strong>
+        </div>
+      </div>
+      <div class="auth-card-notes" id="anime_mapping_error"></div>
+      <div class="cw-settings-inline-action anime-mapping-actions">
+        <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
+        <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
+      </div>
+    </div>
+    </div>
+  `;
+
+  panelHost.appendChild(wrap);
+
+  const enabled = document.getElementById("anime_mapping_enabled");
+  const autoUpdate = document.getElementById("anime_mapping_auto_update");
+  const btnUpdate = document.getElementById("btn-anime-mapping-update");
+  const btnRebuild = document.getElementById("btn-anime-mapping-rebuild");
+  if (enabled && !enabled.__cwAnimeWired) {
+    enabled.addEventListener("change", () => cwAnimeMappingSaveSettings());
+    enabled.__cwAnimeWired = true;
+  }
+  if (autoUpdate && !autoUpdate.__cwAnimeWired) {
+    autoUpdate.addEventListener("change", () => cwAnimeMappingSaveSettings());
+    autoUpdate.__cwAnimeWired = true;
+  }
+  if (btnUpdate && !btnUpdate.__cwAnimeWired) {
+    btnUpdate.addEventListener("click", () => cwAnimeMappingRun("update"));
+    btnUpdate.__cwAnimeWired = true;
+  }
+  if (btnRebuild && !btnRebuild.__cwAnimeWired) {
+    btnRebuild.addEventListener("click", () => cwAnimeMappingRun("rebuild"));
+    btnRebuild.__cwAnimeWired = true;
+  }
+
+  try { cwAnimeMappingRenderStatus(window.__animeMappingStatus || {}); } catch {}
 }
 
 function cwBuildTmdbPanel() {
@@ -715,8 +946,26 @@ function cwBuildTmdbPanel() {
   if (panelHost.querySelector('.cw-meta-provider-panel[data-provider="tmdb"]')) return;
 
   const wrap = document.createElement("div");
-  wrap.className = "cw-meta-provider-panel";
+  wrap.className = "section cw-settings-section cw-settings-provider-section cw-meta-provider-panel active";
+  wrap.id = "sec-meta-tmdb";
   wrap.dataset.provider = "tmdb";
+
+  const sectionHead = document.createElement("div");
+  sectionHead.className = "head";
+  sectionHead.dataset.toggleSection = "sec-meta-tmdb";
+  sectionHead.innerHTML = `
+    <span class="chev"></span>
+    <div class="cw-meta-provider-head-copy">
+      <strong>TMDb</strong>
+      <span class="cw-meta-provider-help" title="Highly recommended for matching, metadata and images." aria-label="Highly recommended for matching, metadata and images.">
+        <span class="material-symbols-rounded cw-meta-provider-help-icon" aria-hidden="true">info</span>
+      </span>
+    </div>
+    <span class="auth-dot" id="meta-tmdb-dot" aria-hidden="true"></span>
+  `;
+
+  const sectionBody = document.createElement("div");
+  sectionBody.className = "body";
 
   const head = document.createElement("div");
   head.className = "cw-panel-head";
@@ -833,9 +1082,11 @@ function cwBuildTmdbPanel() {
   subPanels.appendChild(pApi);
   subPanels.appendChild(pAdv);
 
-  wrap.appendChild(head);
-  wrap.appendChild(subTiles);
-  wrap.appendChild(subPanels);
+  sectionBody.appendChild(head);
+  sectionBody.appendChild(subTiles);
+  sectionBody.appendChild(subPanels);
+  wrap.appendChild(sectionHead);
+  wrap.appendChild(sectionBody);
 
   panelHost.appendChild(wrap);
 
@@ -874,11 +1125,11 @@ function cwMetaSettingsSelect(tab, opts = {}) {
     try { localStorage.setItem(META_SETTINGS_TAB_KEY, want); } catch {}
   }
   try { cwMetaSettingsHubUpdate(); } catch {}
+  try { cwAnimeMappingRefreshStatus(); } catch {}
 }
 
 function cwMetaSettingsHubUpdate() {
   const chip = document.getElementById("hub_tmdb_key");
-  if (!chip) return;
 
   const cfg = window._cfgCache || {};
   const cfgKey = String(cfg?.tmdb?.api_key || "").trim();
@@ -899,7 +1150,17 @@ function cwMetaSettingsHubUpdate() {
   }
 
   const hasKeyNow = uiHasKey || (!uiTouched && cfgHasKey);
-  chip.textContent = `API key: ${hasKeyNow ? "set" : "missing"}`;
+  if (chip) chip.textContent = `API key: ${hasKeyNow ? "set" : "missing"}`;
+
+  const dot = document.getElementById("meta-tmdb-dot");
+  if (dot) {
+    dot.classList.toggle("on", hasKeyNow);
+    dot.title = hasKeyNow ? "Configured" : "Not configured";
+    dot.setAttribute("aria-label", dot.title);
+    dot.closest?.('.cw-meta-provider-panel[data-provider="tmdb"]')?.classList?.toggle("is-configured", hasKeyNow);
+  }
+
+  try { window.syncMetadataProviderDot?.(); } catch {}
 }
 
 function cwMetaSettingsHubInit() {
@@ -1423,6 +1684,11 @@ function setTraktSuccess(show) {
     cwMetaProviderSubSelect,
     cwMetaProviderInit,
     cwMetaProviderEnsure,
+    cwBuildAnimeMappingPanel,
+    cwAnimeMappingRenderStatus,
+    cwAnimeMappingRefreshStatus,
+    cwAnimeMappingSaveSettings,
+    cwAnimeMappingRun,
     cwBuildTmdbPanel,
     cwMetaSettingsSelect,
     cwMetaSettingsHubUpdate,
