@@ -40,6 +40,34 @@ function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
+const isAniList=(v)=>same(v,"anilist");
+function hasAniList(state){return isAniList(state?.src)||isAniList(state?.dst)}
+function hasOwn(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,key)}
+function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
+function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
+function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
+function normalizeAnimeFeatureOptions(state, feature){
+  const key=String(feature||"watchlist").trim().toLowerCase()||"watchlist";
+  const opts=Object.assign({}, state?.options?.[key]||{});
+  if(!hasAniList(state)){
+    opts.use_anime_mapping=false;
+    opts.anime_only_sync=false;
+    state.options[key]=opts;
+    return opts;
+  }
+  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=globalAnimeMappingEnabled(state);
+  opts.use_anime_mapping=!!opts.use_anime_mapping;
+  const canOnly=anilistCanReceive(state);
+  if(!opts.use_anime_mapping || !canOnly){
+    opts.anime_only_sync=false;
+  }else if(!hasOwn(opts,"anime_only_sync")){
+    opts.anime_only_sync=true;
+  }else{
+    opts.anime_only_sync=!!opts.anime_only_sync;
+  }
+  state.options[key]=opts;
+  return opts;
+}
 
 const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]}};
 function ratingsDisabledFor(state){
@@ -546,8 +574,8 @@ function renderProviderSelects(state){
   };
   bindCardTrigger(ID("cx-src-trigger"),srcSel);
   bindCardTrigger(ID("cx-dst-trigger"),dstSel);
-  srcSel.onchange=()=>{state.src=srcSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
-  dstSel.onchange=()=>{state.dst=dstSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderWarnings(state)};
+  srcSel.onchange=()=>{state.src=srcSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state);renderWarnings(state)};
+  dstSel.onchange=()=>{state.dst=dstSel.value||null;upd();renderInstanceSelects(state);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state);renderWarnings(state)};
   upd();renderInstanceSelects(state);ID("cx-mode-two").checked=state.mode==="two-way";ID("cx-mode-one").checked=!ID("cx-mode-two").checked;ID("cx-enabled").checked=!!state.enabled;
 }
 
@@ -614,6 +642,7 @@ function applySubDisable(feature){
   const map={
     watchlist: [
       "#cx-wl-add","#cx-wl-remove",
+      "#cx-wl-anime-map","#cx-wl-anime-only",
       "#plx-wl-pms","#plx-wl-limit","#plx-wl-delay","#plx-wl-title","#plx-wl-meta","#plx-wl-guid",
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
@@ -908,12 +937,16 @@ function renderFeaturePanel(state){
   }
 
   if (state.feature === "watchlist") {
-    const wl = getOpts(state, "watchlist");
+    getOpts(state, "watchlist");
+    const wl = normalizeAnimeFeatureOptions(state, "watchlist");
     const emw = state.emby?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
     const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
     const pmw = state.pairProviders?.publicmetadb || {};
     const pmwName = (pmw.watchlist_name || state.cfgRaw?.publicmetadb?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
+    const showAnime = hasAniList(state);
+    const canAnimeOnly = anilistCanReceive(state);
+    const animeOnlyDisabled = !wl.use_anime_mapping || !canAnimeOnly;
 
     left.innerHTML = `
       <div class="panel-title">Watchlist | Basics</div>
@@ -925,6 +958,20 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="cx-wl-add">Add</label><label class="switch"><input id="cx-wl-add" type="checkbox" ${wl.add?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-wl-remove">Remove</label><label class="switch"><input id="cx-wl-remove" type="checkbox" ${wl.remove?"checked":""}><span class="slider"></span></label></div>
       </div>
+
+      ${showAnime?`
+        <div class="panel-title small" style="margin-top:6px">AniList options</div>
+        <div class="grid2 compact">
+          <div class="opt-row">
+            <label for="cx-wl-anime-map">Use Anime ID Mapping</label>
+            <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""}><span class="slider"></span></label>
+          </div>
+          <div class="opt-row ${animeOnlyDisabled?"muted":""}">
+            <label for="cx-wl-anime-only">Anime-only sync</label>
+            <label class="switch"><input id="cx-wl-anime-only" type="checkbox" ${wl.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
+          </div>
+        </div>
+      `:""}
 
       ${hasJelly(state)?`
         <div class="panel-title small" style="margin-top:6px">Jellyfin specifics</div>
@@ -1614,6 +1661,17 @@ function bindChangeHandlers(state,root){
       applySubDisable("watchlist");
     }
 
+    if (id === "cx-wl-anime-map") {
+      const mapOn = !!ID("cx-wl-anime-map")?.checked;
+      const only = ID("cx-wl-anime-only");
+      if (only) {
+        only.disabled = !mapOn || !anilistCanReceive(state);
+        if (!mapOn || !anilistCanReceive(state)) only.checked = false;
+        else if (mapOn) only.checked = true;
+        only.closest?.(".opt-row")?.classList.toggle("muted", only.disabled);
+      }
+    }
+
     if (id === "cx-rt-enable") {
       applySubDisable("ratings");
     }
@@ -1640,11 +1698,17 @@ function bindChangeHandlers(state,root){
 
     if(id.startsWith("cx-wl-")){
       const prev=state.options.watchlist||{};
+      const mapEl=ID("cx-wl-anime-map");
+      const onlyEl=ID("cx-wl-anime-only");
+      const useMap=mapEl ? !!mapEl.checked : !!prev.use_anime_mapping;
       state.options.watchlist=Object.assign({},prev,{
         enable:!!ID("cx-wl-enable")?.checked,
         add:!!ID("cx-wl-add")?.checked,
-        remove:!!ID("cx-wl-remove")?.checked
+        remove:!!ID("cx-wl-remove")?.checked,
+        use_anime_mapping:useMap,
+        anime_only_sync:useMap && onlyEl ? !!onlyEl.checked : false
       });
+      normalizeAnimeFeatureOptions(state, "watchlist");
       state.visited.add("watchlist");
     }
 
@@ -1801,6 +1865,7 @@ async function saveConfigBits(state){
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
+    const shouldEnableAnimeMapping = hasAniList(state) && !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping;
 
     if(ID("gl-dry")){
       const dropOn=!!ID("gl-drop")?.checked;
@@ -2028,8 +2093,24 @@ async function saveConfigBits(state){
       cfg.mdblist = md;
     }
 
+    if(shouldEnableAnimeMapping){
+      const am=Object.assign({provider:"anibridge",release_tag:"v3"}, cfg.anime_mapping||{});
+      am.enabled=true;
+      cfg.anime_mapping=am;
+    }
+
     const res=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
     if(!res.ok)throw new Error("POST /api/config "+res.status);
+    if(shouldEnableAnimeMapping){
+      const am=cfg.anime_mapping||{};
+      try{
+        await fetch("/api/anime-mapping/settings",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({enabled:true,provider:am.provider||"anibridge",release_tag:am.release_tag||"v3"})
+        });
+      }catch{}
+    }
   }catch(e){console.warn("[cx] saving config bits failed",e)}
 }
 
@@ -2041,6 +2122,18 @@ function buildPayload(state,wrap){
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign(defaultFor(k), (state.options||{})[k]||{});
   const watchlist=get("watchlist");
+  const animePair=isAniList(src)||isAniList(dst);
+  const animeCanReceive=isAniList(dst)||(animePair&&modeTwo);
+  if(animePair){
+    if(!hasOwn(watchlist,"use_anime_mapping")) watchlist.use_anime_mapping=globalAnimeMappingEnabled(state);
+    watchlist.use_anime_mapping=!!watchlist.use_anime_mapping;
+    if(!watchlist.use_anime_mapping||!animeCanReceive) watchlist.anime_only_sync=false;
+    else if(!hasOwn(watchlist,"anime_only_sync")) watchlist.anime_only_sync=true;
+    else watchlist.anime_only_sync=!!watchlist.anime_only_sync;
+  }else{
+    watchlist.use_anime_mapping=false;
+    watchlist.anime_only_sync=false;
+  }
   const ratings=get("ratings");
   const progress=get("progress");
   const dis=ratingsDisabledFor({src,dst});
@@ -2153,7 +2246,7 @@ export default{
     restartFlowAnimation(ID("cx-mode-two")?.checked ? "two" : "one");
 
     ID("cx-enabled").addEventListener("change",()=>updateFlow(state,true));
-    QA('input[name="cx-mode"]').forEach(el=>el.addEventListener("change",()=>updateFlow(state,true)));
+    QA('input[name="cx-mode"]').forEach(el=>el.addEventListener("change",()=>{state.mode=ID("cx-mode-two")?.checked?"two-way":"one-way";updateFlow(state,true);renderFeaturePanel(state)}));
     bindChangeHandlers(state,wrap);
     queueMicrotask(() => applyHelpIcons(wrap, { QA }));
     ensureInlineFoot(hostEl);

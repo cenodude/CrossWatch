@@ -14,6 +14,7 @@ from pathlib import Path
 
 from cw_platform.id_map import minimal as id_minimal
 from cw_platform.anime_mapping import AnimeMappingService
+from cw_platform.anime_mapping.service import PAIR_FEATURE_OPTIONS_KEY, runtime_pair_feature_options
 
 from ._common import read_json, state_file, write_json
 from .._log import log as cw_log
@@ -165,10 +166,42 @@ def _to_int(v: Any) -> int | None:
 def _anime_mapping_enabled(adapter: Any) -> bool:
     try:
         cfg = getattr(adapter, "raw_cfg", None)
+        has_runtime_opts = isinstance(cfg, Mapping) and PAIR_FEATURE_OPTIONS_KEY in cfg
+        opts = runtime_pair_feature_options(cfg if isinstance(cfg, Mapping) else {}, "watchlist")
+        if has_runtime_opts and opts.get("use_anime_mapping") is False:
+            return False
         block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else {}
         if not isinstance(block, Mapping):
             return False
         return bool(block.get("enabled", False))
+    except Exception:
+        return False
+
+
+def _anime_mapping_ready(adapter: Any) -> bool:
+    if not _anime_mapping_enabled(adapter):
+        return False
+    try:
+        svc = AnimeMappingService(getattr(adapter, "raw_cfg", None))
+        ready = bool(svc.ready())
+        if not ready and not getattr(adapter, "_cw_anime_mapping_unavailable_logged", False):
+            setattr(adapter, "_cw_anime_mapping_unavailable_logged", True)
+            _warn("anime_mapping_unavailable", fallback="title_resolve")
+        return ready
+    except Exception as e:
+        if not getattr(adapter, "_cw_anime_mapping_unavailable_logged", False):
+            setattr(adapter, "_cw_anime_mapping_unavailable_logged", True)
+            _warn("anime_mapping_unavailable", fallback="title_resolve", error_type=e.__class__.__name__)
+        return False
+
+
+def _anime_only_sync(adapter: Any) -> bool:
+    try:
+        cfg = getattr(adapter, "raw_cfg", None)
+        if not (isinstance(cfg, Mapping) and PAIR_FEATURE_OPTIONS_KEY in cfg):
+            return False
+        opts = runtime_pair_feature_options(cfg if isinstance(cfg, Mapping) else {}, "watchlist")
+        return bool(opts.get("anime_only_sync", False) and _anime_mapping_ready(adapter))
     except Exception:
         return False
 
@@ -181,12 +214,10 @@ def _has_anime_mapping_detail(item: Mapping[str, Any]) -> bool:
 
 def _anime_enrich(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
     out = dict(item or {})
-    if not _anime_mapping_enabled(adapter):
-        return out
     try:
-        svc = AnimeMappingService(getattr(adapter, "raw_cfg", None))
-        if not svc.ready():
+        if not _anime_mapping_ready(adapter):
             return out
+        svc = AnimeMappingService(getattr(adapter, "raw_cfg", None))
         enriched = svc.enrich_item(out)
         if isinstance(enriched, dict):
             ids0 = out.get("ids") if isinstance(out.get("ids"), Mapping) else {}
@@ -305,6 +336,15 @@ def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None
                     source="anime_mapping" if mapped else "item_ids",
                 )
                 return int(aid), meta
+
+    if _anime_only_sync(adapter):
+        _dbg(
+            "resolve_miss",
+            title=str(item.get("title") or ""),
+            year=_to_int(item.get("year")),
+            reason="anime_only_unmapped",
+        )
+        return None, {"anime_only_unmapped": True}
 
     title = str(item.get("title") or "").strip()
     if not title:
@@ -596,11 +636,12 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
             mid, meta = _resolve_media_id(adapter, m)
 
         if not mid:
+            skip_reason = "anime_only_unmapped" if meta.get("anime_only_unmapped") else "not_anime_or_no_match"
 
             if src_key:
                 ent2: dict[str, Any] = dict(shadow.get(src_key) or {})
                 ent2["ignored"] = True
-                ent2["ignore_reason"] = "not_anime_or_no_match"
+                ent2["ignore_reason"] = skip_reason
                 ent2["type"] = str(m.get("type") or ent2.get("type") or "")
                 src_ids = m.get("ids")
                 if isinstance(src_ids, Mapping) and src_ids:
@@ -614,7 +655,7 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
                 ent2["updated_at"] = int(time.time())
                 shadow[src_key] = ent2
                 shadow_changed = True
-            _dbg("write_item_skipped", op="add", title=str(m.get('title') or ''), year=_to_int(m.get('year')), reason="not_anime_or_no_match")
+            _dbg("write_item_skipped", op="add", title=str(m.get('title') or ''), year=_to_int(m.get('year')), reason=skip_reason)
             if src_key and src_key not in _seen_skip:
                 skipped_keys.append(src_key)
                 _seen_skip.add(src_key)
