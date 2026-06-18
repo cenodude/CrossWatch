@@ -22,6 +22,8 @@ export const HELP_TEXT = {
   "cx-rt-enable": "Ratings: Enable\nCompare and write ratings to the target.",
   "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
   "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",
+  "cx-rt-anime-map": "Use Anime ID Mapping\nUse the local AniBridge ID database for this AniList ratings pair. When enabled from here, global Anime ID Mapping is enabled too.",
+  "cx-rt-anime-only": "Anime-only sync\nOnly sync ratings for items that Anime ID Mapping can confirm as anime. Non-anime and unmapped items are skipped before AniList title search.",
 
   "cx-hs-enable": "History: Enable\nCompare and write watch history to the target.",
   "cx-hs-add": "History: Add\nAdds plays/watched items to the target history.",

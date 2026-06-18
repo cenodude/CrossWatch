@@ -69,7 +69,7 @@ function normalizeAnimeFeatureOptions(state, feature){
   return opts;
 }
 
-const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]}};
+const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]},ANILIST:{disable:["seasons","episodes"]}};
 function ratingsDisabledFor(state){
   const names=[state?.src,state?.dst].map(x=>String(x||"").trim().toUpperCase());
   const out=new Set();
@@ -312,6 +312,7 @@ async function loadProviders(state){
     {name:"CROSSWATCH",label:"CW Tracker",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
     {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
+    {name:"ANILIST",label:"AniList",features:{watchlist:true,ratings:true,history:false,progress:false,playlists:false},capabilities:{bidirectional:true},version:"0.1"},
     {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:false,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
     {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:false,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
   ]
@@ -650,7 +651,7 @@ function applySubDisable(feature){
       "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
     ratings: [
-      "#cx-rt-add","#cx-rt-remove","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
+      "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
     history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
@@ -1158,12 +1159,29 @@ function renderFeaturePanel(state){
   }
 
   if(state.feature==="ratings"){
-    const rt=getOpts(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
+    getOpts(state,"ratings");
+    const rt=normalizeAnimeFeatureOptions(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
+    const showAnime = hasAniList(state);
+    const canAnimeOnly = anilistCanReceive(state);
+    const animeOnlyDisabled = !rt.use_anime_mapping || !canAnimeOnly;
 
     left.innerHTML=`<div class="panel-title">Ratings | Basics</div>
       <div class="opt-row"><label for="cx-rt-enable">Enable</label><label class="switch"><input id="cx-rt-enable" type="checkbox" ${rt.enable?"checked":""}><span class="slider"></span></label></div>
       <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>
+      ${showAnime?`
+        <div class="panel-title small" style="margin-top:6px">AniList options</div>
+        <div class="grid2 compact">
+          <div class="opt-row">
+            <label for="cx-rt-anime-map">Use Anime ID Mapping</label>
+            <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""}><span class="slider"></span></label>
+          </div>
+          <div class="opt-row ${animeOnlyDisabled?"muted":""}">
+            <label for="cx-rt-anime-only">Anime-only sync</label>
+            <label class="switch"><input id="cx-rt-anime-only" type="checkbox" ${rt.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
+          </div>
+        </div>
+      `:""}
       <div class="panel-title small">Scope</div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="cx-rt-type-all">All</label><label class="switch"><input id="cx-rt-type-all" type="checkbox" ${(hasType("movies")&&hasType("shows")&&hasType("seasons")&&hasType("episodes"))?"checked":""}><span class="slider"></span></label></div>
@@ -1674,6 +1692,24 @@ function bindChangeHandlers(state,root){
 
     if (id === "cx-rt-enable") {
       applySubDisable("ratings");
+      const mapOn = !!ID("cx-rt-anime-map")?.checked;
+      const only = ID("cx-rt-anime-only");
+      if (only) {
+        only.disabled = !mapOn || !anilistCanReceive(state) || !ID("cx-rt-enable")?.checked;
+        if (only.disabled) only.checked = false;
+        only.closest?.(".opt-row")?.classList.toggle("muted", only.disabled);
+      }
+    }
+
+    if (id === "cx-rt-anime-map") {
+      const mapOn = !!ID("cx-rt-anime-map")?.checked;
+      const only = ID("cx-rt-anime-only");
+      if (only) {
+        only.disabled = !mapOn || !anilistCanReceive(state) || !ID("cx-rt-enable")?.checked;
+        if (!mapOn || !anilistCanReceive(state) || !ID("cx-rt-enable")?.checked) only.checked = false;
+        else if (mapOn) only.checked = true;
+        only.closest?.(".opt-row")?.classList.toggle("muted", only.disabled);
+      }
     }
 
     if (id === "cx-hs-enable") {
@@ -1741,6 +1777,8 @@ function bindChangeHandlers(state,root){
         enable:!!ID("cx-rt-enable")?.checked,
         add:!!ID("cx-rt-add")?.checked,
         remove:!!ID("cx-rt-remove")?.checked,
+        use_anime_mapping:!!ID("cx-rt-anime-map")?.checked,
+        anime_only_sync:!!ID("cx-rt-anime-map")?.checked && !!ID("cx-rt-anime-only")?.checked && anilistCanReceive(state),
         types,
         mode:ID("cx-rt-mode")?.value||"all",
         from_date:(ID("cx-rt-from-date")?.value||"").trim()
@@ -1865,7 +1903,10 @@ async function saveConfigBits(state){
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
-    const shouldEnableAnimeMapping = hasAniList(state) && !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping;
+    const shouldEnableAnimeMapping = hasAniList(state) && (
+      !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping ||
+      !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping
+    );
 
     if(ID("gl-dry")){
       const dropOn=!!ID("gl-drop")?.checked;
@@ -2124,17 +2165,21 @@ function buildPayload(state,wrap){
   const watchlist=get("watchlist");
   const animePair=isAniList(src)||isAniList(dst);
   const animeCanReceive=isAniList(dst)||(animePair&&modeTwo);
-  if(animePair){
-    if(!hasOwn(watchlist,"use_anime_mapping")) watchlist.use_anime_mapping=globalAnimeMappingEnabled(state);
-    watchlist.use_anime_mapping=!!watchlist.use_anime_mapping;
-    if(!watchlist.use_anime_mapping||!animeCanReceive) watchlist.anime_only_sync=false;
-    else if(!hasOwn(watchlist,"anime_only_sync")) watchlist.anime_only_sync=true;
-    else watchlist.anime_only_sync=!!watchlist.anime_only_sync;
-  }else{
-    watchlist.use_anime_mapping=false;
-    watchlist.anime_only_sync=false;
-  }
   const ratings=get("ratings");
+  const normalizeAnimePairBlock=(block)=>{
+    if(animePair){
+      if(!hasOwn(block,"use_anime_mapping")) block.use_anime_mapping=globalAnimeMappingEnabled(state);
+      block.use_anime_mapping=!!block.use_anime_mapping;
+      if(!block.use_anime_mapping||!animeCanReceive) block.anime_only_sync=false;
+      else if(!hasOwn(block,"anime_only_sync")) block.anime_only_sync=true;
+      else block.anime_only_sync=!!block.anime_only_sync;
+    }else{
+      block.use_anime_mapping=false;
+      block.anime_only_sync=false;
+    }
+  };
+  normalizeAnimePairBlock(watchlist);
+  normalizeAnimePairBlock(ratings);
   const progress=get("progress");
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
