@@ -119,7 +119,7 @@
     d.head.appendChild(s);
     const s2 = d.createElement("style");
     s2.id = "insights-provider-styles-v8-mse";
-    s2.textContent = `#stats-card #stat-providers .tile .mse{display:inline-flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;gap:1px!important}html.cw-compact #stats-card #stat-providers .tile .mse{flex-direction:column!important}#stats-card #stat-providers .tile .mse .mse-row{display:inline-flex;align-items:center;justify-content:center;gap:2px;width:max-content}#stats-card #stat-providers .tile .mse .mse-row-anime{margin-top:-1px}#stats-card #stat-providers .tile .mse .mse-chip{gap:1px;padding:2px 5px}#stats-card #stat-providers .tile .mse .mse-chip .k{display:inline-flex;align-items:center;justify-content:center;min-width:1ch}#stats-card #stat-providers .tile .mse .mse-chip-anime{padding-inline:4px}`;
+    s2.textContent = `#stats-card #stat-providers .tile .mse{display:inline-flex!important;flex-direction:row!important;align-items:center!important;justify-content:center!important;gap:2px!important}html.cw-compact #stats-card #stat-providers .tile .mse{flex-direction:row!important}#stats-card #stat-providers .tile .mse .mse-row{display:inline-flex;align-items:center;justify-content:center;gap:2px;width:max-content}#stats-card #stat-providers .tile .mse .mse-chip{gap:1px;padding:2px 5px}#stats-card #stat-providers .tile .mse .mse-chip .k{display:inline-flex;align-items:center;justify-content:center;min-width:1ch}#stats-card #stat-providers .tile .mse .mse-chip-anime{padding-inline:4px}`;
     d.head.appendChild(s2);
     const s3 = d.createElement("style");
     s3.id = "insights-provider-styles-v8-segmented";
@@ -504,14 +504,15 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
         tile.title = prov === "crosswatch" ? `${label} • ${total} • Click to switch snapshot` : `${label} • ${total}`;
       } else {
         const m = +per.movies || 0, s = +per.shows || 0, a = +per.anime || 0;
-        const mainParts = [["M", m], ["S", s]].filter(([, v]) => v).map(([k, v]) => `<span class="mse-chip"><span class="k">${k}</span><span class="v">${v}</span></span>`);
-        const animePart = a ? `<span class="mse-chip mse-chip-anime"><span class="k">A</span><span class="v">${a}</span></span>` : "";
-        if (!mainParts.length && !animePart) {
+        const parts = [["M", m, ""], ["S", s, ""], ["A", a, " mse-chip-anime"]]
+          .filter(([, v]) => v)
+          .map(([k, v, cls]) => `<span class="mse-chip${cls}"><span class="k">${k}</span><span class="v">${v}</span></span>`);
+        if (!parts.length) {
           info.textContent = "";
           info.style.display = "none";
           tile.title = `${label} • ${total}`;
         } else {
-          info.innerHTML = `<span class="mse-row mse-row-main">${mainParts.join("")}</span>${animePart ? `<span class="mse-row mse-row-anime">${animePart}</span>` : ""}`;
+          info.innerHTML = `<span class="mse-row">${parts.join("")}</span>`;
           info.style.display = "";
           fitProviderMSE(info);
           tile.title = `${label} • ${total} • Movies ${m} • Shows ${s} • Anime ${a}`;

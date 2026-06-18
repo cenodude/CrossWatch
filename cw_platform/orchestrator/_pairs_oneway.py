@@ -12,6 +12,11 @@ import datetime as _dt
 from ..provider_instances import normalize_instance_id
 
 from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
+from ..anime_mapping.service import (
+    enrich_index_for_pair as _anime_enrich_index_for_pair,
+    mapping_enabled_for_feature as _anime_mapping_enabled_for_feature,
+    mapping_enabled_for_pair as _anime_mapping_enabled_for_pair,
+)
 from ._snapshots import (
     build_snapshots_for_feature,
     coerce_suspect_snapshot,
@@ -847,6 +852,14 @@ def run_one_way_feature(
     # Keep metadata when the provider index is presence-only.
     dst_full = _enrich_index_payload(dst_full, prev_dst, feature)
     src_idx = _enrich_index_payload(src_idx, prev_src, feature)
+
+    if _anime_mapping_enabled_for_feature(cfg, feature) and _anime_mapping_enabled_for_pair(cfg, src, dst):
+        src_before = len(src_idx)
+        dst_before = len(dst_full)
+        src_idx = _anime_enrich_index_for_pair(src_idx, cfg, src, dst)
+        dst_full = _anime_enrich_index_for_pair(dst_full, cfg, src, dst)
+        if len(src_idx) != src_before or len(dst_full) != dst_before:
+            dbg("anime_mapping.rekeyed", feature=feature, src=src, dst=dst, src_items=len(src_idx), dst_items=len(dst_full))
 
     # Repair sparse destination snapshots using the source index.
     if feature in ("history", "ratings", "progress"):

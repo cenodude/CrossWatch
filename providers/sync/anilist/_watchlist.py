@@ -13,6 +13,7 @@ from typing import Any
 from pathlib import Path
 
 from cw_platform.id_map import minimal as id_minimal
+from cw_platform.anime_mapping import AnimeMappingService
 
 from ._common import read_json, state_file, write_json
 from .._log import log as cw_log
@@ -161,6 +162,44 @@ def _to_int(v: Any) -> int | None:
         return None
 
 
+def _anime_mapping_enabled(adapter: Any) -> bool:
+    try:
+        cfg = getattr(adapter, "raw_cfg", None)
+        block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else {}
+        if not isinstance(block, Mapping):
+            return False
+        return bool(block.get("enabled", False))
+    except Exception:
+        return False
+
+
+def _has_anime_mapping_detail(item: Mapping[str, Any]) -> bool:
+    detail = item.get("detail") if isinstance(item.get("detail"), Mapping) else {}
+    amap = detail.get("anime_mapping") if isinstance(detail, Mapping) else {}
+    return isinstance(amap, Mapping) and any(bool(v) for v in amap.values())
+
+
+def _anime_enrich(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(item or {})
+    if not _anime_mapping_enabled(adapter):
+        return out
+    try:
+        svc = AnimeMappingService(getattr(adapter, "raw_cfg", None))
+        if not svc.ready():
+            return out
+        enriched = svc.enrich_item(out)
+        if isinstance(enriched, dict):
+            ids0 = out.get("ids") if isinstance(out.get("ids"), Mapping) else {}
+            ids1 = enriched.get("ids") if isinstance(enriched.get("ids"), Mapping) else {}
+            if ids1 and dict(ids1) != dict(ids0 or {}):
+                _dbg("mapping_enriched", ids_before=len(ids0 or {}), ids_after=len(ids1), title=str(out.get("title") or ""))
+                enriched["_cw_anime_mapping"] = True
+            return enriched
+    except Exception as e:
+        _dbg("mapping_enrich_failed", error_type=e.__class__.__name__)
+    return out
+
+
 def _tick(prog: Any, value: int, total: int | None = None, *, force: bool = False) -> None:
     if prog is None:
         return
@@ -223,11 +262,21 @@ def _score_candidate(
 
 
 def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None, dict[str, Any]]:
+    item = _anime_enrich(adapter, item)
     ids = item.get("ids")
     ids = dict(ids) if isinstance(ids, Mapping) else {}
+    mapped = bool(item.get("_cw_anime_mapping") or _has_anime_mapping_detail(item))
 
     mid = _to_int(ids.get("anilist"))
     if mid:
+        _dbg(
+            "resolve_hit",
+            title=str(item.get("title") or ""),
+            year=_to_int(item.get("year")),
+            anilist_id=int(mid),
+            method="direct_id",
+            source="anime_mapping" if mapped else "item_ids",
+        )
         return mid, {"anilist_id": int(mid)}
 
     mal = _to_int(ids.get("mal"))
@@ -246,6 +295,15 @@ def _resolve_media_id(adapter: Any, item: Mapping[str, Any]) -> tuple[int | None
                 mm = _to_int(m.get("idMal"))
                 if mm:
                     meta["mal"] = int(mm)
+                _dbg(
+                    "resolve_hit",
+                    title=str(item.get("title") or ""),
+                    year=_to_int(item.get("year")),
+                    anilist_id=int(aid),
+                    mal=int(mal),
+                    method="mal_lookup",
+                    source="anime_mapping" if mapped else "item_ids",
+                )
                 return int(aid), meta
 
     title = str(item.get("title") or "").strip()
@@ -409,6 +467,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 "ids": ids,
                 "anilist": {"list_entry_id": int(entry_id or 0), "status": "PLANNING"},
             }
+            item = _anime_enrich(adapter, item)
 
             src_key = rev.get(int(mid))
             if src_key:
@@ -511,7 +570,11 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
     skipped = 0
 
     for i, it in enumerate(lst, start=1):
-        m = id_minimal(it)
+        enriched_item = _anime_enrich(adapter, it)
+        mapped_item = bool(enriched_item.get("_cw_anime_mapping") or _has_anime_mapping_detail(enriched_item))
+        m = id_minimal(enriched_item)
+        if mapped_item:
+            m["_cw_anime_mapping"] = True
         src_key = adapter.key_of(m) or ""
         ent = shadow.get(src_key) if src_key and isinstance(shadow, dict) else None
 
@@ -697,7 +760,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     skipped = 0
 
     for i, it in enumerate(lst, start=1):
-        m = id_minimal(it)
+        enriched_item = _anime_enrich(adapter, it)
+        mapped_item = bool(enriched_item.get("_cw_anime_mapping") or _has_anime_mapping_detail(enriched_item))
+        m = id_minimal(enriched_item)
+        if mapped_item:
+            m["_cw_anime_mapping"] = True
         src_key = adapter.key_of(m) or ""
         ent = shadow.get(src_key) if src_key and isinstance(shadow.get(src_key), Mapping) else None
         if isinstance(ent, Mapping) and ent.get("ignored") is True:

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import minimal as id_minimal, canonical_key
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 
 from .._mod_common import request_with_retries
 from .._log import log as cw_log
@@ -523,12 +524,13 @@ def ids_for_trakt(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def pick_trakt_kind(item: Mapping[str, Any]) -> str:
-    t = str(item.get("type") or "movie").lower()
+    t = str(item.get("type") or "movie").strip().lower()
     if t == "episode":
         return "episodes"
     if t == "season":
         return "seasons"
-    if t in ("show", "series", "tv"):
+    media_type = mapped_or_default_media_type(item)
+    if media_type == "show":
         return "shows"
     return "movies"
 

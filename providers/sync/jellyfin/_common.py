@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .._log import log as cw_log
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
 _DEF_TYPES = {"movie", "show", "episode"}
@@ -402,6 +403,13 @@ def _norm_type(t: Any) -> str:
     if x in ("episode", "episodes"):
         return "episode"
     return "movie"
+
+
+def _lookup_type(it: Mapping[str, Any]) -> str:
+    raw = _norm_type(it.get("type"))
+    if raw == "episode":
+        return raw
+    return mapped_or_default_media_type(it)
 
 
 def looks_like_bad_id(iid: Any) -> bool:
@@ -979,7 +987,7 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
         _dbg('resolve_hit', kind='direct', method='provider_id', item_id=str(jf))
         return str(jf)
 
-    t = _norm_type(it.get("type"))
+    t = _lookup_type(it)
     title = (it.get("title") or "").strip()
     year = it.get("year")
     season = it.get("season")
@@ -1177,7 +1185,7 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
     ids = dict(it.get("ids") or {})
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
 
-    t = _norm_type(it.get("type"))
+    t = _lookup_type(it)
     title = (it.get("title") or "").strip()
     year = it.get("year")
     season = it.get("season")

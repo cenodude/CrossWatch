@@ -34,6 +34,10 @@
   }
 
   const SECTION = "#sec-anilist";
+  const MAPPING_DISMISS_KEY = "cw.ui.anilist.animeMapping.dismissed.v1";
+  let mappingRecommendBusy = false;
+  let mappingRecommendStatus = null;
+  let anilistConnected = false;
 
   function normalizeId(v) {
     v = String(v || "").trim();
@@ -61,6 +65,176 @@
 
   function setAniListSuccess(on, txt) {
     return Shared.setStatusPill("anilist_msg", on ? "ok" : (txt ? "warn" : null), txt || (on ? "Connected" : ""));
+  }
+
+  function toast(message, ok = true) {
+    try {
+      if (typeof w.CW?.DOM?.showToast === "function") {
+        w.CW.DOM.showToast(message, !!ok);
+        return;
+      }
+    } catch {}
+    notify(message);
+  }
+
+  function mappingRecommendationDismissed() {
+    try { return localStorage.getItem(MAPPING_DISMISS_KEY) === "1"; } catch { return false; }
+  }
+
+  function setMappingRecommendationDismissed() {
+    try { localStorage.setItem(MAPPING_DISMISS_KEY, "1"); } catch {}
+  }
+
+  function hasAniListCredentials() {
+    try {
+      const cidState = readSecretField($("anilist_client_id"));
+      const secState = readSecretField($("anilist_client_secret"));
+      return !!(cidState.hasValue && secState.hasValue);
+    } catch {
+      return false;
+    }
+  }
+
+  function hasAniListConnection() {
+    return !!anilistConnected;
+  }
+
+  function ensureMappingRecommendation() {
+    const sub = Q(SECTION + ' .cw-subpanel[data-sub="auth"]');
+    if (!sub) return null;
+
+    let box = $("anilist_mapping_recommendation");
+    if (box) return box;
+
+    box = d.createElement("div");
+    box.id = "anilist_mapping_recommendation";
+    box.className = "anilist-mapping-rec hidden";
+    box.innerHTML =
+      '<div class="anilist-mapping-rec-copy">' +
+        '<div class="anilist-mapping-rec-kicker">Recommended for AniList</div>' +
+        '<strong>Use Anime ID Mapping</strong>' +
+        '<div class="muted">Improves matching by translating AniList IDs to IDs your media servers and trackers understand.</div>' +
+        '<div class="anilist-mapping-rec-state" id="anilist_mapping_recommendation_state"></div>' +
+      '</div>' +
+      '<div class="anilist-mapping-rec-actions">' +
+        '<button class="btn primary" type="button" id="btn-anilist-enable-mapping">Enable Anime ID Mapping</button>' +
+        '<button class="btn" type="button" id="btn-anilist-dismiss-mapping">Not now</button>' +
+      '</div>';
+
+    const controls = Q(SECTION + " .inline");
+    if (controls && controls.parentNode === sub) controls.insertAdjacentElement("afterend", box);
+    else sub.appendChild(box);
+
+    const enableBtn = $("btn-anilist-enable-mapping");
+    if (enableBtn && !enableBtn.__wired) {
+      enableBtn.addEventListener("click", enableAnimeMappingFromAniList);
+      enableBtn.__wired = true;
+    }
+
+    const dismissBtn = $("btn-anilist-dismiss-mapping");
+    if (dismissBtn && !dismissBtn.__wired) {
+      dismissBtn.addEventListener("click", () => {
+        setMappingRecommendationDismissed();
+        renderMappingRecommendation();
+      });
+      dismissBtn.__wired = true;
+    }
+
+    return box;
+  }
+
+  function renderMappingRecommendation(status = mappingRecommendStatus) {
+    const box = ensureMappingRecommendation();
+    if (!box) return;
+
+    const connected = hasAniListConnection();
+    const enabled = !!(status?.enabled || w._cfgCache?.anime_mapping?.enabled);
+    const show = connected && !enabled && !mappingRecommendationDismissed();
+    box.classList.toggle("hidden", !show);
+    box.classList.toggle("busy", !!mappingRecommendBusy);
+
+    const btn = $("btn-anilist-enable-mapping");
+    if (btn) {
+      btn.disabled = !!mappingRecommendBusy;
+      btn.textContent = mappingRecommendBusy ? "Enabling..." : "Enable Anime ID Mapping";
+    }
+
+    const state = $("anilist_mapping_recommendation_state");
+    if (state) {
+      const err = String(status?.error || "").trim();
+      state.textContent = mappingRecommendBusy ? "Downloading mapping database if needed..." : err;
+      state.classList.toggle("hidden", !(mappingRecommendBusy || err));
+    }
+  }
+
+  let mappingRefreshTimer = null;
+  function queueMappingRecommendationRefresh(delay = 120) {
+    clearTimeout(mappingRefreshTimer);
+    mappingRefreshTimer = setTimeout(() => {
+      refreshMappingRecommendation().catch(() => {});
+    }, delay);
+  }
+
+  async function refreshMappingRecommendation() {
+    ensureMappingRecommendation();
+    if (!hasAniListConnection()) {
+      renderMappingRecommendation();
+      return null;
+    }
+
+    try {
+      const r = await fetch("/api/anime-mapping/status", { cache: "no-store", credentials: "same-origin" });
+      if (!r.ok) throw new Error(`Status failed (${r.status})`);
+      mappingRecommendStatus = await r.json().catch(() => ({}));
+    } catch (e) {
+      mappingRecommendStatus = { ...(mappingRecommendStatus || {}), error: e?.message || "Could not check Anime ID Mapping status" };
+    }
+
+    renderMappingRecommendation(mappingRecommendStatus);
+    return mappingRecommendStatus;
+  }
+
+  async function enableAnimeMappingFromAniList() {
+    mappingRecommendBusy = true;
+    renderMappingRecommendation();
+
+    try {
+      const r = await fetch("/api/anime-mapping/settings", {
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: true,
+          auto_update: true,
+          provider: "anibridge",
+          use_for_pairs: ["anilist"],
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `Enable failed (${r.status})`);
+
+      w._cfgCache ||= {};
+      w._cfgCache.anime_mapping = data.anime_mapping || {
+        ...(w._cfgCache.anime_mapping || {}),
+        enabled: true,
+        auto_update: true,
+        provider: "anibridge",
+        use_for_pairs: ["anilist"],
+      };
+      mappingRecommendStatus = data.status || { ...(mappingRecommendStatus || {}), enabled: true };
+
+      try { w.cwAnimeMappingRenderStatus?.(mappingRecommendStatus); } catch {}
+      try { await w.cwAnimeMappingRefreshStatus?.(); } catch {}
+      toast(data.bootstrap_error ? data.bootstrap_error : "Anime ID Mapping enabled", !data.bootstrap_error);
+    } catch (e) {
+      mappingRecommendStatus = { ...(mappingRecommendStatus || {}), error: e?.message || "Could not enable Anime ID Mapping" };
+      toast(mappingRecommendStatus.error, false);
+    } finally {
+      mappingRecommendBusy = false;
+      renderMappingRecommendation();
+      queueMappingRecommendationRefresh(0);
+    }
   }
 
   function renderAniListHint() {
@@ -108,10 +282,12 @@
       if (cidEl && (force || !cidEl.value || cidEl.dataset.masked === "1")) markSecretField(cidEl, cid);
       if (secEl && (force || !secEl.value || secEl.dataset.masked === "1")) markSecretField(secEl, sec);
 
+      anilistConnected = !!tok;
       if (tok) setAniListSuccess(true);
       else setAniListSuccess(false, "");
 
       updateAniListButtonState();
+      queueMappingRecommendationRefresh();
     } catch {}
   }
 
@@ -134,6 +310,7 @@
       }
       if (btn) btn.disabled = !ok;
       if (hint) hint.classList.toggle("hidden", ok);
+      renderMappingRecommendation();
     } catch (e) {
       console.warn("updateAniListButtonState failed", e);
     }
@@ -163,6 +340,7 @@
     if (deleteBtn && !deleteBtn.__wired) { deleteBtn.addEventListener("click", anilistDeleteToken); deleteBtn.__wired = true; }
 
     updateAniListButtonState();
+    queueMappingRecommendationRefresh();
   }
 
   async function copyAniListRedirect() {
@@ -216,6 +394,8 @@
         btn.classList.remove("busy");
       }
       try { setAniListSuccess(false, ""); } catch {}
+      anilistConnected = false;
+      queueMappingRecommendationRefresh();
     }
   }
 
@@ -282,9 +462,11 @@
       const blk = getAniListCfgBlock(cfg || {});
       const tok = String(blk?.access_token || "").trim();
       if (tok) {
+        anilistConnected = true;
         setAniListSuccess(true);
 
         pollHandle = null;
+        queueMappingRecommendationRefresh(0);
         try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
         return;
       }
@@ -319,5 +501,6 @@
     startAniList,
     copyAniListRedirect,
     anilistDeleteToken,
+    refreshAniListMappingRecommendation: refreshMappingRecommendation,
   });
 })(window, document);

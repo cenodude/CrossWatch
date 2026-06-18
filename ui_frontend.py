@@ -720,7 +720,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
             <div class="cw-settings-jumpbar" aria-label="Provider sections">
               <button type="button" class="cw-settings-jump" data-target="sec-auth" onclick="cwProvidersJump?.('sec-auth')">Authentication</button>
               <button type="button" class="cw-settings-jump" data-target="sec-sync" onclick="cwProvidersJump?.('sec-sync')">Synchronization</button>
-              <button type="button" class="cw-settings-jump" data-target="sec-meta" onclick="cwProvidersJump?.('sec-meta')">Metadata</button>
+              <button type="button" class="cw-settings-jump" data-target="sec-meta" onclick="cwProvidersJump?.('sec-meta')">Metadata / ID Mapping</button>
             </div>
           </div>
           <div class="cw-settings-pane-stack cw-settings-providers-stack">
@@ -744,19 +744,9 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               </div>
             </div>
 
-            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" data-toggle-section="sec-meta"><span class="chev"></span><strong>Metadata</strong></div><div class="body">
+            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" data-toggle-section="sec-meta"><span class="chev"></span><strong>Metadata / ID Mapping</strong></div><div class="body">
 <div id="metadata-providers">
-  <div class="cw-settings-hub" id="meta_provider_tiles">
-    <button type="button" class="cw-hub-tile tmdb" data-provider="tmdb" aria-selected="false">
-      <div class="cw-meta-provider-row">
-        <div class="cw-hub-title">TMDb</div>
-        <span class="auth-dot" id="meta-tmdb-dot" aria-hidden="true"></span>
-      </div>
-      <span class="hidden" id="hub_tmdb_key" aria-hidden="true">API key: -</span>
-    </button>
-  </div>
-
-  <div id="meta-provider-panel" class="cw-panel hidden"></div>
+  <div id="meta-provider-panel" class="cw-meta-provider-stack"></div>
   <div id="meta-provider-raw" class="hidden"></div>
 </div>
 </div></div>

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
+
 from .._log import log as cw_log
 
 STATE_DIR = Path("/config/.cw_state")
@@ -84,10 +86,10 @@ def as_int(value: Any) -> int | None:
 
 
 def media_type_for_item(item: Mapping[str, Any]) -> str:
-    typ = str(item.get("type") or item.get("media_type") or "").strip().lower()
-    if typ in ("tv", "show", "shows", "series"):
-        return "tv"
-    return "movie"
+    probe = item
+    if not item.get("type") and item.get("media_type"):
+        probe = {**dict(item), "type": item.get("media_type")}
+    return "tv" if mapped_or_default_media_type(probe) == "show" else "movie"
 
 
 def tmdb_id_for_item(item: Mapping[str, Any]) -> int | None:

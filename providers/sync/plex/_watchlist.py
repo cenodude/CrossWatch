@@ -28,6 +28,7 @@ from ._common import (
 
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from .. import _mod_common as mod_common
 
 _UNRES = unresolved_store("watchlist")
@@ -185,6 +186,25 @@ def _clean_query_tokens(*, title: str | None, year: int | None, slug: str | None
         add(slug.replace("-", " "))
     return out[:8]
 
+def _has_anime_mapping(item: Mapping[str, Any]) -> bool:
+    detail = item.get("detail") if isinstance(item.get("detail"), Mapping) else {}
+    amap = detail.get("anime_mapping") if isinstance(detail, Mapping) else {}
+    if not isinstance(amap, Mapping):
+        return False
+    return any(bool(v) for v in amap.values())
+
+def _uses_anime_mapping_resolver(item: Mapping[str, Any]) -> bool:
+    kind = str(item.get("type") or item.get("entity") or "").strip().lower()
+    return kind == "anime" or _has_anime_mapping(item)
+
+def _libtype_for_item(item: Mapping[str, Any]) -> str:
+    kind = mapped_or_default_media_type(item)
+    if kind == "show":
+        return "show"
+    if kind == "movie":
+        return "movie"
+    return "movie"
+
 def _id_pairs_from_guid(g: str) -> set[tuple[str, str]]:
     s: set[tuple[str, str]] = set()
     try:
@@ -194,6 +214,14 @@ def _id_pairs_from_guid(g: str) -> set[tuple[str, str]]:
     except Exception:
         pass
     return s
+
+def _id_pairs_from_ids(ids: Mapping[str, Any] | None) -> set[tuple[str, str]]:
+    if not isinstance(ids, Mapping):
+        return set()
+    return {(k, str(v)) for k, v in ids.items() if k in ("tmdb", "imdb", "tvdb") and v}
+
+def _fmt_id_pairs(pairs: set[tuple[str, str]]) -> str:
+    return ",".join(f"{k}:{v}" for k, v in sorted(pairs))
 
 # ID resolver via METADATA.matches
 def _metadata_match_by_ids(
@@ -228,19 +256,23 @@ def _metadata_match_by_ids(
             accept_json=True,
         )
         if not cont:
+            _dbg("metadata_match_empty", key=key, id=v, libtype=libtype)
             continue
+        rows = 0
         for row in _iter_search_rows(cont):
+            rows += 1
             rk = str(row.get("ratingKey") or "") if isinstance(row, Mapping) else ""
             if not rk:
                 continue
             row_ids = ids_from_discover_row(row) if isinstance(row, Mapping) else {}
             if row_ids.get(key) and str(row_ids.get(key)) == v:
-                _dbg("resolve_rating_key", rating_key=rk, source="metadata_matches", key=key)
+                _dbg("resolve_rating_key", rating_key=rk, source="metadata_matches", key=key, matched_id=f"{key}:{v}")
                 return rk
             ext = hydrate_external_ids(token, rk) if rk else {}
             if ext.get(key) and str(ext.get(key)) == v:
-                _dbg("resolve_rating_key", rating_key=rk, source="metadata_matches_hydrate", key=key)
+                _dbg("resolve_rating_key", rating_key=rk, source="metadata_matches_hydrate", key=key, matched_id=f"{key}:{v}")
                 return rk
+        _dbg("metadata_match_miss", key=key, id=v, libtype=libtype, rows=rows)
     return None
 
 # Fallback resolver via Discover search
@@ -259,6 +291,7 @@ def _discover_resolve_rating_key(
     query_limit: int,
     allow_title: bool,
     cfg: Mapping[str, Any],
+    skip_metadata_match: bool = False,
 ) -> str | None:
     ids: dict[str, Any] = {}
     if isinstance(item_ids, Mapping):
@@ -273,11 +306,13 @@ def _discover_resolve_rating_key(
         except Exception:
             pass
 
-    use_match = _cfg_bool(cfg, "watchlist_use_metadata_match", True)
+    use_match = _cfg_bool(cfg, "watchlist_use_metadata_match", True) and not skip_metadata_match
     if use_match and any(ids.get(k) for k in ("tmdb", "imdb", "tvdb")):
         rk0 = _metadata_match_by_ids(session, token, ids, libtype, year, timeout=timeout, retries=retries)
         if rk0:
             return rk0
+    elif skip_metadata_match and any(ids.get(k) for k in ("tmdb", "imdb", "tvdb")):
+        _dbg("metadata_match_skip", reason="anime_mapping", libtype=libtype, ids=_fmt_id_pairs(_id_pairs_from_ids(ids)))
 
     queries = _clean_query_tokens(
         title=(title if allow_title else None),
@@ -289,18 +324,21 @@ def _discover_resolve_rating_key(
 
     pri = _guid_priority(cfg)
     targets = [(_g, _id_pairs_from_guid(_g)) for _g in sort_guid_candidates(guid_candidates or [], priority=pri)]
+    target_pairs = _id_pairs_from_ids(ids)
+    for _, pairs in targets:
+        target_pairs |= pairs
 
-    def ids_match(rk: str, row: Mapping[str, Any]) -> bool:
+    def matched_ids(rk: str, row: Mapping[str, Any]) -> set[tuple[str, str]]:
         row_ids = ids_from_discover_row(row) if isinstance(row, Mapping) else {}
         row_pairs = {(k, str(v)) for k, v in row_ids.items() if k in ("tmdb", "imdb", "tvdb")}
         g = row.get("guid")
         if g:
             row_pairs |= _id_pairs_from_guid(str(g))
         if row_pairs:
-            return any(tgt & row_pairs for _, tgt in targets if tgt)
+            return target_pairs & row_pairs
         ext = hydrate_external_ids(token, rk) or {}
         hyd_pairs = {(k, str(v)) for k, v in ext.items() if k in ("tmdb", "imdb", "tvdb")}
-        return bool(hyd_pairs and any(tgt & hyd_pairs for _, tgt in targets if tgt))
+        return target_pairs & hyd_pairs
 
     params_common: dict[str, Any] = {
         "limit": 25,
@@ -331,8 +369,9 @@ def _discover_resolve_rating_key(
             rk = str(row.get("ratingKey") or "") if isinstance(row, Mapping) else ""
             if not rk:
                 continue
-            if ids_match(rk, row):
-                _dbg("resolve_rating_key", rating_key=rk, source="discover_search", query=q)
+            hit = matched_ids(rk, row)
+            if hit:
+                _dbg("resolve_rating_key", rating_key=rk, source="discover_search", query=q, matched_ids=_fmt_id_pairs(hit))
                 return rk
         if not any_row:
             _dbg("discover_search_empty", query=q)
@@ -560,8 +599,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 continue
     
             guids = sort_guid_candidates(candidate_guids_from_ids(it, include_raw_ids=True), priority=_guid_priority(cfg))
-            kind = (it.get("type") or "movie").lower()
-            libtype = "show" if kind in ("show", "series", "tv") else "movie"
+            libtype = _libtype_for_item(it)
             title = it.get("title")
             year = it.get("year")
             slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
@@ -603,6 +641,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 query_limit=qlimit,
                 allow_title=allow_title,
                 cfg=cfg,
+                skip_metadata_match=_uses_anime_mapping_resolver(it),
             )
     
             if rk:
@@ -704,8 +743,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 continue
     
             guids = sort_guid_candidates(candidate_guids_from_ids(it, include_raw_ids=True), priority=_guid_priority(cfg))
-            kind = (it.get("type") or "movie").lower()
-            libtype = "show" if kind in ("show", "series", "tv") else "movie"
+            libtype = _libtype_for_item(it)
             title = it.get("title")
             year = it.get("year")
             slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
@@ -747,6 +785,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 query_limit=qlimit,
                 allow_title=allow_title,
                 cfg=cfg,
+                skip_metadata_match=_uses_anime_mapping_resolver(it),
             )
     
             if rk:

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.config_base import load_config, save_config
 from cw_platform.id_map import canonical_key, merge_ids, minimal as id_minimal
 from cw_platform.metadata import MetadataManager
@@ -44,8 +45,10 @@ def _meta() -> MetadataManager | None:
         return None
 
 
-def _type_to_entity(typ: Any) -> str:
-    t = str(typ or "").lower().strip()
+def _type_to_entity(item: Mapping[str, Any] | Any) -> str:
+    if isinstance(item, Mapping):
+        return "movie" if mapped_or_default_media_type(item) == "movie" else "show"
+    t = str(item or "").lower().strip()
     return "movie" if t == "movie" else "show"
 
 
@@ -79,7 +82,7 @@ def _ensure_tmdb_for_item(item: dict[str, Any]) -> bool:
 
     try:
         res = mm.resolve(
-            entity=_type_to_entity(item.get("type")),
+            entity=_type_to_entity(item),
             ids={"imdb": imdb},
             need={"poster": False, "backdrop": False, "overview": False},
         )

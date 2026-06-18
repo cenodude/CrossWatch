@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import secrets
 import base64
 import hashlib
@@ -549,6 +550,18 @@ DEFAULT_CFG: dict[str, Any] = {
     "metadata": {
         "locale": "en-US",                              # example: "en-US" / "nl-NL"
         "ttl_hours": 72,                                # Coarse cache TTL
+    },
+
+    # --- Anime ID Mapping ----------------------------------------------------
+    "anime_mapping": {
+        "enabled": False,                               # Enable local anime ID enrichment for anime-native providers
+        "auto_update": True,                            # Refresh the local AniBridge dataset in the background when enabled
+        "provider": "anibridge",                        # Local dataset provider
+        "release_tag": "v3",                            # AniBridge release tag
+        "refresh_hours": 24,                            # Minimum age before an automatic refresh is considered
+        "stale_after_days": 14,                         # UI/status warning threshold
+        "use_for_pairs": ["anilist"],                   # Providers that activate anime mapping when present in a pair
+        "features": ["watchlist"],                      # Sync features where anime ID enrichment is applied
     },
 
     # --- Scrobble ------------------------------------------------------------
@@ -1219,7 +1232,7 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
         s["every_n_hours"] = 1
     elif mode_raw == "daily_time":
         mode = "daily_time"
-    elif mode_raw == "custom_interval":
+    elif mode_raw in {"custom_interval", "custom"}:
         mode = "custom_interval"
     elif mode_raw == "every_n_hours":
         mode = "every_n_hours"
@@ -1307,6 +1320,47 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
         out.append(j)
 
     adv["jobs"] = out
+
+
+def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
+    am = _ensure_dict(cfg, "anime_mapping")
+    am["enabled"] = bool(am.get("enabled", False))
+    am["auto_update"] = bool(am.get("auto_update", True))
+
+    provider = str(am.get("provider") or "anibridge").strip().lower() or "anibridge"
+    am["provider"] = provider
+
+    tag = str(am.get("release_tag") or "v3").strip() or "v3"
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", tag):
+        tag = "v3"
+    am["release_tag"] = tag
+
+    try:
+        refresh_hours = int(am.get("refresh_hours", 24) or 24)
+    except Exception:
+        refresh_hours = 24
+    am["refresh_hours"] = max(1, refresh_hours)
+
+    try:
+        stale_after_days = int(am.get("stale_after_days", 14) or 14)
+    except Exception:
+        stale_after_days = 14
+    am["stale_after_days"] = max(1, stale_after_days)
+
+    def _string_list(value: Any, default: list[str]) -> list[str]:
+        raw = value if isinstance(value, list) else default
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            name = str(item or "").strip().lower()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out or list(default)
+
+    am["use_for_pairs"] = _string_list(am.get("use_for_pairs"), ["anilist"])
+    am["features"] = _string_list(am.get("features"), ["watchlist"])
 
 
 def _normalize_ui(cfg: dict[str, Any]) -> None:
@@ -1501,6 +1555,7 @@ def load_config() -> dict[str, Any]:
     _normalize_simkl(cfg)
     _normalize_mdblist(cfg)
     _normalize_publicmetadb(cfg)
+    _normalize_anime_mapping(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
     pairs = cfg.get("pairs")
@@ -1550,6 +1605,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_simkl(data)
     _normalize_mdblist(data)
     _normalize_publicmetadb(data)
+    _normalize_anime_mapping(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)
     _normalize_ui(data)

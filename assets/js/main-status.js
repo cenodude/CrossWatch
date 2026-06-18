@@ -82,8 +82,8 @@
   function syncMetadataProviderDot() {
     const chip = $("hub_tmdb_key");
     const dot = $("meta-tmdb-dot");
-    const tile = dot?.closest?.(".cw-hub-tile.tmdb");
-    if (!chip || !dot || !tile) return false;
+    const panel = dot?.closest?.('.cw-meta-provider-panel[data-provider="tmdb"]') || dot?.closest?.(".cw-hub-tile.tmdb");
+    if (!dot) return false;
 
     const cfg = getCachedConfig();
     const cfgKey = txt(cfg?.tmdb?.api_key);
@@ -98,13 +98,13 @@
       if (touched) uiHas = v.length > 0 || mask(v);
     }
 
-    const raw = txt(chip.textContent).toLowerCase();
+    const raw = txt(chip?.textContent).toLowerCase();
     const chipHas = /\bset\b/.test(raw) && !/\bmissing\b|\bnot set\b|\bunset\b|\bempty\b|—/.test(raw);
     const on = uiHas || (!touched && (cfgHas || chipHas));
     dot.classList.toggle("on", on);
     dot.title = on ? "Configured" : "Not configured";
     dot.setAttribute("aria-label", dot.title);
-    tile.classList.toggle("is-configured", on);
+    panel?.classList?.toggle("is-configured", on);
     return true;
   }
 
@@ -308,7 +308,7 @@
   function init() {
     bindStatusButton();
     observe("auth-providers", "auth", 200, () => refreshAuthDots(true).catch(() => {}).finally(renderProviders), { childList: true, subtree: true });
-    observe("hub_tmdb_key", "meta", 0, syncMetadataProviderDot, { childList: true, characterData: true, subtree: true });
+    observe("meta-tmdb-dot", "meta", 0, syncMetadataProviderDot, { childList: true, characterData: true, subtree: true });
     renderCachedProviders();
     let tries = 0;
     (function retry() {
