@@ -65,6 +65,11 @@ except Exception:
         return idx
 
 from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
+from ..anime_mapping.service import (
+    enrich_index_for_pair as _anime_enrich_index_for_pair,
+    mapping_enabled_for_feature as _anime_mapping_enabled_for_feature,
+    mapping_enabled_for_pair as _anime_mapping_enabled_for_pair,
+)
 from ._snapshots import (
     build_snapshots_for_feature,
     coerce_suspect_snapshot,
@@ -508,6 +513,14 @@ def _two_way_sync(
     # Keep rich metadata when the provider index is presence-only.
     A_eff = _enrich_index_payload(A_eff, prevA, feature)
     B_eff = _enrich_index_payload(B_eff, prevB, feature)
+
+    if _anime_mapping_enabled_for_feature(cfg, feature) and _anime_mapping_enabled_for_pair(cfg, a, b):
+        a_before = len(A_eff)
+        b_before = len(B_eff)
+        A_eff = _anime_enrich_index_for_pair(A_eff, cfg, a, b)
+        B_eff = _anime_enrich_index_for_pair(B_eff, cfg, a, b)
+        if len(A_eff) != a_before or len(B_eff) != b_before:
+            dbg("anime_mapping.rekeyed", feature=feature, a=a, b=b, a_items=len(A_eff), b_items=len(B_eff))
 
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))

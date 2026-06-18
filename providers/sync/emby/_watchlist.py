@@ -6,6 +6,8 @@ import json
 import os
 from typing import Any, Iterable, Mapping
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
+
 from ._common import (
     _is_capture_mode,
     make_logger,
@@ -343,8 +345,11 @@ def _filter_watchlist_items(
 ) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     for it in items or []:
-        t = (it.get("type") or "").strip().lower()
-        if t in ("movie", "show", "series"):
+        raw_t = (it.get("type") or "").strip().lower()
+        if raw_t not in ("movie", "movies", "show", "shows", "series", "tv", "anime"):
+            continue
+        t = mapped_or_default_media_type(it)
+        if t in ("movie", "show"):
             out.append(it)
     return out
 
@@ -360,7 +365,13 @@ def _add_favorites(
     unresolved: list[dict[str, Any]] = []
 
     for it in items or []:
-        t = (it.get("type") or "").strip().lower()
+        raw_t = (it.get("type") or "").strip().lower()
+        if raw_t == "episode":
+            t = "episode"
+        elif raw_t in ("movie", "movies", "show", "shows", "series", "tv", "anime"):
+            t = mapped_or_default_media_type(it)
+        else:
+            continue
         if t not in ("movie", "show", "series", "episode"):
             continue
         k = canonical_key(id_minimal(it))

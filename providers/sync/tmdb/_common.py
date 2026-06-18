@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
 
 STATE_DIR = Path("/config/.cw_state")
@@ -177,19 +178,17 @@ def tmdb_id_from_item(item: Mapping[str, Any]) -> int | None:
 
 
 def pick_media_type(item: Mapping[str, Any]) -> str:
-    t = _norm_kind(item.get("type"))
-    if t == "tv":
-        return "tv"
-    if t == "season":
-        return "season"
-    if t == "episode":
-        return "episode"
-    return "movie"
+    raw = _norm_kind(item.get("type"))
+    if raw in ("season", "episode"):
+        return raw
+    return "tv" if mapped_or_default_media_type(item) == "show" else "movie"
 
 
 def pick_watchlist_media_type(item: Mapping[str, Any]) -> str:
-    t = _norm_kind(item.get("type"))
-    return "tv" if t in ("tv", "season", "episode") else "movie"
+    raw = _norm_kind(item.get("type"))
+    if raw in ("season", "episode"):
+        return "tv"
+    return "tv" if mapped_or_default_media_type(item) == "show" else "movie"
 
 
 def unresolved_item(item: Mapping[str, Any], reason: str) -> dict[str, Any]:

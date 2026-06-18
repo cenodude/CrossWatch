@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
@@ -259,7 +260,9 @@ def _ids_for_mdblist(item: Mapping[str, Any]) -> dict[str, Any]:
             "kitsu": item.get("kitsu") or item.get("kitsu_id"),
         }
 
-    typ = str(item.get("type") or item.get("mediatype") or "").strip().lower()
+    typ = mapped_or_default_media_type(item)
+    if not typ:
+        typ = str(item.get("type") or item.get("mediatype") or "").strip().lower()
     if typ.endswith("s") and typ in ("movies", "shows"):
         typ = typ[:-1]
     if typ not in ("movie", "show"):
@@ -542,7 +545,7 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
         if not any(ids.get(k) not in (None, "") for k in ("imdb", "tmdb", "trakt", "tvdb", "kitsu", "mdblist")):
             rejected.append({"item": minimal_item, "hint": "missing_supported_ids"})
             continue
-        kind = "show" if str(item.get("type") or "").lower() in ("show", "shows", "tv", "series") else "movie"
+        kind = "show" if mapped_or_default_media_type(item) == "show" else "movie"
         accepted.append({"type": kind, "ids": ids})
     return accepted, rejected
 

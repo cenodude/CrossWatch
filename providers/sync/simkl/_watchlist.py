@@ -8,6 +8,7 @@ import os
 import time
 from typing import Any, Iterable, Mapping
 
+from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
@@ -195,8 +196,8 @@ def _kind_group(item: Mapping[str, Any]) -> str:
         return "movies"
     if bucket in ("shows", "anime"):
         return "shows"
-    media_type = str(item.get("type") or "movie").strip().lower()
-    return "movies" if media_type in ("movie", "movies") else "shows"
+    media_type = mapped_or_default_media_type(item)
+    return "movies" if media_type == "movie" else "shows"
 
 
 def _sum_processed_from_body(body: Any) -> int:
