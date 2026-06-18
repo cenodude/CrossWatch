@@ -86,6 +86,20 @@ except Exception as e:
         error=str(e),
     )
 
+try:
+    from .anilist import _ratings as feat_ratings
+except Exception as e:
+    feat_ratings = None
+    cw_log(
+        "ANILIST",
+        "module",
+        "warn",
+        "feature_import_failed",
+        import_feature="ratings",
+        error_type=e.__class__.__name__,
+        error=str(e),
+    )
+
 
 GQL_URL = "https://graphql.anilist.co"
 UA = os.environ.get("CW_ANILIST_UA") or os.environ.get("CW_UA") or f"CrossWatch/{__VERSION__} (AniList)"
@@ -117,10 +131,22 @@ def label_anilist(method: str, url: str, kw: Mapping[str, Any]) -> str:
         payload = kw.get("json")
         if isinstance(payload, Mapping):
             q = str(payload.get("query") or "")
+            variables_raw = payload.get("variables")
+            variables = variables_raw if isinstance(variables_raw, Mapping) else {}
             if "Viewer" in q:
                 return "viewer"
+            if "MediaListCollection" in q and "score(" in q:
+                return "ratings:index"
             if "MediaListCollection" in q:
                 return "watchlist:index"
+            if "SaveMediaListEntry" in q and "scoreRaw" in q:
+                try:
+                    score_raw = variables.get("scoreRaw")
+                    if score_raw is not None and int(score_raw) == 0:
+                        return "ratings:remove"
+                except Exception:
+                    pass
+                return "ratings:add"
             if "SaveMediaListEntry" in q:
                 return "watchlist:add"
             if "DeleteMediaListEntry" in q:
@@ -128,6 +154,8 @@ def label_anilist(method: str, url: str, kw: Mapping[str, Any]) -> str:
             if "MediaList(" in q or " MediaList(" in q:
                 return "watchlist:lookup"
             if "Media(idMal" in q:
+                if "score(" in q:
+                    return "ratings:resolve"
                 return "watchlist:resolve"
     except Exception:
         pass
@@ -223,7 +251,7 @@ class ANILISTClient:
 
 
 def supported_features() -> dict[str, bool]:
-    return {"watchlist": bool(feat_watchlist), "ratings": False, "history": False, "playlists": False}
+    return {"watchlist": bool(feat_watchlist), "ratings": bool(feat_ratings), "history": False, "playlists": False}
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -240,6 +268,12 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "observed_deletes": False,
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "unrate": True,
+                "from_date": False,
+            },
         },
     }
 
@@ -345,7 +379,7 @@ class ANILISTModule:
         feats = supported_features()
         features = {
             "watchlist": bool(feats.get("watchlist") and ok),
-            "ratings": False,
+            "ratings": bool(feats.get("ratings") and ok),
             "history": False,
             "playlists": False,
         }
@@ -379,10 +413,11 @@ class ANILISTModule:
         return tuple(k for k, v in feats.items() if v)
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
-        if feature != "watchlist" or not feat_watchlist:
+        mod = {"watchlist": feat_watchlist, "ratings": feat_ratings}.get(str(feature or "").strip().lower())
+        if not mod:
             _info("index_skipped", feature=feature, reason="disabled_or_missing")
             return {}
-        return feat_watchlist.build_index(self)
+        return mod.build_index(self)
 
     def add(
         self,
@@ -396,11 +431,13 @@ class ANILISTModule:
             return {"ok": True, "count": 0}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
-        if feature != "watchlist" or not feat_watchlist:
+        feature_name = str(feature or "").strip().lower()
+        mod = {"watchlist": feat_watchlist, "ratings": feat_ratings}.get(feature_name)
+        if not mod:
             _info("write_skipped", op="add", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
-        if hasattr(feat_watchlist, "add_detailed"):
-            res = feat_watchlist.add_detailed(self, lst)  # type: ignore[attr-defined]
+        if hasattr(mod, "add_detailed"):
+            res = mod.add_detailed(self, lst)  # type: ignore[attr-defined]
             confirmed_keys = (res or {}).get("confirmed_keys") or []
             skipped_keys = (res or {}).get("skipped_keys") or []
             unresolved = (res or {}).get("unresolved") or []
@@ -413,9 +450,10 @@ class ANILISTModule:
                 "skipped_keys": list(skipped_keys) if isinstance(skipped_keys, list) else [],
                 "unresolved": list(unresolved) if isinstance(unresolved, list) else [],
             }
-        count, unresolved = feat_watchlist.add(self, lst)
+        count, unresolved = mod.add(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
         return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+
     def remove(
         self,
         feature: str,
@@ -428,12 +466,15 @@ class ANILISTModule:
             return {"ok": True, "count": 0}
         if dry_run:
             return {"ok": True, "count": len(lst), "dry_run": True}
-        if feature != "watchlist" or not feat_watchlist:
+        feature_name = str(feature or "").strip().lower()
+        mod = {"watchlist": feat_watchlist, "ratings": feat_ratings}.get(feature_name)
+        if not mod:
             _info("write_skipped", op="remove", feature=feature, reason="disabled_or_missing")
             return {"ok": True, "count": 0, "unresolved": []}
-        count, unresolved = feat_watchlist.remove(self, lst)
+        count, unresolved = mod.remove(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
         return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+
 class _ANILISTOPS:
     def name(self) -> str:
         return "ANILIST"
@@ -450,6 +491,12 @@ class _ANILISTOPS:
             "provides_ids": True,
             "index_semantics": "present",
             "observed_deletes": False,
+            "ratings": {
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "unrate": True,
+                "from_date": False,
+            },
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:

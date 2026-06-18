@@ -561,7 +561,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "refresh_hours": 24,                            # Minimum age before an automatic refresh is considered
         "stale_after_days": 14,                         # UI/status warning threshold
         "use_for_pairs": ["anilist"],                   # Providers that activate anime mapping when present in a pair
-        "features": ["watchlist"],                      # Sync features where anime ID enrichment is applied
+        "features": ["watchlist", "ratings"],           # Sync features where anime ID enrichment is applied
     },
 
     # --- Scrobble ------------------------------------------------------------
@@ -1360,7 +1360,7 @@ def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
         return out or list(default)
 
     am["use_for_pairs"] = _string_list(am.get("use_for_pairs"), ["anilist"])
-    am["features"] = _string_list(am.get("features"), ["watchlist"])
+    am["features"] = _string_list(am.get("features"), ["watchlist", "ratings"])
 
 
 def _normalize_ui(cfg: dict[str, Any]) -> None:

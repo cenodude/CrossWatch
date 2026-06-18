@@ -861,7 +861,7 @@ function cwBuildAnimeMappingPanel() {
     <div class="cw-panel-head anime-mapping-head">
       <div class="cw-panel-head-main">
         <div class="cw-panel-title">Anime ID Mapping</div>
-        <div class="muted">Local anime ID index for AniList watchlist pairs.</div>
+        <div class="muted">Local anime ID index for AniList watchlist and ratings pairs.</div>
       </div>
       <label class="cx-toggle anime-mapping-toggle">
         <input type="checkbox" id="anime_mapping_enabled">
