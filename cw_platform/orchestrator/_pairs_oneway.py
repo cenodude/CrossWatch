@@ -1061,15 +1061,12 @@ def run_one_way_feature(
 
     if allow_removes:
         if feature == "ratings":
-            if remove_mode == "mirror":
-                removes = list(mirror_removes or [])
-                if removes:
-                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-                    if prev_dst:
-                        prev_dst_alias = _alias_index(prev_dst)
-                        removes = [it for it in removes if _present(prev_dst, prev_dst_alias, it)]
-            else:
-                removes = _observed_source_removes()
+            removes = list(mirror_removes or [])
+            if removes:
+                removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                if prev_dst:
+                    prev_dst_alias = _alias_index(prev_dst)
+                    removes = [it for it in removes if _present(prev_dst, prev_dst_alias, it)]
         elif remove_mode == "mirror":
             removes = list(mirror_removes or [])
             if removes:
