@@ -17,6 +17,8 @@ export const HELP_TEXT = {
   "cx-wl-enable": "Watchlist: Enable\nCompare watchlists and write missing items to the target.",
   "cx-wl-add": "Watchlist: Add\nAdds missing items to the target watchlist.",
   "cx-wl-remove": "Watchlist: Remove\nRemoves items from the target.",
+  "cx-wl-anime-map": "Use Anime ID Mapping\nUse the local AniBridge ID database for this AniList watchlist pair. When enabled from here, global Anime ID Mapping is enabled too.",
+  "cx-wl-anime-only": "Anime-only sync\nOnly sync items that Anime ID Mapping can confirm as anime. Non-anime and unmapped items are skipped before AniList title search.",
   "cx-rt-enable": "Ratings: Enable\nCompare and write ratings to the target.",
   "cx-rt-add": "Ratings: Add / Update\nWrites ratings/updates to the target.",
   "cx-rt-remove": "Ratings: Remove\nClears ratings on the target (destructive and only for very specific needs).",

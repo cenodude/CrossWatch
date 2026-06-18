@@ -157,6 +157,10 @@ def _normalize_features(f: dict | None) -> dict:
             v.setdefault("enable", True)
             v.setdefault("add", True)
             v.setdefault("remove", False)
+        if isinstance(f.get(k), dict) and ("use_anime_mapping" in f[k] or "anime_only_sync" in f[k]):
+            use_map = bool(f[k].get("use_anime_mapping", False))
+            f[k]["use_anime_mapping"] = use_map
+            f[k]["anime_only_sync"] = bool(f[k].get("anime_only_sync", False)) if use_map else False
     return f
 
 _PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "PUBLICMETADB", "CROSSWATCH"}
