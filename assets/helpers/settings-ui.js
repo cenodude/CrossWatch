@@ -904,6 +904,9 @@ function cwBuildAnimeMappingPanel() {
           <strong id="anime_mapping_counts">-</strong>
         </div>
       </div>
+      <div class="anime-mapping-source">
+        Dataset source: <a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">anibridge/anibridge-mappings</a>. CrossWatch downloads the AniBridge mappings dataset to translate media identifiers between AniList and TMDB, TVDB, IMDb, MyAnimeList, and AniDB.
+      </div>
       <div class="auth-card-notes" id="anime_mapping_error"></div>
       <div class="cw-settings-inline-action anime-mapping-actions">
         <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>

@@ -151,7 +151,7 @@ function view(info, mods, logo) {
       #about-host .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.08)}
       #about-host .badge .dot{width:8px;height:8px;border-radius:999px;background:rgba(150,70,255,.90);box-shadow:0 0 0 4px rgba(150,70,255,.18)}
       #about-host .headline{font-weight:950;font-size:20px;line-height:1.15;margin:10px 0 8px}
-      #about-host .lede{opacity:.84;max-width:72ch;line-height:1.5}
+      #about-host .lede{opacity:.84;width:100%;line-height:1.5}
       #about-host .eyebrow{margin:0 0 6px;color:rgba(228,234,255,.54);font-size:11px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
       #about-host .update{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;border-color:rgba(150,70,255,.22);
         background:linear-gradient(135deg,rgba(150,70,255,.14),rgba(60,140,255,.08))
@@ -235,7 +235,7 @@ function view(info, mods, logo) {
         <section class="card">
           <div class="eyebrow">Disclaimer</div>
           <div class="discBody">
-            <div>Independent community project. Not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, SIMKL, TMDb, Tautulli, AniList, or MDBList.</div>
+            <div>Independent community project. Not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, SIMKL, TMDb, Tautulli, AniList, PublicMetaDB, or MDBList. CrossWatch uses the AniBridge mappings dataset to translate media identifiers between AniList and providers such as TMDB, TVDB, IMDb, MyAnimeList and AniDB.</div>
             <ul>
               <li>Names, logos, and brands belong to their owners and are used for identification only.</li>
               <li>Third-party APIs have their own rules. Use them without getting yourself banned.</li>
