@@ -1133,6 +1133,9 @@ html[data-cw-theme=flat-light] #placeholder-card .nav:hover{background:#e9edf5;b
 #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status{min-width:0;padding:12px;border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(0,0,0,.14)}
 #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status span{display:block;margin-bottom:5px;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-status strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--fg)}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-source{margin-top:-2px;color:var(--muted);font-size:12px;line-height:1.45;opacity:.78}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-source a{color:var(--fg);font-weight:750;text-decoration:none;border-bottom:1px dashed currentColor}
+#page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-source a:hover{border-bottom-style:solid}
 #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-toggle{justify-self:end}
 #page-settings #sec-meta .cw-meta-provider-panel[data-provider=anime-mapping] .anime-mapping-actions{margin-top:0}
 #page-settings #sec-meta #anime_mapping_error:empty{display:none}
