@@ -702,8 +702,23 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         except Exception:
             pass
     try:
+        from cw_platform.anime_mapping.auto_update import refresh_from_config as _anime_mapping_refresh_auto_update
+
+        _anime_mapping_refresh_auto_update(load_config)
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"anime mapping auto-update startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+    try:
         yield
     finally:
+        try:
+            from cw_platform.anime_mapping.auto_update import stop as _anime_mapping_stop_auto_update
+
+            _anime_mapping_stop_auto_update()
+        except Exception:
+            pass
         try:
             from providers.scrobble.watch_manager import stop_all as _wm_stop
             _wm_stop(app)
