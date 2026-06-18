@@ -14,6 +14,7 @@ from .storage import paths, query_edges, read_state
 ANIME_NATIVE_PROVIDERS = {"anilist"}
 DEFAULT_FEATURES = {"watchlist"}
 OUTPUT_KEYS = ("anilist", "mal", "anidb", "tmdb", "tvdb", "imdb")
+PAIR_FEATURE_OPTIONS_KEY = "_cw_pair_feature_options"
 _MEDIA_KIND_KEYS: dict[str, str] = {
     "tmdb_movie": "movie",
     "tvdb_movie": "movie",
@@ -59,6 +60,57 @@ def mapping_enabled_for_feature(cfg: Mapping[str, Any], feature: Any) -> bool:
     else:
         enabled = set(DEFAULT_FEATURES)
     return str(feature or "").strip().lower() in enabled
+
+
+def _pair_feature_options(raw: Mapping[str, Any] | None) -> dict[str, Any]:
+    out = dict(raw or {}) if isinstance(raw, Mapping) else {}
+    use_map = bool(out.get("use_anime_mapping", False))
+    out["use_anime_mapping"] = use_map
+    out["anime_only_sync"] = bool(out.get("anime_only_sync", False)) if use_map else False
+    return out
+
+
+def anime_mapping_pair_feature_options(
+    cfg: Mapping[str, Any],
+    feature_cfg: Mapping[str, Any] | None,
+    feature: Any,
+    *providers: Any,
+    anime_only_default: bool = False,
+) -> dict[str, Any]:
+    feature_name = str(feature or "").strip().lower()
+    base_enabled = mapping_enabled_for_feature(cfg, feature_name) and mapping_enabled_for_pair(cfg, *providers)
+    opts = _pair_feature_options(feature_cfg)
+
+    if "use_anime_mapping" not in dict(feature_cfg or {}):
+        opts["use_anime_mapping"] = bool(base_enabled)
+    else:
+        opts["use_anime_mapping"] = bool(base_enabled and opts.get("use_anime_mapping"))
+
+    if not opts["use_anime_mapping"]:
+        opts["anime_only_sync"] = False
+    elif "anime_only_sync" not in dict(feature_cfg or {}):
+        opts["anime_only_sync"] = bool(anime_only_default)
+
+    opts["feature"] = feature_name
+    return opts
+
+
+def config_with_pair_feature_options(
+    cfg: Mapping[str, Any],
+    options: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    out = dict(cfg or {})
+    out[PAIR_FEATURE_OPTIONS_KEY] = _pair_feature_options(options)
+    return out
+
+
+def runtime_pair_feature_options(cfg: Mapping[str, Any], feature: Any = "watchlist") -> dict[str, Any]:
+    raw = cfg.get(PAIR_FEATURE_OPTIONS_KEY) if isinstance(cfg, Mapping) else {}
+    opts = _pair_feature_options(raw if isinstance(raw, Mapping) else {})
+    if opts.get("feature") and str(opts.get("feature") or "").strip().lower() != str(feature or "").strip().lower():
+        return {"use_anime_mapping": False, "anime_only_sync": False, "feature": str(feature or "").strip().lower()}
+    opts["feature"] = str(feature or "").strip().lower()
+    return opts
 
 
 def mapped_media_type(item: Mapping[str, Any]) -> str | None:
