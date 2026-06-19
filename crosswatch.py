@@ -41,6 +41,7 @@ from api.appAuthAPI import (
 )
 
 from _logging import log as LOG, BLUE, GREEN, DIM, RESET  # type: ignore
+BACKUP_LOG = LOG.child("BACKUP")
 
 def _c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}" if LOG.use_color else text
@@ -913,10 +914,76 @@ async def api_logs_watcher(
 # Scheduler sync starter
 def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
     p = dict(payload or {})
+    raw_backup = p.get("backup")
+    backup: dict[str, Any] = raw_backup if isinstance(raw_backup, dict) else {}
+    backup_job_id = str(p.get("backup_job_id") or "").strip()
+    scheduler_mode = str(p.get("scheduler_mode") or "").strip().lower()
+    if backup_job_id or scheduler_mode == "advanced_backup" or backup:
+        try:
+            from services.backups import create_backup, enforce_backup_retention, render_backup_label_template
+
+            scope = str(backup.get("scope") or "app_state").strip().lower()
+            label_template = str(backup.get("label_template") or backup.get("labelTemplate") or "").strip()
+            try:
+                retention_days = max(0, int(backup.get("retention_days") or 0))
+            except Exception:
+                retention_days = 0
+            try:
+                max_backups = max(0, int(backup.get("max_backups") or 0))
+            except Exception:
+                max_backups = 0
+            auto_delete_old = backup.get("auto_delete_old") is True
+            label = render_backup_label_template(label_template, scope=scope)
+            BACKUP_LOG.info(f"scheduled backup starting scope={scope} job={backup_job_id or 'default'}")
+            BACKUP_LOG.debug(
+                "scheduled backup options",
+                extra={
+                    "scope": scope,
+                    "job_id": backup_job_id or "default",
+                    "retention_days": retention_days,
+                    "max_backups": max_backups,
+                    "auto_delete_old": auto_delete_old,
+                    "include_snapshots": bool(backup.get("include_snapshots")),
+                    "include_reports": bool(backup.get("include_reports")),
+                    "include_cache": bool(backup.get("include_cache")),
+                },
+            )
+            res = create_backup(
+                scope=scope,
+                label=label,
+                include_snapshots=bool(backup.get("include_snapshots")),
+                include_reports=bool(backup.get("include_reports")),
+                include_cache=bool(backup.get("include_cache")),
+                trigger="scheduler",
+            ) or {}
+            _append_log(
+                "SYNC",
+                f"[i] Scheduler backup: saved {scope} -> {res.get('path') or 'backup created'}",
+            )
+            BACKUP_LOG.success(f"scheduled backup completed scope={scope} path={res.get('path') or 'backup created'}")
+            if auto_delete_old:
+                cleanup = enforce_backup_retention(
+                    retention_days=retention_days,
+                    max_backups=max_backups,
+                    auto_delete_old=True,
+                ) or {}
+                deleted = cleanup.get("deleted") or []
+                if deleted:
+                    _append_log("SYNC", f"[i] Scheduler backup retention: deleted {len(deleted)} old backup(s)")
+                BACKUP_LOG.debug(
+                    "scheduled backup retention completed",
+                    extra={"deleted": len(deleted), "errors": len(cleanup.get("errors") or [])},
+                )
+            return True
+        except Exception as e:
+            _append_log("SYNC", f"[!] Scheduler backup failed: {type(e).__name__}")
+            BACKUP_LOG.error(f"scheduled backup failed: {type(e).__name__}")
+            BACKUP_LOG.debug("scheduled backup failure detail", extra={"error_type": type(e).__name__})
+            return False
+
     raw_capture = p.get("capture")
     capture: dict[str, Any] = raw_capture if isinstance(raw_capture, dict) else {}
     capture_job_id = str(p.get("capture_job_id") or "").strip()
-    scheduler_mode = str(p.get("scheduler_mode") or "").strip().lower()
     if capture_job_id or scheduler_mode == "advanced_capture" or capture:
         try:
             from services.snapshots import create_snapshot, enforce_capture_retention, render_capture_label_template

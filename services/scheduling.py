@@ -33,6 +33,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
         "enabled": False,
         "jobs": [],
         "capture_jobs": [],
+        "backup_jobs": [],
         "event_rules": [],
     },
 }
@@ -158,6 +159,8 @@ def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
                 out_adv["jobs"] = []
             if not isinstance(out_adv.get("capture_jobs"), list):
                 out_adv["capture_jobs"] = []
+            if not isinstance(out_adv.get("backup_jobs"), list):
+                out_adv["backup_jobs"] = []
             if not isinstance(out_adv.get("event_rules"), list):
                 out_adv["event_rules"] = []
             out["advanced"] = out_adv
@@ -287,6 +290,38 @@ def _normalize_capture_job(j: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_backup_job(j: dict[str, Any]) -> dict[str, Any]:
+    days = j.get("days")
+    if not isinstance(days, list):
+        days = []
+    days2: list[int] = []
+    for d in days:
+        try:
+            n = int(d)
+            if 1 <= n <= 7 and n not in days2:
+                days2.append(n)
+        except Exception:
+            continue
+    days2.sort()
+    scope = str(j.get("scope") or "app_state").strip().lower()
+    if scope not in {"config_only", "app_state", "full"}:
+        scope = "app_state"
+    return {
+        "id": str(j.get("id") or "").strip() or f"backup_job_{_now_ts()}",
+        "scope": scope,
+        "label_template": str(j.get("label_template") or j.get("labelTemplate") or "").strip(),
+        "retention_days": _as_int(j.get("retention_days", j.get("retentionDays", j.get("keep_days", 0))), 0, minimum=0),
+        "max_backups": _as_int(j.get("max_backups", j.get("maxBackups", j.get("keep_count", 0))), 0, minimum=0),
+        "auto_delete_old": _as_bool(j.get("auto_delete_old", j.get("autoDeleteOld")), False),
+        "include_snapshots": _as_bool(j.get("include_snapshots", j.get("includeSnapshots")), False),
+        "include_reports": _as_bool(j.get("include_reports", j.get("includeReports")), False),
+        "include_cache": _as_bool(j.get("include_cache", j.get("includeCache")), False),
+        "at": (str(j.get("at") or "").strip() or None),
+        "days": days2,
+        "active": _as_bool(j.get("active"), True),
+    }
+
+
 def _normalize_event_rule(rule: dict[str, Any]) -> dict[str, Any]:
     source = str(rule.get("source") or "").strip().lower()
     if source not in {"watcher", "webhook"}:
@@ -392,6 +427,26 @@ def _iter_adv_capture_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
         if not job["active"]:
             continue
         if not job["provider"] or not job["feature"]:
+            continue
+        if not job["at"] or _parse_hhmm(job["at"]) is None:
+            continue
+        out.append(job)
+    return out
+
+
+def _iter_adv_backup_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
+    adv = sch.get("advanced") or {}
+    if not isinstance(adv, dict) or not adv.get("enabled"):
+        return []
+    jobs = adv.get("backup_jobs") or adv.get("backupJobs") or []
+    if not isinstance(jobs, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in jobs:
+        if not isinstance(raw, dict):
+            continue
+        job = _normalize_backup_job(raw)
+        if not job["active"]:
             continue
         if not job["at"] or _parse_hhmm(job["at"]) is None:
             continue
@@ -535,6 +590,8 @@ class SyncScheduler:
             "last_capture_job_id": "",
             "last_capture_provider": "",
             "last_capture_feature": "",
+            "last_backup_job_id": "",
+            "last_backup_scope": "",
             "last_rule_id": "",
             "last_event_source": "",
             "last_event_name": "",
@@ -593,6 +650,7 @@ class SyncScheduler:
     def _adv_signature(self, sch: dict[str, Any]) -> str:
         jobs = _iter_adv_jobs(sch)
         capture_jobs = _iter_adv_capture_jobs(sch)
+        backup_jobs = _iter_adv_backup_jobs(sch)
         pairs = [
             ("sync", str(j.get("id") or ""), str(j.get("pair_id") or ""), str(j.get("at") or ""), tuple(j.get("days") or []))
             for j in jobs
@@ -612,6 +670,22 @@ class SyncScheduler:
             )
             for j in capture_jobs
         ]
+        pairs += [
+            (
+                "backup",
+                str(j.get("id") or ""),
+                str(j.get("scope") or ""),
+                str(j.get("at") or ""),
+                tuple(j.get("days") or []),
+                int(j.get("retention_days") or 0),
+                int(j.get("max_backups") or 0),
+                bool(j.get("auto_delete_old")),
+                bool(j.get("include_snapshots")),
+                bool(j.get("include_reports")),
+                bool(j.get("include_cache")),
+            )
+            for j in backup_jobs
+        ]
         return repr(sorted(pairs))
 
     def _adv_seed_past_due_today(self, sch: dict[str, Any], tz: Any | None) -> None:
@@ -630,6 +704,12 @@ class SyncScheduler:
             self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
 
         for job in _iter_adv_capture_jobs(sch):
+            dt = _job_due_today(base, job)
+            if dt is None or dt >= current:
+                continue
+            self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
+
+        for job in _iter_adv_backup_jobs(sch):
             dt = _job_due_today(base, job)
             if dt is None or dt >= current:
                 continue
@@ -890,6 +970,8 @@ class SyncScheduler:
                 self._status["last_capture_job_id"] = ""
                 self._status["last_capture_provider"] = ""
                 self._status["last_capture_feature"] = ""
+                self._status["last_backup_job_id"] = ""
+                self._status["last_backup_scope"] = ""
                 self._status["last_rule_id"] = str(rule.get("id") or "")
                 self._status["last_event_source"] = str(event.get("source") or "")
                 self._status["last_event_name"] = str(event.get("event") or "")
@@ -935,7 +1017,8 @@ class SyncScheduler:
     def _adv_next(self, sch: dict[str, Any], now_local: datetime, tz: Any | None) -> datetime | None:
         jobs = _iter_adv_jobs(sch)
         capture_jobs = _iter_adv_capture_jobs(sch)
-        if not jobs and not capture_jobs:
+        backup_jobs = _iter_adv_backup_jobs(sch)
+        if not jobs and not capture_jobs and not backup_jobs:
             return None
 
         now = _as_now_in_tz(tz)
@@ -955,6 +1038,12 @@ class SyncScheduler:
             if best is None or cand < best:
                 best = cand
         for j in capture_jobs:
+            cand = _next_job_time(base, j)
+            if cand is None:
+                continue
+            if best is None or cand < best:
+                best = cand
+        for j in backup_jobs:
             cand = _next_job_time(base, j)
             if cand is None:
                 continue
@@ -1010,10 +1099,35 @@ class SyncScheduler:
         due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
         return due
 
+    def _adv_due_backup_jobs(self, sch: dict[str, Any], tz: Any | None) -> list[tuple[datetime, dict[str, Any]]]:
+        jobs = _iter_adv_backup_jobs(sch)
+        if not jobs:
+            return []
+
+        now = _as_now_in_tz(tz)
+        base = now.replace(second=0, microsecond=0)
+        today = base.date().isoformat()
+
+        due: list[tuple[datetime, dict[str, Any]]] = []
+        for j in jobs:
+            dt = _job_due_today(base, j)
+            if dt is None:
+                continue
+            if dt > base:
+                continue
+            key = f"{today}@{j.get('at')}"
+            if self._adv_last_key.get(j["id"]) == key:
+                continue
+            due.append((dt, j))
+
+        due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
+        return due
+
     def _adv_run_due(self, sch: dict[str, Any], tz: Any | None) -> bool:
         due = self._adv_due_jobs(sch, tz)
         due_capture = self._adv_due_capture_jobs(sch, tz)
-        if not due and not due_capture:
+        due_backup = self._adv_due_backup_jobs(sch, tz)
+        if not due and not due_capture and not due_backup:
             return False
 
         now = _as_now_in_tz(tz)
@@ -1067,6 +1181,8 @@ class SyncScheduler:
                 self._status["last_capture_job_id"] = ""
                 self._status["last_capture_provider"] = ""
                 self._status["last_capture_feature"] = ""
+                self._status["last_backup_job_id"] = ""
+                self._status["last_backup_scope"] = ""
                 self._status["last_rule_id"] = ""
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
@@ -1123,6 +1239,65 @@ class SyncScheduler:
                 self._status["last_capture_job_id"] = j["id"]
                 self._status["last_capture_provider"] = j["provider"] or ""
                 self._status["last_capture_feature"] = j["feature"] or ""
+                self._status["last_backup_job_id"] = ""
+                self._status["last_backup_scope"] = ""
+                self._status["last_rule_id"] = ""
+                self._status["last_event_source"] = ""
+                self._status["last_event_name"] = ""
+
+            self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
+        for _, j in due_backup:
+            if self._stop.is_set():
+                break
+
+            waited = 0
+            while self.is_sync_running_fn() and not self._stop.is_set():
+                if waited == 0:
+                    self._log("advanced backup: sync is busy; waiting to run due backup job(s)", level="INFO")
+                waited += 1
+                self._sleep_or_poke(2.0)
+                if self._poke.is_set():
+                    self._poke.clear()
+                    return True
+
+            payload = {
+                "source": "scheduler",
+                "scheduler_mode": "advanced_backup",
+                "backup_job_id": j["id"],
+                "backup": {
+                    "scope": j["scope"],
+                    "label_template": j.get("label_template") or "",
+                    "retention_days": int(j.get("retention_days") or 0),
+                    "max_backups": int(j.get("max_backups") or 0),
+                    "auto_delete_old": bool(j.get("auto_delete_old")),
+                    "include_snapshots": bool(j.get("include_snapshots")),
+                    "include_reports": bool(j.get("include_reports")),
+                    "include_cache": bool(j.get("include_cache")),
+                },
+            }
+
+            self._log(
+                f"advanced backup: running job {j['id']} for {j['scope']}",
+                level="INFO",
+            )
+            ok = self._run_sync(payload)
+            if not ok:
+                ok_all = False
+                self._log(f"advanced backup: job {j['id']} failed", level="ERROR")
+            else:
+                self._log(f"advanced backup: job {j['id']} ok", level="INFO")
+
+            with self._lock:
+                self._status["last_run_ok"] = ok
+                self._status["last_run_at"] = _now_ts()
+                self._status["last_error"] = "" if ok else "advanced backup job failed"
+                self._status["last_job_id"] = ""
+                self._status["last_pair_id"] = ""
+                self._status["last_capture_job_id"] = ""
+                self._status["last_capture_provider"] = ""
+                self._status["last_capture_feature"] = ""
+                self._status["last_backup_job_id"] = j["id"]
+                self._status["last_backup_scope"] = j["scope"] or ""
                 self._status["last_rule_id"] = ""
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
@@ -1143,6 +1318,8 @@ class SyncScheduler:
             self._status["last_capture_job_id"] = ""
             self._status["last_capture_provider"] = ""
             self._status["last_capture_feature"] = ""
+            self._status["last_backup_job_id"] = ""
+            self._status["last_backup_scope"] = ""
             self._status["last_rule_id"] = ""
             self._status["last_event_source"] = ""
             self._status["last_event_name"] = ""
