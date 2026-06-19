@@ -105,7 +105,7 @@ def _is_https_request(request: Request) -> bool:
 
 _HELPER_SCRIPTS = (
     "provider-meta.js", "icon-select.js", "scrobbler-ui.js", "scrobbler-user-picker.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
-    "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js",
+    "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
@@ -337,8 +337,40 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-hub-desc{margin-top:0;font-size:12px;line-height:1.3}
 #page-settings .cw-hub-tile .chips{margin-top:14px;align-self:start}
 #page-settings .cw-hub-tile .chip{padding:6px 10px;border-radius:999px;border-color:rgba(255,255,255,.09);background:rgba(0,0,0,.24);font-size:12px}
+#page-settings .cw-maint-section{overflow:hidden}
+#page-settings .cw-maint-section>.head{display:none!important}
+#page-settings .cw-maint-section>.body{padding:18px!important}
+#page-settings .cw-maint-layout{display:grid;gap:14px}
+#page-settings .cw-maint-debug-card{display:grid;gap:14px;padding:16px;border:1px solid rgba(255,255,255,.08);border-radius:22px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+#page-settings .cw-maint-card-head{display:flex;align-items:center;gap:12px;min-width:0}
+#page-settings .cw-maint-card-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:14px;border:1px solid rgba(255,255,255,.10);background:linear-gradient(180deg,rgba(125,134,201,.18),rgba(125,134,201,.08));color:#edf2ff}
+#page-settings .cw-maint-card-icon.material-symbols-rounded{font-size:22px;font-variation-settings:"FILL" 0,"wght" 600,"GRAD" 0,"opsz" 24}
+#page-settings .cw-maint-card-copy{display:grid;gap:3px;min-width:0}
+#page-settings .cw-maint-card-copy strong{font-size:15px;line-height:1.15}
+#page-settings .cw-maint-card-copy small{font-size:12px;line-height:1.35;color:var(--cw-ov-soft)!important}
+#page-settings .cw-maint-debug-field{display:grid;gap:7px}
+#page-settings .cw-maint-debug-field label{font-size:11px;font-weight:900;letter-spacing:.11em;text-transform:uppercase}
+#page-settings .cw-maint-debug-field select{height:44px;min-height:44px;border-radius:14px!important}
+#page-settings .cw-maint-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+#page-settings .cw-maint-action.btn{min-height:104px;height:auto;padding:14px!important;border-radius:18px!important;display:flex!important;align-items:flex-start!important;justify-content:flex-start!important;gap:12px!important;text-align:left!important;background:linear-gradient(180deg,rgba(255,255,255,.042),rgba(255,255,255,.018))!important;border-color:rgba(255,255,255,.09)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)!important;color:var(--cw-ov-fg)!important}
+#page-settings .cw-maint-action.btn:hover{background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.026))!important;border-color:rgba(255,255,255,.16)!important;transform:translateY(-1px)}
+#page-settings .cw-maint-action-icon{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border-radius:13px;border:1px solid rgba(255,255,255,.10);background:rgba(125,134,201,.12);color:#eef3ff}
+#page-settings .cw-maint-action-icon.material-symbols-rounded{font-size:21px;font-variation-settings:"FILL" 0,"wght" 600,"GRAD" 0,"opsz" 24}
+#page-settings .cw-maint-action-copy{display:grid;gap:4px;min-width:0}
+#page-settings .cw-maint-action-copy strong{font-size:14px;line-height:1.15;color:var(--cw-ov-fg)!important}
+#page-settings .cw-maint-action-copy small{font-size:12px;line-height:1.35;color:var(--cw-ov-soft)!important;font-weight:700;white-space:normal}
+#page-settings .cw-maint-action.backup .cw-maint-action-icon{background:rgba(34,197,94,.11);border-color:rgba(34,197,94,.18);color:#d9fff0}
+#page-settings .cw-maint-action.tools .cw-maint-action-icon{background:rgba(125,134,201,.14);border-color:rgba(125,134,201,.22);color:#edf2ff}
+#page-settings .cw-maint-action.restart .cw-maint-action-icon{background:rgba(255,92,112,.10);border-color:rgba(255,120,138,.22);color:#ffdce2}
+#page-settings .cw-maint-action.restart{border-color:rgba(255,120,138,.18)!important}
+html[data-cw-theme=flat-dark] #page-settings .cw-maint-debug-card,html[data-cw-theme=flat-dark] #page-settings .cw-maint-action.btn{background:#20242d!important;background-image:none!important;border-color:rgba(255,255,255,.13)!important;box-shadow:none!important}
+html[data-cw-theme=flat-dark] #page-settings .cw-maint-card-icon,html[data-cw-theme=flat-dark] #page-settings .cw-maint-action-icon{background:#171a22!important;background-image:none!important;border-color:rgba(255,255,255,.14)!important;color:#dbe1eb!important}
+html[data-cw-theme=flat-light] #page-settings .cw-maint-debug-card,html[data-cw-theme=flat-light] #page-settings .cw-maint-action.btn{background:#fff!important;background-image:none!important;border-color:rgba(21,31,48,.14)!important;box-shadow:none!important;color:#172033!important}
+html[data-cw-theme=flat-light] #page-settings .cw-maint-card-icon,html[data-cw-theme=flat-light] #page-settings .cw-maint-action-icon{background:#eef2f7!important;background-image:none!important;border-color:rgba(21,31,48,.14)!important;color:#344054!important}
+html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint-action-icon{background:#f7dde2!important;border-color:rgba(201,79,97,.36)!important;color:#7f1d2d!important}
 @media (max-width:900px){#page-settings .cw-settings-2col,#page-settings .cw-settings-split{grid-template-columns:1fr}}
-@media (max-width:640px){#page-settings .cw-settings-statusrow{align-items:stretch}#page-settings .cw-settings-status{min-width:0}#page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout,#page-settings .cw-settings-shell #btn-auth-logout-others,#page-settings .cw-settings-inline-action .btn{width:100%}}
+@media (max-width:900px){#page-settings .cw-maint-actions{grid-template-columns:1fr}}
+@media (max-width:640px){#page-settings .cw-settings-statusrow{align-items:stretch}#page-settings .cw-settings-status{min-width:0}#page-settings .cw-settings-shell .btn.primary,#page-settings .cw-settings-shell #btn-auth-logout,#page-settings .cw-settings-shell #btn-auth-logout-others,#page-settings .cw-settings-inline-action .btn{width:100%}#page-settings .cw-maint-section>.body{padding:14px!important}#page-settings .cw-maint-card-head{align-items:flex-start}#page-settings .cw-maint-action.btn{min-height:auto}}
 </style>
 <script>
 (() => {
@@ -1229,23 +1261,55 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
               <p>Use these actions to reset CrossWatch states. They are safe but cannot be undone.</p>
             </div>
           </div>
-          <div class="section open cw-settings-section" id="sec-troubleshoot" data-accordion="off">
+          <div class="section open cw-settings-section cw-maint-section" id="sec-troubleshoot" data-accordion="off">
             <div class="head"><span class="chev"></span><strong>Maintenance</strong></div>
             <div class="body">
-              <div>
-                <label for="debug">Debug</label>
-                <select id="debug" name="debug">
-                  <option value="off">off</option>
-                  <option value="on">on</option>
-                  <option value="mods">on - including MOD debug - best option for debug</option>
-                  <option value="full">on - full (requires restart) - use with caution</option>
-                </select>
+              <div class="cw-maint-layout">
+                <div class="cw-maint-debug-card">
+                  <div class="cw-maint-card-head">
+                    <span class="material-symbols-rounded cw-maint-card-icon" aria-hidden="true">bug_report</span>
+                    <div class="cw-maint-card-copy">
+                      <strong>Debug logging</strong>
+                      <small>Control how much detail CrossWatch writes to the live logs and diagnostics.</small>
+                    </div>
+                  </div>
+                  <div class="cw-maint-debug-field">
+                    <label for="debug">Level</label>
+                    <select id="debug" name="debug">
+                      <option value="off">off</option>
+                      <option value="on">on</option>
+                      <option value="mods">on - including MOD debug - best option for debug</option>
+                      <option value="full">on - full (requires restart) - use with caution</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="cw-maint-actions" aria-label="Maintenance actions">
+                  <button class="btn cw-maint-action backup" type="button" onclick="openBackupRestore()">
+                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">backup</span>
+                    <span class="cw-maint-action-copy">
+                      <strong>Backup & Restore</strong>
+                      <small>Create archives, validate backups, restore state, or manage schedules.</small>
+                    </span>
+                  </button>
+                  <button class="btn cw-maint-action tools" type="button" onclick="openMaintenanceModal()">
+                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">tune</span>
+                    <span class="cw-maint-action-copy">
+                      <strong>Maintenance Tools</strong>
+                      <small>Clean local state, reset counters, and run recovery actions.</small>
+                    </span>
+                  </button>
+                  <button class="btn cw-maint-action restart" type="button" onclick="restartCrossWatch()">
+                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">restart_alt</span>
+                    <span class="cw-maint-action-copy">
+                      <strong>Restart CrossWatch</strong>
+                      <small>Restart CW contrainer.</small>
+                    </span>
+                  </button>
+                </div>
+
+                <div id="tb_msg" class="msg ok hidden">Done </div>
               </div>
-              <div class="chiprow">
-                <button class="btn danger" onclick="openMaintenanceModal()">Maintenance Tools</button>
-                <button class="btn danger" onclick="restartCrossWatch()">Restart CrossWatch</button>
-              </div>
-              <div id="tb_msg" class="msg ok hidden">Done </div>
             </div>
           </div>
         </section>
@@ -1264,7 +1328,7 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 </div>
 
 
-<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)},logout=()=>{closeMenu("settings");if(typeof window.cwAppLogout==="function")return window.cwAppLogout();window.location.href="/logout"};window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuLogout=logout;window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs")return(window.showTab?.("settings"),window.cwProvidersJump?.("sec-sync"));if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return window.openMaintenanceModal?.()};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)},logout=()=>{closeMenu("settings");if(typeof window.cwAppLogout==="function")return window.cwAppLogout();window.location.href="/logout"};window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuLogout=logout;window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs")return(window.showTab?.("settings"),window.cwProvidersJump?.("sec-sync"));if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
 
 __CW_ASSET_BLOCK__
 
@@ -1300,7 +1364,7 @@ __CW_ASSET_BLOCK__
     if (key === "scheduling" || key === "automation") return window.cwSettingsSelect?.("scheduling");
     if (key === "scrobbler") return window.cwSettingsSelect?.("scrobbler");
     if (key === "app") return window.cwSettingsSelect?.("app");
-    if (key === "maintenance") return window.openMaintenanceModal?.();
+    if (key === "maintenance") return window.cwSettingsSelect?.("maintenance");
   };
 
   window.cwSettingsOverviewGo = (key) => {
