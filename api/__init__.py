@@ -14,6 +14,7 @@ from .manualAPI import router as manual_router
 from .insightAPI import register_insights
 from .watchlistAPI import router as watchlist_router
 from .snapshotsAPI import router as snapshots_router
+from .backupsAPI import router as backups_router
 from .schedulingAPI import router as scheduling_router
 from .probesAPI import (
     register_probes,
@@ -47,6 +48,7 @@ __all__ = [
     "manual_router",
     "watchlist_router",
     "snapshots_router",
+    "backups_router",
     "scheduling_router",
     "scrobble_router",
     "sync_router",
@@ -81,6 +83,7 @@ def register(
     app.include_router(manual_router)
     app.include_router(watchlist_router)
     app.include_router(snapshots_router)
+    app.include_router(backups_router)
     app.include_router(maintenance_router)
     app.include_router(activity_router)
     app.include_router(scheduling_router)

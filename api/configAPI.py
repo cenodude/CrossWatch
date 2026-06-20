@@ -14,6 +14,9 @@ from packaging.version import InvalidVersion, Version
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 from providers.scrobble.sources import source_enabled
+from _logging import log as BASE_LOG
+
+BACKUP_LOG = BASE_LOG.child("BACKUP")
 
 def _env() -> dict[str, Any]:
     try:
@@ -464,12 +467,28 @@ def api_config_migrate() -> dict[str, Any]:
     forced_paths: list[str] = []
 
     try:
-        backup = getattr(base, "backup_config_file", None)
-        if callable(backup):
-            backup_result = backup()
-            if backup_result is not None:
-                backup_path = str(backup_result)
+        try:
+            if not hasattr(base, "config_path"):
+                raise RuntimeError("config backend has no file path")
+            from services.backups import create_backup
+
+            BACKUP_LOG.info("creating pre-upgrade backup")
+            backup_result = create_backup(scope="config_only", label="pre-upgrade", trigger="upgrade")
+            backup_path = str(backup_result.get("path") or "")
+            BACKUP_LOG.success(f"pre-upgrade backup created path={backup_path or 'backup created'}")
+        except Exception as e:
+            BACKUP_LOG.debug(f"pre-upgrade backup service unavailable: {type(e).__name__}")
+            backup = getattr(base, "backup_config_file", None)
+            if callable(backup):
+                BACKUP_LOG.debug("pre-upgrade backup falling back to legacy config backup")
+                legacy_backup = backup()
+                if legacy_backup is not None:
+                    backup_path = str(legacy_backup)
+                    BACKUP_LOG.success("legacy pre-upgrade config backup created")
+            if not backup_path:
+                BACKUP_LOG.warn("pre-upgrade backup was not created")
     except Exception:
+        BACKUP_LOG.error("pre-upgrade backup failed")
         return {"ok": False, "error": "config_backup_failed"}
 
     cfg: dict[str, Any] = dict(current or {})
