@@ -1033,7 +1033,32 @@ function cwBuildTmdbPanel() {
   apiField.innerHTML = `<div class="muted" style="margin-bottom:6px;">API key</div>`;
   apiField.appendChild(keyInput);
 
+  const checkRow = document.createElement("div");
+  checkRow.className = "inline";
+  checkRow.style.display = "flex";
+  checkRow.style.marginTop = "10px";
+  checkRow.style.gap = "10px";
+  checkRow.style.alignItems = "center";
+  checkRow.style.justifyContent = "space-between";
+  checkRow.innerHTML = `
+    <button type="button" class="btn secondary" id="tmdb_check">Check</button>
+    <div id="tmdb_check_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto;width:auto;max-width:min(520px,60%);flex:0 1 auto;white-space:normal"></div>
+  `;
+  checkRow.querySelector("#tmdb_check")?.addEventListener("click", () => {
+    try { cwVerifyTmdbKey(); } catch {}
+  });
+  keyInput.addEventListener("input", () => {
+    keyInput.dataset.verified = "";
+    const msg = document.getElementById("tmdb_check_msg");
+    if (msg) {
+      msg.textContent = "";
+      msg.classList.add("hidden");
+    }
+    try { cwMetaSettingsHubUpdate(); } catch {}
+  });
+
   apiFields.appendChild(apiField);
+  apiFields.appendChild(checkRow);
   apiCard.appendChild(hint);
   apiCard.appendChild(apiFields);
 
@@ -1153,14 +1178,17 @@ function cwMetaSettingsHubUpdate() {
   }
 
   const hasKeyNow = uiHasKey || (!uiTouched && cfgHasKey);
-  if (chip) chip.textContent = `API key: ${hasKeyNow ? "set" : "missing"}`;
+  const verifyState = keyEl?.dataset?.verified || "";
+  const verified = hasKeyNow && verifyState === "1";
+  const failed = hasKeyNow && verifyState === "0";
+  if (chip) chip.textContent = `API key: ${verified ? "verified" : failed ? "check failed" : hasKeyNow ? "set" : "missing"}`;
 
   const dot = document.getElementById("meta-tmdb-dot");
   if (dot) {
-    dot.classList.toggle("on", hasKeyNow);
-    dot.title = hasKeyNow ? "Configured" : "Not configured";
+    dot.classList.toggle("on", hasKeyNow && !failed);
+    dot.title = verified ? "Verified" : failed ? "TMDb key check failed" : hasKeyNow ? "Configured; click Check to validate" : "Not configured";
     dot.setAttribute("aria-label", dot.title);
-    dot.closest?.('.cw-meta-provider-panel[data-provider="tmdb"]')?.classList?.toggle("is-configured", hasKeyNow);
+    dot.closest?.('.cw-meta-provider-panel[data-provider="tmdb"]')?.classList?.toggle("is-configured", hasKeyNow && !failed);
   }
 
   try { window.syncMetadataProviderDot?.(); } catch {}
@@ -1662,6 +1690,58 @@ async function updateTmdbHint() {
     hint.classList.toggle("hidden", has);
   } catch {
     hint.classList.remove("hidden");
+  }
+}
+
+function cwReadTmdbKeyForVerify() {
+  const input = document.getElementById("tmdb_api_key");
+  const value = String(input?.value || "").trim();
+  const masked = !!value && (input?.dataset?.masked === "1" || value === "********" || /^[*•]+$/.test(value));
+  if (masked) return { has: true, value: "********" };
+  return { has: !!value, value };
+}
+
+function cwSetTmdbCheckMessage(ok, text) {
+  const msg = document.getElementById("tmdb_check_msg");
+  if (!msg) return;
+  msg.textContent = String(text || "");
+  msg.classList.toggle("hidden", !msg.textContent);
+  msg.classList.toggle("warn", !!msg.textContent && !ok);
+  msg.classList.toggle("ok", !!msg.textContent && !!ok);
+}
+
+async function cwVerifyTmdbKey() {
+  const input = document.getElementById("tmdb_api_key");
+  const btn = document.getElementById("tmdb_check");
+  const state = cwReadTmdbKeyForVerify();
+  if (!state.has) {
+    if (input) input.dataset.verified = "0";
+    cwSetTmdbCheckMessage(false, "Missing API key");
+    try { cwMetaSettingsHubUpdate(); } catch {}
+    return false;
+  }
+  try {
+    if (btn) btn.disabled = true;
+    cwSetTmdbCheckMessage(true, "Checking...");
+    const r = await fetch("/api/tmdb/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ api_key: state.value }),
+    });
+    const data = await r.json().catch(() => ({}));
+    const ok = !!(r.ok && data && data.valid !== false && data.ok !== false);
+    if (input) input.dataset.verified = ok ? "1" : "0";
+    cwSetTmdbCheckMessage(ok, ok ? "Connected" : (data?.error || "TMDb key check failed."));
+    try { cwMetaSettingsHubUpdate(); } catch {}
+    return ok;
+  } catch {
+    if (input) input.dataset.verified = "0";
+    cwSetTmdbCheckMessage(false, "TMDb key check failed.");
+    try { cwMetaSettingsHubUpdate(); } catch {}
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 

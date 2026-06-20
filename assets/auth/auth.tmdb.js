@@ -12,6 +12,7 @@
   const Shared = window.CW.AuthShared;
   const el = Shared.el;
   const txt = Shared.txt;
+  const readSecretField = Shared.readSecretField;
   const note = Shared.notify;
   const profile = Shared.createProfileAdapter({
     provider: "tmdb_sync",
@@ -84,6 +85,12 @@
 
     const keyEl = el("tmdb_sync_api_key");
     const sessEl = el("tmdb_sync_session_id");
+
+    if (sessEl) {
+      sessEl.readOnly = true;
+      sessEl.setAttribute("aria-readonly", "true");
+      sessEl.setAttribute("tabindex", "-1");
+    }
     maskInput(keyEl, hasKey);
     maskInput(sessEl, hasSess);
 
@@ -165,11 +172,14 @@
   async function onConnect() {
     const keyEl = el("tmdb_sync_api_key");
     const sessEl = el("tmdb_sync_session_id");
-    const apiKey = txt(keyEl?.value);
-    const hasSess = !!txt(sessEl?.value) || sessEl?.dataset.masked === "1";
+    const keyState = readSecretField(keyEl);
+    const sessState = readSecretField(sessEl);
+    const apiKey = keyState.value;
+    const hasKey = keyState.hasValue;
+    const hasSess = sessState.hasValue;
     if (hasSess) { await refresh(false); return; }
 
-    if (!apiKey || apiKey.includes("***")) {
+    if (!hasKey) {
       setConn(false, "Enter your API key first.");
       el("tmdb_sync_hint")?.classList.remove("hidden");
       return;
@@ -179,15 +189,15 @@
       const r = await fetchJSON(tmdbApi(API.start), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: apiKey }),
+        body: JSON.stringify({ api_key: keyState.masked ? "********" : apiKey }),
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "connect_failed");
       const j = r.data || {};
       if (j.auth_url) window.open(j.auth_url, "_blank", "noopener,noreferrer");
       setConn(false, "Approve in TMDb...");
       startPoll(120000);
-    } catch {
-      setConn(false, "TMDb connect failed");
+    } catch (err) {
+      setConn(false, (err && err.message) ? err.message : "TMDb connect failed");
     }
   }
 
@@ -226,20 +236,24 @@
     const sessEl = el("tmdb_sync_session_id");
 
     if (keyEl && !keyEl.__wired) {
+      Shared.wireSecretInput(keyEl, {
+        onInput(input) {
+          const has = readSecretField(input).hasValue;
+          el("tmdb_sync_hint")?.classList.toggle("hidden", has);
+        },
+      });
       keyEl.addEventListener("input", () => {
-        keyEl.dataset.touched = "1";
-        const has = (keyEl.value || "").trim().length > 0;
+        const has = readSecretField(keyEl).hasValue;
         el("tmdb_sync_hint")?.classList.toggle("hidden", has);
       });
       keyEl.addEventListener("change", () => {
-        const has = (keyEl.value || "").trim().length > 0;
+        const has = readSecretField(keyEl).hasValue;
         el("tmdb_sync_hint")?.classList.toggle("hidden", has);
       });
       keyEl.__wired = true;
     }
 
     if (sessEl && !sessEl.__wired) {
-      sessEl.addEventListener("input", () => { sessEl.dataset.touched = "1"; });
       sessEl.__wired = true;
     }
 
@@ -289,8 +303,8 @@
     const keyEl = el("tmdb_sync_api_key");
     const sessEl = el("tmdb_sync_session_id");
 
-    const key = txt(keyEl?.value || "");
-    const sess = txt(sessEl?.value || "");
+    const keyState = readSecretField(keyEl);
+    const sessState = readSecretField(sessEl);
 
     const inst = getTMDbSyncInstance();
     cfg.tmdb_sync = cfg.tmdb_sync || {};
@@ -299,8 +313,8 @@
       ? cfg.tmdb_sync
       : ((cfg.tmdb_sync.instances = cfg.tmdb_sync.instances || {}), (cfg.tmdb_sync.instances[inst] = cfg.tmdb_sync.instances[inst] || {}), cfg.tmdb_sync.instances[inst]);
 
-    if (key && !key.includes("***") && keyEl?.dataset.masked !== "1") dst.api_key = key;
-    if (sess && !sess.includes("***") && sessEl?.dataset.masked !== "1") dst.session_id = sess;
+    if (keyState.value) dst.api_key = keyState.value;
+    if (sessState.value) dst.session_id = sessState.value;
   });
 
   function boot() {

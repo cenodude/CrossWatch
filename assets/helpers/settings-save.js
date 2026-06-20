@@ -7,7 +7,7 @@ const _cwJSONHeaders = { "Content-Type": "application/json" };
 const _cwSecretIds = [
   "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
-  "tmdb_api_key", "mdblist_key", "publicmetadb_key", "tautulli_key"
+  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key"
 ];
 
 function _cwEl(id) { return document.getElementById(id); }
@@ -328,6 +328,30 @@ async function _cwValidateProviderSecret(provider, inst, change) {
   }
 }
 
+async function _cwValidateTmdbSecret(change) {
+  if (!change?.changed || !change?.set) return;
+  const resp = await _cwRequest("/api/tmdb/save", {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify({ api_key: change.set })
+  }, 15000);
+  const body = await _cwReadBody(resp);
+  if (!resp?.ok || body?.ok === false) {
+    _cwAbortSave(body?.error || body?.detail || `TMDb key check failed (${resp?.status || 0})`);
+  }
+  try {
+    const input = _cwEl("tmdb_api_key");
+    if (input) input.dataset.verified = "1";
+    const msg = _cwEl("tmdb_check_msg");
+    if (msg) {
+      msg.textContent = "Connected";
+      msg.classList.remove("hidden", "warn");
+      msg.classList.add("ok");
+    }
+    window.cwMetaSettingsHubUpdate?.();
+  } catch {}
+}
+
 async function _cwValidateTautulliSecret(inst, payload) {
   const server = _cwNorm(payload?.server_url);
   const apiKey = _cwNorm(payload?.api_key);
@@ -642,11 +666,14 @@ async function saveSettings() {
         trakt: _cwInstBlock(serverCfg?.trakt, _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1")),
         anilist: _cwInstBlock(serverCfg?.anilist, _cwSelectedInst("anilist")),
         mdblist: _cwInstBlock(serverCfg?.mdblist, _cwSelectedInst("mdblist")),
-        publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb"))
+        publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb")),
+        tmdb_sync: _cwInstBlock(serverCfg?.tmdb_sync, _cwSelectedInst("tmdb_sync", "cw.ui.tmdb_sync.auth.instance.v1"))
       };
       const publicmetadbInst = _cwSelectedInst("publicmetadb");
       const publicmetadbKey = _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key));
+      const tmdbKey = _cwReadSecret("tmdb_api_key", _cwNorm(serverCfg?.tmdb?.api_key));
       await _cwValidateProviderSecret("publicmetadb", publicmetadbInst, publicmetadbKey);
+      await _cwValidateTmdbSecret(tmdbKey);
       [
         ["mdblist", _cwSelectedInst("mdblist"), [["api_key", _cwReadSecret("mdblist_key", _cwNorm(secrets.mdblist?.api_key))]]],
         ["publicmetadb", publicmetadbInst, [["api_key", publicmetadbKey]]],
@@ -654,7 +681,8 @@ async function saveSettings() {
         ["simkl", _cwSelectedInst("simkl"), [["client_id", _cwReadSecret("simkl_client_id", _cwNorm(secrets.simkl?.client_id))], ["client_secret", _cwReadSecret("simkl_client_secret", _cwNorm(secrets.simkl?.client_secret))]]],
         ["trakt", _cwSelectedInst("trakt", "cw.ui.trakt.auth.instance.v1"), [["client_id", _cwReadSecret("trakt_client_id", _cwNorm(secrets.trakt?.client_id))], ["client_secret", _cwReadSecret("trakt_client_secret", _cwNorm(secrets.trakt?.client_secret))]]],
         ["anilist", _cwSelectedInst("anilist"), [["client_id", _cwReadSecret("anilist_client_id", _cwNorm(secrets.anilist?.client_id))], ["client_secret", _cwReadSecret("anilist_client_secret", _cwNorm(secrets.anilist?.client_secret))]]],
-        ["tmdb", "default", [["api_key", _cwReadSecret("tmdb_api_key", _cwNorm(serverCfg?.tmdb?.api_key))]]]
+        ["tmdb_sync", _cwSelectedInst("tmdb_sync", "cw.ui.tmdb_sync.auth.instance.v1"), [["api_key", _cwReadSecret("tmdb_sync_api_key", _cwNorm(secrets.tmdb_sync?.api_key))], ["session_id", _cwReadSecret("tmdb_sync_session_id", _cwNorm(secrets.tmdb_sync?.session_id))]]],
+        ["tmdb", "default", [["api_key", tmdbKey]]]
       ].forEach(([rootKey, inst, fields]) => {
         const changes = fields.filter(([, ch]) => ch?.changed);
         if (!changes.length) return;
