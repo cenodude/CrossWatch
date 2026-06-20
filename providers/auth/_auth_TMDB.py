@@ -43,14 +43,15 @@ class TMDbAuth(AuthProvider):
                     "label": "API Key (v3)",
                     "type": "password",
                     "required": True,
-                    "placeholder": "********",
+                    "placeholder": "Enter TMDb API key",
                 },
                 {
                     "key": "tmdb_sync.session_id",
                     "label": "Session ID (v3)",
                     "type": "password",
-                    "required": True,
-                    "placeholder": "session_id",
+                    "required": False,
+                    "readonly": True,
+                    "placeholder": "Created after approval",
                 },
             ],
             actions={"start": False, "finish": False, "refresh": True, "disconnect": True},
@@ -178,7 +179,7 @@ def _tmdb_sync_html() -> str:
                 <div class="grid2">
                   <div>
                     <label for="tmdb_sync_api_key">API Key (v3)</label>
-                    <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="off" placeholder="********" />
+                    <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="new-password" placeholder="Enter TMDb API key" spellcheck="false" autocapitalize="off" />
                     <div id="tmdb_sync_hint" class="msg warn" style="margin-top:8px">
                       You need an TMDb API key. Create one at
                       <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb Preferences</a>
@@ -188,8 +189,8 @@ def _tmdb_sync_html() -> str:
             
                   <div>
                     <label for="tmdb_sync_session_id">Session ID (v3)</label>
-                    <input id="tmdb_sync_session_id" name="tmdb_sync_session_id" type="password" autocomplete="off" placeholder="Auto-filled after approval" />
-                    <div class="muted">Required for account watchlists/ratings.</div>
+                    <input id="tmdb_sync_session_id" name="tmdb_sync_session_id" type="password" autocomplete="off" placeholder="Created after approval" readonly aria-readonly="true" tabindex="-1" />
+                    <div class="muted">Created automatically after TMDb approval.</div>
                   </div>
                 </div>
             

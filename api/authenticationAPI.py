@@ -8,6 +8,7 @@ from typing import Any, Callable, Optional
 import copy
 
 import importlib
+import re
 import secrets
 import threading
 import time
@@ -1116,10 +1117,87 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"users": users, "count": len(users), "instance": inst}
 
     # TMDB
+    TMDB_API_BASE = "https://api.themoviedb.org/3"
+
+    def _tmdb_v3_api_key_error(api_key: str) -> str:
+        key = str(api_key or "").strip()
+        if not key:
+            return "Missing api_key"
+        if key.lower().startswith("bearer "):
+            return "Paste the TMDb v3 API Key only, without a Bearer prefix."
+        if key.startswith("eyJ") or key.count(".") >= 2:
+            return "Use the TMDb API Key (v3 auth), not the API Read Access Token."
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", key):
+            return "Invalid TMDb API key format. Use the 32-character API Key (v3 auth)."
+        return ""
+
+    def _tmdb_request_error(e: Exception) -> str:
+        if isinstance(e, requests.exceptions.Timeout):
+            return "TMDb request timed out"
+        if isinstance(e, requests.exceptions.HTTPError):
+            resp = getattr(e, "response", None)
+            status = int(getattr(resp, "status_code", 0) or 0)
+            msg = ""
+            try:
+                data = resp.json() if resp is not None else {}
+                if isinstance(data, dict):
+                    msg = str(data.get("status_message") or data.get("message") or "").strip()
+            except Exception:
+                msg = ""
+            low = msg.lower()
+            if status in (401, 403) or "invalid api key" in low:
+                return "Invalid TMDb API key. Use the v3 API Key, not the v4 Read Access Token."
+            if status == 429:
+                return "TMDb rate limit reached. Try again later."
+            if status >= 500:
+                return "TMDb server error. Try again later."
+            if msg:
+                return f"TMDb rejected the request: {msg}"
+            return f"TMDb rejected the request (HTTP {status})"
+        if isinstance(e, requests.exceptions.RequestException):
+            return "Could not reach TMDb. Check network/DNS from the CrossWatch container."
+        return "TMDb check failed"
+
+    def _tmdb_validate_metadata_key(api_key: str) -> tuple[bool, str]:
+        key = str(api_key or "").strip()
+        key_error = _tmdb_v3_api_key_error(key)
+        if key_error:
+            return False, key_error
+        try:
+            r = requests.get(f"{TMDB_API_BASE}/configuration", params={"api_key": key}, timeout=12)
+            r.raise_for_status()
+            data = r.json() or {}
+            if not isinstance(data, dict) or not isinstance(data.get("images"), dict):
+                return False, "TMDb returned an unexpected response"
+            return True, ""
+        except Exception as e:
+            return False, _tmdb_request_error(e)
+
+    @app.post("/api/tmdb/verify", tags=["auth"])
+    def api_tmdb_verify(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
+        try:
+            cfg = load_config()
+            current = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
+            key = str((payload or {}).get("api_key") or "").strip()
+            if _looks_masked_secret(key):
+                key = current
+            if not key:
+                key = current
+            ok, error = _tmdb_validate_metadata_key(key)
+            return {"ok": ok, "valid": ok, "error": error}
+        except Exception as e:
+            _safe_log(log_fn, "TMDB", f"[TMDB] ERROR verify: {e}")
+            return {"ok": False, "valid": False, "error": "TMDb check failed"}
+
     @app.post("/api/tmdb/save", tags=["auth"])
     def api_tmdb_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         try:
             key = str((payload or {}).get("api_key") or "").strip()
+            if key:
+                ok, error = _tmdb_validate_metadata_key(key)
+                if not ok:
+                    _safe_log(log_fn, "TMDB", f"[TMDB] api_key validation failed: {error}")
+                    return {"ok": False, "error": error}
             cfg = load_config(); cfg.setdefault("tmdb", {})["api_key"] = key
             save_config(cfg)
             _safe_log(log_fn, "TMDB", "[TMDB] api_key saved")
@@ -1141,9 +1219,6 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "TMDB", f"[TMDB] ERROR disconnect: {e}")
             return {"ok": False, "error": "internal"}
 
-    # TMDB Sync (v3 session)
-    TMDB_API_BASE = "https://api.themoviedb.org/3"
-
     def _tmdb_v3_request_token(api_key: str) -> dict[str, Any]:
         r = requests.get(f"{TMDB_API_BASE}/authentication/token/new", params={"api_key": api_key}, timeout=15)
         r.raise_for_status()
@@ -1164,15 +1239,24 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         r.raise_for_status()
         return r.json() or {}
 
+    def _tmdb_sync_error(e: Exception) -> str:
+        return _tmdb_request_error(e).replace("TMDb check failed", "TMDb connect failed")
+
+    def _tmdb_sync_key_error(api_key: str) -> str:
+        return _tmdb_v3_api_key_error(api_key)
+
     @app.post("/api/tmdb_sync/connect/start", tags=["auth"])
     def api_tmdb_sync_connect_start(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
-        key = str((payload or {}).get("api_key") or "").strip()
-        if not key:
-            return {"ok": False, "error": "Missing api_key"}
         try:
             cfg = load_config()
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
+            key = str((payload or {}).get("api_key") or "").strip()
+            if _looks_masked_secret(key):
+                key = str((tm or {}).get("api_key") or "").strip()
+            key_error = _tmdb_sync_key_error(key)
+            if key_error:
+                return {"ok": False, "error": key_error}
             tm["api_key"] = key
 
             j = _tmdb_v3_request_token(key)
@@ -1195,8 +1279,9 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 "instance": inst,
             }
         except Exception as e:
-            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/start: {e}")
-            return {"ok": False, "error": "internal"}
+            err = _tmdb_sync_error(e)
+            _safe_log(log_fn, "TMDB_SYNC", f"[TMDB_SYNC] ERROR connect/start: {err}")
+            return {"ok": False, "error": err}
 
     @app.post("/api/tmdb_sync/connect/finish", tags=["auth"])
     def api_tmdb_sync_connect_finish(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1205,6 +1290,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             cfg = load_config()
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
             key = str((payload or {}).get("api_key") or tm.get("api_key") or "").strip()
+            if _looks_masked_secret(key):
+                key = str((tm or {}).get("api_key") or "").strip()
             token = str((payload or {}).get("request_token") or tm.get("_pending_request_token") or "").strip()
             if not key:
                 return {"ok": False, "error": "Missing api_key"}
@@ -1241,10 +1328,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def api_tmdb_sync_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         try:
-            key = str((payload or {}).get("api_key") or "").strip()
-            sess = str((payload or {}).get("session_id") or "").strip()
             cfg = load_config()
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
+            key = str((payload or {}).get("api_key") or "").strip()
+            sess = str((payload or {}).get("session_id") or "").strip()
+            if _looks_masked_secret(key):
+                key = str((tm or {}).get("api_key") or "").strip()
+            if _looks_masked_secret(sess):
+                sess = str((tm or {}).get("session_id") or "").strip()
             tm["api_key"] = key
             tm["session_id"] = sess
             tm.pop("_pending_request_token", None)
