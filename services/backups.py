@@ -249,11 +249,11 @@ def _backup_rel_for_new(ts: datetime, label: str) -> tuple[str, Path]:
     day_dir = _backups_dir() / ts.strftime("%Y-%m-%d")
     day_dir.mkdir(parents=True, exist_ok=True)
     stamp = ts.strftime("%Y%m%dT%H%M%SZ")
-    base_name = f"crosswatch-backup-{stamp}-{_safe_backup_label(label)}.zip"
+    base_name = f"crosswatch-backup-{stamp}-{uuid.uuid4().hex[:12]}.zip"
     target = day_dir / base_name
     i = 1
     while target.exists():
-        target = day_dir / f"crosswatch-backup-{stamp}-{_safe_backup_label(label)}-{i}.zip"
+        target = day_dir / f"crosswatch-backup-{stamp}-{uuid.uuid4().hex[:12]}-{i}.zip"
         i += 1
     return _rel_from_backup_root(target), target
 
@@ -570,7 +570,7 @@ def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, a
         try:
             deleted.append(str(delete_backup(rel).get("deleted") or rel))
         except Exception as e:
-            errors.append(str(e))
+            errors.append(f"{rel}: {type(e).__name__}")
     result = {"ok": not errors, "applied": True, "deleted": deleted, "errors": errors}
     if errors:
         LOG.warn(f"backup retention completed with errors deleted={len(deleted)} errors={len(errors)}")
@@ -625,7 +625,7 @@ def restore_backup(path: str, *, create_pre_restore: bool = True) -> dict[str, A
                     os.replace(tmp, dst)
                     restored.append(member)
                 except Exception as e:
-                    errors.append(f"{member}: {e}")
+                    errors.append(f"{member}: {type(e).__name__}")
                     try:
                         tmp.unlink(missing_ok=True)
                     except Exception:
