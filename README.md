@@ -54,6 +54,7 @@
 * **Synchronization**
   * Watchlists, ratings and History
   * Progress sync your progress status between Plex, Emby, Jellyfin and PublicMetaDB.
+  * Anime ID mapping (powered AniBridge) for better AniList matching across providers.
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
     * Does not require any Plex Pass, Emby Premiere,etc.  
