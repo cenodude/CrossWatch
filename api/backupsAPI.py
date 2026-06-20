@@ -29,35 +29,13 @@ from services.backups import (
 router = APIRouter(prefix="/api/backups", tags=["backups"])
 LOG = BASE_LOG.child("BACKUP")
 
-_SAFE_ERROR_PREFIXES = (
-    "Backup path is required",
-    "Backup not found",
-    "Backup archive is too large",
-    "Backup archive contains too many files",
-    "Backup archive failed integrity check",
-    "Backup manifest",
-    "Invalid backup",
-    "Invalid path",
-    "Invalid restore target",
-    "Unsupported backup schema",
-    "Uploaded backup",
-)
-
-
 def _ok(payload: dict[str, Any], *, status_code: int = 200) -> JSONResponse:
     payload.setdefault("ok", True)
     return JSONResponse(payload, status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
-def _public_error(msg: str, default: str = "backup_request_failed") -> str:
-    text = str(msg or "").strip()
-    if text and any(text.startswith(prefix) for prefix in _SAFE_ERROR_PREFIXES):
-        return text
-    return default
-
-
 def _err(msg: str, *, status_code: int = 400, extra: dict[str, Any] | None = None) -> JSONResponse:
-    payload: dict[str, Any] = {"ok": False, "error": _public_error(msg)}
+    payload: dict[str, Any] = {"ok": False, "error": str(msg or "backup_request_failed")}
     if extra:
         payload.update(extra)
     return JSONResponse(payload, status_code=status_code, headers={"Cache-Control": "no-store"})
@@ -66,7 +44,7 @@ def _err(msg: str, *, status_code: int = 400, extra: dict[str, Any] | None = Non
 def _debug_failure(action: str, err: Exception) -> None:
     LOG.debug(
         f"{action} failure detail",
-        extra={"error_type": type(err).__name__, "public_error": _public_error(str(err))},
+        extra={"error_type": type(err).__name__},
     )
 
 
@@ -97,7 +75,7 @@ def api_backups_list() -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup list request failed: {type(e).__name__}")
         _debug_failure("backup list", e)
-        return _err(str(e))
+        return _err("backup_list_failed")
 
 
 @router.post("/create")
@@ -125,7 +103,7 @@ def api_backups_create(body: dict[str, Any] | None = Body(default=None)) -> JSON
     except Exception as e:
         LOG.warn(f"manual backup request failed: {type(e).__name__}")
         _debug_failure("manual backup", e)
-        return _err(str(e))
+        return _err("backup_create_failed")
 
 
 @router.get("/download", response_model=None)
@@ -146,7 +124,7 @@ def api_backups_download(path: str = Query(..., description="Relative path under
     except Exception as e:
         LOG.warn(f"backup download request failed: {type(e).__name__}")
         _debug_failure("backup download", e)
-        return _err(str(e))
+        return _err("backup_download_failed")
 
 
 @router.post("/validate")
@@ -158,7 +136,7 @@ def api_backups_validate(body: dict[str, Any] = Body(...)) -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup validate request failed: {type(e).__name__}")
         _debug_failure("backup validate", e)
-        return _err(str(e))
+        return _err("backup_validate_failed")
 
 
 @router.post("/restore")
@@ -176,7 +154,7 @@ def api_backups_restore(body: dict[str, Any] = Body(...)) -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup restore request failed: {type(e).__name__}")
         _debug_failure("backup restore", e)
-        return _err(str(e))
+        return _err("backup_restore_failed")
 
 
 @router.post("/delete")
@@ -188,7 +166,7 @@ def api_backups_delete(body: dict[str, Any] = Body(...)) -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup delete request failed: {type(e).__name__}")
         _debug_failure("backup delete", e)
-        return _err(str(e))
+        return _err("backup_delete_failed")
 
 
 @router.post("/upload")
@@ -218,7 +196,7 @@ async def api_backups_upload(file: UploadFile = File(...)) -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup upload request failed: {type(e).__name__}")
         _debug_failure("backup upload", e)
-        return _err(str(e))
+        return _err("backup_upload_failed")
     finally:
         try:
             await file.close()
@@ -249,7 +227,7 @@ def api_backups_schedule_get() -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup schedule request failed: {type(e).__name__}")
         _debug_failure("backup schedule", e)
-        return _err(str(e))
+        return _err("backup_schedule_failed")
 
 
 @router.post("/schedule")
@@ -297,7 +275,7 @@ def api_backups_schedule_post(body: dict[str, Any] = Body(...)) -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup schedule save failed: {type(e).__name__}")
         _debug_failure("backup schedule save", e)
-        return _err(str(e))
+        return _err("backup_schedule_save_failed")
 
 
 @router.post("/retention")
@@ -314,4 +292,4 @@ def api_backups_retention(body: dict[str, Any] | None = Body(default=None)) -> J
     except Exception as e:
         LOG.warn(f"backup retention request failed: {type(e).__name__}")
         _debug_failure("backup retention", e)
-        return _err(str(e))
+        return _err("backup_retention_failed")
