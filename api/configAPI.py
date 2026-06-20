@@ -147,6 +147,14 @@ def _safe_ver(v: str | None) -> Version:
         return Version("0.0.0")
 
 
+def _pre_upgrade_backup_label(cfg: dict[str, Any]) -> str:
+    ui = cfg.get("ui") if isinstance(cfg.get("ui"), dict) else {}
+    pending = _norm_ver((ui or {}).get("_pending_upgrade_from_version")) if isinstance(ui, dict) else ""
+    stored = _norm_ver(cfg.get("version"))
+    version = pending or stored or "unknown"
+    return f"pre-upgrade version {version}"
+
+
 def _set_cfg_version_current(env: dict[str, Any], cfg: dict[str, Any]) -> None:
     try:
         base = env.get("cfg_base")
@@ -472,8 +480,9 @@ def api_config_migrate() -> dict[str, Any]:
                 raise RuntimeError("config backend has no file path")
             from services.backups import create_backup
 
-            BACKUP_LOG.info("creating pre-upgrade backup")
-            backup_result = create_backup(scope="config_only", label="pre-upgrade", trigger="upgrade")
+            backup_label = _pre_upgrade_backup_label(current)
+            BACKUP_LOG.info(f"creating {backup_label} backup")
+            backup_result = create_backup(scope="config_only", label=backup_label, trigger="upgrade")
             backup_path = str(backup_result.get("path") or "")
             BACKUP_LOG.success(f"pre-upgrade backup created path={backup_path or 'backup created'}")
         except Exception as e:
