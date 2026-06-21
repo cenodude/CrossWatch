@@ -874,6 +874,8 @@ to{left:6px}
 #ux-lanes .chip.more:hover,#ux-spotlight .chip.more:hover,.ux-spots-modal .chip.more:hover{background:rgba(255,255,255,.06)}
 .ux-spots-modal{position:fixed;inset:0;z-index:9999}
 .ux-spots-modal.hidden{display:none}
+.cw-page-loading,.cw-page-load-error{margin:18px;padding:18px;border:1px solid rgba(255,255,255,.10);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.018));color:rgba(236,242,250,.82);font-weight:750}
+.cw-page-load-error{color:#ffd9df;border-color:rgba(255,110,135,.22);background:linear-gradient(180deg,rgba(124,30,50,.20),rgba(88,18,34,.12))}
 .ux-spots-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(2px)}
 .ux-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ux-date{margin-left:auto;font-size:10px;opacity:.7;white-space:nowrap}

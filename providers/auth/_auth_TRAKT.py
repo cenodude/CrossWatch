@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from typing import Any
 
@@ -59,6 +60,9 @@ _H: dict[str, str] = {
     "trakt-api-version": "2",
 }
 
+_REFRESH_LOCKS: dict[str, threading.Lock] = {}
+_REFRESH_LOCKS_GUARD = threading.Lock()
+
 
 def _now() -> int:
     return int(time.time())
@@ -72,6 +76,16 @@ def _load_config() -> dict[str, Any]:
         return dict(cfg)
     except Exception:
         return {}
+
+
+def _refresh_lock(instance_id: Any) -> threading.Lock:
+    inst = normalize_instance_id(instance_id)
+    with _REFRESH_LOCKS_GUARD:
+        lock = _REFRESH_LOCKS.get(inst)
+        if lock is None:
+            lock = threading.Lock()
+            _REFRESH_LOCKS[inst] = lock
+        return lock
 
 
 def _save_config(cfg: dict[str, Any]) -> None:
@@ -347,70 +361,79 @@ class _TraktProvider:
         return {"ok": True, "status": "ok"}
 
     def refresh(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> dict[str, Any]:
-        cfg = cfg or _load_config()
-        inst, _, tr = _blocks(cfg, instance_id)
-        c = _client(cfg, inst)
+        inst_key = normalize_instance_id(instance_id)
+        with _refresh_lock(inst_key):
+            cfg = cfg or _load_config()
+            inst, _, tr = _blocks(cfg, inst_key)
+            c = _client(cfg, inst)
 
-        rt = str(tr.get("refresh_token") or "").strip()
-        cid = str(c.get("client_id") or "").strip()
-        secr = str(c.get("client_secret") or "").strip()
-
-        if not (cid and secr and rt):
-            log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
-            return {"ok": False, "status": "missing_refresh"}
-
-        log("TRAKT: refresh token", level="INFO", module="AUTH")
-
-        payload: dict[str, Any] = {
-            "refresh_token": rt,
-            "client_id": cid,
-            "client_secret": secr,
-            "grant_type": "refresh_token",
-        }
-
-        try:
-            r = requests.post(OAUTH_TOKEN, json=payload, headers=_headers(), timeout=30)
-        except Exception as e:
-            log(f"TRAKT: token refresh network error: {e}", "ERROR")
-            return {"ok": False, "status": "network_error", "error": str(e)}
-
-        if r.status_code >= 400:
-            body: dict[str, Any] = {}
             try:
-                body = r.json() or {}
+                exp = int(tr.get("expires_at") or 0)
             except Exception:
-                body = {}
-            err = str(body.get("error") or "") or str(body.get("error_description") or "") or (r.text or "")[:400]
-            log(f"TRAKT: token refresh failed {r.status_code}: {err}", "ERROR")
-            return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err}
+                exp = 0
+            if str(tr.get("access_token") or "").strip() and exp and exp > (_now() + 120):
+                return {"ok": True, "status": "fresh", "expires_at": exp}
 
-        try:
-            tok: dict[str, Any] = r.json() or {}
-        except Exception as e:
-            log(f"TRAKT: token refresh invalid JSON: {e}", "ERROR")
-            return {"ok": False, "status": "bad_json"}
+            rt = str(tr.get("refresh_token") or "").strip()
+            cid = str(c.get("client_id") or "").strip()
+            secr = str(c.get("client_secret") or "").strip()
 
-        acc = str(tok.get("access_token") or "").strip()
-        if not acc:
-            log("TRAKT: token refresh succeeded but no access_token in response", "ERROR")
-            return {"ok": False, "status": "no_access_token"}
+            if not (cid and secr and rt):
+                log("TRAKT: missing client_id/client_secret/refresh_token for refresh", "ERROR")
+                return {"ok": False, "status": "missing_refresh"}
 
-        new_rt = str(tok.get("refresh_token") or rt or "").strip()
-        exp_in = int(tok.get("expires_in") or 0)
-        expires_at = _now() + exp_in if exp_in > 0 else 0
+            log("TRAKT: refresh token", level="INFO", module="AUTH")
 
-        tr.update(
-            {
-                "access_token": acc,
-                "refresh_token": new_rt,
-                "scope": tok.get("scope") or tr.get("scope") or "public",
-                "token_type": tok.get("token_type") or tr.get("token_type") or "bearer",
-                "expires_at": expires_at,
+            payload: dict[str, Any] = {
+                "refresh_token": rt,
+                "client_id": cid,
+                "client_secret": secr,
+                "grant_type": "refresh_token",
             }
-        )
-        _save_config(cfg)
-        log("TRAKT: refresh ok", level="SUCCESS", module="AUTH")
-        return {"ok": True, "status": "ok"}
+
+            try:
+                r = requests.post(OAUTH_TOKEN, json=payload, headers=_headers(), timeout=30)
+            except Exception as e:
+                log(f"TRAKT: token refresh network error: {e}", "ERROR")
+                return {"ok": False, "status": "network_error", "error": str(e)}
+
+            if r.status_code >= 400:
+                body: dict[str, Any] = {}
+                try:
+                    body = r.json() or {}
+                except Exception:
+                    body = {}
+                err = str(body.get("error") or "") or str(body.get("error_description") or "") or (r.text or "")[:400]
+                log(f"TRAKT: token refresh failed {r.status_code}: {err}", "ERROR")
+                return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err}
+
+            try:
+                tok: dict[str, Any] = r.json() or {}
+            except Exception as e:
+                log(f"TRAKT: token refresh invalid JSON: {e}", "ERROR")
+                return {"ok": False, "status": "bad_json"}
+
+            acc = str(tok.get("access_token") or "").strip()
+            if not acc:
+                log("TRAKT: token refresh succeeded but no access_token in response", "ERROR")
+                return {"ok": False, "status": "no_access_token"}
+
+            new_rt = str(tok.get("refresh_token") or rt or "").strip()
+            exp_in = int(tok.get("expires_in") or 0)
+            expires_at = _now() + exp_in if exp_in > 0 else 0
+
+            tr.update(
+                {
+                    "access_token": acc,
+                    "refresh_token": new_rt,
+                    "scope": tok.get("scope") or tr.get("scope") or "public",
+                    "token_type": tok.get("token_type") or tr.get("token_type") or "bearer",
+                    "expires_at": expires_at,
+                }
+            )
+            _save_config(cfg)
+            log("TRAKT: refresh ok", level="SUCCESS", module="AUTH")
+            return {"ok": True, "status": "ok"}
 
     def disconnect(self, cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
         cfg = cfg or _load_config()

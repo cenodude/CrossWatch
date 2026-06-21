@@ -111,7 +111,7 @@ _HELPER_SCRIPTS = (
 _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "main-status.js", "settings-insight.js", "scrobbler.js",
-    "editor.js", "snapshots.js",
+    "editor.js", "snapshots.js", "playback_progress.js",
 )
 _AUTH_HEADER_ICONS = (
     {"prov": "PLEX", "label": "Plex"},
@@ -199,6 +199,7 @@ def _get_index_html_static() -> str:
   const TITLES = {
     main: "Main",
     watchlist: "Watchlist",
+    playback_progress: "Playback Progress",
     snapshots: "Captures",
     editor: "Editor",
     settings: "Settings",
@@ -420,6 +421,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
   <nav class="tabs" aria-label="Primary navigation">
     <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">Main</button>
     <button id="tab-watchlist" class="tab" type="button" onclick="showTab('watchlist')">Watchlist</button>
+    <button id="tab-playback_progress" class="tab" type="button" onclick="showTab('playback_progress')">Playback</button>
     <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
     <button id="tab-editor" class="tab" type="button" onclick="showTab('editor')">Editor</button>
     <div class="cw-tabmenu" id="tab-settings-menu">
@@ -592,6 +594,12 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 
   <section id="page-watchlist" class="card hidden">
     <div class="title">Watchlist</div><div id="watchlist-root"></div>
+  </section>
+
+  <section id="page-playback_progress" class="card hidden tab-page">
+    <div id="playback-progress-root">
+      <div class="cw-page-loading">Loading Playback Progress...</div>
+    </div>
   </section>
 
   <section id="page-snapshots" class="card hidden"></section>
