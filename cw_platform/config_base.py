@@ -314,6 +314,11 @@ DEFAULT_CFG: dict[str, Any] = {
             "get_per_sec": 20,
         },
     },
+
+    "playback_progress": {
+        "disabled_profiles": [],                        # Provider profiles excluded from Continue Watching, e.g. ["trakt:default"]
+        "provider_timeout_seconds": 12.0,               # Max time this screen waits for provider profiles during one refresh
+    },
     
      "tautulli": {
          "server_url": "",                              # http(s)://host:8181

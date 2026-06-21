@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key, ids_from_guid, ids_from, minimal as id_minimal
 
 from ._common import (
+    active_pms_token,
     episode_rating_key_from_show,
     has_external_ids,
     home_scope_enter,
@@ -18,6 +19,7 @@ from ._common import (
     plex_cfg_get,
     server_find_rating_key_by_guid,
     make_logger,
+    minimal_from_history_row,
     normalize,
 )
 
@@ -86,7 +88,7 @@ def _fetch_resume_rating_keys(srv: Any, *, limit: int = 100) -> set[str]:
     return rks
 
 
-def _fetch_metadata_row(srv: Any, rk: str) -> tuple[Mapping[str, Any] | None, dict[str, str]]:
+def _fetch_metadata_row(srv: Any, rk: str) -> tuple[dict[str, Any] | None, dict[str, str]]:
     try:
         key = f"/library/metadata/{str(rk).strip()}?includeUserState=1&includeGuids=1"
         root = srv.query(key)  # type: ignore[attr-defined]
@@ -96,18 +98,23 @@ def _fetch_metadata_row(srv: Any, rk: str) -> tuple[Mapping[str, Any] | None, di
 
         el = rows[0]
         a = getattr(el, "attrib", {}) or {}
+        row = dict(a)
 
         ids: dict[str, str] = {}
+        guid_rows: list[dict[str, str]] = []
 
         try:
             for g in el.findall("./Guid"):  # type: ignore[attr-defined]
                 gid = (getattr(g, "attrib", {}) or {}).get("id")
                 if gid:
+                    guid_rows.append({"id": str(gid)})
                     for k, v in ids_from_guid(str(gid)).items():
                         if k != "guid" and v:
                             ids[k] = v
         except Exception:
             pass
+        if guid_rows:
+            row["Guid"] = guid_rows
 
         # Some agents encode tmdb/imdb in the main guid string.
         g0 = a.get("guid")
@@ -116,7 +123,7 @@ def _fetch_metadata_row(srv: Any, rk: str) -> tuple[Mapping[str, Any] | None, di
                 if k != "guid" and v:
                     ids[k] = v
 
-        return a, ids
+        return row, ids
     except Exception:
         return None, {}
 
@@ -131,6 +138,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         rks = _fetch_resume_rating_keys(srv, limit=150)
         out: dict[str, dict[str, Any]] = {}
         dbg = _mods_debug()
+        token = active_pms_token(adapter)
 
         for rk in sorted(rks):
             a, ext_ids = _fetch_metadata_row(srv, rk)
@@ -152,9 +160,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 "ids": {},
             }
 
+            base["ids"]["plex"] = str(rk)
+
             # Keep external IDs when available
             if has_external_ids(ext_ids):
-                base["ids"] = dict(ext_ids)
+                base["ids"].update(dict(ext_ids))
                 base["ids"]["plex"] = str(rk)
 
             if typ == "episode":
@@ -169,6 +179,20 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                             show_ids[k] = v
                 if show_ids:
                     base["show_ids"] = show_ids
+
+            enriched = minimal_from_history_row(a, token=token, allow_discover=True)
+            if isinstance(enriched, Mapping):
+                enriched_ids = enriched.get("ids") if isinstance(enriched.get("ids"), Mapping) else {}
+                if enriched_ids:
+                    base["ids"].update({str(k): v for k, v in enriched_ids.items() if v})
+                    base["ids"]["plex"] = str(rk)
+                enriched_show_ids = enriched.get("show_ids") if isinstance(enriched.get("show_ids"), Mapping) else {}
+                if typ == "episode" and enriched_show_ids:
+                    base.setdefault("show_ids", {})
+                    base["show_ids"].update({str(k): v for k, v in enriched_show_ids.items() if v})
+                for key_name in ("title", "series_title", "year", "season", "episode"):
+                    if enriched.get(key_name) is not None and base.get(key_name) in (None, ""):
+                        base[key_name] = enriched.get(key_name)
 
             norm = id_minimal(base)
             if ts:
@@ -395,6 +419,38 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    unresolved = [{"item": dict(x), "hint": "not_supported"} for x in (items or [])]
-    _info("write_skipped", op="remove", reason="not_supported", unresolved=len(unresolved))
-    return 0, unresolved
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if not srv:
+        return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
+
+    _need_scope, did_switch, _aid, _uname = home_scope_enter(adapter)
+    try:
+        ok = 0
+        unresolved: list[dict[str, Any]] = []
+
+        for it in items or []:
+            it0 = dict(it or {})
+            rk = _resolve_rating_key(adapter, it0)
+            if not rk:
+                unresolved.append({"item": it0, "hint": "not_found"})
+                if _mods_debug():
+                    _dbg("resolve_miss", hint="not_found", canonical_key=str(canonical_key(id_minimal(it0)) or ""), ids=dict(ids_from(it0)))
+                continue
+
+            try:
+                obj = srv.fetchItem(int(rk))  # type: ignore[attr-defined]
+                mark_unplayed = getattr(obj, "markUnplayed", None) or getattr(obj, "markUnwatched", None)
+                if callable(mark_unplayed):
+                    mark_unplayed()
+                else:
+                    srv.query(f"/:/unscrobble?key={rk}&identifier=com.plexapp.plugins.library")  # type: ignore[attr-defined]
+                ok += 1
+            except Exception as e:
+                if _mods_debug():
+                    _warn("write_failed", op="remove", rating_key=str(rk), canonical_key=str(canonical_key(id_minimal(it0)) or ""), error=str(e))
+                unresolved.append({"item": it0, "hint": f"exception:{e}"})
+
+        _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), mode="unscrobble")
+        return ok, unresolved
+    finally:
+        home_scope_exit(adapter, did_switch)

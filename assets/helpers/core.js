@@ -837,7 +837,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "snapshots", "editor", "settings"].forEach((name) => {
+    ["main", "watchlist", "playback_progress", "snapshots", "editor", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab);
     });
   }
@@ -848,6 +848,7 @@
     if (tab !== "main") byId("placeholder-card")?.classList.add("hidden");
 
     byId("page-watchlist")?.classList.toggle("hidden", tab !== "watchlist");
+    byId("page-playback_progress")?.classList.toggle("hidden", tab !== "playback_progress");
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
@@ -914,6 +915,21 @@
         console.warn("Watchlist load/refresh failed:", e);
       }
       state.currentTab = "watchlist";
+      return;
+    }
+
+    if (tab === "playback_progress") {
+      try {
+        await ensurePageModule("playback_progress", "/assets/js/playback_progress.js", "PlaybackProgress");
+        window.PlaybackProgress?.mount?.(byId("page-playback_progress"));
+      } catch (e) {
+        console.warn("Playback Progress load/refresh failed:", e);
+        const root = byId("playback-progress-root");
+        if (root && (!root.children.length || root.querySelector(".cw-page-loading"))) {
+          root.innerHTML = '<div class="cw-page-load-error">Playback Progress failed to load. Refresh the page and try again.</div>';
+        }
+      }
+      state.currentTab = "playback_progress";
       return;
     }
 

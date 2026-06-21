@@ -27,6 +27,7 @@ from .wallAPI import register_wall
 from .versionAPI import router as version_router
 from .editorAPI import router as editor_router
 from .providerInstancesAPI import router as provider_instances_router
+from .playbackProgressAPI import router as playback_progress_router
 from .syncAPI import (
     router as sync_router,
     _is_sync_running,
@@ -57,6 +58,7 @@ __all__ = [
     "export_router",
     "editor_router",
     "provider_instances_router",
+    "playback_progress_router",
     "register_probes",
     "register_insights",
     "register_wall",
@@ -94,6 +96,7 @@ def register(
     app.include_router(export_router)
     app.include_router(editor_router)
     app.include_router(provider_instances_router)
+    app.include_router(playback_progress_router)
 
     register_probes(app, load_config)
     register_insights(app)
