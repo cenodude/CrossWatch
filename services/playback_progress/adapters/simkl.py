@@ -8,10 +8,10 @@ from typing import Any, Mapping, cast
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_SIMKL import OPS as SIMKL_OPS, SIMKLModule, __VERSION__ as SIMKL_MODULE_VERSION
-from providers.sync.simkl._common import build_headers, extract_latest_ts, fetch_activities
+from providers.sync.simkl._common import build_headers
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure
+from .base import PlaybackProgressAdapter, public_failure, rating_from_sources, tmdb_metadata_provider
 
 
 def _int(value: Any) -> int | None:
@@ -162,6 +162,51 @@ def _progress_body_from_record(record: Mapping[str, Any], progress_percent: floa
     return clean_mapping(body)
 
 
+def _metadata_rating_duration(
+    provider: Any,
+    *,
+    media_type: str,
+    ids: Mapping[str, Any],
+    title: str,
+    year: Any = None,
+    season: int | None = None,
+    episode: int | None = None,
+) -> tuple[float | None, int | None]:
+    if provider is None:
+        return None, None
+    lookup_ids = {str(k): str(v) for k, v in ids.items() if v not in (None, "", 0, False)}
+    if title:
+        lookup_ids["title"] = str(title)
+    if year:
+        lookup_ids["year"] = str(year)
+    if not lookup_ids.get("tmdb") and not lookup_ids.get("imdb") and not lookup_ids.get("title"):
+        return None, None
+    try:
+        detail = provider.fetch(
+            entity="movie" if media_type == "movie" else "tv",
+            ids=lookup_ids,
+            need={"poster": False, "backdrop": False, "ids": True, "score": True, "runtime_minutes": True},
+        )
+    except Exception:
+        return None, None
+    if not isinstance(detail, Mapping):
+        return None, None
+    duration = _int(detail.get("runtime_minutes"))
+    if duration is None and media_type != "movie" and season is not None and episode is not None:
+        ids_value = detail.get("ids")
+        detail_ids = ids_value if isinstance(ids_value, Mapping) else {}
+        tmdb = _first_str(detail_ids.get("tmdb"), lookup_ids.get("tmdb"))
+        fetch = getattr(provider, "_get", None)
+        if callable(fetch) and tmdb:
+            try:
+                episode_detail = fetch(f"https://api.themoviedb.org/3/tv/{tmdb}/season/{int(season)}/episode/{int(episode)}")
+            except Exception:
+                episode_detail = {}
+            if isinstance(episode_detail, Mapping):
+                duration = _int(episode_detail.get("runtime"))
+    return rating_from_sources(detail), (duration * 60 if duration else None)
+
+
 class SimklPlaybackAdapter(PlaybackProgressAdapter):
     provider = "simkl"
     provider_label = "SIMKL"
@@ -195,28 +240,6 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
             supports_anime=configured,
             reason=reason,
         )
-
-    def activity_marker(self, config_view: Mapping[str, Any]) -> str:
-        try:
-            module = SIMKLModule(config_view)
-            headers = build_headers({"simkl": {"api_key": module.cfg.api_key, "access_token": module.cfg.access_token}})
-            acts, _rate = fetch_activities(module.client.session, headers, timeout=float(module.cfg.timeout or 8.0))
-            if not isinstance(acts, Mapping):
-                return ""
-            latest = extract_latest_ts(
-                acts,
-                (
-                    ("playback",),
-                    ("playback", "updated_at"),
-                    ("movies", "playback"),
-                    ("shows", "playback"),
-                    ("anime", "playback"),
-                    ("all",),
-                ),
-            )
-            return str(latest or "")
-        except Exception:
-            return ""
 
     def list_progress(
         self,
@@ -263,7 +286,8 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
                     bucket = data.get(key)
                     if isinstance(bucket, list):
                         rows.extend([r for r in bucket if isinstance(r, Mapping)])
-            items = [self._normalize(row, instance_id, instance_label, caps) for row in rows]
+            metadata = tmdb_metadata_provider(config_view)
+            items = [self._normalize(row, instance_id, instance_label, caps, metadata) for row in rows]
             return PlaybackListResult(ok=True, provider=self.provider, instance_id=instance_id, items=[x for x in items if x], refreshed_at=utc_now_iso())
         except Exception:
             return PlaybackListResult(ok=False, provider=self.provider, instance_id=instance_id, error_code="provider_error", message="SIMKL playback request failed.", retryable=True)
@@ -274,6 +298,7 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
         instance_id: str,
         instance_label: str,
         caps: PlaybackCapabilities,
+        metadata: Any,
     ) -> PlaybackRecord | None:
         remote = _first_str(row.get("id"), row.get("playback_id"), row.get("session_id"))
         if not remote:
@@ -313,9 +338,26 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
         poster = _image_url(row.get("poster") or container.get("poster") or container.get("poster_url") or container.get("image"))
         backdrop = _image_url(row.get("backdrop") or row.get("fanart") or container.get("fanart") or container.get("backdrop"))
         progress = _float(row.get("percent") or row.get("progress") or row.get("progress_percent"))
-        updated = _first_str(row.get("watched_at"), row.get("updated_at"), row.get("date"), row.get("last_watched_at")) or None
+        updated = _first_str(row.get("paused_at"), row.get("watched_at"), row.get("updated_at"), row.get("date"), row.get("last_watched_at")) or None
         remaining = _int(row.get("remaining") or row.get("remaining_seconds"))
         duration = _int(row.get("runtime_seconds") or row.get("duration_seconds")) or _duration_seconds_from_sources(row, container, episode)
+        rating_ids = container_ids if media_type == "movie" else (container_ids or episode_ids)
+        rating_title = title if media_type == "movie" else series_title or title
+        rating = rating_from_sources(row, container, episode)
+        if duration is None or rating is None:
+            meta_rating, meta_duration = _metadata_rating_duration(
+                metadata,
+                media_type=media_type,
+                ids=rating_ids,
+                title=rating_title,
+                year=container.get("year") or row.get("year"),
+                season=season,
+                episode=episode_no,
+            )
+            if duration is None:
+                duration = meta_duration
+            if rating is None:
+                rating = meta_rating
         if remaining is None and _int(row.get("remaining_mins")) is not None:
             remaining = int(_int(row.get("remaining_mins")) or 0) * 60
         if remaining is None:
@@ -342,7 +384,7 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
             updated_at=updated,
             source_app=_first_str(row.get("app"), row.get("source_app"), row.get("application")),
             source_device=_first_str(row.get("device"), row.get("source_device")),
-            rating=_float(row.get("rating")),
+            rating=rating,
             poster_url=poster,
             backdrop_url=backdrop,
             can_remove_progress=caps.remove_progress,
@@ -380,7 +422,7 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
                     operation="remove_progress",
                     remote_id=remote_id,
                     canonical_key=str(record.get("canonical_key") or ""),
-                    message="Playback record removed." if response.status_code != 404 else "Playback record was already absent.",
+                    message="Playback record removed.",
                     remote_status=response.status_code,
                 )
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="SIMKL remove progress failed.", error_code=f"http:{response.status_code}", remote_status=response.status_code, retryable=response.status_code in {408, 429, 500, 502, 503, 504}, remote_id=remote_id, canonical_key=str(record.get("canonical_key") or ""))

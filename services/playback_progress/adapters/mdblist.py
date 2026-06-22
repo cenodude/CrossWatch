@@ -7,10 +7,9 @@ from typing import Any, Mapping, cast
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_MDBLIST import MDBLISTModule, OPS as MDBLIST_OPS
-from providers.sync.mdblist._common import iso_ok, iso_z, max_iso
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure
+from .base import PlaybackProgressAdapter, metadata_rating, public_failure, rating_from_sources, tmdb_metadata_provider
 
 
 MDBLIST_PLAYBACK_REASON = ""
@@ -200,21 +199,6 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
             reason=reason,
         )
 
-    def activity_marker(self, config_view: Mapping[str, Any], *, instance_id: str = "default") -> str:
-        try:
-            mod = _module(config_view, instance_id)
-            data = mod.client.last_activities()
-            if not isinstance(data, Mapping):
-                return ""
-            latest: str | None = None
-            for key in ("paused_at", "episode_paused_at"):
-                value = data.get(key)
-                if iso_ok(value):
-                    latest = max_iso(latest, iso_z(str(value)))
-            return latest or ""
-        except Exception:
-            return ""
-
     def list_progress(
         self,
         config_view: Mapping[str, Any],
@@ -246,7 +230,8 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
                     if isinstance(value, list):
                         rows.extend(row for row in value if isinstance(row, Mapping))
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
-            items = [self._normalize(row, instance_id, instance_label, caps) for row in rows]
+            metadata = tmdb_metadata_provider(config_view)
+            items = [self._normalize(row, instance_id, instance_label, caps, metadata) for row in rows]
             return PlaybackListResult(
                 ok=True,
                 provider=self.provider,
@@ -270,6 +255,7 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
         instance_id: str,
         instance_label: str,
         caps: PlaybackCapabilities,
+        metadata: Any,
     ) -> PlaybackRecord | None:
         remote_id = _first_str(row.get("id"), row.get("playback_id"), row.get("session_id"))
         if not remote_id:
@@ -337,6 +323,12 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
         progress = _float(row.get("progress") or row.get("progress_percent") or row.get("percent"))
         duration = _duration_seconds_from_sources(row, movie, show, episode_obj)
         remaining = _remaining_seconds(duration, progress)
+        rating = rating_from_sources(row, movie, show, episode_obj)
+        if rating is None:
+            show_rating_ids = clean_mapping(history_item.get("show_ids") if isinstance(history_item.get("show_ids"), Mapping) else {})
+            rating_ids = ids if media_type == "movie" else show_rating_ids or ids
+            rating_title = title if media_type == "movie" else series_title or title
+            rating = metadata_rating(metadata, media_type=media_type, ids=rating_ids, title=rating_title, year=year)
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,
@@ -359,7 +351,7 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
             updated_at=updated,
             source_app=_first_str(row.get("app"), row.get("source_app"), row.get("application")),
             source_device=_first_str(row.get("device"), row.get("source_device")),
-            rating=_float(row.get("rating")),
+            rating=rating,
             poster_url=_first_str(row.get("poster"), row.get("poster_url")),
             backdrop_url=_first_str(row.get("backdrop"), row.get("backdrop_url"), row.get("fanart")),
             can_remove_progress=caps.remove_progress,
@@ -398,7 +390,7 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
                     operation="remove_progress",
                     remote_id=remote_id,
                     canonical_key=str(record.get("canonical_key") or ""),
-                    message="Playback record removed." if response.status_code != 404 else "Playback record was already absent.",
+                    message="Playback record removed.",
                     remote_status=response.status_code,
                 )
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="MDBList remove progress failed.", error_code=f"http:{response.status_code}", remote_status=response.status_code, retryable=response.status_code in {408, 429, 500, 502, 503, 504}, remote_id=remote_id, canonical_key=str(record.get("canonical_key") or ""))
