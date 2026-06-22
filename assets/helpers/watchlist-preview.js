@@ -562,15 +562,24 @@
   };
   const hidePreviewCard = (card, row, msg) => {
     card?.classList.add("hidden");
-    if (row) { row.innerHTML = ""; row.classList.add("hidden"); }
-    if (msg) msg.textContent = "";
+    if (row) {
+      row.innerHTML = "";
+      row.classList.add("hidden");
+      row.closest(".wall-wrap")?.classList.remove("is-empty");
+    }
+    if (msg) {
+      msg.textContent = "";
+      msg.classList.remove("is-empty");
+    }
     window.wallLoaded = false;
   };
   const setWallEmpty = (row, msg, text) => {
     window.__wallRenderSignature = "";
     row.replaceChildren();
     row.classList.add("hidden");
+    row.closest(".wall-wrap")?.classList.add("is-empty");
     msg.textContent = text;
+    msg.classList.add("is-empty");
     msg.classList.remove("hidden");
   };
 
@@ -725,7 +734,9 @@
     window._lastSyncEpoch = lastSyncEpoch || null;
     window.__cwWallPreviewItems = itemMap;
     row.replaceChildren(frag);
+    row.closest(".wall-wrap")?.classList.remove("is-empty");
     row.classList.remove("hidden");
+    msg.classList.remove("is-empty");
     msg.classList.add("hidden");
     window.__wallRenderSignature = wallSignature(wallItems, lastSyncEpoch);
     initWallInteractions();
@@ -751,7 +762,9 @@
     const hasRenderedWall = row.childElementCount > 0 && !row.classList.contains("hidden");
     if (!hasRenderedWall) {
       msg.textContent = "Loading...";
+      msg.classList.remove("is-empty");
       msg.classList.remove("hidden");
+      row.closest(".wall-wrap")?.classList.remove("is-empty");
       row.classList.add("hidden");
       const cached = readWallCache();
       if (cached) {
