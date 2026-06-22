@@ -27,10 +27,12 @@ from ._common import (
     plex_cfg_get,
     plex_feature_library_ids,
     plex_headers,
+    raise_home_scope_not_applied,
     server_find_rating_key_by_guid,
     plex_worker_count,
     season_rating_key_from_show,
     section_allowed,
+    unresolved_home_scope_not_applied,
     unresolved_store,
     emit,
     make_logger,
@@ -289,6 +291,9 @@ def _rate(srv: Any, rating_key: Any, rating_1to10: int) -> bool:
 def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
     need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            raise_home_scope_not_applied("ratings", sel_aid, sel_uname)
+
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
             raise RuntimeError("PLEX server not bound")
@@ -594,7 +599,7 @@ def _get_existing_rating(srv: Any, rating_key: Any) -> int | None:
     return _norm_rating(getattr(it, "userRating", None))
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    _, did_switch, _, _ = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
@@ -603,6 +608,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _UNRES.freeze(it, action="add", reasons=["no_plex_server"])
                 unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
             _info("write_skipped", op="add", reason="no_server")
+            return 0, unresolved
+
+        if need_scope and not did_switch:
+            unresolved = unresolved_home_scope_not_applied(items, sel_aid, sel_uname)
+            _info("write_skipped", op="add", reason="home_scope_not_applied", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
             return 0, unresolved
     
         ok = 0
@@ -645,7 +655,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     finally:
         home_scope_exit(adapter, did_switch)
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    _, did_switch, _, _ = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
@@ -654,6 +664,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 _UNRES.freeze(it, action="remove", reasons=["no_plex_server"])
                 unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
             _info("write_skipped", op="remove", reason="no_server")
+            return 0, unresolved
+
+        if need_scope and not did_switch:
+            unresolved = unresolved_home_scope_not_applied(items, sel_aid, sel_uname)
+            _info("write_skipped", op="remove", reason="home_scope_not_applied", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
             return 0, unresolved
     
         ok = 0
