@@ -208,6 +208,39 @@ function ensurePlexInstanceUI() {
     setPlexPanelNotice(kind, text);
   }
 
+  function ensurePlexUserScopeNotice() {
+    const userPick = $("plex_user_pick_btn")?.closest(".userpick") || $("plex_username")?.parentElement;
+    if (!userPick) return null;
+    let el = $("plex_user_scope_notice");
+    if (el) return el;
+    el = d.createElement("div");
+    el.id = "plex_user_scope_notice";
+    el.className = "sub hidden";
+    el.style.marginTop = "8px";
+    el.style.padding = "8px 10px";
+    el.style.borderRadius = "8px";
+    el.style.border = "1px solid rgba(247,185,85,.35)";
+    el.style.background = "rgba(247,185,85,.08)";
+    el.style.color = "#f7b955";
+    el.style.lineHeight = "1.35";
+    userPick.insertAdjacentElement("afterend", el);
+    return el;
+  }
+
+  function setPlexUserScopeNotice(user) {
+    const el = ensurePlexUserScopeNotice();
+    if (!el) return;
+    const type = String(user?.type || "").trim().toLowerCase();
+    if (type !== "friend") {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    const name = String(user?.username || "This friend").trim() || "This friend";
+    el.classList.remove("hidden");
+    el.textContent = `${name} is a Plex friend/shared account, not a Plex Home user. Syncing this account's watchlist, ratings, or history is highly unlikely to work with your Plex token. Create a separate Plex profile and authenticate with that friend's Plex account instead.`;
+  }
+
   function setPlexSuccess(on, text) {
     try { getPlexState().connected = !!on; } catch {}
     if (on) setPlexBanner("ok", text || "Connected");
@@ -288,7 +321,7 @@ function ensurePlexInstanceUI() {
       const msg = $("plex_msg");
       if (msg && !pin) setPlexBanner("warn", "PIN request failed");
       try { setPlexBannerDetail(null, ""); } catch {}
-      if (pin) { try { await Shared.copyText(pin, null, { failureMessage: false }); } catch {} }
+      if (pin && d.hasFocus()) { try { await Shared.copyText(pin, null, { failureMessage: false }); } catch {} }
       if (win && !win.closed) {
         try { win.focus(); } catch {}
       } else {
@@ -328,7 +361,11 @@ function ensurePlexInstanceUI() {
       const tok = (p.account_token || "").trim();
 
       if (tok) {
-        if (tok !== lastTok) { lastTok = tok; inspectTried = false; }
+        if (tok !== lastTok) {
+          lastTok = tok;
+          inspectTried = false;
+          try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
+        }
         try {
 
           const urlEl  = $("plex_server_url");
@@ -402,6 +439,7 @@ async function plexDeleteToken() {
     if (r.ok && (j.ok !== false)) {
       ["plex_pin", "plex_username", "plex_account_id"].forEach((id) => { const el = $(id); if (el) el.value = ""; });
       try { const st = getPlexState(); st.libs = []; st.connected = false; } catch {}
+      try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
       try { setPlexBanner("warn", "Disconnected"); } catch {}
       try { setPlexBannerDetail("warn", "Token deleted and saved."); } catch {}
       try { notify("Plex disconnected (saved)."); } catch {}
@@ -438,6 +476,7 @@ async function plexDeleteToken() {
       set("plex_account_id", aid || "");
       // If account_id is missing, resolve it once from /api/plex/pickusers.
       await resolvePlexAccountIdFromUsers();
+      await refreshPlexSelectedUserScopeNotice();
       try { const cb = $("plex_verify_ssl"); if (cb) cb.checked = !!p.verify_ssl; } catch {}
 
       const st = getPlexState();
@@ -741,7 +780,7 @@ const tags = [
       if (!needsResolve) return;
 
       if (opts.bustCache) {
-        try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
+        try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
       }
 
       const users = await fetchPlexUsers();
@@ -772,18 +811,50 @@ const tags = [
 
   // User picker
   const __plexUsersByInst = new Map();
+  const __plexUsersMetaByInst = new Map();
 
   async function fetchPlexUsers() {
     const inst = getPlexInstance();
     if (__plexUsersByInst.has(inst)) return __plexUsersByInst.get(inst) || [];
     let out = [];
+    let meta = {};
     try {
       const r = await fetch(plexApi("/api/plex/pickusers"), { cache: "no-store" });
       const j = await r.json();
       out = Array.isArray(j?.users) ? j.users : [];
-    } catch { out = []; }
+      meta = j && typeof j === "object" ? j : {};
+    } catch { out = []; meta = {}; }
     __plexUsersByInst.set(inst, out);
+    __plexUsersMetaByInst.set(inst, meta);
     return out;
+  }
+
+  async function refreshPlexSelectedUserScopeNotice() {
+    try {
+      const userEl = $("plex_username");
+      const idEl = $("plex_account_id");
+      const wantUser = String(userEl?.value || "").trim().toLowerCase();
+      const wantId = String(idEl?.value || "").trim();
+      if (!wantUser && !wantId) {
+        setPlexUserScopeNotice(null);
+        return;
+      }
+
+      const users = await fetchPlexUsers();
+      const sameId = (u) => {
+        if (!wantId) return false;
+        return [u?.id, u?.account_id, u?.cloud_account_id, u?.pms_account_id]
+          .some((v) => v != null && String(v).trim() === wantId);
+      };
+      const sameUser = (u) => {
+        if (!wantUser) return false;
+        return String(u?.username || u?.title || "").trim().toLowerCase() === wantUser;
+      };
+      const match = users.find(sameId) || users.find(sameUser) || null;
+      setPlexUserScopeNotice(match);
+    } catch {
+      setPlexUserScopeNotice(null);
+    }
   }
 
   function renderPlexUserList() {
@@ -793,7 +864,9 @@ const tags = [
     const rankSrc  = { cloud:0, pms:1 };
     const by = new Map();
 
-    const src = __plexUsersByInst.get(getPlexInstance()) || [];
+    const inst = getPlexInstance();
+    const src = __plexUsersByInst.get(inst) || [];
+    const meta = __plexUsersMetaByInst.get(inst) || {};
 
     for (const u of src) {
       const uname = (u.username || u.title || `user#${u.id}`).trim();
@@ -831,13 +904,13 @@ const tags = [
 
     const esc = s => String(s||"").replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
     listEl.innerHTML = users.length ? users.map(u => `
-      <button type="button" class="userrow" data-uid="${esc(u.id)}" data-username="${esc(u.username)}">
+      <button type="button" class="userrow" data-uid="${esc(u.id)}" data-username="${esc(u.username)}" data-usertype="${esc(u.type)}" data-userlabel="${esc(u.label)}" data-usersource="${esc(u.source)}">
         <div class="row1">
           <strong>${esc(u.username)}</strong>
           <span class="tag ${esc(u.type)}">${esc(u.label || u.type)}</span>
         </div>
       </button>
-    `).join("") : '<div class="sub">No users found.</div>';
+    `).join("") : `<div class="sub">${esc(meta.reason === "token_required" ? (meta.message || "Connect this Plex profile first.") : "No users found.")}</div>`;
   }
 
   function placePlexUserPop() {
@@ -884,12 +957,22 @@ const tags = [
         const row = e.target.closest(".userrow"); if (!row) return;
         const uname = row.dataset.username || "";
         const uid   = row.dataset.uid || "";
+        const type  = row.dataset.usertype || "";
+        const label = row.dataset.userlabel || "";
+        const source = row.dataset.usersource || "";
         const uEl = $("plex_username"); if (uEl) uEl.value = uname;
         const aEl = $("plex_account_id"); if (aEl) aEl.value = uid;
+        setPlexUserScopeNotice({ username: uname, type, label, source });
         closePlexUserPicker();
         try{ document.dispatchEvent(new CustomEvent("settings-collect",{detail:{section:"plex-users"}})); }catch{}
       });
     }
+    ["plex_username", "plex_account_id"].forEach((id) => {
+      const input = $(id);
+      if (!input || input.__plexUserScopeNoticeWired) return;
+      input.__plexUserScopeNoticeWired = true;
+      input.addEventListener("input", () => setPlexUserScopeNotice(null));
+    });
     if (!document.__plexUserAway){
       document.__plexUserAway = true;
       document.addEventListener("click",(e)=>{
