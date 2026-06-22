@@ -896,7 +896,9 @@ to{left:6px}
 #placeholder-card.cw-main-card{padding:14px 18px 16px}
 #placeholder-card .cw-main-card-head{margin-bottom:10px;padding-bottom:8px;border-color:rgba(255,255,255,.1)}
 #placeholder-card .wall-msg{display:inline-flex;align-items:center;gap:8px;margin:0 0 10px;padding:8px 10px;border-radius:12px;border:1px solid var(--cw-flat-border,rgba(255,255,255,.12));background:var(--cw-flat-panel-2,rgba(255,255,255,.035));color:var(--cw-flat-muted,rgba(185,193,230,.78))}
+#placeholder-card .wall-msg.is-empty{display:flex;width:100%;min-height:70px;margin:0;justify-content:center;border-style:dashed}
 #placeholder-card .wall-wrap{margin:0;padding:0 42px;min-height:0;border:0;border-radius:0;background:0 0;box-shadow:none;overflow:visible}
+#placeholder-card .wall-wrap.is-empty{display:none}
 #placeholder-card #poster-row.row-scroll{--poster-gap:10px;display:grid;grid-auto-flow:column;grid-auto-columns:118px;align-items:start;gap:var(--poster-gap);width:100%;max-width:100%;padding:2px 4px 6px;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x proximity;scrollbar-width:none}
 #placeholder-card #poster-row.row-scroll::-webkit-scrollbar{display:none}
 #placeholder-card .poster{width:118px;min-width:118px;border-radius:14px;border-color:rgba(255,255,255,.14);box-shadow:none}

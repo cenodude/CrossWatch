@@ -517,7 +517,14 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         token = (plex.get("account_token") or "").strip()
         base = (plex.get("server_url") or "").strip()
         if not token:
-            return {"users": [], "count": 0, "instance": inst}
+            return {
+                "users": [],
+                "count": 0,
+                "instance": inst,
+                "ok": False,
+                "reason": "token_required",
+                "message": "Connect this Plex profile first.",
+            }
 
         norm = lambda s: (s or "").strip().lower()
         is_local_id = (

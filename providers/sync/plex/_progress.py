@@ -17,10 +17,12 @@ from ._common import (
     home_scope_exit,
     item_guid_candidates,
     plex_cfg_get,
+    raise_home_scope_not_applied,
     server_find_rating_key_by_guid,
     make_logger,
     minimal_from_history_row,
     normalize,
+    unresolved_home_scope_not_applied,
 )
 
 
@@ -133,8 +135,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     if not srv:
         return {}
 
-    _need_scope, did_switch, _aid, _uname = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            raise_home_scope_not_applied("progress", sel_aid, sel_uname)
+
         rks = _fetch_resume_rating_keys(srv, limit=150)
         out: dict[str, dict[str, Any]] = {}
         dbg = _mods_debug()
@@ -381,8 +386,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if not srv:
         return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
 
-    _need_scope, did_switch, _aid, _uname = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            unresolved = unresolved_home_scope_not_applied(items, sel_aid, sel_uname)
+            _info("write_skipped", op="add", reason="home_scope_not_applied", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
+            return 0, unresolved
+
         ok = 0
         unresolved: list[dict[str, Any]] = []
 
@@ -423,8 +433,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     if not srv:
         return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
 
-    _need_scope, did_switch, _aid, _uname = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            unresolved = unresolved_home_scope_not_applied(items, sel_aid, sel_uname)
+            _info("write_skipped", op="remove", reason="home_scope_not_applied", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
+            return 0, unresolved
+
         ok = 0
         unresolved: list[dict[str, Any]] = []
 

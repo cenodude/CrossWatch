@@ -17,11 +17,13 @@ from ._common import (
     hydrate_external_ids,
     home_scope_enter,
     home_scope_exit,
+    raise_home_scope_not_applied,
     ids_from_discover_row,
     meta_guids,
     normalize_discover_row,
     plex_headers,
     sort_guid_candidates,
+    unresolved_home_scope_not_applied,
     unresolved_store,
     make_logger,
 )
@@ -466,8 +468,11 @@ def _pms_find_in_index(libtype: str, guid_candidates: list[str]) -> Any | None:
 
 # Index build
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    _, did_switch, _, _ = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            raise_home_scope_not_applied("watchlist", sel_aid, sel_uname)
+
         token = active_cloud_token(adapter)
         if not token:
             raise RuntimeError("Plex token is required for watchlist index")
@@ -558,8 +563,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
 # Add
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    _, did_switch, _, _ = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            unresolved = unresolved_home_scope_not_applied(items, sel_aid, sel_uname)
+            _info("write_skipped", op="add", reason="home_scope_not_applied", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
+            return 0, unresolved
+
         token = active_cloud_token(adapter)
         if not token:
             raise RuntimeError("Plex token is required for watchlist writes")
@@ -702,8 +712,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
 # Remove
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
-    _, did_switch, _, _ = home_scope_enter(adapter)
+    need_scope, did_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
+        if need_scope and not did_switch:
+            unresolved = unresolved_home_scope_not_applied(items, sel_aid, sel_uname)
+            _info("write_skipped", op="remove", reason="home_scope_not_applied", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
+            return 0, unresolved
+
         token = active_cloud_token(adapter)
         if not token:
             raise RuntimeError("Plex token is required for watchlist writes")

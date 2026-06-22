@@ -2015,6 +2015,31 @@ def home_scope_exit(adapter: Any, did_switch: bool) -> None:
         pass
 
 
+def home_scope_selected_label(sel_aid: Any, sel_uname: Any) -> str:
+    v = sel_aid if sel_aid is not None else sel_uname
+    return str(v or "").strip() or "selected user"
+
+
+def raise_home_scope_not_applied(feature: str, sel_aid: Any, sel_uname: Any) -> None:
+    selected = home_scope_selected_label(sel_aid, sel_uname)
+    _warn("home_scope_blocked", target_feature=str(feature or ""), selected=selected)
+    raise RuntimeError(f"Plex selected user scope could not be applied for {feature}: {selected}")
+
+
+def unresolved_home_scope_not_applied(items: Iterable[Mapping[str, Any]] | None, sel_aid: Any, sel_uname: Any) -> list[dict[str, Any]]:
+    from cw_platform.id_map import minimal as id_minimal
+
+    selected = home_scope_selected_label(sel_aid, sel_uname)
+    out: list[dict[str, Any]] = []
+    for item in items or []:
+        try:
+            minimal = id_minimal(item)
+        except Exception:
+            minimal = dict(item or {})
+        out.append({"item": minimal, "hint": "home_scope_not_applied", "selected": selected})
+    return out
+
+
 def as_epoch(v: Any) -> int | None:
     if v is None:
         return None
