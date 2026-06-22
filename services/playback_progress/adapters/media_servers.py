@@ -9,7 +9,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.metadata._meta_TMDB import TmdbProvider
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure
+from .base import PlaybackProgressAdapter, metadata_rating, public_failure, rating_from_sources
 
 try:
     from providers.sync._mod_EMBY import OPS as EMBY_OPS
@@ -277,6 +277,9 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             }
         )
         canonical = canonical_key(item) or key or ""
+        rating_ids = show_ids if media_type in {"episode", "anime_episode"} and _has_metadata_ids(show_ids) else ids
+        rating_title = (series_title or title) if media_type in {"episode", "anime_episode"} else title
+        rating = rating_from_sources(row) or metadata_rating(metadata_provider, media_type=media_type, ids=rating_ids, title=rating_title, year=row.get("year"))
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,
@@ -297,6 +300,7 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             duration_seconds=duration_seconds,
             progress_at=_first_str(row.get("progress_at"), row.get("updated_at")) or None,
             updated_at=_first_str(row.get("progress_at"), row.get("updated_at")) or None,
+            rating=rating,
             poster_url=_first_str(row.get("poster"), row.get("poster_url")),
             backdrop_url=_first_str(row.get("backdrop"), row.get("backdrop_url"), row.get("fanart")),
             can_remove_progress=caps.remove_progress,

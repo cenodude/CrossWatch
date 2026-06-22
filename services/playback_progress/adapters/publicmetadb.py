@@ -6,10 +6,11 @@ from __future__ import annotations
 from typing import Any, Mapping, cast
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from providers.metadata._meta_TMDB import TmdbProvider
 from providers.sync._mod_PUBLICMETADB import OPS as PUBLICMETADB_OPS, PUBLICMETADBModule
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure
+from .base import PlaybackProgressAdapter, metadata_rating, public_failure, rating_from_sources
 
 
 def _int(value: Any) -> int | None:
@@ -42,6 +43,73 @@ def _first_str(*values: Any) -> str:
 
 def _as_mapping(value: Any) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
+
+
+def _nested_maps(row: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    out: list[Mapping[str, Any]] = [row]
+    for key in ("item", "media", "metadata", "movie", "show", "series", "episode"):
+        nested = row.get(key)
+        if isinstance(nested, Mapping):
+            out.append(nested)
+    return out
+
+
+def _first_nested_str(row: Mapping[str, Any], *keys: str) -> str:
+    for source in _nested_maps(row):
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, Mapping):
+                value = value.get("title") or value.get("name") or value.get("original_title") or value.get("original_name")
+            text = _first_str(value)
+            if text:
+                return text
+    return ""
+
+
+def _first_nested_int(row: Mapping[str, Any], *keys: str) -> int | None:
+    for source in _nested_maps(row):
+        ids = source.get("ids")
+        if isinstance(ids, Mapping):
+            for key in keys:
+                value = _int(ids.get(key))
+                if value is not None:
+                    return value
+        for key in keys:
+            value = _int(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def _metadata_provider(config_view: Mapping[str, Any]) -> TmdbProvider | None:
+    tmdb = _as_mapping(config_view.get("tmdb"))
+    metadata = _as_mapping(config_view.get("metadata"))
+    if not _first_str(tmdb.get("api_key"), metadata.get("tmdb_api_key")):
+        return None
+    cfg = dict(config_view)
+    return TmdbProvider(lambda: cfg, lambda _cfg: None)
+
+
+def _metadata_title(
+    provider: TmdbProvider | None,
+    *,
+    media_type: str,
+    tmdb: int | None,
+) -> tuple[str, int | None, int | None]:
+    if provider is None or tmdb is None:
+        return "", None, None
+    try:
+        detail = provider.fetch(
+            entity="movie" if media_type == "movie" else "tv",
+            ids={"tmdb": str(tmdb)},
+            need={"poster": False, "backdrop": False, "ids": False},
+        )
+    except Exception:
+        return "", None, None
+    if not isinstance(detail, Mapping):
+        return "", None, None
+    runtime_minutes = _int(detail.get("runtime_minutes"))
+    return _first_str(detail.get("title")), _int(detail.get("year")), runtime_minutes * 60 if runtime_minutes else None
 
 
 def _rows(data: Any) -> list[Mapping[str, Any]]:
@@ -196,7 +264,8 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
                 page += 1
 
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
-            items = [self._normalize(row, instance_id, instance_label, caps) for row in rows]
+            metadata = _metadata_provider(config_view)
+            items = [self._normalize(row, instance_id, instance_label, caps, metadata) for row in rows]
             return PlaybackListResult(
                 ok=True,
                 provider=self.provider,
@@ -220,6 +289,7 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
         instance_id: str,
         instance_label: str,
         caps: PlaybackCapabilities,
+        metadata: TmdbProvider | None,
     ) -> PlaybackRecord | None:
         remote_id = _first_str(row.get("id"), row.get("resume_id"), row.get("_publicmetadb_resume_id"))
         if not remote_id:
@@ -227,7 +297,7 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
 
         media = str(row.get("media_type") or row.get("type") or "").strip().lower()
         is_episode = media in {"tv", "show", "series", "episode"}
-        tmdb = _int(row.get("tmdb_id") or row.get("tmdb"))
+        tmdb = _first_nested_int(row, "tmdb_id", "tmdb")
         ids = {"tmdb": tmdb} if tmdb is not None else {}
         progress_ms = _int(row.get("position_ms") or row.get("positionMs") or row.get("progress_ms") or row.get("progressMs"))
         runtime_ms = _int(row.get("runtime_ms") or row.get("runtimeMs") or row.get("duration_ms") or row.get("durationMs"))
@@ -237,10 +307,16 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
         updated = _first_str(row.get("updated"), row.get("updated_at"), row.get("progress_at"), row.get("last_played")) or None
 
         if is_episode:
-            series_title = _first_str(row.get("series_title"), row.get("show_title"), row.get("title"), row.get("name"))
-            episode_title = _first_str(row.get("episode_title"), row.get("episode_name"))
+            series_title = _first_nested_str(row, "series_title", "show_title", "show_name", "name", "title")
+            episode_title = _first_nested_str(row, "episode_title", "episode_name", "episodeTitle", "episodeName")
             season_no = _int(row.get("season") or row.get("season_number"))
             episode_no = _int(row.get("episode") or row.get("episode_number"))
+            year = _int(row.get("year"))
+            if not series_title or not runtime_ms:
+                meta_title, meta_year, meta_duration = _metadata_title(metadata, media_type="episode", tmdb=tmdb)
+                series_title = series_title or meta_title
+                year = year or meta_year
+                runtime_ms = runtime_ms or (meta_duration * 1000 if meta_duration else None)
             item = id_minimal(
                 {
                     "type": "episode",
@@ -254,11 +330,16 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
             )
             history_item = dict(item)
             media_type = "episode"
-            title = series_title or episode_title
-            year = _int(row.get("year"))
+            title = series_title or episode_title or (f"TMDb {tmdb}" if tmdb is not None else "")
         else:
-            title = _first_str(row.get("title"), row.get("name"))
+            title = _first_nested_str(row, "title", "name", "original_title", "original_name")
             year = _int(row.get("year"))
+            if not title or year is None or not runtime_ms:
+                meta_title, meta_year, meta_duration = _metadata_title(metadata, media_type="movie", tmdb=tmdb)
+                title = title or meta_title
+                year = year or meta_year
+                runtime_ms = runtime_ms or (meta_duration * 1000 if meta_duration else None)
+            title = title or (f"TMDb {tmdb}" if tmdb is not None else "")
             item = id_minimal({"type": "movie", "ids": ids, "title": title, "year": year})
             history_item = dict(item)
             media_type = "movie"
@@ -267,8 +348,11 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
             season_no = None
             episode_no = None
 
+        if progress is None and progress_ms is not None and runtime_ms:
+            progress = round((float(progress_ms) / float(runtime_ms)) * 100.0, 3)
         canonical = canonical_key(item) or ""
         duration_seconds = _ms_to_seconds(runtime_ms)
+        rating = rating_from_sources(row) or metadata_rating(metadata, media_type=media_type, ids=ids, title=title, year=year)
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,
@@ -291,7 +375,7 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
             updated_at=updated,
             source_app=_first_str(row.get("app"), row.get("source_app"), row.get("application")),
             source_device=_first_str(row.get("device"), row.get("source_device")),
-            rating=_float(row.get("rating")),
+            rating=rating,
             poster_url=_first_str(row.get("poster"), row.get("poster_url")),
             backdrop_url=_first_str(row.get("backdrop"), row.get("backdrop_url"), row.get("fanart")),
             can_remove_progress=caps.remove_progress,
@@ -327,7 +411,7 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
                     operation="remove_progress",
                     remote_id=remote_id,
                     canonical_key=str(record.get("canonical_key") or ""),
-                    message="Playback record removed." if response.status_code != 404 else "Playback record was already absent.",
+                    message="Playback record removed.",
                     remote_status=response.status_code,
                 )
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="PublicMetaDB remove progress failed.", error_code=f"http:{response.status_code}", remote_status=response.status_code, retryable=response.status_code in {408, 429, 500, 502, 503, 504}, remote_id=remote_id, canonical_key=str(record.get("canonical_key") or ""))

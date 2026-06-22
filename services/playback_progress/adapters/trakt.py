@@ -9,7 +9,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_TRAKT import OPS as TRAKT_OPS, TRAKTModule
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure
+from .base import PlaybackProgressAdapter, public_failure, rating_from_sources
 
 
 def _num(value: Any) -> int | None:
@@ -128,6 +128,10 @@ def _progress_body_from_record(record: Mapping[str, Any], progress_percent: floa
     return clean_mapping(body)
 
 
+def _module(config_view: Mapping[str, Any]) -> TRAKTModule:
+    return TRAKTModule(config_view, connect=False)
+
+
 class TraktPlaybackAdapter(PlaybackProgressAdapter):
     provider = "trakt"
     provider_label = "Trakt"
@@ -171,7 +175,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
         force_refresh: bool = False,
     ) -> PlaybackListResult:
         try:
-            module = TRAKTModule(config_view)
+            module = _module(config_view)
             rows: list[Mapping[str, Any]] = []
             seen_ids: set[str] = set()
             first_error: tuple[int, str] | None = None
@@ -288,6 +292,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
             duration_seconds=duration,
             progress_at=updated,
             updated_at=updated,
+            rating=rating_from_sources(row, payload, show),
             poster_url=poster,
             backdrop_url=backdrop,
             can_remove_progress=caps.remove_progress,
@@ -309,7 +314,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
         if not remote_id:
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="Missing Trakt playback record id.", error_code="missing_remote_id")
         try:
-            module = TRAKTModule(config_view)
+            module = _module(config_view)
             response = module.client.delete(f"{module.client.BASE}/sync/playback/{remote_id}")
             if response.status_code in {200, 202, 204, 404}:
                 return PlaybackActionResult(
@@ -319,7 +324,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
                     operation="remove_progress",
                     remote_id=remote_id,
                     canonical_key=str(record.get("canonical_key") or ""),
-                    message="Playback record removed." if response.status_code != 404 else "Playback record was already absent.",
+                    message="Playback record removed.",
                     remote_status=response.status_code,
                 )
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="Trakt remove progress failed.", error_code=f"http:{response.status_code}", remote_status=response.status_code, retryable=response.status_code in {408, 429, 500, 502, 503, 504}, remote_id=remote_id, canonical_key=str(record.get("canonical_key") or ""))
@@ -339,7 +344,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
         if watched_at:
             item["watched_at"] = watched_at
         try:
-            result = TRAKT_OPS.add(config_view, [item], feature="history")
+            result = _module(config_view).add("history", [item])
             ok = bool(result.get("ok"))
             return PlaybackActionResult(
                 ok=ok,
@@ -365,7 +370,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
         instance_label: str,
     ) -> PlaybackActionResult:
         try:
-            module = TRAKTModule(config_view)
+            module = _module(config_view)
             response = module.client.post(f"{module.client.BASE}/scrobble/pause", json=_progress_body_from_record(record, progress_percent))
             if response.status_code in {200, 201, 202}:
                 return PlaybackActionResult(

@@ -321,7 +321,7 @@ class TRAKTClient:
 
 
 class TRAKTModule:
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], *, connect: bool = True):
         t = dict(cfg.get("trakt") or {})
         raw_types = t.get("history_collection_types")
         allowed = {"movies", "shows"}
@@ -374,7 +374,9 @@ class TRAKTModule:
         if t.get("debug") in (True, "1", 1):
             os.environ.setdefault("CW_TRAKT_DEBUG", "1")
 
-        self.client = TRAKTClient(self.cfg, cfg).connect()
+        self.client = TRAKTClient(self.cfg, cfg)
+        if connect:
+            self.client = self.client.connect()
         self.raw_cfg = cfg
         self.config = cfg
         self.progress_factory = (

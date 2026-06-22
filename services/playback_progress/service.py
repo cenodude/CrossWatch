@@ -124,7 +124,18 @@ def _blank_scalar(value: Any) -> bool:
     return value is None or value == ""
 
 
+def _rating_value(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        rating = float(value)
+        return rating if math.isfinite(rating) and rating > 0 else None
+    except Exception:
+        return None
+
+
 def _with_remaining_fallback(item: dict[str, Any]) -> dict[str, Any]:
+    item["rating"] = _rating_value(item.get("rating"))
     if not _blank_scalar(item.get("remaining_seconds")):
         return item
     remaining = _remaining_seconds(item.get("duration_seconds"), item.get("progress_percent"))
@@ -140,6 +151,11 @@ def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         primary["remaining_seconds"] = next((record.get("remaining_seconds") for record in ordered if not _blank_scalar(record.get("remaining_seconds"))), None)
     if _blank_scalar(primary.get("duration_seconds")):
         primary["duration_seconds"] = next((record.get("duration_seconds") for record in ordered if not _blank_scalar(record.get("duration_seconds"))), None)
+    ratings = [rating for rating in (_rating_value(record.get("rating")) for record in ordered) if rating is not None]
+    if ratings:
+        primary["rating"] = max(ratings)
+    else:
+        primary["rating"] = None
     providers: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for record in ordered:
