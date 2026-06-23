@@ -62,8 +62,10 @@
   * **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
 * **Tools**
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
+  * Playback Progress Manager: View and edit unfinished playback sessions across providers.
   * Editor: Inspect and adjust your items and add or block items.
   * Captures: Rollback tool for provider watchlist, ratings, and history.
+  * Backup & Restore: Create, validate, import and restore configuration, application state, or full CrossWatch backups.
 
 And much more...such as:
 * Simple and advanced scheduling: From standard to more detailed pair schedules
