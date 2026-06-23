@@ -21,14 +21,13 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
         s = str(v).strip().lower()
         return f"{k}:{s}" if s else None
 
-    ids = ids_from(item)
-    for k in _STRONG_ID_KEYS:
-        t = _tok(k, ids.get(k))
-        if t:
-            out.add(t)
-
     typ = str(item.get("type") or "").strip().lower()
+    ids = ids_from(item)
     if typ not in ("season", "episode"):
+        for k in _STRONG_ID_KEYS:
+            t = _tok(k, ids.get(k))
+            if t:
+                out.add(t)
         return out
 
     s = item.get("season") if item.get("season") is not None else item.get("season_number")
@@ -37,6 +36,10 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
         sn = int(s) if s is not None else None
         en = int(e) if e is not None else None
     except Exception:
+        for k in _STRONG_ID_KEYS:
+            t = _tok(k, ids.get(k))
+            if t:
+                out.add(t)
         return out
 
     frag: str | None = None
@@ -46,15 +49,21 @@ def _strong_keys(item: Mapping[str, Any]) -> set[str]:
         frag = f"#s{str(sn).zfill(2)}e{str(en).zfill(2)}"
 
     if not frag:
+        for k in _STRONG_ID_KEYS:
+            t = _tok(k, ids.get(k))
+            if t:
+                out.add(t)
         return out
 
+    source_ids: Mapping[str, Any] = ids
     show_ids_raw = item.get("show_ids")
     if isinstance(show_ids_raw, Mapping) and show_ids_raw:
-        sids = coalesce_ids(show_ids_raw)
-        for k in _STRONG_ID_KEYS:
-            t = _tok(k, sids.get(k))
-            if t:
-                out.add(f"{t}{frag}")
+        source_ids = coalesce_ids(show_ids_raw) or ids
+
+    for k in _STRONG_ID_KEYS:
+        t = _tok(k, source_ids.get(k))
+        if t:
+            out.add(f"{t}{frag}")
 
     return out
 
