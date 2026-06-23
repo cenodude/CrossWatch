@@ -23,7 +23,16 @@ from ._mod_common import (
     SimpleRateLimiter,
     request_with_retries,
 )
-from .simkl._common import _pair_scope as simkl_pair_scope, _is_capture_mode as simkl_capture_mode, build_headers, memoize_activities, normalize as simkl_normalize, key_of as simkl_key_of, state_file
+from .simkl._common import (
+    _pair_scope as simkl_pair_scope,
+    _is_capture_mode as simkl_capture_mode,
+    build_headers,
+    memoize_activities,
+    normalize as simkl_normalize,
+    key_of as simkl_key_of,
+    simkl_api_params,
+    state_file,
+)
 
 
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
@@ -66,7 +75,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -255,12 +264,18 @@ class SIMKLClient:
         )
 
     def _request(self, method: str, url: str, **kw: Any) -> requests.Response:
+        params = dict(kw.pop("params", {}) or {})
+        merged_params = simkl_api_params(self.cfg.api_key)
+        merged_params.update(params)
+        kw["params"] = merged_params
+        timeout = kw.pop("timeout", self.cfg.timeout)
+        max_retries = kw.pop("max_retries", self.cfg.max_retries)
         return request_with_retries(
             self.session,
             method,
             url,
-            timeout=self.cfg.timeout,
-            max_retries=self.cfg.max_retries,
+            timeout=timeout,
+            max_retries=max_retries,
             **kw,
         )
 
@@ -269,7 +284,7 @@ class SIMKLClient:
 
     def activities(self) -> dict[str, Any]:
         try:
-            r = self._request("POST", f"{self.BASE}/sync/activities")
+            r = self._request("GET", f"{self.BASE}/sync/activities")
             if r.ok:
                 return r.json() if r.text else {}
             return {"status": r.status_code}
@@ -358,13 +373,7 @@ class SIMKLModule:
 
         if need_core:
             try:
-                r = request_with_retries(
-                    sess,
-                    "POST",
-                    f"{base}/sync/activities",
-                    timeout=tmo,
-                    max_retries=self.cfg.max_retries,
-                )
+                r = self.client._request("GET", f"{base}/sync/activities", timeout=tmo)
                 core_code = r.status_code
                 if r.status_code in (401, 403):
                     core_reason = "unauthorized"

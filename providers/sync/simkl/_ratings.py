@@ -18,6 +18,7 @@ from ._common import (
     load_json_state,
     maybe_map_tvdb_ids,
     normalize_flat_watermarks,
+    simkl_api_params_from_headers,
     key_of as simkl_key_of,
     normalize as simkl_normalize,
     save_json_state,
@@ -44,11 +45,12 @@ ID_KEYS = ("tmdb", "imdb", "tvdb", "simkl", "trakt", "mal", "anilist", "kitsu", 
 
 def _maybe_map_tvdb(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
     def _fetch_rows() -> Iterable[Mapping[str, Any]]:
+        headers = _headers(adapter, force_refresh=True)
         try:
             resp = adapter.client.session.get(
                 f"{BASE}/sync/all-items/anime",
-                headers=_headers(adapter, force_refresh=True),
-                params={"extended": "full_anime_seasons"},
+                headers=headers,
+                params=simkl_api_params_from_headers(headers, extended="full_anime_seasons"),
                 timeout=adapter.cfg.timeout,
             )
             data = resp.json() if resp.ok else {}
@@ -535,10 +537,7 @@ def _resolve_by_simkl_id(
     simkl_id: int,
     timeout: float,
 ) -> Mapping[str, Any]:
-    client_id = str(hdrs.get("simkl-api-key") or "").strip()
-    params: dict[str, str] = {"extended": "full"}
-    if client_id:
-        params["client_id"] = client_id
+    params = simkl_api_params_from_headers(hdrs, extended="full")
 
     k = str(kind or "").lower()
     if k == "movies":
@@ -572,7 +571,12 @@ def _fetch_rows_current(
         return [], False
     url = f"{BASE}/sync/ratings/{kind}/{RATINGS_ALL}"
     try:
-        resp = sess.post(url, headers=dict(hdrs), timeout=timeout)
+        resp = sess.get(
+            url,
+            headers=dict(hdrs),
+            params=simkl_api_params_from_headers(hdrs),
+            timeout=timeout,
+        )
         if resp.status_code != 200:
             _warn("http_failed", op="index", kind=kind, status=resp.status_code, body=(resp.text or "")[:200])
             return [], False
@@ -969,7 +973,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             body["shows"] = shows
 
         try:
-            resp = sess.post(URL_ADD, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
+            resp = sess.post(
+                URL_ADD,
+                headers=hdrs,
+                params=simkl_api_params_from_headers(hdrs),
+                json=body,
+                timeout=adapter.cfg.timeout,
+            )
             if 200 <= resp.status_code < 300:
                 _unfreeze_if_present(thaw_keys)
                 ok += len(movies) + len(shows)
@@ -1058,7 +1068,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             body["shows"] = shows
 
         try:
-            resp = sess.post(URL_REMOVE, headers=hdrs, json=body, timeout=adapter.cfg.timeout)
+            resp = sess.post(
+                URL_REMOVE,
+                headers=hdrs,
+                params=simkl_api_params_from_headers(hdrs),
+                json=body,
+                timeout=adapter.cfg.timeout,
+            )
             if 200 <= resp.status_code < 300:
                 _unfreeze_if_present(thaw_keys)
                 try:
