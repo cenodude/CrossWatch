@@ -25,6 +25,32 @@ def simkl_user_agent() -> str:
             return f"CrossWatch/{version.strip()} (SIMKL)"
     return "CrossWatch (SIMKL)"
 
+
+def simkl_app_version() -> str:
+    env_version = str(os.getenv("APP_VERSION") or "").strip()
+    if env_version:
+        return env_version
+    for mod_name in ("sync._mod_SIMKL", "providers.sync._mod_SIMKL"):
+        mod = sys.modules.get(mod_name)
+        version = getattr(mod, "__VERSION__", None) if mod is not None else None
+        if isinstance(version, str) and version.strip():
+            return version.strip()
+    return "1.0"
+
+
+def simkl_api_params(api_key: Any, **extra: Any) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "client_id": str(api_key or "").strip(),
+        "app-name": "crosswatch",
+        "app-version": simkl_app_version(),
+    }
+    params.update({k: v for k, v in extra.items() if v is not None})
+    return params
+
+
+def simkl_api_params_from_headers(headers: Mapping[str, Any], **extra: Any) -> dict[str, Any]:
+    return simkl_api_params((headers or {}).get("simkl-api-key"), **extra)
+
 STATE_DIR = Path("/config/.cw_state")
 
 
@@ -427,7 +453,12 @@ def fetch_activities(
     url = "https://api.simkl.com/sync/activities"
     rate: dict[str, Any] = {}
     try:
-        resp = session.post(url, headers=dict(headers), timeout=timeout)
+        resp = session.get(
+            url,
+            headers=dict(headers),
+            params=simkl_api_params_from_headers(headers),
+            timeout=timeout,
+        )
         rate = parse_rate_limit(resp.headers)
         if 200 <= resp.status_code < 300:
             data = resp.json() if (resp.text or "").strip() else {}
@@ -642,6 +673,9 @@ __all__ = [
     "load_json_state",
     "save_json_state",
     "slug_to_title",
+    "simkl_app_version",
+    "simkl_api_params",
+    "simkl_api_params_from_headers",
     "anime_tvdb_map_path",
     "load_anime_tvdb_map",
     "save_anime_tvdb_map",
