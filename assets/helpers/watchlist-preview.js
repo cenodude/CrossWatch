@@ -285,7 +285,7 @@
         opacity:1;
         pointer-events:auto;
       }
-      html[data-tab!="main"] #cw-wall-preview-detail{display:none!important}
+      html:not([data-tab="main"]) #cw-wall-preview-detail{display:none!important}
       #cw-wall-preview-detail::before{
         content:"";
         position:absolute;
@@ -748,9 +748,11 @@
     const msg = document.getElementById("wall-msg");
     const row = document.getElementById("poster-row");
     if (!card || !msg || !row) return;
+    if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
 
     try {
       const gate = await previewGate();
+      if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
       if (!gate.allowed) {
         card.classList.add("hidden");
         return;
@@ -776,6 +778,7 @@
       const limit = Number.isFinite(window.MAX_WALL_POSTERS) ? Math.max(1, Number(window.MAX_WALL_POSTERS)) : 20;
       const data = await json(`/api/state/wall?both_only=0&active_only=1&limit=${encodeURIComponent(limit)}`);
       if (myReq !== wallReqSeq) return;
+      if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
       if (data?.missing_tmdb_key) { card.classList.add("hidden"); return; }
       if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return; }
 
@@ -841,14 +844,28 @@
 
   async function updateWatchlistPreview() {
     try {
-      const { allowed } = await previewGate();
       const card = document.getElementById("placeholder-card");
+      const row = document.getElementById("poster-row");
+      const msg = document.getElementById("wall-msg");
+      if (!isOnMain()) {
+        hidePreviewCard(card, row, msg);
+        return;
+      }
+      const { allowed } = await previewGate();
+      if (!isOnMain()) {
+        hidePreviewCard(card, row, msg);
+        return;
+      }
       if (!allowed) {
         if (card) card.classList.add("hidden");
         window.wallLoaded = false;
         return;
       }
       await loadWall();
+      if (!isOnMain()) {
+        hidePreviewCard(card, row, msg);
+        return;
+      }
       window.wallLoaded = true;
     } catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
@@ -873,6 +890,7 @@
       }
 
       const { allowed } = await previewGate();
+      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
       if (!allowed) { hidePreviewCard(card, row, msg); return false; }
 
       if (!window.wallLoaded && !window.__wallLoading) {
