@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import json
 import math
 import threading
 import time
@@ -12,6 +13,7 @@ from typing import Any, Mapping, cast
 
 from _logging import log as BASE_LOG
 from cw_platform.config_base import load_config, save_config
+from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.provider_instances import build_provider_config_view, get_provider_block, list_instance_ids, normalize_instance_id
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
@@ -29,6 +31,9 @@ MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
 PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
+LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin"}
+LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
+LIVE_MAX_AGE_SECONDS = 10 * 60
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -70,6 +75,205 @@ def _group_progress(value: Any) -> str:
         return ""
 
 
+def _live_source_provider(value: Any) -> str:
+    source = str(value or "").strip().lower()
+    return {
+        "plextrakt": "plex",
+        "embytrakt": "emby",
+        "jellyfintrakt": "jellyfin",
+    }.get(source, source)
+
+
+def _live_show_ids(ids: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in ids.items():
+        text = str(key or "").strip().lower()
+        if not text.endswith("_show") or value in (None, ""):
+            continue
+        out[text[:-5]] = value
+    return out
+
+
+def _live_item(stream: Mapping[str, Any]) -> dict[str, Any]:
+    ids_value = stream.get("ids")
+    ids: Mapping[str, Any] = cast(Mapping[str, Any], ids_value) if isinstance(ids_value, Mapping) else {}
+    media_type = str(stream.get("media_type") or stream.get("type") or "").strip().lower()
+    typ = "episode" if media_type in {"episode", "anime_episode"} else "movie"
+    show_ids = _live_show_ids(ids)
+    item: dict[str, Any] = {
+        "type": typ,
+        "title": stream.get("title"),
+        "year": stream.get("year"),
+        "season": stream.get("season"),
+        "episode": stream.get("episode"),
+        "ids": {str(k): v for k, v in ids.items() if not str(k).lower().endswith("_show")},
+    }
+    if show_ids:
+        item["show_ids"] = show_ids
+    return id_minimal(item)
+
+
+def _title_key(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _live_match_keys(item: Mapping[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    ck = str(item.get("canonical_key") or "").strip().lower()
+    if not ck:
+        try:
+            ck = canonical_key(item).strip().lower()
+        except Exception:
+            ck = ""
+    if ck and not ck.startswith("unknown:"):
+        keys.add(f"key:{ck}")
+
+    media_type = str(item.get("media_type") or item.get("type") or "").strip().lower()
+    typ = "movie" if media_type == "movie" else "episode"
+    title = _title_key(item.get("title"))
+    series = _title_key(item.get("series_title"))
+    season = _group_number(item.get("season"))
+    episode = _group_number(item.get("episode"))
+    year = _group_number(item.get("year"))
+    if typ == "movie" and title:
+        keys.add(f"live:movie:{title}:{year}")
+    elif typ == "episode" and season and episode:
+        for name in {series, title}:
+            if name:
+                keys.add(f"live:episode:{name}:{season}:{episode}")
+    return {key for key in keys if key}
+
+
+def _live_stream_keys(stream: Mapping[str, Any]) -> set[str]:
+    return _live_match_keys(_live_item(stream))
+
+
+def _live_progress_percent(stream: Mapping[str, Any]) -> float | None:
+    raw = stream.get("progress")
+    if raw in (None, ""):
+        return None
+    try:
+        value = float(raw)
+    except Exception:
+        return None
+    return round(max(0.0, min(100.0, value)), 3) if math.isfinite(value) else None
+
+
+def _live_remaining_seconds(stream: Mapping[str, Any], progress_percent: float | None) -> int | None:
+    raw = stream.get("duration_ms")
+    if raw in (None, ""):
+        return None
+    try:
+        duration_ms = float(raw)
+    except Exception:
+        return None
+    if not math.isfinite(duration_ms) or duration_ms <= 0 or progress_percent is None:
+        return None
+    remaining = int(round((duration_ms / 1000.0) * max(0.0, 100.0 - min(progress_percent, 100.0)) / 100.0))
+    return remaining if remaining > 0 else None
+
+
+def _live_rank(stream: Mapping[str, Any]) -> tuple[int, int]:
+    state = str(stream.get("state") or "").strip().lower()
+    rank = 0 if state == "playing" else 1 if state == "buffering" else 2 if state == "paused" else 3
+    try:
+        updated = int(stream.get("updated") or 0)
+    except Exception:
+        updated = 0
+    return (rank, -updated)
+
+
+def _currently_watching_state_file() -> Any:
+    try:
+        from providers.scrobble.currently_watching import state_file
+
+        return state_file()
+    except Exception:
+        return None
+
+
+def _load_live_streams(now: int | None = None) -> list[dict[str, Any]]:
+    path = _currently_watching_state_file()
+    if path is None:
+        return []
+    try:
+        if not path.exists():
+            return []
+        raw = path.read_text(encoding="utf-8")
+        data = json.loads(raw) if raw.strip() else None
+    except Exception:
+        return []
+    if not isinstance(data, Mapping) or int(data.get("v") or 0) != 2 or not isinstance(data.get("streams"), Mapping):
+        return []
+    now_sec = int(now if now is not None else time.time())
+    out: list[dict[str, Any]] = []
+    for value in data.get("streams", {}).values():
+        if not isinstance(value, Mapping):
+            continue
+        state = str(value.get("state") or "").strip().lower()
+        provider = _live_source_provider(value.get("source"))
+        try:
+            updated = int(value.get("updated") or 0)
+        except Exception:
+            updated = 0
+        if provider not in LIVE_MEDIA_PROVIDERS or state not in LIVE_ACTIVE_STATES:
+            continue
+        if updated and now_sec - updated > LIVE_MAX_AGE_SECONDS:
+            continue
+        stream = dict(value)
+        stream["_live_provider"] = provider
+        stream["_live_instance_id"] = normalize_instance_id(value.get("provider_instance")) if value.get("provider_instance") else ""
+        out.append(stream)
+    out.sort(key=_live_rank)
+    return out
+
+
+def _apply_live_overlay(item: dict[str, Any], stream: Mapping[str, Any]) -> None:
+    progress = _live_progress_percent(stream)
+    remaining = _live_remaining_seconds(stream, progress)
+    provider = str(stream.get("_live_provider") or _live_source_provider(stream.get("source")) or "").strip().lower()
+    instance_id = str(stream.get("_live_instance_id") or "").strip()
+    item["live_state"] = str(stream.get("state") or "").strip().lower()
+    item["live_source"] = str(stream.get("source") or "").strip()
+    item["live_provider"] = provider
+    item["live_instance_id"] = instance_id
+    item["live_updated"] = int(stream.get("updated") or 0) if str(stream.get("updated") or "").strip() else None
+    item["live_started"] = int(stream.get("started") or 0) if str(stream.get("started") or "").strip() else None
+    if progress is not None:
+        item["live_progress_percent"] = progress
+    if remaining is not None:
+        item["live_remaining_seconds"] = remaining
+
+
+def _overlay_live_streams(items: list[dict[str, Any]], streams: list[dict[str, Any]] | None = None) -> None:
+    live_streams = streams if streams is not None else _load_live_streams()
+    if not live_streams:
+        return
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for stream in live_streams:
+        for key in _live_stream_keys(stream):
+            by_key.setdefault(key, []).append(stream)
+    if not by_key:
+        return
+    for item in items:
+        provider = str(item.get("provider") or "").strip().lower()
+        if provider not in LIVE_MEDIA_PROVIDERS:
+            continue
+        instance_id = normalize_instance_id(item.get("instance_id"))
+        candidates: list[dict[str, Any]] = []
+        for key in _live_match_keys(item):
+            for stream in by_key.get(key, []):
+                live_provider = str(stream.get("_live_provider") or _live_source_provider(stream.get("source")) or "").strip().lower()
+                live_instance = str(stream.get("_live_instance_id") or "").strip()
+                if live_provider and live_provider != provider:
+                    continue
+                if live_instance and live_instance != instance_id:
+                    continue
+                candidates.append(stream)
+        if candidates:
+            _apply_live_overlay(item, sorted(candidates, key=_live_rank)[0])
+
+
 def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
     keys: list[str] = []
     key = str(item.get("canonical_key") or "").strip().lower()
@@ -97,6 +301,12 @@ def _record_group_key(item: Mapping[str, Any]) -> str:
 
 
 def _record_time_value(item: Mapping[str, Any]) -> float:
+    try:
+        live_updated = int(item.get("live_updated") or 0)
+    except Exception:
+        live_updated = 0
+    if live_updated > 0:
+        return float(live_updated)
     dt = _parse_iso(item.get("updated_at") or item.get("progress_at"))
     return dt.timestamp() if dt else 0.0
 
@@ -147,6 +357,27 @@ def _with_remaining_fallback(item: dict[str, Any]) -> dict[str, Any]:
 def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     ordered = sorted(records, key=_record_time_value, reverse=True)
     primary = dict(ordered[0])
+    live_records = [record for record in ordered if str(record.get("live_state") or "").strip().lower() in LIVE_ACTIVE_STATES]
+    if live_records:
+        live = sorted(
+            live_records,
+            key=lambda record: (
+                0 if record.get("live_state") == "playing" else 1 if record.get("live_state") == "buffering" else 2,
+                -int(record.get("live_updated") or 0),
+            ),
+        )[0]
+        for key in (
+            "live_state",
+            "live_source",
+            "live_provider",
+            "live_instance_id",
+            "live_updated",
+            "live_started",
+            "live_progress_percent",
+            "live_remaining_seconds",
+        ):
+            if key in live:
+                primary[key] = live.get(key)
     if _blank_scalar(primary.get("remaining_seconds")):
         primary["remaining_seconds"] = next((record.get("remaining_seconds") for record in ordered if not _blank_scalar(record.get("remaining_seconds"))), None)
     if _blank_scalar(primary.get("duration_seconds")):
@@ -372,7 +603,8 @@ class PlaybackProgressService:
             if (
                 not force_refresh
                 and cached
-                and (not marker or marker == cached.get("activity_marker"))
+                and marker
+                and marker == cached.get("activity_marker")
             ):
                 result = cached.get("result")
                 if isinstance(result, PlaybackListResult):
@@ -466,6 +698,7 @@ class PlaybackProgressService:
 
         errors = [r.to_error() for r in results if not r.ok]
         items = [_with_remaining_fallback(item.to_dict()) for result in results if result.ok for item in result.items]
+        _overlay_live_streams(items)
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)
         if not provider_filter:
             groups: dict[str, list[dict[str, Any]]] = {}
