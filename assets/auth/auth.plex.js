@@ -238,7 +238,7 @@ function ensurePlexInstanceUI() {
     }
     const name = String(user?.username || "This friend").trim() || "This friend";
     el.classList.remove("hidden");
-    el.textContent = `${name} is a Plex friend/shared account, not a Plex Home user. Syncing this account's watchlist, ratings, or history is highly unlikely to work with your Plex token. Create a separate Plex profile and authenticate with that friend's Plex account instead.`;
+    el.textContent = `${name} is a Plex friend/shared account, not a Plex Home user. CrossWatch can only use Plex's server-scoped shared token for History and Progress. Ratings and Watchlist still need that friend's own Plex profile/authentication, and Plex may remove this token path later.`;
   }
 
   function setPlexSuccess(on, text) {

@@ -8,7 +8,7 @@ import re
 import time
 import ipaddress
 import xml.etree.ElementTree as ET
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from typing import Any, Mapping
 
 import requests
@@ -557,6 +557,87 @@ def fetch_cloud_account_users(token: str, timeout: float = 8.0) -> list[dict[str
         except Exception:  # noqa: BLE001
             continue
     return []
+
+
+def fetch_shared_server_token(
+    token: str,
+    *,
+    machine_id: str,
+    client_id: str | None = None,
+    user_id: Any = None,
+    username: str | None = None,
+    timeout: float = 8.0,
+) -> str | None:
+    """Return Plex's provisional shared-server token for a friend user.
+
+    This mirrors PlexAPI's MyPlexUser.get_token(machineIdentifier) behavior.
+    Keep it isolated: Plex has said shared-server tokens may be removed later.
+    """
+
+    t = (token or "").strip()
+    mid = (machine_id or "").strip()
+    if not t or not mid:
+        return None
+
+    uid: int | None = None
+    try:
+        if user_id is not None and str(user_id).strip().isdigit():
+            uid = int(str(user_id).strip())
+    except Exception:  # noqa: BLE001
+        uid = None
+    uname = (username or "").strip().lower()
+    if uid is None and not uname:
+        return None
+
+    headers = _plex_headers(t)
+    if client_id and str(client_id).strip():
+        headers["X-Plex-Client-Identifier"] = str(client_id).strip()
+
+    url = f"https://plex.tv/api/servers/{quote(mid, safe='')}/shared_servers"
+    try:
+        response = requests.get(url, headers=headers, timeout=float(timeout))
+        if not response.ok or not (response.text or "").lstrip().startswith("<"):
+            return None
+        root = ET.fromstring(response.text or "")
+    except Exception:  # noqa: BLE001
+        return None
+
+    for el in root.iter():
+        attrs = getattr(el, "attrib", {}) or {}
+        access_token = (attrs.get("accessToken") or attrs.get("access_token") or "").strip()
+        if not access_token:
+            continue
+
+        raw_ids = (
+            attrs.get("userID"),
+            attrs.get("userId"),
+            attrs.get("user_id"),
+            attrs.get("accountID"),
+            attrs.get("accountId"),
+            attrs.get("account_id"),
+        )
+        id_match = False
+        if uid is not None:
+            for raw in raw_ids:
+                try:
+                    if raw is not None and int(str(raw).strip()) == uid:
+                        id_match = True
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+
+        raw_names = (
+            attrs.get("username"),
+            attrs.get("title"),
+            attrs.get("name"),
+            attrs.get("email"),
+        )
+        name_match = bool(uname) and any(str(n or "").strip().lower() == uname for n in raw_names)
+
+        if id_match or name_match:
+            return access_token
+
+    return None
 
 
 def _pms_id_from_attr_map(attrs: Mapping[str, Any]) -> int | None:
