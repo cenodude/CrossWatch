@@ -81,7 +81,7 @@
     return text.toLowerCase() === "default" ? "Default" : text;
   }
 
-  function endpointHTML(item, side, compact = false) {
+  function endpointHTML(item, side) {
     const provider = side === "source" ? item?.source : item?.target;
     const instance = side === "source" ? item?.source_instance : item?.target_instance;
     const label = providerLabel(provider);
@@ -89,13 +89,25 @@
     const logo = providerLogo(provider);
     const img = logo ? `<img src="${esc(logo)}" alt="" aria-hidden="true">` : `<span>${esc(label.slice(0, 2).toUpperCase())}</span>`;
     return `
-      <span class="activity-endpoint" title="${esc(`${label} profile: ${profile}`)}">
+      <span class="activity-endpoint" title="${esc(`${label} profile: ${profile}`)}" aria-label="${esc(`${label} profile: ${profile}`)}">
         <span class="activity-provider-icon">${img}</span>
-        <span class="activity-endpoint-text">
-          <span class="activity-provider-name">${esc(label)}</span>
-          ${compact ? "" : `<span class="activity-profile-name">${esc(profile)}</span>`}
-        </span>
       </span>
+    `;
+  }
+
+  function targetEndpointHTML(target) {
+    return endpointHTML({ target: target?.target, target_instance: target?.target_instance }, "target");
+  }
+
+  function routeHTML(item) {
+    const rawTargets = Array.isArray(item?.targets) ? item.targets : [];
+    const targets = rawTargets.length ? rawTargets : [{ target: item?.target, target_instance: item?.target_instance }];
+    return `
+      <div class="activity-route">
+        ${endpointHTML(item, "source")}
+        <span class="activity-route-arrow" aria-hidden="true"></span>
+        <span class="activity-targets">${targets.map(targetEndpointHTML).join("")}</span>
+      </div>
     `;
   }
 
@@ -122,7 +134,7 @@
     return parts.join("");
   }
 
-  function rowHTML(item, compact = false) {
+  function rowHTML(item) {
     const status = String(item?.status || "ok").toLowerCase();
     const media = String(item?.media_type || "").toLowerCase();
     const cls = status === "ok" ? "ok" : "err";
@@ -133,11 +145,7 @@
         <div class="activity-main">
           <div class="activity-title">${esc(titleOf(item))}</div>
           <div class="activity-flow-line">
-            <div class="activity-route">
-              ${endpointHTML(item, "source", compact)}
-              <span class="activity-route-arrow" aria-hidden="true"></span>
-              ${endpointHTML(item, "target", compact)}
-            </div>
+            ${routeHTML(item)}
             <div class="activity-meta-line">${metricHTML(media, progress, time)}</div>
           </div>
         </div>
@@ -222,7 +230,7 @@
       }
       const items = data.items;
       host.innerHTML = items.length
-        ? items.map((item) => rowHTML(item, true)).join("")
+        ? items.map((item) => rowHTML(item)).join("")
         : `<div class="activity-empty">${display.mode === "hours" ? `No scrobbled activity in the last ${display.hours} hours.` : "No scrobbled activity yet."}</div>`;
     } catch {
       if (!host.children.length || host.textContent.trim() === "Loading activity...") {
@@ -249,12 +257,10 @@
       .activity-route-arrow{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:14px;flex:0 0 auto;opacity:.72}
       .activity-route-arrow::before{content:"";width:14px;height:1px;border-radius:999px;background:linear-gradient(90deg,rgba(130,149,210,.18),rgba(130,149,210,.72))}
       .activity-route-arrow::after{content:"";position:absolute;right:1px;width:6px;height:6px;border-right:2px solid rgba(174,194,232,.70);border-top:2px solid rgba(174,194,232,.70);transform:rotate(45deg)}
-      .activity-endpoint{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:190px;padding:3px 7px;border-radius:999px;border:1px solid rgba(130,149,210,.14);background:rgba(255,255,255,.035);color:rgba(229,235,248,.86)}
+      .activity-targets{display:inline-flex;align-items:center;gap:5px;min-width:0;flex-wrap:wrap}
+      .activity-endpoint{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;height:24px;border-radius:999px;border:1px solid rgba(130,149,210,.14);background:rgba(255,255,255,.035);color:rgba(229,235,248,.86)}
       .activity-provider-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06);font-size:8px;font-weight:900;color:rgba(238,243,255,.82)}
       .activity-provider-icon img{display:block;width:13px;height:13px;object-fit:contain}
-      .activity-endpoint-text{display:inline-flex;align-items:center;gap:5px;min-width:0}
-      .activity-provider-name{font-size:10.5px;font-weight:900;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .activity-profile-name{font-size:10px;font-weight:800;line-height:1.2;color:rgba(174,182,194,.76);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .activity-meta-line{min-width:0;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
       .activity-metric{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:22px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.032);color:rgba(188,198,215,.76);font-size:10.5px;font-weight:800;line-height:1;text-transform:uppercase;white-space:nowrap}
       .activity-metric.progress{color:rgba(218,227,255,.86);text-transform:none}
@@ -281,7 +287,7 @@
       .activity-load{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.05);color:#fff;border-radius:999px;padding:8px 14px;cursor:pointer;font-weight:800}
       .activity-load[disabled]{opacity:.5;cursor:default}
       #sync-history .history-meta.muted{font-size:12px;font-weight:400;color:var(--muted);opacity:.6}
-      @media(max-width:620px){.activity-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 12px}.activity-title{font-size:13px}.activity-flow-line{gap:6px}.activity-route{gap:5px}.activity-endpoint{max-width:130px;padding:2px 6px;gap:5px}.activity-provider-icon{width:14px;height:14px}.activity-provider-icon img{width:11px;height:11px}.activity-provider-name{font-size:10px}.activity-profile-name{font-size:9.5px}.activity-metric{min-height:20px;padding:0 7px;font-size:10px}.activity-progress-bar{width:20px}.activity-badges{justify-content:flex-end;align-self:center}.activity-badge{padding:3px 7px;font-size:10px;letter-spacing:.02em}.activity-filters{grid-template-columns:1fr}.activity-dialog{max-height:86vh}}
+      @media(max-width:620px){.activity-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 12px}.activity-title{font-size:13px}.activity-flow-line{gap:6px}.activity-route{gap:5px}.activity-targets{gap:4px}.activity-endpoint{width:25px;height:22px}.activity-provider-icon{width:14px;height:14px}.activity-provider-icon img{width:11px;height:11px}.activity-metric{min-height:20px;padding:0 7px;font-size:10px}.activity-progress-bar{width:20px}.activity-badges{justify-content:flex-end;align-self:center}.activity-badge{padding:3px 7px;font-size:10px;letter-spacing:.02em}.activity-filters{grid-template-columns:1fr}.activity-dialog{max-height:86vh}}
       @media(max-width:380px){.activity-item{grid-template-columns:minmax(0,1fr)}.activity-badges{justify-content:flex-start}}
     `;
     document.head.appendChild(el);
@@ -357,7 +363,7 @@
       }
       const items = data.items;
       state.total = Number(data?.total || 0);
-      const html = items.map((item) => rowHTML(item, false)).join("");
+      const html = items.map((item) => rowHTML(item)).join("");
       if (list) {
         if (reset) list.innerHTML = html || `<div class="activity-empty">No activity matches this view.</div>`;
         else list.insertAdjacentHTML("beforeend", html);

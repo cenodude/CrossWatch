@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 LOG_VERSION = 1
 DEFAULT_LIMIT = 1000
 LOG_FILE_NAME = "activity_history.json"
+GROUP_WINDOW_SECONDS = 120
 _LOCK = threading.RLock()
 
 
@@ -109,6 +110,77 @@ def _event_id(item: Mapping[str, Any]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:24]
 
 
+def _target_ref(item: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        "target": str(item.get("target") or "").strip().lower(),
+        "target_instance": str(item.get("target_instance") or "default").strip() or "default",
+    }
+
+
+def _target_key(target: Mapping[str, Any]) -> tuple[str, str]:
+    return (
+        str(target.get("target") or "").strip().lower(),
+        str(target.get("target_instance") or "default").strip() or "default",
+    )
+
+
+def _group_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
+    ids_key = json.dumps(ids, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return (
+        str(item.get("kind") or "").strip().lower(),
+        str(item.get("method") or "").strip().lower(),
+        str(item.get("event") or "").strip().lower(),
+        str(item.get("status") or "").strip().lower(),
+        str(item.get("source") or "").strip().lower(),
+        str(item.get("source_instance") or "default").strip() or "default",
+        str(item.get("media_type") or "").strip().lower(),
+        str(item.get("title") or "").strip().lower(),
+        _as_int(item.get("year")),
+        _as_int(item.get("season")),
+        _as_int(item.get("episode")),
+        _as_int(item.get("progress")),
+        str(item.get("account") or "").strip().lower(),
+        ids_key,
+    )
+
+
+def _event_ts(item: Mapping[str, Any]) -> int:
+    return _as_int(item.get("captured_at")) or _as_int(item.get("watched_at")) or 0
+
+
+def _group_route_fanout(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    open_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
+    seen_targets: dict[int, set[tuple[str, str]]] = {}
+
+    for raw in items or []:
+        if not isinstance(raw, Mapping):
+            continue
+        item = dict(raw)
+        key = _group_key(item)
+        ts = _event_ts(item)
+        group = open_by_key.get(key)
+        group_ts = _event_ts(group) if group else 0
+        if group is None or abs(ts - group_ts) > GROUP_WINDOW_SECONDS:
+            target = _target_ref(item)
+            item["targets"] = [target] if target["target"] else []
+            groups.append(item)
+            open_by_key[key] = item
+            seen_targets[id(item)] = {_target_key(target)} if target["target"] else set()
+            continue
+
+        target = _target_ref(item)
+        if target["target"]:
+            target_key = _target_key(target)
+            targets_seen = seen_targets.setdefault(id(group), set())
+            if target_key not in targets_seen:
+                group.setdefault("targets", []).append(target)
+                targets_seen.add(target_key)
+
+    return groups
+
+
 def add_event(event: Mapping[str, Any], *, limit: int = DEFAULT_LIMIT) -> dict[str, Any] | None:
     media_type = str(event.get("media_type") or "").strip().lower()
     if media_type not in {"movie", "episode"}:
@@ -201,6 +273,7 @@ def list_events(
     status: str = "all",
     query: str = "",
     since: int | None = None,
+    group_routes: bool = True,
 ) -> dict[str, Any]:
     with _LOCK:
         items = [x for x in list(_read_payload().get("items") or []) if isinstance(x, dict)]
@@ -236,16 +309,17 @@ def list_events(
         return True
 
     filtered = [x for x in items if keep(x)]
+    display_items = _group_route_fanout(filtered) if group_routes else filtered
     start = max(0, int(offset or 0))
     cap = max(1, min(500, int(limit or 100)))
-    page = filtered[start:start + cap]
+    page = display_items[start:start + cap]
     return {
         "ok": True,
         "items": page,
-        "total": len(filtered),
+        "total": len(display_items),
         "offset": start,
         "limit": cap,
-        "has_more": start + cap < len(filtered),
+        "has_more": start + cap < len(display_items),
         "path": str(activity_path()),
     }
 
