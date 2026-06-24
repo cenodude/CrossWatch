@@ -436,6 +436,11 @@ def active_pms_token(source: Any) -> str | None:
 def active_cloud_token(source: Any) -> str | None:
     for obj in (source, getattr(source, "client", None)):
         try:
+            if bool(getattr(obj, "_cloud_token_suppressed", False)):
+                return None
+        except Exception:
+            pass
+        try:
             tok = getattr(obj, "cloud_token", None)
             if tok and str(tok).strip():
                 return str(tok).strip()
@@ -1980,26 +1985,39 @@ def home_scope_enter(adapter: Any) -> tuple[bool, bool, int | None, str | None]:
     if not need:
         return False, False, sel_aid, sel_uname
 
+    can_home = False
     try:
-        if not bool(getattr(cli, "can_home_switch")()):
-            return True, False, sel_aid, sel_uname
+        can_home = bool(getattr(cli, "can_home_switch")())
     except Exception:
-        return True, False, sel_aid, sel_uname
+        can_home = False
 
-    pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
-    try:
-        ok = bool(
-            getattr(cli, "enter_home_user_scope")(
-                target_username=(str(desired_uname).strip() if desired_uname else None),
-                target_account_id=(int(desired_aid) if desired_aid is not None else None),
-                pin=pin,
+    ok = False
+    if can_home:
+        pin = (getattr(getattr(cli, "cfg", None), "home_pin", None) or "").strip() or None
+        try:
+            ok = bool(
+                getattr(cli, "enter_home_user_scope")(
+                    target_username=(str(desired_uname).strip() if desired_uname else None),
+                    target_account_id=(int(desired_aid) if desired_aid is not None else None),
+                    pin=pin,
+                )
             )
-        )
-    except Exception:
-        ok = False
+        except Exception:
+            ok = False
 
     if not ok:
-        _warn("home_scope_not_applied", selected=(desired_aid or desired_uname))
+        try:
+            ok = bool(
+                getattr(cli, "enter_shared_user_scope")(
+                    target_username=(str(desired_uname).strip() if desired_uname else None),
+                    target_account_id=(int(desired_aid) if desired_aid is not None else None),
+                )
+            )
+        except Exception:
+            ok = False
+
+    if not ok:
+        _warn("user_scope_not_applied", selected=(desired_aid or desired_uname))
     return True, ok, sel_aid, sel_uname
 
 

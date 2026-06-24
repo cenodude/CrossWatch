@@ -109,7 +109,6 @@ class AnimeMappingAutoUpdater:
                     self._set_status(enabled=True, last_check_at=last_checked, next_check_at=due_at)
 
                     if due_at and now < due_at:
-                        log("auto_update_waiting", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag, "next_check_at": due_at})
                         self._sleep(min(MAX_SLEEP_SECONDS, max(1, due_at - now)))
                         continue
 

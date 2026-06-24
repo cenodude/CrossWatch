@@ -35,7 +35,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -60,7 +60,7 @@ from .plex._common import (
     stable_client_id,
     set_client_id,
 )
-from .plex._utils import resolve_user_scope
+from .plex._utils import fetch_shared_server_token, resolve_user_scope
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -403,7 +403,9 @@ class PLEXClient:
 
         self._home_users_cache: list[dict[str, Any]] | None = None
         self._home_users_cache_ts: float = 0.0
-        self._token_stack: list[tuple[str | None, str | None, str | None, int | None, int | None]] = []
+        self._cloud_token_suppressed = False
+        self._user_scope_kind: str | None = None
+        self._token_stack: list[tuple[str | None, str | None, str | None, int | None, int | None, bool, str | None]] = []
 
     def connect(self) -> PLEXClient:
         try:
@@ -694,8 +696,12 @@ class PLEXClient:
             prev_token = None
 
         prev_cloud = self.cloud_token
+        prev_cloud_suppressed = self._cloud_token_suppressed
+        prev_scope_kind = self._user_scope_kind
         self.cloud_token = user_token
-        self._token_stack.append((prev_token, prev_cloud, self.user_username, self.user_account_id, self.user_home_id))
+        self._cloud_token_suppressed = False
+        self._user_scope_kind = "home"
+        self._token_stack.append((prev_token, prev_cloud, self.user_username, self.user_account_id, self.user_home_id, prev_cloud_suppressed, prev_scope_kind))
         self.session.headers["X-Plex-Token"] = pms_user_token
 
         try:
@@ -740,10 +746,101 @@ class PLEXClient:
         )
         return True
 
+    def enter_shared_user_scope(
+        self,
+        *,
+        target_username: str | None = None,
+        target_account_id: int | None = None,
+    ) -> bool:
+        srv = self.server
+        token = self.cloud_token or self.cfg.token
+        if not srv or not token:
+            return False
+
+        machine_id = (self.cfg.machine_id or "").strip() or None
+        if not machine_id:
+            try:
+                machine_id = str(getattr(srv, "machineIdentifier", None) or "").strip() or None
+            except Exception:
+                machine_id = None
+        if not machine_id:
+            machine_id = self._infer_machine_id(srv)
+        if not machine_id:
+            _warn("shared_scope_failed", reason="missing_machine_identifier")
+            return False
+
+        client_id = _plex_tv_client_id(self.cfg)
+        try:
+            pms_user_token = fetch_shared_server_token(
+                token,
+                machine_id=machine_id,
+                client_id=client_id,
+                user_id=target_account_id,
+                username=target_username,
+                timeout=float(self.cfg.timeout),
+            )
+        except Exception as e:
+            _warn("shared_scope_token_failed", error=str(e))
+            return False
+
+        if not pms_user_token:
+            return False
+
+        prev_token_raw = self.session.headers.get("X-Plex-Token")
+        if isinstance(prev_token_raw, bytes):
+            prev_token = prev_token_raw.decode("utf-8", "ignore")
+        elif isinstance(prev_token_raw, str):
+            prev_token = prev_token_raw
+        else:
+            prev_token = None
+
+        prev_cloud = self.cloud_token
+        prev_cloud_suppressed = self._cloud_token_suppressed
+        prev_scope_kind = self._user_scope_kind
+        self._token_stack.append((prev_token, prev_cloud, self.user_username, self.user_account_id, self.user_home_id, prev_cloud_suppressed, prev_scope_kind))
+        self.cloud_token = None
+        self._cloud_token_suppressed = True
+        self._user_scope_kind = "shared"
+        self.session.headers["X-Plex-Token"] = pms_user_token
+
+        try:
+            srv._token = pms_user_token  # type: ignore[attr-defined]
+        except Exception:
+            pass
+        try:
+            sess = getattr(srv, "_session", None) or self.session
+            sess.headers["X-Plex-Token"] = pms_user_token
+        except Exception:
+            pass
+
+        try:
+            baseurl = str(getattr(srv, "baseurl", None) or self._pms_baseurl or self.cfg.baseurl or "")
+            if baseurl:
+                configure_plex_context(baseurl=baseurl, token=pms_user_token)
+        except Exception:
+            pass
+
+        try:
+            rr = request_with_retries(self.session, "GET", srv.url("/library/sections"), timeout=float(self.cfg.timeout), max_retries=1)
+            if rr.status_code in (401, 403):
+                _warn("shared_scope_failed", reason="token_rejected")
+                self.exit_home_user_scope()
+                return False
+        except Exception as e:
+            _warn("shared_scope_verify_failed", error=str(e))
+            self.exit_home_user_scope()
+            return False
+
+        self.user_username = (target_username or "").strip() or None
+        self.user_home_id = None
+        self.user_account_id = target_account_id
+        _info("shared_scope_entered", user=str(self.user_username or ""), account_id=self.user_account_id)
+        return True
+
     def exit_home_user_scope(self) -> None:
         if not self._token_stack:
             return
-        prev_token, prev_cloud, prev_uname, prev_aid, prev_hid = self._token_stack.pop()
+        prev_token, prev_cloud, prev_uname, prev_aid, prev_hid, prev_cloud_suppressed, prev_scope_kind = self._token_stack.pop()
         srv = self.server
         if prev_token:
             try:
@@ -770,6 +867,8 @@ class PLEXClient:
         self.user_account_id = prev_aid
         self.user_home_id = prev_hid
         self.cloud_token = prev_cloud
+        self._cloud_token_suppressed = prev_cloud_suppressed
+        self._user_scope_kind = prev_scope_kind
 
     def account(self) -> MyPlexAccount:
         if not self._account:
