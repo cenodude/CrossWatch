@@ -880,7 +880,7 @@
         }
         return "";
       };
-      return fromBlock(cfg?.tmdb) || fromBlock(cfg?.tmdb_sync);
+      return fromBlock(cfg?.tmdb);
     };
 
     try {
