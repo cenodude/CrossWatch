@@ -43,11 +43,11 @@
     return res.json();
   }
 
-  async function getConfig() {
+  async function getConfig(force = false) {
     if (cfgPromise) return cfgPromise;
     cfgPromise = (async () => {
       try {
-        if (window.CW?.API?.Config?.load) return window.CW.API.Config.load(false);
+        if (window.CW?.API?.Config?.load) return window.CW.API.Config.load(!!force);
         return await fetchJSON("/api/config");
       } finally {
         window.setTimeout(() => { cfgPromise = null; }, 1500);
@@ -70,14 +70,24 @@
     };
   }
 
-  async function readSettings() {
-    try {
-      const cfg = await getConfig();
-      return widgetSettings(cfg?.ui || cfg?.user_interface || {});
-    } catch (e) {
-      if (authPendingError(e)) return { history: true, ratings: true, scrobble: true };
-      return { history: true, ratings: true, scrobble: true };
-    }
+  function hasTmdbKeyInConfig(cfg) {
+    const pickFromBlock = (block) => {
+      if (!block || typeof block !== "object") return "";
+      const direct = String(block.api_key || "").trim();
+      if (direct) return direct;
+      const insts = block.instances;
+      if (!insts || typeof insts !== "object") return "";
+      for (const value of Object.values(insts)) {
+        const key = value && typeof value === "object" ? String(value.api_key || "").trim() : "";
+        if (key) return key;
+      }
+      return "";
+    };
+    return !!pickFromBlock(cfg?.tmdb);
+  }
+
+  function hideDashboardWidgets() {
+    $("#dashboard-widgets-card")?.classList.add("hidden");
   }
 
   function providerMeta() {
@@ -332,7 +342,7 @@
 
   async function refreshDashboardWidgets({ forceConfig = false } = {}) {
     if (!isOnMain()) {
-      $("#dashboard-widgets-card")?.classList.add("hidden");
+      hideDashboardWidgets();
       return;
     }
     if (authSetupPending()) {
@@ -341,13 +351,28 @@
     }
     if (forceConfig) cfgPromise = null;
     const seq = ++loadSeq;
-    const settings = await readSettings();
+    let cfg;
+    try {
+      cfg = await getConfig(forceConfig);
+    } catch (e) {
+      if (authPendingError(e)) {
+        scheduleAuthReadyRefresh();
+        return;
+      }
+      hideDashboardWidgets();
+      return;
+    }
+    const settings = widgetSettings(cfg?.ui || cfg?.user_interface || {});
     if (seq !== loadSeq || !isOnMain()) return;
     visibleCounts.history = PAGE_STEP;
     visibleCounts.ratings = RATING_PAGE_STEP;
     visibleCounts.scrobble = PAGE_STEP;
     applyVisibility(settings);
     if (!settings.history && !settings.ratings && !settings.scrobble) return;
+    if (!hasTmdbKeyInConfig(cfg)) {
+      hideDashboardWidgets();
+      return;
+    }
 
     const historyHost = $("#recent-history-list");
     const ratingsHost = $("#latest-ratings-grid");
@@ -411,7 +436,7 @@
     document.addEventListener("tab-changed", (event) => {
       const id = event?.detail?.id || event?.detail?.tab;
       if (String(id || "").toLowerCase() === "main") setTimeout(() => refreshDashboardWidgets(), 50);
-      else $("#dashboard-widgets-card")?.classList.add("hidden");
+      else hideDashboardWidgets();
     });
     window.addEventListener("settings-changed", () => setTimeout(() => refreshDashboardWidgets({ forceConfig: true }), 300));
     window.addEventListener("activity-log-cleared", () => setTimeout(() => refreshDashboardWidgets(), 100));
