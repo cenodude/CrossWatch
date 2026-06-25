@@ -255,10 +255,21 @@
     const tag = href ? "a" : "div";
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
     const route = sourceRouteTitle(item?.sources);
+    const rawType = String(item?.type || "").toLowerCase();
+    const ratedLabel = relTime(item?.sort_epoch || 0);
+    const season = Number(item?.season || 0);
+    const episode = Number(item?.episode || 0);
+    const mediaDetail = rawType === "episode"
+      ? (item?.episode_label || (season && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "Episode"))
+      : rawType === "season" && season
+        ? `S${String(season).padStart(2, "0")}`
+        : "";
+    const titleParts = [title, mediaDetail ? `${rawType === "season" ? "Season" : "Episode"}: ${mediaDetail}` : "", ratedLabel ? `Rated ${ratedLabel}` : ""].filter(Boolean);
     return `
-      <${tag} class="cw-rating-widget-card"${hrefAttr} title="${esc(title)}">
+      <${tag} class="cw-rating-widget-card"${hrefAttr} title="${esc(titleParts.join(" | "))}">
         <img src="${esc(poster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
-        <span class="cw-rating-score">${esc(item?.rating || "")}</span>
+        <span class="cw-rating-score"><span>${esc(item?.rating || "")}</span></span>
+        ${ratedLabel ? `<span class="cw-rating-time">Rated ${esc(ratedLabel)}</span>` : ""}
         <span class="cw-rating-overlay">
           <span class="cw-rating-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
         </span>
@@ -269,8 +280,27 @@
     if (host) host.innerHTML = `<div class="cw-dash-empty">${esc(text)}</div>`;
   }
 
-  function setLoading(host) {
-    if (host) host.innerHTML = `<div class="cw-dash-empty">Loading...</div>`;
+  function setLoading(host, kind = "list") {
+    if (!host) return;
+    if (kind === "ratings") {
+      host.innerHTML = Array.from({ length: 6 }, () => `
+        <div class="cw-rating-widget-card cw-dash-skeleton cw-dash-skeleton-poster" aria-hidden="true">
+          <span class="cw-skel-shine"></span>
+        </div>`).join("");
+      return;
+    }
+    host.innerHTML = Array.from({ length: 3 }, () => `
+      <div class="cw-history-widget-item cw-dash-skeleton cw-dash-skeleton-row" aria-hidden="true">
+        <span class="cw-history-thumb cw-skel-block"></span>
+        <span class="cw-history-copy">
+          <span class="cw-skel-line cw-skel-line--title"></span>
+          <span class="cw-skel-line cw-skel-line--meta"></span>
+        </span>
+        <span class="cw-history-sources">
+          <span class="cw-dash-source cw-skel-dot"></span>
+          <span class="cw-dash-source cw-skel-dot"></span>
+        </span>
+      </div>`).join("");
   }
 
   function renderPagedList(host, items, count, cardFn, emptyText, kind) {
@@ -323,7 +353,7 @@
     const ratingsHost = $("#latest-ratings-grid");
     const scrobbleHost = $("#recent-scrobble-list");
     if (settings.history) setLoading(historyHost);
-    if (settings.ratings) setLoading(ratingsHost);
+    if (settings.ratings) setLoading(ratingsHost, "ratings");
     if (settings.scrobble) setLoading(scrobbleHost);
 
     try {
