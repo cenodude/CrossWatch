@@ -220,6 +220,41 @@ def _tmdb_fetch_posters(api_key: str, typ: str, tmdb_id: str, locale: str | None
     return out
 
 
+def _tmdb_fetch_episode_stills(
+    api_key: str,
+    show_tmdb_id: str | int,
+    season: int,
+    episode: int,
+) -> list[dict[str, Any]]:
+    url = f"https://api.themoviedb.org/3/tv/{show_tmdb_id}/season/{season}/episode/{episode}/images"
+    try:
+        r = requests.get(url, params={"api_key": api_key}, timeout=20)
+        if not r.ok:
+            return []
+        data = r.json()
+    except Exception:
+        return []
+    stills = data.get("stills") if isinstance(data, dict) else None
+    if not isinstance(stills, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for img in stills:
+        if not isinstance(img, dict):
+            continue
+        fp = img.get("file_path")
+        if not fp:
+            continue
+        out.append(
+            {
+                "path": fp,
+                "url": f"https://image.tmdb.org/t/p/original{fp}",
+                "vote_average": img.get("vote_average") or 0,
+                "vote_count": img.get("vote_count") or 0,
+            }
+        )
+    return out
+
+
 def _tmdb_size_url(img: dict[str, Any], size_tag: str) -> str | None:
     path = img.get("path") or img.get("file_path")
     if path:
@@ -561,6 +596,11 @@ def _cache_download(
 def _placeholder_poster() -> Path:
     return Path("/app/assets/img/placeholder_poster.svg")
 
+
+def _is_placeholder_art(path: str | Path) -> bool:
+    return Path(path).name == _placeholder_poster().name
+
+
 def _art_candidates(
     meta: dict[str, Any],
     kind: str,
@@ -672,6 +712,102 @@ def get_art_file(
     return str(path), mime
 
 
+def get_episode_still_file(
+    api_key: str,
+    show_tmdb_id: str | int,
+    season: int,
+    episode: int,
+    size: str,
+    cache_dir: Path | str,
+) -> tuple[str, str]:
+    cache_root = _cache_subdir(cache_dir, "art")
+    cache_root.mkdir(parents=True, exist_ok=True)
+
+    safe_show_id = _safe_cache_part(show_tmdb_id)
+    safe_season = _safe_cache_part(season)
+    safe_episode = _safe_cache_part(episode)
+    safe_size = _safe_cache_part(_sanitize_tmdb_size(size), default="w300")
+    base = cache_root / f"tv_{safe_show_id}_s{safe_season}_e{safe_episode}_still_{safe_size}"
+    meta_path = base.with_suffix(".json")
+
+    cached_art = None
+    if meta_path.exists() and _read_json(meta_path).get("url"):
+        for f in cache_root.glob(base.name + ".*"):
+            if f.suffix.lower() != ".json" and f.exists():
+                cached_art = f
+                break
+    if cached_art:
+        ext = cached_art.suffix.lower()
+        mime = "image/jpeg" if ext in {".jpg", ".jpeg"} else "image/png" if ext == ".png" else "application/octet-stream"
+        _meta_debug(
+            "art_cache_hit",
+            type="tv",
+            tmdb_id=show_tmdb_id,
+            kind="still",
+            season=season,
+            episode=episode,
+            size=safe_size,
+        )
+        return str(cached_art), mime
+
+    def show_art_fallback() -> tuple[str, str]:
+        last: tuple[str, str] | None = None
+        for fallback_kind in ("backdrop", "poster"):
+            path, mime = get_art_file(
+                api_key,
+                "tv",
+                show_tmdb_id,
+                size,
+                cache_dir,
+                kind=fallback_kind,
+            )
+            last = (path, mime)
+            if not _is_placeholder_art(path):
+                return path, mime
+        return last or (str(_placeholder_poster()), "image/svg+xml")
+
+    stills = _tmdb_fetch_episode_stills(api_key, show_tmdb_id, season, episode)
+    best = _pick_best_image(stills, None)
+    if not best:
+        return show_art_fallback()
+
+    src_url = _tmdb_size_url(best, safe_size) or ""
+    if not src_url:
+        return show_art_fallback()
+
+    ext = Path(src_url.split("?", 1)[0]).suffix.lower() or ".jpg"
+    if ext not in {".jpg", ".jpeg", ".png", ".webp"}:
+        ext = ".jpg"
+    dest = base.with_suffix(ext)
+
+    _ensure_under_root(cache_root, meta_path)
+    _ensure_under_root(cache_root, dest)
+
+    prev_url = _read_json(meta_path).get("url") if meta_path.exists() else None
+    if (prev_url and prev_url != src_url) or (not meta_path.exists()):
+        for f in cache_root.glob(base.name + ".*"):
+            if f.name != meta_path.name:
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+
+    art_hit = bool(dest.exists() and prev_url == src_url)
+    _meta_debug(
+        "art_cache_hit" if art_hit else "art_cache_miss",
+        type="tv",
+        tmdb_id=show_tmdb_id,
+        kind="still",
+        season=season,
+        episode=episode,
+        size=safe_size,
+    )
+
+    path, mime = _cache_download(src_url, dest)
+    _write_json(meta_path, {"url": src_url, "ts": int(time.time())})
+    return str(path), mime
+
+
 def get_poster_file(
     api_key: str,
     typ: str,
@@ -728,6 +864,8 @@ def api_tmdb_art(
     tmdb_id: int = FPath(...),
     size: str = Query("w342"),
     kind: str = Query("poster"),
+    season: int | None = Query(None, ge=1),
+    episode: int | None = Query(None, ge=1),
     locale: str | None = Query(None),
 ):
     t = typ.lower()
@@ -757,15 +895,28 @@ def api_tmdb_art(
             kind=kind,
         )
 
-        local_path, mime = get_art_file(
-            api_key,
-            t,
-            tmdb_id,
-            size_tag,
-            base,
-            locale=eff_locale,
-            kind=kind,
-        )
+        art_kind = str(kind or "poster").strip().lower()
+        if art_kind in {"still", "episode_still"}:
+            if t != "tv" or season is None or episode is None:
+                return PlainTextResponse("Episode still requires tv, season and episode", status_code=400)
+            local_path, mime = get_episode_still_file(
+                api_key,
+                tmdb_id,
+                int(season),
+                int(episode),
+                size_tag,
+                base,
+            )
+        else:
+            local_path, mime = get_art_file(
+                api_key,
+                t,
+                tmdb_id,
+                size_tag,
+                base,
+                locale=eff_locale,
+                kind=kind,
+            )
         return FileResponse(
             str(local_path),
             media_type=mime,
@@ -774,8 +925,8 @@ def api_tmdb_art(
             },
         )
     except Exception as e:
-        LOG.exception("TMDb poster fetch failed")
-        return PlainTextResponse("Poster not available", status_code=404)
+        LOG.exception("TMDb art fetch failed")
+        return PlainTextResponse("Art not available", status_code=404)
 
 
 class MetadataResolveIn(BaseModel):

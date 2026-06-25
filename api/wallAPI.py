@@ -117,12 +117,14 @@ def register_wall(app: FastAPI) -> None:
             return True
 
         items = [it for it in items if keep(it)]
+        total = len(items)
         if limit:
             items = items[:limit]
 
         data = {
             "ok": True,
             "items": items,
+            "total": total,
             "missing_tmdb_key": not bool(api_key),
             "last_sync_epoch": st.get("last_sync_epoch") if isinstance(st, dict) else None,
         }
