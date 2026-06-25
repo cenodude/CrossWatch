@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -138,6 +139,27 @@ def _safe_cache_part(value: Any, *, default: str = "x") -> str:
     txt = _SAFE_CACHE_PART_RE.sub("_", str(value or "").strip())
     txt = txt.strip("._-")
     return txt or default
+
+
+def _safe_cache_digest_stem(prefix: str, *parts: Any) -> str:
+    safe_prefix = _safe_cache_part(prefix, default="cache")
+    payload = "\x1f".join(_safe_cache_part(part) for part in parts)
+    digest = hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()
+    return f"{safe_prefix}_{digest}"
+
+
+def _cache_base_path(cache_root: Path, stem: str) -> Path:
+    safe_stem = _safe_cache_part(stem, default="cache")
+    return _ensure_under_root(cache_root, cache_root / safe_stem)
+
+
+def _cache_matches(cache_root: Path, stem: str) -> list[Path]:
+    safe_stem = _safe_cache_part(stem, default="cache")
+    prefix = f"{safe_stem}."
+    try:
+        return [p for p in cache_root.iterdir() if p.name.startswith(prefix)]
+    except Exception:
+        return []
 
 
 def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Path:
@@ -723,16 +745,14 @@ def get_episode_still_file(
     cache_root = _cache_subdir(cache_dir, "art")
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    safe_show_id = _safe_cache_part(show_tmdb_id)
-    safe_season = _safe_cache_part(season)
-    safe_episode = _safe_cache_part(episode)
     safe_size = _safe_cache_part(_sanitize_tmdb_size(size), default="w300")
-    base = cache_root / f"tv_{safe_show_id}_s{safe_season}_e{safe_episode}_still_{safe_size}"
+    cache_stem = _safe_cache_digest_stem("tv_still", "tv", show_tmdb_id, season, episode, safe_size)
+    base = _cache_base_path(cache_root, cache_stem)
     meta_path = base.with_suffix(".json")
 
     cached_art = None
     if meta_path.exists() and _read_json(meta_path).get("url"):
-        for f in cache_root.glob(base.name + ".*"):
+        for f in _cache_matches(cache_root, cache_stem):
             if f.suffix.lower() != ".json" and f.exists():
                 cached_art = f
                 break
@@ -780,12 +800,12 @@ def get_episode_still_file(
         ext = ".jpg"
     dest = base.with_suffix(ext)
 
-    _ensure_under_root(cache_root, meta_path)
-    _ensure_under_root(cache_root, dest)
+    meta_path = _ensure_under_root(cache_root, meta_path)
+    dest = _ensure_under_root(cache_root, dest)
 
     prev_url = _read_json(meta_path).get("url") if meta_path.exists() else None
     if (prev_url and prev_url != src_url) or (not meta_path.exists()):
-        for f in cache_root.glob(base.name + ".*"):
+        for f in _cache_matches(cache_root, cache_stem):
             if f.name != meta_path.name:
                 try:
                     f.unlink()
