@@ -1042,13 +1042,17 @@ function cwBuildTmdbPanel() {
   checkRow.style.marginTop = "10px";
   checkRow.style.gap = "10px";
   checkRow.style.alignItems = "center";
-  checkRow.style.justifyContent = "space-between";
+  checkRow.style.justifyContent = "flex-start";
   checkRow.innerHTML = `
     <button type="button" class="btn secondary" id="tmdb_check">Check</button>
+    <button type="button" class="btn danger" id="tmdb_delete">Delete</button>
     <div id="tmdb_check_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto;width:auto;max-width:min(520px,60%);flex:0 1 auto;white-space:normal"></div>
   `;
   checkRow.querySelector("#tmdb_check")?.addEventListener("click", () => {
     try { cwVerifyTmdbKey(); } catch {}
+  });
+  checkRow.querySelector("#tmdb_delete")?.addEventListener("click", () => {
+    try { cwDeleteTmdbKey(); } catch {}
   });
   keyInput.addEventListener("input", () => {
     keyInput.dataset.verified = "";
@@ -1769,6 +1773,49 @@ async function cwVerifyTmdbKey() {
   }
 }
 
+async function cwDeleteTmdbKey() {
+  const input = document.getElementById("tmdb_api_key");
+  const btn = document.getElementById("tmdb_delete");
+  const checkBtn = document.getElementById("tmdb_check");
+  try {
+    if (btn) btn.disabled = true;
+    if (checkBtn) checkBtn.disabled = true;
+    cwSetTmdbCheckMessage(true, "Deleting...");
+    const r = await fetch("/api/tmdb/disconnect", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data?.ok === false) throw new Error(data?.error || "disconnect_failed");
+    if (input) {
+      input.value = "";
+      input.dataset.masked = "0";
+      input.dataset.loaded = "1";
+      input.dataset.touched = "";
+      input.dataset.clear = "";
+      input.dataset.verified = "0";
+    }
+    try {
+      const cfg = window._cfgCache;
+      if (cfg?.tmdb && typeof cfg.tmdb === "object") cfg.tmdb.api_key = "";
+    } catch {}
+    try { window.CW?.Cache?.invalidate?.("config"); } catch {}
+    try { window.invalidateConfigCache?.(); } catch {}
+    try { window.manualRefreshStatus?.(); } catch {}
+    try { updateTmdbHint(); } catch {}
+    try { cwMetaSettingsHubUpdate(); } catch {}
+    cwSetTmdbCheckMessage(true, "Deleted");
+    return true;
+  } catch {
+    cwSetTmdbCheckMessage(false, "TMDb key delete failed.");
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
+    if (checkBtn) checkBtn.disabled = false;
+  }
+}
+
 function setTraktSuccess(show) {
   const el = document.getElementById("trakt_msg");
   if (el) el.classList.toggle("hidden", !show);
@@ -1797,6 +1844,7 @@ function setTraktSuccess(show) {
     cwAnimeMappingSaveSettings,
     cwAnimeMappingRun,
     cwBuildTmdbPanel,
+    cwDeleteTmdbKey,
     cwMetaSettingsSelect,
     cwMetaSettingsHubUpdate,
     cwMetaSettingsHubInit,
