@@ -59,6 +59,82 @@ def _compact_dict(value: Any) -> dict[str, Any]:
     return out
 
 
+def _nested_dict(item: Mapping[str, Any], key: str) -> dict[str, Any]:
+    value = item.get(key)
+    if not isinstance(value, Mapping):
+        return {}
+    return {str(k): v for k, v in value.items()}
+
+
+def _nested_text(item: Mapping[str, Any], key: str, *fields: str) -> str:
+    nested = _nested_dict(item, key)
+    for field in fields:
+        value = str(nested.get(field) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _item_media_type(item: Mapping[str, Any]) -> str:
+    media_type = str(item.get("type") or item.get("media_type") or "").strip().lower()
+    if media_type in {"movie", "episode"}:
+        return media_type
+    if isinstance(item.get("episode"), Mapping):
+        return "episode"
+    if isinstance(item.get("movie"), Mapping):
+        return "movie"
+    return media_type
+
+
+def _item_title(item: Mapping[str, Any], media_type: str) -> Any:
+    if media_type == "episode":
+        return (
+            item.get("series_title")
+            or item.get("show_title")
+            or _nested_text(item, "show", "title", "name")
+            or _nested_text(item, "series", "title", "name")
+            or item.get("title")
+        )
+    return item.get("title") or item.get("name") or _nested_text(item, "movie", "title", "name")
+
+
+def _item_year(item: Mapping[str, Any], media_type: str) -> Any:
+    if item.get("year") or item.get("series_year"):
+        return item.get("year") or item.get("series_year")
+    if media_type == "episode":
+        return _nested_dict(item, "show").get("year") or _nested_dict(item, "series").get("year")
+    return _nested_dict(item, "movie").get("year")
+
+
+def _item_season(item: Mapping[str, Any]) -> Any:
+    season = item.get("season")
+    if isinstance(season, Mapping):
+        return season.get("number")
+    return season or _nested_dict(item, "episode").get("season")
+
+
+def _item_episode(item: Mapping[str, Any]) -> Any:
+    episode = item.get("episode")
+    if isinstance(episode, Mapping):
+        return episode.get("number")
+    return episode or item.get("number")
+
+
+def _item_activity_ids(item: Mapping[str, Any], media_type: str) -> dict[str, Any]:
+    if media_type == "episode":
+        show_ids = _compact_dict(item.get("show_ids"))
+        for key in ("show", "series"):
+            nested_ids = _compact_dict(_nested_dict(item, key).get("ids"))
+            if nested_ids:
+                show_ids = {**nested_ids, **show_ids}
+        if show_ids:
+            return show_ids
+    ids = _compact_dict(item.get("ids"))
+    if not ids and media_type == "movie":
+        ids = _compact_dict(_nested_dict(item, "movie").get("ids"))
+    return ids
+
+
 def _read_payload() -> dict[str, Any]:
     path = activity_path()
     if not path.exists():
@@ -347,7 +423,7 @@ def record_history_sync_items(
     for item in items or []:
         if not isinstance(item, Mapping):
             continue
-        media_type = str(item.get("type") or item.get("media_type") or "").strip().lower()
+        media_type = _item_media_type(item)
         if media_type not in {"movie", "episode"}:
             continue
         add_event(
@@ -360,12 +436,12 @@ def record_history_sync_items(
                 "target": target,
                 "target_instance": target_instance,
                 "media_type": media_type,
-                "title": item.get("title") or item.get("series_title") or item.get("show_title"),
-                "year": item.get("year") or item.get("series_year"),
-                "season": item.get("season"),
-                "episode": item.get("episode") or item.get("number"),
+                "title": _item_title(item, media_type),
+                "year": _item_year(item, media_type),
+                "season": _item_season(item),
+                "episode": _item_episode(item),
                 "progress": 100,
                 "watched_at": item.get("watched_at"),
-                "ids": item.get("ids") or item.get("show_ids") or {},
+                "ids": _item_activity_ids(item, media_type),
             }
         )

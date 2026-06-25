@@ -110,7 +110,7 @@ _HELPER_SCRIPTS = (
 )
 _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "main-status.js", "settings-insight.js", "scrobbler.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "main-status.js", "settings-insight.js", "scrobbler.js",
     "editor.js", "snapshots.js", "playback_progress.js",
 )
 _AUTH_HEADER_ICONS = (
@@ -566,30 +566,75 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
     <div class="stat-tiles" id="stat-providers"></div>
 
     <div class="stat-block" id="recent-activity-block">
-      <div class="stat-block-header"><span class="pill plain">Recent Activity</span><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
+      <div class="stat-block-header"><span class="pill plain">Recent Scrobble</span><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
       <div id="recent-activity" class="history-list"></div>
     </div>
 
     <div class="stat-block">
-      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights" onclick="refreshInsights()" title="Refresh">R</button></div>
+      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights material-symbols-rounded" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs">refresh</button></div>
       <div id="sync-history" class="history-list"></div>
     </div>
   </section>
 
   <section id="placeholder-card" class="card cw-main-card cw-main-card--wall hidden">
-    <div class="title">Watchlist Preview</div>
+    <div class="title">Watchlist</div>
     <div class="cw-main-card-head cw-main-card-head--compact">
       <div class="cw-main-card-head-copy">
-        <div class="cw-main-card-kicker">Watchlist Preview</div>
+        <div class="cw-main-card-kicker">Watchlist</div>
       </div>
+      <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+      <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" aria-label="Open Watchlist page">
+        <span class="material-symbols-rounded" aria-hidden="true">apps</span>
+      </button>
     </div>
     <div id="wall-msg" class="wall-msg">Loading...</div>
     <div class="wall-wrap">
       <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
-      <div id="poster-row" class="row-scroll" aria-label="Watchlist preview"></div>
+      <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
       <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
       <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
     </div>
+  </section>
+
+  <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
+    <article id="recent-history-widget" class="cw-dash-widget cw-dash-widget--history">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">history</span>
+          <h3>Recent History</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-history-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-history-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh recent history" aria-label="Refresh recent history">refresh</button>
+        </div>
+      </div>
+      <div id="recent-history-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+
+    <article id="latest-ratings-widget" class="cw-dash-widget cw-dash-widget--ratings">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">star</span>
+          <h3>Latest Ratings</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="latest-ratings-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="latest-ratings-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh latest ratings" aria-label="Refresh latest ratings">refresh</button>
+        </div>
+      </div>
+      <div id="latest-ratings-grid" class="cw-ratings-widget-grid" aria-live="polite"></div>
+    </article>
+
+    <article id="recent-scrobble-widget" class="cw-dash-widget cw-dash-widget--scrobble">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">sensors</span>
+          <h3>Recent Scrobble</h3>
+        </div>
+        <button id="recent-scrobble-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble">refresh</button>
+      </div>
+      <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
   </section>
 
   <section id="page-watchlist" class="card hidden">
@@ -892,12 +937,12 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 
                   <div class="cw-settings-layout">
                     <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Visibility</div>
+                      <div class="cw-settings-block-title">Dashboard widgets</div>
                       <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
-                            <label for="ui_show_watchlist_preview">Watchlist</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist: Shows or hides the dashboard watchlist preview card on the Main screen." aria-label="Watchlist setting help">help</button>
+                            <label for="ui_show_watchlist_preview">Watchlist widget</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist widget: Shows or hides the dashboard Watchlist card on the Main screen." aria-label="Watchlist widget setting help">help</button>
                           </div>
                           <select id="ui_show_watchlist_preview" name="ui_show_watchlist_preview">
                             <option value="true">Show</option>
@@ -905,6 +950,44 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
                           </select>
                         </div>
 
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_recent_history_widget">Recent history widget</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent history widget: Shows or hides the Main screen media history widget below Watchlist." aria-label="Recent history widget setting help">help</button>
+                          </div>
+                          <select id="ui_show_recent_history_widget" name="ui_show_recent_history_widget">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_latest_ratings_widget">Latest ratings widget</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Latest ratings widget: Shows or hides the Main screen latest ratings poster widget below Watchlist." aria-label="Latest ratings widget setting help">help</button>
+                          </div>
+                          <select id="ui_show_latest_ratings_widget" name="ui_show_latest_ratings_widget">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_recent_scrobble_widget">Recent Scrobble widget</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble widget: Shows or hides the Main screen recent scrobble widget below Watchlist." aria-label="Recent Scrobble widget setting help">help</button>
+                          </div>
+                          <select id="ui_show_recent_scrobble_widget" name="ui_show_recent_scrobble_widget">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="cw-settings-block">
+                      <div class="cw-settings-block-title">Visibility</div>
+                      <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
                             <label for="ui_show_playingcard">Playing card</label>
@@ -918,8 +1001,8 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 
                         <div>
                           <div class="cw-field-label-row">
-                            <label for="ui_show_recent_activity">Recent activity</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent activity: Shows or hides the Main screen list of locally recorded scrobbled movies and episodes." aria-label="Recent activity setting help">help</button>
+                            <label for="ui_show_recent_activity">Recent Scrobble list</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble list: Shows or hides the Main screen text list of locally recorded scrobbled movies and episodes." aria-label="Recent Scrobble list setting help">help</button>
                           </div>
                           <select id="ui_show_recent_activity" name="ui_show_recent_activity">
                             <option value="true">Show</option>
@@ -929,8 +1012,8 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 
                         <div>
                           <div class="cw-field-label-row">
-                            <label for="ui_recent_activity_display">Recent activity display</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent activity display: Choose a fixed number of rows, or show items from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent activity display setting help">help</button>
+                            <label for="ui_recent_activity_display">Recent Scrobble display</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble display: Choose a fixed number of rows, or show items from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent Scrobble display setting help">help</button>
                           </div>
                           <select id="ui_recent_activity_display" name="ui_recent_activity_display">
                             <option value="count:3">Last 3 items</option>
