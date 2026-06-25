@@ -575,6 +575,9 @@ async function saveSettings() {
       show_watchlist_preview: typeof serverCfg?.ui?.show_watchlist_preview === "boolean" ? !!serverCfg.ui.show_watchlist_preview : true,
       show_playingcard: typeof serverCfg?.ui?.show_playingcard === "boolean" ? !!serverCfg.ui.show_playingcard : true,
       show_recent_activity: typeof serverCfg?.ui?.show_recent_activity === "boolean" ? !!serverCfg.ui.show_recent_activity : true,
+      show_recent_history_widget: typeof serverCfg?.ui?.show_recent_history_widget === "boolean" ? !!serverCfg.ui.show_recent_history_widget : true,
+      show_latest_ratings_widget: typeof serverCfg?.ui?.show_latest_ratings_widget === "boolean" ? !!serverCfg.ui.show_latest_ratings_widget : true,
+      show_recent_scrobble_widget: typeof serverCfg?.ui?.show_recent_scrobble_widget === "boolean" ? !!serverCfg.ui.show_recent_scrobble_widget : true,
       recent_activity_display: normalizeUiDisplay(serverCfg?.ui?.recent_activity_display, Number(serverCfg?.ui?.recent_activity_limit)),
       recent_syncs_display: normalizeUiDisplay(serverCfg?.ui?.recent_syncs_display, Number(serverCfg?.ui?.recent_syncs_limit)),
       show_AI: typeof serverCfg?.ui?.show_AI === "boolean" ? !!serverCfg.ui.show_AI : true,
@@ -587,7 +590,7 @@ async function saveSettings() {
       protocol: _cwNorm(serverCfg?.ui?.protocol).toLowerCase() === "https" ? "https" : "http"
     };
 
-    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_AI", "show_AI"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
+    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_recent_history_widget", "show_recent_history_widget"], ["ui_show_latest_ratings_widget", "show_latest_ratings_widget"], ["ui_show_recent_scrobble_widget", "show_recent_scrobble_widget"], ["ui_show_AI", "show_AI"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
       const el = _cwEl(id);
       if (!el) return;
       const next = el.value !== "false";

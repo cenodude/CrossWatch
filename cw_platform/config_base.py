@@ -636,9 +636,12 @@ DEFAULT_CFG: dict[str, Any] = {
         "theme": "flat-dark",                           # "flat-dark" | "flat-light" | "original"
         "show_watchlist_preview": True,                 # Show Watchlist Preview card on Main tab
         "show_playingcard": True,                       # Show Now Playing card on Main tab
-        "show_recent_activity": True,                   # Show Recent Activity card on Main tab
+        "show_recent_activity": True,                   # Show Recent Scrobble card on Main tab
+        "show_recent_history_widget": True,             # Show Recent History widget on Main tab
+        "show_latest_ratings_widget": True,             # Show Latest Ratings widget on Main tab
+        "show_recent_scrobble_widget": True,            # Show Recent Scrobble widget on Main tab
         "recent_activity_display": "count:3",           # "count:3|4|5" | "hours:24|48|72"
-        "recent_activity_limit": 3,                     # Recent Activity rows on Main tab
+        "recent_activity_limit": 3,                     # Recent Scrobble rows on Main tab
         "recent_syncs_display": "count:3",              # "count:3|4|5" | "hours:24|48|72"
         "recent_syncs_limit": 3,                        # Recent Sync rows on Main tab
         "show_AI": True,                                # Show ASK AI from GitBook
@@ -1379,6 +1382,9 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui["show_watchlist_preview"] = bool(ui.get("show_watchlist_preview", True))
     ui["show_playingcard"] = bool(ui.get("show_playingcard", True))
     ui["show_recent_activity"] = bool(ui.get("show_recent_activity", True))
+    ui["show_recent_history_widget"] = bool(ui.get("show_recent_history_widget", True))
+    ui["show_latest_ratings_widget"] = bool(ui.get("show_latest_ratings_widget", True))
+    ui["show_recent_scrobble_widget"] = bool(ui.get("show_recent_scrobble_widget", True))
     ui["show_AI"] = bool(ui.get("show_AI", True))
     ui["show_quick_add_desktop"] = bool(ui.get("show_quick_add_desktop", True))
     ui["show_quick_add_mobile"] = bool(ui.get("show_quick_add_mobile", True))

@@ -1,5 +1,5 @@
 /* assets/js/activity.js */
-/* CrossWatch Recent Activity UI */
+/* CrossWatch Recent Scrobble UI */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -210,7 +210,7 @@
     if (!block || !host) return;
 
     if (authSetupPending()) {
-      if (!host.children.length) host.innerHTML = `<div class="activity-empty">Loading activity...</div>`;
+      if (!host.children.length) host.innerHTML = `<div class="activity-empty">Loading scrobble...</div>`;
       scheduleRetry();
       return;
     }
@@ -231,10 +231,10 @@
       const items = data.items;
       host.innerHTML = items.length
         ? items.map((item) => rowHTML(item)).join("")
-        : `<div class="activity-empty">${display.mode === "hours" ? `No scrobbled activity in the last ${display.hours} hours.` : "No scrobbled activity yet."}</div>`;
+        : `<div class="activity-empty">${display.mode === "hours" ? `No recent scrobble in the last ${display.hours} hours.` : "No recent scrobble yet."}</div>`;
     } catch {
-      if (!host.children.length || host.textContent.trim() === "Loading activity...") {
-        host.innerHTML = `<div class="activity-empty">Activity could not be loaded.</div>`;
+      if (!host.children.length || host.textContent.trim() === "Loading scrobble...") {
+        host.innerHTML = `<div class="activity-empty">Recent scrobble could not be loaded.</div>`;
       }
       scheduleRetry(2500);
     }
@@ -375,7 +375,7 @@
         load.textContent = data?.has_more ? "Load more" : "All loaded";
       }
     } catch {
-      if (list) list.innerHTML = `<div class="activity-empty">Activity could not be loaded.</div>`;
+      if (list) list.innerHTML = `<div class="activity-empty">Recent scrobble could not be loaded.</div>`;
       if (count) count.textContent = "";
     } finally {
       state.busy = false;

@@ -12,6 +12,7 @@
   window._lastSyncEpoch = window._lastSyncEpoch || null;
   window.__wallRenderSignature = window.__wallRenderSignature || "";
   const WALL_PREVIEW_CACHE_KEY = `cw.wall.preview.${window.APP_VERSION || "v1"}`;
+  const DEFAULT_INSTANCE = "default";
 
   const json = async (url, opt) => {
     if (authSetupPending()) throw new Error("auth setup pending");
@@ -33,6 +34,11 @@
   const providerKey = (value) => providerMeta().keyOf?.(value) || String(value || "").trim().toUpperCase();
   const providerLabel = (value) => providerMeta().label?.(value) || providerKey(value) || String(value || "");
   const providerShortLabel = (value) => providerMeta().shortLabel?.(value) || providerLabel(value);
+  const providerInstanceLabel = (provider, instance) => {
+    const label = providerLabel(provider);
+    const inst = String(instance || DEFAULT_INSTANCE).trim() || DEFAULT_INSTANCE;
+    return inst.toLowerCase() === DEFAULT_INSTANCE ? label : `${label} (${inst})`;
+  };
   const providerFromStatus = (status) => {
     const raw = String(status || "").toLowerCase().trim();
     if (!raw || raw === "both" || raw === "deleted") return "";
@@ -67,9 +73,9 @@
     }
   };
 
-  const writeWallCache = (items, lastSyncEpoch) => {
+  const writeWallCache = (items, lastSyncEpoch, total = null) => {
     try {
-      localStorage.setItem(WALL_PREVIEW_CACHE_KEY, JSON.stringify({ items, last_sync_epoch: lastSyncEpoch || 0 }));
+      localStorage.setItem(WALL_PREVIEW_CACHE_KEY, JSON.stringify({ items, last_sync_epoch: lastSyncEpoch || 0, total }));
     } catch {}
   };
 
@@ -129,6 +135,23 @@
   const previewMetaCache = new Map();
   const previewMetaInflight = new Map();
   let activePreviewDrawerKey = "";
+
+  function countLabel(total, noun) {
+    const n = Number(total || 0);
+    const label = n === 1 ? noun : `${noun}s`;
+    return `${Number.isFinite(n) ? n : 0} ${label}`;
+  }
+
+  function setWatchlistCount(total) {
+    const chip = document.getElementById("watchlist-count-chip");
+    if (!chip) return;
+    chip.textContent = countLabel(total, "item");
+    chip.classList.remove("hidden");
+  }
+
+  function hideWatchlistCount() {
+    document.getElementById("watchlist-count-chip")?.classList.add("hidden");
+  }
 
   function mediaTypeOf(item) {
     const raw = String(item?.type || item?.entity || item?.media_type || "").toLowerCase();
@@ -485,12 +508,13 @@
   }
 
   function sourceMarkup(item) {
-    return providersForItem(item).slice(0, 6).map((name) => {
+    return sourceRowsForItem(item).slice(0, 6).map(({ provider, instance }) => {
+      const name = provider;
       const src = providerLogoPath(name);
-      const label = providerLabel(name);
+      const label = providerInstanceLabel(name, instance);
       return src
-        ? `<span class="wpd-source" title="${esc(label)}"><img src="${src}" alt="${esc(label)} logo"></span>`
-        : `<span class="wpd-source" title="${esc(label)}">${esc(providerShortLabel(name).slice(0, 2))}</span>`;
+        ? `<span class="wpd-source"><img src="${esc(src)}" alt="${esc(label)} logo"></span>`
+        : `<span class="wpd-source" aria-label="${esc(label)}">${esc(providerShortLabel(name).slice(0, 2))}</span>`;
     }).join("");
   }
 
@@ -517,6 +541,7 @@
     const scoreColor = score == null ? "#94a3b8" : score >= 70 ? "#49d391" : score >= 45 ? "#e4b85a" : "#e66b7a";
     const tmdb = tmdbUrl(item, meta);
     const imdb = imdbUrl(item, meta);
+    const sourcesTitle = sourceRouteTitle(item);
 
     drawer.style.setProperty("--wpd-backdrop", backdrop ? `url("${backdrop}")` : "none");
     drawer.innerHTML = `
@@ -529,7 +554,7 @@
           </div>
           <div class="wpd-meta">${chips.map((chip) => `<span class="wpd-chip">${esc(chip)}</span>`).join("")}</div>
           <div class="wpd-overview">${esc(overview)}</div>
-          <div class="wpd-sources" aria-label="Providers">${sourceMarkup(item)}</div>
+          <div class="wpd-sources" title="${esc(sourcesTitle)}" aria-label="${esc(sourcesTitle || "Providers")}">${sourceMarkup(item)}</div>
         </div>
         <div class="wpd-side">
           ${score == null ? "" : `<div class="wpd-score" style="--wpd-score:${Math.max(0, Math.min(100, score)) * 3.6}deg;--wpd-score-color:${scoreColor}"><span>${score}%</span></div><div class="wpd-score-label">User Score</div>`}
@@ -562,6 +587,7 @@
   };
   const hidePreviewCard = (card, row, msg) => {
     card?.classList.add("hidden");
+    hideWatchlistCount();
     if (row) {
       row.innerHTML = "";
       row.classList.add("hidden");
@@ -574,6 +600,7 @@
     window.wallLoaded = false;
   };
   const setWallEmpty = (row, msg, text) => {
+    setWatchlistCount(0);
     window.__wallRenderSignature = "";
     row.replaceChildren();
     row.classList.add("hidden");
@@ -592,18 +619,50 @@
     return { text: "-", cls: "p-sk" };
   }
 
-  function providersForItem(item) {
-    const direct = Array.isArray(item?.sources)
-      ? item.sources.map(providerKey).filter(Boolean)
-      : [];
-    if (direct.length) return [...new Set(direct)];
+  function sourceRowsForItem(item) {
+    const rows = [];
+    const seen = new Set();
+    const push = (provider, instance = DEFAULT_INSTANCE) => {
+      const keyProvider = providerKey(provider);
+      const inst = String(instance || DEFAULT_INSTANCE).trim() || DEFAULT_INSTANCE;
+      const key = `${keyProvider}:${inst}`;
+      if (!keyProvider || seen.has(key)) return;
+      seen.add(key);
+      rows.push({ provider: keyProvider, instance: inst });
+    };
 
     const sbp = item?.sources_by_provider || item?.sourcesByProvider || {};
-    const byProvider = Object.keys(sbp || {}).map(providerKey).filter(Boolean);
-    if (byProvider.length) return [...new Set(byProvider)];
+    if (sbp && typeof sbp === "object") {
+      for (const [provider, instances] of Object.entries(sbp)) {
+        if (Array.isArray(instances) && instances.length) {
+          for (const instance of instances) push(provider, instance);
+        } else {
+          push(provider);
+        }
+      }
+    }
+    if (rows.length) return rows;
+
+    const direct = Array.isArray(item?.sources) ? item.sources : [];
+    for (const source of direct) {
+      if (source && typeof source === "object") push(source.provider, source.instance);
+      else push(source);
+    }
+    if (rows.length) return rows;
 
     const provider = providerFromStatus(item?.status);
-    return provider ? [provider] : [];
+    if (provider) push(provider);
+    return rows;
+  }
+
+  function providersForItem(item) {
+    return [...new Set(sourceRowsForItem(item).map((row) => row.provider))];
+  }
+
+  function sourceRouteTitle(item) {
+    const labels = sourceRowsForItem(item).slice(0, 8).map((row) => providerInstanceLabel(row.provider, row.instance));
+    if (!labels.length) return "";
+    return labels.length > 1 ? `Sources: ${labels.join(" -> ")}` : `Source: ${labels[0]}`;
   }
 
   function providerIconMarkup(name) {
@@ -612,8 +671,8 @@
     const shortLabel = providerShortLabel(name);
     const shell = `display:inline-flex;align-items:center;justify-content:center;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(7,11,18,.38);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 8px 20px rgba(0,0,0,.18);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);`;
     return src
-      ? `<span title="${label}" style="${shell}width:28px;height:28px;padding:0 5px;"><img src="${src}" alt="${label} logo" style="display:block;width:auto;height:16px;max-width:20px;object-fit:contain;filter:brightness(1.05)"></span>`
-      : `<span title="${label}" style="${shell}min-width:28px;height:28px;padding:0 7px;font-size:11px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${shortLabel}</span>`;
+      ? `<span style="${shell}width:28px;height:28px;padding:0 5px;"><img src="${esc(src)}" alt="${esc(label)} logo" style="display:block;width:auto;height:16px;max-width:20px;object-fit:contain;filter:brightness(1.05)"></span>`
+      : `<span aria-label="${esc(label)}" style="${shell}min-width:28px;height:28px;padding:0 7px;font-size:11px;font-weight:800;line-height:1;color:rgba(245,248,255,.88);">${esc(shortLabel)}</span>`;
   }
 
   function wallSignature(items, epoch) {
@@ -629,7 +688,7 @@
     });
   }
 
-  function renderWall(row, msg, items, lastSyncEpoch, { preserveIfSame = false } = {}) {
+  function renderWall(row, msg, items, lastSyncEpoch, { preserveIfSame = false, total = null } = {}) {
     let wallItems = Array.isArray(items) ? items.slice() : [];
     if (!wallItems.length) {
       setWallEmpty(row, msg, "No items to show yet.");
@@ -661,6 +720,7 @@
 
     const getTs = (it) => Number(it?.added_epoch ?? it?.added_ts ?? it?.created_ts ?? it?.created ?? it?.epoch ?? firstSeen[it?.key] ?? 0);
     wallItems.sort((a, b) => getTs(b) - getTs(a));
+    setWatchlistCount(total ?? wallItems.length);
     wallItems = wallItems.slice(0, Number.isFinite(window.MAX_WALL_POSTERS) ? window.MAX_WALL_POSTERS : 20);
 
     const frag = document.createDocumentFragment();
@@ -697,8 +757,13 @@
 
       const overlay = document.createElement("div");
       const currentProviders = providersForItem(item).slice(0, 5);
+      const routeTitle = sourceRouteTitle(item);
       const synced = String(source).toLowerCase() === "both";
       overlay.className = "ovr";
+      if (routeTitle) {
+        overlay.title = routeTitle;
+        overlay.setAttribute("aria-label", routeTitle);
+      }
       overlay.style.left = "8px";
       overlay.style.right = synced ? "8px" : "auto";
       overlay.style.justifyContent = synced ? "center" : "flex-start";
@@ -755,6 +820,7 @@
       if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
       if (!gate.allowed) {
         card.classList.add("hidden");
+        hideWatchlistCount();
         return;
       }
       card.classList.remove("hidden");
@@ -770,7 +836,7 @@
       row.classList.add("hidden");
       const cached = readWallCache();
       if (cached) {
-        renderWall(row, msg, cached.items, cached.last_sync_epoch || 0);
+        renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
       }
     }
 
@@ -779,7 +845,7 @@
       const data = await json(`/api/state/wall?both_only=0&active_only=1&limit=${encodeURIComponent(limit)}`);
       if (myReq !== wallReqSeq) return;
       if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
-      if (data?.missing_tmdb_key) { card.classList.add("hidden"); return; }
+      if (data?.missing_tmdb_key) { card.classList.add("hidden"); hideWatchlistCount(); return; }
       if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return; }
 
       let items = Array.isArray(data.items) ? data.items.slice() : [];
@@ -789,8 +855,8 @@
         setWallEmpty(row, msg, "No items to show yet.");
         return;
       }
-      writeWallCache(items, data.last_sync_epoch || 0);
-      renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true });
+      writeWallCache(items, data.last_sync_epoch || 0, data?.total ?? items.length);
+      renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true, total: data?.total ?? items.length });
     } catch {
       if (!hasRenderedWall) {
         row.classList.add("hidden");
@@ -858,6 +924,7 @@
       }
       if (!allowed) {
         if (card) card.classList.add("hidden");
+        hideWatchlistCount();
         window.wallLoaded = false;
         return;
       }
