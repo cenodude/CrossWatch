@@ -430,6 +430,9 @@ async def app_auth_gate(request: Request, call_next):
     if path.startswith("/api/app-auth/") or path in {"/login", "/logout"}:
         return await call_next(request)
 
+    if path.startswith("/api/mobile/"):
+        return await call_next(request)
+
     # exclude callback paths
     if path == "/callback" or path.startswith("/callback/"):
         return await call_next(request)
