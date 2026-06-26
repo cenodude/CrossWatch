@@ -620,7 +620,7 @@ public class MainActivity extends Activity {
         c.addView(input, inputLp);
         Button save = button("Save and refresh", MINT, BG);
         save.setOnClickListener(v -> {
-            serverUrl = input.getText().toString().trim().replaceAll("/+$", "");
+            serverUrl = trimTrailingSlashes(input.getText().toString().trim());
             prefs.edit().putString("server_url", serverUrl).apply();
             refresh(true);
         });
@@ -837,7 +837,7 @@ public class MainActivity extends Activity {
             rebuild();
             return;
         }
-        final String firstBase = serverUrl.replaceAll("/+$", "");
+        final String firstBase = trimTrailingSlashes(serverUrl);
         status = "Pairing device";
         rebuild();
         io.execute(() -> {
@@ -883,7 +883,7 @@ public class MainActivity extends Activity {
 
     private Summary fetchSummary(String base) {
         try {
-            String body = get(base.replaceAll("/+$", "") + "/api/mobile/summary");
+            String body = get(trimTrailingSlashes(base) + "/api/mobile/summary");
             return Summary.fromJson(new JSONObject(body), base);
         } catch (Exception ignored) {
             return Summary.sample(base);
@@ -977,7 +977,7 @@ public class MainActivity extends Activity {
                 String server = uri.getQueryParameter("server");
                 String code = uri.getQueryParameter("code");
                 if (server != null && !server.trim().isEmpty()) {
-                    serverUrl = server.trim().replaceAll("/+$", "");
+                    serverUrl = trimTrailingSlashes(server.trim());
                     prefs.edit().putString("server_url", serverUrl).apply();
                 }
                 return code == null ? "" : code.trim();
@@ -1131,7 +1131,7 @@ public class MainActivity extends Activity {
     }
 
     private String providerKey(String name) {
-        String key = name == null ? "" : name.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        String key = providerKeyChars(name);
         if (key.contains("JELLY")) return "JELLYFIN";
         if (key.contains("MDB")) return "MDBLIST";
         if (key.contains("PUBLIC")) return "PUBLICMETADB";
@@ -1194,8 +1194,30 @@ public class MainActivity extends Activity {
         String value = rawUrl == null ? "" : rawUrl.trim();
         if (value.isEmpty()) return "";
         if (value.startsWith("http://") || value.startsWith("https://")) return value;
-        if (value.startsWith("/")) return serverUrl.replaceAll("/+$", "") + value;
+        if (value.startsWith("/")) return trimTrailingSlashes(serverUrl) + value;
         return value;
+    }
+
+    private String trimTrailingSlashes(String value) {
+        if (value == null) return "";
+        int end = value.length();
+        while (end > 0 && value.charAt(end - 1) == '/') {
+            end--;
+        }
+        return end == value.length() ? value : value.substring(0, end);
+    }
+
+    private String providerKeyChars(String value) {
+        if (value == null || value.isEmpty()) return "";
+        String upper = value.toUpperCase(Locale.ROOT);
+        StringBuilder out = new StringBuilder(upper.length());
+        for (int i = 0; i < upper.length(); i++) {
+            char ch = upper.charAt(i);
+            if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) {
+                out.append(ch);
+            }
+        }
+        return out.toString();
     }
 
     private Bitmap fetchBitmap(String value) throws Exception {
