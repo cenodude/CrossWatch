@@ -17,6 +17,11 @@ if (typeof window._watchVisibilityHandler === "undefined") window._watchVisibili
 if (typeof window._watchFlushIV === "undefined") window._watchFlushIV = null;
 if (typeof window.watchStickBottom === "undefined") window.watchStickBottom = true;
 if (typeof window.watchBuf === "undefined") window.watchBuf = [];
+if (typeof window.esDebug === "undefined") window.esDebug = null;
+if (typeof window._debugRetryTO === "undefined") window._debugRetryTO = null;
+if (typeof window._debugStaleIV === "undefined") window._debugStaleIV = null;
+if (typeof window._debugVisibilityHandler === "undefined") window._debugVisibilityHandler = null;
+if (typeof window.debugStickBottom === "undefined") window.debugStickBottom = true;
 if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
 if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
 if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 2500;
@@ -28,9 +33,9 @@ if (typeof window._detReplayCursor === "undefined") window._detReplayCursor = 0;
 if (typeof window._detDidConnectOnce === "undefined") window._detDidConnectOnce = false;
 
 function _activeDetailsLogEl() {
-  return window._detailsTab === "watcher"
-    ? document.getElementById("det-watch-log")
-    : document.getElementById("det-log");
+  if (window._detailsTab === "watcher") return document.getElementById("det-watch-log");
+  if (window._detailsTab === "debug") return document.getElementById("det-debug-log");
+  return document.getElementById("det-log");
 }
 
 function _pruneDetailsLog(el) {
@@ -159,36 +164,45 @@ async function _copyDetailsLog(btn) {
 }
 
 function setDetailsTab(tab) {
-  const t = (tab === "watcher") ? "watcher" : "sync";
+  const t = (tab === "watcher" || tab === "debug") ? tab : "sync";
   window._detailsTab = t;
 
   const syncPanel  = document.getElementById("det-panel-sync");
   const watchPanel = document.getElementById("det-panel-watcher");
+  const debugPanel = document.getElementById("det-panel-debug");
   const tabSync    = document.getElementById("det-tab-sync");
   const tabWatch   = document.getElementById("det-tab-watcher");
-  if (!syncPanel || !watchPanel || !tabSync || !tabWatch) return;
+  const tabDebug   = document.getElementById("det-tab-debug");
+  if (!syncPanel || !watchPanel || !debugPanel || !tabSync || !tabWatch || !tabDebug) return;
 
   const isWatch = t === "watcher";
-  syncPanel.classList.toggle("hidden", isWatch);
+  const isDebug = t === "debug";
+  syncPanel.classList.toggle("hidden", isWatch || isDebug);
   watchPanel.classList.toggle("hidden", !isWatch);
+  debugPanel.classList.toggle("hidden", !isDebug);
 
-  tabSync.classList.toggle("active", !isWatch);
-  tabSync.setAttribute("aria-selected", String(!isWatch));
+  tabSync.classList.toggle("active", t === "sync");
+  tabSync.setAttribute("aria-selected", String(t === "sync"));
   tabWatch.classList.toggle("active", isWatch);
   tabWatch.setAttribute("aria-selected", String(isWatch));
+  tabDebug.classList.toggle("active", isDebug);
+  tabDebug.setAttribute("aria-selected", String(isDebug));
 
   if (isWatch) { try { openWatcherLog(); } catch {} }
+  if (isDebug) { try { openDebugLog(); } catch {} }
 }
 
 function initDetailsTabs() {
   if (window._detailsTabsWired) return;
   const tabSync  = document.getElementById("det-tab-sync");
   const tabWatch = document.getElementById("det-tab-watcher");
-  if (!tabSync || !tabWatch) return;
+  const tabDebug = document.getElementById("det-tab-debug");
+  if (!tabSync || !tabWatch || !tabDebug) return;
   window._detailsTabsWired = true;
 
   tabSync.addEventListener("click", () => setDetailsTab("sync"));
   tabWatch.addEventListener("click", () => setDetailsTab("watcher"));
+  tabDebug.addEventListener("click", () => setDetailsTab("debug"));
 
   const btnCopy = document.getElementById("det-copy");
   if (btnCopy) {
@@ -213,6 +227,10 @@ function initDetailsTabs() {
         window.watchStickBottom = !window.watchStickBottom;
         const el = document.getElementById("det-watch-log");
         if (window.watchStickBottom && el) el.scrollTop = el.scrollHeight;
+      } else if (window._detailsTab === "debug") {
+        window.debugStickBottom = !window.debugStickBottom;
+        const el = document.getElementById("det-debug-log");
+        if (window.debugStickBottom && el) el.scrollTop = el.scrollHeight;
       } else {
         window.detStickBottom = !window.detStickBottom;
         const el = document.getElementById("det-log");
@@ -234,6 +252,104 @@ function closeWatcherLog() {
   }
   const tabWatch = document.getElementById("det-tab-watcher");
   tabWatch?.classList.remove("connected", "stale");
+}
+
+function closeDebugLog() {
+  try { window.esDebug?.close?.(); } catch {}
+  window.esDebug = null;
+  if (window._debugRetryTO) { clearTimeout(window._debugRetryTO); window._debugRetryTO = null; }
+  if (window._debugStaleIV) { clearInterval(window._debugStaleIV); window._debugStaleIV = null; }
+  if (window._debugVisibilityHandler) {
+    document.removeEventListener("visibilitychange", window._debugVisibilityHandler);
+    window._debugVisibilityHandler = null;
+  }
+  const tabDebug = document.getElementById("det-tab-debug");
+  tabDebug?.classList.remove("connected", "stale");
+}
+
+function openDebugLog() {
+  const el = document.getElementById("det-debug-log");
+  const details = document.getElementById("details");
+  const tabDebug = document.getElementById("det-tab-debug");
+  if (!el || !details || details.classList.contains("hidden")) return;
+  if (window.esDebug || window._debugOpening) return;
+  window._debugOpening = true;
+
+  try {
+    if (!el.__cwScrollWired) {
+      el.addEventListener("scroll", () => {
+        const pad = 12;
+        window.debugStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
+      }, { passive: true });
+      el.__cwScrollWired = true;
+    }
+
+    el.innerHTML = "";
+    window.debugStickBottom = true;
+
+    const MAX_LINES = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+    let lastMsgAt = Date.now();
+
+    const append = (html) => {
+      if (!html) return;
+      const row = document.createElement("div");
+      row.className = "wlog-line det-debug-line";
+
+      const msg = document.createElement("span");
+      msg.className = "wlog-msg";
+      msg.innerHTML = html;
+
+      row.appendChild(msg);
+      el.appendChild(row);
+      while (el.childNodes.length > MAX_LINES) el.removeChild(el.firstChild);
+      if (window.debugStickBottom) el.scrollTop = el.scrollHeight;
+      lastMsgAt = Date.now();
+    };
+
+    const url = new URL("/api/logs/stream", document.baseURI);
+    url.searchParams.set("tag", "DEBUG");
+    url.searchParams.set("_ts", String(Date.now()));
+
+    const es = new EventSource(url.toString());
+    window.esDebug = es;
+    es.onopen = () => {
+      tabDebug?.classList.add("connected");
+      tabDebug?.classList.remove("stale");
+    };
+    es.onmessage = (ev) => {
+      tabDebug?.classList.add("connected");
+      tabDebug?.classList.remove("stale");
+      append(ev?.data);
+    };
+    es.onerror = () => {
+      tabDebug?.classList.remove("connected");
+      tabDebug?.classList.add("stale");
+      try { window.esDebug?.close?.(); } catch {}
+      window.esDebug = null;
+
+      if (window._debugRetryTO) clearTimeout(window._debugRetryTO);
+      window._debugRetryTO = setTimeout(() => {
+        if (window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
+      }, 1200);
+    };
+
+    if (window._debugStaleIV) clearInterval(window._debugStaleIV);
+    window._debugStaleIV = setInterval(() => {
+      const stale = (Date.now() - lastMsgAt) > 20000;
+      tabDebug?.classList.toggle("stale", stale);
+    }, 1000);
+
+    if (window._debugVisibilityHandler) {
+      document.removeEventListener("visibilitychange", window._debugVisibilityHandler);
+    }
+    window._debugVisibilityHandler = () => {
+      if (document.visibilityState !== "visible") return;
+      if (window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
+    };
+    document.addEventListener("visibilitychange", window._debugVisibilityHandler);
+  } finally {
+    window._debugOpening = false;
+  }
 }
 
 async function openWatcherLog() {
@@ -551,7 +667,10 @@ function closeDetailsLog() {
   tabSync?.classList.remove("connected", "stale");
   const tabWatch = document.getElementById("det-tab-watcher");
   tabWatch?.classList.remove("connected", "stale");
+  const tabDebug = document.getElementById("det-tab-debug");
+  tabDebug?.classList.remove("connected", "stale");
   try { closeWatcherLog(); } catch {}
+  try { closeDebugLog(); } catch {}
 }
 
 function toggleDetails() {
@@ -562,9 +681,11 @@ function toggleDetails() {
     try { setDetailsTab(window._detailsTab || "sync"); } catch {}
     openDetailsLog();
     if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
+    if (window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
   } else {
     closeDetailsLog();
     closeWatcherLog();
+    closeDebugLog();
   }
 }
 
@@ -583,6 +704,7 @@ function resetDetailsSyncLog() {
 window.addEventListener("beforeunload", () => {
   try { closeDetailsLog(); } catch {}
   try { closeWatcherLog(); } catch {}
+  try { closeDebugLog(); } catch {}
 });
 
 
@@ -591,6 +713,8 @@ window.addEventListener("beforeunload", () => {
     initDetailsTabs,
     closeWatcherLog,
     openWatcherLog,
+    closeDebugLog,
+    openDebugLog,
     openDetailsLog,
     closeDetailsLog,
     resetDetailsSyncLog,
