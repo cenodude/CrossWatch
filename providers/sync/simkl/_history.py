@@ -42,6 +42,7 @@ def _unresolved_path() -> str:
 
 ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 _MOVIE_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl")  # anime IDs excluded to prevent SIMKL misrouting to anime bucket
+_EPISODE_LOOKUP_ID_KEYS = ("tvdb", "anidb")
 
 _EP_LOOKUP_MEMO: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 def _maybe_map_tvdb(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
@@ -137,6 +138,13 @@ def _safe_int(value: Any) -> int:
         return 0
 
 
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def _chunk_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mapping[str, Any]]]:
     size = max(1, int(n or 1))
     for i in range(0, len(seq), size):
@@ -204,6 +212,11 @@ def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
 def _ids_of(obj: Mapping[str, Any]) -> dict[str, Any]:
     ids = dict(obj.get("ids") or {})
     return {k: ids[k] for k in ID_KEYS if ids.get(k)}
+
+
+def _episode_lookup_ids(item: Mapping[str, Any]) -> dict[str, str]:
+    ids = dict(item.get("ids") or {})
+    return {k: str(ids[k]) for k in _EPISODE_LOOKUP_ID_KEYS if ids.get(k)}
 
 
 def _raw_show_ids(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -1123,36 +1136,48 @@ def _season_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, 
     return show, s_num, watched_at
 
 
-def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str] | None:
+def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str, dict[str, str]] | None:
     show_ids_raw = _show_ids_of_episode(item)
     if not show_ids_raw:
         return None
-    s_num = _safe_int(item.get("season") or item.get("season_number"))
+    raw_season = item.get("season") if item.get("season") is not None else item.get("season_number")
+    s_num = _safe_int(raw_season)
     e_num = _safe_int(item.get("episode") or item.get("episode_number"))
     watched_at = item.get("watched_at") or item.get("watchedAt")
-    if not s_num or not e_num or not isinstance(watched_at, str) or not watched_at:
+    episode_ids = _episode_lookup_ids(item)
+    if not e_num or not isinstance(watched_at, str) or not watched_at:
+        return None
+    if not s_num:
+        if _int_or_none(raw_season) == 0 and episode_ids:
+            s_num = 0
+        else:
+            return None
+
+    if s_num == 0 and not episode_ids:
         return None
 
     anime_force = False
     mapped = None
-    try:
-        mapped = _map_tvdb_episode_to_simkl_anime(
-            adapter,
-            show_ids=show_ids_raw,
-            season=s_num,
-            episode=e_num,
-        )
-    except Exception:
-        mapped = None
+    if s_num > 0:
+        try:
+            mapped = _map_tvdb_episode_to_simkl_anime(
+                adapter,
+                show_ids=show_ids_raw,
+                season=s_num,
+                episode=e_num,
+            )
+        except Exception:
+            mapped = None
     if mapped is not None:
         anime_force = True
         s_num, e_num = mapped
+        episode_ids = {}
 
     show = _show_scope_entry(adapter, item, show_ids_raw, force_anime=anime_force)
     if not show:
         return None
 
-    return show, s_num, e_num, watched_at
+    return show, s_num, e_num, watched_at, episode_ids
 
 
 def _merge_show_group(groups: dict[str, dict[str, Any]], show_entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -1192,6 +1217,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     shows_scoped: dict[str, dict[str, Any]] = {}
     scoped_items: dict[str, list[Mapping[str, Any]]] = {}  # ids_key for original items (seasons)
     scoped_ep_index: dict[tuple[str, int, int], Mapping[str, Any]] = {}  # (ids_key, season, ep) for original episode item
+    scoped_ep_id_index: dict[tuple[str, str], Mapping[str, Any]] = {}  # episode-level lookup ids for original episode item
     scoped_id_index: dict[tuple[str, str], str] = {}  # (field, str(value)) ids_key, for matching
     failed_thaw_keys: set[str] = set()  # thaw keys of items confirmed as not_found, excluded from cache injection
     unresolved: list[dict[str, Any]] = []
@@ -1255,13 +1281,19 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
                 continue
 
-            show_entry, s_num, e_num, watched_at = packed
+            show_entry, s_num, e_num, watched_at, episode_ids = packed
             ids_key = json.dumps(dict(show_entry.get("ids") or {}), sort_keys=True)
             group = _merge_show_group(shows_scoped, show_entry)
             season = _merge_show_season(group, s_num)
-            season.setdefault("episodes", []).append({"number": e_num, "watched_at": watched_at})
+            ep_payload: dict[str, Any] = {"number": e_num, "watched_at": watched_at}
+            if s_num == 0 and episode_ids:
+                ep_payload["ids"] = dict(episode_ids)
+            season.setdefault("episodes", []).append(ep_payload)
             scoped_items.setdefault(ids_key, []).append(item)
             scoped_ep_index[(ids_key, s_num, e_num)] = item
+            for _f, _v in episode_ids.items():
+                if _v is not None:
+                    scoped_ep_id_index.setdefault((_f, str(_v)), item)
             for _f, _v in (show_entry.get("ids") or {}).items():
                 if _v is not None:
                     scoped_id_index.setdefault((_f, str(_v)), ids_key)
@@ -1386,6 +1418,13 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                         for _e in (_s.get("episodes") or []):
                             _enum = int(_e.get("number") or 0)
                             _orig = scoped_ep_index.get((_matched_ids_key, _snum, _enum))
+                            if _orig is None and isinstance(_e, Mapping):
+                                for _f, _v in (_e.get("ids") or {}).items():
+                                    if _v is None:
+                                        continue
+                                    _orig = scoped_ep_id_index.get((_f, str(_v)))
+                                    if _orig is not None:
+                                        break
                             nf_total += 1
                             if _orig is not None:
                                 failed_thaw_keys.add(_thaw_key(_orig))
