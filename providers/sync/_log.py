@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -99,6 +100,16 @@ def _kv(fields: Mapping[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _append_ui_log(provider: str, line: str) -> None:
+    try:
+        cw = sys.modules.get("crosswatch") or sys.modules.get("__main__")
+        append = getattr(cw, "_append_log", None)
+        if callable(append):
+            append(provider, line)
+    except Exception:
+        pass
+
+
 def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:
     provider_s = str(provider).strip().upper()
     feature_s = str(feature).strip().lower()
@@ -121,7 +132,9 @@ def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> Non
     payload = {**base, **fields}
 
     if fmt == "json":
-        print(json.dumps(payload, ensure_ascii=False), flush=True)
+        line = json.dumps(payload, ensure_ascii=False)
+        print(line, flush=True)
+        _append_ui_log(provider_s, line)
         return
 
     head = _c(f"[{base['provider']}:{base['feature']}]", DIM, on=use_color)
@@ -132,3 +145,4 @@ def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> Non
     if tail:
         line = f"{line} {tail}"
     print(line, flush=True)
+    _append_ui_log(provider_s, line)

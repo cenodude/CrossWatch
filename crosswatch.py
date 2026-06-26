@@ -463,9 +463,10 @@ def get_primary_ip() -> str:
 
 # Log buffers
 MAX_LOG_LINES = 3000
-LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": []}
-LOG_BASE_SEQ: Dict[str, int] = {"SYNC": 1}
-LOG_NEXT_SEQ: Dict[str, int] = {"SYNC": 1}
+DIAG_LOG_TAG = "DEBUG"
+LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], DIAG_LOG_TAG: []}
+LOG_BASE_SEQ: Dict[str, int] = {"SYNC": 1, DIAG_LOG_TAG: 1}
+LOG_NEXT_SEQ: Dict[str, int] = {"SYNC": 1, DIAG_LOG_TAG: 1}
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
 ANSI_STRIP = re.compile(r"\x1b\[[0-9;]*m")
@@ -551,7 +552,7 @@ def ansi_to_html(line: str) -> str:
 
     return "".join(out)
 
-def _append_log(tag: str, raw_line: str) -> None:
+def _append_log_to_buffer(tag: str, raw_line: str) -> None:
     t = _norm_log_tag(tag)
     safe_line = _redact_secrets_in_text(raw_line)
     html = ansi_to_html(safe_line.rstrip("\n"))
@@ -562,6 +563,13 @@ def _append_log(tag: str, raw_line: str) -> None:
         drop = len(buf) - MAX_LOG_LINES
         del buf[:drop]
         LOG_BASE_SEQ[t] = int(LOG_BASE_SEQ.get(t, 1)) + drop
+
+def _append_log(tag: str, raw_line: str) -> None:
+    t = _norm_log_tag(tag)
+    _append_log_to_buffer(t, raw_line)
+    if t != DIAG_LOG_TAG:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _append_log_to_buffer(DIAG_LOG_TAG, f"[{ts}] [{t}] {raw_line}")
 
 def _install_ui_log_forwarder() -> None:
     try:
