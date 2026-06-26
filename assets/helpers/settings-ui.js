@@ -1568,6 +1568,7 @@ async function loadConfig() {
     cwRenderOtherSessions(st);
   } catch {}
 
+  try { await cwMobileDevicesRefresh(); } catch {}
   try { await cwAppAuthPlexRefreshStatus(); } catch {}
   try { cwUiSettingsHubUpdate?.(); } catch {}
 
@@ -1638,6 +1639,190 @@ function cwRenderOtherSessions(st) {
   if (btn) btn.disabled = !(st && st.authenticated && count > 0);
 }
 
+function cwMobileDateLabel(seconds) {
+  const n = Number(seconds || 0);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  try {
+    return new Date(n * 1000).toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+async function cwMobileJson(url, options = {}) {
+  const res = await fetch(url, {
+    cache: "no-store",
+    credentials: "same-origin",
+    ...options,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) {
+    throw new Error(String(data?.detail || data?.error || `HTTP ${res.status}`));
+  }
+  return data;
+}
+
+function cwMobileSetStatus(text, warn = false) {
+  const el = document.getElementById("mobile_auth_state");
+  if (!el) return;
+  el.textContent = String(text || "");
+  el.classList.toggle("warn", !!warn);
+}
+
+function cwMobileRenderDevices(devices) {
+  const list = document.getElementById("mobile_devices_list");
+  const count = Array.isArray(devices) ? devices.length : 0;
+  cwMobileSetStatus(`${count} paired ${count === 1 ? "device" : "devices"}`);
+  if (!list) return;
+  list.textContent = "";
+
+  if (!count) {
+    const empty = document.createElement("div");
+    empty.className = "sub";
+    empty.textContent = "No paired companion devices.";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const device of devices) {
+    const id = String(device?.id || "");
+    const name = String(device?.name || "Android device");
+    const scopes = Array.isArray(device?.scopes) ? device.scopes.join(", ") : "read";
+    const seen = cwMobileDateLabel(device?.last_seen_at);
+    const row = document.createElement("div");
+    row.className = "cw-mobile-device-row";
+    row.dataset.mobileDeviceId = id;
+
+    const meta = document.createElement("div");
+    meta.className = "cw-mobile-device-meta";
+    const title = document.createElement("strong");
+    title.textContent = name;
+    const detail = document.createElement("div");
+    detail.className = "sub";
+    detail.textContent = `${scopes || "read"}${seen ? ` | seen ${seen}` : ""}`;
+    meta.append(title, detail);
+
+    const revoke = document.createElement("button");
+    revoke.className = "btn";
+    revoke.type = "button";
+    revoke.textContent = "Revoke";
+    revoke.disabled = !id;
+    revoke.addEventListener("click", () => cwMobileRevokeDevice(id, name));
+
+    row.append(meta, revoke);
+    list.appendChild(row);
+  }
+}
+
+async function cwMobileDevicesRefresh() {
+  try {
+    const data = await cwMobileJson("/api/mobile/devices");
+    const devices = Array.isArray(data?.devices) ? data.devices : [];
+    cwMobileRenderDevices(devices);
+    return devices;
+  } catch (err) {
+    cwMobileSetStatus(String(err?.message || err || "Could not load companion devices."), true);
+    return [];
+  }
+}
+
+function cwMobilePairingPollUntil(expiresAt) {
+  try { clearInterval(window.__cwMobilePairingPoll); } catch {}
+  const stopAt = Number(expiresAt || 0);
+  if (!Number.isFinite(stopAt) || stopAt <= 0) return;
+  window.__cwMobilePairingPoll = setInterval(async () => {
+    if (Date.now() / 1000 > stopAt) {
+      clearInterval(window.__cwMobilePairingPoll);
+      return;
+    }
+    try { await cwMobileDevicesRefresh(); } catch {}
+  }, 5000);
+}
+
+async function cwMobilePairingStart() {
+  const btn = document.getElementById("btn-mobile-pairing-start");
+  const box = document.getElementById("mobile_pairing_box");
+  const qr = document.getElementById("mobile_pairing_qr");
+  const code = document.getElementById("mobile_pairing_code");
+  const uri = document.getElementById("mobile_pairing_uri");
+  const expiry = document.getElementById("mobile_pairing_expiry");
+  const previous = btn?.textContent || "Add device";
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Creating...";
+    }
+    const data = await cwMobileJson("/api/mobile/pairing/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        device_name: "CrossWatch companion",
+        server_url: window.location?.origin || "",
+        scopes: ["read", "actions", "diagnostics", "safe-config"],
+      }),
+    });
+    if (box) box.classList.remove("hidden");
+    if (code) code.textContent = String(data?.code || "");
+    if (uri) uri.value = String(data?.pairing_uri || "");
+    if (expiry) {
+      const until = cwMobileDateLabel(data?.expires_at);
+      expiry.textContent = until ? `Expires ${until}` : "";
+    }
+    if (qr) {
+      qr.textContent = "";
+      const img = document.createElement("img");
+      img.alt = "Companion pairing QR code";
+      img.addEventListener("error", () => {
+        qr.textContent = "";
+        const msg = document.createElement("div");
+        msg.className = "sub";
+        msg.style.color = "#1f2937";
+        msg.style.textAlign = "center";
+        msg.textContent = "QR generator missing. Install requirements and restart CrossWatch.";
+        qr.appendChild(msg);
+        cwMobileSetStatus("QR image could not be loaded. Use the code or URI for now.", true);
+      });
+      img.src = `/api/mobile/pairing/${encodeURIComponent(String(data?.id || ""))}/qr.svg?t=${Date.now()}`;
+      qr.appendChild(img);
+    }
+    cwMobileSetStatus("Pairing code ready");
+    cwMobilePairingPollUntil(data?.expires_at);
+    try { await cwMobileDevicesRefresh(); } catch {}
+  } catch (err) {
+    cwMobileSetStatus(String(err?.message || err || "Could not create pairing code."), true);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = previous;
+    }
+  }
+}
+
+async function cwMobileRevokeDevice(id, name = "") {
+  const deviceId = String(id || "");
+  if (!deviceId) return false;
+  if (!confirm(`Revoke ${name || "this companion device"}?`)) return false;
+  const row = Array.from(document.querySelectorAll(".cw-mobile-device-row"))
+    .find((el) => String(el?.dataset?.mobileDeviceId || "") === deviceId);
+  const btn = row?.querySelector("button");
+  try {
+    if (btn) btn.disabled = true;
+    await cwMobileJson(`/api/mobile/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" });
+    await cwMobileDevicesRefresh();
+    return true;
+  } catch (err) {
+    cwMobileSetStatus(String(err?.message || err || "Could not revoke companion device."), true);
+    if (btn) btn.disabled = false;
+    return false;
+  }
+}
+
 async function cwRefreshAppAuthStatus() {
   const r = await fetch("/api/app-auth/status", { cache: "no-store", credentials: "same-origin" });
   const st = r.ok ? await r.json() : null;
@@ -1666,6 +1851,7 @@ async function cwRefreshAppAuthStatus() {
   const btn = document.getElementById("btn-auth-logout");
   if (btn) btn.disabled = !(st && st.authenticated);
   cwRenderOtherSessions(st);
+  try { await cwMobileDevicesRefresh(); } catch {}
 }
 
 window.cwAppLogout = async function cwAppLogout() {
@@ -1849,6 +2035,9 @@ function setTraktSuccess(show) {
     cwMetaSettingsHubUpdate,
     cwMetaSettingsHubInit,
     cwMetaSettingsHubEnsure,
+    cwMobileDevicesRefresh,
+    cwMobilePairingStart,
+    cwMobileRevokeDevice,
     loadConfig,
     updateTmdbHint,
     setTraktSuccess,
