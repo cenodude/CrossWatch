@@ -690,21 +690,25 @@ def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
     typ = _media_type(event)
     raw_targets = event.get("targets")
     targets: list[Any] = raw_targets if isinstance(raw_targets, list) else []
-    sources = [_provider_ref(str(event.get("source") or ""), str(event.get("source_instance") or _DEFAULT_INSTANCE))]
+    source = _provider_ref(str(event.get("source") or ""), str(event.get("source_instance") or _DEFAULT_INSTANCE))
+    target_refs: list[dict[str, str]] = []
     for target in targets:
         if isinstance(target, Mapping):
-            sources.append(_provider_ref(str(target.get("target") or ""), str(target.get("target_instance") or _DEFAULT_INSTANCE)))
+            target_refs.append(_provider_ref(str(target.get("target") or ""), str(target.get("target_instance") or _DEFAULT_INSTANCE)))
     if not targets and event.get("target"):
-        sources.append(_provider_ref(str(event.get("target") or ""), str(event.get("target_instance") or _DEFAULT_INSTANCE)))
+        target_refs.append(_provider_ref(str(event.get("target") or ""), str(event.get("target_instance") or _DEFAULT_INSTANCE)))
 
     seen: set[tuple[str, str]] = set()
     clean_sources: list[dict[str, str]] = []
-    for source in sources:
-        key = (source["provider"], source["instance"])
+    clean_targets: list[dict[str, str]] = []
+    for endpoint in [source, *target_refs]:
+        key = (endpoint["provider"], endpoint["instance"])
         if not key[0] or key in seen:
             continue
         seen.add(key)
-        clean_sources.append(source)
+        clean_sources.append(endpoint)
+        if endpoint is not source:
+            clean_targets.append(endpoint)
 
     return {
         "id": str(event.get("id") or ""),
@@ -724,7 +728,9 @@ def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
         "method": str(event.get("method") or "").lower(),
         "ids": _ids(event),
         "tmdb": _tmdb_id(event),
-        "poster": _poster_url(event, size="w300"),
+        "poster": _poster_url(event, size="w300", episode_still=True),
+        "source": source,
+        "targets": clean_targets,
         "sources": clean_sources,
     }
 
@@ -751,7 +757,7 @@ def _history_state_row(raw_key: str, item: Mapping[str, Any], sources: list[dict
         "method": "sync_state",
         "ids": _ids(item),
         "tmdb": _tmdb_id(item),
-        "poster": _poster_url(item, size="w300"),
+        "poster": _poster_url(item, size="w300", episode_still=True),
         "sources": sources,
     }
 
@@ -850,7 +856,7 @@ def recent_history_widget(
     state_rows = _latest_history_state_rows(state or {})
     tracker_rows = _latest_history_tracker_rows(tracker_items or {})
     rows = _merge_history_rows(state_rows, tracker_rows)
-    selected = _resolve_missing_art_rows(rows[:cap], size="w300")
+    selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
     return {"ok": True, "items": selected, "total": len(rows)}
 
 
@@ -858,7 +864,7 @@ def recent_scrobble_widget(*, limit: int = 8) -> dict[str, Any]:
     cap = max(1, min(int(limit or 8), 24))
     payload = list_events(limit=max(cap, 12), offset=0, status="ok", group_routes=True)
     rows = [_activity_row(item) for item in payload.get("items") or [] if isinstance(item, Mapping)]
-    selected = _resolve_missing_art_rows(rows[:cap], size="w300")
+    selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
     return {"ok": True, "items": selected, "total": len(rows)}
 
 
