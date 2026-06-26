@@ -21,10 +21,8 @@ foreach ($tool in @($androidJar, $aapt2, $d8, $zipalign, $apksigner)) {
     if (-not (Test-Path $tool)) { throw "Missing build input: $tool" }
 }
 
-$javaHome = $env:JAVA_HOME
-if (-not $javaHome -or -not (Test-Path (Join-Path $javaHome "bin\javac.exe"))) {
-    $javaHome = "C:\Users\pasca\.jdks\openjdk-17.0.1"
-}
+$localJavaHome = "C:\Users\pasca\.jdks\openjdk-17.0.1"
+$javaHome = if (Test-Path (Join-Path $localJavaHome "bin\javac.exe")) { $localJavaHome } else { $env:JAVA_HOME }
 $javac = Join-Path $javaHome "bin\javac.exe"
 $keytool = Join-Path $javaHome "bin\keytool.exe"
 if (-not (Test-Path $javac)) { throw "javac not found. Set JAVA_HOME to a JDK." }

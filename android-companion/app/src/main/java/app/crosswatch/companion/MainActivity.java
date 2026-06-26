@@ -5,6 +5,8 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -19,7 +21,10 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.HapticFeedbackConstants;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
@@ -42,8 +47,10 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -75,6 +82,24 @@ public class MainActivity extends Activity {
     private String status = "Ready";
     private int statusInset = 0;
     private int navInset = 0;
+    private boolean refreshInFlight = false;
+    private boolean foreground = false;
+    private float pullStartY = -1f;
+    private float swipeStartX = -1f;
+    private float swipeStartY = -1f;
+    private boolean pullReady = false;
+    private final Map<String, Bitmap> imageCache = new HashMap<>();
+    private final Runnable autoRefreshTask = new Runnable() {
+        @Override
+        public void run() {
+            if (!foreground) return;
+            if (hasMobileToken() && !refreshInFlight) {
+                refresh(false);
+            } else {
+                scheduleAutoRefresh();
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,18 +114,34 @@ public class MainActivity extends Activity {
         mobileToken = prefs.getString("mobile_token", "");
         summary = Summary.sample(serverUrl);
         buildShell();
-        if (!handlePairingIntent(getIntent())) refresh();
+        if (!handlePairingIntent(getIntent())) refresh(true);
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (!handlePairingIntent(intent)) refresh();
+        if (!handlePairingIntent(intent)) refresh(true);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        foreground = true;
+        if (hasMobileToken()) refresh(false);
+        scheduleAutoRefresh();
+    }
+
+    @Override
+    protected void onPause() {
+        foreground = false;
+        main.removeCallbacks(autoRefreshTask);
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        main.removeCallbacks(autoRefreshTask);
         io.shutdownNow();
         super.onDestroy();
     }
@@ -121,7 +162,6 @@ public class MainActivity extends Activity {
 
         LinearLayout mainColumn = new LinearLayout(this);
         mainColumn.setOrientation(LinearLayout.VERTICAL);
-        mainColumn.addView(topBar(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(isTablet() ? 96 : 88)));
         content = new FrameLayout(this);
         mainColumn.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
@@ -160,35 +200,6 @@ public class MainActivity extends Activity {
         claimPairing(scanned);
     }
 
-    private View topBar() {
-        LinearLayout bar = row();
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(isTablet() ? 28 : 18), dp(12), dp(isTablet() ? 28 : 18), dp(10));
-        bar.setBackgroundColor(BG);
-
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.crosswatch_icon);
-        icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-        icon.setBackground(round(0xFF162131, 18, 0));
-        icon.setPadding(dp(4), dp(4), dp(4), dp(4));
-        bar.addView(icon, new LinearLayout.LayoutParams(dp(54), dp(54)));
-
-        LinearLayout titleBlock = col();
-        titleBlock.setPadding(dp(12), 0, dp(12), 0);
-        ImageView wordmark = new ImageView(this);
-        wordmark.setImageResource(R.drawable.crosswatch_wordmark);
-        wordmark.setAdjustViewBounds(true);
-        wordmark.setScaleType(ImageView.ScaleType.FIT_START);
-        titleBlock.addView(wordmark, new LinearLayout.LayoutParams(isTablet() ? dp(220) : dp(174), dp(34)));
-        titleBlock.addView(label(statusLine(), 12, Typeface.BOLD, statusColor()));
-        bar.addView(titleBlock, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        Button refresh = button("Refresh", MINT, BG);
-        refresh.setOnClickListener(v -> refresh());
-        bar.addView(refresh, new LinearLayout.LayoutParams(dp(isTablet() ? 132 : 112), dp(50)));
-        return bar;
-    }
-
     private View bottomNav() {
         LinearLayout wrap = col();
         wrap.setPadding(dp(10), dp(6), dp(10), navInset + dp(8));
@@ -196,7 +207,7 @@ public class MainActivity extends Activity {
         LinearLayout nav = row();
         nav.setGravity(Gravity.CENTER);
         nav.setPadding(dp(6), dp(6), dp(6), dp(6));
-        nav.setBackground(round(0xF0111822, 22, 0x242F3D));
+        nav.setBackground(round(0xF00F141D, 24, 0x1F2A3443));
         for (String item : sections()) {
             nav.addView(navButton(item, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
         }
@@ -208,7 +219,7 @@ public class MainActivity extends Activity {
         LinearLayout rail = col();
         rail.setPadding(dp(12), dp(18), dp(12), navInset + dp(14));
         rail.setGravity(Gravity.CENTER_HORIZONTAL);
-        rail.setBackgroundColor(0xFF0B1018);
+        rail.setBackgroundColor(0xFF0A0E15);
         ImageView icon = new ImageView(this);
         icon.setImageResource(R.drawable.crosswatch_icon);
         icon.setPadding(dp(6), dp(6), dp(6), dp(6));
@@ -227,17 +238,17 @@ public class MainActivity extends Activity {
         LinearLayout b = col();
         b.setGravity(Gravity.CENTER);
         b.setPadding(dp(4), dp(4), dp(4), dp(4));
-        b.setBackground(active ? gradient(new int[]{MINT, CYAN}, rail ? 18 : 17) : round(Color.TRANSPARENT, 16, 0));
+        b.setBackground(active ? round(0xFF202734, rail ? 18 : 18, 0x3349D8B5) : round(Color.TRANSPARENT, 16, 0));
         b.setClickable(true);
         b.setOnClickListener(v -> {
             selected = item;
+            haptic();
             buildShell();
         });
 
-        TextView marker = label(navMarker(item), rail ? 16 : 14, Typeface.BOLD, active ? BG : SOFT);
-        marker.setGravity(Gravity.CENTER);
-        b.addView(marker, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        TextView text = label(item, rail ? 11 : 10, Typeface.BOLD, active ? BG : SOFT);
+        NavIconView icon = new NavIconView(this, item, active);
+        b.addView(icon, new LinearLayout.LayoutParams(dp(rail ? 28 : 24), dp(rail ? 28 : 24)));
+        TextView text = label(item, rail ? 11 : 10, Typeface.BOLD, active ? INK : SOFT);
         text.setGravity(Gravity.CENTER);
         text.setSingleLine(true);
         b.addView(text, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -249,10 +260,17 @@ public class MainActivity extends Activity {
         content.removeAllViews();
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
+        LinearLayout scrollBody = col();
+        TextView pull = label("Pull to refresh", 12, Typeface.BOLD, SOFT);
+        pull.setGravity(Gravity.CENTER);
+        pull.setAlpha(0f);
+        scrollBody.addView(pull, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34)));
         LinearLayout page = col();
         int horizontal = isTablet() ? dp(32) : dp(18);
-        page.setPadding(horizontal, dp(8), horizontal, dp(isTablet() ? 32 : 18));
-        scroll.addView(page, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.setPadding(horizontal, dp(4), horizontal, dp(isTablet() ? 32 : 18));
+        scrollBody.addView(page, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        scroll.addView(scrollBody, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        attachPullRefresh(scroll, page, pull);
 
         if ("Dashboard".equals(selected)) dashboard(page);
         else if ("Activity".equals(selected)) activity(page);
@@ -264,84 +282,307 @@ public class MainActivity extends Activity {
     }
 
     private void dashboard(LinearLayout page) {
-        heroHeader(page);
+        statusStrip(page);
         metricGrid(page, Arrays.asList(
-                pair("Sync", summary.syncRunning ? "Running" : "Idle"),
+                pair("Sync", summary.syncState),
                 pair("Scheduler", summary.scheduler),
-                pair("Next run", summary.nextRun),
-                pair("Warnings", String.valueOf(summary.warnings))
-        ), isTablet() ? 4 : 2);
-        section(page, "Now");
-        nowCard(page);
+                pair("Watcher", summary.watcher),
+                pair("Webhook", summary.webhook),
+                pair("Next run", summary.nextRun)
+        ), isTablet() ? 5 : 2);
+        if (summary.nowPlaying.active) {
+            section(page, "Now");
+            nowCard(page);
+        }
         section(page, "Providers");
         providerGrid(page, summary.providers, isTablet() ? 3 : 2);
     }
 
-    private void heroHeader(LinearLayout page) {
-        LinearLayout hero = col();
-        hero.setPadding(dp(18), dp(18), dp(18), dp(18));
-        hero.setBackground(gradient(new int[]{0xFF192338, 0xFF123B45, 0xFF13202F}, 24));
+    private void attachPullRefresh(ScrollView scroll, View page, TextView pull) {
+        scroll.setOnTouchListener((view, event) -> {
+            if (refreshInFlight) return false;
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                pullStartY = event.getY();
+                swipeStartX = event.getX();
+                swipeStartY = event.getY();
+                pullReady = false;
+                return false;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_MOVE && scroll.getScrollY() <= 0 && pullStartY >= 0) {
+                float dy = event.getY() - pullStartY;
+                if (dy > 0) {
+                    float pullDistance = Math.min(dp(92), dy * 0.48f);
+                    float progress = Math.min(1f, pullDistance / dp(72));
+                    page.setTranslationY(pullDistance);
+                    pull.setTranslationY(pullDistance * 0.24f);
+                    pull.setAlpha(Math.max(0.18f, progress));
+                    pull.setText(progress >= 1f ? "Release to refresh" : "Pull to refresh");
+                    pullReady = progress >= 1f;
+                    return true;
+                }
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+                float dx = event.getX() - swipeStartX;
+                float dy = event.getY() - swipeStartY;
+                if (Math.abs(dx) > dp(84) && Math.abs(dx) > Math.abs(dy) * 1.7f) {
+                    navigatePage(dx < 0 ? 1 : -1);
+                    pullStartY = -1f;
+                    swipeStartX = -1f;
+                    swipeStartY = -1f;
+                    return true;
+                }
+                if (pullReady) {
+                    pull.setText("Refreshing...");
+                    pull.setAlpha(1f);
+                    settlePull(page, pull);
+                    pullReady = false;
+                    pullStartY = -1f;
+                    swipeStartX = -1f;
+                    swipeStartY = -1f;
+                    refresh(true);
+                    return true;
+                }
+                settlePull(page, pull);
+                pullStartY = -1f;
+                swipeStartX = -1f;
+                swipeStartY = -1f;
+                pullReady = false;
+            }
+            if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                settlePull(page, pull);
+                pullStartY = -1f;
+                swipeStartX = -1f;
+                swipeStartY = -1f;
+                pullReady = false;
+            }
+            return false;
+        });
+    }
 
-        LinearLayout top = row();
-        top.setGravity(Gravity.CENTER_VERTICAL);
+    private void settlePull(View page, TextView pull) {
+        page.animate().translationY(0f).setDuration(170).start();
+        pull.animate().translationY(0f).alpha(0f).setDuration(170).start();
+    }
+
+    private void navigatePage(int delta) {
+        List<String> items = sections();
+        int idx = items.indexOf(selected);
+        if (idx < 0) idx = 0;
+        int next = Math.max(0, Math.min(items.size() - 1, idx + delta));
+        if (next == idx) return;
+        selected = items.get(next);
+        haptic();
+        buildShell();
+    }
+
+    private void statusStrip(LinearLayout page) {
+        LinearLayout strip = row();
+        strip.setGravity(Gravity.CENTER_VERTICAL);
+        strip.setPadding(dp(14), dp(12), dp(14), dp(12));
+        strip.setBackground(round(0xFF111821, 18, 0x22324050));
+
+        TextView dot = label("", 1, Typeface.BOLD, statusColor());
+        dot.setBackground(round(statusColor(), 99, 0));
+        strip.addView(dot, new LinearLayout.LayoutParams(dp(10), dp(10)));
+
         LinearLayout copy = col();
-        copy.addView(label(summary.demo ? "Companion preview" : "Connected companion", 12, Typeface.BOLD, summary.demo ? GOLD : MINT));
-        TextView title = label(summary.serverName, isTablet() ? 30 : 25, Typeface.BOLD, INK);
-        title.setSingleLine(false);
-        copy.addView(title);
-        copy.addView(label(summary.serverUrl, 12, Typeface.NORMAL, 0xFFD2D9E8));
-        top.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        copy.setPadding(dp(10), 0, dp(10), 0);
+        copy.addView(label(hasMobileToken() ? "Connected - paired" : "Not paired", 13, Typeface.BOLD, hasMobileToken() ? MINT : GOLD));
+        copy.addView(label(refreshInFlight ? "Refreshing..." : (hasMobileToken() ? "Auto refresh active" : "Pull down to refresh"), 12, Typeface.NORMAL, SOFT));
+        strip.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.crosswatch_icon);
-        icon.setAlpha(0.92f);
-        top.addView(icon, new LinearLayout.LayoutParams(dp(isTablet() ? 84 : 68), dp(isTablet() ? 84 : 68)));
-        hero.addView(top);
-
-        LinearLayout chips = row();
-        chips.setGravity(Gravity.CENTER_VERTICAL);
-        chips.addView(chip(hasMobileToken() ? "Paired" : "Pairing needed", hasMobileToken() ? MINT : GOLD, 0x22182410));
-        chips.addView(chip(summary.version.isEmpty() ? "Version unknown" : summary.version, CYAN, 0x1F123242));
-        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cp.topMargin = dp(14);
-        hero.addView(chips, cp);
-
-        page.addView(hero, blockParams(16));
-        if (summary.demo) notice(page, "No live connection yet", "Pair the app from CrossWatch Security, then refresh to show live server data.", GOLD);
+        TextView version = label(summary.version.isEmpty() ? "CrossWatch" : summary.version, 12, Typeface.BOLD, MUTED);
+        version.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        strip.addView(version, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        page.addView(strip, blockParams(14));
     }
 
     private void nowCard(LinearLayout page) {
-        LinearLayout c = card();
-        c.setPadding(dp(18), dp(18), dp(18), dp(18));
-        c.setBackground(gradient(new int[]{0xFF1A2432, 0xFF142532}, 20));
-        c.addView(label("Currently watching", 12, Typeface.BOLD, MUTED));
-        TextView value = label(summary.currentlyWatching, 25, Typeface.BOLD, INK);
+        int cardHeight = dp(isTablet() ? 136 : 118);
+        int posterWidth = Math.round(cardHeight * 0.68f);
+        FrameLayout c = new FrameLayout(this);
+        c.setBackground(gradient(new int[]{0xFF172231, 0xFF111923}, 18));
+
+        RoundedImageView backdrop = new RoundedImageView(this, false, 18);
+        backdrop.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        backdrop.setAlpha(0.22f);
+        c.addView(backdrop, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        loadImageInto(summary.nowPlaying.backdrop, backdrop, false);
+
+        View scrim = new View(this);
+        scrim.setBackground(gradient(new int[]{0xEE141C28, 0xD9141A24, 0xF0121721}, 18));
+        c.addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout row = row();
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        RoundedImageView poster = new RoundedImageView(this, true, 18);
+        poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        poster.setBackgroundColor(0xFF0A0F18);
+        row.addView(poster, new LinearLayout.LayoutParams(posterWidth, cardHeight));
+        loadImageInto(summary.nowPlaying.poster, poster);
+
+        LinearLayout copy = col();
+        copy.setGravity(Gravity.CENTER_VERTICAL);
+        copy.setPadding(dp(16), dp(8), dp(16), dp(8));
+        TextView kicker = label(summary.nowPlaying.active ? summary.nowPlaying.state : "Idle", 12, Typeface.BOLD, summary.nowPlaying.active ? MINT : SOFT);
+        copy.addView(kicker);
+        TextView value = label(summary.nowPlaying.title, 20, Typeface.BOLD, INK);
         value.setSingleLine(false);
-        LinearLayout.LayoutParams vlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        vlp.topMargin = dp(8);
-        c.addView(value, vlp);
-        c.addView(label(summary.syncRunning ? "Sync is active" : "Quiet right now", 13, Typeface.NORMAL, SOFT));
-        page.addView(c, blockParams(18));
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        titleLp.topMargin = dp(2);
+        copy.addView(value, titleLp);
+        String sub = summary.nowPlaying.subtitle.isEmpty() ? (summary.nowPlaying.active ? "Playing now" : "No active watcher session") : summary.nowPlaying.subtitle;
+        copy.addView(label(sub, 13, Typeface.NORMAL, MUTED));
+        TextView progressText = label(summary.nowPlaying.progressLabel, 14, Typeface.BOLD, INK);
+        LinearLayout.LayoutParams progressTextLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        progressTextLp.topMargin = dp(9);
+        copy.addView(progressText, progressTextLp);
+        LinearLayout.LayoutParams barLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8));
+        barLp.topMargin = dp(6);
+        copy.addView(progressBar(summary.nowPlaying.progress, summary.nowPlaying.active ? MINT : LINE), barLp);
+        if (!summary.nowPlaying.position.isEmpty() || !summary.nowPlaying.duration.isEmpty()) {
+            String timing = summary.nowPlaying.position + " / " + summary.nowPlaying.duration;
+            TextView time = label(timing, 11, Typeface.BOLD, SOFT);
+            LinearLayout.LayoutParams timeLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            timeLp.topMargin = dp(5);
+            copy.addView(time, timeLp);
+        }
+        row.addView(copy, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        c.addView(row, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardHeight));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardHeight);
+        lp.bottomMargin = dp(18);
+        page.addView(c, lp);
+    }
+
+    private View progressBar(int percent, int accent) {
+        FrameLayout outer = new FrameLayout(this);
+        outer.setBackground(round(0xFF263040, 99, 0));
+        View fill = new View(this);
+        fill.setBackground(round(accent, 99, 0));
+        outer.addView(fill, new FrameLayout.LayoutParams(1, ViewGroup.LayoutParams.MATCH_PARENT));
+        outer.post(() -> {
+            int bounded = Math.max(0, Math.min(100, percent));
+            int width = Math.round(outer.getWidth() * bounded / 100f);
+            ViewGroup.LayoutParams lp = fill.getLayoutParams();
+            lp.width = bounded <= 0 ? 0 : Math.max(dp(4), width);
+            fill.setLayoutParams(lp);
+        });
+        return outer;
     }
 
     private void activity(LinearLayout page) {
         pageIntro(page, "Recent activity", "Fast read-only view of CrossWatch events.");
         for (ActivityItem item : summary.activity) {
-            LinearLayout c = card();
+            LinearLayout c = row();
             c.setOrientation(LinearLayout.HORIZONTAL);
             c.setGravity(Gravity.CENTER_VERTICAL);
-            TextView badge = label(levelShort(item.level), 11, Typeface.BOLD, levelColor(item.level));
-            badge.setGravity(Gravity.CENTER);
-            badge.setBackground(round(tint(levelColor(item.level), 0.16f), 14, tint(levelColor(item.level), 0.32f)));
-            c.addView(badge, new LinearLayout.LayoutParams(dp(46), dp(46)));
+            c.setPadding(0, 0, dp(8), 0);
+            c.setBackground(round(SURFACE_2, 18, LINE));
+
+            int cardHeight = isTablet() ? dp(112) : dp(90);
+            int posterWidth = activityThumbWidth(cardHeight, item);
+            FrameLayout media = new FrameLayout(this);
+            RoundedImageView poster = new RoundedImageView(this, true, 16);
+            poster.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            poster.setBackgroundColor(0xFF0A0F18);
+            media.addView(poster, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            loadImageInto(item.poster, poster);
+            if (!item.episodeLabel.isEmpty()) {
+                TextView badge = label(item.episodeLabel, isTablet() ? 12 : 11, Typeface.BOLD, INK);
+                badge.setGravity(Gravity.CENTER);
+                badge.setPadding(dp(8), 0, dp(8), 0);
+                badge.setBackground(round(0xDD121824, 10, 0x33415062));
+                FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(28), Gravity.RIGHT | Gravity.BOTTOM);
+                blp.rightMargin = dp(8);
+                blp.bottomMargin = dp(8);
+                media.addView(badge, blp);
+            }
+            c.addView(media, new LinearLayout.LayoutParams(posterWidth, ViewGroup.LayoutParams.MATCH_PARENT));
+
             LinearLayout txt = col();
-            txt.setPadding(dp(14), 0, dp(10), 0);
-            txt.addView(label(item.title, 16, Typeface.BOLD, INK));
-            txt.addView(label(item.detail, 13, Typeface.NORMAL, MUTED));
+            txt.setGravity(Gravity.CENTER_VERTICAL);
+            txt.setPadding(dp(14), 0, dp(8), 0);
+            TextView title = label(item.title, isTablet() ? 18 : 16, Typeface.BOLD, INK);
+            title.setSingleLine(true);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            txt.addView(title);
+            TextView detail = label(item.detail, isTablet() ? 14 : 12, Typeface.BOLD, MUTED);
+            detail.setSingleLine(true);
+            detail.setEllipsize(TextUtils.TruncateAt.END);
+            LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            detailLp.topMargin = dp(3);
+            txt.addView(detail, detailLp);
             c.addView(txt, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            c.addView(label(item.time, 12, Typeface.BOLD, SOFT));
-            page.addView(c, blockParams(12));
+
+            LinearLayout routes = col();
+            routes.setGravity(Gravity.CENTER_VERTICAL | Gravity.RIGHT);
+            List<String> sourceProviders = activityRouteProviders(item, true);
+            List<String> sinkProviders = activityRouteProviders(item, false);
+            if (!sourceProviders.isEmpty()) {
+                LinearLayout sourceRow = row();
+                sourceRow.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                for (String source : sourceProviders) {
+                    sourceRow.addView(sourceChip(source));
+                }
+                routes.addView(sourceRow, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)));
+            }
+            if (!sinkProviders.isEmpty()) {
+                LinearLayout sinkRow = row();
+                sinkRow.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+                for (String source : sinkProviders) {
+                    sinkRow.addView(sourceChip(source));
+                }
+                LinearLayout.LayoutParams sinkLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24));
+                if (!sourceProviders.isEmpty()) sinkLp.topMargin = dp(5);
+                routes.addView(sinkRow, sinkLp);
+            }
+            c.addView(routes, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardHeight);
+            lp.bottomMargin = dp(14);
+            page.addView(c, lp);
         }
+    }
+
+    private int activityThumbWidth(int cardHeight, ActivityItem item) {
+        int screen = getResources().getDisplayMetrics().widthPixels;
+        int pagePadding = isTablet() ? dp(64) : dp(36);
+        int chipReserve = activityRouteWidth(item) + dp(6);
+        int minText = isTablet() ? dp(260) : dp(150);
+        int available = Math.max(dp(260), screen - pagePadding);
+        int ideal = Math.round(cardHeight * 1.48f);
+        int max = Math.max(dp(96), available - chipReserve - minText - dp(30));
+        return Math.max(dp(96), Math.min(ideal, max));
+    }
+
+    private int activityRouteWidth(ActivityItem item) {
+        int count = Math.max(activityRouteProviders(item, true).size(), activityRouteProviders(item, false).size());
+        return count <= 0 ? 0 : count * dp(24);
+    }
+
+    private List<String> activityRouteProviders(ActivityItem item, boolean mediaSource) {
+        List<String> out = new ArrayList<>();
+        int limit = mediaSource ? 1 : 3;
+        for (String source : item.sources) {
+            String key = providerKey(source);
+            boolean media = isMediaSource(key);
+            if (media != mediaSource || containsProvider(out, key)) continue;
+            out.add(key);
+            if (out.size() >= limit) break;
+        }
+        return out;
+    }
+
+    private boolean containsProvider(List<String> providers, String key) {
+        for (String provider : providers) {
+            if (providerKey(provider).equals(providerKey(key))) return true;
+        }
+        return false;
+    }
+
+    private boolean isMediaSource(String provider) {
+        String key = providerKey(provider);
+        return "PLEX".equals(key) || "EMBY".equals(key) || "JELLYFIN".equals(key);
     }
 
     private void library(LinearLayout page) {
@@ -381,7 +622,7 @@ public class MainActivity extends Activity {
         save.setOnClickListener(v -> {
             serverUrl = input.getText().toString().trim().replaceAll("/+$", "");
             prefs.edit().putString("server_url", serverUrl).apply();
-            refresh();
+            refresh(true);
         });
         LinearLayout.LayoutParams saveLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52));
         saveLp.topMargin = dp(12);
@@ -442,33 +683,38 @@ public class MainActivity extends Activity {
             for (int j = 0; j < columns; j++) {
                 int idx = i + j;
                 View child = idx < items.size() ? metric(items.get(idx).a, items.get(idx).b) : new View(this);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(112), 1f);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(76), 1f);
                 if (j > 0) lp.leftMargin = dp(10);
                 r.addView(child, lp);
             }
-            page.addView(r, blockParams(10));
+            page.addView(r, blockParams(8));
         }
     }
 
     private View metric(String label, String value) {
         LinearLayout c = card();
         c.setGravity(Gravity.CENTER_VERTICAL);
-        c.addView(label(label, 12, Typeface.BOLD, MUTED));
-        TextView val = label(value, 20, Typeface.BOLD, INK);
+        c.setPadding(dp(13), dp(10), dp(13), dp(10));
+        c.addView(label(label, 11, Typeface.BOLD, MUTED));
+        TextView val = label(value, 16, Typeface.BOLD, INK);
         val.setSingleLine(false);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(10);
+        lp.topMargin = dp(5);
         c.addView(val, lp);
         return c;
     }
 
     private void providerGrid(LinearLayout page, List<Provider> providers, int columns) {
+        if (providers == null || providers.isEmpty()) {
+            notice(page, "No configured providers", "Configure providers in CrossWatch first. The companion app only shows providers that are actually set up.", GOLD);
+            return;
+        }
         for (int i = 0; i < providers.size(); i += columns) {
             LinearLayout r = row();
             for (int j = 0; j < columns; j++) {
                 int idx = i + j;
                 View child = idx < providers.size() ? provider(providers.get(idx)) : new View(this);
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(isTablet() ? 150 : 154), 1f);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(isTablet() ? 126 : 128), 1f);
                 if (j > 0) lp.leftMargin = dp(10);
                 r.addView(child, lp);
             }
@@ -527,27 +773,49 @@ public class MainActivity extends Activity {
         page.addView(c, blockParams(14));
     }
 
-    private TextView chip(String text, int accent, int bg) {
-        TextView chip = label(text, 12, Typeface.BOLD, accent);
-        chip.setPadding(dp(10), dp(7), dp(10), dp(7));
-        chip.setBackground(round(bg, 18, tint(accent, 0.28f)));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.rightMargin = dp(8);
-        chip.setLayoutParams(lp);
-        return chip;
+    private void refresh() {
+        refresh(true);
     }
 
-    private void refresh() {
-        status = "Refreshing";
-        rebuild();
+    private void refresh(boolean userInitiated) {
+        if (refreshInFlight) return;
+        main.removeCallbacks(autoRefreshTask);
+        if (userInitiated) haptic();
+        refreshInFlight = true;
+        if (userInitiated) {
+            status = "Refreshing";
+            rebuild();
+        }
         io.execute(() -> {
             Summary next = fetchSummary(serverUrl);
             main.post(() -> {
-                summary = next;
-                status = next.demo ? "Preview data" : "Connected";
-                rebuild();
+                boolean keepCurrent = !userInitiated && next.demo && summary != null && !summary.demo;
+                if (!keepCurrent) {
+                    summary = next;
+                    status = next.demo ? "Preview data" : "Connected";
+                }
+                refreshInFlight = false;
+                if (!keepCurrent || userInitiated) rebuild();
+                scheduleAutoRefresh();
             });
         });
+    }
+
+    private int autoRefreshDelayMs() {
+        if (!hasMobileToken()) return 45000;
+        if (summary != null && summary.nowPlaying != null && summary.nowPlaying.active) return 12000;
+        return "Dashboard".equals(selected) ? 45000 : 60000;
+    }
+
+    private void scheduleAutoRefresh() {
+        main.removeCallbacks(autoRefreshTask);
+        if (!foreground) return;
+        main.postDelayed(autoRefreshTask, autoRefreshDelayMs());
+    }
+
+    private void haptic() {
+        View v = root != null ? root : content;
+        if (v != null) v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK);
     }
 
     private void action(String path) {
@@ -557,7 +825,7 @@ public class MainActivity extends Activity {
             boolean ok = post(serverUrl + path);
             main.post(() -> {
                 status = ok ? "Action sent" : "Action unavailable";
-                refresh();
+                refresh(true);
             });
         });
     }
@@ -597,7 +865,7 @@ public class MainActivity extends Activity {
                     mobileToken = token;
                     prefs.edit().putString("mobile_token", token).apply();
                     status = "Device paired";
-                    refresh();
+                    refresh(true);
                 });
             } catch (Exception err) {
                 final String detail = shortError(err);
@@ -815,24 +1083,6 @@ public class MainActivity extends Activity {
         return Arrays.asList("Dashboard", "Activity", "Library", "Tools", "Settings");
     }
 
-    private String navMarker(String item) {
-        if ("Dashboard".equals(item)) return "D";
-        if ("Activity".equals(item)) return "A";
-        if ("Library".equals(item)) return "L";
-        if ("Tools".equals(item)) return "T";
-        return "S";
-    }
-
-    private String initials(String name) {
-        String clean = name == null ? "" : name.trim();
-        if (clean.length() <= 2) return clean.toUpperCase(Locale.ROOT);
-        return clean.substring(0, 2).toUpperCase(Locale.ROOT);
-    }
-
-    private String statusLine() {
-        return status + " - " + (hasMobileToken() ? "paired" : "not paired");
-    }
-
     private int statusColor() {
         String s = status == null ? "" : status.toLowerCase(Locale.ROOT);
         if (s.contains("fail") || s.contains("unavailable") || s.contains("removed")) return ROSE;
@@ -847,6 +1097,37 @@ public class MainActivity extends Activity {
         if (v.contains("ERROR")) return ROSE;
         if (v.contains("OK")) return MINT;
         return CYAN;
+    }
+
+    private View sourceChip(String source) {
+        String key = providerKey(source);
+        FrameLayout chip = new FrameLayout(this);
+        chip.setBackground(round(0xFF171E2A, 99, 0x33415062));
+        Bitmap logo = loadProviderLogo(key);
+        if (logo != null) {
+            ImageView icon = new ImageView(this);
+            icon.setImageBitmap(logo);
+            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+            FrameLayout.LayoutParams ilp = new FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER);
+            chip.addView(icon, ilp);
+        } else {
+            TextView initials = label(sourceInitials(key), 9, Typeface.BOLD, INK);
+            initials.setGravity(Gravity.CENTER);
+            chip.addView(initials, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(23), dp(23));
+        lp.leftMargin = dp(4);
+        chip.setLayoutParams(lp);
+        return chip;
+    }
+
+    private String sourceInitials(String source) {
+        String key = providerKey(source);
+        if (key.length() <= 2) return key;
+        if ("MDBLIST".equals(key)) return "M";
+        if ("PUBLICMETADB".equals(key)) return "P";
+        if ("CROSSWATCH".equals(key)) return "CW";
+        return key.substring(0, 1);
     }
 
     private String providerKey(String name) {
@@ -876,6 +1157,61 @@ public class MainActivity extends Activity {
         if ("PUBLICMETADB".equals(key)) return 0xFFF5F5F5;
         if ("TAUTULLI".equals(key)) return 0xFFF59E0B;
         return BLUE;
+    }
+
+    private Bitmap loadProviderLogo(String name) {
+        String key = providerKey(name).toLowerCase(Locale.ROOT);
+        int id = getResources().getIdentifier("provider_" + key, "drawable", getPackageName());
+        if (id <= 0) return null;
+        return BitmapFactory.decodeResource(getResources(), id);
+    }
+
+    private void loadImageInto(String rawUrl, ImageView target) {
+        loadImageInto(rawUrl, target, true);
+    }
+
+    private void loadImageInto(String rawUrl, ImageView target, boolean placeholder) {
+        if (placeholder) target.setImageResource(R.drawable.crosswatch_icon);
+        String url = absoluteUrl(rawUrl);
+        if (url.isEmpty() || url.toLowerCase(Locale.ROOT).endsWith(".svg")) return;
+        Bitmap cached = imageCache.get(url);
+        if (cached != null) {
+            target.setImageBitmap(cached);
+            return;
+        }
+        io.execute(() -> {
+            try {
+                Bitmap bmp = fetchBitmap(url);
+                if (bmp == null) return;
+                imageCache.put(url, bmp);
+                main.post(() -> target.setImageBitmap(bmp));
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
+    private String absoluteUrl(String rawUrl) {
+        String value = rawUrl == null ? "" : rawUrl.trim();
+        if (value.isEmpty()) return "";
+        if (value.startsWith("http://") || value.startsWith("https://")) return value;
+        if (value.startsWith("/")) return serverUrl.replaceAll("/+$", "") + value;
+        return value;
+    }
+
+    private Bitmap fetchBitmap(String value) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(value).openConnection();
+        c.setRequestMethod("GET");
+        c.setConnectTimeout(6000);
+        c.setReadTimeout(8000);
+        c.setRequestProperty("Accept", "image/*,*/*;q=0.8");
+        addMobileAuth(c);
+        if (c.getResponseCode() < 200 || c.getResponseCode() >= 300) return null;
+        InputStream stream = c.getInputStream();
+        try {
+            return BitmapFactory.decodeStream(stream);
+        } finally {
+            stream.close();
+        }
     }
 
     private int mix(int a, int b, float t) {
@@ -924,14 +1260,88 @@ public class MainActivity extends Activity {
     }
 
     private static class Provider {
+        final String key;
         final String name;
         final String status;
         final boolean healthy;
+        final int count;
+        final int movies;
+        final int shows;
+        final int anime;
 
-        Provider(String name, String status, boolean healthy) {
+        Provider(String key, String name, String status, boolean healthy, int count, int movies, int shows, int anime) {
+            this.key = key;
             this.name = name;
             this.status = status;
             this.healthy = healthy;
+            this.count = count;
+            this.movies = movies;
+            this.shows = shows;
+            this.anime = anime;
+        }
+    }
+
+    private class NavIconView extends View {
+        private final String item;
+        private final boolean active;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final RectF rect = new RectF();
+
+        NavIconView(Context context, String item, boolean active) {
+            super(context);
+            this.item = item;
+            this.active = active;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float w = getWidth();
+            float h = getHeight();
+            float s = Math.min(w, h);
+            float cx = w / 2f;
+            float cy = h / 2f;
+            int color = active ? MINT : SOFT;
+            paint.setColor(color);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(2f, dp(2)));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+
+            if ("Dashboard".equals(item)) {
+                paint.setStyle(Paint.Style.FILL);
+                float r = s * 0.12f;
+                canvas.drawRoundRect(new RectF(cx - s * 0.34f, cy - s * 0.34f, cx - s * 0.06f, cy - s * 0.06f), r, r, paint);
+                canvas.drawRoundRect(new RectF(cx + s * 0.06f, cy - s * 0.34f, cx + s * 0.34f, cy - s * 0.06f), r, r, paint);
+                canvas.drawRoundRect(new RectF(cx - s * 0.34f, cy + s * 0.06f, cx - s * 0.06f, cy + s * 0.34f), r, r, paint);
+                canvas.drawRoundRect(new RectF(cx + s * 0.06f, cy + s * 0.06f, cx + s * 0.34f, cy + s * 0.34f), r, r, paint);
+            } else if ("Activity".equals(item)) {
+                paint.setStyle(Paint.Style.FILL);
+                canvas.drawRoundRect(new RectF(cx - s * 0.34f, cy + s * 0.02f, cx - s * 0.20f, cy + s * 0.34f), s * 0.06f, s * 0.06f, paint);
+                canvas.drawRoundRect(new RectF(cx - s * 0.07f, cy - s * 0.28f, cx + s * 0.07f, cy + s * 0.34f), s * 0.06f, s * 0.06f, paint);
+                canvas.drawRoundRect(new RectF(cx + s * 0.20f, cy - s * 0.08f, cx + s * 0.34f, cy + s * 0.34f), s * 0.06f, s * 0.06f, paint);
+            } else if ("Library".equals(item)) {
+                rect.set(cx - s * 0.34f, cy - s * 0.30f, cx + s * 0.34f, cy + s * 0.32f);
+                canvas.drawRoundRect(rect, s * 0.10f, s * 0.10f, paint);
+                canvas.drawLine(cx - s * 0.12f, cy - s * 0.30f, cx - s * 0.12f, cy + s * 0.32f, paint);
+            } else if ("Tools".equals(item)) {
+                canvas.drawLine(cx - s * 0.28f, cy + s * 0.28f, cx + s * 0.24f, cy - s * 0.24f, paint);
+                canvas.drawCircle(cx + s * 0.26f, cy - s * 0.26f, s * 0.10f, paint);
+                canvas.drawCircle(cx - s * 0.30f, cy + s * 0.30f, s * 0.08f, paint);
+            } else {
+                canvas.drawCircle(cx, cy, s * 0.26f, paint);
+                paint.setStyle(Paint.Style.FILL);
+                canvas.drawCircle(cx, cy, s * 0.08f, paint);
+                for (int i = 0; i < 8; i++) {
+                    double a = Math.PI * 2 * i / 8.0;
+                    float x1 = cx + (float) Math.cos(a) * s * 0.36f;
+                    float y1 = cy + (float) Math.sin(a) * s * 0.36f;
+                    float x2 = cx + (float) Math.cos(a) * s * 0.44f;
+                    float y2 = cy + (float) Math.sin(a) * s * 0.44f;
+                    paint.setStyle(Paint.Style.STROKE);
+                    canvas.drawLine(x1, y1, x2, y2, paint);
+                }
+            }
         }
     }
 
@@ -940,10 +1350,12 @@ public class MainActivity extends Activity {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final RectF rect = new RectF();
         private final Path clip = new Path();
+        private final Bitmap logo;
 
         ProviderTileView(Context context, Provider provider) {
             super(context);
             this.provider = provider;
+            this.logo = loadProviderLogo(provider.key);
             setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         }
 
@@ -953,7 +1365,7 @@ public class MainActivity extends Activity {
             float w = getWidth();
             float h = getHeight();
             float radius = dp(22);
-            int tone = providerTone(provider.name);
+            int tone = providerTone(provider.key);
             int keyTone = provider.healthy ? MINT : GOLD;
             rect.set(0, 0, w, h);
             clip.reset();
@@ -969,14 +1381,14 @@ public class MainActivity extends Activity {
             canvas.drawRect(rect, paint);
             paint.setShader(null);
 
-            drawProviderPattern(canvas, w, h, tone);
+            drawProviderArtwork(canvas, w, h, tone);
 
-            paint.setColor(tint(0xFF000000, 0.20f));
-            canvas.drawRect(0, h * 0.56f, w, h, paint);
+            paint.setColor(tint(0xFF000000, 0.18f));
+            canvas.drawRect(0, h * 0.54f, w, h, paint);
 
             drawStatusPill(canvas, w, keyTone);
-            drawBigMetric(canvas, w, h, provider.healthy ? "2" : "0");
-            drawFeatureBadge(canvas, w, h, provider.healthy ? "M 2" : "IDLE");
+            drawBigMetric(canvas, w, h, String.valueOf(Math.max(0, provider.count)));
+            drawFeatureBadges(canvas, w, h);
             drawProviderFooter(canvas, w, h, tone);
 
             canvas.restoreToCount(save);
@@ -988,53 +1400,21 @@ public class MainActivity extends Activity {
             paint.setStyle(Paint.Style.FILL);
         }
 
-        private void drawProviderPattern(Canvas canvas, float w, float h, int tone) {
-            String key = providerKey(provider.name);
+        private void drawProviderArtwork(Canvas canvas, float w, float h, int tone) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(tint(tone, provider.healthy ? 0.30f : 0.16f));
+            paint.setColor(tint(tone, provider.healthy ? 0.20f : 0.10f));
+            canvas.drawCircle(w * 0.12f, h * 0.10f, w * 0.38f, paint);
+            paint.setColor(tint(0xFFFFFFFF, provider.healthy ? 0.08f : 0.05f));
+            canvas.drawCircle(w * 0.90f, h * 0.04f, w * 0.34f, paint);
 
-            Path slash = new Path();
-            if ("PLEX".equals(key)) {
-                slash.moveTo(w * 0.60f, -h * 0.12f);
-                slash.lineTo(w * 0.88f, -h * 0.12f);
-                slash.lineTo(w * 0.45f, h * 1.15f);
-                slash.lineTo(w * 0.16f, h * 1.15f);
-                slash.close();
-                canvas.drawPath(slash, paint);
-            } else if ("JELLYFIN".equals(key)) {
-                slash.moveTo(w * 0.78f, -h * 0.10f);
-                slash.lineTo(w * 1.10f, h * 0.10f);
-                slash.lineTo(w * 0.50f, h * 0.82f);
-                slash.lineTo(w * 0.18f, h * 0.62f);
-                slash.close();
-                canvas.drawPath(slash, paint);
-                paint.setColor(tint(0xFFFFFFFF, 0.10f));
-                canvas.drawPath(slash, paint);
-            } else if ("TRAKT".equals(key) || "SIMKL".equals(key)) {
-                paint.setStrokeWidth(dp(8));
-                paint.setStyle(Paint.Style.STROKE);
-                for (int i = -2; i < 7; i++) {
-                    paint.setColor(tint(tone, 0.24f));
-                    canvas.drawLine(i * w * 0.24f, h, i * w * 0.24f + w * 0.72f, 0, paint);
-                }
-                paint.setStyle(Paint.Style.FILL);
-            } else if ("ANILIST".equals(key) || "MDBLIST".equals(key)) {
-                paint.setColor(tint(0xFFFFFFFF, 0.10f));
-                canvas.drawRoundRect(new RectF(w * 0.06f, h * 0.22f, w * 0.88f, h * 0.42f), dp(12), dp(12), paint);
-                paint.setColor(tint(tone, 0.28f));
-                canvas.drawRoundRect(new RectF(w * 0.16f, h * 0.52f, w * 1.05f, h * 0.72f), dp(12), dp(12), paint);
-            } else {
-                paint.setColor(tint(tone, 0.22f));
-                canvas.drawCircle(w * 0.22f, h * 0.24f, w * 0.36f, paint);
-                paint.setColor(tint(0xFFFFFFFF, 0.08f));
-                canvas.drawCircle(w * 0.92f, h * 0.02f, w * 0.36f, paint);
-            }
-
-            paint.setTextAlign(Paint.Align.CENTER);
-            paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
-            paint.setTextSize(sp(104));
-            paint.setColor(tint(0xFFFFFFFF, 0.08f));
-            canvas.drawText(initials(provider.name), w * 0.50f, h * 0.78f, paint);
+            if (logo == null) return;
+            float size = Math.min(w, h) * 1.02f;
+            float left = (w - size) / 2f;
+            float top = h * 0.04f;
+            RectF dst = new RectF(left, top, left + size, top + size);
+            paint.setAlpha(provider.healthy ? 94 : 64);
+            canvas.drawBitmap(logo, null, dst, paint);
+            paint.setAlpha(255);
         }
 
         private void drawStatusPill(Canvas canvas, float w, int accent) {
@@ -1056,23 +1436,44 @@ public class MainActivity extends Activity {
         private void drawBigMetric(Canvas canvas, float w, float h, String value) {
             paint.setTextAlign(Paint.Align.CENTER);
             paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
-            paint.setTextSize(sp(52));
+            paint.setTextSize(sp(44));
             paint.setColor(tint(0xFF000000, 0.36f));
             canvas.drawText(value, w * 0.50f + dp(2), h * 0.62f + dp(3), paint);
             paint.setColor(0xDDE9EEF7);
             canvas.drawText(value, w * 0.50f, h * 0.62f, paint);
         }
 
-        private void drawFeatureBadge(Canvas canvas, float w, float h, String value) {
+        private void drawFeatureBadges(Canvas canvas, float w, float h) {
+            List<Pair> parts = new ArrayList<>();
+            if (provider.movies > 0) parts.add(pair("M", String.valueOf(provider.movies)));
+            if (provider.shows > 0) parts.add(pair("S", String.valueOf(provider.shows)));
+            if (provider.anime > 0) parts.add(pair("A", String.valueOf(provider.anime)));
+            if (parts.isEmpty()) {
+                if (provider.count <= 0) parts.add(pair("IDLE", ""));
+                else parts.add(pair("W", String.valueOf(provider.count)));
+            }
+
             paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
             paint.setTextSize(sp(12));
-            float bw = Math.max(dp(44), paint.measureText(value) + dp(18));
-            RectF badge = new RectF((w - bw) / 2f, h - dp(44), (w + bw) / 2f, h - dp(20));
-            paint.setColor(0xAA283241);
-            canvas.drawRoundRect(badge, dp(12), dp(12), paint);
-            paint.setTextAlign(Paint.Align.CENTER);
-            paint.setColor(INK);
-            canvas.drawText(value, badge.centerX(), badge.top + dp(17), paint);
+            float totalW = 0f;
+            float gap = dp(4);
+            for (Pair p : parts) {
+                String text = p.b.isEmpty() ? p.a : p.a + " " + p.b;
+                totalW += Math.max(dp(34), paint.measureText(text) + dp(14));
+            }
+            totalW += gap * Math.max(0, parts.size() - 1);
+            float x = (w - totalW) / 2f;
+            for (Pair p : parts) {
+                String text = p.b.isEmpty() ? p.a : p.a + " " + p.b;
+                float bw = Math.max(dp(34), paint.measureText(text) + dp(14));
+                RectF badge = new RectF(x, h - dp(38), x + bw, h - dp(16));
+                paint.setColor(0xAA202733);
+                canvas.drawRoundRect(badge, dp(12), dp(12), paint);
+                paint.setTextAlign(Paint.Align.CENTER);
+                paint.setColor(INK);
+                canvas.drawText(text, badge.centerX(), badge.top + dp(16), paint);
+                x += bw + gap;
+            }
         }
 
         private void drawProviderFooter(Canvas canvas, float w, float h, int tone) {
@@ -1088,17 +1489,67 @@ public class MainActivity extends Activity {
         }
     }
 
+    private class RoundedImageView extends ImageView {
+        private final boolean leftOnly;
+        private final int radiusDp;
+        private final Path clip = new Path();
+        private final RectF rect = new RectF();
+
+        RoundedImageView(Context context, boolean leftOnly, int radiusDp) {
+            super(context);
+            this.leftOnly = leftOnly;
+            this.radiusDp = radiusDp;
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            float w = getWidth();
+            float h = getHeight();
+            float r = dp(radiusDp);
+            clip.reset();
+            rect.set(0, 0, w, h);
+            if (!leftOnly) {
+                clip.addRoundRect(rect, r, r, Path.Direction.CW);
+            } else {
+                clip.moveTo(0, r);
+                clip.quadTo(0, 0, r, 0);
+                clip.lineTo(w, 0);
+                clip.lineTo(w, h);
+                clip.lineTo(r, h);
+                clip.quadTo(0, h, 0, h - r);
+                clip.close();
+            }
+            int save = canvas.save();
+            canvas.clipPath(clip);
+            super.onDraw(canvas);
+            canvas.restoreToCount(save);
+        }
+    }
+
     private static class ActivityItem {
         final String title;
         final String detail;
         final String time;
         final String level;
+        final String poster;
+        final String episodeLabel;
+        final List<String> sources;
+        final String method;
 
         ActivityItem(String title, String detail, String time, String level) {
+            this(title, detail, time, level, "", "", new ArrayList<>(), "");
+        }
+
+        ActivityItem(String title, String detail, String time, String level, String poster, String episodeLabel, List<String> sources, String method) {
             this.title = title;
             this.detail = detail;
             this.time = time;
             this.level = level;
+            this.poster = poster == null ? "" : poster;
+            this.episodeLabel = episodeLabel == null ? "" : episodeLabel;
+            this.sources = sources == null ? new ArrayList<>() : sources;
+            this.method = method == null ? "" : method;
         }
     }
 
@@ -1114,28 +1565,86 @@ public class MainActivity extends Activity {
         }
     }
 
+    private static class NowPlaying {
+        final boolean active;
+        final String title;
+        final String subtitle;
+        final String state;
+        final String poster;
+        final String backdrop;
+        final int progress;
+        final String progressLabel;
+        final String position;
+        final String duration;
+        final String source;
+
+        NowPlaying(boolean active, String title, String subtitle, String state, String poster, String backdrop, int progress, String progressLabel, String position, String duration, String source) {
+            this.active = active;
+            this.title = title == null || title.isEmpty() ? "Nothing playing" : title;
+            this.subtitle = subtitle == null ? "" : subtitle;
+            this.state = state == null || state.isEmpty() ? (active ? "Playing" : "Idle") : state;
+            this.poster = poster == null ? "" : poster;
+            this.backdrop = backdrop == null ? "" : backdrop;
+            this.progress = Math.max(0, Math.min(100, progress));
+            this.progressLabel = progressLabel == null || progressLabel.isEmpty()
+                    ? (this.progress > 0 ? this.progress + "% watched" : "Progress unavailable")
+                    : progressLabel;
+            this.position = position == null ? "" : position;
+            this.duration = duration == null ? "" : duration;
+            this.source = source == null ? "" : source;
+        }
+
+        static NowPlaying fromJson(JSONObject obj, String fallbackTitle) {
+            if (obj == null) return new NowPlaying(false, fallbackTitle, "No active watcher session", "Idle", "", "", 0, "Progress unavailable", "", "", "");
+            boolean active = obj.optBoolean("active", false);
+            String title = obj.optString("title", fallbackTitle == null || fallbackTitle.isEmpty() ? "Nothing playing" : fallbackTitle);
+            int progress = obj.optInt("progress", 0);
+            return new NowPlaying(
+                    active,
+                    title,
+                    obj.optString("subtitle", ""),
+                    obj.optString("state", active ? "Playing" : "Idle"),
+                    obj.optString("poster", ""),
+                    obj.optString("backdrop", ""),
+                    progress,
+                    obj.optString("progress_label", progress > 0 ? progress + "% watched" : "Progress unavailable"),
+                    obj.optString("position", ""),
+                    obj.optString("duration", ""),
+                    obj.optString("source", "")
+            );
+        }
+    }
+
     private static class Summary {
         final String serverName;
         final String serverUrl;
         final String version;
         final boolean syncRunning;
+        final String syncState;
         final String scheduler;
+        final String watcher;
+        final String webhook;
         final String nextRun;
         final String currentlyWatching;
+        final NowPlaying nowPlaying;
         final int warnings;
         final List<Provider> providers;
         final List<ActivityItem> activity;
         final List<LibraryItem> library;
         final boolean demo;
 
-        Summary(String serverName, String serverUrl, String version, boolean syncRunning, String scheduler, String nextRun, String currentlyWatching, int warnings, List<Provider> providers, List<ActivityItem> activity, List<LibraryItem> library, boolean demo) {
+        Summary(String serverName, String serverUrl, String version, boolean syncRunning, String syncState, String scheduler, String watcher, String webhook, String nextRun, String currentlyWatching, NowPlaying nowPlaying, int warnings, List<Provider> providers, List<ActivityItem> activity, List<LibraryItem> library, boolean demo) {
             this.serverName = serverName;
             this.serverUrl = serverUrl;
             this.version = version;
             this.syncRunning = syncRunning;
+            this.syncState = syncState;
             this.scheduler = scheduler;
+            this.watcher = watcher;
+            this.webhook = webhook;
             this.nextRun = nextRun;
             this.currentlyWatching = currentlyWatching;
+            this.nowPlaying = nowPlaying;
             this.warnings = warnings;
             this.providers = providers;
             this.activity = activity;
@@ -1149,17 +1658,21 @@ public class MainActivity extends Activity {
                     baseUrl == null || baseUrl.isEmpty() ? "http://10.0.2.2:8787" : baseUrl,
                     "Companion preview",
                     false,
-                    "Ready",
+                    "Idle",
+                    "Disabled",
+                    "Disabled",
+                    "Enabled",
                     "Not connected",
                     "Nothing playing",
+                    new NowPlaying(false, "Nothing playing", "No active watcher session", "Idle", "", "", 0, "Progress unavailable", "", "", ""),
                     1,
                     Arrays.asList(
-                            new Provider("Plex", "Connected", true),
-                            new Provider("Jellyfin", "Connected", true),
-                            new Provider("Trakt", "Needs attention", false),
-                            new Provider("SIMKL", "Connected", true),
-                            new Provider("AniList", "Idle", true),
-                            new Provider("MDBList", "Idle", true)
+                            new Provider("ANILIST", "AniList", "Live", true, 2, 2, 0, 0),
+                            new Provider("EMBY", "Emby", "Live", true, 2, 2, 0, 0),
+                            new Provider("JELLYFIN", "Jellyfin", "Live", true, 2, 2, 0, 0),
+                            new Provider("MDBLIST", "MDBList", "Live", true, 2, 2, 0, 0),
+                            new Provider("PLEX", "Plex", "Live", true, 2, 2, 0, 0),
+                            new Provider("PUBLICMETADB", "PublicMetaDB", "Live", true, 2, 2, 0, 0)
                     ),
                     Arrays.asList(
                             new ActivityItem("Sync route grouped", "Plex -> Trakt history completed", "2 min ago", "OK"),
@@ -1182,9 +1695,13 @@ public class MainActivity extends Activity {
                     baseUrl,
                     obj.optString("version", ""),
                     obj.optBoolean("sync_running", false),
+                    obj.optString("sync_state", obj.optBoolean("sync_running", false) ? "Running" : "Idle"),
                     obj.optString("scheduler", "Unknown"),
+                    obj.optString("watcher", "Unknown"),
+                    obj.optString("webhook", "Unknown"),
                     obj.optString("next_run", "Not scheduled"),
                     obj.optString("currently_watching", "Nothing playing"),
+                    NowPlaying.fromJson(obj.optJSONObject("now_playing"), obj.optString("currently_watching", "Nothing playing")),
                     obj.optInt("warnings", 0),
                     providers(obj.optJSONArray("providers"), fallback.providers),
                     activity(obj.optJSONArray("activity"), fallback.activity),
@@ -1198,7 +1715,19 @@ public class MainActivity extends Activity {
             List<Provider> out = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.optJSONObject(i);
-                if (o != null) out.add(new Provider(o.optString("name", "Provider"), o.optString("status", "Unknown"), o.optBoolean("healthy", false)));
+                if (o != null) {
+                    JSONObject breakdown = o.optJSONObject("breakdown");
+                    out.add(new Provider(
+                            o.optString("key", o.optString("name", "Provider")).toUpperCase(Locale.ROOT),
+                            o.optString("label", o.optString("name", "Provider")),
+                            o.optString("status", "Unknown"),
+                            o.optBoolean("healthy", false),
+                            o.optInt("count", 0),
+                            breakdown == null ? 0 : breakdown.optInt("movies", 0),
+                            breakdown == null ? 0 : breakdown.optInt("shows", 0),
+                            breakdown == null ? 0 : breakdown.optInt("anime", 0)
+                    ));
+                }
             }
             return out;
         }
@@ -1208,7 +1737,27 @@ public class MainActivity extends Activity {
             List<ActivityItem> out = new ArrayList<>();
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.optJSONObject(i);
-                if (o != null) out.add(new ActivityItem(o.optString("title", "Activity"), o.optString("detail", ""), o.optString("time", ""), o.optString("level", "INFO")));
+                if (o != null) {
+                    List<String> sources = new ArrayList<>();
+                    JSONArray rawSources = o.optJSONArray("sources");
+                    if (rawSources != null) {
+                        for (int j = 0; j < rawSources.length(); j++) {
+                            JSONObject src = rawSources.optJSONObject(j);
+                            String provider = src == null ? rawSources.optString(j, "") : src.optString("provider", "");
+                            if (provider != null && !provider.trim().isEmpty()) sources.add(provider.trim());
+                        }
+                    }
+                    out.add(new ActivityItem(
+                            o.optString("title", "Activity"),
+                            o.optString("detail", ""),
+                            o.optString("time", ""),
+                            o.optString("level", "INFO"),
+                            o.optString("poster", ""),
+                            o.optString("episode_label", ""),
+                            sources,
+                            o.optString("method", "")
+                    ));
+                }
             }
             return out;
         }
