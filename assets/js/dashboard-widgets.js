@@ -145,6 +145,25 @@
     }).join("");
   }
 
+  function scrobbleSourceLabel(source) {
+    const provider = String(source?.provider || "").trim().toUpperCase();
+    if (!provider) return "";
+    const instance = String(source?.instance || "default").trim() || "default";
+    const label = sourceLabel({ provider, instance });
+    const tone = providerMeta().tone?.(provider) || {};
+    const rgb = String(tone?.rgb || "124,92,255");
+    return `<span class="cw-scrobble-source" style="--cw-source-rgb:${esc(rgb)}" title="${esc(`Source: ${label}`)}">${esc(label)}</span>`;
+  }
+
+  function scrobbleSinkIcons(targets) {
+    const sinkRows = sourceRows(targets, 8).filter(({ provider }) => providerMeta().get?.(provider)?.scrobblerSink === true);
+    const route = sinkRows.length ? `Sinks: ${sinkRows.map(sourceLabel).join(", ")}` : "No scrobble sinks";
+    return {
+      html: sourceIcons(sinkRows, 8),
+      route,
+    };
+  }
+
   function countLabel(total, noun) {
     const n = Number(total || 0);
     const label = n === 1 ? noun : `${noun}s`;
@@ -244,7 +263,8 @@
     const hrefAttr = href ? ` href="${esc(href)}" target="_blank" rel="noopener"` : "";
     const art = poster(item);
     const artStyle = art ? ` style="--cw-history-art:url(&quot;${esc(art)}&quot;)"` : "";
-    const route = sourceRouteTitle(item?.sources);
+    const source = item?.source || sourceRows(item?.sources, 1)[0] || null;
+    const sinks = scrobbleSinkIcons(item?.targets);
     return `
       <${tag} class="cw-history-widget-item cw-history-widget-item--activity"${hrefAttr}${artStyle}>
         <span class="cw-history-thumb">
@@ -255,7 +275,10 @@
           <strong>${esc(title)}</strong>
           <span>${esc(meta || "Activity")}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
+        <span class="cw-scrobble-route">
+          ${scrobbleSourceLabel(source)}
+          <span class="cw-history-sources" title="${esc(sinks.route)}" aria-label="${esc(sinks.route)}">${sinks.html}</span>
+        </span>
       </${tag}>`;
   }
 
