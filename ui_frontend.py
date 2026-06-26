@@ -513,6 +513,8 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
                 role="tab" aria-selected="true" aria-controls="det-panel-sync" data-tab="sync">Sync</button>
               <button id="det-tab-watcher" class="det-tab" type="button"
                 role="tab" aria-selected="false" aria-controls="det-panel-watcher" data-tab="watcher">Watcher</button>
+              <button id="det-tab-debug" class="det-tab" type="button"
+                role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug">Debug</button>
             </div>
             <div class="det-tools">
               <button id="det-copy" class="ghost" type="button" title="Copy current output">Copy</button>
@@ -526,6 +528,9 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
             </div>
             <div id="det-panel-watcher" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-watcher">
               <div id="det-watch-log" class="log wlog"></div>
+            </div>
+            <div id="det-panel-debug" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-debug">
+              <div id="det-debug-log" class="log wlog"></div>
             </div>
           </div>
 
