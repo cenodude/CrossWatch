@@ -616,6 +616,9 @@ def _cache_download(
     return dest_path, mime
 
 def _placeholder_poster() -> Path:
+    local = Path(__file__).resolve().parents[1] / "assets" / "img" / "placeholder_poster.svg"
+    if local.exists():
+        return local
     return Path("/app/assets/img/placeholder_poster.svg")
 
 
