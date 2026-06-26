@@ -113,6 +113,42 @@ def _coerce_int(v: Any) -> Optional[int]:
         return None
 
 
+def _iter_dicts(value: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            out.append(node)
+            for child in node.values():
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    return out
+
+
+def _duration_from_raw(raw: Any) -> int | None:
+    for node in _iter_dicts(raw):
+        ticks = _coerce_int(node.get("RunTimeTicks") or node.get("runtime_ticks"))
+        if ticks and ticks > 0:
+            return int(ticks / 10_000)
+        duration = _coerce_int(node.get("duration") or node.get("Duration") or node.get("duration_ms"))
+        if duration and duration > 0:
+            return duration * 1000 if duration < 10_000 else duration
+    return None
+
+
+def _cover_from_raw(raw: Any) -> str | None:
+    for node in _iter_dicts(raw):
+        for key in ("cover", "poster", "thumb", "grandparentThumb"):
+            value = str(node.get(key) or "").strip()
+            if value and (value.startswith("http://") or value.startswith("https://") or value.startswith("/art/") or value.startswith("/api/")):
+                return value
+    return None
+
+
 def _payload_key(source: str, payload: dict[str, Any]) -> str:
     pk = str(payload.get("_key") or "").strip()
     if pk:
@@ -269,6 +305,10 @@ def update_from_event(
 
         ids = _extract_tmdb_ids(ev)
 
+        raw = ev.raw if isinstance(ev.raw, dict) else {}
+        eff_duration_ms = int(duration_ms) if isinstance(duration_ms, int) else _duration_from_raw(raw)
+        eff_cover = cover or _cover_from_raw(raw)
+
         payload: dict[str, Any] = {
             "source": str(source),
             "provider_instance": str(provider_instance or "").strip(),
@@ -278,8 +318,8 @@ def update_from_event(
             "season": season,
             "episode": episode,
             "progress": int(ev.progress),
-            "duration_ms": int(duration_ms) if isinstance(duration_ms, int) else None,
-            "cover": cover,
+            "duration_ms": eff_duration_ms,
+            "cover": eff_cover,
             "state": state,
             "updated": int(time.time()),
             "ids": ids,

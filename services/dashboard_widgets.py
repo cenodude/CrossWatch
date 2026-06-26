@@ -36,6 +36,12 @@ _ID_KEYS = (
     "guid",
     "slug",
 )
+_SHOW_ID_ALIASES = {
+    "tmdb_show": "tmdb",
+    "imdb_show": "imdb",
+    "tvdb_show": "tvdb",
+    "trakt_show": "trakt",
+}
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -108,12 +114,17 @@ def _ids(item: Mapping[str, Any]) -> dict[str, Any]:
         value = item.get(key)
         if value not in (None, "", 0, False):
             ids.setdefault(key, value)
-    show_ids = _as_dict(item.get("show_ids"))
+    show_ids = _merge_ids(_as_dict(ids.get("show_ids")), _as_dict(item.get("show_ids")))
+    for source in (ids, item):
+        for alias, key in _SHOW_ID_ALIASES.items():
+            value = source.get(alias)
+            if value not in (None, "", 0, False):
+                show_ids.setdefault(key, value)
     for nested_key in ("show", "series"):
         nested_ids = _as_dict(_nested_dict(item, nested_key).get("ids"))
         show_ids = _merge_ids(show_ids, nested_ids)
     if show_ids:
-        ids.setdefault("show_ids", show_ids)
+        ids["show_ids"] = show_ids
     return ids
 
 
@@ -713,7 +724,7 @@ def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
         "method": str(event.get("method") or "").lower(),
         "ids": _ids(event),
         "tmdb": _tmdb_id(event),
-        "poster": _poster_url(event, size="w300", episode_still=True),
+        "poster": _poster_url(event, size="w300"),
         "sources": clean_sources,
     }
 
@@ -740,7 +751,7 @@ def _history_state_row(raw_key: str, item: Mapping[str, Any], sources: list[dict
         "method": "sync_state",
         "ids": _ids(item),
         "tmdb": _tmdb_id(item),
-        "poster": _poster_url(item, size="w300", episode_still=True),
+        "poster": _poster_url(item, size="w300"),
         "sources": sources,
     }
 
@@ -839,7 +850,7 @@ def recent_history_widget(
     state_rows = _latest_history_state_rows(state or {})
     tracker_rows = _latest_history_tracker_rows(tracker_items or {})
     rows = _merge_history_rows(state_rows, tracker_rows)
-    selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
+    selected = _resolve_missing_art_rows(rows[:cap], size="w300")
     return {"ok": True, "items": selected, "total": len(rows)}
 
 
@@ -847,7 +858,7 @@ def recent_scrobble_widget(*, limit: int = 8) -> dict[str, Any]:
     cap = max(1, min(int(limit or 8), 24))
     payload = list_events(limit=max(cap, 12), offset=0, status="ok", group_routes=True)
     rows = [_activity_row(item) for item in payload.get("items") or [] if isinstance(item, Mapping)]
-    selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
+    selected = _resolve_missing_art_rows(rows[:cap], size="w300")
     return {"ok": True, "items": selected, "total": len(rows)}
 
 
