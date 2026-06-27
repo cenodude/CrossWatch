@@ -600,11 +600,13 @@ def _two_way_sync(
 
         if typ == "episode":
             try:
-                s = int(it.get("season") or 0)
-                e = int(it.get("episode") or 0)
+                season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
+                episode_raw = it.get("episode") if it.get("episode") is not None else it.get("episode_number")
+                s = int(season_raw) if season_raw is not None else -1
+                e = int(episode_raw) if episode_raw is not None else 0
             except Exception:
-                s, e = 0, 0
-            if s > 0 and e > 0:
+                s, e = -1, 0
+            if s >= 0 and e > 0:
                 frag = f"#s{s:02d}e{e:02d}"
                 for k, v in ids.items():
                     if v is None or str(v) == "":
@@ -613,10 +615,11 @@ def _two_way_sync(
 
         elif typ == "season":
             try:
-                s = int(it.get("season") or 0)
+                season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
+                s = int(season_raw) if season_raw is not None else -1
             except Exception:
-                s = 0
-            if s > 0:
+                s = -1
+            if s >= 0:
                 frag = f"#season:{s}"
                 for k, v in ids.items():
                     if v is None or str(v) == "":
