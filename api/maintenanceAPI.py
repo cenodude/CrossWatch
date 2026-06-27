@@ -445,8 +445,8 @@ def clear_activity_log() -> dict[str, Any]:
         except Exception:
             pass
         return res
-    except Exception as e:
-        return {"ok": False, "error": "clear_activity_log_failed", "detail": str(e)}
+    except Exception:
+        return {"ok": False, "error": "clear_activity_log_failed"}
 
 
 @router.post("/clear-recent-scrobbles")
@@ -464,8 +464,8 @@ def clear_recent_scrobbles() -> dict[str, Any]:
         except Exception:
             pass
         return res
-    except Exception as e:
-        return {"ok": False, "error": "clear_recent_scrobbles_failed", "detail": str(e)}
+    except Exception:
+        return {"ok": False, "error": "clear_recent_scrobbles_failed"}
 
 # --- statistics reset / recalculation ---
 @router.post("/reset-stats")
