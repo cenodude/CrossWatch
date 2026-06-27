@@ -577,11 +577,13 @@ def run_one_way_feature(
 
         if typ == "episode":
             try:
-                s = int(it.get("season") or 0)
-                e = int(it.get("episode") or 0)
+                season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
+                episode_raw = it.get("episode") if it.get("episode") is not None else it.get("episode_number")
+                s = int(season_raw) if season_raw is not None else -1
+                e = int(episode_raw) if episode_raw is not None else 0
             except Exception:
-                s, e = 0, 0
-            has_frag = bool(s > 0 and e > 0)
+                s, e = -1, 0
+            has_frag = bool(s >= 0 and e > 0)
             if has_frag:
                 frag = f"#s{s:02d}e{e:02d}"
     
@@ -599,10 +601,11 @@ def run_one_way_feature(
 
         elif typ == "season":
             try:
-                s = int(it.get("season") or 0)
+                season_raw = it.get("season") if it.get("season") is not None else it.get("season_number")
+                s = int(season_raw) if season_raw is not None else -1
             except Exception:
-                s = 0
-            if s > 0:
+                s = -1
+            if s >= 0:
                 frag = f"#season:{s}"
                 for src_ids in (show_ids, ids):
                     for k, v in src_ids.items():

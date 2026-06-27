@@ -243,8 +243,8 @@ def _show_id_from(item: Mapping[str, Any]) -> str | None:
 
 
 def _se_fragment(item: Mapping[str, Any]) -> str | None:
-    s = item.get("season") or item.get("season_number")
-    e = item.get("episode") or item.get("episode_number")
+    s = item.get("season") if item.get("season") is not None else item.get("season_number")
+    e = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
     try:
         s = int(s) if s is not None else None
         e = int(e) if e is not None else None

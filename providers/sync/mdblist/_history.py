@@ -1005,7 +1005,18 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
         if not isinstance(show_obj.get("seasons"), list):
             show_obj["seasons"] = []
         seasons_list: list[dict[str, Any]] = show_obj["seasons"]
-        season_obj: dict[str, Any] | None = next((x for x in seasons_list if int(x.get("number") or -1) == s), None)
+        season_obj: dict[str, Any] | None = None
+        for candidate in seasons_list:
+            candidate_raw = candidate.get("number")
+            if candidate_raw is None:
+                continue
+            try:
+                candidate_number = int(candidate_raw)
+            except (TypeError, ValueError):
+                continue
+            if candidate_number == s:
+                season_obj = candidate
+                break
         if not season_obj:
             season_obj = {"number": s}
             seasons_list.append(season_obj)
