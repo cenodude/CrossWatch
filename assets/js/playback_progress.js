@@ -367,7 +367,12 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
     const displayProgress = Number.isFinite(Number(it.live_progress_percent)) ? it.live_progress_percent : it.progress_percent;
     const pct = Math.max(0, Math.min(100, Number(displayProgress || 0)));
     const remaining = fmtRemaining(Number.isFinite(Number(it.live_remaining_seconds)) ? it.live_remaining_seconds : it.remaining_seconds);
-    const posterImg = it.poster_url || tmdbArtUrl(it, "w342") || "/assets/img/placeholder_poster.svg";
+    const directPoster = String(it.poster_url || "").trim();
+    const metadataPoster = tmdbArtUrl(it, "w342");
+    const posterImg = directPoster || metadataPoster || "/assets/img/placeholder_poster.svg";
+    const posterFallback = directPoster && metadataPoster && directPoster !== metadataPoster ? metadataPoster : "";
+    const posterFallbackAttr = posterFallback ? ` data-fallback-src="${esc(posterFallback)}"` : "";
+    const posterKey = `${posterImg}|${posterFallback}`;
     const backdropImg = it.backdrop_url || tmdbArtUrl(it, "w780", "backdrop");
     const backdropStyle = backdropImg ? ` style="--pp-backdrop:url('${esc(backdropImg)}')"` : "";
     const live = liveLabel(it);
@@ -379,7 +384,7 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
     const actionEdit = it.can_update_progress ? `<button class="pp-btn pp-action-btn pp-action-edit" data-action="edit" data-key="${esc(key)}" title="Edit progress" aria-label="Edit progress">${icon("edit")}<span>Edit</span></button>` : "";
     const actionRemove = it.can_remove_progress ? `<button class="pp-btn pp-action-btn pp-action-remove" data-action="remove" data-key="${esc(key)}" title="Remove progress" aria-label="Remove progress">${icon("delete")}<span>Remove</span></button>` : "";
     return `<article class="pp-card${selected}" data-key="${esc(key)}" role="checkbox" aria-checked="${state.selected.has(key) ? "true" : "false"}" tabindex="0"${backdropStyle}>
-      <div class="pp-art"><img src="${esc(posterImg)}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"></div>
+      <div class="pp-art"><img src="${esc(posterImg)}"${posterFallbackAttr} data-poster-key="${esc(posterKey)}" alt="" loading="lazy" decoding="async" onerror="const fallback=this.dataset.fallbackSrc;if(fallback){delete this.dataset.fallbackSrc;this.src=fallback}else{this.onerror=null;this.src='/assets/img/placeholder_poster.svg'}"></div>
       <div class="pp-body">
         <div class="pp-top">
           <div class="pp-card-head">
@@ -400,11 +405,29 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
     bulk.classList.toggle("hidden", count === 0);
   }
 
-  function renderItems() {
+  function renderItems(preserveArtwork = true) {
     const grid = document.getElementById("pp-grid");
     const ratingFilter = document.getElementById("pp-rating");
     ratingFilter.classList.toggle("hidden", !state.items.some((it) => Number(it.rating) > 0));
-    grid.innerHTML = state.items.length ? state.items.map(card).join("") : `<div class="pp-empty">No playback records found.</div>`;
+    const markup = state.items.length ? state.items.map(card).join("") : `<div class="pp-empty">No playback records found.</div>`;
+    if (preserveArtwork && state.items.length && grid.children.length) {
+      const existing = new Map(
+        [...grid.querySelectorAll(".pp-card[data-key]")].map((cardEl) => [cardEl.dataset.key, cardEl])
+      );
+      const template = document.createElement("template");
+      template.innerHTML = markup;
+      template.content.querySelectorAll(".pp-card[data-key]").forEach((nextCard) => {
+        const currentCard = existing.get(nextCard.dataset.key);
+        const currentImg = currentCard?.querySelector(".pp-art img[data-poster-key]");
+        const nextImg = nextCard.querySelector(".pp-art img[data-poster-key]");
+        if (currentImg && nextImg && currentImg.dataset.posterKey === nextImg.dataset.posterKey) {
+          nextImg.replaceWith(currentImg);
+        }
+      });
+      grid.replaceChildren(template.content);
+    } else {
+      grid.innerHTML = markup;
+    }
     const maxPage = Math.max(1, Math.ceil((state.total || 0) / state.pageSize));
     document.getElementById("pp-page-text").textContent = `${state.page} / ${maxPage} - ${state.total} total`;
     document.getElementById("pp-prev").disabled = state.page <= 1;
@@ -447,7 +470,7 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
       providerOptions();
       renderStatus();
       renderErrors();
-      renderItems();
+      renderItems(!force);
     } catch (e) {
       state.items = [];
       state.errors = [{ provider: "Playback Progress", message: String(e?.message || e || "Request failed") }];
