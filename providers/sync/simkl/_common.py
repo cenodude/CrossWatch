@@ -548,6 +548,8 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
 
     if obj_type == "episode":
         ids = _fix_imdb((payload.get("ids") if isinstance(payload, Mapping) else None) or obj.get("ids") or {})
+        show_ids_raw = obj.get("show_ids")
+        show_ids = _fix_imdb(show_ids_raw) if isinstance(show_ids_raw, Mapping) else {}
 
         def _to_int(v: Any) -> int | None:
             try:
@@ -555,13 +557,16 @@ def normalize(obj: Mapping[str, Any]) -> dict[str, Any]:
             except Exception:
                 return None
 
+        raw_season = obj.get("season") if obj.get("season") is not None else obj.get("season_number")
+        raw_episode = obj.get("episode") if obj.get("episode") is not None else obj.get("episode_number")
         base = {
             "type": "episode",
             "title": (payload.get("title") if isinstance(payload, Mapping) else None) or obj.get("title"),
             "year": (payload.get("year") if isinstance(payload, Mapping) else None) or obj.get("year"),
             "ids": {k: v for k, v in ids.items() if v},
-            "season": _to_int(obj.get("season") or obj.get("season_number")),
-            "episode": _to_int(obj.get("episode") or obj.get("episode_number")),
+            "season": _to_int(raw_season),
+            "episode": _to_int(raw_episode),
+            "show_ids": {k: v for k, v in show_ids.items() if v},
         }
         return id_minimal(base)
 
@@ -607,15 +612,18 @@ def key_of(item: Mapping[str, Any]) -> str:
     typ = str(item.get("type") or "").lower()
     if typ == "episode":
 
-        def _to_int(v: Any) -> int:
+        def _to_int(v: Any) -> int | None:
             try:
-                n = int(v)
-                return n if n > 0 else 0
+                return int(v)
             except Exception:
-                return 0
+                return None
 
-        s_num = _to_int(item.get("season") or item.get("season_number"))
-        e_num = _to_int(item.get("episode") or item.get("episode_number") or item.get("number"))
+        raw_season = item.get("season") if item.get("season") is not None else item.get("season_number")
+        raw_episode = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
+        if raw_episode is None:
+            raw_episode = item.get("number")
+        s_num = _to_int(raw_season)
+        e_num = _to_int(raw_episode)
 
         show_ids_raw = item.get("show_ids")
         show_ids = dict(show_ids_raw) if isinstance(show_ids_raw, Mapping) else {}
@@ -624,21 +632,23 @@ def key_of(item: Mapping[str, Any]) -> str:
             ids = dict(ids_raw) if isinstance(ids_raw, Mapping) else {}
             show_ids = {k: ids[k] for k in ("tmdb", "imdb", "tvdb", "simkl") if ids.get(k)}
 
-        if show_ids and s_num and e_num:
+        if show_ids and s_num is not None and s_num >= 0 and e_num is not None and e_num > 0:
             show_key = canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or ""
             if show_key:
                 return f"{show_key}#s{s_num:02d}e{e_num:02d}"
 
     if typ == "season":
 
-        def _to_int(v: Any) -> int:
+        def _to_int(v: Any) -> int | None:
             try:
-                n = int(v)
-                return n if n > 0 else 0
+                return int(v)
             except Exception:
-                return 0
+                return None
 
-        s_num = _to_int(item.get("season") or item.get("season_number") or item.get("number"))
+        raw_season = item.get("season") if item.get("season") is not None else item.get("season_number")
+        if raw_season is None:
+            raw_season = item.get("number")
+        s_num = _to_int(raw_season)
 
         show_ids_raw = item.get("show_ids")
         show_ids = dict(show_ids_raw) if isinstance(show_ids_raw, Mapping) else {}
@@ -647,7 +657,7 @@ def key_of(item: Mapping[str, Any]) -> str:
             ids = dict(ids_raw) if isinstance(ids_raw, Mapping) else {}
             show_ids = {k: ids[k] for k in ("tmdb", "imdb", "tvdb", "simkl") if ids.get(k)}
 
-        if show_ids and s_num:
+        if show_ids and s_num is not None and s_num >= 0:
             show_key = canonical_key(id_minimal({"type": "show", "ids": _fix_imdb(show_ids)})) or ""
             if show_key:
                 return f"{show_key}#season:{s_num}"

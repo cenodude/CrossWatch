@@ -832,10 +832,16 @@ def _parse_rows(
                 continue
         for season in row.get("seasons") or []:
             season = season if isinstance(season, Mapping) else {}
-            s_num_internal = int((season.get("number") or season.get("season") or 0))
+            raw_season = season.get("number") if season.get("number") is not None else season.get("season")
+            s_num_internal = _int_or_none(raw_season)
+            if s_num_internal is None or s_num_internal < 0:
+                continue
             for episode in (season.get("episodes") or []):
                 episode = episode if isinstance(episode, Mapping) else {}
-                e_num_internal = int((episode.get("number") or episode.get("episode") or 0))
+                raw_episode = episode.get("number") if episode.get("number") is not None else episode.get("episode")
+                e_num_internal = _int_or_none(raw_episode)
+                if e_num_internal is None or e_num_internal <= 0:
+                    continue
                 s_num = s_num_internal
                 e_num = e_num_internal
                 if row_kind == "anime":
@@ -851,13 +857,14 @@ def _parse_rows(
                 if not ts and row_kind == "shows":
                     watched_at = (row.get("last_watched_at") or "").strip()
                     ts = _as_epoch(watched_at)
-                if not ts or not s_num or not e_num:
+                if not ts or s_num < 0 or e_num <= 0:
                     continue
+                episode_ids = _episode_lookup_ids(episode) if s_num == 0 else {}
                 ep = {
                     "type": "episode",
                     "season": s_num,
                     "episode": e_num,
-                    "ids": dict(show_ids),
+                    "ids": dict(episode_ids or show_ids),
                     "title": f"S{s_num:02d}E{e_num:02d}",
                     "year": None,
                     "series_title": series_name,
@@ -1511,9 +1518,18 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 continue
             if typ == "episode":
                 show_ids = _show_ids_of_episode(item)
-                s_num = int(item.get("season") or item.get("season_number") or 0)
-                e_num = int(item.get("episode") or item.get("episode_number") or 0)
-                if not show_ids or not s_num or not e_num:
+                raw_season = item.get("season") if item.get("season") is not None else item.get("season_number")
+                raw_episode = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
+                s_num = _safe_int(raw_season)
+                e_num = _safe_int(raw_episode)
+                episode_ids = _episode_lookup_ids(item)
+                if not s_num:
+                    if _int_or_none(raw_season) == 0 and episode_ids:
+                        s_num = 0
+                    else:
+                        unresolved.append({"item": id_minimal(item), "hint": "missing_show_ids_or_s/e"})
+                        continue
+                if not show_ids or e_num <= 0:
                     unresolved.append({"item": id_minimal(item), "hint": "missing_show_ids_or_s/e"})
                     continue
                 show_entry = _show_scope_entry(adapter, item, show_ids)
@@ -1522,7 +1538,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     continue
                 group = _merge_show_group(shows_scoped, show_entry)
                 season = _merge_show_season(group, s_num)
-                season.setdefault("episodes", []).append({"number": e_num})
+                episode_payload: dict[str, Any] = {"number": e_num}
+                if s_num == 0:
+                    episode_payload["ids"] = dict(episode_ids)
+                season.setdefault("episodes", []).append(episode_payload)
                 thaw_keys.append(_thaw_key(item))
                 continue
             ids = _ids_of(item)

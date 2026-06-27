@@ -107,8 +107,10 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
     hist_id = str(row.get("id") or row.get("history_id") or "").strip()
 
     if media in ("tv", "show", "series", "episode"):
-        season = as_int(row.get("season") or row.get("season_number"))
-        episode = as_int(row.get("episode") or row.get("episode_number"))
+        season_raw = row.get("season") if row.get("season") is not None else row.get("season_number")
+        episode_raw = row.get("episode") if row.get("episode") is not None else row.get("episode_number")
+        season = as_int(season_raw)
+        episode = as_int(episode_raw)
         if season is None or episode is None:
             return None
         out: dict[str, Any] = {
@@ -190,8 +192,10 @@ def _payload_for_item(item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, s
     typ = str(mini.get("type") or item.get("type") or "").strip().lower()
     if typ == "episode":
         tmdb = _show_tmdb_for_item(mini) or _show_tmdb_for_item(item)
-        season = as_int(mini.get("season") or item.get("season"))
-        episode = as_int(mini.get("episode") or item.get("episode"))
+        season_raw = mini.get("season") if mini.get("season") is not None else item.get("season")
+        episode_raw = mini.get("episode") if mini.get("episode") is not None else item.get("episode")
+        season = as_int(season_raw)
+        episode = as_int(episode_raw)
         if tmdb is None or season is None or episode is None:
             return None, "missing_show_tmdb_or_episode_numbers"
         return {
