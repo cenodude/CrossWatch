@@ -29,6 +29,7 @@ const SIMPLE_OPS = {
   cache: "/api/maintenance/clear-cache",
   metadata: "/api/maintenance/clear-metadata-cache",
   activity: "/api/maintenance/clear-activity-log",
+  scrobbles: "/api/maintenance/clear-recent-scrobbles",
   stats: "/api/maintenance/reset-stats",
   playing: "/api/maintenance/reset-currently-watching",
 };
@@ -37,33 +38,33 @@ const OPS = [
     key: "state",
     kind: "state",
     icon: "deployed_code_history",
-    title: "Clear state",
-    tag: "state.json",
-    desc: 'Removes orchestrator <code>state.json</code> so the next sync rebuilds baseline state from providers.',
+    title: "Rebuild sync state",
+    tag: "sync pairs",
+    desc: 'Starts every sync pair from fresh provider baselines on its next run.',
   },
   {
     key: "cache",
     kind: "cache",
     icon: "network_node",
-    title: "Clear provider cache",
-    tag: ".cw_state",
-    desc: 'Clears provider shadow / flap files under <code>/config/.cw_state</code> so unresolved items and health state are retried.',
+    title: "Retry provider items",
+    tag: "runtime",
+    desc: 'Clears temporary retry and health data so unresolved provider items are tried again.',
   },
   {
     key: "meta",
     kind: "metadata",
     icon: "gallery_thumbnail",
-    title: "Remove metadata cache",
-    tag: "/config/cache",
-    desc: 'Deletes cached posters and metadata under <code>/config/cache</code>. Artwork and meta will be refetched when needed.',
+    title: "Refresh artwork & metadata",
+    tag: "artwork",
+    desc: 'Removes cached artwork and metadata so fresh copies are fetched when needed.',
   },
   {
     key: "tracker",
     kind: "tracker",
     icon: "deployed_code",
-    title: "Clear CrossWatch tracker",
-    tag: "tracker",
-    desc: 'Cleans up local tracker files (<code>watchlist.json</code>, <code>history.json</code>, <code>ratings.json</code>) and optional snapshots.',
+    title: "Reset local tracker",
+    tag: "local library",
+    desc: 'Clears local Watchlist, History and Ratings tracker data. Provider accounts stay untouched.',
     extra: `
       <div class="action-options">
         <label><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
@@ -75,32 +76,41 @@ const OPS = [
     key: "activity",
     kind: "activity",
     icon: "fact_check",
-    title: "Clear activity log",
-    tag: "local only",
-    desc: "Clears CrossWatch's local Recent Activity list. Provider watch history is not changed.",
+    title: "Clear all activity",
+    tag: "local activity",
+    desc: "Clears the complete local activity list without changing provider watch history.",
+  },
+  {
+    key: "scrobbles",
+    kind: "scrobbles",
+    icon: "podcasts",
+    title: "Clear Recent Scrobbles",
+    tag: "scrobbles only",
+    desc: "Clears only the local Recent Scrobble list while keeping other Recent Activity entries.",
   },
   {
     key: "stats",
     kind: "stats",
     icon: "monitoring",
-    title: "Reset statistics",
-    tag: "stats + reports",
-    desc: "Drops statistics, reports and insights caches, then reloads stats from a clean state. Does not touch provider data.",
+    title: "Rebuild statistics",
+    tag: "stats & reports",
+    desc: "Rebuilds Statistics, Reports and Insights from clean local data.",
   },
   {
     key: "playing",
     kind: "playing",
     icon: "live_tv",
-    title: "Reset currently playing",
-    desc: 'Clears <code>currently_watching.json</code> so stuck "currently playing" entries disappear.',
+    title: "Clear currently playing",
+    tag: "playback",
+    desc: 'Removes stuck items from the local Currently Playing list.',
   },
   {
     key: "defaults",
     kind: "defaults",
     icon: "release_alert",
-    title: "Reset all to default",
-    tag: "DANGER",
-    desc: "Resets CrossWatch to a clean install state by deleting local state, caches, tracker files, reports and TLS material, and backing up <code>config.json</code>. Snapshots in <code>/config/snapshots</code> are kept.",
+    title: "Factory reset",
+    tag: "danger zone",
+    desc: "Returns CrossWatch to a clean install and backs up config.json. Snapshots are kept.",
   },
 ];
 const renderActionRow = ({ key, icon, title, tag, desc, extra = "" }) => `
@@ -131,13 +141,18 @@ function injectCSS() {
     position: relative;
     display: flex;
     flex-direction: column;
-    height: 100%;
+    height: auto;
+    max-height: min(80vh, calc(100vh - 40px));
     background:
       radial-gradient(96% 125% at 0% 0%, rgba(72,52,146,.18), transparent 36%),
       linear-gradient(180deg, rgba(5,7,14,.99), rgba(3,5,11,.99));
     border: 1px solid rgba(255,255,255,.06);
     border-radius: 22px;
     box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 28px 60px rgba(0,0,0,.32);
+  }
+  .cx-modal-shell.cw-maint-shell {
+    height: auto !important;
+    max-height: min(80vh, calc(100vh - 40px)) !important;
   }
 
   .cw-maint .cx-head {
@@ -222,41 +237,84 @@ function injectCSS() {
   .cw-maint .cx-body {
     flex: 1;
     min-height: 0;
-    padding: 12px 14px 14px;
+    padding: 10px 12px 12px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+    overflow: auto;
   }
 
   .cw-maint .summary-card {
-    background: radial-gradient(120% 140% at 0% 0%,rgba(84,58,164,.10),transparent 38%),
-                linear-gradient(180deg,rgba(10,13,24,.97),rgba(6,9,18,.965));
-    border-radius: 18px;
+    background: linear-gradient(135deg,rgba(81,91,190,.12),rgba(21,27,52,.45));
+    border-radius: 16px;
     border: 1px solid rgba(255,255,255,.07);
-    padding: 10px 12px;
+    padding: 9px 11px;
     display: grid;
-    grid-template-columns: minmax(0,1.3fr) minmax(0,1fr);
-    grid-gap: 10px;
+    grid-template-columns: minmax(240px,1fr) auto auto;
+    align-items: center;
+    gap: 12px;
     font-size: 12px;
-    box-shadow: 0 18px 34px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.025);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
   }
-  @media (max-width: 900px) {
+  @media (max-width: 980px) {
     .cw-maint .summary-card {
-      grid-template-columns: minmax(0,1fr);
+      grid-template-columns: minmax(0,1fr) auto;
     }
+    .cw-maint .storage-details { grid-column: 1 / -1; }
   }
-  .cw-maint .summary-label {
-    opacity: .78;
-    margin-bottom: 5px;
+  .cw-maint .summary-safe {
+    display: grid;
+    grid-template-columns: 32px minmax(0,1fr);
+    align-items: center;
+    gap: 9px;
+  }
+  .cw-maint .summary-safe-icon {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border-radius: 11px;
+    border: 1px solid rgba(124,242,176,.16);
+    background: rgba(55,178,126,.09);
+    color: #bdf0d0;
+  }
+  .cw-maint .summary-safe-icon .material-symbols-rounded { font-size: 19px; }
+  .cw-maint .summary-safe strong { display:block;color:#f5f7ff;font-size:12px; }
+  .cw-maint .summary-safe span { display:block;margin-top:2px;color:rgba(205,214,231,.7);font-size:11px; }
+  .cw-maint .storage-details { position: relative; }
+  .cw-maint .storage-details summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 6px 9px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.03);
+    color: rgba(224,230,242,.8);
     font-size: 10px;
     font-weight: 800;
-    letter-spacing: .14em;
+    letter-spacing: .06em;
     text-transform: uppercase;
+    white-space: nowrap;
   }
+  .cw-maint .storage-details summary::-webkit-details-marker { display:none; }
+  .cw-maint .storage-details[open] .summary-paths {
+    display:block;
+    position:absolute;
+    z-index:8;
+    right:0;
+    top:calc(100% + 6px);
+    min-width:310px;
+    padding:9px 10px;
+    border-radius:13px;
+    border:1px solid rgba(255,255,255,.1);
+    background:#111521;
+    box-shadow:0 16px 34px rgba(0,0,0,.34);
+  }
+  .cw-maint .summary-paths { display:none;line-height:1.7;color:rgba(205,214,231,.76); }
   .cw-maint .summary-paths code {
-    font-size: 11px;
+    font-size: 10px;
     background: rgba(255,255,255,.035);
-    padding: 2px 6px;
+    padding: 1px 5px;
     border-radius: 999px;
   }
   .cw-maint .summary-badges {
@@ -278,45 +336,46 @@ function injectCSS() {
 
   .cw-maint .actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
     margin-top: 0;
   }
-  @media (max-width: 980px) {
+  @media (max-width: 1100px) {
     .cw-maint .actions {
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(2,minmax(0,1fr));
     }
   }
+  @media (max-width: 720px) { .cw-maint .actions { grid-template-columns:1fr; } }
 
   .cw-maint .action-row {
     background: radial-gradient(120% 145% at 0% 0%,rgba(76,54,150,.08),transparent 38%),linear-gradient(180deg,rgba(9,12,22,.97),rgba(5,8,17,.965));
-    border-radius: 18px;
+    border-radius: 15px;
     border: 1px solid rgba(255,255,255,.07);
-    padding: 12px 13px;
+    padding: 9px 10px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 12px;
-    box-shadow: 0 16px 30px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.02);
+    gap: 8px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
     transition: transform .14s ease,border-color .14s ease,box-shadow .16s ease,background .16s ease;
   }
   .cw-maint .action-row:hover {
     transform: translateY(-1px);
     border-color: rgba(130,116,220,.16);
-    box-shadow: 0 20px 34px rgba(0,0,0,.26), inset 0 1px 0 rgba(255,255,255,.03);
+    box-shadow: 0 12px 24px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.03);
   }
   .cw-maint .action-main {
     display: grid;
-    grid-template-columns: 26px minmax(0, 1fr);
+    grid-template-columns: 28px minmax(0, 1fr);
     align-items: start;
-    gap: 10px;
+    gap: 9px;
     flex: 1;
     min-width: 0;
   }
   .cw-maint .action-icon {
     width: 28px;
     height: 28px;
-    border-radius: 10px;
+    border-radius: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -345,27 +404,27 @@ function injectCSS() {
     min-width: 0;
   }
   .cw-maint .action-title {
-    font-size: 13px;
-    font-weight: 750;
+    font-size: 12px;
+    font-weight: 800;
     line-height: 1.2;
   }
   .cw-maint .action-tag {
-    padding: 2px 8px;
+    padding: 2px 6px;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,.08);
-    font-size: 10px;
+    font-size: 9px;
     text-transform: uppercase;
     letter-spacing: .09em;
     opacity: .86;
     background: rgba(255,255,255,.028);
   }
   .cw-maint .action-desc {
-    font-size: 11px;
-    line-height: 1.35;
+    font-size: 10.5px;
+    line-height: 1.3;
     color: rgba(197,206,224,.76);
   }
   .cw-maint .action-desc code {
-    font-size: 11px;
+    font-size: 10px;
     background: rgba(255,255,255,.035);
     border-radius: 999px;
     padding: 1px 6px;
@@ -373,11 +432,11 @@ function injectCSS() {
 
   .cw-maint .action-options {
     width: 100%;
-    margin-top: 6px;
-    font-size: 12px;
+    margin-top: 4px;
+    font-size: 10px;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px 16px;
+    gap: 3px 10px;
     align-items: start;
   }
   .cw-maint .action-options label {
@@ -407,8 +466,8 @@ function injectCSS() {
     align-self: start;
     border-radius: 999px;
     border: 1px solid rgba(255,255,255,.09);
-    padding: 7px 14px;
-    font-size: 11px;
+    padding: 6px 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: .09em;
     text-transform: uppercase;
@@ -429,41 +488,62 @@ function injectCSS() {
   }
   .cw-maint .action-row[data-op="state"] .action-icon {
     border-color: rgba(255,134,145,.16);
+    background: rgba(126,121,255,.10);
   }
   .cw-maint .action-row[data-op="cache"] .action-icon {
     border-color: rgba(164,138,255,.18);
+    background: rgba(164,138,255,.10);
   }
   .cw-maint .action-row[data-op="meta"] .action-icon {
     border-color: rgba(255,201,110,.18);
+    background: rgba(255,201,110,.09);
   }
   .cw-maint .action-row[data-op="tracker"] .action-icon {
     border-color: rgba(115,197,255,.18);
+    background: rgba(115,197,255,.09);
   }
   .cw-maint .action-row[data-op="stats"] .action-icon {
     border-color: rgba(120,220,176,.18);
+    background: rgba(120,220,176,.09);
   }
   .cw-maint .action-row[data-op="playing"] .action-icon {
     border-color: rgba(190,196,255,.16);
+    background: rgba(190,196,255,.08);
   }
   .cw-maint .action-row[data-op="activity"] .action-icon {
     border-color: rgba(124,242,176,.16);
+    background: rgba(124,242,176,.08);
+  }
+  .cw-maint .action-row[data-op="scrobbles"] .action-icon {
+    border-color: rgba(104,191,255,.18);
+    background: rgba(104,191,255,.09);
   }
 
   .cw-maint .action-row[data-op="defaults"] .action-icon {
     border-color: rgba(255,106,106,.18);
+    background: rgba(255,106,106,.10);
+  }
+  .cw-maint .action-row[data-op="defaults"] {
+    border-color: rgba(255,106,106,.14);
+    background: linear-gradient(145deg,rgba(75,27,40,.18),rgba(17,12,20,.86));
   }
 
   .cw-maint .status {
     display: flex;
     align-items: center;
     gap: 10px;
-    min-height: 42px;
-    margin-top: 2px;
-    padding: 9px 12px;
-    border-radius: 16px;
+    min-height: 38px;
+    margin-top: 0;
+    padding: 7px 10px;
+    border-radius: 14px;
     border: 1px solid rgba(255,255,255,.07);
     background: radial-gradient(120% 140% at 0% 0%,rgba(74,54,150,.06),transparent 38%),linear-gradient(180deg,rgba(9,12,22,.97),rgba(6,8,16,.96));
     box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
   }
   .cw-maint .status::before {
     content: "STATUS";
@@ -513,6 +593,28 @@ function injectCSS() {
     box-shadow: inset 0 1px 0 rgba(255,255,255,.02),0 12px 24px rgba(0,0,0,.22);
     margin-right: 8px; /* small gap before CLOSE */
   }
+  #cw-clear-provider-cache {
+    border-radius: 999px;
+    border: 1px solid rgba(139,149,255,.2);
+    padding: 7px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    cursor: pointer;
+    background: linear-gradient(180deg,rgba(35,39,78,.94),rgba(20,24,50,.92));
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.03),0 12px 24px rgba(0,0,0,.2);
+  }
+  #cw-clear-provider-cache:hover {
+    border-color: rgba(154,162,255,.3);
+    background: linear-gradient(180deg,rgba(47,52,101,.96),rgba(25,30,61,.94));
+  }
+  #cw-clear-provider-cache[disabled] {
+    opacity: .6;
+    cursor: wait;
+    box-shadow: none;
+  }
   #cw-clean-all:hover {
     border-color: rgba(255,146,160,.22);
     background: linear-gradient(180deg,rgba(72,26,39,.96),rgba(44,15,25,.94));
@@ -529,13 +631,13 @@ function injectCSS() {
   html[data-cw-theme="flat-dark"] .cw-maint .summary-card,
   html[data-cw-theme="flat-dark"] .cw-maint .summary-pill,
   html[data-cw-theme="flat-dark"] .cw-maint .action-row,
-  html[data-cw-theme="flat-dark"] .cw-maint .action-icon,
   html[data-cw-theme="flat-dark"] .cw-maint .action-desc code,
   html[data-cw-theme="flat-dark"] .cw-maint .action-options label,
   html[data-cw-theme="flat-dark"] .cw-maint .action-options input,
   html[data-cw-theme="flat-dark"] .cw-maint .run-btn,
   html[data-cw-theme="flat-dark"] .cw-maint .status,
   html[data-cw-theme="flat-dark"] .cw-maint .status::before,
+  html[data-cw-theme="flat-dark"] #cw-clear-provider-cache,
   html[data-cw-theme="flat-dark"] #cw-clean-all {
     background: #20242d !important;
     border-color: rgba(255,255,255,.14) !important;
@@ -546,6 +648,7 @@ function injectCSS() {
   html[data-cw-theme="flat-dark"] .cw-maint .close-btn:hover,
   html[data-cw-theme="flat-dark"] .cw-maint .action-row:hover,
   html[data-cw-theme="flat-dark"] .cw-maint .run-btn:hover,
+  html[data-cw-theme="flat-dark"] #cw-clear-provider-cache:hover,
   html[data-cw-theme="flat-dark"] #cw-clean-all:hover {
     background: #2b313d !important;
     border-color: rgba(255,255,255,.19) !important;
@@ -565,6 +668,15 @@ function injectCSS() {
     background: #43272e !important;
     border-color: rgba(216,102,114,.42) !important;
   }
+  html[data-cw-theme="flat-dark"] .cw-maint #cw-clear-provider-cache,
+  html[data-cw-theme="flat-dark"] #cw-clear-provider-cache {
+    background: #292f4c !important;
+    border-color: rgba(128,139,226,.4) !important;
+  }
+  html[data-cw-theme="flat-dark"] .cw-maint .action-row[data-op="defaults"] {
+    background:#35252a !important;
+    border-color:rgba(216,102,114,.3) !important;
+  }
   html[data-cw-theme="flat-dark"] .cw-maint .cx-body {
     scrollbar-color: #3a414c #151821 !important;
   }
@@ -583,7 +695,6 @@ function injectCSS() {
   html[data-cw-theme="flat-light"] .cw-maint .summary-card,
   html[data-cw-theme="flat-light"] .cw-maint .summary-pill,
   html[data-cw-theme="flat-light"] .cw-maint .action-row,
-  html[data-cw-theme="flat-light"] .cw-maint .action-icon,
   html[data-cw-theme="flat-light"] .cw-maint .action-desc code,
   html[data-cw-theme="flat-light"] .cw-maint .action-options label,
   html[data-cw-theme="flat-light"] .cw-maint .action-options input,
@@ -606,6 +717,35 @@ function injectCSS() {
     border-color: rgba(201,79,97,.36) !important;
     color: #7f1d2d !important;
   }
+  html[data-cw-theme="flat-light"] .cw-maint #cw-clear-provider-cache,
+  html[data-cw-theme="flat-light"] #cw-clear-provider-cache {
+    background: #e8ebff !important;
+    border-color: rgba(80,91,184,.3) !important;
+    color: #313b82 !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .summary-safe strong { color:#172033; }
+  html[data-cw-theme="flat-light"] .cw-maint .summary-safe span { color:#667085; }
+  html[data-cw-theme="flat-light"] .cw-maint .summary-safe-icon {
+    background:#e9f8f0;
+    border-color:rgba(31,143,91,.2);
+    color:#207a50;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .action-icon .material-symbols-rounded { color:#344054; }
+  html[data-cw-theme="flat-light"] .cw-maint .action-row[data-op="defaults"] {
+    background:#fff4f5 !important;
+    border-color:rgba(201,79,97,.24) !important;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .storage-details summary {
+    background:#f5f7fb;
+    border-color:rgba(21,31,48,.14);
+    color:#475467;
+  }
+  html[data-cw-theme="flat-light"] .cw-maint .storage-details[open] .summary-paths {
+    background:#fff;
+    border-color:rgba(21,31,48,.14);
+    color:#475467;
+    box-shadow:0 16px 34px rgba(15,23,42,.14);
+  }
   html[data-cw-theme="flat-light"] .cw-maint .cx-body {
     scrollbar-color: #c4ccd8 #eef2f7 !important;
   }
@@ -626,13 +766,13 @@ export default {
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
+      shell.classList.add("cw-maint-shell");
       shell.style.setProperty("--cxModalW", "1180px");
       shell.style.setProperty("--cxModalMaxW", "1180px");
       shell.style.setProperty("--cxModalMaxH", "80vh");
     }
     const cleanAllOps = [
-      () => post(SIMPLE_OPS.state),
-      () => post(SIMPLE_OPS.cache),
+      () => post("/api/maintenance/clear-provider-sync-cache"),
       () => post(SIMPLE_OPS.metadata),
       () => post(SIMPLE_OPS.activity),
       () => post("/api/maintenance/crosswatch-tracker/clear", { clear_state: true, clear_snapshots: true }),
@@ -653,6 +793,7 @@ export default {
             </div>
           </div>
           <div class="cx-head-right">
+            <button id="cw-clear-provider-cache" type="button">Clear Provider Sync Cache</button>
             <button id="cw-clean-all" class="cw-btn danger">Clean Everything</button>
             <button type="button" class="close-btn" id="cxm-close">Close</button>
           </div>
@@ -660,22 +801,24 @@ export default {
 
         <div class="cx-body">
           <div class="summary-card">
-            <div>
-              <div class="summary-label">Paths</div>
+            <div class="summary-safe">
+              <div class="summary-safe-icon"><span class="material-symbols-rounded" aria-hidden="true">verified_user</span></div>
+              <div>
+                <strong>Local cleanup only</strong>
+                <span>These tools do not delete data from provider accounts.</span>
+              </div>
+            </div>
+            <div class="summary-badges">
+              <span class="summary-pill" id="cxm-tracker-count">Tracker: -</span>
+              <span class="summary-pill" id="cxm-cache-count">Provider cache: -</span>
+            </div>
+            <details class="storage-details">
+              <summary>Storage details</summary>
               <div class="summary-paths">
-                Tracker root:
-                <code id="cxm-tracker-root">/config/.cw_provider</code><br>
-                Provider cache:
-                <code id="cxm-cache-root">/config/.cw_state</code>
+                Tracker: <code id="cxm-tracker-root">/config/.cw_provider</code><br>
+                Provider cache: <code id="cxm-cache-root">/config/.cw_state</code>
               </div>
-            </div>
-            <div>
-              <div class="summary-label">Counts</div>
-              <div class="summary-badges">
-                <span class="summary-pill" id="cxm-tracker-count">Tracker: -</span>
-                <span class="summary-pill" id="cxm-cache-count">Provider cache: -</span>
-              </div>
-            </div>
+            </details>
           </div>
 
           <div class="actions">
@@ -788,7 +931,7 @@ export default {
           return;
         }
 
-        if (kind === "activity") {
+        if (kind === "activity" || kind === "scrobbles") {
           try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
         }
 
@@ -813,6 +956,30 @@ export default {
       const btn = row?.querySelector(".run-btn");
       if (btn) btn.addEventListener("click", () => runOp(kind, btn));
     });
+
+    const clearProviderCacheBtn = root.querySelector("#cw-clear-provider-cache");
+    if (clearProviderCacheBtn) {
+      clearProviderCacheBtn.addEventListener("click", async () => {
+        if (!confirm("Clear provider sync baselines and runtime cache so every sync pair starts fresh? Local tracker data, metadata and recent activity will be kept.")) {
+          return;
+        }
+        clearProviderCacheBtn.disabled = true;
+        const originalText = clearProviderCacheBtn.textContent;
+        clearProviderCacheBtn.textContent = "Clearing...";
+        setStatus("Clearing provider sync cache...", "busy");
+        try {
+          const res = await post("/api/maintenance/clear-provider-sync-cache");
+          if (res?.ok === false) throw new Error("Provider sync cache could not be fully cleared");
+          await refreshSummary();
+          setStatus("Provider sync cache cleared. Sync pairs will rebuild on their next run.", "ok");
+        } catch (e) {
+          setStatus(`Error: ${e.message || String(e)}`, "err");
+        } finally {
+          clearProviderCacheBtn.disabled = false;
+          clearProviderCacheBtn.textContent = originalText;
+        }
+      });
+    }
 
     // Clean Everything button
     const cleanAllBtn = root.querySelector("#cw-clean-all");
