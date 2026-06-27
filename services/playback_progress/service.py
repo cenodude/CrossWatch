@@ -14,7 +14,7 @@ from typing import Any, Mapping, cast
 from _logging import log as BASE_LOG
 from cw_platform.config_base import load_config, save_config
 from cw_platform.id_map import canonical_key, minimal as id_minimal
-from cw_platform.provider_instances import build_provider_config_view, get_provider_block, list_instance_ids, normalize_instance_id
+from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
 from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter, PlexPlaybackAdapter
@@ -232,7 +232,7 @@ def _apply_live_overlay(item: dict[str, Any], stream: Mapping[str, Any]) -> None
     progress = _live_progress_percent(stream)
     remaining = _live_remaining_seconds(stream, progress)
     provider = str(stream.get("_live_provider") or _live_source_provider(stream.get("source")) or "").strip().lower()
-    instance_id = str(stream.get("_live_instance_id") or "").strip()
+    instance_id = normalize_instance_id(stream.get("_live_instance_id") or stream.get("provider_instance"))
     item["live_state"] = str(stream.get("state") or "").strip().lower()
     item["live_source"] = str(stream.get("source") or "").strip()
     item["live_provider"] = provider
@@ -264,10 +264,10 @@ def _overlay_live_streams(items: list[dict[str, Any]], streams: list[dict[str, A
         for key in _live_match_keys(item):
             for stream in by_key.get(key, []):
                 live_provider = str(stream.get("_live_provider") or _live_source_provider(stream.get("source")) or "").strip().lower()
-                live_instance = str(stream.get("_live_instance_id") or "").strip()
+                live_instance = normalize_instance_id(stream.get("_live_instance_id") or stream.get("provider_instance"))
                 if live_provider and live_provider != provider:
                     continue
-                if live_instance and live_instance != instance_id:
+                if live_instance != instance_id:
                     continue
                 candidates.append(stream)
         if candidates:
@@ -277,15 +277,15 @@ def _overlay_live_streams(items: list[dict[str, Any]], streams: list[dict[str, A
 def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
     keys: list[str] = []
     key = str(item.get("canonical_key") or "").strip().lower()
+    progress = _group_progress(item.get("progress_percent"))
     if key and not key.startswith("unknown:"):
-        keys.append(f"key:{key}")
+        keys.append(f"key:{key}:progress:{progress}")
     media_type = _group_text(item.get("media_type"))
     title = _group_text(item.get("title"))
     series = _group_text(item.get("series_title"))
     season = _group_number(item.get("season"))
     episode = _group_number(item.get("episode"))
     year = _group_number(item.get("year"))
-    progress = _group_progress(item.get("progress_percent"))
     if media_type == "movie":
         fallback = f"fallback:movie:{title}:{year}:{progress}"
     else:
@@ -309,6 +309,17 @@ def _record_time_value(item: Mapping[str, Any]) -> float:
         return float(live_updated)
     dt = _parse_iso(item.get("updated_at") or item.get("progress_at"))
     return dt.timestamp() if dt else 0.0
+
+
+def _record_order_key(item: Mapping[str, Any]) -> tuple[float, int, str, str, str]:
+    artwork = int(not _blank_scalar(item.get("poster_url"))) + int(not _blank_scalar(item.get("backdrop_url")))
+    return (
+        -_record_time_value(item),
+        -artwork,
+        str(item.get("provider") or "").strip().lower(),
+        normalize_instance_id(item.get("instance_id")),
+        str(item.get("remote_id") or "").strip(),
+    )
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -355,7 +366,7 @@ def _with_remaining_fallback(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
-    ordered = sorted(records, key=_record_time_value, reverse=True)
+    ordered = sorted(records, key=_record_order_key)
     primary = dict(ordered[0])
     live_records = [record for record in ordered if str(record.get("live_state") or "").strip().lower() in LIVE_ACTIVE_STATES]
     if live_records:
@@ -382,6 +393,41 @@ def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
         primary["remaining_seconds"] = next((record.get("remaining_seconds") for record in ordered if not _blank_scalar(record.get("remaining_seconds"))), None)
     if _blank_scalar(primary.get("duration_seconds")):
         primary["duration_seconds"] = next((record.get("duration_seconds") for record in ordered if not _blank_scalar(record.get("duration_seconds"))), None)
+    artwork_records = sorted(
+        records,
+        key=lambda record: (
+            str(record.get("provider") or "").strip().lower(),
+            normalize_instance_id(record.get("instance_id")),
+            str(record.get("remote_id") or "").strip(),
+        ),
+    )
+    for field in ("poster_url", "backdrop_url"):
+        primary[field] = next((record.get(field) for record in artwork_records if not _blank_scalar(record.get(field))), "")
+    merged_ids: dict[str, Any] = {}
+    for record in ordered:
+        ids = record.get("ids")
+        if not isinstance(ids, Mapping):
+            continue
+        for key, value in ids.items():
+            if not _blank_scalar(value):
+                merged_ids.setdefault(str(key), value)
+    if merged_ids:
+        primary["ids"] = merged_ids
+    primary_meta_value = primary.get("provider_metadata")
+    primary_meta: dict[str, Any] = (
+        {str(key): value for key, value in primary_meta_value.items()}
+        if isinstance(primary_meta_value, Mapping)
+        else {}
+    )
+    if not isinstance(primary_meta.get("show_ids"), Mapping) or not primary_meta.get("show_ids"):
+        for record in ordered:
+            meta = record.get("provider_metadata")
+            show_ids = meta.get("show_ids") if isinstance(meta, Mapping) else None
+            if isinstance(show_ids, Mapping) and show_ids:
+                primary_meta["show_ids"] = {str(key): value for key, value in show_ids.items()}
+                break
+    if primary_meta:
+        primary["provider_metadata"] = primary_meta
     ratings = [rating for rating in (_rating_value(record.get("rating")) for record in ordered) if rating is not None]
     if ratings:
         primary["rating"] = max(ratings)
@@ -456,6 +502,47 @@ def _profile_key(provider: Any, instance_id: Any) -> str:
     return f"{str(provider or '').strip().lower()}:{normalize_instance_id(instance_id)}"
 
 
+def _path_value(block: Mapping[str, Any], path: str) -> Any:
+    value: Any = block
+    for part in path.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(part)
+    return value
+
+
+def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instance_id: Any) -> bool:
+    inst = normalize_instance_id(instance_id)
+    if inst == "default":
+        return True
+    raw = get_instance_block(cfg, provider, inst, create=False)
+    if not raw:
+        return False
+    identity_paths = {
+        "trakt": ("access_token", "token", "oauth.access_token"),
+        "simkl": ("access_token", "token", "oauth.access_token"),
+        "mdblist": ("access_token", "api_key", "key"),
+        "publicmetadb": ("api_key",),
+        "plex": (
+            "account_token",
+            "token",
+            "pms_token",
+            "pms.token",
+            "pms.x_plex_token",
+            "username",
+            "account_id",
+            "baseurl",
+            "server_url",
+            "server",
+            "server_name",
+            "machine_id",
+        ),
+        "emby": ("access_token", "user_id"),
+        "jellyfin": ("access_token", "user_id"),
+    }.get(str(provider or "").strip().lower(), ())
+    return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
+
+
 def _playback_settings(cfg: Mapping[str, Any]) -> Mapping[str, Any]:
     value = cfg.get("playback_progress") if isinstance(cfg, Mapping) else None
     return value if isinstance(value, Mapping) else {}
@@ -500,6 +587,8 @@ class PlaybackProgressService:
         for provider in PHASE1_PROVIDERS:
             for instance_id in list_instance_ids(config, provider):
                 inst = normalize_instance_id(instance_id)
+                if not _profile_has_explicit_identity(config, provider, inst):
+                    continue
                 out.append(
                     {
                         "provider": provider,
