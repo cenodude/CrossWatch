@@ -302,6 +302,18 @@ def clear_cache() -> dict[str, Any]:
         "after": after,
     }
 
+
+@router.post("/clear-provider-sync-cache")
+def clear_provider_sync_cache() -> dict[str, Any]:
+    """Reset pair baselines and provider runtime cache without touching user-facing local history."""
+    state = clear_state_minimal()
+    cache = clear_cache()
+    return {
+        "ok": bool(state.get("ok")) and bool(cache.get("ok")),
+        "state": state,
+        "cache": cache,
+    }
+
 @router.get("/provider-cache")
 def provider_cache_status() -> dict[str, Any]:
     info = _scan_provider_cache()
@@ -433,8 +445,27 @@ def clear_activity_log() -> dict[str, Any]:
         except Exception:
             pass
         return res
-    except Exception as e:
-        return {"ok": False, "error": "clear_activity_log_failed", "detail": str(e)}
+    except Exception:
+        return {"ok": False, "error": "clear_activity_log_failed"}
+
+
+@router.post("/clear-recent-scrobbles")
+def clear_recent_scrobbles() -> dict[str, Any]:
+    try:
+        from services.activity import clear_scrobble_events
+
+        res = clear_scrobble_events()
+        _, _, _, _, _, _append_log = _cw()
+        try:
+            _append_log(
+                "TRBL",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Cleared local recent scrobbles.",
+            )
+        except Exception:
+            pass
+        return res
+    except Exception:
+        return {"ok": False, "error": "clear_recent_scrobbles_failed"}
 
 # --- statistics reset / recalculation ---
 @router.post("/reset-stats")

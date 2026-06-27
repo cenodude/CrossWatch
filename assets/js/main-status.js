@@ -8,6 +8,8 @@
   const meta = window.CW?.ProviderMeta || {};
   const up = (v) => (typeof meta.keyOf === "function" ? meta.keyOf(v) : txt(v).toUpperCase());
   const providerLabel = (v) => (typeof meta.label === "function" ? meta.label(v) : (txt(v) || up(v)));
+  const providerLogo = (v) => (typeof meta.logoPath === "function" ? meta.logoPath(v) : `/assets/img/${up(v)}.svg`);
+  const providerTone = (v) => (typeof meta.tone === "function" ? meta.tone(v)?.rgb : "255,255,255") || "255,255,255";
   const mask = (v) => v === "*****" || /^[•]+$/.test(v);
   const pretty = (v) => (txt(v).toLowerCase() === "default" ? "Default" : txt(v));
   const AUTH_MAP = typeof meta.authProviders === "function"
@@ -136,17 +138,19 @@
     const inst = data && typeof data === "object" ? data.instances : null;
     const sum = data && typeof data === "object" ? data.instances_summary : null;
     if (!inst || typeof inst !== "object") return "";
+    const profileIds = Object.keys(inst).sort((a, b) => (a !== "default") - (b !== "default") || a.localeCompare(b));
+    if (!profileIds.length) return "";
     const ok = Number(sum?.ok);
     const probed = Number(sum?.probed);
     const total = Number(sum?.total);
-    if (!Number.isFinite(total) || total <= 1) return "";
-    const lines = [
-      Number.isFinite(probed) && probed > 0 && probed < total
-        ? `Profiles: ${ok}/${probed} checked, ${total} total`
+    const lines = [`Profiles: ${profileIds.map(pretty).join(", ")}`];
+    if (Number.isFinite(total) && total > 1) {
+      lines.push(Number.isFinite(probed) && probed > 0 && probed < total
+        ? `Checked profiles: ${ok}/${probed}, ${total} total`
         : Number.isFinite(ok)
-        ? `Profiles: ${ok}/${total} connected`
-        : `Profiles: ${total}`,
-    ];
+        ? `Connected profiles: ${ok}/${total}`
+        : `Profile count: ${total}`);
+    }
     const used = Array.isArray(sum?.used) ? sum.used : [];
     if (used.length) {
       const labels = used.slice(0, 4).map(pretty);
@@ -186,10 +190,19 @@
     const pill = wrap?.querySelector?.(".conn-pill");
     if (!pill) return;
     const provKey = up(key || name);
-    const text = pill.querySelector(".conn-text");
     const dot = pill.querySelector(".dot");
     const brand = pill.querySelector(".conn-brand");
     const hasSlot = !!pill.querySelector(".conn-slot");
+    let visual = pill.querySelector(".conn-provider-visual");
+    if (!visual) {
+      visual = document.createElement("span");
+      visual.className = "conn-provider-visual";
+      visual.setAttribute("aria-hidden", "true");
+      const legacy = pill.querySelector(".conn-provider-logo,.conn-text");
+      if (legacy) legacy.replaceWith(visual);
+      else pill.insertBefore(visual, dot || null);
+    }
+    if (dot && dot.parentElement !== visual) visual.appendChild(dot);
 
     wrap.dataset.prov = provKey;
     pill.dataset.prov = provKey;
@@ -199,7 +212,9 @@
     pill.ariaLabel = `${name} ${connected ? "connected" : "disconnected"}`;
     if (detail) pill.title = detail;
     else pill.removeAttribute("title");
-    if (text && text.textContent !== name) text.textContent = name;
+    const logoSrc = providerLogo(provKey);
+    visual.style.setProperty("--conn-provider-logo", `url("${logoSrc}")`);
+    visual.style.setProperty("--conn-provider-rgb", providerTone(provKey));
     if (dot) {
       dot.classList.toggle("ok", !!connected);
       dot.classList.toggle("no", !connected);
@@ -221,12 +236,11 @@
     pill.role = "status";
     pill.ariaLabel = `${name} ${connected ? "connected" : "disconnected"}`;
     if (detail) pill.title = detail;
-    pill.innerHTML = `<div class="conn-brand"><span class="conn-logo"></span>${
+    pill.innerHTML = `<div class="conn-brand">${
       vip ? `<span class="conn-slot">${CROWN}</span>` : ""
-    }</div><span class="conn-text"></span><span class="dot ${
+    }</div><span class="conn-provider-visual" aria-hidden="true"><span class="dot ${
       connected ? "ok" : "no"
-    }" aria-hidden="true"></span>`;
-    pill.querySelector(".conn-text").textContent = name;
+    }" aria-hidden="true"></span></span>`;
     wrap.appendChild(pill);
     updateConn(wrap, { name, connected, vip, detail, key });
     return wrap;
@@ -273,9 +287,13 @@
         const data = providers[key] || {};
         const name = providerLabel(key) || titleCase(key);
         const meta = providerMeta(key, data);
-        const detail =
-          [instancesDetail(data), meta.detail, usageDetail(data)].filter(Boolean).join("\n") ||
-          `${name} ${data?.connected ? "connected" : "not connected"}`;
+        const detail = [
+          `Provider: ${name}`,
+          `Status: ${data?.connected ? "Connected" : "Not connected"}`,
+          instancesDetail(data) || "Profiles: Not reported",
+          meta.detail,
+          usageDetail(data),
+        ].filter(Boolean).join("\n");
         const provKey = up(key);
         const existing = existingByKey.get(provKey);
         const item = existing || makeConn({ name, connected: !!data.connected, vip: meta.vip, detail, key });

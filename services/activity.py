@@ -347,6 +347,7 @@ def list_events(
     offset: int = 0,
     media_type: str = "all",
     status: str = "all",
+    kind: str = "all",
     query: str = "",
     since: int | None = None,
     group_routes: bool = True,
@@ -356,6 +357,7 @@ def list_events(
 
     mt = str(media_type or "all").strip().lower()
     st = str(status or "all").strip().lower()
+    kd = str(kind or "all").strip().lower()
     q = str(query or "").strip().lower()
     since_ts = _as_int(since)
 
@@ -371,6 +373,8 @@ def list_events(
             got = str(item.get("status") or "").lower()
             if got != want:
                 return False
+        if kd != "all" and str(item.get("kind") or "").strip().lower() != kd:
+            return False
         if q:
             hay = " ".join(
                 str(item.get(k) or "")
@@ -400,15 +404,38 @@ def list_events(
     }
 
 
-def clear_events() -> dict[str, Any]:
+def clear_events(*, kind: str | None = None) -> dict[str, Any]:
     path = activity_path()
     existed = path.exists()
+    wanted = str(kind or "").strip().lower()
     with _LOCK:
         try:
-            path.unlink(missing_ok=True)
-            return {"ok": True, "path": str(path), "existed": bool(existed), "removed": 1 if existed else 0}
+            if not wanted:
+                path.unlink(missing_ok=True)
+                return {"ok": True, "path": str(path), "existed": bool(existed), "removed": 1 if existed else 0}
+
+            payload = _read_payload()
+            items = [x for x in list(payload.get("items") or []) if isinstance(x, dict)]
+            kept = [x for x in items if str(x.get("kind") or "").strip().lower() != wanted]
+            removed = len(items) - len(kept)
+            if kept:
+                _write_payload({"v": LOG_VERSION, "items": kept})
+            else:
+                path.unlink(missing_ok=True)
+            return {
+                "ok": True,
+                "path": str(path),
+                "existed": bool(existed),
+                "kind": wanted,
+                "removed": removed,
+                "remaining": len(kept),
+            }
         except Exception as e:
             return {"ok": False, "error": "clear_activity_failed", "path": str(path), "existed": bool(existed), "detail": str(e)}
+
+
+def clear_scrobble_events() -> dict[str, Any]:
+    return clear_events(kind="scrobble")
 
 
 def record_history_sync_items(

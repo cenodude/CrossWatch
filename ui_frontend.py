@@ -659,7 +659,10 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
           <span class="material-symbols-rounded" aria-hidden="true">sensors</span>
           <h3>Recent Scrobble</h3>
         </div>
-        <button id="recent-scrobble-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble">refresh</button>
+        <div class="cw-dash-head-actions">
+          <span id="recent-scrobble-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-scrobble-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble">refresh</button>
+        </div>
       </div>
       <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
     </article>
