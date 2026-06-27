@@ -30,6 +30,17 @@ def _float(value: Any) -> float | None:
         return None
 
 
+def _trakt_image_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("//"):
+        return f"https:{text}"
+    if text.lower().startswith("media.trakt.tv/"):
+        return f"https://{text}"
+    return text
+
+
 def _duration_seconds_from_sources(*sources: Mapping[str, Any]) -> int | None:
     for source in sources:
         for key in ("runtime_ms", "duration_ms"):
@@ -264,8 +275,8 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
         poster = ""
         backdrop = ""
         try:
-            poster = str(((images.get("poster") or []) or [""])[0] or "")
-            backdrop = str(((images.get("fanart") or images.get("background") or []) or [""])[0] or "")
+            poster = _trakt_image_url(((images.get("poster") or []) or [""])[0])
+            backdrop = _trakt_image_url(((images.get("fanart") or images.get("background") or []) or [""])[0])
         except Exception:
             poster = ""
             backdrop = ""
