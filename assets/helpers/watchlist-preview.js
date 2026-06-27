@@ -11,7 +11,8 @@
   window.__wallLoading = window.__wallLoading || false;
   window._lastSyncEpoch = window._lastSyncEpoch || null;
   window.__wallRenderSignature = window.__wallRenderSignature || "";
-  const WALL_PREVIEW_CACHE_KEY = `cw.wall.preview.${window.APP_VERSION || "v1"}`;
+  const WALL_PREVIEW_CACHE_KEY = "cw.wall.preview.v2";
+  const WALL_PREVIEW_LEGACY_CACHE_KEY = `cw.wall.preview.${window.APP_VERSION || "v1"}`;
   const DEFAULT_INSTANCE = "default";
 
   const json = async (url, opt) => {
@@ -66,7 +67,17 @@
 
   const readWallCache = () => {
     try {
-      const data = JSON.parse(localStorage.getItem(WALL_PREVIEW_CACHE_KEY) || "{}");
+      let raw = localStorage.getItem(WALL_PREVIEW_CACHE_KEY)
+        || localStorage.getItem(WALL_PREVIEW_LEGACY_CACHE_KEY);
+      if (!raw) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i) || "";
+          if (!key.startsWith("cw.wall.preview.") || key === WALL_PREVIEW_CACHE_KEY) continue;
+          raw = localStorage.getItem(key);
+          if (raw) break;
+        }
+      }
+      const data = JSON.parse(raw);
       return Array.isArray(data?.items) ? data : null;
     } catch {
       return null;
@@ -127,7 +138,7 @@
   function artUrl(item, size = "w342") {
     const tmdb = item?.tmdb;
     if (!tmdb) return null;
-    return `/art/tmdb/${isTV(item.type || item.entity || item.media_type) ? "tv" : "movie"}/${tmdb}?size=${encodeURIComponent(size)}&cb=${window._lastSyncEpoch || 0}`;
+    return `/art/tmdb/${isTV(item.type || item.entity || item.media_type) ? "tv" : "movie"}/${tmdb}?size=${encodeURIComponent(size)}`;
   }
 
   const providerLogoPath = (name) => window.CW?.ProviderMeta?.logoPath?.(name) || "";
@@ -145,7 +156,9 @@
   function setWatchlistCount(total) {
     const chip = document.getElementById("watchlist-count-chip");
     if (!chip) return;
-    chip.textContent = countLabel(total, "item");
+    const count = Number(total || 0);
+    chip.textContent = String(Number.isFinite(count) ? count : 0);
+    chip.setAttribute("aria-label", countLabel(total, "item"));
     chip.classList.remove("hidden");
   }
 
@@ -749,7 +762,8 @@
       link.dataset.source = source;
 
       const img = document.createElement("img");
-      img.loading = "lazy";
+      img.loading = renderedCount < 4 ? "eager" : "lazy";
+      if (renderedCount < 4) img.fetchPriority = "high";
       img.alt = `${item.title || ""} (${item.year || ""})`;
       img.src = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
       img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
@@ -815,19 +829,8 @@
     if (!card || !msg || !row) return;
     if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
 
-    try {
-      const gate = await previewGate();
-      if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
-      if (!gate.allowed) {
-        card.classList.add("hidden");
-        hideWatchlistCount();
-        return;
-      }
-      card.classList.remove("hidden");
-    } catch {}
-
     const myReq = ++wallReqSeq;
-    const hasRenderedWall = row.childElementCount > 0 && !row.classList.contains("hidden");
+    let hasRenderedWall = row.childElementCount > 0 && !row.classList.contains("hidden");
     if (!hasRenderedWall) {
       msg.textContent = "Loading...";
       msg.classList.remove("is-empty");
@@ -836,33 +839,48 @@
       row.classList.add("hidden");
       const cached = readWallCache();
       if (cached) {
-        renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
+        hasRenderedWall = renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
       }
     }
 
+    const limit = Number.isFinite(window.MAX_WALL_POSTERS) ? Math.max(1, Number(window.MAX_WALL_POSTERS)) : 20;
+    const wallDataPromise = json(`/api/state/wall?both_only=0&active_only=1&limit=${encodeURIComponent(limit)}`)
+      .then((data) => ({ data }), (error) => ({ error }));
+
     try {
-      const limit = Number.isFinite(window.MAX_WALL_POSTERS) ? Math.max(1, Number(window.MAX_WALL_POSTERS)) : 20;
-      const data = await json(`/api/state/wall?both_only=0&active_only=1&limit=${encodeURIComponent(limit)}`);
-      if (myReq !== wallReqSeq) return;
-      if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
-      if (data?.missing_tmdb_key) { card.classList.add("hidden"); hideWatchlistCount(); return; }
-      if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return; }
+      const gate = await previewGate();
+      if (myReq !== wallReqSeq) return false;
+      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
+      if (!gate.allowed) {
+        hidePreviewCard(card, row, msg);
+        return false;
+      }
+      card.classList.remove("hidden");
+
+      const wallResult = await wallDataPromise;
+      if (wallResult.error) throw wallResult.error;
+      const data = wallResult.data;
+      if (myReq !== wallReqSeq) return false;
+      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
+      if (data?.missing_tmdb_key) { hidePreviewCard(card, row, msg); return false; }
+      if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return false; }
 
       let items = Array.isArray(data.items) ? data.items.slice() : [];
       if (!items.length) items = (data.items || []).filter((it) => String(it?.status || "").toLowerCase() === "both");
       window._lastSyncEpoch = data.last_sync_epoch || null;
       if (!items.length) {
         setWallEmpty(row, msg, "No items to show yet.");
-        return;
+        return true;
       }
       writeWallCache(items, data.last_sync_epoch || 0, data?.total ?? items.length);
-      renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true, total: data?.total ?? items.length });
+      return renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true, total: data?.total ?? items.length });
     } catch {
       if (!hasRenderedWall) {
         row.classList.add("hidden");
         msg.classList.remove("hidden");
       }
       msg.textContent = "Failed to load preview.";
+      return hasRenderedWall;
     }
   }
 
@@ -917,23 +935,11 @@
         hidePreviewCard(card, row, msg);
         return;
       }
-      const { allowed } = await previewGate();
+      window.wallLoaded = !!(await loadWall());
       if (!isOnMain()) {
         hidePreviewCard(card, row, msg);
         return;
       }
-      if (!allowed) {
-        if (card) card.classList.add("hidden");
-        hideWatchlistCount();
-        window.wallLoaded = false;
-        return;
-      }
-      await loadWall();
-      if (!isOnMain()) {
-        hidePreviewCard(card, row, msg);
-        return;
-      }
-      window.wallLoaded = true;
     } catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("Failed to update watchlist preview:", e);
@@ -956,16 +962,12 @@
         msg.classList.remove("hidden");
       }
 
-      const { allowed } = await previewGate();
-      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
-      if (!allowed) { hidePreviewCard(card, row, msg); return false; }
-
       if (!window.wallLoaded && !window.__wallLoading) {
         window.__wallLoading = true;
-        try { await loadWall(); window.wallLoaded = true; }
+        try { window.wallLoaded = !!(await loadWall()); }
         finally { window.__wallLoading = false; }
       }
-      return true;
+      return !!window.wallLoaded;
     } finally {
       previewBusy = false;
     }

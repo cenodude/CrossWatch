@@ -343,8 +343,8 @@ def _history_key(raw_key: str, item: Mapping[str, Any]) -> str:
         [
             _media_type(item),
             base,
-            str(_season_number(item) or ""),
-            str(_episode_number(item) or ""),
+            "" if _season_number(item) is None else str(_season_number(item)),
+            "" if _episode_number(item) is None else str(_episode_number(item)),
             str(_history_sort_epoch(item) or _history_key_epoch(raw_key)),
         ]
     )
@@ -862,7 +862,7 @@ def recent_history_widget(
 
 def recent_scrobble_widget(*, limit: int = 8) -> dict[str, Any]:
     cap = max(1, min(int(limit or 8), 24))
-    payload = list_events(limit=max(cap, 12), offset=0, status="ok", group_routes=True)
+    payload = list_events(limit=max(cap, 12), offset=0, status="ok", kind="scrobble", group_routes=True)
     rows = [_activity_row(item) for item in payload.get("items") or [] if isinstance(item, Mapping)]
     selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
     return {"ok": True, "items": selected, "total": len(rows)}

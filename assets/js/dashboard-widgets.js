@@ -173,7 +173,9 @@
   function setCountChip(id, total, noun) {
     const chip = $(`#${id}`);
     if (!chip) return;
-    chip.textContent = countLabel(total, noun);
+    const count = Number(total || 0);
+    chip.textContent = String(Number.isFinite(count) ? count : 0);
+    chip.setAttribute("aria-label", countLabel(total, noun));
     chip.classList.remove("hidden");
   }
 
@@ -336,7 +338,7 @@
       </div>`).join("");
   }
 
-  function renderPagedList(host, items, count, cardFn, emptyText, kind) {
+  function renderPagedList(host, items, count, cardFn, emptyText, kind, keepPager = false) {
     if (!host) return;
     if (!items.length) {
       setEmpty(host, emptyText);
@@ -344,8 +346,8 @@
     }
     const visible = Math.min(count, items.length);
     const hasMore = visible < items.length;
-    const button = hasMore
-      ? `<button type="button" class="cw-dash-see-more" data-cw-widget-more="${esc(kind)}" aria-label="Show more ${esc(kind)} items">
+    const button = hasMore || keepPager
+      ? `<button type="button" class="cw-dash-see-more" data-cw-widget-more="${esc(kind)}" aria-label="${hasMore ? `Show more ${esc(kind)} items` : `All ${esc(kind)} items shown`}"${hasMore ? "" : " disabled"}>
           <span class="material-symbols-rounded">expand_more</span>
         </button>`
       : "";
@@ -414,6 +416,7 @@
       const ratingItems = Array.isArray(data?.latest_ratings?.items) ? data.latest_ratings.items : [];
       setCountChip("recent-history-count-chip", data?.recent_history?.total ?? historyItems.length, "item");
       setCountChip("latest-ratings-count-chip", data?.latest_ratings?.total ?? ratingItems.length, "rating");
+      setCountChip("recent-scrobble-count-chip", data?.recent_scrobble?.total ?? scrobbleItems.length, "scrobble");
       latestItems.history = historyItems;
       latestItems.ratings = ratingItems;
       latestItems.scrobble = scrobbleItems;
@@ -424,7 +427,7 @@
         renderPagedList(ratingsHost, ratingItems, visibleCounts.ratings, ratingCard, "No ratings recorded yet.", "ratings");
       }
       if (settings.scrobble) {
-        renderPagedList(scrobbleHost, scrobbleItems, visibleCounts.scrobble, activityCard, "No recent scrobble recorded yet.", "scrobble");
+        renderPagedList(scrobbleHost, scrobbleItems, visibleCounts.scrobble, activityCard, "No recent scrobble recorded yet.", "scrobble", true);
       }
     } catch (e) {
       if (authPendingError(e)) {
@@ -453,7 +456,7 @@
       } else if (kind === "ratings") {
         renderPagedList($("#latest-ratings-grid"), latestItems.ratings, visibleCounts.ratings, ratingCard, "No ratings recorded yet.", "ratings");
       } else {
-        renderPagedList($("#recent-scrobble-list"), latestItems.scrobble, visibleCounts.scrobble, activityCard, "No recent scrobble recorded yet.", "scrobble");
+        renderPagedList($("#recent-scrobble-list"), latestItems.scrobble, visibleCounts.scrobble, activityCard, "No recent scrobble recorded yet.", "scrobble", true);
       }
     });
     document.addEventListener("tab-changed", (event) => {

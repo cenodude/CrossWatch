@@ -887,7 +887,7 @@ def api_tmdb_art(
     tmdb_id: int = FPath(...),
     size: str = Query("w342"),
     kind: str = Query("poster"),
-    season: int | None = Query(None, ge=1),
+    season: int | None = Query(None, ge=0),
     episode: int | None = Query(None, ge=1),
     locale: str | None = Query(None),
 ):
