@@ -576,7 +576,7 @@ def _progress(md: Mapping[str, Any]) -> float | None:
     return round(max(0.0, min(100.0, progress)), 2)
 
 
-def _probe_active_progress(cfg: dict[str, Any], rating_key: Any) -> int | None:
+def _probe_active_progress(cfg: dict[str, Any], rating_key: Any) -> tuple[int, int] | None:
     try:
         base, token = _plex_base_token(cfg)
         rk = str(rating_key or "")
@@ -587,12 +587,13 @@ def _probe_active_progress(cfg: dict[str, Any], rating_key: Any) -> int | None:
             return None
         root = ET.fromstring(r.text or "")
 
-        def _pct(v: Any) -> int | None:
+        def _playback(v: Any) -> tuple[int, int] | None:
             d = int(v.get("duration") or "0") or 0
             vo = int(v.get("viewOffset") or "0") or 0
             if d <= 0:
                 return None
-            return int(round(100.0 * max(0, min(vo, d)) / float(d)))
+            progress = int(round(100.0 * max(0, min(vo, d)) / float(d)))
+            return progress, d
 
         hit = None
         for v in root.iter("Video"):
@@ -602,7 +603,7 @@ def _probe_active_progress(cfg: dict[str, Any], rating_key: Any) -> int | None:
                 hit = v
         if hit is None:
             return None
-        return _pct(hit)
+        return _playback(hit)
     except Exception:
         return None
     return None
@@ -1267,14 +1268,16 @@ def process_webhook(
         return {"ok": True, "debounced": True}
 
     progress_source = "Metadata" if prog_raw is not None else ""
+    probed_duration_ms: int | None = None
     if (
         prog_raw is None
         and probe_progress
         and rk
         and event in ("media.play", "media.resume", "media.pause")
     ):
-        p_probe = _probe_active_progress(cfg, rk)
-        if isinstance(p_probe, int):
+        playback_probe = _probe_active_progress(cfg, rk)
+        if playback_probe is not None:
+            p_probe, probed_duration_ms = playback_probe
             prog_raw = float(p_probe)
             progress_source = "Plex active session"
 
@@ -1341,6 +1344,68 @@ def process_webhook(
             _emit(logger, "PMS says played → force STOP at ≥95%", "DEBUG")
             prog = max(prog, last_prog, 95.0)
 
+    def _update_playback_state() -> None:
+        # Only media.stop is authoritative for removing the live card/banner.
+        if event == "media.scrobble":
+            return
+        try:
+            stop_flag = event == "media.stop"
+            if (media_type or "").lower() == "episode":
+                title = (md.get("grandparentTitle") or md.get("title") or "").strip()
+            else:
+                title = (md.get("title") or md.get("grandparentTitle") or "").strip()
+            year = md.get("year")
+
+            season_val = None
+            episode_val = None
+            if (media_type or "").lower() == "episode":
+                try:
+                    season_val = int(md.get("parentIndex") or 0) or None
+                except Exception:
+                    season_val = None
+                try:
+                    episode_val = int(md.get("index") or 0) or None
+                except Exception:
+                    episode_val = None
+
+            duration_ms = probed_duration_ms
+            try:
+                dur_val = md.get("duration")
+                if dur_val is not None:
+                    metadata_duration_ms = int(dur_val)
+                    if metadata_duration_ms > 0:
+                        duration_ms = metadata_duration_ms
+            except Exception:
+                pass
+
+            if event in ("media.play", "media.resume"):
+                state_val = "playing"
+            elif event == "media.pause":
+                state_val = "paused"
+            elif stop_flag:
+                state_val = "stopped"
+            else:
+                state_val = "playing"
+
+            cw_ids = _cw_ids_for_payload(media_type, md, ids_all2, cfg, logger=logger)
+            _cw_update(
+                source="plextrakt",
+                media_type=(media_type or ""),
+                title=title,
+                year=year,
+                season=season_val,
+                episode=episode_val,
+                progress=prog,
+                stop=stop_flag,
+                duration_ms=duration_ms,
+                cover=None,
+                state=state_val,
+                clear_on_stop=True,
+                ids=cw_ids,
+            )
+        except Exception:
+            pass
+
     fast_cancel_stop = False
     if event == "media.stop" and prog < force_stop_at:
         age = now - float(st.get("first_seen", now))
@@ -1360,6 +1425,7 @@ def process_webhook(
                 "prog": prog,
                 "finished": False,
             }
+            _update_playback_state()
             return {"ok": True, "suppressed": True}
 
         if fast_cancel and prog < last_p:
@@ -1411,6 +1477,7 @@ def process_webhook(
             "prog": prog,
             "finished": (prog >= force_stop_at),
         }
+        _update_playback_state()
         return {"ok": True, "suppressed": True}
 
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
@@ -1424,63 +1491,13 @@ def process_webhook(
                 "finished": True,
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
+            _update_playback_state()
             return {"ok": True, "suppressed": True}
 
     if event in ("media.stop", "media.scrobble") and prog >= force_stop_at:
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
 
-    try:
-        stop_flag = event in ("media.stop", "media.scrobble")
-        title = (md.get("title") or md.get("grandparentTitle") or "").strip()
-        year = md.get("year")
-
-        season_val = None
-        episode_val = None
-        if (media_type or "").lower() == "episode":
-            try:
-                season_val = int(md.get("parentIndex") or 0) or None
-            except Exception:
-                season_val = None
-            try:
-                episode_val = int(md.get("index") or 0) or None
-            except Exception:
-                episode_val = None
-
-        duration_ms = None
-        try:
-            dur_val = md.get("duration")
-            if dur_val is not None:
-                duration_ms = int(dur_val)
-        except Exception:
-            duration_ms = None
-
-        if event in ("media.play", "media.resume"):
-            state_val = "playing"
-        elif event == "media.pause":
-            state_val = "paused"
-        elif event in ("media.stop", "media.scrobble"):
-            state_val = "stopped"
-        else:
-            state_val = "playing"
-
-        cw_ids = _cw_ids_for_payload(media_type, md, ids_all2, cfg, logger=logger)
-        _cw_update(
-            source="plextrakt",
-            media_type=(media_type or ""),
-            title=title,
-            year=year,
-            season=season_val,
-            episode=episode_val,
-            progress=prog,
-            stop=stop_flag,
-            duration_ms=duration_ms,
-            cover=None,
-            state=state_val,
-            clear_on_stop=True,
-            ids=cw_ids,
-        )
-    except Exception:
-        pass
+    _update_playback_state()
 
     body = _build_primary_body(media_type, md, ids_all2, prog, cfg, logger=logger)
     if not body:
