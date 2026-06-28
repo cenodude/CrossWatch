@@ -530,10 +530,6 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
       <div class="details-grid">
         <div class="det-left">
           <div class="det-head">
-            <div class="det-console-mark" title="Output" aria-label="Output">
-              <span class="material-symbols-rounded" aria-hidden="true">terminal</span>
-              <span class="det-title">Output</span>
-            </div>
             <div class="det-tabs" role="tablist" aria-label="Output tabs">
               <button id="det-tab-sync" class="det-tab active" type="button"
                 role="tab" aria-selected="true" aria-controls="det-panel-sync" data-tab="sync">Sync</button>
