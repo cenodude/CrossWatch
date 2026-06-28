@@ -24,7 +24,7 @@
     chipIcon={pairs:"sync_alt",sched:"calendar_month",watch:"visibility",hook:"webhook",providers:"shield",update:"notifications"},
     chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},providers:{target:"refresh-providers",label:"Re-check provider connections"},update:{target:"refresh-update",label:"Re-check for updates"}},
     S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{providers:{total:0,connected:0,missing:[],known:false},update:{known:false,available:false,current:"",latest:"",url:""}},timers:{sched:null,scrob:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
-  const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=10000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
+  const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=3000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
   let scrobPollSeq=0;
 
   if (!$("#sched-banner-css")) {
@@ -471,11 +471,12 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       if (nextWatch.enabled) watcherReportedAlive=!!(await API().Watch.status(force))?.alive;
       if (watcherReportedAlive) nextWatch.lastHealthyAt=now;
       const shared=!force?window[SHARED_WATCH_KEY]:null;
-      const cw=shared&&typeof shared==="object"&&(now-(Number(shared.at)||0))<SHARED_WATCH_TTL_MS
+      const sharedFresh=shared&&typeof shared==="object"&&(now-(Number(shared.at)||0))<SHARED_WATCH_TTL_MS;
+      const cw=sharedFresh
         ? (shared.payload||null)
         : await API().Watch.currentlyWatching(force).catch(()=>null);
       if (cw&&typeof cw==="object") {
-        window[SHARED_WATCH_KEY]={at:now,payload:cw};
+        if (!sharedFresh) window[SHARED_WATCH_KEY]={at:now,payload:cw};
         const all=Array.isArray(cw.streams)?cw.streams.filter(x=>x&&typeof x==="object"):[];
         const watchItems=all.filter(it=>!isWebhookStream(it));
         const hookItems=all.filter(isWebhookStream);
