@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, quote
 
@@ -507,6 +508,30 @@ def _log_lines(tag: str | None, tail: int | None = None) -> List[str]:
         return list(buf)
     return buf[-int(tail):]
 
+class _LogTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "br":
+            self.parts.append("\n")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+
+def _log_stream_text(line: str, plain: bool) -> str:
+    text = str(line or "")
+    if plain:
+        parser = _LogTextExtractor()
+        parser.feed(text)
+        parser.close()
+        text = "".join(parser.parts)
+    return text.replace("\r", " ").replace("\n", " ")
+
 def ansi_to_html(line: str) -> str:
     out, pos = [], 0
     state = {"b": False, "u": False, "fg": None, "bg": None}
@@ -794,6 +819,7 @@ async def api_logs_stream_initial(
     request: Request,
     tag: str = Query("SYNC"),
     tail: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
+    plain: bool = Query(False),
 ):
     tag = _norm_log_tag(tag)
 
@@ -801,7 +827,7 @@ async def api_logs_stream_initial(
         buf = _get_log_buf(tag)
         initial = buf[-int(tail):] if tail else buf
         for line in initial:
-            yield f"data: {line}\n\n"
+            yield f"data: {_log_stream_text(line, plain)}\n\n"
         base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
         last_seq = base + len(buf) - 1
         last = time.time()
@@ -818,7 +844,7 @@ async def api_logs_stream_initial(
                 start_idx = 0
             for i in range(start_idx, len(new_buf)):
                 line = new_buf[i]
-                yield f"data: {line}\n\n"
+                yield f"data: {_log_stream_text(line, plain)}\n\n"
                 last = time.time()
                 last_seq = base + i
             if time.time() - last > 15:
@@ -843,6 +869,7 @@ async def api_logs_watcher(
     request: Request,
     tail: int = Query(200, ge=1, le=3000),
     tags: str = Query("", description="Optional CSV override"),
+    plain: bool = Query(False),
 ):
     cfg = load_config() or {}
     if tags and tags.strip():
@@ -881,7 +908,7 @@ async def api_logs_watcher(
             buf = _get_log_buf(t)
             start = max(0, len(buf) - int(tail))
             for line in buf[start:]:
-                safe = (line or "").replace("\n", " ")
+                safe = _log_stream_text(line, plain)
                 yield f"event: {t}\ndata: {safe}\n\n"
             base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
             last_seq[t] = base + len(buf) - 1
@@ -903,7 +930,7 @@ async def api_logs_watcher(
                     start_idx = 0
                 for i in range(start_idx, len(buf)):
                     line = buf[i]
-                    safe = (line or "").replace("\n", " ")
+                    safe = _log_stream_text(line, plain)
                     yield f"event: {t}\ndata: {safe}\n\n"
                     last = time.time()
                     seen = base + i

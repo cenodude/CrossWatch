@@ -175,28 +175,12 @@ function _isAppDebugMode(cfg) {
   return !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
 }
 
-function _decodeLogText(value) {
-  const named = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
-  return String(value ?? "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&(#(?:x[0-9a-f]+|\d+)|amp|lt|gt|quot|apos|nbsp);/gi, (match, token) => {
-      const key = String(token || "").toLowerCase();
-      if (Object.prototype.hasOwnProperty.call(named, key)) return named[key];
-      const numeric = key.startsWith("#x")
-        ? Number.parseInt(key.slice(2), 16)
-        : Number.parseInt(key.slice(1), 10);
-      if (!Number.isInteger(numeric) || numeric < 0 || numeric > 0x10ffff || (numeric >= 0xd800 && numeric <= 0xdfff)) return match;
-      return String.fromCodePoint(numeric);
-    });
-}
-
 function _decodeLogLine(line) {
-  return _decodeLogText(line);
+  return String(line ?? "");
 }
 
 function _plainLogText(value) {
-  return _decodeLogText(value).replace(/\u00a0/g, " ").trim();
+  return String(value ?? "").replace(/\u00a0/g, " ").trim();
 }
 
 function _logTimeNow() {
@@ -591,6 +575,7 @@ function openDebugLog() {
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "DEBUG");
     url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
 
     const es = new EventSource(url.toString());
@@ -663,6 +648,7 @@ async function openWatcherLog() {
 
     const url = new URL("/api/logs/watcher", document.baseURI);
     url.searchParams.set("tail", "200");
+    url.searchParams.set("plain", "1");
     if (uniq.length) url.searchParams.set("tags", uniq.join(","));
 
     if (!el.__cwScrollWired) {
@@ -859,6 +845,7 @@ async function openDetailsLog() {
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "SYNC");
     url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
     window.esDet = new EventSource(url.toString());
     window.esDet.onopen = () => {
