@@ -10,6 +10,9 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from _logging import log as BASE_LOG
+
+LOG = BASE_LOG.child("ACTIVITY")
 LOG_VERSION = 1
 DEFAULT_LIMIT = 1000
 LOG_FILE_NAME = "activity_history.json"
@@ -431,7 +434,8 @@ def clear_events(*, kind: str | None = None) -> dict[str, Any]:
                 "remaining": len(kept),
             }
         except Exception as e:
-            return {"ok": False, "error": "clear_activity_failed", "path": str(path), "existed": bool(existed), "detail": str(e)}
+            LOG.error(f"failed to clear activity log: {type(e).__name__}: {e}")
+            return {"ok": False, "error": "clear_activity_failed"}
 
 
 def clear_scrobble_events() -> dict[str, Any]:
