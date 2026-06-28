@@ -416,6 +416,18 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
             )
         if k == "videos":
             return "videos" in meta
+        if k == "vote_count":
+            return "vote_count" in meta or "vote_count" in det
+        if k == "series_info":
+            return all(
+                field in det
+                for field in (
+                    "status",
+                    "number_of_seasons",
+                    "number_of_episodes",
+                    "next_episode_to_air",
+                )
+            )
         return bool(meta.get(k))
 
     for k, v in (need or {}).items():
@@ -1193,6 +1205,7 @@ def api_metadata_bulk(
             "genres",
             "videos",
             "score",
+            "vote_count",
             "certification",
             "release",
             "detail",

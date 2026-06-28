@@ -58,8 +58,8 @@
     }
     const s = Number(item?.season || 0);
     const e = Number(item?.episode || 0);
-    const code = s && e ? ` S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}` : "";
-    return `${title}${code}`;
+    const code = s && e ? `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}` : "";
+    return code ? `${title} - ${code}` : title;
   }
 
   function providerMeta() {

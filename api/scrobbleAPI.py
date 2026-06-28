@@ -371,6 +371,21 @@ def _scheduler_event_webhook_payload(provider: str, payload: dict[str, Any], res
         except Exception:
             return None
 
+    def _first(*values: Any) -> Any:
+        for value in values:
+            if value not in (None, ""):
+                return value
+        return None
+
+    def _number(*values: Any) -> int | None:
+        value = _first(*values)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     provider_lc = str(provider or "").strip().lower()
     action_raw = str((result or {}).get("action") or "").strip().lower()
     event_name = action_raw.rsplit("/", 1)[-1] if action_raw.startswith("/scrobble/") else action_raw
@@ -400,6 +415,7 @@ def _scheduler_event_webhook_payload(provider: str, payload: dict[str, Any], res
     media_type = str(
         _dig(payload, "Metadata", "type")
         or _dig(payload, "Item", "Type")
+        or _dig(payload, "NowPlayingItem", "Type")
         or payload.get("itemType")
         or ""
     ).strip().lower()
@@ -413,14 +429,38 @@ def _scheduler_event_webhook_payload(provider: str, payload: dict[str, Any], res
         or ""
     ).strip()
 
-    title = str(
-        _dig(payload, "Metadata", "title")
-        or _dig(payload, "Metadata", "grandparentTitle")
-        or _dig(payload, "Item", "Name")
-        or _dig(payload, "Item", "SeriesName")
-        or payload.get("Name")
+    series_title = str(
+        _first(
+            _dig(payload, "Metadata", "grandparentTitle"),
+            _dig(payload, "Item", "SeriesName"),
+            _dig(payload, "NowPlayingItem", "SeriesName"),
+            payload.get("SeriesName"),
+        )
         or ""
     ).strip()
+    item_title = str(
+        _first(
+            _dig(payload, "Metadata", "title"),
+            _dig(payload, "Item", "Name"),
+            _dig(payload, "NowPlayingItem", "Name"),
+            payload.get("Name"),
+        )
+        or ""
+    ).strip()
+    title = series_title if media_type == "episode" and series_title else item_title
+
+    season = _number(
+        _dig(payload, "Metadata", "parentIndex"),
+        _dig(payload, "Item", "ParentIndexNumber"),
+        _dig(payload, "NowPlayingItem", "ParentIndexNumber"),
+        payload.get("SeasonNumber"),
+    )
+    episode = _number(
+        _dig(payload, "Metadata", "index"),
+        _dig(payload, "Item", "IndexNumber"),
+        _dig(payload, "NowPlayingItem", "IndexNumber"),
+        payload.get("EpisodeNumber"),
+    )
 
     ids = {}
     for key in ("imdb", "tmdb", "tvdb", "trakt"):
@@ -441,6 +481,8 @@ def _scheduler_event_webhook_payload(provider: str, payload: dict[str, Any], res
         "finished": finished,
         "session_key": str(payload.get("sessionKey") or payload.get("SessionId") or "").strip(),
         "title": title,
+        "season": season if media_type == "episode" else None,
+        "episode": episode if media_type == "episode" else None,
         "ids": ids,
         "ts": int(time.time()),
     }
@@ -470,6 +512,14 @@ def _emit_activity_webhook_event(provider: str, payload: dict[str, Any], result:
 
     try:
         event = _scheduler_event_webhook_payload(provider, payload or {}, result)
+        trakt_payload = result.get("trakt")
+        trakt_action = str(trakt_payload.get("action") or "").strip().lower() if isinstance(trakt_payload, dict) else ""
+        confirmed_scrobble = trakt_action in {"scrobble", "stop"}
+        confirmed_conflict = str(result.get("note") or "").strip().lower() == "409_checkin"
+        if trakt_action and not confirmed_scrobble:
+            return
+        if not trakt_action and not confirmed_conflict and not bool(event.get("finished")):
+            return
         media_type = str(event.get("media_type") or "").strip().lower()
         if media_type not in {"movie", "episode"}:
             return
@@ -485,6 +535,8 @@ def _emit_activity_webhook_event(provider: str, payload: dict[str, Any], result:
                 "target_instance": "default",
                 "media_type": media_type,
                 "title": event.get("title"),
+                "season": event.get("season"),
+                "episode": event.get("episode"),
                 "progress": event.get("progress"),
                 "account": event.get("account"),
                 "watched_at": event.get("ts"),
@@ -1487,7 +1539,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
     elif res.get("debounced"):
         log("plex-webhook: debounced pause", "DEBUG")
     elif res.get("suppressed"):
-        log("plex-webhook: suppressed late start", "DEBUG")
+        log("plex-webhook: event suppressed by scrobble rules", "DEBUG")
     elif res.get("dedup"):
         log("plex-webhook: duplicate event suppressed", "DEBUG")
 

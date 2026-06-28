@@ -462,6 +462,15 @@ class TmdbProvider:
             self._log_exc("TMDb detail fetch failed", e)
             return {}
 
+        vote_count_raw = det.get("vote_count")
+        vote_count = (
+            int(vote_count_raw)
+            if isinstance(vote_count_raw, (int, float))
+            and not isinstance(vote_count_raw, bool)
+            and vote_count_raw >= 0
+            else None
+        )
+
         if kind == "movie":
             title_out = det.get("title") or det.get("original_title")
             year = self._safe_int_year(det.get("release_date"))
@@ -495,7 +504,10 @@ class TmdbProvider:
             detail = {
                 "first_air_date": det.get("first_air_date"),
                 "episode_run_time": run_list,
+                "status": det.get("status"),
                 "number_of_seasons": det.get("number_of_seasons"),
+                "number_of_episodes": det.get("number_of_episodes"),
+                "next_episode_to_air": det.get("next_episode_to_air"),
             }
 
         images: dict[str, list[dict[str, Any]]] = {}
@@ -546,6 +558,7 @@ class TmdbProvider:
             "title": title_out,
             "year": year,
             "runtime_minutes": runtime_minutes,
+            "vote_count": vote_count,
             "images": images or {},
             "detail": detail,
         }
