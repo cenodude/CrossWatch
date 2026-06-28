@@ -561,20 +561,26 @@ def _describe_ids(ids: dict[str, Any] | str) -> str:
     return str(ids)
 
 
-def _progress(payload: dict[str, Any]) -> float:
-    md = payload.get("Metadata") or {}
-    vo = payload.get("viewOffset") or md.get("viewOffset") or 0
-    dur = md.get("duration") or 0
-    if not dur:
-        return 0.0
-    p = max(0.0, min(100.0, (float(vo) * 100.0) / float(dur)))
-    return round(p, 2)
+def _progress(md: Mapping[str, Any]) -> float | None:
+    view_offset = md.get("viewOffset")
+    duration = md.get("duration")
+    if view_offset is None or duration is None:
+        return None
+    try:
+        duration_value = float(duration)
+        if duration_value <= 0:
+            return None
+        progress = (float(view_offset) * 100.0) / duration_value
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return round(max(0.0, min(100.0, progress)), 2)
 
 
-def _probe_session_progress(cfg: dict[str, Any], rating_key: Any, session_key: Any) -> int | None:
+def _probe_active_progress(cfg: dict[str, Any], rating_key: Any) -> int | None:
     try:
         base, token = _plex_base_token(cfg)
-        if not token:
+        rk = str(rating_key or "")
+        if not token or not rk:
             return None
         r = requests.get(f"{base}/status/sessions", headers={"X-Plex-Token": token}, timeout=5)
         if r.status_code != 200:
@@ -588,20 +594,9 @@ def _probe_session_progress(cfg: dict[str, Any], rating_key: Any, session_key: A
                 return None
             return int(round(100.0 * max(0, min(vo, d)) / float(d)))
 
-        sk_str = str(session_key) if session_key is not None else ""
-        if sk_str:
-            for v in root.iter("Video"):
-                if (v.get("sessionKey") or "") == sk_str:
-                    return _pct(v)
-            return None
-
-        rk_str = str(rating_key) if rating_key is not None else ""
-        if not rk_str:
-            return None
-
         hit = None
         for v in root.iter("Video"):
-            if (v.get("ratingKey") or "") == rk_str:
+            if (v.get("ratingKey") or "") == rk:
                 if hit is not None:
                     return None
                 hit = v
@@ -978,12 +973,6 @@ def _account_matches(
     title = ((payload.get("Account") or {}).get("title") or "")
     acc_id = str((payload.get("Account") or {}).get("id") or "")
     acc_uuid = str((payload.get("Account") or {}).get("uuid") or "").lower()
-    try:
-        psn0 = (payload.get("PlaySessionStateNotification") or [None])[0] or {}
-        acc_id = acc_id or str(psn0.get("accountID") or "")
-        acc_uuid = acc_uuid or str(psn0.get("accountUUID") or "").lower()
-    except Exception:
-        pass
     wl = [str(x).strip() for x in allow_users if str(x).strip()]
     for e in wl:
         s = e.lower()
@@ -1259,21 +1248,11 @@ def process_webhook(
         _emit(logger, f"rating forward failed {r.status_code} {(str(rj_r)[:180])}", "ERROR")
         return {"ok": False, "status": r.status_code, "trakt": rj_r}
 
-    prog_raw = _progress(payload)
-
+    prog_raw = _progress(md)
     acc_key = _account_key(payload)
     rk = str(md.get("ratingKey") or md.get("ratingkey") or "")
-    sk_current = str(payload.get("sessionKey") or md.get("sessionKey") or md.get("sessionkey") or "")
     player_uuid = str((payload.get("Player") or {}).get("uuid") or "")
-    sess = sk_current or f"rk:{rk}|p:{player_uuid or 'na'}|u:{acc_key}"
-
-    if probe_progress and sk_current:
-        p_probe = _probe_session_progress(cfg, None, sk_current)
-        if isinstance(p_probe, int) and abs(p_probe - int(round(prog_raw))) >= 5:
-            best = p_probe
-            if 5 <= best <= 95 or (best >= 96 and prog_raw >= 95):
-                _emit(logger, f"probe correction: {prog_raw:.0f}% → {best:.0f}%", "DEBUG")
-                prog_raw = float(best)
+    sess = f"rk:{rk}|p:{player_uuid or 'na'}|u:{acc_key}"
 
     now = time.time()
     st = _SCROBBLE_STATE.get(sess) or {}
@@ -1287,15 +1266,43 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {**st, "ts": now, "last_event": event}
         return {"ok": True, "debounced": True}
 
+    progress_source = "Metadata" if prog_raw is not None else ""
+    if (
+        prog_raw is None
+        and probe_progress
+        and rk
+        and event in ("media.play", "media.resume", "media.pause")
+    ):
+        p_probe = _probe_active_progress(cfg, rk)
+        if isinstance(p_probe, int):
+            prog_raw = float(p_probe)
+            progress_source = "Plex active session"
+
+    progress_available = prog_raw is not None
+    last_prog = float(st.get("prog", 0.0))
+    if prog_raw is None:
+        if "prog" in st:
+            effective_prog = last_prog
+            progress_source = "cache"
+        else:
+            effective_prog = 0.0
+            progress_source = "event fallback"
+    else:
+        effective_prog = prog_raw
+
+    if progress_source == "event fallback":
+        _emit(logger, "progress unavailable; using event fallback", "DEBUG")
+    else:
+        _emit(logger, f"progress {effective_prog:.2f}% from {progress_source}", "DEBUG")
+
     is_start = event in ("media.play", "media.resume")
     finished_flag = bool(st.get("finished"))
     fresh_start = (
         is_start
-        and float(prog_raw) <= 5.0
+        and effective_prog <= 5.0
         and (
             finished_flag
             or (st.get("last_event") in ("media.stop", "media.scrobble"))
-            or (sk_current and sk_current != st.get("sk"))
             or (float(st.get("prog", 0.0)) >= force_stop_at)
         )
     )
@@ -1303,12 +1310,11 @@ def process_webhook(
     if fresh_start:
         st["first_seen"] = now
 
-    last_prog = float(st.get("prog", 0.0))
     tol_pts = max(0.0, regress_tol)
-    prog = prog_raw
+    prog = effective_prog
 
     last_prog_for_clamp = 0.0 if fresh_start else last_prog
-    if prog + tol_pts < last_prog_for_clamp:
+    if progress_available and prog + tol_pts < last_prog_for_clamp:
         _emit(logger, f"regression clamp {prog_raw:.2f}% -> {last_prog_for_clamp:.2f}% (tol={tol_pts}%)", "DEBUG")
         prog = last_prog_for_clamp
 
@@ -1321,6 +1327,15 @@ def process_webhook(
         _emit(logger, f"promote STOP: using last progress {last_prog:.1f}% (current {prog:.1f}%)", "DEBUG")
         prog = last_prog
 
+    if event == "media.scrobble" and prog < force_stop_at:
+        authoritative_progress = max(95.0, force_stop_at, last_prog)
+        _emit(
+            logger,
+            f"authoritative SCROBBLE: promote {prog:.1f}% -> {authoritative_progress:.1f}%",
+            "DEBUG",
+        )
+        prog = authoritative_progress
+
     if event in ("media.stop", "media.scrobble") and prog < force_stop_at:
         if _probe_played_status(cfg, rk):
             _emit(logger, "PMS says played → force STOP at ≥95%", "DEBUG")
@@ -1330,13 +1345,11 @@ def process_webhook(
     if event == "media.stop" and prog < force_stop_at:
         age = now - float(st.get("first_seen", now))
         last_evt = str(st.get("last_event") or "")
-        last_sk = str(st.get("sk") or "")
         last_p = float(st.get("prog", 0.0) or 0.0)
         fast_cancel = (
             age < 2.0
             and last_evt in ("media.play", "media.resume")
             and last_p <= 5.0
-            and (not sk_current or not last_sk or sk_current == last_sk)
         )
         fast_cancel_stop = bool(fast_cancel)
 
@@ -1345,7 +1358,6 @@ def process_webhook(
             _SCROBBLE_STATE[sess] = {**st,                "ts": now,
                 "last_event": event,
                 "prog": prog,
-                "sk": sk_current,
                 "finished": False,
             }
             return {"ok": True, "suppressed": True}
@@ -1359,7 +1371,6 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
-            "sk": sk_current,
             "finished": (prog >= force_stop_at),
         }
         return {"ok": True, "ignored": True}
@@ -1369,7 +1380,6 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
-            "sk": sk_current,
             "finished": (prog >= force_stop_at),
         }
         return {"ok": True, "suppressed": True}
@@ -1384,7 +1394,7 @@ def process_webhook(
     if intended == "/scrobble/stop" and not fast_cancel_stop:
         if prog < force_stop_at:
             intended = "/scrobble/pause"
-        elif last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
+        elif event != "media.scrobble" and last_prog >= 0 and (prog - last_prog) >= 30 and last_prog < stop_pause_threshold and prog >= 98:
             _emit(logger, f"Demote STOP to PAUSE jump {last_prog:.0f}%→{prog:.0f}% (thr={stop_pause_threshold})", "DEBUG")
             intended = "/scrobble/pause"
             prog = last_prog
@@ -1399,7 +1409,6 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
-            "sk": sk_current,
             "finished": (prog >= force_stop_at),
         }
         return {"ok": True, "suppressed": True}
@@ -1412,7 +1421,6 @@ def process_webhook(
                 "last_event": event,
                 "last_pause_ts": st.get("last_pause_ts", 0),
                 "prog": prog,
-                "sk": sk_current,
                 "finished": True,
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
@@ -1422,7 +1430,7 @@ def process_webhook(
         _LAST_FINISH_BY_ACC[_account_key(payload)] = {"rk": str(rk or ""), "ts": now}
 
     try:
-        stop_flag = (intended == "/scrobble/stop")
+        stop_flag = event in ("media.stop", "media.scrobble")
         title = (md.get("title") or md.get("grandparentTitle") or "").strip()
         year = md.get("year")
 
@@ -1446,11 +1454,11 @@ def process_webhook(
         except Exception:
             duration_ms = None
 
-        if intended == "/scrobble/start":
+        if event in ("media.play", "media.resume"):
             state_val = "playing"
-        elif intended == "/scrobble/pause":
+        elif event == "media.pause":
             state_val = "paused"
-        elif intended == "/scrobble/stop":
+        elif event in ("media.stop", "media.scrobble"):
             state_val = "stopped"
         else:
             state_val = "playing"
@@ -1480,7 +1488,6 @@ def process_webhook(
         _SCROBBLE_STATE[sess] = {**st,            "ts": now,
             "last_event": event,
             "prog": prog,
-            "sk": sk_current,
             "finished": (prog >= force_stop_at),
         }
         return {"ok": True, "ignored": True}
@@ -1526,7 +1533,6 @@ def process_webhook(
                 "last_event": event,
                 "last_pause_ts": st.get("last_pause_ts", 0),
                 "prog": prog,
-                "sk": sk_current,
                 "finished": True,
                 **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
             }
@@ -1544,7 +1550,6 @@ def process_webhook(
             "last_event": event,
             "last_pause_ts": (now if intended == "/scrobble/pause" else st.get("last_pause_ts", 0)),
             "prog": prog,
-            "sk": sk_current,
             "finished": (intended == "/scrobble/stop" and prog >= force_stop_at),
             **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
         }
@@ -1565,7 +1570,6 @@ def process_webhook(
         "last_event": event,
         "last_pause_ts": st.get("last_pause_ts", 0),
         "prog": prog,
-        "sk": sk_current,
         "finished": (prog >= force_stop_at),
         **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
     }
