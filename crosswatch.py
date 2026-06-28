@@ -790,12 +790,17 @@ def logs_dump(channel: str = "TRAKT", n: int = 50):
     return {"channel": channel, "lines": _log_lines(channel, tail=n)}
 
 @app.get("/api/logs/stream", tags=["logging"])
-async def api_logs_stream_initial(request: Request, tag: str = Query("SYNC")):
+async def api_logs_stream_initial(
+    request: Request,
+    tag: str = Query("SYNC"),
+    tail: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
+):
     tag = _norm_log_tag(tag)
 
     async def agen():
         buf = _get_log_buf(tag)
-        for line in buf:
+        initial = buf[-int(tail):] if tail else buf
+        for line in initial:
             yield f"data: {line}\n\n"
         base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
         last_seq = base + len(buf) - 1

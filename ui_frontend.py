@@ -530,7 +530,10 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
       <div class="details-grid">
         <div class="det-left">
           <div class="det-head">
-            <div class="det-title">Output</div>
+            <div class="det-console-mark" title="Output" aria-label="Output">
+              <span class="material-symbols-rounded" aria-hidden="true">terminal</span>
+              <span class="det-title">Output</span>
+            </div>
             <div class="det-tabs" role="tablist" aria-label="Output tabs">
               <button id="det-tab-sync" class="det-tab active" type="button"
                 role="tab" aria-selected="true" aria-controls="det-panel-sync" data-tab="sync">Sync</button>
@@ -540,9 +543,9 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
                 role="tab" aria-selected="false" aria-controls="det-panel-debug" data-tab="debug">Debug</button>
             </div>
             <div class="det-tools">
-              <button id="det-copy" class="ghost" type="button" title="Copy current output">Copy</button>
-              <button id="det-clear" class="ghost" type="button" title="Clear current output">Clear</button>
-              <button id="det-follow" class="ghost" type="button" title="Toggle auto-follow">Follow</button>
+              <button id="det-copy" class="ghost det-tool-icon" type="button" title="Copy current output" aria-label="Copy current output"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
+              <button id="det-clear" class="ghost det-tool-icon" type="button" title="Clear current output" aria-label="Clear current output"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
+              <button id="det-follow" class="ghost det-follow" type="button" title="Toggle auto-follow" aria-pressed="true"><span class="material-symbols-rounded det-follow-icon" aria-hidden="true">podcasts</span><span>Follow</span><span class="material-symbols-rounded det-follow-caret" aria-hidden="true">expand_more</span></button>
             </div>
           </div>
           <div class="det-panels">
@@ -555,6 +558,13 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
             <div id="det-panel-debug" class="det-panel hidden" role="tabpanel" aria-labelledby="det-tab-debug">
               <div id="det-debug-log" class="log wlog"></div>
             </div>
+          </div>
+          <div class="det-console-footer" aria-live="polite">
+            <span id="det-live-state" class="det-live-state"><span class="det-live-dot" aria-hidden="true"></span><span class="det-live-label">Live</span></span>
+            <span id="det-follow-state" class="det-follow-state">Auto-scroll on</span>
+            <span class="det-footer-spacer"></span>
+            <span id="det-line-count" class="det-line-count">0 lines</span>
+            <span class="material-symbols-rounded det-list-icon" aria-hidden="true">format_list_bulleted</span>
           </div>
 
         </div>

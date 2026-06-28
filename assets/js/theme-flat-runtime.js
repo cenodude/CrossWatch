@@ -425,6 +425,7 @@ html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log
 html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) :is(.cf-line,.wlog-line,.wlog-msg){color:#253044!important;-webkit-text-fill-color:#253044!important;}
 html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) :is(.cf-line,.wlog-line){border-bottom-color:rgba(16,24,40,.08)!important;}
 html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) .wlog-tag{background:#eef2f7!important;border-color:rgba(16,24,40,.14)!important;color:#344054!important;-webkit-text-fill-color:#344054!important;}
+html[data-cw-theme="flat-light"] #details .det-structured-line .wlog-tag{background:rgba(var(--det-provider-rgb),.10)!important;border-color:rgba(var(--det-provider-rgb),.24)!important;color:var(--det-provider-color)!important;-webkit-text-fill-color:var(--det-provider-color)!important;}
 html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) .c30,html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) .c90{color:#667085!important;-webkit-text-fill-color:#667085!important;}
 html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) :is(.c37,.c97){color:#172033!important;-webkit-text-fill-color:#172033!important;}
 html[data-cw-theme="flat-light"] :is(#det-log,#det-watch-log,#det-debug-log,.log) :is(.c31,.c91){color:#b42318!important;-webkit-text-fill-color:#b42318!important;}
