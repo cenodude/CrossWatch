@@ -9,10 +9,14 @@
 
   window.wallLoaded = window.wallLoaded || false;
   window.__wallLoading = window.__wallLoading || false;
+  window.__cwWallPreviewDirty = typeof window.__cwWallPreviewDirty === "boolean" ? window.__cwWallPreviewDirty : true;
+  window.__cwWallPreviewDirtyVersion = Number(window.__cwWallPreviewDirtyVersion || 1);
+  window.__cwWallPreviewLoadedAt = Number(window.__cwWallPreviewLoadedAt || 0);
   window._lastSyncEpoch = window._lastSyncEpoch || null;
   window.__wallRenderSignature = window.__wallRenderSignature || "";
   const WALL_PREVIEW_CACHE_KEY = "cw.wall.preview.v2";
   const WALL_PREVIEW_LEGACY_CACHE_KEY = `cw.wall.preview.${window.APP_VERSION || "v1"}`;
+  const WALL_PREVIEW_REFRESH_TTL_MS = 60 * 1000;
   const DEFAULT_INSTANCE = "default";
 
   const json = async (url, opt) => {
@@ -88,6 +92,15 @@
     try {
       localStorage.setItem(WALL_PREVIEW_CACHE_KEY, JSON.stringify({ items, last_sync_epoch: lastSyncEpoch || 0, total }));
     } catch {}
+  };
+
+  const hasRenderedWall = (row = document.getElementById("poster-row")) => !!(row?.childElementCount && !row.classList.contains("hidden"));
+  const previewNeedsRefresh = () => window.__cwWallPreviewDirty
+    || !window.__cwWallPreviewLoadedAt
+    || (Date.now() - window.__cwWallPreviewLoadedAt) >= WALL_PREVIEW_REFRESH_TTL_MS;
+  const markPreviewClean = (refreshVersion) => {
+    if (window.__cwWallPreviewDirtyVersion === refreshVersion) window.__cwWallPreviewDirty = false;
+    window.__cwWallPreviewLoadedAt = Date.now();
   };
 
   const firstSeenMap = () => {
@@ -598,8 +611,9 @@
     ]);
     return { wlEnabled, hasKey, uiAllowed, allowed: !!(wlEnabled && hasKey && uiAllowed) };
   };
-  const hidePreviewCard = (card, row, msg) => {
+  const hidePreviewCard = (card, row, msg, { preserve = false } = {}) => {
     card?.classList.add("hidden");
+    if (preserve) return;
     hideWatchlistCount();
     if (row) {
       row.innerHTML = "";
@@ -827,11 +841,12 @@
     const msg = document.getElementById("wall-msg");
     const row = document.getElementById("poster-row");
     if (!card || !msg || !row) return;
-    if (!isOnMain()) { hidePreviewCard(card, row, msg); return; }
+    if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return; }
 
     const myReq = ++wallReqSeq;
-    let hasRenderedWall = row.childElementCount > 0 && !row.classList.contains("hidden");
-    if (!hasRenderedWall) {
+    const refreshVersion = window.__cwWallPreviewDirtyVersion;
+    let renderedWall = hasRenderedWall(row);
+    if (!renderedWall) {
       msg.textContent = "Loading...";
       msg.classList.remove("is-empty");
       msg.classList.remove("hidden");
@@ -839,7 +854,7 @@
       row.classList.add("hidden");
       const cached = readWallCache();
       if (cached) {
-        hasRenderedWall = renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
+        renderedWall = renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
       }
     }
 
@@ -850,7 +865,7 @@
     try {
       const gate = await previewGate();
       if (myReq !== wallReqSeq) return false;
-      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
+      if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       if (!gate.allowed) {
         hidePreviewCard(card, row, msg);
         return false;
@@ -861,7 +876,7 @@
       if (wallResult.error) throw wallResult.error;
       const data = wallResult.data;
       if (myReq !== wallReqSeq) return false;
-      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
+      if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       if (data?.missing_tmdb_key) { hidePreviewCard(card, row, msg); return false; }
       if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return false; }
 
@@ -870,17 +885,20 @@
       window._lastSyncEpoch = data.last_sync_epoch || null;
       if (!items.length) {
         setWallEmpty(row, msg, "No items to show yet.");
+        markPreviewClean(refreshVersion);
         return true;
       }
       writeWallCache(items, data.last_sync_epoch || 0, data?.total ?? items.length);
-      return renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true, total: data?.total ?? items.length });
+      renderWall(row, msg, items, data.last_sync_epoch || 0, { preserveIfSame: true, total: data?.total ?? items.length });
+      markPreviewClean(refreshVersion);
+      return true;
     } catch {
-      if (!hasRenderedWall) {
+      if (!renderedWall) {
         row.classList.add("hidden");
         msg.classList.remove("hidden");
       }
       msg.textContent = "Failed to load preview.";
-      return hasRenderedWall;
+      return renderedWall;
     }
   }
 
@@ -926,20 +944,33 @@
     }
   }
 
-  async function updateWatchlistPreview() {
+  async function updateWatchlistPreview({ force = true } = {}) {
     try {
       const card = document.getElementById("placeholder-card");
       const row = document.getElementById("poster-row");
       const msg = document.getElementById("wall-msg");
       if (!isOnMain()) {
-        hidePreviewCard(card, row, msg);
-        return;
+        hidePreviewCard(card, row, msg, { preserve: true });
+        return false;
       }
-      window.wallLoaded = !!(await loadWall());
+      card?.classList.remove("hidden");
+      const rendered = hasRenderedWall(row);
+      if (!force && !previewNeedsRefresh() && (window.wallLoaded || rendered)) return true;
+      if (window.__wallLoading) return !!(window.wallLoaded || rendered);
+      const refreshVersion = window.__cwWallPreviewDirtyVersion;
+      window.__wallLoading = true;
+      try { window.wallLoaded = !!(await loadWall()); }
+      finally {
+        window.__wallLoading = false;
+        if (window.__cwWallPreviewDirtyVersion !== refreshVersion && isOnMain()) {
+          window.setTimeout(() => updateWatchlistPreview({ force: true }), 0);
+        }
+      }
       if (!isOnMain()) {
-        hidePreviewCard(card, row, msg);
-        return;
+        hidePreviewCard(card, row, msg, { preserve: true });
+        return false;
       }
+      return !!(window.wallLoaded || hasRenderedWall(row));
     } catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("Failed to update watchlist preview:", e);
@@ -947,7 +978,7 @@
   }
 
   async function updatePreviewVisibility() {
-    if (previewBusy) return false;
+    if (previewBusy) return !!(window.wallLoaded || hasRenderedWall());
     previewBusy = true;
     try {
       const card = document.getElementById("placeholder-card");
@@ -955,22 +986,31 @@
       const msg = document.getElementById("wall-msg");
       if (!card) return false;
 
-      if (!isOnMain()) { hidePreviewCard(card, row, msg); return false; }
+      if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       card.classList.remove("hidden");
-      if (msg && !window.wallLoaded) {
+      const rendered = hasRenderedWall(row);
+      if (msg && !window.wallLoaded && !rendered) {
         msg.textContent = "Loading...";
         msg.classList.remove("hidden");
       }
 
-      if (!window.wallLoaded && !window.__wallLoading) {
-        window.__wallLoading = true;
-        try { window.wallLoaded = !!(await loadWall()); }
-        finally { window.__wallLoading = false; }
+      if ((!window.wallLoaded || previewNeedsRefresh()) && !window.__wallLoading) {
+        const pending = updateWatchlistPreview({ force: true });
+        if (rendered) void pending;
+        else await pending;
       }
-      return !!window.wallLoaded;
+      return !!(window.wallLoaded || rendered);
     } finally {
       previewBusy = false;
     }
+  }
+
+  function markWatchlistPreviewDirty() {
+    window.__cwWallPreviewDirty = true;
+    window.__cwWallPreviewDirtyVersion += 1;
+    if (!isOnMain()) return false;
+    void updateWatchlistPreview({ force: true });
+    return true;
   }
 
   window.addEventListener("storage", (event) => {
@@ -978,6 +1018,8 @@
     updatePreviewVisibility();
     window.dispatchEvent(new CustomEvent("watchlist-hidden-changed"));
   });
+  window.addEventListener("sync-complete", markWatchlistPreviewDirty);
+  window.addEventListener("watchlist:refresh", markWatchlistPreviewDirty);
 
   const WatchlistPreview = {
     updateEdges,
@@ -990,6 +1032,7 @@
     isOnMain,
     isWatchlistPreviewAllowed,
     updatePreviewVisibility,
+    markWatchlistPreviewDirty,
   };
 
   (window.CW ||= {}).WatchlistPreview = WatchlistPreview;

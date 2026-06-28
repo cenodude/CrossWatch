@@ -28,6 +28,7 @@
     selected: new Map(),
     filters: { provider: "", media_type: "", progress: "", age: "", rating: "", search: "", sort: "last_updated" },
     busy: false,
+    loaded: false,
     settings: null
   };
 
@@ -52,6 +53,8 @@ html[data-cw-theme=flat-light] .pp-field option{background:#ffffff;color:#111827
 #${ROOT_ID} .pp-toolbar>*,#${ROOT_ID} .pp-pager>*{position:relative;z-index:1}
 html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-pager{--pp-matrix-line:rgba(255,255,255,.055);--pp-matrix-glow:rgba(255,255,255,.030)}
 html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-light] #${ROOT_ID} .pp-pager{--pp-matrix-line:rgba(16,24,40,.065);--pp-matrix-glow:rgba(76,68,170,.050)}
+.pp-loading-grid{min-height:0}.pp-loading-card{cursor:default!important;pointer-events:none}.pp-loading-card:hover{border-color:var(--pp-border)!important;transform:none!important}.pp-loading-card .pp-body:before{opacity:.18!important}.pp-loading-shape{position:relative;display:block;overflow:hidden;background:color-mix(in srgb,var(--pp-soft) 12%,transparent)}.pp-loading-shape:after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 0%,rgba(255,255,255,.035) 40%,rgba(255,255,255,.16) 50%,rgba(255,255,255,.035) 60%,transparent 100%);transform:translateX(-120%);animation:ppSkeletonShimmer 1.35s ease-in-out infinite}.pp-loading-art{height:100%;background:color-mix(in srgb,var(--pp-soft) 10%,var(--pp-panel-bg-strong))}.pp-loading-copy{display:grid;gap:8px;align-content:start}.pp-loading-line{height:12px;border-radius:999px}.pp-loading-line.title{width:min(62%,240px);height:16px}.pp-loading-line.meta{width:min(40%,150px);opacity:.76}.pp-loading-chip{width:58px;height:22px;border-radius:999px}.pp-loading-progress{gap:5px}.pp-loading-progress .pp-loading-line{width:30%;height:12px}.pp-loading-bar{height:8px;border-radius:999px}.pp-loading-actions{gap:6px;align-self:end}.pp-loading-action{width:58px;height:28px;border-radius:999px}.pp-loading-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.is-loading #pp-refresh .material-symbols-rounded{animation:ppLoadingSpin .8s linear infinite}.is-loading .pp-toolbar{pointer-events:none;transition:opacity .16s ease}.is-initial-loading .pp-toolbar{opacity:.72}.is-initial-loading .pp-status,.is-initial-loading .pp-pager{display:none!important}.cw-compact .pp-loading-card:nth-child(n+4){display:none}@keyframes ppSkeletonShimmer{to{transform:translateX(120%)}}@keyframes ppLoadingSpin{to{transform:rotate(360deg)}}@media(max-width:980px){.pp-loading-card:nth-child(n+4){display:none}}@media(prefers-reduced-motion:reduce){.pp-loading-shape:after,.is-loading #pp-refresh .material-symbols-rounded{animation:none!important}.pp-loading-shape:after{transform:none;opacity:.35}}
+html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-shape{background:#2a2f39}html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-art{background:#242a34}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-loading-shape{background:#e2e7ef}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-loading-art{background:#e9edf3}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-loading-shape:after{background:linear-gradient(110deg,transparent 0%,rgba(255,255,255,.16) 40%,rgba(255,255,255,.76) 50%,rgba(255,255,255,.16) 60%,transparent 100%)}
     `;
     document.head.appendChild(Object.assign(document.createElement("style"), { id: STYLE_ID, textContent: css }));
   }
@@ -69,7 +72,7 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
       <div class="pp-status" id="pp-status"></div>
       <div class="pp-toolbar">
         <input class="pp-field" id="pp-search" type="search" placeholder="Search">
-        <select class="pp-field" id="pp-provider"></select>
+        <select class="pp-field" id="pp-provider"><option value="">Loading providers...</option></select>
         <select class="pp-field" id="pp-type"><option value="">All Types</option><option value="movie">Movies</option><option value="episode">TV Episodes</option><option value="anime_episode">Anime Episodes</option></select>
         <select class="pp-field" id="pp-progress"><option value="">All Progress</option><option value="0:24.99">Under 25 percent</option><option value="25:50">25 to 50 percent</option><option value="50:75">50 to 75 percent</option><option value="75:100">Over 75 percent</option><option value="90:100">Nearly Finished</option></select>
         <select class="pp-field" id="pp-age"><option value="">All Time</option><option value="today">Today</option><option value="7d">Last 7 Days</option><option value="30d">Last 30 Days</option><option value="older_30d">Older Than 30 Days</option></select>
@@ -77,6 +80,7 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
         <select class="pp-field" id="pp-sort"><option value="last_updated">Last Updated</option><option value="progress_high">Progress High</option><option value="progress_low">Progress Low</option><option value="remaining_time">Remaining Time</option><option value="rating_high">Rating High</option><option value="title">Title</option><option value="provider">Provider</option></select>
       </div>
       <div class="pp-errors hidden" id="pp-errors"></div>
+      <div class="pp-loading-status" id="pp-loading-status" role="status" aria-live="polite"></div>
       <div class="pp-grid" id="pp-grid"></div>
       <div class="pp-pager" id="pp-pager"><button class="pp-btn" id="pp-prev">${icon("chevron_left")}</button><span id="pp-page-text"></span><button class="pp-btn" id="pp-next">${icon("chevron_right")}</button></div>
       <div class="pp-bulk hidden" id="pp-bulk"><div class="pp-bulk-left"><strong class="pp-selected-pill"><span id="pp-selected-count" class="pp-selected-number">0</span><span class="pp-selected-label">selected</span></strong><button class="pp-btn" id="pp-select-visible">Select Visible</button><button class="pp-btn" id="pp-select-all">Select All Filtered Results</button><button class="pp-btn" id="pp-clear-selection">Clear Selection</button></div><span class="pp-bulk-divider" aria-hidden="true"></span><div class="pp-bulk-actions"><button class="pp-btn pp-bulk-icon" id="pp-bulk-edit" title="Edit progress" aria-label="Edit progress">${icon("edit")}</button><button class="pp-btn pp-bulk-icon" id="pp-bulk-watch" title="Mark as watched" aria-label="Mark as watched">${icon("check_circle")}</button><button class="pp-btn pp-bulk-icon danger" id="pp-bulk-remove" title="Remove progress" aria-label="Remove progress">${icon("delete")}</button></div></div>
@@ -341,6 +345,47 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
     if ([...document.getElementById("pp-provider").options].some((o) => o.value === cur)) document.getElementById("pp-provider").value = cur;
   }
 
+  function loadingCard() {
+    return `<article class="pp-card pp-loading-card" aria-hidden="true">
+      <div class="pp-art pp-loading-art pp-loading-shape"></div>
+      <div class="pp-body">
+        <div class="pp-top"><div class="pp-card-head">
+          <div class="pp-title-wrap pp-loading-copy"><span class="pp-loading-line title pp-loading-shape"></span><span class="pp-loading-line meta pp-loading-shape"></span></div>
+          <div class="pp-card-side"><span class="pp-loading-chip pp-loading-shape"></span></div>
+        </div></div>
+        <div class="pp-progress pp-loading-progress"><div class="pp-progress-row"><span class="pp-loading-line pp-loading-shape"></span></div><span class="pp-loading-bar pp-loading-shape"></span></div>
+        <div class="pp-actions pp-loading-actions"><span class="pp-loading-action pp-loading-shape"></span><span class="pp-loading-action pp-loading-shape"></span></div>
+      </div>
+    </article>`;
+  }
+
+  function renderInitialLoading() {
+    const grid = document.getElementById("pp-grid");
+    const status = document.getElementById("pp-loading-status");
+    document.getElementById("pp-errors")?.classList.add("hidden");
+    document.getElementById("pp-bulk")?.classList.add("hidden");
+    if (status) status.textContent = "Refreshing Playback Progress from configured providers.";
+    if (grid) {
+      grid.classList.add("pp-loading-grid");
+      grid.innerHTML = Array.from({ length: 6 }, loadingCard).join("");
+    }
+  }
+
+  function setLoadingState(loading, initial = false) {
+    const el = root();
+    if (!el) return;
+    el.classList.toggle("is-loading", loading);
+    el.classList.toggle("is-initial-loading", loading && initial);
+    loading ? el.setAttribute("aria-busy", "true") : el.removeAttribute("aria-busy");
+    el.querySelectorAll(".pp-toolbar .pp-field").forEach((field) => { field.disabled = loading; });
+    const refresh = document.getElementById("pp-refresh");
+    if (refresh) refresh.disabled = loading;
+    if (!loading) {
+      const status = document.getElementById("pp-loading-status");
+      if (status) status.textContent = "";
+    }
+  }
+
   function renderStatus() {
     const wrap = document.getElementById("pp-status");
     const configured = state.providers.filter((p) => p.configured && p.read);
@@ -407,6 +452,7 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
 
   function renderItems(preserveArtwork = true) {
     const grid = document.getElementById("pp-grid");
+    grid.classList.remove("pp-loading-grid");
     const ratingFilter = document.getElementById("pp-rating");
     ratingFilter.classList.toggle("hidden", !state.items.some((it) => Number(it.rating) > 0));
     const markup = state.items.length ? state.items.map(card).join("") : `<div class="pp-empty">No playback records found.</div>`;
@@ -458,8 +504,10 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
 
   async function load(force = false) {
     if (state.busy) return;
+    const initial = !state.loaded;
     state.busy = true;
-    document.getElementById("pp-refresh")?.setAttribute("disabled", "disabled");
+    setLoadingState(true, initial);
+    if (initial) renderInitialLoading();
     try {
       const data = await api(`/api/playback_progress/items?${query(force).toString()}`);
       state.items = Array.isArray(data.items) ? data.items : [];
@@ -471,15 +519,21 @@ html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-l
       renderStatus();
       renderErrors();
       renderItems(!force);
+      state.loaded = true;
     } catch (e) {
       state.items = [];
       state.errors = [{ provider: "Playback Progress", message: String(e?.message || e || "Request failed") }];
       state.total = 0;
+      const status = document.getElementById("pp-status");
+      if (status) {
+        status.innerHTML = "";
+        status.classList.add("hidden");
+      }
       renderErrors();
       renderItems();
     } finally {
       state.busy = false;
-      document.getElementById("pp-refresh")?.removeAttribute("disabled");
+      setLoadingState(false);
     }
   }
 

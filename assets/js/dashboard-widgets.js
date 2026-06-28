@@ -9,9 +9,16 @@
   let cfgPromise = null;
   let loadSeq = 0;
   let authRetryQueued = false;
+  let hasLoaded = false;
+  let widgetsDirty = true;
+  let dirtyVersion = 1;
+  let lastLoadedAt = 0;
+  let lastSettings = null;
+  let scrobbleStopRefreshTimer = null;
   const PAGE_STEP = 6;
   const RATING_PAGE_STEP = 9;
   const MAX_WIDGET_ITEMS = 24;
+  const WIDGET_REFRESH_TTL_MS = 60 * 1000;
   const visibleCounts = { history: PAGE_STEP, ratings: RATING_PAGE_STEP, scrobble: PAGE_STEP };
   const latestItems = { history: [], ratings: [], scrobble: [] };
 
@@ -33,6 +40,25 @@
 
   function scheduleWidgetRefresh(delay = 150, opts = {}) {
     window.setTimeout(() => refreshDashboardWidgets(opts), delay);
+  }
+
+  function revealCachedWidgets() {
+    if (hasLoaded && lastSettings) applyVisibility(lastSettings);
+  }
+
+  function markWidgetsDirty(delay = 150, opts = {}) {
+    widgetsDirty = true;
+    dirtyVersion += 1;
+    if (!isOnMain()) return;
+    scheduleWidgetRefresh(delay, { ...opts, force: true, preserve: hasLoaded });
+  }
+
+  function scheduleScrobbleStopRefresh() {
+    window.clearTimeout(scrobbleStopRefreshTimer);
+    scrobbleStopRefreshTimer = window.setTimeout(() => {
+      scrobbleStopRefreshTimer = null;
+      markWidgetsDirty(0);
+    }, 1000);
   }
 
   async function fetchJSON(url) {
@@ -145,14 +171,27 @@
     }).join("");
   }
 
+  function scrobbleProfileLabel(instance) {
+    const raw = String(instance || "default").trim() || "default";
+    if (raw.toLowerCase() === "default") return "Default";
+    const profile = raw.toUpperCase().match(/(?:^|[^A-Z0-9])(P\d{1,3})$/);
+    return profile?.[1] || raw;
+  }
+
   function scrobbleSourceLabel(source) {
     const provider = String(source?.provider || "").trim().toUpperCase();
     if (!provider) return "";
     const instance = String(source?.instance || "default").trim() || "default";
-    const label = sourceLabel({ provider, instance });
+    const profile = scrobbleProfileLabel(instance);
+    const providerName = providerLabel(provider);
+    const logo = providerMeta().logLogoPath?.(provider) || providerLogo(provider);
+    const providerIcon = logo
+      ? `<img src="${esc(logo)}" alt="" aria-hidden="true">`
+      : `<span class="cw-scrobble-source-icon--text" aria-hidden="true">${esc(providerShort(provider).slice(0, 2))}</span>`;
     const tone = providerMeta().tone?.(provider) || {};
     const rgb = String(tone?.rgb || "124,92,255");
-    return `<span class="cw-scrobble-source" style="--cw-source-rgb:${esc(rgb)}" title="${esc(`Source: ${label}`)}">${esc(label)}</span>`;
+    const description = `${providerName} profile: ${profile}`;
+    return `<span class="cw-scrobble-source" style="--cw-source-rgb:${esc(rgb)}" title="${esc(description)}" aria-label="${esc(description)}">${providerIcon}<span>${esc(profile)}</span></span>`;
   }
 
   function scrobbleSinkIcons(targets) {
@@ -365,17 +404,21 @@
     if (card) card.classList.toggle("hidden", !settings.history && !settings.ratings && !settings.scrobble);
   }
 
-  async function refreshDashboardWidgets({ forceConfig = false } = {}) {
+  async function refreshDashboardWidgets({ forceConfig = false, force = false, preserve = false } = {}) {
     if (!isOnMain()) {
       hideDashboardWidgets();
       return;
     }
+    revealCachedWidgets();
+    const fresh = hasLoaded && (Date.now() - lastLoadedAt) < WIDGET_REFRESH_TTL_MS;
+    if (!force && !widgetsDirty && fresh) return;
     if (authSetupPending()) {
       scheduleAuthReadyRefresh();
       return;
     }
     if (forceConfig) cfgPromise = null;
     const seq = ++loadSeq;
+    const refreshVersion = dirtyVersion;
     let cfg;
     try {
       cfg = await getConfig(forceConfig);
@@ -384,14 +427,21 @@
         scheduleAuthReadyRefresh();
         return;
       }
+      if (preserve && hasLoaded) {
+        revealCachedWidgets();
+        return;
+      }
       hideDashboardWidgets();
       return;
     }
     const settings = widgetSettings(cfg?.ui || cfg?.user_interface || {});
+    lastSettings = settings;
     if (seq !== loadSeq || !isOnMain()) return;
-    visibleCounts.history = PAGE_STEP;
-    visibleCounts.ratings = RATING_PAGE_STEP;
-    visibleCounts.scrobble = PAGE_STEP;
+    if (!preserve || !hasLoaded) {
+      visibleCounts.history = PAGE_STEP;
+      visibleCounts.ratings = RATING_PAGE_STEP;
+      visibleCounts.scrobble = PAGE_STEP;
+    }
     applyVisibility(settings);
     if (!settings.history && !settings.ratings && !settings.scrobble) return;
     if (!hasTmdbKeyInConfig(cfg)) {
@@ -402,9 +452,11 @@
     const historyHost = $("#recent-history-list");
     const ratingsHost = $("#latest-ratings-grid");
     const scrobbleHost = $("#recent-scrobble-list");
-    if (settings.history) setLoading(historyHost);
-    if (settings.ratings) setLoading(ratingsHost, "ratings");
-    if (settings.scrobble) setLoading(scrobbleHost);
+    if (!preserve || !hasLoaded) {
+      if (settings.history) setLoading(historyHost);
+      if (settings.ratings) setLoading(ratingsHost, "ratings");
+      if (settings.scrobble) setLoading(scrobbleHost);
+    }
 
     try {
       const data = await fetchJSON(`/api/dashboard/widgets?history_limit=${MAX_WIDGET_ITEMS}&ratings_limit=${MAX_WIDGET_ITEMS}&scrobble_limit=${MAX_WIDGET_ITEMS}`);
@@ -420,6 +472,9 @@
       latestItems.history = historyItems;
       latestItems.ratings = ratingItems;
       latestItems.scrobble = scrobbleItems;
+      hasLoaded = true;
+      lastLoadedAt = Date.now();
+      widgetsDirty = dirtyVersion !== refreshVersion;
       if (settings.history) {
         renderPagedList(historyHost, historyItems, visibleCounts.history, historyCard, "No watched history recorded yet.", "history");
       }
@@ -434,6 +489,7 @@
         scheduleAuthReadyRefresh();
         return;
       }
+      if (preserve && hasLoaded) return;
       if (settings.history) setEmpty(historyHost, "Recent history could not be loaded.");
       if (settings.ratings) setEmpty(ratingsHost, "Latest ratings could not be loaded.");
       if (settings.scrobble) setEmpty(scrobbleHost, "Recent scrobble could not be loaded.");
@@ -441,9 +497,9 @@
   }
 
   function initDashboardWidgets() {
-    $("#recent-history-refresh")?.addEventListener("click", () => refreshDashboardWidgets({ forceConfig: true }));
-    $("#latest-ratings-refresh")?.addEventListener("click", () => refreshDashboardWidgets({ forceConfig: true }));
-    $("#recent-scrobble-refresh")?.addEventListener("click", () => refreshDashboardWidgets({ forceConfig: true }));
+    $("#recent-history-refresh")?.addEventListener("click", () => markWidgetsDirty(0, { forceConfig: true }));
+    $("#latest-ratings-refresh")?.addEventListener("click", () => markWidgetsDirty(0, { forceConfig: true }));
+    $("#recent-scrobble-refresh")?.addEventListener("click", () => markWidgetsDirty(0, { forceConfig: true }));
     $("#dashboard-widgets-card")?.addEventListener("click", (event) => {
       const btn = event.target?.closest?.("[data-cw-widget-more]");
       if (!btn) return;
@@ -461,14 +517,17 @@
     });
     document.addEventListener("tab-changed", (event) => {
       const id = event?.detail?.id || event?.detail?.tab;
-      if (String(id || "").toLowerCase() === "main") setTimeout(() => refreshDashboardWidgets(), 50);
-      else hideDashboardWidgets();
+      if (String(id || "").toLowerCase() === "main") {
+        revealCachedWidgets();
+        setTimeout(() => refreshDashboardWidgets({ preserve: hasLoaded }), 50);
+      } else hideDashboardWidgets();
     });
-    window.addEventListener("settings-changed", () => setTimeout(() => refreshDashboardWidgets({ forceConfig: true }), 300));
-    window.addEventListener("activity-log-cleared", () => setTimeout(() => refreshDashboardWidgets(), 100));
-    window.addEventListener("sync-complete", () => scheduleWidgetRefresh(250));
-    window.addEventListener("cw:manual-watched-saved", () => scheduleWidgetRefresh(250));
-    window.addEventListener("watchlist:refresh", () => scheduleWidgetRefresh(250));
+    window.addEventListener("settings-changed", () => markWidgetsDirty(300, { forceConfig: true }));
+    window.addEventListener("activity-log-cleared", () => markWidgetsDirty(100));
+    window.addEventListener("sync-complete", () => markWidgetsDirty(250));
+    window.addEventListener("cw:scrobble-stopped", scheduleScrobbleStopRefresh);
+    window.addEventListener("cw:manual-watched-saved", () => markWidgetsDirty(250));
+    window.addEventListener("watchlist:refresh", () => markWidgetsDirty(250));
     if (authSetupPending()) scheduleAuthReadyRefresh();
     window.addEventListener("load", () => setTimeout(() => refreshDashboardWidgets({ forceConfig: true }), 100), { once: true });
     refreshDashboardWidgets();
