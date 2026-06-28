@@ -1,5 +1,4 @@
 /* assets/js/schedulerbanner.js */
-/* refactored */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (()=>{
   if (window.__SCHED_BANNER_INIT__) return;
@@ -20,10 +19,10 @@
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.provider||"").trim()&&String(r?.feature||"").trim()&&String(r?.at||"").trim()).length,
     activeEventRules=c=>(((c?.scheduling||c||{})?.advanced?.event_rules)||((c?.scheduling||c||{})?.advanced?.eventRules)||[])
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.action?.kind||"sync_pair")==="sync_pair"&&String(r?.action?.pair_id||r?.action?.pairId||r?.pair_id||"").trim()&&String(r?.filters?.route_id||r?.filters?.routeId||"").trim()).length,
-    chipText={pairs:"Sync pairs",sched:"Scheduler",watch:"Watcher",hook:"Webhook",providers:"Provider connections",update:"Updates"},
-    chipIcon={pairs:"sync_alt",sched:"calendar_month",watch:"visibility",hook:"webhook",providers:"shield",update:"notifications"},
-    chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},providers:{target:"refresh-providers",label:"Re-check provider connections"},update:{target:"refresh-update",label:"Re-check for updates"}},
-    S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{providers:{total:0,connected:0,missing:[],known:false},update:{known:false,available:false,current:"",latest:"",url:""}},timers:{sched:null,scrob:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
+    chipText={pairs:"Sync pairs",sched:"Scheduler",watch:"Watcher",hook:"Webhook",health:"CrossWatch health",update:"Updates"},
+    chipIcon={pairs:"sync_alt",sched:"calendar_month",watch:"visibility",hook:"webhook",health:"arrow_upward",update:"notifications"},
+    chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},health:{target:"maintenance",label:"Open Maintenance tools"},update:{target:"refresh-update",label:"Re-check for updates"}},
+    S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{health:{known:false,ok:false,status:"checking"},update:{known:false,available:false,current:"",latest:"",url:""}},timers:{sched:null,scrob:null,health:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
   const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=3000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
   let scrobPollSeq=0;
 
@@ -90,10 +89,22 @@
 #ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:hover::after,#ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:focus-visible::after{transform:translateX(0) translateY(0)!important;}
 #ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]::after{left:auto!important;right:0!important;transform:translateX(0) translateY(4px)!important;}
 #ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]:hover::after,#ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]:focus-visible::after{transform:translateX(0) translateY(0)!important;}
+#ops-card #sched-inline-log .sched[data-tip]::after{display:none!important;}
+#ops-card #sched-inline-log .cw-hub-tip{position:absolute;z-index:40;left:50%;bottom:calc(100% + 11px);display:grid;gap:2px;min-width:210px;max-width:min(310px,80vw);padding:10px 12px;border-radius:10px;background:var(--hub-card-bg);border:1px solid color-mix(in srgb,var(--service-state) 34%,var(--hub-card-border));box-shadow:0 14px 32px rgba(0,0,0,.34);color:var(--hub-text);font-size:11px;line-height:1.5;letter-spacing:.01em;text-align:left;white-space:nowrap;opacity:0;pointer-events:none;transform:translateX(-50%) translateY(4px);transition:opacity .16s ease,transform .16s ease;}
+#ops-card #sched-inline-log .sched[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .sched[data-tip]:focus-visible>.cw-hub-tip{opacity:1;transform:translateX(-50%) translateY(0);}
+#ops-card #sched-inline-log .cw-hub-tip-line{display:block;font-weight:750;overflow:hidden;text-overflow:ellipsis;}
+#ops-card #sched-inline-log .cw-hub-tip-action{display:block;margin-top:5px;padding-top:6px;border-top:1px solid color-mix(in srgb,var(--hub-muted) 24%,transparent);color:color-mix(in srgb,var(--service-state) 72%,var(--hub-text));font-weight:500;}
+#ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child .cw-hub-tip{left:0;transform:translateX(0) translateY(4px);}
+#ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .hub-status-group:first-child .sched:first-child[data-tip]:focus-visible>.cw-hub-tip{transform:translateX(0) translateY(0);}
+#ops-card #sched-inline-log .hub-group-system .sched:last-child .cw-hub-tip{left:auto;right:0;transform:translateX(0) translateY(4px);}
+#ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]:hover>.cw-hub-tip,#ops-card #sched-inline-log .hub-group-system .sched:last-child[data-tip]:focus-visible>.cw-hub-tip{transform:translateX(0) translateY(0);}
 html[data-cw-theme="flat-dark"] #ops-card .action-row{--hub-service-good:#57b58a;--hub-service-bad:#d86672;--hub-service-disabled:#7c8491;--hub-action-bg:#20242d;--hub-action-hover:#272c36;--hub-card-bg:#20242d;--hub-card-border:rgba(255,255,255,.13);--hub-text:#eef1f6;--hub-muted:#a9b0bd;}
 html[data-cw-theme="flat-light"] #ops-card .action-row{--hub-service-good:#276348;--hub-service-bad:#a93f4d;--hub-service-disabled:#98a2b3;--hub-action-bg:#fff;--hub-action-hover:#eef2f7;--hub-card-bg:#fff;--hub-card-border:rgba(16,24,40,.16);--hub-text:#172033;--hub-muted:#667085;}
 html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-service-bad:#e06470;--hub-service-disabled:#77808f;--hub-action-bg:rgba(255,255,255,.035);--hub-action-hover:rgba(255,255,255,.065);--hub-card-bg:linear-gradient(180deg,rgba(20,24,34,.96),rgba(12,15,23,.98));--hub-card-border:rgba(255,255,255,.09);--hub-text:#eef3ff;--hub-muted:rgba(188,198,217,.68);}
+#ops-card #sched-inline-log #chip-update.update-available::after{content:"";position:absolute;z-index:0;inset:0;border-radius:inherit;background:color-mix(in srgb,var(--hub-service-good) 22%,transparent);opacity:0;pointer-events:none;animation:cwHubUpdateBlink 2.8s ease-in-out infinite;}
+@keyframes cwHubUpdateBlink{0%,100%{opacity:0}50%{opacity:1}}
 @keyframes cwHubSyncSpin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){#ops-card #sched-inline-log #chip-update.update-available::after{animation:none;opacity:.7;}}
 @media(max-width:760px){#ops-card .action-buttons{width:100%!important;}#ops-card .action-buttons>.cw-split-run,#ops-card .action-buttons>.cw-hub-action{flex:1 1 150px!important;}#sched-inline-log{flex-wrap:wrap!important;}#ops-card #sched-inline-log .hub-group-system{margin-left:0;}}
 @media(max-width:480px){#ops-card .action-buttons>.cw-split-run,#ops-card .action-buttons>.cw-hub-action{flex:1 1 100%!important;}#ops-card #sched-inline-log .sched[data-tip]::after{left:0!important;transform:translateX(0) translateY(4px)!important;}#ops-card #sched-inline-log .sched[data-tip]:hover::after,#ops-card #sched-inline-log .sched[data-tip]:focus-visible::after{transform:translateX(0) translateY(0)!important;}}
 `;
@@ -109,7 +120,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
   })();
 
   function activateStatusTarget(target){
-    if (target==="refresh-providers") return document.getElementById("btn-status-refresh")?.click();
+    if (target==="maintenance") return window.openMaintenanceModal?.();
     if (target==="refresh-update") return CW().checkForUpdate?.();
     window.showTab?.("settings");
     setTimeout(()=>{
@@ -136,13 +147,13 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     if (!wrap) {
       wrap=document.createElement("div");
       wrap.id="sched-inline-log";
-      const statusTile=k=>{const nav=chipNav[k];return `<div class="sched idle${["sched","watch","hook"].includes(k)?" has-copy":""}" id="chip-${k}" role="${nav?"button":"status"}" tabindex="0"${nav?` data-nav="${nav.target}" data-nav-label="${nav.label}"`:""}><span class="ic service-icon material-symbols-rounded" aria-hidden="true">${chipIcon[k]}</span><span class="copy"><span class="label">${chipText[k]}</span><span class="value" id="${k}-value">-</span><span class="meta" id="${k}-meta"></span><span class="badges" id="${k}-badges"></span></span>${["watch","hook"].includes(k)?`<span class="watch-progress" aria-hidden="true"><span class="watch-progress-value" id="${k}-progress-value"></span></span>`:""}</div>`};
+      const statusTile=k=>{const nav=chipNav[k];return `<div class="sched idle${["sched","watch","hook"].includes(k)?" has-copy":""}" id="chip-${k}" role="${nav?"button":"status"}" tabindex="0"${nav?` data-nav="${nav.target}" data-nav-label="${nav.label}"`:""}><span class="ic service-icon material-symbols-rounded" aria-hidden="true">${chipIcon[k]}</span><span class="copy"><span class="label">${chipText[k]}</span><span class="value" id="${k}-value">-</span><span class="meta" id="${k}-meta"></span><span class="badges" id="${k}-badges"></span></span>${["watch","hook"].includes(k)?`<span class="watch-progress" aria-hidden="true"><span class="watch-progress-value" id="${k}-progress-value"></span></span>`:""}<span class="cw-hub-tip" aria-hidden="true"></span></div>`};
       wrap.innerHTML=`
         <div class="hub-status-group hub-group-monitoring">
           <div class="hub-group-items">${["sched","watch","hook"].map(statusTile).join("")}</div>
         </div>
         <div class="hub-status-group hub-group-system">
-          <div class="hub-group-items">${["pairs","providers","update"].map(statusTile).join("")}</div>
+          <div class="hub-group-items">${["pairs","health","update"].map(statusTile).join("")}</div>
         </div>`;
       host.appendChild(wrap);
     }
@@ -185,17 +196,31 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     if (!raw || raw.toLowerCase()==="default") return "Default";
     return raw;
   };
+  const streamTitle=(item)=>{
+    const title=String(item?.title||"").trim()||"Untitled";
+    const season=item?.season==null||item.season===""?null:Number(item.season);
+    const episode=item?.episode==null||item.episode===""?null:Number(item.episode);
+    if (!Number.isInteger(season)||season<0||!Number.isInteger(episode)||episode<0) return title;
+    return `${title} - S${String(season).padStart(2,"0")}E${String(episode).padStart(2,"0")}`;
+  };
+  const visualProgress=(item,nowMs=Date.now())=>{
+    const base=Math.max(0,Math.min(100,Number(item?.progress)||0));
+    if (String(item?.state||"").toLowerCase()!=="playing") return base;
+    const durationMs=Number(item?.duration_ms)||0,updatedSec=Number(item?.updated)||0;
+    if (!(durationMs>0)||!(updatedSec>0)) return base;
+    const serverTs=Number(item?._server_ts)||0,receivedAt=Number(item?._received_at_ms)||0;
+    const nowSec=serverTs&&receivedAt?serverTs+Math.max(0,nowMs-receivedAt)/1000:nowMs/1000;
+    return Math.max(base,Math.min(100,base+(Math.max(0,nowSec-updatedSec)*100000/durationMs)));
+  };
   const streamSummary=(item)=>{
     if (!item || typeof item!=="object") return "";
     const src=sourceLabel(item.source);
     const inst=instanceLabel(item.provider_instance);
-    const title=String(item.title||"").trim() || "Untitled";
-    const pct=Number(item.progress);
-    const bits=[src];
-    if (inst) bits.push(inst);
-    bits.push(title);
-    if (Number.isFinite(pct)) bits.push(`${Math.round(pct)}%`);
-    return bits.join(" • ");
+    const title=streamTitle(item);
+    const pct=visualProgress(item);
+    const sourceLine=[src,inst].filter(Boolean).join(" \u2022 ");
+    const mediaLine=[title,Number.isFinite(pct)?`${Math.round(pct)}%`:""].filter(Boolean).join(" \u2022 ");
+    return [sourceLine,mediaLine].filter(Boolean).join("\n");
   };
   const currentItem=(bucket)=>{
     const items=Array.isArray(bucket?.items)?bucket.items:[];
@@ -208,6 +233,23 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     return source.includes("webhook")||["plextrakt","embytrakt","jellyfintrakt"].includes(source);
   };
   const tooltipFor=(label,items)=>[label,...(Array.isArray(items)?items.map(streamSummary).filter(Boolean):[])].join("\n");
+
+  const renderTip=(el,tip,action)=>{
+    if (!el?.tip) return;
+    el.tip.replaceChildren();
+    String(tip||"").split("\n").map(line=>line.trim()).filter(Boolean).forEach(line=>{
+      const row=document.createElement("span");
+      row.className="cw-hub-tip-line";
+      row.textContent=line;
+      el.tip.appendChild(row);
+    });
+    if (action) {
+      const row=document.createElement("span");
+      row.className="cw-hub-tip-action";
+      row.textContent=action;
+      el.tip.appendChild(row);
+    }
+  };
 
   function emit(source,detail){
     const payload={source,...detail}, key=JSON.stringify(payload);
@@ -231,6 +273,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
         el.badges.innerHTML="";
         el.badges.style.display="none";
       }
+      el.tip?.replaceChildren();
       return el.chip.removeAttribute("data-tip"), el.chip.removeAttribute("title");
     }
     const healthy=!!ok&&!idle;
@@ -255,16 +298,18 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       el.badges.style.display=badgeHtml?"inline-flex":"none";
     }
     tip=String(tip||"").trim().replace(/\s*\u2022\s*/,"\n");
-    tip=[tip,el.chip.dataset.navLabel||""].filter(Boolean).join("\n");
+    const action=el.chip.dataset.navLabel||"";
+    const aria=[tip,action].filter(Boolean).join("\n");
+    renderTip(el,tip,action);
     el.chip.removeAttribute("title");
-    tip?(el.chip.dataset.tip=tip,el.chip.setAttribute("aria-label",tip)):(el.chip.removeAttribute("data-tip"),el.chip.removeAttribute("aria-label"));
+    aria?(el.chip.dataset.tip=aria,el.chip.setAttribute("aria-label",aria)):(el.chip.removeAttribute("data-tip"),el.chip.removeAttribute("aria-label"));
   }
 
   function render(){
     const host=ensureBanner();
     if (!host) return;
-    const E=k=>({chip:$(`#chip-${k}`,host),value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host),badges:$(`#${k}-badges`,host),progress:["watch","hook"].includes(k)?$(".watch-progress",$(`#chip-${k}`,host)):null,progressValue:["watch","hook"].includes(k)?$(`#${k}-progress-value`,host):null}),
-      pairs=E("pairs"), sched=E("sched"), watch=E("watch"), hook=E("hook"), providers=E("providers"), update=E("update"),
+    const E=k=>{const chip=$(`#chip-${k}`,host);return {chip,icon:$(".service-icon",chip),value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host),badges:$(`#${k}-badges`,host),tip:$(".cw-hub-tip",chip),progress:["watch","hook"].includes(k)?$(".watch-progress",chip):null,progressValue:["watch","hook"].includes(k)?$(`#${k}-progress-value`,host):null};},
+      pairs=E("pairs"), sched=E("sched"), watch=E("watch"), hook=E("hook"), health=E("health"), update=E("update"),
       watchItem=currentItem(S.watch),
       hookItem=currentItem(S.hook),
       watchLive=!!(watchItem&&S.watch.alive),
@@ -297,9 +342,9 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       show:false
     }:{
       value:S.watch.alive?"":"unavailable",
-      meta:watchLive?(watchItem.title||"Watching"):"",
+      meta:watchLive?streamTitle(watchItem):"",
       badges:S.watch.streams>1?[S.watch.streams]:[],
-      progress:watchLive?watchItem.progress:null,
+      progress:watchLive?visualProgress(watchItem):null,
       live:watchLive, ok:S.watch.alive, idle:!S.watch.alive,
       tip:watchLive?tooltipFor(`Watcher • ${S.watch.streams} active stream${S.watch.streams===1?"":"s"}`,S.watch.items):`Watcher ${S.watch.alive?"running":"idle"}${S.watch.state?` • state ${S.watch.state}`:""}`
     });
@@ -309,28 +354,26 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       show:false
     }:{
       value:"",
-      meta:hookLive?(hookItem.title||"Watching"):"",
+      meta:hookLive?streamTitle(hookItem):"",
       badges:S.hook.streams>1?[S.hook.streams]:[],
-      progress:hookLive?hookItem.progress:null,
+      progress:hookLive?visualProgress(hookItem):null,
       live:hookLive, ok:true, idle:false,
       tip:hookLive?tooltipFor(`Webhook • ${S.hook.streams} active stream${S.hook.streams===1?"":"s"}`,S.hook.items):"Webhook listening"
     });
     emit("webhook",hookLive?{title:hookItem.title,progress:Number(hookItem.progress)||0,state:hookItem.state||"playing",_streams_count:S.hook.streams}:{state:"stopped"});
     $(".hub-group-monitoring",host)?.classList.toggle("is-hidden",[sched,watch,hook].every(item=>item.chip?.classList.contains("is-hidden")));
 
-    const providerState=S.system.providers||{}, providerTotal=Number(providerState.total)||0, providerConnected=Number(providerState.connected)||0;
-    paint(providers,!providerState.known?{
+    const healthState=S.system.health||{};
+    if (health.icon) health.icon.textContent=healthState.known&&!healthState.ok?"arrow_downward":"arrow_upward";
+    paint(health,!healthState.known?{
       value:"checking", ok:false, disabled:true,
-      tip:"Provider connections\nStatus: checking"
-    }:providerTotal===0?{
-      value:"none", ok:false, disabled:true,
-      tip:"Provider connections\nStatus: no configured providers"
-    }:providerConnected===providerTotal?{
-      value:"healthy", ok:true,
-      tip:`Provider connections\nStatus: healthy\nConnected: ${providerConnected} of ${providerTotal}`
+      tip:"CrossWatch health\nStatus: checking"
+    }:healthState.ok?{
+      value:"up", ok:true,
+      tip:"CrossWatch health\nStatus: up"
     }:{
-      value:"attention", ok:false, idle:true,
-      tip:["Provider connections","Status: attention required",`Connected: ${providerConnected} of ${providerTotal}`,providerState.missing?.length?`Unavailable: ${providerState.missing.join(", ")}`:""].filter(Boolean).join("\n")
+      value:"down", ok:false,
+      tip:["CrossWatch health","Status: down",healthState.status&&healthState.status!=="down"?`Response: ${healthState.status}`:""].filter(Boolean).join("\n")
     });
 
     const updateState=S.system.update||{};
@@ -338,7 +381,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       value:"checking", ok:false, disabled:true,
       tip:"Updates\nStatus: checking"
     }:updateState.available?{
-      value:"available", ok:false, idle:true,
+      value:"available", ok:false, disabled:true,
       tip:["Update available",updateState.latest?`Latest: ${updateState.latest}`:"",updateState.current?`Installed: ${updateState.current}`:""].filter(Boolean).join("\n")
     }:updateState.ahead?{
       value:"ahead", ok:true,
@@ -350,33 +393,13 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       value:"current", ok:true,
       tip:["Updates","Status: up to date",updateState.current?`Installed: ${updateState.current}`:""].filter(Boolean).join("\n")
     });
+    update.chip?.classList.toggle("update-available",!!updateState.available);
 
     host.style.display="flex";
   }
 
   async function readConfig(force=false){
     try { return await API()?.Config.load(force)||{}; } catch { return Cache()?.getCfg()||{}; }
-  }
-
-  const providerName=key=>{
-    try { return CW()?.ProviderMeta?.label?.(String(key||"").toLowerCase())||String(key||""); }
-    catch { return String(key||""); }
-  };
-
-  function applyProviderHealth(detail=window.__CW_PROVIDER_STATUS__){
-    if (!detail||typeof detail!=="object") return;
-    const status=detail.providers&&typeof detail.providers==="object"?detail.providers:{};
-    const statusKeys=new Set(Object.keys(status).map(key=>String(key||"").toUpperCase()));
-    const providerList=Array.isArray(window.cx?.providers)?window.cx.providers:[];
-    const hasConfiguredFlag=providerList.some(item=>typeof item?.configured==="boolean");
-    const fromList=hasConfiguredFlag?providerList
-      .filter(item=>item?.configured!==false&&item?.enabled!==false)
-      .map(item=>String(item?.key||item?.name||item?.label||"").trim().toUpperCase())
-      .filter(key=>key&&statusKeys.has(key)):[];
-    const configured=[...new Set(fromList.length?fromList:(Array.isArray(detail.configuredProviders)?detail.configuredProviders:[]).map(key=>String(key||"").trim().toUpperCase()).filter(Boolean))];
-    const infoFor=key=>status[key]??status[key.toLowerCase()]??status[key.toUpperCase()]??{};
-    const missing=configured.filter(key=>!infoFor(key)?.connected).map(providerName);
-    S.system.providers={total:configured.length,connected:configured.length-missing.length,missing,known:true};
   }
 
   function applyUpdateStatus(detail=window.__CW_UPDATE_STATUS__){
@@ -417,6 +440,22 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       total:list.length,
       active:list.filter(pair=>pair&&pair.enabled!==false).length
     };
+  }
+
+  async function pollHealth(){
+    clear("health");
+    if (document.hidden) return scheduleHealth();
+    try {
+      const response=await fetch("/api/health",{cache:"no-store",headers:{Accept:"application/json"}});
+      const data=await response.json().catch(()=>({}));
+      const status=String(data?.status||"").trim().toLowerCase();
+      const ok=response.ok&&data?.ok===true&&status==="ok";
+      S.system.health={known:true,ok,status:status||response.statusText||"unknown"};
+    } catch {
+      S.system.health={known:true,ok:false,status:"unreachable"};
+    }
+    render();
+    scheduleHealth();
   }
 
   async function pollSched(force=false){
@@ -478,6 +517,8 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       if (cw&&typeof cw==="object") {
         if (!sharedFresh) window[SHARED_WATCH_KEY]={at:now,payload:cw};
         const all=Array.isArray(cw.streams)?cw.streams.filter(x=>x&&typeof x==="object"):[];
+        const serverTs=Number(cw.ts)||0,receivedAt=Date.now();
+        all.forEach(item=>{if(serverTs)item._server_ts=serverTs;item._received_at_ms=receivedAt;});
         const watchItems=all.filter(it=>!isWebhookStream(it));
         const hookItems=all.filter(isWebhookStream);
         Object.assign(nextWatch,{items:watchItems,streams:watchItems.length,title:String(watchItems[0]?.title||""),state:watchItems[0]?.state||null,index:Math.min(Number(nextWatch.index)||0,Math.max(0,watchItems.length-1))});
@@ -493,9 +534,10 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     scheduleScrob();
   }
 
-  const scheduleSched=()=>S.sched.enabled&&(S.timers.sched=setTimeout(()=>pollSched(false),30000)),
+  const scheduleHealth=()=>S.timers.health=setTimeout(()=>pollHealth(),30000),
+    scheduleSched=()=>S.sched.enabled&&(S.timers.sched=setTimeout(()=>pollSched(false),30000)),
     scheduleScrob=()=>S.cfg?.scrobble?.enabled&&(S.timers.scrob=setTimeout(()=>pollScrob(false),scrobSources().webhook?5000:15000)),
-    stop=()=>["sched","scrob","rotate"].forEach(clear);
+    stop=()=>["sched","scrob","health","rotate"].forEach(clear);
 
   function scheduleRotate(){
     clear("rotate");
@@ -511,8 +553,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
 
   async function refresh(forceCfg=false){
     stop();
-    [S.cfg]=await Promise.all([readConfig(forceCfg),pollPairs(forceCfg)]);
-    applyProviderHealth();
+    [S.cfg]=await Promise.all([readConfig(forceCfg),pollPairs(forceCfg),pollHealth()]);
     applyUpdateStatus();
     if (!schedulingOn(S.cfg?.scheduling) && !S.cfg?.scrobble?.enabled) {
       S.sched={enabled:false,running:false,next:0,advanced:false,captures:0};
@@ -544,7 +585,6 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     document.addEventListener("config-saved",()=>queueRefresh(true));
     window.addEventListener("cx:pairs:changed",refreshPairs);
     document.addEventListener("cx-state-change",refreshPairs);
-    document.addEventListener("cw-status-updated",event=>{applyProviderHealth(event?.detail);render();});
     document.addEventListener("cw-update-status",event=>{applyUpdateStatus(event?.detail);render();});
     window.addEventListener("auth-changed",()=>queueRefresh(true));
     document.addEventListener("scheduling-status-refresh",()=>pollSched(true));
@@ -552,6 +592,11 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     document.addEventListener("tab-changed",e=>["main","settings"].includes(e?.detail?.id)&&queueRefresh(false));
     window.addEventListener("focus",()=>queueRefresh(false));
     window.refreshSchedulingBanner=queueRefresh;
+    S.timers.visual=setInterval(()=>{
+      if (document.hidden) return;
+      const items=[currentItem(S.watch),currentItem(S.hook)].filter(Boolean);
+      if (items.some(item=>String(item?.state||"").toLowerCase()==="playing"&&Number(item?.duration_ms)>0)) render();
+    },1000);
   }
 
   document.addEventListener("DOMContentLoaded",()=>{
