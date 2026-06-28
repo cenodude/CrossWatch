@@ -14,7 +14,7 @@ if (typeof window.esWatch === "undefined") window.esWatch = null;
 if (typeof window._watchRetryTO === "undefined") window._watchRetryTO = null;
 if (typeof window._watchStaleIV === "undefined") window._watchStaleIV = null;
 if (typeof window._watchVisibilityHandler === "undefined") window._watchVisibilityHandler = null;
-if (typeof window._watchFlushIV === "undefined") window._watchFlushIV = null;
+if (typeof window._watchFlushRAF === "undefined") window._watchFlushRAF = null;
 if (typeof window.watchStickBottom === "undefined") window.watchStickBottom = true;
 if (typeof window.watchBuf === "undefined") window.watchBuf = [];
 if (typeof window.esDebug === "undefined") window.esDebug = null;
@@ -22,15 +22,25 @@ if (typeof window._debugRetryTO === "undefined") window._debugRetryTO = null;
 if (typeof window._debugStaleIV === "undefined") window._debugStaleIV = null;
 if (typeof window._debugVisibilityHandler === "undefined") window._debugVisibilityHandler = null;
 if (typeof window.debugStickBottom === "undefined") window.debugStickBottom = true;
+if (typeof window.debugBuf === "undefined") window.debugBuf = [];
+if (typeof window._debugFlushRAF === "undefined") window._debugFlushRAF = null;
 if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
 if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
-if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 2500;
+if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 600;
+if (typeof window.DETAILS_STREAM_TAIL === "undefined") window.DETAILS_STREAM_TAIL = 400;
+if (typeof window.DETAILS_QUEUE_MAX === "undefined") window.DETAILS_QUEUE_MAX = 1200;
+if (typeof window.DETAILS_BATCH_ROWS === "undefined") window.DETAILS_BATCH_ROWS = 80;
+if (typeof window.DETAILS_FRAME_BUDGET_MS === "undefined") window.DETAILS_FRAME_BUDGET_MS = 8;
 if (typeof window._detOpenSeq === "undefined") window._detOpenSeq = 0;
 if (typeof window._detBuf === "undefined") window._detBuf = "";
+if (typeof window.syncBuf === "undefined") window.syncBuf = [];
+if (typeof window._syncFlushRAF === "undefined") window._syncFlushRAF = null;
 if (typeof window._detSeenLines === "undefined") window._detSeenLines = [];
 if (typeof window._detReplayActive === "undefined") window._detReplayActive = false;
 if (typeof window._detReplayCursor === "undefined") window._detReplayCursor = 0;
 if (typeof window._detDidConnectOnce === "undefined") window._detDidConnectOnce = false;
+if (typeof window._detailsDropped === "undefined") window._detailsDropped = { sync: 0, watcher: 0, debug: 0 };
+if (typeof window._detailsStatusRAF === "undefined") window._detailsStatusRAF = null;
 
 function _activeDetailsLogEl() {
   if (window._detailsTab === "watcher") return document.getElementById("det-watch-log");
@@ -39,14 +49,50 @@ function _activeDetailsLogEl() {
 }
 
 function _pruneDetailsLog(el) {
-  const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+  const max = Number(window.DETAILS_MAX_LINES || 0) || 600;
   while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
 }
 
 function _pruneSeenDetailLines() {
-  const max = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+  const max = Number(window.DETAILS_MAX_LINES || 0) || 600;
   const lines = Array.isArray(window._detSeenLines) ? window._detSeenLines : [];
   if (lines.length > max) window._detSeenLines = lines.slice(lines.length - max);
+}
+
+function _detailsLimit(name, fallback) {
+  const value = Number(window[name] || 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+function _resetDetailsDropped(tab) {
+  if (!window._detailsDropped || typeof window._detailsDropped !== "object") {
+    window._detailsDropped = { sync: 0, watcher: 0, debug: 0 };
+  }
+  window._detailsDropped[tab] = 0;
+}
+
+function _enqueueDetailsItem(queue, item, tab) {
+  queue.push(item);
+  const max = _detailsLimit("DETAILS_QUEUE_MAX", 1200);
+  if (queue.length <= max) return;
+  const dropped = queue.length - max;
+  queue.splice(0, dropped);
+  window._detailsDropped[tab] = Number(window._detailsDropped[tab] || 0) + dropped;
+  _scheduleDetailsConsoleStatus();
+}
+
+function _runDetailsBatch(queue, renderItem, afterBatch, scheduleNext) {
+  const maxRows = _detailsLimit("DETAILS_BATCH_ROWS", 80);
+  const budget = _detailsLimit("DETAILS_FRAME_BUDGET_MS", 8);
+  const started = performance.now();
+  let rendered = 0;
+  while (rendered < queue.length && rendered < maxRows && performance.now() - started < budget) {
+    renderItem(queue[rendered]);
+    rendered += 1;
+  }
+  if (rendered) queue.splice(0, rendered);
+  if (rendered) afterBatch?.(rendered);
+  if (queue.length) scheduleNext();
 }
 
 function _rememberDetailLine(line) {
@@ -130,14 +176,186 @@ function _isAppDebugMode(cfg) {
 }
 
 function _decodeLogLine(line) {
-  const host = document.createElement("textarea");
-  host.innerHTML = String(line ?? "").replace(/<br\s*\/?>/gi, "\n");
-  return host.value;
+  return String(line ?? "");
+}
+
+function _plainLogText(value) {
+  return String(value ?? "").replace(/\u00a0/g, " ").trim();
+}
+
+function _logTimeNow() {
+  return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function _parseLogParts(raw, fallbackProvider = "") {
+  let text = _plainLogText(raw);
+  const fallback = String(fallbackProvider || "").trim().toUpperCase();
+  let provider = "";
+  let level = "";
+  let time = "";
+  const known = new Set(_watchLogKnownTags());
+  const levelName = (value) => {
+    const key = String(value || "").trim().toUpperCase();
+    if (key === "WARNING") return "WARN";
+    if (key === "ERR" || key === "CRITICAL" || key === "FATAL") return "ERROR";
+    if (key === "I") return "INFO";
+    return ["TRACE", "DEBUG", "INFO", "WARN", "ERROR", "SUCCESS"].includes(key) ? key : "";
+  };
+
+  for (let i = 0; i < 5; i++) {
+    const match = text.match(/^\s*\[([^\]]+)]\s*/);
+    if (!match) break;
+    const token = String(match[1] || "").trim();
+    const tokenLevel = levelName(token);
+    const tokenTime = token.match(/\b(\d{2}:\d{2}:\d{2})(?:[.,]\d+)?\b/);
+    if (tokenTime) time ||= tokenTime[1];
+    else if (tokenLevel) level ||= tokenLevel;
+    else if (known.has(token.toUpperCase()) || /^[A-Z][A-Z0-9_-]{1,20}$/.test(token)) provider ||= token.toUpperCase();
+    else break;
+    text = text.slice(match[0].length);
+  }
+
+  const timeMatch = text.match(/(?:^|\s)(\d{2}:\d{2}:\d{2})(?:[.,]\d+)?(?=\s|$)/);
+  if (timeMatch) {
+    time ||= timeMatch[1];
+    text = `${text.slice(0, timeMatch.index)} ${text.slice((timeMatch.index || 0) + timeMatch[0].length)}`.trim();
+  }
+
+  if (provider) {
+    const providerPrefix = new RegExp(`^\\s*(?:\\[${provider.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]\\s*)+`, "i");
+    text = text.replace(providerPrefix, "");
+  } else {
+    const providerMatch = text.match(/^\s*([A-Z][A-Z0-9_-]{1,20})\s+(?=(?:TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|CRITICAL|SUCCESS)\b)/i);
+    if (providerMatch) {
+      provider = providerMatch[1].toUpperCase();
+      text = text.slice(providerMatch[0].length);
+    }
+  }
+
+  const levelMatch = text.match(/^\s*(TRACE|DEBUG|INFO|WARN(?:ING)?|ERROR|ERR|CRITICAL|FATAL|SUCCESS)\b[:\s-]*/i);
+  if (levelMatch) {
+    level ||= levelName(levelMatch[1]);
+    text = text.slice(levelMatch[0].length);
+  }
+
+  return {
+    provider: provider || fallback || "SYSTEM",
+    level: level || "INFO",
+    message: text.trim() || _plainLogText(raw) || "-",
+    time: time || _logTimeNow(),
+  };
+}
+
+function _structuredLogRow(raw, fallbackProvider = "") {
+  const parts = _parseLogParts(raw, fallbackProvider);
+  const row = document.createElement("div");
+  row.className = "wlog-line det-structured-line";
+  row.dataset.provider = parts.provider;
+  row.dataset.level = parts.level.toLowerCase();
+
+  const badge = document.createElement("span");
+  badge.className = "wlog-tag";
+  badge.textContent = parts.provider;
+
+  const level = document.createElement("span");
+  level.className = `wlog-level level-${parts.level.toLowerCase()}`;
+  level.textContent = parts.level;
+
+  const msg = document.createElement("span");
+  msg.className = "wlog-msg";
+  msg.textContent = parts.message;
+
+  const time = document.createElement("time");
+  time.className = "wlog-time";
+  time.textContent = parts.time;
+
+  row.append(badge, level, msg, time);
+  return row;
+}
+
+function _upgradeSyncLogRows(el) {
+  if (!el) return;
+  el.querySelectorAll(":scope > .cf-line:not([data-structured])").forEach((line) => {
+    const row = _structuredLogRow(line.textContent || "", "SYNC");
+    row.classList.add("cf-line", "cf-fade-in");
+    row.dataset.structured = "1";
+    line.replaceWith(row);
+  });
+}
+
+function _detailsStickBottom() {
+  if (window._detailsTab === "watcher") return !!window.watchStickBottom;
+  if (window._detailsTab === "debug") return !!window.debugStickBottom;
+  return !!window.detStickBottom;
+}
+
+function _updateDetailsConsoleStatus() {
+  const el = _activeDetailsLogEl();
+  const tab = document.getElementById(`det-tab-${window._detailsTab || "sync"}`);
+  const live = document.getElementById("det-live-state");
+  const liveLabel = live?.querySelector(".det-live-label");
+  const followState = document.getElementById("det-follow-state");
+  const count = document.getElementById("det-line-count");
+  const follow = document.getElementById("det-follow");
+  const following = _detailsStickBottom();
+  const stale = !!tab?.classList.contains("stale");
+  const connected = !!tab?.classList.contains("connected");
+  const rows = el?.childElementCount || 0;
+  const dropped = Number(window._detailsDropped?.[window._detailsTab || "sync"] || 0);
+
+  live?.classList.toggle("is-live", connected && !stale);
+  live?.classList.toggle("is-stale", stale);
+  if (liveLabel) liveLabel.textContent = stale ? "Reconnecting" : (connected ? "Live" : "Idle");
+  if (followState) followState.textContent = `Auto-scroll ${following ? "on" : "off"}`;
+  if (count) count.textContent = `${rows} ${rows === 1 ? "line" : "lines"}${dropped ? ` · ${dropped} omitted` : ""}`;
+  follow?.classList.toggle("is-on", following);
+  follow?.setAttribute("aria-pressed", String(following));
+}
+
+function _scheduleDetailsConsoleStatus() {
+  if (window._detailsStatusRAF) return;
+  window._detailsStatusRAF = requestAnimationFrame(() => {
+    window._detailsStatusRAF = null;
+    _updateDetailsConsoleStatus();
+  });
+}
+
+function _wireDetailsConsoleStatus() {
+  for (const id of ["det-log", "det-watch-log", "det-debug-log"]) {
+    const el = document.getElementById(id);
+    if (!el || el.__cwStatusObserver) continue;
+    el.__cwStatusObserver = new MutationObserver(_scheduleDetailsConsoleStatus);
+    el.__cwStatusObserver.observe(el, { childList: true });
+  }
+  _updateDetailsConsoleStatus();
+}
+
+function _copyableDetailsRow(row) {
+  if (!row) return "";
+  if (row.classList?.contains("det-structured-line")) {
+    const time = row.querySelector(".wlog-time")?.textContent?.trim() || "";
+    const provider = row.querySelector(".wlog-tag")?.textContent?.trim() || "SYSTEM";
+    const level = row.querySelector(".wlog-level")?.textContent?.trim() || "INFO";
+    const message = row.querySelector(".wlog-msg")?.textContent?.replace(/\s+/g, " ").trim() || "";
+    return [time, `[${provider}]`, level, message].filter(Boolean).join(" ");
+  }
+  return String(row.innerText || row.textContent || "")
+    .replace(/\s*\n\s*/g, " ")
+    .replace(/[\t ]+/g, " ")
+    .trim();
+}
+
+function _copyableDetailsLog(el) {
+  if (!el) return "";
+  const lines = Array.from(el.children, _copyableDetailsRow).filter(Boolean);
+  const dropped = Number(window._detailsDropped?.[window._detailsTab || "sync"] || 0);
+  if (dropped) lines.push(`--- ${dropped} incoming log ${dropped === 1 ? "entry was" : "entries were"} omitted from this view ---`);
+  return lines.join("\n");
 }
 
 async function _copyDetailsLog(btn) {
   const el = _activeDetailsLogEl();
-  const text = (el?.innerText || el?.textContent || "").trim();
+  const text = _copyableDetailsLog(el);
   if (!text) return;
 
   try {
@@ -155,11 +373,14 @@ async function _copyDetailsLog(btn) {
   }
 
   if (!btn) return;
-  const prev = btn.textContent;
-  btn.textContent = "Copied";
+  const icon = btn.querySelector(".material-symbols-rounded");
+  const prev = icon?.textContent || "content_copy";
+  if (icon) icon.textContent = "check";
+  btn.classList.add("is-copied");
   clearTimeout(btn._copyFlashTO);
   btn._copyFlashTO = setTimeout(() => {
-    btn.textContent = prev;
+    if (icon) icon.textContent = prev;
+    btn.classList.remove("is-copied");
   }, 1200);
 }
 
@@ -188,8 +409,20 @@ function setDetailsTab(tab) {
   tabDebug.classList.toggle("active", isDebug);
   tabDebug.setAttribute("aria-selected", String(isDebug));
 
-  if (isWatch) { try { openWatcherLog(); } catch {} }
-  if (isDebug) { try { openDebugLog(); } catch {} }
+  if (t === "sync") {
+    try { closeWatcherLog(); } catch {}
+    try { closeDebugLog(); } catch {}
+    if (_detailsVisible()) { try { openDetailsLog(); } catch {} }
+  } else if (isWatch) {
+    try { closeSyncLog(); } catch {}
+    try { closeDebugLog(); } catch {}
+    try { openWatcherLog(); } catch {}
+  } else if (isDebug) {
+    try { closeSyncLog(); } catch {}
+    try { closeWatcherLog(); } catch {}
+    try { openDebugLog(); } catch {}
+  }
+  _updateDetailsConsoleStatus();
 }
 
 function initDetailsTabs() {
@@ -199,6 +432,7 @@ function initDetailsTabs() {
   const tabDebug = document.getElementById("det-tab-debug");
   if (!tabSync || !tabWatch || !tabDebug) return;
   window._detailsTabsWired = true;
+  _wireDetailsConsoleStatus();
 
   tabSync.addEventListener("click", () => setDetailsTab("sync"));
   tabWatch.addEventListener("click", () => setDetailsTab("watcher"));
@@ -217,6 +451,10 @@ function initDetailsTabs() {
       const el = _activeDetailsLogEl();
       if (el) el.innerHTML = "";
       if (window._detailsTab === "watcher") window.watchBuf.length = 0;
+      if (window._detailsTab === "debug") window.debugBuf.length = 0;
+      if (window._detailsTab === "sync") window.syncBuf.length = 0;
+      _resetDetailsDropped(window._detailsTab || "sync");
+      _updateDetailsConsoleStatus();
     });
   }
 
@@ -236,27 +474,51 @@ function initDetailsTabs() {
         const el = document.getElementById("det-log");
         if (window.detStickBottom && el) el.scrollTop = el.scrollHeight;
       }
+      _updateDetailsConsoleStatus();
     });
   }
+}
+
+function closeSyncLog() {
+  window._detOpenSeq += 1;
+  try { window.esDet?.close?.(); } catch {}
+  try { window.esDetSummary?.close?.(); } catch {}
+  window.esDet = null;
+  window.esDetSummary = null;
+  window.syncBuf.length = 0;
+  if (window._syncFlushRAF) { cancelAnimationFrame(window._syncFlushRAF); window._syncFlushRAF = null; }
+  if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
+  if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
+  if (window._detVisibilityHandler) {
+    document.removeEventListener("visibilitychange", window._detVisibilityHandler);
+    window._detVisibilityHandler = null;
+  }
+  const tabSync = document.getElementById("det-tab-sync");
+  tabSync?.classList.remove("connected", "stale");
+  _scheduleDetailsConsoleStatus();
 }
 
 function closeWatcherLog() {
   try { window.esWatch?.close?.(); } catch {}
   window.esWatch = null;
+  window.watchBuf.length = 0;
   if (window._watchRetryTO) { clearTimeout(window._watchRetryTO); window._watchRetryTO = null; }
   if (window._watchStaleIV) { clearInterval(window._watchStaleIV); window._watchStaleIV = null; }
-  if (window._watchFlushIV) { clearInterval(window._watchFlushIV); window._watchFlushIV = null; }
+  if (window._watchFlushRAF) { cancelAnimationFrame(window._watchFlushRAF); window._watchFlushRAF = null; }
   if (window._watchVisibilityHandler) {
     document.removeEventListener("visibilitychange", window._watchVisibilityHandler);
     window._watchVisibilityHandler = null;
   }
   const tabWatch = document.getElementById("det-tab-watcher");
   tabWatch?.classList.remove("connected", "stale");
+  _updateDetailsConsoleStatus();
 }
 
 function closeDebugLog() {
   try { window.esDebug?.close?.(); } catch {}
   window.esDebug = null;
+  window.debugBuf.length = 0;
+  if (window._debugFlushRAF) { cancelAnimationFrame(window._debugFlushRAF); window._debugFlushRAF = null; }
   if (window._debugRetryTO) { clearTimeout(window._debugRetryTO); window._debugRetryTO = null; }
   if (window._debugStaleIV) { clearInterval(window._debugStaleIV); window._debugStaleIV = null; }
   if (window._debugVisibilityHandler) {
@@ -265,13 +527,14 @@ function closeDebugLog() {
   }
   const tabDebug = document.getElementById("det-tab-debug");
   tabDebug?.classList.remove("connected", "stale");
+  _updateDetailsConsoleStatus();
 }
 
 function openDebugLog() {
   const el = document.getElementById("det-debug-log");
   const details = document.getElementById("details");
   const tabDebug = document.getElementById("det-tab-debug");
-  if (!el || !details || details.classList.contains("hidden")) return;
+  if (!el || !details || details.classList.contains("hidden") || window._detailsTab !== "debug") return;
   if (window.esDebug || window._debugOpening) return;
   window._debugOpening = true;
 
@@ -280,34 +543,39 @@ function openDebugLog() {
       el.addEventListener("scroll", () => {
         const pad = 12;
         window.debugStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
+        _updateDetailsConsoleStatus();
       }, { passive: true });
       el.__cwScrollWired = true;
     }
 
     el.innerHTML = "";
     window.debugStickBottom = true;
-
-    const MAX_LINES = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+    window.debugBuf.length = 0;
+    _resetDetailsDropped("debug");
     let lastMsgAt = Date.now();
 
-    const append = (html) => {
-      if (!html) return;
-      const row = document.createElement("div");
-      row.className = "wlog-line det-debug-line";
-
-      const msg = document.createElement("span");
-      msg.className = "wlog-msg";
-      msg.innerHTML = html;
-
-      row.appendChild(msg);
-      el.appendChild(row);
-      while (el.childNodes.length > MAX_LINES) el.removeChild(el.firstChild);
-      if (window.debugStickBottom) el.scrollTop = el.scrollHeight;
-      lastMsgAt = Date.now();
+    const scheduleFlush = () => {
+      if (window._debugFlushRAF || window._detailsTab !== "debug") return;
+      window._debugFlushRAF = requestAnimationFrame(() => {
+        window._debugFlushRAF = null;
+        const frag = document.createDocumentFragment();
+        _runDetailsBatch(window.debugBuf, (html) => {
+          const row = _structuredLogRow(html);
+          row.classList.add("det-debug-line");
+          frag.appendChild(row);
+        }, () => {
+          el.appendChild(frag);
+          _pruneDetailsLog(el);
+          if (window.debugStickBottom) el.scrollTop = el.scrollHeight;
+          _scheduleDetailsConsoleStatus();
+        }, scheduleFlush);
+      });
     };
 
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "DEBUG");
+    url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
 
     const es = new EventSource(url.toString());
@@ -315,21 +583,26 @@ function openDebugLog() {
     es.onopen = () => {
       tabDebug?.classList.add("connected");
       tabDebug?.classList.remove("stale");
+      _updateDetailsConsoleStatus();
     };
     es.onmessage = (ev) => {
       tabDebug?.classList.add("connected");
       tabDebug?.classList.remove("stale");
-      append(ev?.data);
+      if (!ev?.data) return;
+      lastMsgAt = Date.now();
+      _enqueueDetailsItem(window.debugBuf, ev.data, "debug");
+      scheduleFlush();
     };
     es.onerror = () => {
       tabDebug?.classList.remove("connected");
       tabDebug?.classList.add("stale");
+      _updateDetailsConsoleStatus();
       try { window.esDebug?.close?.(); } catch {}
       window.esDebug = null;
 
       if (window._debugRetryTO) clearTimeout(window._debugRetryTO);
       window._debugRetryTO = setTimeout(() => {
-        if (window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
+        if (_detailsVisible() && window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
       }, 1200);
     };
 
@@ -337,6 +610,7 @@ function openDebugLog() {
     window._debugStaleIV = setInterval(() => {
       const stale = (Date.now() - lastMsgAt) > 20000;
       tabDebug?.classList.toggle("stale", stale);
+      _updateDetailsConsoleStatus();
     }, 1000);
 
     if (window._debugVisibilityHandler) {
@@ -344,7 +618,7 @@ function openDebugLog() {
     }
     window._debugVisibilityHandler = () => {
       if (document.visibilityState !== "visible") return;
-      if (window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
+      if (_detailsVisible() && window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
     };
     document.addEventListener("visibilitychange", window._debugVisibilityHandler);
   } finally {
@@ -356,7 +630,7 @@ async function openWatcherLog() {
   const el = document.getElementById("det-watch-log");
   const details = document.getElementById("details");
   const tabWatch = document.getElementById("det-tab-watcher");
-  if (!el || !details || details.classList.contains("hidden")) return;
+  if (!el || !details || details.classList.contains("hidden") || window._detailsTab !== "watcher") return;
   if (window.esWatch || window._watchOpening) return;
   window._watchOpening = true;
 
@@ -369,16 +643,19 @@ async function openWatcherLog() {
       } catch {}
     }
 
+    if (!_detailsVisible() || window._detailsTab !== "watcher") return;
     const uniq = _watchLogTagsFromConfig(cfg);
 
     const url = new URL("/api/logs/watcher", document.baseURI);
     url.searchParams.set("tail", "200");
+    url.searchParams.set("plain", "1");
     if (uniq.length) url.searchParams.set("tags", uniq.join(","));
 
     if (!el.__cwScrollWired) {
       el.addEventListener("scroll", () => {
         const pad = 12;
         window.watchStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
+        _updateDetailsConsoleStatus();
       }, { passive: true });
       el.__cwScrollWired = true;
     }
@@ -386,50 +663,38 @@ async function openWatcherLog() {
     window.watchBuf.length = 0;
     el.innerHTML = "";
     window.watchStickBottom = true;
-
-    const MAX_LINES = Number(window.DETAILS_MAX_LINES || 0) || 2500;
+    _resetDetailsDropped("watcher");
     let lastMsgAt = Date.now();
 
     const enqueue = (tag, html) => {
       if (!html) return;
-      window.watchBuf.push({ tag, html });
+      _enqueueDetailsItem(window.watchBuf, { tag, html }, "watcher");
       lastMsgAt = Date.now();
+      scheduleFlush();
     };
 
-    const flush = () => {
-      if (!window.watchBuf.length) return;
-      const frag = document.createDocumentFragment();
-      const items = window.watchBuf.splice(0, window.watchBuf.length);
-      for (const it of items) {
-        const row = document.createElement("div");
-        row.className = "wlog-line";
-
-        const badge = document.createElement("span");
-        badge.className = "wlog-tag";
-        badge.textContent = it.tag;
-
-        const msg = document.createElement("span");
-        msg.className = "wlog-msg";
-        msg.innerHTML = it.html;
-
-        row.appendChild(badge);
-        row.appendChild(msg);
-        frag.appendChild(row);
-      }
-      el.appendChild(frag);
-
-      while (el.childNodes.length > MAX_LINES) el.removeChild(el.firstChild);
-      if (window.watchStickBottom) el.scrollTop = el.scrollHeight;
+    const scheduleFlush = () => {
+      if (window._watchFlushRAF || window._detailsTab !== "watcher") return;
+      window._watchFlushRAF = requestAnimationFrame(() => {
+        window._watchFlushRAF = null;
+        const frag = document.createDocumentFragment();
+        _runDetailsBatch(window.watchBuf, (it) => {
+          frag.appendChild(_structuredLogRow(it.html, it.tag));
+        }, () => {
+          el.appendChild(frag);
+          _pruneDetailsLog(el);
+          if (window.watchStickBottom) el.scrollTop = el.scrollHeight;
+          _scheduleDetailsConsoleStatus();
+        }, scheduleFlush);
+      });
     };
-
-    if (window._watchFlushIV) clearInterval(window._watchFlushIV);
-    window._watchFlushIV = setInterval(flush, 120);
 
     url.searchParams.set("_ts", String(Date.now()));
     const es = new EventSource(url.toString());
     window.esWatch = es;
     tabWatch?.classList.add("connected");
     tabWatch?.classList.remove("stale");
+    _updateDetailsConsoleStatus();
 
     for (const t of (uniq.length ? uniq : _watchLogKnownTags())) {
       es.addEventListener(t, (ev) => enqueue(t, ev?.data));
@@ -439,12 +704,14 @@ async function openWatcherLog() {
 
     es.onerror = () => {
       tabWatch?.classList.remove("connected");
+      tabWatch?.classList.add("stale");
+      _updateDetailsConsoleStatus();
       try { window.esWatch?.close?.(); } catch {}
       window.esWatch = null;
 
       if (window._watchRetryTO) clearTimeout(window._watchRetryTO);
       window._watchRetryTO = setTimeout(() => {
-        if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
+        if (_detailsVisible() && window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
       }, 1200);
     };
 
@@ -452,6 +719,7 @@ async function openWatcherLog() {
     window._watchStaleIV = setInterval(() => {
       const stale = (Date.now() - lastMsgAt) > 20000;
       tabWatch?.classList.toggle("stale", stale);
+      _updateDetailsConsoleStatus();
     }, 1000);
 
     if (window._watchVisibilityHandler) {
@@ -459,7 +727,7 @@ async function openWatcherLog() {
     }
     window._watchVisibilityHandler = () => {
       if (document.visibilityState !== "visible") return;
-      if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
+      if (_detailsVisible() && window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
     };
     document.addEventListener("visibilitychange", window._watchVisibilityHandler);
   } finally {
@@ -471,7 +739,7 @@ async function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
   if (!el) return;
-  if (!_detailsVisible()) return;
+  if (!_detailsVisible() || window._detailsTab !== "sync" || window.esDet) return;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const tabSync = document.getElementById("det-tab-sync");
   const openSeq = ++window._detOpenSeq;
@@ -483,6 +751,7 @@ async function openDetailsLog() {
     window._cfgCache = cfg;
     window.appDebug = _isAppDebugMode(cfg);
   } catch (_) {}
+  if (openSeq !== window._detOpenSeq || !_detailsVisible() || window._detailsTab !== "sync") return;
 
   const CF = window.ClientFormatter;
   const useFormatter = !window.appDebug && CF && CF.processChunk && CF.renderInto;
@@ -493,6 +762,8 @@ async function openDetailsLog() {
   if (!useFormatter) el.classList?.add("cf-log-plain");
   window.detStickBottom = true;
   window._detBuf = "";
+  window.syncBuf.length = 0;
+  _resetDetailsDropped("sync");
   window._detSeenLines = [];
   window._detReplayActive = false;
   window._detReplayCursor = 0;
@@ -518,7 +789,10 @@ async function openDetailsLog() {
     window.detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
   };
 
-  el.addEventListener("scroll", () => { updateSlider(); updateStick(); }, { passive: true });
+  if (!el.__cwSyncScrollWired) {
+    el.addEventListener("scroll", () => { updateSlider(); updateStick(); _scheduleDetailsConsoleStatus(); }, { passive: true });
+    el.__cwSyncScrollWired = true;
+  }
 
   if (slider) {
     slider.addEventListener("input", () => {
@@ -532,14 +806,8 @@ async function openDetailsLog() {
     const lines = String(s).replace(/\r\n/g, "\n").split("\n");
     for (const line of lines) {
       if (!line) continue;
-      const row = document.createElement("div");
-      row.className = "wlog-line det-plain-line";
-
-      const msg = document.createElement("span");
-      msg.className = "wlog-msg";
-      msg.textContent = _decodeLogLine(line);
-
-      row.appendChild(msg);
+      const row = _structuredLogRow(_decodeLogLine(line), "SYNC");
+      row.classList.add("det-plain-line");
       el.appendChild(row);
     }
   };
@@ -548,18 +816,43 @@ async function openDetailsLog() {
   let retryMs = 1000;
   const STALE_MS = 20000;
 
+  const scheduleFlush = () => {
+    if (window._syncFlushRAF || window._detailsTab !== "sync") return;
+    window._syncFlushRAF = requestAnimationFrame(() => {
+      window._syncFlushRAF = null;
+      _runDetailsBatch(window.syncBuf, (line) => {
+        if (!useFormatter) {
+          appendRaw(line);
+          return;
+        }
+        const { tokens, buf } = CF.processChunk(window._detBuf, line);
+        window._detBuf = buf;
+        for (const tok of tokens) CF.renderInto(el, tok, false);
+      }, () => {
+        if (useFormatter) _upgradeSyncLogRows(el);
+        _pruneDetailsLog(el);
+        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
+        updateSlider();
+        _scheduleDetailsConsoleStatus();
+      }, scheduleFlush);
+    });
+  };
+
   const connect = () => {
-    if (authSetupPending()) return;
+    if (authSetupPending() || !_detailsVisible() || window._detailsTab !== "sync") return;
     try { window.esDet?.close(); } catch (_) {}
     if (window._detDidConnectOnce) _beginDetailReplayFilter();
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "SYNC");
+    url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
     window.esDet = new EventSource(url.toString());
     window.esDet.onopen = () => {
       window._detDidConnectOnce = true;
       tabSync?.classList.add("connected");
       tabSync?.classList.remove("stale");
+      _updateDetailsConsoleStatus();
     };
 
     window.esDet.onmessage = (ev) => {
@@ -570,12 +863,15 @@ async function openDetailsLog() {
 
       if (ev.data === "::CLEAR::") {
         el.textContent = "";
+        window.syncBuf.length = 0;
         window._detBuf = "";
         window._detSeenLines = [];
         window._detReplayActive = false;
         window._detReplayCursor = 0;
         try { CF?.reset?.(); } catch {}
+        _resetDetailsDropped("sync");
         updateSlider();
+        _scheduleDetailsConsoleStatus();
         return;
       }
 
@@ -584,23 +880,16 @@ async function openDetailsLog() {
         return;
       }
 
-      if (!useFormatter) {
-        appendRaw(ev.data);
-      } else {
-        const { tokens, buf } = CF.processChunk(window._detBuf, ev.data);
-        window._detBuf = buf;
-        for (const tok of tokens) CF.renderInto(el, tok, false);
-      }
+      _enqueueDetailsItem(window.syncBuf, ev.data, "sync");
       _rememberDetailLine(ev.data);
-      _pruneDetailsLog(el);
-      if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-      updateSlider();
+      scheduleFlush();
       retryMs = 1000;
     };
 
     window.esDet.onerror = () => {
         tabSync?.classList.remove("connected");
         tabSync?.classList.add("stale");
+      _updateDetailsConsoleStatus();
       try { window.esDet?.close(); } catch (_) {}
       window.esDet = null;
 
@@ -608,15 +897,16 @@ async function openDetailsLog() {
         const { tokens } = CF.processChunk("", window._detBuf);
         window._detBuf = "";
         for (const tok of tokens) CF.renderInto(el, tok, false);
+        _upgradeSyncLogRows(el);
         if (window.detStickBottom) el.scrollTop = el.scrollHeight;
         updateSlider();
       }
 
       if (!window._detRetryTO) {
-        if (authSetupPending()) return;
+        if (authSetupPending() || window._detailsTab !== "sync" || !_detailsVisible()) return;
         window._detRetryTO = setTimeout(() => {
           window._detRetryTO = null;
-          connect();
+          if (window._detailsTab === "sync" && _detailsVisible()) connect();
         }, retryMs);
         retryMs = Math.min(retryMs * 2, 15000);
       }
@@ -627,6 +917,7 @@ async function openDetailsLog() {
 
   window._detStaleIV = setInterval(() => {
     tabSync?.classList.toggle("stale", (Date.now() - lastMsgAt) > STALE_MS);
+    _updateDetailsConsoleStatus();
     if (!window.esDet) return;
     if (document.visibilityState !== "visible") return;
     if (Date.now() - lastMsgAt > STALE_MS) {
@@ -638,7 +929,7 @@ async function openDetailsLog() {
 
   window._detVisibilityHandler = () => {
     if (document.visibilityState !== "visible") return;
-    if (!window.esDet || (Date.now() - lastMsgAt > STALE_MS)) connect();
+    if (window._detailsTab === "sync" && (!window.esDet || (Date.now() - lastMsgAt > STALE_MS))) connect();
   };
   document.addEventListener("visibilitychange", window._detVisibilityHandler);
 
@@ -652,23 +943,10 @@ async function openDetailsLog() {
 }
 
 function closeDetailsLog() {
-  window._detOpenSeq += 1;
-  try { window.esDet?.close(); } catch (_) {}
-  try { window.esDetSummary?.close(); } catch (_) {}
-  window.esDet = null;
-  window.esDetSummary = null;
   window._detBuf = "";
   window._detReplayActive = false;
   window._detReplayCursor = 0;
-  if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
-  if (window._detRetryTO) { clearTimeout(window._detRetryTO); window._detRetryTO = null; }
-  if (window._detVisibilityHandler) { document.removeEventListener("visibilitychange", window._detVisibilityHandler); window._detVisibilityHandler = null; }
-  const tabSync = document.getElementById("det-tab-sync");
-  tabSync?.classList.remove("connected", "stale");
-  const tabWatch = document.getElementById("det-tab-watcher");
-  tabWatch?.classList.remove("connected", "stale");
-  const tabDebug = document.getElementById("det-tab-debug");
-  tabDebug?.classList.remove("connected", "stale");
+  try { closeSyncLog(); } catch {}
   try { closeWatcherLog(); } catch {}
   try { closeDebugLog(); } catch {}
 }
@@ -679,13 +957,8 @@ function toggleDetails() {
   if (!d.classList.contains("hidden")) {
     try { initDetailsTabs(); } catch {}
     try { setDetailsTab(window._detailsTab || "sync"); } catch {}
-    openDetailsLog();
-    if (window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
-    if (window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
   } else {
     closeDetailsLog();
-    closeWatcherLog();
-    closeDebugLog();
   }
 }
 
@@ -693,24 +966,26 @@ function resetDetailsSyncLog() {
   const el = document.getElementById("det-log");
   if (el) el.textContent = "";
   window._detBuf = "";
+  window.syncBuf.length = 0;
+  if (window._syncFlushRAF) { cancelAnimationFrame(window._syncFlushRAF); window._syncFlushRAF = null; }
   window._detSeenLines = [];
   window._detReplayActive = false;
   window._detReplayCursor = 0;
   window._detDidConnectOnce = false;
   window.detStickBottom = true;
+  _resetDetailsDropped("sync");
   try { window.ClientFormatter?.reset?.(); } catch {}
 }
 
 window.addEventListener("beforeunload", () => {
   try { closeDetailsLog(); } catch {}
-  try { closeWatcherLog(); } catch {}
-  try { closeDebugLog(); } catch {}
 });
 
 
   const DetailsLog = {
     setDetailsTab,
     initDetailsTabs,
+    closeSyncLog,
     closeWatcherLog,
     openWatcherLog,
     closeDebugLog,
