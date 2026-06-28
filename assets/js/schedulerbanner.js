@@ -65,8 +65,8 @@
 #ops-card #sched-inline-log .watch-progress{--watch-progress-angle:0deg;position:relative;display:none;place-items:center;flex:0 0 28px;width:28px;height:28px;margin-left:1px;border-radius:50%;background:conic-gradient(var(--service-state) 0 var(--watch-progress-angle),color-mix(in srgb,var(--hub-muted) 20%,transparent) var(--watch-progress-angle) 360deg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--hub-muted) 18%,transparent);overflow:hidden;}
 #ops-card #sched-inline-log .watch-progress::before{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--hub-card-bg);box-shadow:inset 0 0 0 1px var(--hub-card-border);}
 #ops-card #sched-inline-log .watch-progress-value{position:relative;z-index:1;font-size:8px;font-weight:900;letter-spacing:-.02em;line-height:1;color:var(--hub-text);}
-#ops-card #sched-inline-log #chip-watch.has-progress .watch-progress{display:grid;}
-#ops-card #sched-inline-log #chip-watch.has-progress{min-width:190px!important;}
+#ops-card #sched-inline-log :is(#chip-watch,#chip-hook).has-progress .watch-progress{display:grid;}
+#ops-card #sched-inline-log :is(#chip-watch,#chip-hook).has-progress{min-width:190px!important;}
 #ops-card #sched-inline-log .sched.disabled .service-icon{opacity:.52!important;}
 #ops-card #sched-inline-log .sched.disabled::before{opacity:.48!important;box-shadow:none!important;}
 #ops-card #sched-inline-log .copy{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;}
@@ -136,7 +136,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     if (!wrap) {
       wrap=document.createElement("div");
       wrap.id="sched-inline-log";
-      const statusTile=k=>{const nav=chipNav[k];return `<div class="sched idle${["sched","watch","hook"].includes(k)?" has-copy":""}" id="chip-${k}" role="${nav?"button":"status"}" tabindex="0"${nav?` data-nav="${nav.target}" data-nav-label="${nav.label}"`:""}><span class="ic service-icon material-symbols-rounded" aria-hidden="true">${chipIcon[k]}</span><span class="copy"><span class="label">${chipText[k]}</span><span class="value" id="${k}-value">-</span><span class="meta" id="${k}-meta"></span><span class="badges" id="${k}-badges"></span></span>${k==="watch"?'<span class="watch-progress" aria-hidden="true"><span class="watch-progress-value" id="watch-progress-value"></span></span>':""}</div>`};
+      const statusTile=k=>{const nav=chipNav[k];return `<div class="sched idle${["sched","watch","hook"].includes(k)?" has-copy":""}" id="chip-${k}" role="${nav?"button":"status"}" tabindex="0"${nav?` data-nav="${nav.target}" data-nav-label="${nav.label}"`:""}><span class="ic service-icon material-symbols-rounded" aria-hidden="true">${chipIcon[k]}</span><span class="copy"><span class="label">${chipText[k]}</span><span class="value" id="${k}-value">-</span><span class="meta" id="${k}-meta"></span><span class="badges" id="${k}-badges"></span></span>${["watch","hook"].includes(k)?`<span class="watch-progress" aria-hidden="true"><span class="watch-progress-value" id="${k}-progress-value"></span></span>`:""}</div>`};
       wrap.innerHTML=`
         <div class="hub-status-group hub-group-monitoring">
           <div class="hub-group-items">${["sched","watch","hook"].map(statusTile).join("")}</div>
@@ -203,6 +203,10 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     const idx=((Number(bucket?.index)||0)%items.length+items.length)%items.length;
     return items[idx]||items[0]||null;
   };
+  const isWebhookStream=(item)=>{
+    const source=String(item?.source||"").trim().toLowerCase();
+    return source.includes("webhook")||["plextrakt","embytrakt","jellyfintrakt"].includes(source);
+  };
   const tooltipFor=(label,items)=>[label,...(Array.isArray(items)?items.map(streamSummary).filter(Boolean):[])].join("\n");
 
   function emit(source,detail){
@@ -259,7 +263,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
   function render(){
     const host=ensureBanner();
     if (!host) return;
-    const E=k=>({chip:$(`#chip-${k}`,host),value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host),badges:$(`#${k}-badges`,host),progress:k==="watch"?$(".watch-progress",host):null,progressValue:k==="watch"?$("#watch-progress-value",host):null}),
+    const E=k=>({chip:$(`#chip-${k}`,host),value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host),badges:$(`#${k}-badges`,host),progress:["watch","hook"].includes(k)?$(".watch-progress",$(`#chip-${k}`,host)):null,progressValue:["watch","hook"].includes(k)?$(`#${k}-progress-value`,host):null}),
       pairs=E("pairs"), sched=E("sched"), watch=E("watch"), hook=E("hook"), providers=E("providers"), update=E("update"),
       watchItem=currentItem(S.watch),
       hookItem=currentItem(S.hook),
@@ -307,6 +311,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       value:"",
       meta:hookLive?(hookItem.title||"Watching"):"",
       badges:S.hook.streams>1?[S.hook.streams]:[],
+      progress:hookLive?hookItem.progress:null,
       live:hookLive, ok:true, idle:false,
       tip:hookLive?tooltipFor(`Webhook • ${S.hook.streams} active stream${S.hook.streams===1?"":"s"}`,S.hook.items):"Webhook listening"
     });
@@ -472,8 +477,8 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       if (cw&&typeof cw==="object") {
         window[SHARED_WATCH_KEY]={at:now,payload:cw};
         const all=Array.isArray(cw.streams)?cw.streams.filter(x=>x&&typeof x==="object"):[];
-        const watchItems=all.filter(it=>!String(it?.source||"").toLowerCase().includes("webhook"));
-        const hookItems=all.filter(it=>String(it?.source||"").toLowerCase().includes("webhook"));
+        const watchItems=all.filter(it=>!isWebhookStream(it));
+        const hookItems=all.filter(isWebhookStream);
         Object.assign(nextWatch,{items:watchItems,streams:watchItems.length,title:String(watchItems[0]?.title||""),state:watchItems[0]?.state||null,index:Math.min(Number(nextWatch.index)||0,Math.max(0,watchItems.length-1))});
         Object.assign(nextHook,{items:hookItems,streams:hookItems.length,title:String(hookItems[0]?.title||""),state:hookItems[0]?.state||null,index:Math.min(Number(nextHook.index)||0,Math.max(0,hookItems.length-1))});
       }
@@ -488,7 +493,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
   }
 
   const scheduleSched=()=>S.sched.enabled&&(S.timers.sched=setTimeout(()=>pollSched(false),30000)),
-    scheduleScrob=()=>S.cfg?.scrobble?.enabled&&(S.timers.scrob=setTimeout(()=>pollScrob(false),scrobSources().watcher?15000:60000)),
+    scheduleScrob=()=>S.cfg?.scrobble?.enabled&&(S.timers.scrob=setTimeout(()=>pollScrob(false),scrobSources().webhook?5000:15000)),
     stop=()=>["sched","scrob","rotate"].forEach(clear);
 
   function scheduleRotate(){
