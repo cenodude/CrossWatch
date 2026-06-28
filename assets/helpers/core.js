@@ -95,6 +95,7 @@
   const AUTO_STATUS = false;
   const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000;
   const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+  const UPDATE_CHECK_RETRY_MS = 5 * 60 * 1000;
   const PAIRS_CACHE_KEY = "cw.pairs.v1";
   const PAIRS_TTL_MS = 15_000;
   const STATUS_CACHE_KEY = "cw.status.v1";
@@ -672,7 +673,10 @@
       renderConnectorStatus(providers, { stale: false });
       saveStatusCache(providers);
       try {
-        document.dispatchEvent(new CustomEvent("cw-status-updated", { detail: { payload, providers } }));
+        const configuredProviders = [...getConfiguredProviders()].filter((key) => Object.prototype.hasOwnProperty.call(providers, key));
+        const detail = { payload, providers, configuredProviders };
+        window.__CW_PROVIDER_STATUS__ = detail;
+        document.dispatchEvent(new CustomEvent("cw-status-updated", { detail }));
       } catch {}
       UI.status = buildStatusUIState(payload, providers);
       recomputeRunDisabled();
@@ -754,6 +758,11 @@
 
   function recomputeRunDisabled() {
     const disabled = !!state.busy || !!UI.summary?.running || !(UI.status ? !!UI.status.can_run : true);
+    const runButton = byId("run");
+    if (runButton) {
+      runButton.classList.toggle("loading", !!state.busy || !!UI.summary?.running);
+      runButton.setAttribute("aria-busy", String(!!state.busy || !!UI.summary?.running));
+    }
     [byId("run"), byId("run-menu")].forEach((btn) => {
       if (btn) btn.disabled = disabled;
     });
@@ -817,15 +826,18 @@
     if (authSetupPending()) return;
     enforceMainLayout();
     state.lastStatusMs = 0;
+    const previewAlreadyRendered = !!(window.wallLoaded || byId("poster-row")?.childElementCount);
     await Promise.allSettled([
       refreshStatus(false),
       Promise.resolve(window.refreshInsights?.(true)),
+      previewAlreadyRendered ? Promise.resolve(window.updatePreviewVisibility?.()) : Promise.resolve(),
     ]);
 
     if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
     if (!window.esLogs) queueSafe(() => window.openLogStream?.());
-    window.wallLoaded = false;
-    try { await window.updatePreviewVisibility?.(); } catch {}
+    if (!previewAlreadyRendered) {
+      try { await window.updatePreviewVisibility?.(); } catch {}
+    }
 
     if (typeof window.refreshSchedulingBanner === "function") {
       window.refreshSchedulingBanner();
@@ -1480,11 +1492,15 @@
 
   async function checkForUpdate() {
     try {
-      const payload = await requestJSON("/api/version", {}, 15000);
-      const current = String(payload.current ?? "0.0.0").trim();
-      const latest = payload.latest ? String(payload.latest).trim() : null;
-      const url = payload.html_url || "https://github.com/cenodude/CrossWatch/releases";
+      const payload = await requestJSON("/api/update", {}, 15000);
+      const current = String(payload.current_version ?? payload.current ?? "0.0.0").trim();
+      const latestValue = payload.latest_version ?? payload.latest;
+      const latest = latestValue ? String(latestValue).trim() : null;
+      const url = payload.html_url || payload.url || "https://github.com/cenodude/CrossWatch/releases";
       const hasUpdate = !!payload.update_available;
+      const updateDetail = { current, latest, url, available: hasUpdate, known: true };
+      window.__CW_UPDATE_STATUS__ = updateDetail;
+      try { document.dispatchEvent(new CustomEvent("cw-update-status", { detail: updateDetail })); } catch {}
 
       const versionEl = byId("app-version");
       if (versionEl) versionEl.textContent = `Version ${current}`;
@@ -1512,19 +1528,43 @@
       }
 
       renderMainUpdatePill(hasUpdate, latest, url);
+      return updateDetail;
     } catch (err) {
+      const updateDetail = { current: String(window.CW_CURRENT_VERSION || ""), latest: null, url: "", available: false, known: true, unavailable: true };
+      window.__CW_UPDATE_STATUS__ = updateDetail;
+      try { document.dispatchEvent(new CustomEvent("cw-update-status", { detail: updateDetail })); } catch {}
       console.debug("Version check failed:", err);
+      return null;
     }
   }
 
   (function initUpdateChecks() {
     if (window.__cwUpdateInitDone) return;
     window.__cwUpdateInitDone = true;
-    const run = () => {
-      try { checkForUpdate(); } catch (e) { console.debug("checkForUpdate failed:", e); }
+    let retryTimer = null;
+    const run = async () => {
+      try {
+        if (window.__cwAuthBootstrapPromise) {
+          try { await window.__cwAuthBootstrapPromise; } catch {}
+        }
+        if (authSetupPending()) return;
+        const result = await checkForUpdate();
+        if (result) {
+          if (retryTimer) clearTimeout(retryTimer);
+          retryTimer = null;
+        } else if (!retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            run();
+          }, UPDATE_CHECK_RETRY_MS);
+        }
+      } catch (e) {
+        console.debug("checkForUpdate failed:", e);
+      }
     };
     onReady(run);
     setInterval(run, UPDATE_CHECK_INTERVAL_MS);
+    window.addEventListener("auth-changed", run);
   })();
 
   function renderSummaryCore(summary) {
@@ -1548,6 +1588,7 @@
     setText("det-ver", summary.version || "–");
     setText("det-start", toLocal(summary.started_at));
     setText("det-finish", toLocal(summary.finished_at));
+    recomputeRunDisabled();
   }
 
   const previousRenderSummary = window.renderSummary;
@@ -1760,6 +1801,7 @@ Object.assign(window, {
   copySummary, loadPairs, cxSavePair,
   cwToggleSyncMenu, DETAILS_MAX_LINES,
 });
+CW.checkForUpdate = checkForUpdate;
 
   onReady(() => {
     const authPendingAtReady = authSetupPending();

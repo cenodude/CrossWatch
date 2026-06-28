@@ -478,6 +478,7 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
     el.classList.add("removing"); setTimeout(() => el.remove(), 200);
     try { await fetch(`/api/pairs/${id}`, { method: "DELETE" }); } catch (e) { console.warn("delete api failed", e); }
     if (Array.isArray(window.cx?.pairs)) window.cx.pairs = window.cx.pairs.filter((p) => String(p.id) !== String(id));
+    try { window.dispatchEvent(new CustomEvent("cx:pairs:changed", { detail: { action: "delete", id } })); } catch {}
     setTimeout(() => refreshBadges(board), 220);
   }
   window.deletePairCard = deletePairCard;
