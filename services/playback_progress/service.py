@@ -29,6 +29,7 @@ LOG = BASE_LOG.child("PLAYBACK")
 CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
+GROUP_PROGRESS_TOLERANCE = 2.0
 PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin"}
@@ -66,13 +67,6 @@ def _group_number(value: Any) -> str:
         return str(int(value))
     except Exception:
         return str(value).strip().lower()
-
-
-def _group_progress(value: Any) -> str:
-    try:
-        return str(round(float(value)))
-    except Exception:
-        return ""
 
 
 def _live_source_provider(value: Any) -> str:
@@ -277,9 +271,9 @@ def _overlay_live_streams(items: list[dict[str, Any]], streams: list[dict[str, A
 def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
     keys: list[str] = []
     key = str(item.get("canonical_key") or "").strip().lower()
-    progress = _group_progress(item.get("progress_percent"))
+    profile = _group_text(normalize_instance_id(item.get("instance_id")))
     if key and not key.startswith("unknown:"):
-        keys.append(f"key:{key}:progress:{progress}")
+        keys.append(f"key:{key}:profile:{profile}")
     media_type = _group_text(item.get("media_type"))
     title = _group_text(item.get("title"))
     series = _group_text(item.get("series_title"))
@@ -287,17 +281,12 @@ def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
     episode = _group_number(item.get("episode"))
     year = _group_number(item.get("year"))
     if media_type == "movie":
-        fallback = f"fallback:movie:{title}:{year}:{progress}"
+        fallback = f"fallback:movie:{title}:{year}:profile:{profile}"
     else:
-        fallback = f"fallback:episode:{series or title}:{season}:{episode}:{progress}"
+        fallback = f"fallback:episode:{series or title}:{season}:{episode}:profile:{profile}"
     if fallback not in keys:
         keys.append(fallback)
     return keys
-
-
-def _record_group_key(item: Mapping[str, Any]) -> str:
-    keys = _record_group_keys(item)
-    return keys[0] if keys else "fallback:unknown"
 
 
 def _record_time_value(item: Mapping[str, Any]) -> float:
@@ -330,6 +319,30 @@ def _float_or_none(value: Any) -> float | None:
         return number if math.isfinite(number) else None
     except Exception:
         return None
+
+
+def _split_progress_groups(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    numeric: list[tuple[float, dict[str, Any]]] = []
+    missing: list[dict[str, Any]] = []
+    for record in records:
+        progress = _float_or_none(record.get("progress_percent"))
+        if progress is None:
+            missing.append(record)
+        else:
+            numeric.append((progress, record))
+
+    numeric.sort(key=lambda entry: (entry[0], _record_order_key(entry[1])))
+    groups: list[list[dict[str, Any]]] = []
+    group_start: float | None = None
+    for progress, record in numeric:
+        if group_start is None or progress - group_start > GROUP_PROGRESS_TOLERANCE:
+            groups.append([record])
+            group_start = progress
+        else:
+            groups[-1].append(record)
+    if missing:
+        groups.append(sorted(missing, key=_record_order_key))
+    return groups
 
 
 def _remaining_seconds(duration_seconds: Any, progress_percent: Any) -> int | None:
@@ -461,10 +474,32 @@ def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     primary["can_remove_progress"] = any(bool(record.get("can_remove_progress")) for record in ordered)
     primary["can_mark_watched"] = any(bool(record.get("can_mark_watched")) for record in ordered)
     primary["can_update_progress"] = any(bool(record.get("can_update_progress")) for record in ordered)
+    combined_id = "|".join(
+        sorted(
+            f"{str(record.get('provider') or '').strip().lower()}:{normalize_instance_id(record.get('instance_id'))}:{str(record.get('remote_id') or record.get('canonical_key') or '').strip()}"
+            for record in ordered
+        )
+    )
     primary["provider"] = "combined" if len(ordered) > 1 else primary.get("provider")
     primary["instance_id"] = "all" if len(ordered) > 1 else primary.get("instance_id")
-    primary["remote_id"] = _record_group_key(primary) if len(ordered) > 1 else primary.get("remote_id")
+    primary["remote_id"] = combined_id if len(ordered) > 1 else primary.get("remote_id")
     return primary
+
+
+def _group_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    identity_groups: dict[str, list[dict[str, Any]]] = {}
+    aliases: dict[str, str] = {}
+    for item in records:
+        keys = _record_group_keys(item)
+        group_key = next((aliases[key] for key in keys if key in aliases), keys[0] if keys else "fallback:unknown")
+        identity_groups.setdefault(group_key, []).append(item)
+        for key in keys:
+            aliases[key] = group_key
+    return [
+        _combine_records(progress_group)
+        for identity_group in identity_groups.values()
+        for progress_group in _split_progress_groups(identity_group)
+    ]
 
 
 def _validated_progress_percent(value: Any) -> tuple[float | None, str]:
@@ -790,15 +825,7 @@ class PlaybackProgressService:
         _overlay_live_streams(items)
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)
         if not provider_filter:
-            groups: dict[str, list[dict[str, Any]]] = {}
-            aliases: dict[str, str] = {}
-            for item in filtered:
-                keys = _record_group_keys(item)
-                group_key = next((aliases[key] for key in keys if key in aliases), keys[0] if keys else "fallback:unknown")
-                groups.setdefault(group_key, []).append(item)
-                for key in keys:
-                    aliases[key] = group_key
-            filtered = [_combine_records(group) for group in groups.values()]
+            filtered = _group_records(filtered)
         sorted_items = self._sort(filtered, sort)
         page = max(1, int(page or 1))
         page_size = max(1, min(250, int(page_size or 50)))
