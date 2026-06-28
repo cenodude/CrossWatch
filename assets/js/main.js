@@ -485,12 +485,6 @@
         if (needsSpotlights(s)) queueLogHydration(runKey);
       } catch {}
       try {
-        window.wallLoaded = false;
-        if (typeof window.updateWatchlistPreview === "function") window.updateWatchlistPreview();
-        else if (typeof window.updatePreviewVisibility === "function") window.updatePreviewVisibility();
-        else if (typeof window.loadWatchlist === "function") window.loadWatchlist();
-      } catch {}
-      try {
         window.dispatchEvent(new CustomEvent("sync-complete", { detail: { at: nowTs(), summary: s, source: source || "?" } }));
       } catch {}
     }
