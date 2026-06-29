@@ -55,8 +55,12 @@
   function authProviders(){ return order.map((key) => get(key)).filter((info) => info?.authSectionId).map((info) => ({ key: info.key, sectionId: info.authSectionId, groupId: info.authGroupId || "" })); }
   function watchlistProviders(){ return order.filter((key) => !!get(key)?.watchlist); }
   function scrobblerSinks(){ return order.filter((key) => !!get(key)?.scrobblerSink); }
-  function logoPath(v){ const info = get(v); return info?.hasLogo ? `/assets/img/${info.key}.svg` : ""; }
-  function logLogoPath(v){ const info = get(v); return info?.hasLogLogo ? `/assets/img/${info.key}-log.svg` : ""; }
+  function assetPath(path){
+    const version = String(window.APP_VERSION || window.__CW_VERSION__ || "").trim();
+    return version ? `${path}?v=${encodeURIComponent(version)}` : path;
+  }
+  function logoPath(v){ const info = get(v); return info?.hasLogo ? assetPath(`/assets/img/${info.key}.svg`) : ""; }
+  function logLogoPath(v){ const info = get(v); return info?.hasLogLogo ? assetPath(`/assets/img/${info.key}-log.svg`) : ""; }
   function brandInfo(v){ const info = get(v); return { cls: info?.brandClass || "", icon: logoPath(v) || "" }; }
   function logoHtml(v, cls = "token-logo"){
     const k = keyOf(v);
@@ -73,7 +77,7 @@
   (window.CW ||= {});
   window.CW.ProviderMeta = {
     providers, order, get, normalizeToken, keyOf, matchKey, label, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
-    statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, logoPath, logLogoPath, brandInfo, logoHtml,
+    statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
     logLogoHtml, logo: logoPath, logLogo: logLogoPath,
     labels: Object.fromEntries(order.map((key) => [key, label(key)])),
   };

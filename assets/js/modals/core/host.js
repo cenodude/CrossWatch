@@ -153,7 +153,7 @@ export class ModalHost {
   _onDown(e) {
     const head = e.target.closest?.('.cx-head');
     if (!head) return;
-    if (/INPUT|TEXTAREA|SELECT|BUTTON/.test(e.target.tagName)) return;
+    if (e.target.closest?.('input, textarea, select, button, a, [role="button"]')) return;
     const r = this.shell.getBoundingClientRect();
     this._drag = {
       active: true,

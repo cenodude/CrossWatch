@@ -1,0 +1,22 @@
+/* Coverage shared with the Original CrossWatch theme. */
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card{--pulse-rgb:137,147,235;--pulse-logo:url("/assets/img/CROSSWATCH.svg");isolation:isolate;overflow:hidden;background:radial-gradient(105% 130% at 100% 0%,rgba(var(--pulse-rgb),.22),transparent 48%),linear-gradient(180deg,#252b38 0%,#1b212c 100%)!important;border-color:rgba(var(--pulse-rgb),.26)!important;box-shadow:0 12px 24px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.06)!important;}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card::before{content:""!important;display:block!important;position:absolute;inset:-20px -34px -24px auto;width:136px;z-index:0;pointer-events:none;background:var(--pulse-logo) center/contain no-repeat!important;opacity:.105;transform:rotate(-9deg) scale(1.12);filter:grayscale(.1) brightness(1.6);}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card::after{content:"";position:absolute;left:0;right:0;bottom:0;z-index:0;height:3px;pointer-events:none;background:linear-gradient(90deg,rgba(var(--pulse-rgb),0),rgba(var(--pulse-rgb),.92),rgba(var(--pulse-rgb),0));opacity:.85;}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card > *{position:relative;z-index:1;}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.is-live{border-color:rgba(var(--pulse-rgb),.38)!important;}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-brand{background:rgba(var(--pulse-rgb),.12)!important;border-color:rgba(var(--pulse-rgb),.30)!important;}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-crosswatch{--pulse-rgb:139,111,255;--pulse-logo:url("/assets/img/CROSSWATCH.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-plex{--pulse-rgb:235,176,43;--pulse-logo:url("/assets/img/PLEX.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-simkl{--pulse-rgb:220,225,226;--pulse-logo:url("/assets/img/SIMKL.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-trakt{--pulse-rgb:210,58,182;--pulse-logo:url("/assets/img/TRAKT.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-mdblist{--pulse-rgb:72,144,220;--pulse-logo:url("/assets/img/MDBLIST.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-publicmetadb{--pulse-rgb:208,214,216;--pulse-logo:url("/assets/img/PUBLICMETADB.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-tmdb{--pulse-rgb:1,180,228;--pulse-logo:url("/assets/img/TMDB.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-anilist{--pulse-rgb:2,169,255;--pulse-logo:url("/assets/img/ANILIST.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-jellyfin{--pulse-rgb:164,99,255;--pulse-logo:url("/assets/img/JELLYFIN.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-emby{--pulse-rgb:82,150,220;--pulse-logo:url("/assets/img/EMBY.svg");}
+html:is([data-cw-theme],.cw-theme-original) #page-watchlist .wl-provider-card.provider-tautulli{--pulse-rgb:251,137,37;--pulse-logo:url("/assets/img/TAUTULLI.svg");}
+html.cw-theme-original #page-watchlist .wl-provider-card{background:radial-gradient(105% 130% at 100% 0%,rgba(var(--pulse-rgb),.12),transparent 50%),linear-gradient(180deg,#12151d 0%,#07090e 100%)!important;box-shadow:0 10px 22px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.04)!important;}
+html.cw-theme-original #page-watchlist .wl-provider-card::before{opacity:.075;filter:grayscale(.15) brightness(1.3);}
+html.cw-theme-original #page-watchlist .wl-provider-card::after{opacity:.68;}
+html.cw-theme-original #page-watchlist .wl-provider-brand{background:rgba(var(--pulse-rgb),.09)!important;border-color:rgba(var(--pulse-rgb),.26)!important;}

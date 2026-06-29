@@ -868,6 +868,51 @@ def delete_snapshot(path: str, *, delete_children: bool = True) -> dict[str, Any
 
     return {"ok": len(errors) == 0, "deleted": deleted, "errors": errors}
 
+
+def delete_all_snapshots() -> dict[str, Any]:
+    base = _snapshots_dir().resolve()
+    deleted: list[str] = []
+    errors: list[str] = []
+    freed_bytes = 0
+
+    for candidate in sorted(base.rglob("*.json")):
+        try:
+            target = candidate.resolve()
+            rel = str(target.relative_to(base)).replace("\\", "/")
+            if not target.is_file():
+                continue
+            size = target.stat().st_size
+            target.unlink()
+            deleted.append(rel)
+            freed_bytes += int(size)
+        except Exception as e:
+            errors.append(str(e))
+
+    directories = sorted(
+        (path for path in base.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    )
+    for directory in directories:
+        try:
+            if not any(directory.iterdir()):
+                directory.rmdir()
+        except Exception:
+            pass
+
+    return {
+        "ok": len(errors) == 0,
+        "root": str(base),
+        "deleted": deleted,
+        "deleted_count": len(deleted),
+        "errors": errors,
+        "summary": {
+            "removed_files": len(deleted),
+            "removed_items": 0,
+            "freed_bytes": freed_bytes,
+        },
+    }
+
 def restore_snapshot(
     path: str,
     *,

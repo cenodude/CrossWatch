@@ -2,7 +2,8 @@
   font-family: "Material Symbols Rounded";
   font-style: normal;
   font-weight: 400;
-  src: url("/assets/fonts/material-symbols-rounded.ttf") format("truetype");
+  font-display: block;
+  src: url("/assets/fonts/material-symbols-rounded-full-v355.woff2") format("woff2");
 }
 
 .material-symbols-rounded {

@@ -10,6 +10,7 @@
   const providerMeta = () => window.CW?.ProviderMeta || null;
   const providerLabel = (item, providerKey) => providerMeta()?.label?.(providerKey) || String(item?.label || item?.name || providerKey || "Provider");
   const providerClass = (providerKey) => providerMeta()?.brandInfo?.(providerKey)?.cls || "";
+  const providerLogo = (providerKey) => providerMeta()?.logoPath?.(providerKey) || "";
   const truthy = (v) => {
     if (v && typeof v === "object") v = v.enable ?? v.enabled;
     if (typeof v === "string") v = v.toLowerCase().trim();
@@ -228,13 +229,15 @@ html[data-cw-theme="flat-light"] #providers_list .prov-btn.target{
       const isTarget = providerKey === target;
       const btnClass = isSource ? "selected" : (source && !isTarget ? "target" : "");
       const btnText = isSource ? "Clear Source" : (source ? "Set as Target" : "Set as Source");
+      const logo = providerLogo(providerKey);
+      const watermarkStyle = logo ? ` style="--wm:url('${logo}')"` : "";
       const badge = isSource
         ? '<span class="prov-badge">Source selected</span>'
         : (isTarget ? '<span class="prov-badge">Target selected</span>' : "");
 
       return `
         <article class="card prov-card ${cls} ${isSource ? "is-source" : ""} ${isTarget ? "is-target" : ""}" data-prov="${providerKey}" data-sync-prov="${providerKey}">
-          <div class="prov-watermark" aria-hidden="true"></div>
+          <div class="prov-watermark" aria-hidden="true"${watermarkStyle}></div>
           <div class="prov-main">
             <div class="prov-title">${label}</div>
             <div class="prov-features" aria-label="Supported features">${featureDots(item.features || {})}</div>

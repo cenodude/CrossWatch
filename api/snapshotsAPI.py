@@ -16,6 +16,7 @@ from services.snapshots import (
     restore_snapshot,
     snapshot_manifest,
     delete_snapshot,
+    delete_all_snapshots,
     diff_snapshots,
     diff_snapshots_extended,
 )
@@ -160,6 +161,17 @@ def api_snapshots_delete(body: dict[str, Any] = Body(...)) -> JSONResponse:
     try:
         res = delete_snapshot(path, delete_children=delete_children)
         return _ok({"result": res})
+    except Exception as e:
+        return _err(str(e))
+
+
+@router.post("/clear")
+def api_snapshots_clear() -> JSONResponse:
+    try:
+        result = delete_all_snapshots()
+        if not result.get("ok"):
+            return _err("snapshot_clear_failed", extra={"result": result})
+        return _ok({"result": result, "summary": result.get("summary") or {}})
     except Exception as e:
         return _err(str(e))
 
