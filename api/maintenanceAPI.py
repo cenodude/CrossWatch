@@ -16,7 +16,12 @@ from fastapi import APIRouter, Body
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 CW_STATE_KEEP_DIRS = {"id"}
-CW_STATE_KEEP_FILES = {"activity_history.json"}
+CW_STATE_KEEP_FILES = {
+    "activity_history.json",
+    "currently_watching.json",
+    "auto_remove_seen.json",
+    "watchlist_wl_autoremove.json",
+}
 
 
 def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -98,6 +103,293 @@ def _file_meta(path: Path) -> dict[str, Any]:
         ),
     }
 
+
+def _path_usage(path: Path) -> dict[str, int | None]:
+    """Return recursive file count, byte size and newest mtime."""
+    files = 0
+    size = 0
+    newest: int | None = None
+    if not path.exists():
+        return {"files": 0, "bytes": 0, "modified": None}
+
+    candidates: list[Path]
+    if path.is_file():
+        candidates = [path]
+    else:
+        candidates = []
+        try:
+            for base, _, names in os.walk(path, followlinks=False):
+                candidates.extend(Path(base) / name for name in names)
+        except Exception:
+            pass
+
+    for candidate in candidates:
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            stat = candidate.stat()
+            files += 1
+            size += int(stat.st_size)
+            stamp = int(stat.st_mtime)
+            newest = stamp if newest is None else max(newest, stamp)
+        except Exception:
+            continue
+    return {"files": files, "bytes": size, "modified": newest}
+
+
+def _paths_usage(paths: list[Path]) -> dict[str, int | None]:
+    usages = [_path_usage(path) for path in paths]
+    modified = [int(item["modified"]) for item in usages if item["modified"]]
+    return {
+        "files": sum(int(item["files"] or 0) for item in usages),
+        "bytes": sum(int(item["bytes"] or 0) for item in usages),
+        "modified": max(modified, default=None),
+    }
+
+
+def _cleanup_summary(
+    before: dict[str, int | None],
+    after: dict[str, int | None],
+    *,
+    removed_items: int = 0,
+) -> dict[str, int]:
+    """Return receipt for destructive maintenance actions."""
+    return {
+        "removed_files": max(0, int(before.get("files") or 0) - int(after.get("files") or 0)),
+        "removed_items": max(0, int(removed_items or 0)),
+        "freed_bytes": max(0, int(before.get("bytes") or 0) - int(after.get("bytes") or 0)),
+    }
+
+
+def _statistics_artifact_paths(
+    cache_dir: Path,
+    config_dir: Path,
+    state_dir: Path,
+    stats_path: Path,
+    *,
+    include_stats: bool,
+    include_state: bool,
+    include_reports: bool,
+    include_insights: bool,
+) -> list[Path]:
+    paths: list[Path] = []
+    if include_stats:
+        paths.append(stats_path)
+    if include_state:
+        paths.append(config_dir / "state.json")
+    if include_reports:
+        try:
+            from services.statistics import REPORT_DIR
+        except Exception:
+            REPORT_DIR = config_dir / "sync_reports"
+        paths.extend(Path(REPORT_DIR).glob("sync-*.json"))
+    if include_insights:
+        for root in (state_dir, cache_dir, config_dir):
+            if not root.exists():
+                continue
+            for pattern in ("insights*.json", ".insights*.json", "insight*.json", "series*.json"):
+                paths.extend(root.glob(pattern))
+    return list(dict.fromkeys(paths))
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text("utf-8"))
+    except Exception:
+        return None
+
+
+def _metric(label: str, value: Any, fmt: str = "number") -> dict[str, Any]:
+    return {"label": label, "value": value, "format": fmt}
+
+
+def _sync_state_inventory(path: Path) -> tuple[int, int]:
+    payload = _read_json(path)
+    providers = payload.get("providers") if isinstance(payload, dict) else None
+    if not isinstance(providers, dict):
+        return 0, 0
+
+    baseline_count = 0
+    feature_names = {"history", "ratings", "watchlist", "playlists", "progress"}
+    for provider in providers.values():
+        if not isinstance(provider, dict):
+            continue
+        for name, block in provider.items():
+            if str(name).lower() not in feature_names or not isinstance(block, dict):
+                continue
+            if block.get("baseline") is not None or block:
+                baseline_count += 1
+    return len(providers), baseline_count
+
+
+def _currently_playing_count(path: Path) -> int:
+    payload = _read_json(path)
+    if not isinstance(payload, dict):
+        return 0
+    streams = payload.get("streams")
+    if isinstance(streams, dict):
+        return len(streams)
+    return 1 if payload.get("title") else 0
+
+
+def maintenance_action_status(action: str) -> dict[str, Any]:
+    """Build the read-only inventory shown when a maintenance action is selected."""
+    CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log = _cw()
+    action = str(action or "").strip().lower()
+    response: dict[str, Any] = {"ok": True, "action": action, "metrics": []}
+
+    if action == "state":
+        path = CONFIG_DIR / "state.json"
+        usage = _path_usage(path)
+        providers, baselines = _sync_state_inventory(path)
+        response.update(
+            title="Rebuild sync state",
+            note="These provider baselines are removed; the next sync reads fresh provider data.",
+            metrics=[
+                _metric("Providers", providers),
+                _metric("Feature baselines", baselines),
+                _metric("State storage", usage["bytes"], "bytes"),
+                _metric("Last updated", usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "cache":
+        info = _scan_provider_cache()
+        files = list(info.get("files") or [])
+        retry_names = ("unresolved", "phantom", "tombstone", "blackbox", "flap", "health", "dropped")
+        retry_files = sum(1 for item in files if any(token in str(item.get("name") or "").lower() for token in retry_names))
+        response.update(
+            title="Retry provider items",
+            note="Clears retry guards, tombstones, phantom records and provider health state. Playback and activity files stay untouched.",
+            metrics=[
+                _metric("Runtime files", len(files)),
+                _metric("Retry / guard files", retry_files),
+                _metric("Storage", sum(int(item.get("size") or 0) for item in files), "bytes"),
+                _metric("Preserved files", len(CW_STATE_KEEP_FILES)),
+            ],
+        )
+    elif action == "tracker":
+        root = _cw_tracker_root(CONFIG_DIR)
+        info = _scan_cw_tracker(root)
+        usage = _path_usage(root)
+        counts = info.get("counts") or {}
+        response.update(
+            title="Reset local tracker",
+            note="Tracker state and saved tracker snapshots can be selected independently with the checkboxes on the card.",
+            metrics=[
+                _metric("Tracker states", counts.get("state_files", 0)),
+                _metric("Tracker snapshots", counts.get("snapshots", 0)),
+                _metric("Storage", usage["bytes"], "bytes"),
+                _metric("Last updated", usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "playing":
+        path = CW_STATE_DIR / "currently_watching.json"
+        usage = _path_usage(path)
+        response.update(
+            title="Clear currently playing",
+            note="Only CrossWatch's local live-playback sessions are affected; provider playback history is not changed.",
+            metrics=[
+                _metric("Active sessions", _currently_playing_count(path)),
+                _metric("Storage", usage["bytes"], "bytes"),
+                _metric("Last updated", usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "scrobbles":
+        from services.activity import activity_path, list_events
+
+        events = list_events(limit=1, kind="scrobble", group_routes=False)
+        usage = _path_usage(activity_path())
+        response.update(
+            title="Clear Recent Scrobbles",
+            note="Removes only scrobble rows from Recent Activity. Other activity and provider watch history remain.",
+            metrics=[
+                _metric("Scrobble rows", int(events.get("total") or 0)),
+                _metric("Activity file", usage["bytes"], "bytes"),
+                _metric("Last updated", usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "stats":
+        try:
+            from services.statistics import REPORT_DIR
+        except Exception:
+            REPORT_DIR = CONFIG_DIR / "sync_reports"
+        stats_path = Path(getattr(STATS, "path", CONFIG_DIR / "statistics.json"))
+        stats_usage = _path_usage(stats_path)
+        report_paths = list(Path(REPORT_DIR).glob("sync-*.json")) if Path(REPORT_DIR).exists() else []
+        report_usage = _paths_usage(report_paths)
+        insight_paths: list[Path] = []
+        for root in (CW_STATE_DIR, CACHE_DIR, CONFIG_DIR):
+            if not root.exists():
+                continue
+            for pattern in ("insights*.json", ".insights*.json", "insight*.json", "series*.json"):
+                insight_paths.extend(root.glob(pattern))
+        insight_usage = _paths_usage(list(dict.fromkeys(insight_paths)))
+        response.update(
+            title="Rebuild statistics",
+            note="Statistics, saved sync reports and generated insight caches are rebuilt from future sync activity.",
+            metrics=[
+                _metric("Sync reports", report_usage["files"]),
+                _metric("Insight cache files", insight_usage["files"]),
+                _metric("Data rebuilt", int(stats_usage["bytes"] or 0) + int(report_usage["bytes"] or 0) + int(insight_usage["bytes"] or 0), "bytes"),
+                _metric("Last report", report_usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "metadata":
+        usage = _path_usage(CACHE_DIR)
+        response.update(
+            title="Refresh artwork & metadata",
+            note="All cached artwork and metadata are removed and downloaded again only when CrossWatch needs them.",
+            metrics=[
+                _metric("Cached files", usage["files"]),
+                _metric("Cache storage", usage["bytes"], "bytes"),
+                _metric("Last updated", usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "captures":
+        from services.snapshots import list_snapshots
+
+        rows = list_snapshots()
+        providers = {str(row.get("provider") or "").upper() for row in rows if row.get("provider")}
+        newest = max((int(row.get("mtime") or 0) for row in rows), default=None)
+        response.update(
+            title="Clear all captures",
+            note="Deletes saved provider captures only; automatic tracker snapshots are stored separately.",
+            metrics=[
+                _metric("Saved captures", len(rows)),
+                _metric("Providers", len(providers)),
+                _metric("Capture storage", sum(int(row.get("size") or 0) for row in rows), "bytes"),
+                _metric("Latest capture", newest, "datetime"),
+            ],
+        )
+    elif action == "defaults":
+        snapshots_dir = CONFIG_DIR / "snapshots"
+        paths = [
+            CONFIG_DIR / "last_sync.json",
+            CONFIG_DIR / "state.json",
+            CONFIG_DIR / "statistics.json",
+            CONFIG_DIR / "sync_reports",
+            CW_STATE_DIR,
+            _cw_tracker_root(CONFIG_DIR),
+            CACHE_DIR,
+            CONFIG_DIR / "tls",
+        ]
+        usages = [_path_usage(path) for path in paths]
+        captures = _path_usage(Path(snapshots_dir))
+        response.update(
+            title="Factory reset",
+            note="Deletes all local runtime data and backs up config.json. Saved captures are kept.",
+            metrics=[
+                _metric("Files removed", sum(int(item["files"] or 0) for item in usages)),
+                _metric("Data removed", sum(int(item["bytes"] or 0) for item in usages), "bytes"),
+                _metric("Captures kept", captures["files"]),
+                _metric("Capture storage kept", captures["bytes"], "bytes"),
+            ],
+        )
+    else:
+        return {"ok": False, "error": "unknown_maintenance_action", "action": action}
+
+    return response
+
 def _scan_provider_cache() -> dict[str, Any]:
     _, _, CW_STATE_DIR, *_ = _cw()
     exists = CW_STATE_DIR.exists()
@@ -111,7 +403,11 @@ def _scan_provider_cache() -> dict[str, Any]:
         return out
 
     files: list[dict[str, Any]] = []
-    for p in CW_STATE_DIR.glob("*.json"):
+    try:
+        candidates = list(CW_STATE_DIR.iterdir())
+    except Exception:
+        candidates = []
+    for p in candidates:
         if p.name in CW_STATE_KEEP_FILES:
             continue
         if p.is_file():
@@ -162,9 +458,11 @@ def _clear_cache_dir(cache_dir: Path) -> list[str]:
 def clear_metadata_cache() -> dict[str, Any]:
     CACHE_DIR, *_ = _cw()
 
+    before_usage = _path_usage(CACHE_DIR)
     before = _scan_cache_dir(CACHE_DIR)
     removed = _clear_cache_dir(CACHE_DIR)
     after = _scan_cache_dir(CACHE_DIR)
+    after_usage = _path_usage(CACHE_DIR)
 
     return {
         "ok": True,
@@ -172,6 +470,7 @@ def clear_metadata_cache() -> dict[str, Any]:
         "removed": removed,
         "before": before,
         "after": after,
+        "summary": _cleanup_summary(before_usage, after_usage),
     }
 
 
@@ -232,12 +531,15 @@ def clear_state_minimal() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
     state_path = CONFIG_DIR / "state.json"
     existed = state_path.exists()
+    before_usage = _path_usage(state_path)
     try:
         state_path.unlink(missing_ok=True)
+        after_usage = _path_usage(state_path)
         return {
             "ok": True,
             "path": str(state_path),
             "existed": bool(existed),
+            "summary": _cleanup_summary(before_usage, after_usage),
         }
     except Exception as e:
         return {
@@ -257,6 +559,12 @@ def crosswatch_tracker_clear(
     root = _cw_tracker_root(CONFIG_DIR)
 
     before = _scan_cw_tracker(root)
+    selected_before_paths = []
+    if clear_state:
+        selected_before_paths.extend(root.glob("*.json"))
+    if clear_snapshots:
+        selected_before_paths.extend((root / "snapshots").glob("*.json"))
+    before_usage = _paths_usage(list(selected_before_paths))
     removed_state: list[str] = []
     removed_snapshots: list[str] = []
 
@@ -273,6 +581,12 @@ def crosswatch_tracker_clear(
                     removed_snapshots.append(p.name)
 
     after = _scan_cw_tracker(root)
+    selected_after_paths = []
+    if clear_state:
+        selected_after_paths.extend(root.glob("*.json"))
+    if clear_snapshots:
+        selected_after_paths.extend((root / "snapshots").glob("*.json"))
+    after_usage = _paths_usage(list(selected_after_paths))
 
     return {
         "ok": True,
@@ -283,6 +597,7 @@ def crosswatch_tracker_clear(
         },
         "before": before,
         "after": after,
+        "summary": _cleanup_summary(before_usage, after_usage),
     }
 
 
@@ -291,8 +606,18 @@ def clear_cache() -> dict[str, Any]:
     _, _, CW_STATE_DIR, *_ = _cw()
 
     before = _scan_provider_cache()
+    before_usage = {
+        "files": len(before.get("files") or []),
+        "bytes": sum(int(item.get("size") or 0) for item in before.get("files") or []),
+        "modified": None,
+    }
     removed = _clear_cw_state_files()
     after = _scan_provider_cache()
+    after_usage = {
+        "files": len(after.get("files") or []),
+        "bytes": sum(int(item.get("size") or 0) for item in after.get("files") or []),
+        "modified": None,
+    }
 
     return {
         "ok": True,
@@ -300,24 +625,35 @@ def clear_cache() -> dict[str, Any]:
         "removed": removed,
         "before": before,
         "after": after,
+        "summary": _cleanup_summary(before_usage, after_usage),
     }
 
 
 @router.post("/clear-provider-sync-cache")
 def clear_provider_sync_cache() -> dict[str, Any]:
-    """Reset pair baselines and provider runtime cache without touching user-facing local history."""
+    """Reset pair baselines and provider runtime cache"""
     state = clear_state_minimal()
     cache = clear_cache()
+    summaries = [state.get("summary") or {}, cache.get("summary") or {}]
     return {
         "ok": bool(state.get("ok")) and bool(cache.get("ok")),
         "state": state,
         "cache": cache,
+        "summary": {
+            key: sum(int(item.get(key) or 0) for item in summaries)
+            for key in ("removed_files", "removed_items", "freed_bytes")
+        },
     }
 
 @router.get("/provider-cache")
 def provider_cache_status() -> dict[str, Any]:
     info = _scan_provider_cache()
     return {"ok": True, **info}
+
+
+@router.get("/action-status/{action}")
+def action_status(action: str) -> dict[str, Any]:
+    return maintenance_action_status(action)
 
 
 @router.post("/reset-all-default")
@@ -412,8 +748,10 @@ def reset_currently_watching() -> dict[str, Any]:
     _, _, CW_STATE_DIR, _, _, _append_log = _cw()
     path = CW_STATE_DIR / "currently_watching.json"
     existed = path.exists()
+    before_usage = _path_usage(path)
     try:
         path.unlink(missing_ok=True)
+        after_usage = _path_usage(path)
         try:
             _append_log(
                 "TRBL",
@@ -421,7 +759,12 @@ def reset_currently_watching() -> dict[str, Any]:
             )
         except Exception:
             pass
-        return {"ok": True, "path": str(path), "existed": bool(existed)}
+        return {
+            "ok": True,
+            "path": str(path),
+            "existed": bool(existed),
+            "summary": _cleanup_summary(before_usage, after_usage),
+        }
     except Exception as e:
         return {
             "ok": False,
@@ -452,9 +795,16 @@ def clear_activity_log() -> dict[str, Any]:
 @router.post("/clear-recent-scrobbles")
 def clear_recent_scrobbles() -> dict[str, Any]:
     try:
-        from services.activity import clear_scrobble_events
+        from services.activity import activity_path, clear_scrobble_events
 
+        before_usage = _path_usage(activity_path())
         res = clear_scrobble_events()
+        after_usage = _path_usage(activity_path())
+        res["summary"] = _cleanup_summary(
+            before_usage,
+            after_usage,
+            removed_items=int(res.get("removed") or 0),
+        )
         _, _, _, _, _, _append_log = _cw()
         try:
             _append_log(
@@ -481,6 +831,20 @@ def reset_stats(
     if not any((recalc, purge_file, purge_state, purge_reports, purge_insights)):
         purge_file = purge_state = purge_reports = purge_insights = True
         recalc = False
+
+    stats_path = Path(getattr(STATS, "path", CONFIG_DIR / "statistics.json"))
+    before_usage = _paths_usage(
+        _statistics_artifact_paths(
+            CACHE_DIR,
+            CONFIG_DIR,
+            CW_STATE_DIR,
+            stats_path,
+            include_stats=purge_file,
+            include_state=purge_state,
+            include_reports=purge_reports,
+            include_insights=purge_insights,
+        )
+    )
 
     try:
         try:
@@ -597,6 +961,19 @@ def reset_stats(
             except Exception:
                 pass
 
+        after_usage = _paths_usage(
+            _statistics_artifact_paths(
+                CACHE_DIR,
+                CONFIG_DIR,
+                CW_STATE_DIR,
+                stats_path,
+                include_stats=purge_file,
+                include_state=purge_state,
+                include_reports=purge_reports,
+                include_insights=purge_insights,
+            )
+        )
+
         return {
             "ok": True,
             "dropped": {
@@ -607,6 +984,7 @@ def reset_stats(
                 "insights_mem": bool(purge_insights),
             },
             "recalculated": bool(recalc),
+            "summary": _cleanup_summary(before_usage, after_usage),
         }
     except Exception:
         return {"ok": False, "error": "reset_stats_failed"}

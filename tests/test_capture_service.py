@@ -137,3 +137,39 @@ def test_capture_retention_keeps_newest(tmp_path: Path, monkeypatch) -> None:
     remaining = {row["path"] for row in snapshots.list_snapshots()}
     assert paths[0] not in remaining
     assert {paths[1], paths[2]}.issubset(remaining)
+
+
+def test_delete_all_captures_preserves_unrelated_files(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    monkeypatch.setattr(snapshots, "CONFIG", tmp_path)
+    capture_root = tmp_path / "snapshots"
+    first_day = capture_root / "2026-03-15"
+    second_day = capture_root / "2026-03-16"
+    first_day.mkdir(parents=True)
+    second_day.mkdir(parents=True)
+
+    capture_paths = [
+        first_day / "first.json",
+        first_day / "second.json",
+        second_day / "third.json",
+    ]
+    for path in capture_paths:
+        path.write_text("{}", encoding="utf-8")
+
+    keep = capture_root / "README.txt"
+    keep.write_text("not a capture", encoding="utf-8")
+
+    result = snapshots.delete_all_snapshots()
+
+    assert result["ok"] is True
+    assert result["deleted_count"] == 3
+    assert result["summary"] == {
+        "removed_files": 3,
+        "removed_items": 0,
+        "freed_bytes": 6,
+    }
+    assert all(not path.exists() for path in capture_paths)
+    assert keep.exists()
+    assert not first_day.exists()
+    assert not second_day.exists()

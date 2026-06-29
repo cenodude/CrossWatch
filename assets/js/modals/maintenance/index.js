@@ -3,17 +3,37 @@
 /* Modal for maintenance and troubleshooting operations like clearing state, cache, tracker data, and resetting stats. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+const REQUEST_TIMEOUT_MS = 45_000;
 const fjson = async (url, opts = {}) => {
-  const r = await fetch(url, { cache: "no-store", ...opts });
-  if (!r.ok) {
-    const msg = `${r.status} ${r.statusText || ""}`.trim();
-    throw new Error(msg || "Request failed");
-  }
-  if (r.status === 204) return {};
+  const controller = new AbortController();
+  const externalSignal = opts.signal;
+  const forwardAbort = () => controller.abort();
+  let timedOut = false;
+  if (externalSignal?.aborted) controller.abort();
+  else externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+
   try {
-    return await r.json();
-  } catch {
-    return {};
+    const r = await fetch(url, { cache: "no-store", ...opts, signal: controller.signal });
+    if (!r.ok) {
+      const msg = `${r.status} ${r.statusText || ""}`.trim();
+      throw new Error(msg || "Request failed");
+    }
+    if (r.status === 204) return {};
+    try {
+      return await r.json();
+    } catch {
+      return {};
+    }
+  } catch (error) {
+    if (timedOut) throw new Error("Request timed out after 45 seconds");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", forwardAbort);
   }
 };
 
@@ -28,10 +48,10 @@ const SIMPLE_OPS = {
   state: "/api/maintenance/clear-state",
   cache: "/api/maintenance/clear-cache",
   metadata: "/api/maintenance/clear-metadata-cache",
-  activity: "/api/maintenance/clear-activity-log",
   scrobbles: "/api/maintenance/clear-recent-scrobbles",
   stats: "/api/maintenance/reset-stats",
   playing: "/api/maintenance/reset-currently-watching",
+  captures: "/api/snapshots/clear",
 };
 const OPS = [
   {
@@ -40,7 +60,7 @@ const OPS = [
     icon: "deployed_code_history",
     title: "Rebuild sync state",
     tag: "sync pairs",
-    desc: 'Starts every sync pair from fresh provider baselines on its next run.',
+    desc: "Starts every sync pair from fresh provider baselines.",
   },
   {
     key: "cache",
@@ -48,7 +68,7 @@ const OPS = [
     icon: "network_node",
     title: "Retry provider items",
     tag: "runtime",
-    desc: 'Clears temporary retry and health data so unresolved provider items are tried again.',
+    desc: "Clears temporary retry and health data so items are tried again.",
   },
   {
     key: "meta",
@@ -64,21 +84,13 @@ const OPS = [
     icon: "deployed_code",
     title: "Reset local tracker",
     tag: "local library",
-    desc: 'Clears local Watchlist, History and Ratings tracker data. Provider accounts stay untouched.',
+    desc: "Clears local Watchlist, History and Ratings tracker data.",
     extra: `
       <div class="action-options">
         <label><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
         <label><input type="checkbox" id="cxm-cw-snaps"><span>All snapshots</span></label>
       </div>
     `,
-  },
-  {
-    key: "activity",
-    kind: "activity",
-    icon: "fact_check",
-    title: "Clear all activity",
-    tag: "local activity",
-    desc: "Clears the complete local activity list without changing provider watch history.",
   },
   {
     key: "scrobbles",
@@ -105,6 +117,14 @@ const OPS = [
     desc: 'Removes stuck items from the local Currently Playing list.',
   },
   {
+    key: "captures",
+    kind: "captures",
+    icon: "photo_library",
+    title: "Clear all captures",
+    tag: "saved captures",
+    desc: "Deletes every saved provider capture from local storage.",
+  },
+  {
     key: "defaults",
     kind: "defaults",
     icon: "release_alert",
@@ -113,17 +133,64 @@ const OPS = [
     desc: "Returns CrossWatch to a clean install and backs up config.json. Snapshots are kept.",
   },
 ];
-const renderActionRow = ({ key, icon, title, tag, desc, extra = "" }) => `
-  <div class="action-row" data-op="${key}">
+const GROUPS = [
+  {
+    id: "sync",
+    icon: "sync",
+    title: "Sync",
+    desc: "Keep sync state healthy and up to date.",
+    keys: ["state", "cache"],
+  },
+  {
+    id: "local",
+    icon: "verified_user",
+    title: "Local cleanup",
+    desc: "Clean local tracker data.",
+    keys: ["tracker"],
+  },
+  {
+    id: "playback",
+    icon: "play_circle",
+    title: "Playback",
+    desc: "Manage playback lists and state.",
+    keys: ["playing", "scrobbles"],
+  },
+  {
+    id: "reports",
+    icon: "bar_chart",
+    title: "Reports & Metadata",
+    desc: "Rebuild reports and refresh cached metadata.",
+    keys: ["stats", "meta"],
+  },
+  {
+    id: "captures",
+    icon: "photo_library",
+    title: "Captures",
+    desc: "Manage saved provider captures.",
+    keys: ["captures"],
+  },
+  {
+    id: "danger",
+    icon: "warning",
+    title: "Danger zone",
+    desc: "Irreversible actions. Proceed with caution.",
+    keys: ["defaults"],
+  },
+];
+
+const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
+const OVERVIEW_KEYS = GROUPS
+  .filter((group) => group.id !== "danger")
+  .flatMap((group) => group.keys);
+
+const renderActionRow = ({ key, kind, icon, title, desc, extra = "" }) => `
+  <div class="action-row" data-op="${key}" data-kind="${kind}" tabindex="0" aria-label="Inspect ${title} status">
     <div class="action-main">
       <div class="action-icon">
         <span class="material-symbols-rounded" aria-hidden="true">${icon}</span>
       </div>
       <div class="action-copy">
-        <div class="action-line">
-          <div class="action-title">${title}</div>
-          ${tag ? `<span class="action-tag">${tag}</span>` : ""}
-        </div>
+        <div class="action-title">${title}</div>
         <div class="action-desc">${desc}</div>
         ${extra}
       </div>
@@ -132,714 +199,371 @@ const renderActionRow = ({ key, icon, title, tag, desc, extra = "" }) => `
   </div>
 `;
 
+const renderGroup = ({ id, icon, title, desc, keys }) => `
+  <section class="action-group ${id}" id="cxm-group-${id}" data-group="${id}">
+    <div class="group-info">
+      <div class="group-title-row">
+        <div class="group-icon">
+          <span class="material-symbols-rounded" aria-hidden="true">${icon}</span>
+        </div>
+        <div class="group-title">${title}</div>
+      </div>
+      <div class="group-desc">${desc}</div>
+    </div>
+    <div class="group-actions${keys.length === 1 ? " single" : keys.length === 2 ? " two" : ""}">
+      ${keys.map((key) => renderActionRow(OPS_BY_KEY[key])).join("")}
+    </div>
+  </section>
+`;
+
 function injectCSS() {
-  if (document.getElementById("cw-maint-css")) return;
-  const el = document.createElement("style");
-  el.id = "cw-maint-css";
-  el.textContent = `
-  .cw-maint {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    height: auto;
-    max-height: min(80vh, calc(100vh - 40px));
-    background:
-      radial-gradient(96% 125% at 0% 0%, rgba(72,52,146,.18), transparent 36%),
-      linear-gradient(180deg, rgba(5,7,14,.99), rgba(3,5,11,.99));
-    border: 1px solid rgba(255,255,255,.06);
-    border-radius: 22px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.025), 0 28px 60px rgba(0,0,0,.32);
-  }
-  .cx-modal-shell.cw-maint-shell {
-    height: auto !important;
-    max-height: min(80vh, calc(100vh - 40px)) !important;
-  }
-
-  .cw-maint .cx-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid rgba(255,255,255,.06);
-    background: linear-gradient(180deg,rgba(255,255,255,.016),rgba(255,255,255,.003));
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-  }
-  .cw-maint .cx-head-left {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-  }
-  .cw-maint .head-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: linear-gradient(145deg,rgba(18,23,42,.96),rgba(10,15,28,.94));
-    border: 1px solid rgba(124,138,255,.16);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.035),0 16px 28px rgba(0,0,0,.24);
-    flex-shrink: 0;
-  }
-  .cw-maint .head-icon .material-symbols-rounded {
-    font-variation-settings:"FILL" 0,"wght" 550,"GRAD" 0,"opsz" 24;
-    font-size: 20px;
-    color: #b9c6ff;
-  }
-  .cw-maint .head-text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-  }
-  .cw-maint .head-title {
-    font-weight: 850;
-    font-size: 16px;
-    letter-spacing: -.01em;
-    color: #f4f7ff;
-  }
-  .cw-maint .head-sub {
-    font-size: 12px;
-    color: rgba(197,206,224,.72);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .cw-maint .cx-head-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .cw-maint .close-btn {
-    border: 1px solid rgba(255,255,255,.09);
-    background: linear-gradient(180deg,rgba(18,22,38,.92),rgba(10,13,24,.9));
-    color: #eef3ff;
-    border-radius: 999px;
-    padding: 7px 14px;
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: .06em;
-    cursor: pointer;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.025),0 12px 22px rgba(0,0,0,.22);
-  }
-  .cw-maint .close-btn:hover {
-    background: linear-gradient(180deg,rgba(24,30,52,.96),rgba(12,16,30,.94));
-    border-color: rgba(255,255,255,.13);
-  }
-
-  .cw-maint .cx-body {
-    flex: 1;
-    min-height: 0;
-    padding: 10px 12px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    overflow: auto;
-  }
-
-  .cw-maint .summary-card {
-    background: linear-gradient(135deg,rgba(81,91,190,.12),rgba(21,27,52,.45));
-    border-radius: 16px;
-    border: 1px solid rgba(255,255,255,.07);
-    padding: 9px 11px;
-    display: grid;
-    grid-template-columns: minmax(240px,1fr) auto auto;
-    align-items: center;
-    gap: 12px;
-    font-size: 12px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.025);
-  }
-  @media (max-width: 980px) {
-    .cw-maint .summary-card {
-      grid-template-columns: minmax(0,1fr) auto;
-    }
-    .cw-maint .storage-details { grid-column: 1 / -1; }
-  }
-  .cw-maint .summary-safe {
-    display: grid;
-    grid-template-columns: 32px minmax(0,1fr);
-    align-items: center;
-    gap: 9px;
-  }
-  .cw-maint .summary-safe-icon {
-    width: 32px;
-    height: 32px;
-    display: grid;
-    place-items: center;
-    border-radius: 11px;
-    border: 1px solid rgba(124,242,176,.16);
-    background: rgba(55,178,126,.09);
-    color: #bdf0d0;
-  }
-  .cw-maint .summary-safe-icon .material-symbols-rounded { font-size: 19px; }
-  .cw-maint .summary-safe strong { display:block;color:#f5f7ff;font-size:12px; }
-  .cw-maint .summary-safe span { display:block;margin-top:2px;color:rgba(205,214,231,.7);font-size:11px; }
-  .cw-maint .storage-details { position: relative; }
-  .cw-maint .storage-details summary {
-    list-style: none;
-    cursor: pointer;
-    padding: 6px 9px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.08);
-    background: rgba(255,255,255,.03);
-    color: rgba(224,230,242,.8);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: .06em;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-  .cw-maint .storage-details summary::-webkit-details-marker { display:none; }
-  .cw-maint .storage-details[open] .summary-paths {
-    display:block;
-    position:absolute;
-    z-index:8;
-    right:0;
-    top:calc(100% + 6px);
-    min-width:310px;
-    padding:9px 10px;
-    border-radius:13px;
-    border:1px solid rgba(255,255,255,.1);
-    background:#111521;
-    box-shadow:0 16px 34px rgba(0,0,0,.34);
-  }
-  .cw-maint .summary-paths { display:none;line-height:1.7;color:rgba(205,214,231,.76); }
-  .cw-maint .summary-paths code {
-    font-size: 10px;
-    background: rgba(255,255,255,.035);
-    padding: 1px 5px;
-    border-radius: 999px;
-  }
-  .cw-maint .summary-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .cw-maint .summary-pill {
-    padding: 4px 9px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.08);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    opacity: .9;
-    background: linear-gradient(180deg,rgba(15,18,34,.95),rgba(9,12,22,.93));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
-  }
-
-  .cw-maint .actions {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 7px;
-    margin-top: 0;
-  }
-  @media (max-width: 1100px) {
-    .cw-maint .actions {
-      grid-template-columns: repeat(2,minmax(0,1fr));
-    }
-  }
-  @media (max-width: 720px) { .cw-maint .actions { grid-template-columns:1fr; } }
-
-  .cw-maint .action-row {
-    background: radial-gradient(120% 145% at 0% 0%,rgba(76,54,150,.08),transparent 38%),linear-gradient(180deg,rgba(9,12,22,.97),rgba(5,8,17,.965));
-    border-radius: 15px;
-    border: 1px solid rgba(255,255,255,.07);
-    padding: 9px 10px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
-    transition: transform .14s ease,border-color .14s ease,box-shadow .16s ease,background .16s ease;
-  }
-  .cw-maint .action-row:hover {
-    transform: translateY(-1px);
-    border-color: rgba(130,116,220,.16);
-    box-shadow: 0 12px 24px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.03);
-  }
-  .cw-maint .action-main {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr);
-    align-items: start;
-    gap: 9px;
-    flex: 1;
-    min-width: 0;
-  }
-  .cw-maint .action-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 9px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    border: 1px solid rgba(255,255,255,.08);
-    background: linear-gradient(145deg,rgba(13,16,31,.98),rgba(8,10,20,.97));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.025),0 14px 22px rgba(0,0,0,.22);
-  }
-  .cw-maint .action-icon .material-symbols-rounded {
-    font-variation-settings:"FILL" 0,"wght" 450,"GRAD" 0,"opsz" 20;
-    font-size: 18px;
-    color: #eef3ff;
-  }
-
-  .cw-maint .action-copy {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-  }
-  .cw-maint .action-line {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    min-width: 0;
-  }
-  .cw-maint .action-title {
-    font-size: 12px;
-    font-weight: 800;
-    line-height: 1.2;
-  }
-  .cw-maint .action-tag {
-    padding: 2px 6px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.08);
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: .09em;
-    opacity: .86;
-    background: rgba(255,255,255,.028);
-  }
-  .cw-maint .action-desc {
-    font-size: 10.5px;
-    line-height: 1.3;
-    color: rgba(197,206,224,.76);
-  }
-  .cw-maint .action-desc code {
-    font-size: 10px;
-    background: rgba(255,255,255,.035);
-    border-radius: 999px;
-    padding: 1px 6px;
-  }
-
-  .cw-maint .action-options {
-    width: 100%;
-    margin-top: 4px;
-    font-size: 10px;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 3px 10px;
-    align-items: start;
-  }
-  .cw-maint .action-options label {
-    display: grid;
-    grid-template-columns: 16px minmax(0, 1fr);
-    align-items: start;
-    gap: 8px;
-    width: 100%;
-    cursor: pointer;
-  }
-  .cw-maint .action-options label span {
-    min-width: 0;
-    white-space: normal;
-    line-height: 1.15;
-  }
-  .cw-maint .action-options input {
-    margin: 2px 0 0;
-    accent-color: #7e79ff;
-  }
-  @media (max-width: 720px) {
-    .cw-maint .action-options {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  .cw-maint .run-btn {
-    align-self: start;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.09);
-    padding: 6px 11px;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: .09em;
-    text-transform: uppercase;
-    cursor: pointer;
-    background: linear-gradient(180deg,rgba(15,18,34,.95),rgba(9,12,22,.93));
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.025),0 12px 24px rgba(0,0,0,.22);
-    flex-shrink: 0;
-  }
-  .cw-maint .run-btn:hover {
-    border-color: rgba(132,120,240,.22);
-    background: linear-gradient(180deg,rgba(33,28,66,.98),rgba(13,16,30,.95));
-  }
-  .cw-maint .run-btn[disabled] {
-    opacity: .6;
-    cursor: wait;
-    box-shadow: none;
-  }
-  .cw-maint .action-row[data-op="state"] .action-icon {
-    border-color: rgba(255,134,145,.16);
-    background: rgba(126,121,255,.10);
-  }
-  .cw-maint .action-row[data-op="cache"] .action-icon {
-    border-color: rgba(164,138,255,.18);
-    background: rgba(164,138,255,.10);
-  }
-  .cw-maint .action-row[data-op="meta"] .action-icon {
-    border-color: rgba(255,201,110,.18);
-    background: rgba(255,201,110,.09);
-  }
-  .cw-maint .action-row[data-op="tracker"] .action-icon {
-    border-color: rgba(115,197,255,.18);
-    background: rgba(115,197,255,.09);
-  }
-  .cw-maint .action-row[data-op="stats"] .action-icon {
-    border-color: rgba(120,220,176,.18);
-    background: rgba(120,220,176,.09);
-  }
-  .cw-maint .action-row[data-op="playing"] .action-icon {
-    border-color: rgba(190,196,255,.16);
-    background: rgba(190,196,255,.08);
-  }
-  .cw-maint .action-row[data-op="activity"] .action-icon {
-    border-color: rgba(124,242,176,.16);
-    background: rgba(124,242,176,.08);
-  }
-  .cw-maint .action-row[data-op="scrobbles"] .action-icon {
-    border-color: rgba(104,191,255,.18);
-    background: rgba(104,191,255,.09);
-  }
-
-  .cw-maint .action-row[data-op="defaults"] .action-icon {
-    border-color: rgba(255,106,106,.18);
-    background: rgba(255,106,106,.10);
-  }
-  .cw-maint .action-row[data-op="defaults"] {
-    border-color: rgba(255,106,106,.14);
-    background: linear-gradient(145deg,rgba(75,27,40,.18),rgba(17,12,20,.86));
-  }
-
-  .cw-maint .status {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 38px;
-    margin-top: 0;
-    padding: 7px 10px;
-    border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.07);
-    background: radial-gradient(120% 140% at 0% 0%,rgba(74,54,150,.06),transparent 38%),linear-gradient(180deg,rgba(9,12,22,.97),rgba(6,8,16,.96));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.02);
-    position: sticky;
-    bottom: 0;
-    z-index: 5;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  .cw-maint .status::before {
-    content: "STATUS";
-    flex-shrink: 0;
-    padding: 4px 9px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.08);
-    background: linear-gradient(180deg,rgba(15,18,33,.96),rgba(9,11,21,.95));
-    color: rgba(222,229,245,.92);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: .12em;
-    text-transform: uppercase;
-  }
-  .cw-maint .status-text {
-    min-width: 0;
-    color: rgba(226,232,245,.88);
-    font-size: 12px;
-    line-height: 1.35;
-  }
-  .cw-maint .status.ok::before {
-    content: "DONE";
-    color: #bdf0d0;
-    border-color: rgba(124,242,176,.16);
-  }
-  .cw-maint .status.err::before {
-    content: "ERROR";
-    color: #ffc4c4;
-    border-color: rgba(255,148,148,.18);
-  }
-  .cw-maint .status.busy::before {
-    content: "RUNNING";
-    color: #cfd5ff;
-    border-color: rgba(126,121,255,.18);
-  }
-  #cw-clean-all {
-    border-radius: 999px;
-    border: 1px solid rgba(255,132,146,.14);
-    padding: 7px 14px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .09em;
-    text-transform: uppercase;
-    cursor: pointer;
-    background: linear-gradient(180deg,rgba(58,20,31,.94),rgba(37,12,21,.92));
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.02),0 12px 24px rgba(0,0,0,.22);
-    margin-right: 8px; /* small gap before CLOSE */
-  }
-  #cw-clear-provider-cache {
-    border-radius: 999px;
-    border: 1px solid rgba(139,149,255,.2);
-    padding: 7px 14px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: .09em;
-    text-transform: uppercase;
-    cursor: pointer;
-    background: linear-gradient(180deg,rgba(35,39,78,.94),rgba(20,24,50,.92));
-    color: #fff;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.03),0 12px 24px rgba(0,0,0,.2);
-  }
-  #cw-clear-provider-cache:hover {
-    border-color: rgba(154,162,255,.3);
-    background: linear-gradient(180deg,rgba(47,52,101,.96),rgba(25,30,61,.94));
-  }
-  #cw-clear-provider-cache[disabled] {
-    opacity: .6;
-    cursor: wait;
-    box-shadow: none;
-  }
-  #cw-clean-all:hover {
-    border-color: rgba(255,146,160,.22);
-    background: linear-gradient(180deg,rgba(72,26,39,.96),rgba(44,15,25,.94));
-  }
-  #cw-clean-all[disabled] {
-    opacity: .6;
-    cursor: wait;
-    box-shadow: none;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint,
-  html[data-cw-theme="flat-dark"] .cw-maint .cx-head,
-  html[data-cw-theme="flat-dark"] .cw-maint .head-icon,
-  html[data-cw-theme="flat-dark"] .cw-maint .close-btn,
-  html[data-cw-theme="flat-dark"] .cw-maint .summary-card,
-  html[data-cw-theme="flat-dark"] .cw-maint .summary-pill,
-  html[data-cw-theme="flat-dark"] .cw-maint .action-row,
-  html[data-cw-theme="flat-dark"] .cw-maint .action-desc code,
-  html[data-cw-theme="flat-dark"] .cw-maint .action-options label,
-  html[data-cw-theme="flat-dark"] .cw-maint .action-options input,
-  html[data-cw-theme="flat-dark"] .cw-maint .run-btn,
-  html[data-cw-theme="flat-dark"] .cw-maint .status,
-  html[data-cw-theme="flat-dark"] .cw-maint .status::before,
-  html[data-cw-theme="flat-dark"] #cw-clear-provider-cache,
-  html[data-cw-theme="flat-dark"] #cw-clean-all {
-    background: #20242d !important;
-    border-color: rgba(255,255,255,.14) !important;
-    box-shadow: none !important;
-    text-shadow: none !important;
-    filter: none !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint .close-btn:hover,
-  html[data-cw-theme="flat-dark"] .cw-maint .action-row:hover,
-  html[data-cw-theme="flat-dark"] .cw-maint .run-btn:hover,
-  html[data-cw-theme="flat-dark"] #cw-clear-provider-cache:hover,
-  html[data-cw-theme="flat-dark"] #cw-clean-all:hover {
-    background: #2b313d !important;
-    border-color: rgba(255,255,255,.19) !important;
-    box-shadow: none !important;
-    filter: none !important;
-    transform: none !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint .status.ok::before,
-  html[data-cw-theme="flat-dark"] .cw-maint .status.err::before,
-  html[data-cw-theme="flat-dark"] .cw-maint .status.busy::before {
-    box-shadow: none !important;
-    filter: none !important;
-    text-shadow: none !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint #cw-clean-all,
-  html[data-cw-theme="flat-dark"] #cw-clean-all {
-    background: #43272e !important;
-    border-color: rgba(216,102,114,.42) !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint #cw-clear-provider-cache,
-  html[data-cw-theme="flat-dark"] #cw-clear-provider-cache {
-    background: #292f4c !important;
-    border-color: rgba(128,139,226,.4) !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint .action-row[data-op="defaults"] {
-    background:#35252a !important;
-    border-color:rgba(216,102,114,.3) !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint .cx-body {
-    scrollbar-color: #3a414c #151821 !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint .cx-body::-webkit-scrollbar-track {
-    background: #151821 !important;
-  }
-  html[data-cw-theme="flat-dark"] .cw-maint .cx-body::-webkit-scrollbar-thumb {
-    background: #3a414c !important;
-    border-color: #151821 !important;
-    box-shadow: none !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint,
-  html[data-cw-theme="flat-light"] .cw-maint .cx-head,
-  html[data-cw-theme="flat-light"] .cw-maint .head-icon,
-  html[data-cw-theme="flat-light"] .cw-maint .close-btn,
-  html[data-cw-theme="flat-light"] .cw-maint .summary-card,
-  html[data-cw-theme="flat-light"] .cw-maint .summary-pill,
-  html[data-cw-theme="flat-light"] .cw-maint .action-row,
-  html[data-cw-theme="flat-light"] .cw-maint .action-desc code,
-  html[data-cw-theme="flat-light"] .cw-maint .action-options label,
-  html[data-cw-theme="flat-light"] .cw-maint .action-options input,
-  html[data-cw-theme="flat-light"] .cw-maint .run-btn,
-  html[data-cw-theme="flat-light"] .cw-maint .status,
-  html[data-cw-theme="flat-light"] .cw-maint .status::before {
-    background: #ffffff !important;
-    border-color: rgba(21,31,48,.14) !important;
-    color: #172033 !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .close-btn:hover,
-  html[data-cw-theme="flat-light"] .cw-maint .action-row:hover,
-  html[data-cw-theme="flat-light"] .cw-maint .run-btn:hover {
-    background: #eef2f7 !important;
-    border-color: rgba(21,31,48,.20) !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint #cw-clean-all,
-  html[data-cw-theme="flat-light"] #cw-clean-all {
-    background: #f7dde2 !important;
-    border-color: rgba(201,79,97,.36) !important;
-    color: #7f1d2d !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint #cw-clear-provider-cache,
-  html[data-cw-theme="flat-light"] #cw-clear-provider-cache {
-    background: #e8ebff !important;
-    border-color: rgba(80,91,184,.3) !important;
-    color: #313b82 !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .summary-safe strong { color:#172033; }
-  html[data-cw-theme="flat-light"] .cw-maint .summary-safe span { color:#667085; }
-  html[data-cw-theme="flat-light"] .cw-maint .summary-safe-icon {
-    background:#e9f8f0;
-    border-color:rgba(31,143,91,.2);
-    color:#207a50;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .action-icon .material-symbols-rounded { color:#344054; }
-  html[data-cw-theme="flat-light"] .cw-maint .action-row[data-op="defaults"] {
-    background:#fff4f5 !important;
-    border-color:rgba(201,79,97,.24) !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .storage-details summary {
-    background:#f5f7fb;
-    border-color:rgba(21,31,48,.14);
-    color:#475467;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .storage-details[open] .summary-paths {
-    background:#fff;
-    border-color:rgba(21,31,48,.14);
-    color:#475467;
-    box-shadow:0 16px 34px rgba(15,23,42,.14);
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .cx-body {
-    scrollbar-color: #c4ccd8 #eef2f7 !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .cx-body::-webkit-scrollbar-track {
-    background: #eef2f7 !important;
-  }
-  html[data-cw-theme="flat-light"] .cw-maint .cx-body::-webkit-scrollbar-thumb {
-    background: #c4ccd8 !important;
-    border-color: #eef2f7 !important;
-  }
-  `;
-  document.head.appendChild(el);
+  const existing = document.getElementById("cw-maint-css");
+  if (existing?.tagName === "LINK") return Promise.resolve();
+  existing?.remove();
+  const link = document.createElement("link");
+  const cssUrl = new URL("./styles.css", import.meta.url);
+  const version = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__;
+  if (version) cssUrl.searchParams.set("v", version);
+  link.id = "cw-maint-css";
+  link.rel = "stylesheet";
+  link.href = cssUrl.href;
+  return new Promise((resolve) => {
+    link.addEventListener("load", resolve, { once: true });
+    link.addEventListener("error", resolve, { once: true });
+    document.head.appendChild(link);
+  });
 }
 
 export default {
   async mount(root) {
-    injectCSS();
+    await injectCSS();
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
       shell.classList.add("cw-maint-shell");
       shell.style.setProperty("--cxModalW", "1180px");
       shell.style.setProperty("--cxModalMaxW", "1180px");
-      shell.style.setProperty("--cxModalMaxH", "80vh");
+      shell.style.setProperty("--cxModalMaxH", "700px");
     }
-    const cleanAllOps = [
-      () => post("/api/maintenance/clear-provider-sync-cache"),
-      () => post(SIMPLE_OPS.metadata),
-      () => post(SIMPLE_OPS.activity),
-      () => post("/api/maintenance/crosswatch-tracker/clear", { clear_state: true, clear_snapshots: true }),
-      () => post(SIMPLE_OPS.stats, {}),
-      () => post(SIMPLE_OPS.playing),
-    ];
-
     root.innerHTML = `
       <div class="cw-maint">
         <div class="cx-head">
           <div class="cx-head-left">
             <div class="head-icon">
-              <span class="material-symbols-rounded" aria-hidden="true">tune</span>
+              <span class="material-symbols-rounded" aria-hidden="true">handyman</span>
             </div>
             <div class="head-text">
               <div class="head-title">Maintenance tools</div>
-              <div class="head-sub">Reset, rebuild or clean the local CrossWatch layers without touching provider accounts</div>
+              <div class="head-sub">Reset, rebuild or clean the local CrossWatch data without touching provider accounts.</div>
             </div>
           </div>
           <div class="cx-head-right">
-            <button id="cw-clear-provider-cache" type="button">Clear Provider Sync Cache</button>
-            <button id="cw-clean-all" class="cw-btn danger">Clean Everything</button>
-            <button type="button" class="close-btn" id="cxm-close">Close</button>
+            <button type="button" class="header-action" id="cxm-close">
+              <span class="material-symbols-rounded" aria-hidden="true">close</span>
+              <span class="header-action-label">Close</span>
+            </button>
           </div>
         </div>
 
-        <div class="cx-body">
-          <div class="summary-card">
-            <div class="summary-safe">
-              <div class="summary-safe-icon"><span class="material-symbols-rounded" aria-hidden="true">verified_user</span></div>
-              <div>
-                <strong>Local cleanup only</strong>
-                <span>These tools do not delete data from provider accounts.</span>
+        <div class="maint-layout">
+          <aside class="maint-sidebar" aria-label="Maintenance categories">
+            <div>
+              <nav class="side-nav primary">
+                <div class="side-nav-item active" data-group="overview">
+                  <button type="button" class="side-nav-btn active" data-target="cxm-main" aria-current="page">
+                    <span class="material-symbols-rounded" aria-hidden="true">home</span>
+                    <span>Overview</span>
+                  </button>
+                  <button type="button" class="category-run-btn" id="cxm-run-overview" aria-label="Run complete local cleanup">Run</button>
+                </div>
+              </nav>
+
+              <div class="sidebar-label">Categories</div>
+              <nav class="side-nav secondary">
+                <div class="side-nav-item" data-group="sync">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-sync">
+                    <span class="material-symbols-rounded" aria-hidden="true">sync</span>
+                    <span>Sync</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="sync" aria-label="Run all Sync tools">Run</button>
+                </div>
+                <div class="side-nav-item" data-group="local">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-local">
+                    <span class="material-symbols-rounded" aria-hidden="true">shield</span>
+                    <span>Local cleanup</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="local" aria-label="Run all Local cleanup tools">Run</button>
+                </div>
+                <div class="side-nav-item" data-group="playback">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-playback">
+                    <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
+                    <span>Playback</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="playback" aria-label="Run all Playback tools">Run</button>
+                </div>
+                <div class="side-nav-item" data-group="reports">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-reports">
+                    <span class="material-symbols-rounded" aria-hidden="true">bar_chart</span>
+                    <span>Reports & Metadata</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="reports" aria-label="Run all Reports and Metadata tools">Run</button>
+                </div>
+                <div class="side-nav-item" data-group="captures">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-captures">
+                    <span class="material-symbols-rounded" aria-hidden="true">photo_library</span>
+                    <span>Captures</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="captures" aria-label="Run all Captures tools">Run</button>
+                </div>
+                <div class="side-nav-item danger" data-group="danger">
+                  <button type="button" class="side-nav-btn danger" data-target="cxm-group-danger">
+                    <span class="material-symbols-rounded" aria-hidden="true">warning</span>
+                    <span>Danger zone</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="danger" aria-label="Run Danger zone tools">Run</button>
+                </div>
+              </nav>
+            </div>
+
+            <div class="sidebar-status" id="cxm-sidebar-status">
+              <div class="status-heading">Status</div>
+              <div id="cxm-status" class="status-message" aria-live="polite" hidden></div>
+              <div id="cxm-overview-status">
+                <div class="status-lines">
+                  <div class="status-line">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span id="cxm-tracker-count">Tracker - state · - snapshots</span>
+                  </div>
+                  <div class="status-line">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <span id="cxm-cache-count">Provider cache - files</span>
+                  </div>
+                </div>
+                <details class="storage-details">
+                  <summary>
+                    <span>Storage details</span>
+                    <span class="material-symbols-rounded" aria-hidden="true">expand_more</span>
+                  </summary>
+                  <div class="summary-paths">
+                    <div class="storage-path">
+                      <span>Tracker</span>
+                      <code id="cxm-tracker-root">/config/.cw_provider</code>
+                    </div>
+                    <div class="storage-path">
+                      <span>Provider cache</span>
+                      <code id="cxm-cache-root">/config/.cw_state</code>
+                    </div>
+                  </div>
+                </details>
+              </div>
+              <div id="cxm-action-insight" class="action-insight" aria-live="polite" hidden>
+                <div class="insight-head">
+                  <span class="material-symbols-rounded insight-icon" aria-hidden="true"></span>
+                  <div>
+                    <div class="insight-kicker">Selected tool</div>
+                    <div class="insight-title"></div>
+                  </div>
+                </div>
+                <div class="insight-metrics"></div>
+                <div class="insight-note"></div>
               </div>
             </div>
-            <div class="summary-badges">
-              <span class="summary-pill" id="cxm-tracker-count">Tracker: -</span>
-              <span class="summary-pill" id="cxm-cache-count">Provider cache: -</span>
-            </div>
-            <details class="storage-details">
-              <summary>Storage details</summary>
-              <div class="summary-paths">
-                Tracker: <code id="cxm-tracker-root">/config/.cw_provider</code><br>
-                Provider cache: <code id="cxm-cache-root">/config/.cw_state</code>
-              </div>
-            </details>
-          </div>
+          </aside>
 
-          <div class="actions">
-            ${OPS.map(renderActionRow).join("")}
-          </div>
-
-          <div id="cxm-status" class="status"><span class="status-text">Select a maintenance action.</span></div>
+          <main class="maint-main" id="cxm-main">
+            ${GROUPS.map(renderGroup).join("")}
+          </main>
         </div>
       </div>
     `;
 
     const statusEl = $("#cxm-status", root);
+    const closeModal = () => {
+      try { window.cxCloseModal?.(); } catch {}
+      if (root.isConnected) {
+        root.dispatchEvent(new CustomEvent("cw-modal-close", { bubbles: true }));
+      }
+    };
     const setStatus = (msg, kind = "") => {
       if (!statusEl) return;
-      statusEl.innerHTML = `<span class="status-text">${msg}</span>`;
-      statusEl.className = "status" + (kind ? " " + kind : "");
+      statusEl.textContent = msg;
+      statusEl.className = "status-message" + (kind ? " " + kind : "");
+      statusEl.hidden = !msg;
     };
 
-    $("#cxm-close", root)?.addEventListener("click", () => {
-      if (window.cxCloseModal) window.cxCloseModal();
+    let selectedInsightKind = null;
+    let insightRequestId = 0;
+    let operationBusy = false;
+
+    function setOperationBusy(busy) {
+      if (operationBusy === busy) return;
+      operationBusy = busy;
+      const controls = root.querySelectorAll(".run-btn, .category-run-btn, #cxm-close");
+      controls.forEach((control) => {
+        if (busy) {
+          control.dataset.cwWasDisabled = control.disabled ? "1" : "0";
+          control.disabled = true;
+        } else {
+          control.disabled = control.dataset.cwWasDisabled === "1";
+          delete control.dataset.cwWasDisabled;
+        }
+      });
+      $(".cw-maint", root)?.toggleAttribute("aria-busy", busy);
+      try { window.cxSetModalDismissible?.(!busy); } catch {}
+    }
+
+    const formatBytes = (raw) => {
+      const bytes = Number(raw || 0);
+      if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+      const value = bytes / (1024 ** index);
+      const digits = index === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2;
+      return `${value.toFixed(digits)} ${units[index]}`;
+    };
+
+    const resultSummary = (result) => result?.summary || result?.result?.summary || null;
+    const combineSummaries = (results) => {
+      const summaries = results.map(resultSummary).filter(Boolean);
+      if (!summaries.length) return null;
+      return summaries.reduce((total, item) => ({
+        removed_files: total.removed_files + Number(item.removed_files || 0),
+        removed_items: total.removed_items + Number(item.removed_items || 0),
+        freed_bytes: total.freed_bytes + Number(item.freed_bytes || 0),
+      }), { removed_files: 0, removed_items: 0, freed_bytes: 0 });
+    };
+    const plural = (count, one, many = `${one}s`) => `${new Intl.NumberFormat().format(count)} ${count === 1 ? one : many}`;
+    const completionReceipt = (label, results, extra = []) => {
+      const list = Array.isArray(results) ? results : [results];
+      const summary = combineSummaries(list);
+      const details = [...extra];
+      if (summary) {
+        if (summary.removed_items > 0) details.push(plural(summary.removed_items, "item"));
+        if (summary.removed_files > 0) details.push(plural(summary.removed_files, "file"));
+        if (summary.freed_bytes > 0) details.push(`${formatBytes(summary.freed_bytes)} cleared`);
+        if (!summary.removed_items && !summary.removed_files && !summary.freed_bytes) details.push("nothing to remove");
+      }
+      details.push(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      return `${label} completed · ${details.join(" · ")}.`;
+    };
+
+    const formatMetric = ({ value, format }) => {
+      if (format === "bytes") return formatBytes(value);
+      if (format === "datetime") {
+        if (!value) return "Never";
+        const date = new Date(Number(value) * 1000);
+        return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
+      }
+      if (typeof value === "number") return new Intl.NumberFormat().format(value);
+      return value ?? "-";
+    };
+
+    function showOverviewStatus() {
+      selectedInsightKind = null;
+      insightRequestId += 1;
+      root.querySelectorAll(".action-row.is-inspected").forEach((row) => row.classList.remove("is-inspected"));
+      const overview = $("#cxm-overview-status", root);
+      const insight = $("#cxm-action-insight", root);
+      if (overview) overview.hidden = false;
+      if (insight) {
+        insight.hidden = true;
+        insight.classList.remove("loading", "load-error");
+      }
+    }
+
+    function renderActionInsight(op, payload = null, state = "ready") {
+      const insight = $("#cxm-action-insight", root);
+      if (!insight) return;
+      insight.hidden = false;
+      insight.classList.toggle("loading", state === "loading");
+      insight.classList.toggle("load-error", state === "error");
+
+      $(".insight-icon", insight).textContent = op.icon;
+      $(".insight-title", insight).textContent = payload?.title || op.title;
+      const metricsRoot = $(".insight-metrics", insight);
+      metricsRoot.replaceChildren();
+
+      if (state === "loading") {
+        for (let i = 0; i < 3; i += 1) {
+          const skeleton = document.createElement("div");
+          skeleton.className = "insight-metric skeleton";
+          metricsRoot.appendChild(skeleton);
+        }
+      } else {
+        (payload?.metrics || []).forEach((metric) => {
+          const item = document.createElement("div");
+          item.className = "insight-metric";
+          item.dataset.format = metric.format || "number";
+          const value = document.createElement("div");
+          value.className = "insight-value";
+          value.textContent = formatMetric(metric);
+          const label = document.createElement("div");
+          label.className = "insight-label";
+          label.textContent = metric.label || "Value";
+          item.append(value, label);
+          metricsRoot.appendChild(item);
+        });
+      }
+
+      const note = $(".insight-note", insight);
+      note.textContent = state === "loading"
+        ? "Reading current local data..."
+        : state === "error"
+          ? "Status data could not be loaded. The maintenance action is still available."
+          : payload?.note || "";
+    }
+
+    async function loadActionInsight(kind) {
+      const op = OPS.find((item) => item.kind === kind);
+      if (!op) return;
+      setStatus("");
+      selectedInsightKind = kind;
+      const requestId = ++insightRequestId;
+      root.querySelectorAll(".action-row").forEach((row) => {
+        row.classList.toggle("is-inspected", row.dataset.kind === kind);
+      });
+      const overview = $("#cxm-overview-status", root);
+      if (overview) overview.hidden = true;
+      renderActionInsight(op, null, "loading");
+
+      try {
+        const payload = await fjson(`/api/maintenance/action-status/${encodeURIComponent(kind)}`);
+        if (requestId !== insightRequestId || selectedInsightKind !== kind) return;
+        if (payload?.ok === false) throw new Error(payload.error || "Status unavailable");
+        renderActionInsight(op, payload, "ready");
+      } catch {
+        if (requestId !== insightRequestId || selectedInsightKind !== kind) return;
+        renderActionInsight(op, null, "error");
+      }
+    }
+
+    const actionGroups = [...root.querySelectorAll(".action-group")];
+    root.querySelectorAll(".side-nav-btn[data-target]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = root.querySelector(`#${btn.dataset.target}`);
+        if (!target) return;
+        const isOverview = target.id === "cxm-main";
+        root.querySelectorAll(".side-nav-btn").forEach((item) => {
+          const active = item === btn;
+          item.classList.toggle("active", active);
+          item.closest(".side-nav-item")?.classList.toggle("active", active);
+          if (active) item.setAttribute("aria-current", "page");
+          else item.removeAttribute("aria-current");
+        });
+        actionGroups.forEach((group) => group.classList.toggle("is-focused", !isOverview && group === target));
+        showOverviewStatus();
+        if (!isOverview) {
+          target.classList.remove("focus-pop");
+          void target.offsetWidth;
+          target.classList.add("focus-pop");
+          window.setTimeout(() => target.classList.remove("focus-pop"), 520);
+        }
+        if (isOverview) target.scrollTo({ top: 0, behavior: "smooth" });
+        else target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
     });
+
+    $("#cxm-close", root)?.addEventListener("click", closeModal);
 
     async function refreshSummary() {
       try {
@@ -858,34 +582,91 @@ export default {
         const tState = tCounts.state_files ?? "-";
         const tSnap = tCounts.snapshots ?? "-";
         $("#cxm-tracker-count", root).textContent =
-          `Tracker: ${tState} state - ${tSnap} snapshots`;
+          `Tracker ${tState} state · ${tSnap} snapshots`;
 
         const cCount = cache?.count ?? "-";
         $("#cxm-cache-count", root).textContent =
-          `Provider cache: ${cCount} file${cCount === 1 ? "" : "s"}`;
+          `Provider cache ${cCount} file${cCount === 1 ? "" : "s"}`;
       } catch {
 
       }
     }
 
-    async function runOp(kind, btn) {
-      if (btn) btn.disabled = true;
-      const label = btn?.dataset?.label || kind;
+    function resetActionFeedback(btn) {
+      if (!btn) return;
+      if (btn._cwResultTimer) window.clearTimeout(btn._cwResultTimer);
+      btn._cwResultTimer = null;
+      btn.classList.remove("busy", "result-success", "result-error");
+      btn.removeAttribute("aria-busy");
+      btn.textContent = btn.dataset.idleLabel || "Run";
+      btn.closest(".action-row")?.classList.remove("is-running", "run-success", "run-error");
+    }
+
+    function startActionFeedback(btn) {
+      if (!btn) return;
+      btn.dataset.idleLabel ||= btn.textContent.trim() || "Run";
+      resetActionFeedback(btn);
+      btn.classList.add("busy");
+      btn.setAttribute("aria-busy", "true");
+      btn.closest(".action-row")?.classList.add("is-running");
+    }
+
+    function finishActionFeedback(btn, result) {
+      if (!btn) return;
+      const row = btn.closest(".action-row");
+      row?.classList.remove("is-running");
+      btn.classList.remove("busy");
+      btn.removeAttribute("aria-busy");
+      if (result === "cancel") {
+        resetActionFeedback(btn);
+        return;
+      }
+
+      const ok = result === "success";
+      row?.classList.add(ok ? "run-success" : "run-error");
+      btn.classList.add(ok ? "result-success" : "result-error");
+      btn.textContent = ok ? "Done" : "Failed";
+      btn._cwResultTimer = window.setTimeout(() => resetActionFeedback(btn), 1400);
+    }
+
+    async function runOp(kind, btn, options = {}) {
+      const {
+        manageLock = true,
+        skipConfirm = false,
+        trackerOptions = null,
+      } = options;
+      if (manageLock && operationBusy) return false;
+
+      if (!skipConfirm && kind === "captures" && !confirm("Delete all saved captures? This cannot be undone.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
+
+      if (manageLock) setOperationBusy(true);
+      startActionFeedback(btn);
+      const label = btn?.dataset?.label || OPS.find((item) => item.kind === kind)?.title || kind;
       setStatus(`Running ${label.toLowerCase()}...`, "busy");
 
       try {
         let res = null;
         if (SIMPLE_OPS[kind]) {
-          res = await post(SIMPLE_OPS[kind], kind === "stats" ? {} : undefined);
+          res = await post(SIMPLE_OPS[kind], kind === "stats" ? {
+            recalc: false,
+            purge_file: true,
+            purge_state: false,
+            purge_reports: true,
+            purge_insights: true,
+          } : undefined);
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
           const chkSnaps = $("#cxm-cw-snaps", root);
-          const clearState = !!(chkState && chkState.checked);
-          const clearSnaps = !!(chkSnaps && chkSnaps.checked);
+          const clearState = trackerOptions?.clear_state ?? !!(chkState && chkState.checked);
+          const clearSnaps = trackerOptions?.clear_snapshots ?? !!(chkSnaps && chkSnaps.checked);
 
           if (!clearState && !clearSnaps) {
             setStatus("Select at least one option for tracker cleanup.", "err");
-            return;
+            finishActionFeedback(btn, "error");
+            return false;
           }
 
           res = await post("/api/maintenance/crosswatch-tracker/clear", {
@@ -904,21 +685,37 @@ export default {
             "Are you absolutely sure you want to continue?"
           ].join("\n");
 
-          if (!confirm(warn)) return;
-
-          const typed = prompt('Type RESET to continue');
-          if (String(typed || "").trim().toUpperCase() !== "RESET") {
+          if (!skipConfirm && !confirm(warn)) {
             setStatus("Cancelled.", "");
-            return;
+            finishActionFeedback(btn, "cancel");
+            return false;
           }
 
+          if (!skipConfirm) {
+            const typed = prompt("Type RESET to continue");
+            if (String(typed || "").trim().toUpperCase() !== "RESET") {
+              setStatus("Cancelled.", "");
+              finishActionFeedback(btn, "cancel");
+              return false;
+            }
+          }
           res = await post("/api/maintenance/reset-all-default", {});
+        }
 
-          // Restart with overlay/timer (restart_apply.js)
-          try {
-            if (window.cxCloseModal) window.cxCloseModal();
-          } catch (_) {}
+        if (res?.ok === false) {
+          setStatus(`Failed: ${res.error || "Unknown error"}`, "err");
+          finishActionFeedback(btn, "error");
+          return false;
+        }
 
+        if (kind === "scrobbles") {
+          try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
+        }
+        if (kind === "cache" || kind === "tracker") await refreshSummary();
+
+        if (kind === "defaults") {
+          finishActionFeedback(btn, "success");
+          closeModal();
           setTimeout(() => {
             if (window.cwRestartCrossWatchWithOverlay) {
               window.cwRestartCrossWatchWithOverlay();
@@ -928,26 +725,47 @@ export default {
               });
             }
           }, 150);
-          return;
+          return res || { ok: true };
         }
 
-        if (kind === "activity" || kind === "scrobbles") {
-          try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
-        }
-
-        if (kind === "cache" || kind === "tracker") {
-          await refreshSummary();
-        }
-
-        if (res && res.ok === false) {
-          setStatus(`Failed: ${res.error || "Unknown error"}`, "err");
-        } else {
-          setStatus(`${label} completed.`, "ok");
-        }
+        if (selectedInsightKind === kind) await loadActionInsight(kind);
+        setStatus(completionReceipt(label, res), "ok");
+        finishActionFeedback(btn, "success");
+        return res || { ok: true };
       } catch (e) {
         setStatus(`Error: ${e.message || String(e)}`, "err");
+        finishActionFeedback(btn, "error");
+        return false;
       } finally {
-        if (btn) btn.disabled = false;
+        if (manageLock) setOperationBusy(false);
+      }
+    }
+
+    async function runGroup(groupId, groupBtn) {
+      const group = GROUPS.find((item) => item.id === groupId);
+      if (!group || operationBusy) return;
+
+      root.querySelector(`.side-nav-btn[data-target="cxm-group-${groupId}"]`)?.click();
+      setOperationBusy(true);
+      groupBtn.classList.add("busy");
+      groupBtn.setAttribute("aria-busy", "true");
+      setStatus(`Running all ${group.title.toLowerCase()} tools...`, "busy");
+
+      const results = [];
+      try {
+        for (const key of group.keys) {
+          const op = OPS_BY_KEY[key];
+          const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .run-btn`);
+          if (!op || !actionBtn) continue;
+          const result = await runOp(op.kind, actionBtn, { manageLock: false });
+          if (!result || !root.isConnected) return;
+          results.push(result);
+        }
+        setStatus(completionReceipt(group.title, results, [plural(results.length, "tool")]), "ok");
+      } finally {
+        groupBtn.classList.remove("busy");
+        groupBtn.removeAttribute("aria-busy");
+        setOperationBusy(false);
       }
     }
 
@@ -955,65 +773,63 @@ export default {
       const row = root.querySelector(`.action-row[data-op="${key}"]`);
       const btn = row?.querySelector(".run-btn");
       if (btn) btn.addEventListener("click", () => runOp(kind, btn));
+      row?.addEventListener("click", (event) => {
+        if (event.target.closest("button, input, label, a, summary")) return;
+        loadActionInsight(kind);
+      });
+      row?.addEventListener("keydown", (event) => {
+        if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        loadActionInsight(kind);
+      });
     });
 
-    const clearProviderCacheBtn = root.querySelector("#cw-clear-provider-cache");
-    if (clearProviderCacheBtn) {
-      clearProviderCacheBtn.addEventListener("click", async () => {
-        if (!confirm("Clear provider sync baselines and runtime cache so every sync pair starts fresh? Local tracker data, metadata and recent activity will be kept.")) {
+    root.querySelectorAll(".category-run-btn[data-run-group]").forEach((btn) => {
+      btn.addEventListener("click", () => runGroup(btn.dataset.runGroup, btn));
+    });
+
+    const overviewRunBtn = root.querySelector("#cxm-run-overview");
+    if (overviewRunBtn) {
+      overviewRunBtn.addEventListener("click", async () => {
+        if (operationBusy) return;
+        if (!confirm("Run every visible maintenance tool except Factory reset? This clears sync state, retry data, tracker data, recent scrobbles, statistics, metadata, currently playing and saved captures.")) {
           return;
         }
-        clearProviderCacheBtn.disabled = true;
-        const originalText = clearProviderCacheBtn.textContent;
-        clearProviderCacheBtn.textContent = "Clearing...";
-        setStatus("Clearing provider sync cache...", "busy");
+
+        root.querySelector('.side-nav-btn[data-target="cxm-main"]')?.click();
+        setOperationBusy(true);
+        overviewRunBtn.classList.add("busy");
+        overviewRunBtn.setAttribute("aria-busy", "true");
+        setStatus("Running complete local cleanup...", "busy");
+        const results = [];
         try {
-          const res = await post("/api/maintenance/clear-provider-sync-cache");
-          if (res?.ok === false) throw new Error("Provider sync cache could not be fully cleared");
+          for (const key of OVERVIEW_KEYS) {
+            const op = OPS_BY_KEY[key];
+            const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .run-btn`);
+            if (!op || !actionBtn) continue;
+            const result = await runOp(op.kind, actionBtn, {
+              manageLock: false,
+              skipConfirm: true,
+              trackerOptions: op.kind === "tracker"
+                ? { clear_state: true, clear_snapshots: true }
+                : null,
+            });
+            if (!result || !root.isConnected) return;
+            results.push(result);
+          }
           await refreshSummary();
-          setStatus("Provider sync cache cleared. Sync pairs will rebuild on their next run.", "ok");
-        } catch (e) {
-          setStatus(`Error: ${e.message || String(e)}`, "err");
+          setStatus(completionReceipt("Complete local cleanup", results, [plural(results.length, "tool")]), "ok");
         } finally {
-          clearProviderCacheBtn.disabled = false;
-          clearProviderCacheBtn.textContent = originalText;
+          overviewRunBtn.classList.remove("busy");
+          overviewRunBtn.removeAttribute("aria-busy");
+          setOperationBusy(false);
         }
       });
     }
 
-    // Clean Everything button
-    const cleanAllBtn = root.querySelector("#cw-clean-all");
-    if (cleanAllBtn) {
-      cleanAllBtn.addEventListener("click", async (ev) => {
-        const btn = ev.currentTarget;
-        if (!confirm("This will clear all state, caches, tracker data, stats and currently playing. Continue?")) {
-          return;
-        }
-
-        btn.disabled = true;
-        btn.textContent = "Cleaning...";
-        try {
-          for (const op of cleanAllOps) await op();
-          try { window.dispatchEvent(new CustomEvent("activity-log-cleared")); } catch {}
-
-          await refreshSummary();
-          setStatus("Clean Everything completed.", "ok");
-
-          btn.textContent = "All Clean!";
-          await new Promise((r) => setTimeout(r, 1200));
-          btn.textContent = "Clean Everything";
-        } catch (err) {
-          console.error(err);
-          btn.textContent = "Error";
-          setStatus("Error while cleaning. See console.", "err");
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    }
-
+    showOverviewStatus();
     await refreshSummary();
-    setStatus("Select a maintenance action.");
+    setStatus("");
   },
   unmount() {},
 };
