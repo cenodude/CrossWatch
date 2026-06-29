@@ -874,6 +874,11 @@
   }
 
   async function hydrateSettingsPage() {
+    try {
+      await ensurePageModule("settings-insight", "/assets/js/settings-insight.js", "SettingsInsight");
+    } catch (e) {
+      console.warn("Settings insight load failed:", e);
+    }
     try { await window.loadConfig?.(); } catch {}
     try { await window.ensureProvidersPaneReady?.(); } catch {}
 
@@ -957,6 +962,16 @@
       return;
     }
 
+    if (tab === "editor") {
+      try {
+        await ensurePageModule("editor", "/assets/js/editor.js", "Editor");
+      } catch (e) {
+        console.warn("Editor load failed:", e);
+      }
+      state.currentTab = "editor";
+      return;
+    }
+
     if (tab === "settings") {
       await hydrateSettingsPage();
       state.currentTab = "settings";
@@ -1026,7 +1041,8 @@
     if (!script) {
       script = document.createElement("script");
       script.id = "scrobbler-js";
-      script.src = "/assets/js/scrobbler.js";
+      const version = encodeURIComponent(String(window.APP_VERSION || window.__CW_VERSION__ || ""));
+      script.src = `/assets/js/scrobbler.js${version ? `?v=${version}` : ""}`;
       script.defer = true;
       script.onload = start;
       script.onerror = () => console.warn("[scrobbler] script failed to load");

@@ -56,6 +56,7 @@ from fastapi.responses import (
     RedirectResponse,
     StreamingResponse,
 )
+from starlette.middleware.gzip import GZipMiddleware
 
 from api.wallAPI import _load_wall_snapshot
 from providers.webhooks.plextrakt import process_webhook as process_webhook
@@ -354,6 +355,7 @@ def _compute_next_run_from_cfg(scfg: dict[str, Any] | None, now_ts: int | None =
 # API
 _apply_auth_reset_env_once()
 app = FastAPI()
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 @app.middleware("http")
 async def conditional_access_logger(request: Request, call_next):
@@ -663,7 +665,7 @@ class _UIHostLogger:
 # Orchestrator getter
 def _get_orchestrator() -> Orchestrator:
     cfg = load_config()
-    return Orchestrator(config=cfg)
+    return Orchestrator(cfg)
 
 # Startup sequence
 @asynccontextmanager
@@ -774,10 +776,11 @@ async def cache_headers_for_api(request: Request, call_next):
         resp.headers["Cache-Control"] = "no-store"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
-    elif path == "/assets/js/modals.js" or path.startswith("/assets/js/modals/"):
-        resp.headers["Cache-Control"] = "no-store"
-        resp.headers["Pragma"] = "no-cache"
-        resp.headers["Expires"] = "0"
+    elif path.startswith("/assets/") and request.query_params.get("v") and resp.status_code in (200, 304):
+        # The global asset token changes whenever a bundled asset changes.
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.startswith("/assets/fonts/") and resp.status_code in (200, 304):
+        resp.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=604800"
     return resp
 
 # Files listing API - TODO: move to api/files.py

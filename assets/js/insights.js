@@ -14,6 +14,7 @@
   const $ = (s, r = d) => r.querySelector(s), $$ = (s, r = d) => [...r.querySelectorAll(s)], lc = s => String(s || "").toLowerCase();
   const featureLabel = v => featureMeta.label?.(v) || FEAT_LABEL[lc(v)] || String(v || "");
   const providerLabel = v => providerMeta.label?.(v) || String(v || "");
+  const providerLogo = v => providerMeta.logoPath?.(v) || "";
   const titleOf = x => x?.display_title || x?.title || x?.series_title || x?.name || (x?.type === "episode" && x?.series_title && Number.isInteger(x?.season) && Number.isInteger(x?.episode) ? `${x.series_title} S${String(x.season).padStart(2,"0")}E${String(x.episode).padStart(2,"0")}` : x?.key) || "item";
   const subtitleOf = x => x?.display_subtitle || "";
   const readJSON = (key, fallback = {}) => { try { return JSON.parse(localStorage.getItem(key) || "{}") || fallback; } catch { return fallback; } };
@@ -491,6 +492,9 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
       } else if (tile.parentNode !== host) host.appendChild(tile);
 
       tile.style.cursor = prov === "crosswatch" ? "pointer" : "";
+      const watermark = providerLogo(prov);
+      if (watermark) tile.style.setProperty("--wm", `url("${watermark}")`);
+      else tile.style.removeProperty("--wm");
       tile.classList.toggle("inactive", !live);
       $(".tile-k", tile).textContent = label;
       $(".tile-state", tile).classList.toggle("on", live);

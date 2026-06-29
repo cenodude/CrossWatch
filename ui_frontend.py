@@ -110,8 +110,7 @@ _HELPER_SCRIPTS = (
 )
 _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "main-status.js", "settings-insight.js", "scrobbler.js",
-    "editor.js", "snapshots.js", "playback_progress.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "main-status.js",
 )
 _AUTH_HEADER_ICONS = (
     {"prov": "PLEX", "label": "Plex"},
@@ -139,7 +138,6 @@ def _asset_block() -> str:
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>',
-        '<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
         '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
     ))
@@ -254,6 +252,7 @@ def _get_index_html_static() -> str:
 })();
 </script>
 
+<link rel="stylesheet" href="/assets/themes/tokens.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <style id="cw-dark-shell-overrides">
@@ -423,7 +422,22 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 })();
 </script>
 
+<link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
+<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__" media="not all" disabled>
+<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__" media="not all" disabled>
+<script>
+(() => {
+  const original = document.documentElement.classList.contains("cw-theme-original");
+  const flatLink = document.getElementById("cw-theme-flat-css");
+  const originalLink = document.getElementById("cw-theme-original-css");
+  flatLink.disabled = original;
+  flatLink.media = original ? "not all" : "all";
+  originalLink.disabled = !original;
+  originalLink.media = original ? "all" : "not all";
+})();
+</script>
 </head><body>
 
 <header>

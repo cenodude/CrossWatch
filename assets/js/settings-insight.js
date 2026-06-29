@@ -319,6 +319,7 @@
 
   const refreshAll = async (force = false) => { await refreshStatic(force); await refreshLive(force); };
   const invalidateAll = () => { try { Cache()?.invalidate(); } catch {} Object.assign(state, { cfg: null, staticData: null, liveData: null, lastKey: '' }); };
+  w.SettingsInsight = { refresh: () => refreshAll(true) };
 
   (async function boot() {
     if (!$('#cw-settings-insight-style')) {
