@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from cw_platform.config_base import load_config
 from cw_platform.id_map import canonical_key, merge_ids, minimal
-from cw_platform.modules_registry import load_sync_ops
+from cw_platform.modules_registry import load_sync_ops, state_read_features
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
@@ -1188,10 +1188,7 @@ def api_editor_state_import_providers() -> dict[str, Any]:
             label = str(getattr(ops, "label", lambda: name)())
         except Exception:
             label = name
-        try:
-            feats = dict(getattr(ops, "features", lambda: {})())
-        except Exception:
-            feats = {}
+        feats = state_read_features(ops)
         try:
             inst_ids = list_instance_ids(cfg, name)
         except Exception:
@@ -1272,10 +1269,7 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
         except Exception:
             raise HTTPException(status_code=400, detail=f"Provider not configured: {provider} ({provider_instance})")
 
-    try:
-        feats_supported = dict(getattr(ops, "features", lambda: {})())
-    except Exception:
-        feats_supported = {}
+    feats_supported = state_read_features(ops)
 
     store = _state_store()
     state = store.load_state() if not dry_run else {"providers": {}, "wall": [], "last_sync_epoch": None}
@@ -1314,7 +1308,11 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
 
     for feature in features:
         if not bool(feats_supported.get(feature)):
-            imported["features"][feature] = {"ok": False, "skipped": True, "reason": "feature disabled"}
+            imported["features"][feature] = {
+                "ok": False,
+                "skipped": True,
+                "reason": "complete provider state unavailable",
+            }
             continue
 
         t0 = _t.time()

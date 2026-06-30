@@ -17,13 +17,14 @@ from .publicmetadb import _history as feat_history
 from .publicmetadb import _progress as feat_progress
 from .publicmetadb import _ratings as feat_ratings
 from .publicmetadb import _watchlist as feat_watchlist
+from .publicmetadb._common import enrich_index_metadata
 
 try:  # type: ignore[name-defined]
     ctx  # type: ignore[misc]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "0.2"
+__VERSION__ = "0.3"
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
@@ -317,14 +318,16 @@ class PUBLICMETADBModule:
 
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if feature == "watchlist":
-            return feat_watchlist.build_index(self)
-        if feature == "history":
-            return feat_history.build_index(self)
-        if feature == "ratings":
-            return feat_ratings.build_index(self)
-        if feature == "progress":
-            return feat_progress.build_index(self)
-        return {}
+            items = feat_watchlist.build_index(self)
+        elif feature == "history":
+            items = feat_history.build_index(self)
+        elif feature == "ratings":
+            items = feat_ratings.build_index(self)
+        elif feature == "progress":
+            items = feat_progress.build_index(self)
+        else:
+            return {}
+        return enrich_index_metadata(self, items, feature=feature)
 
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         lst = list(items or [])
@@ -368,6 +371,15 @@ class _PUBLICMETADBOPS:
 
     def features(self) -> Mapping[str, bool]:
         return PUBLICMETADBModule.supported_features()
+
+    def state_read_features(self) -> Mapping[str, bool]:
+        """Features for complete captures and provider-state imports."""
+        features = dict(PUBLICMETADBModule.supported_features())
+        # PublicMetaDB accepts rating writes but cannot enumerate a user's
+        # complete ratings inventory. The local shadow is intentionally not
+        # treated as authoritative provider state.
+        features["ratings"] = False
+        return features
 
     def capabilities(self) -> Mapping[str, Any]:
         return get_manifest()["capabilities"]
