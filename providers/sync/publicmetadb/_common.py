@@ -3,11 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
-from threading import RLock
 from typing import Any, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
@@ -24,8 +22,6 @@ from .._log import log as cw_log
 
 STATE_DIR = Path("/config/.cw_state")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
-_TMDB_METADATA_PROVIDERS: dict[tuple[str, str, str], Any] = {}
-_TMDB_METADATA_PROVIDERS_LOCK = RLock()
 
 
 def _pair_scope() -> str | None:
@@ -201,21 +197,11 @@ def _tmdb_metadata_provider(adapter: Any) -> Any:
     runtime_obj = cfg.get("runtime") if isinstance(cfg, Mapping) else None
     runtime: Mapping[str, Any] = runtime_obj if isinstance(runtime_obj, Mapping) else {}
     provider_cfg = {"tmdb": dict(tmdb), "metadata": dict(metadata), "runtime": dict(runtime)}
-    api_key_hash = hashlib.sha256(_tmdb_metadata_api_key(adapter).encode("utf-8")).hexdigest()
-    provider_key = (
-        api_key_hash,
-        _tmdb_metadata_locale(adapter) or "",
-        str(metadata.get("ttl_hours") or "720"),
-    )
 
     def _load_cfg() -> dict[str, Any]:
         return provider_cfg
 
-    with _TMDB_METADATA_PROVIDERS_LOCK:
-        provider = _TMDB_METADATA_PROVIDERS.get(provider_key)
-        if provider is None:
-            provider = TmdbProvider(_load_cfg, lambda _data: None)
-            _TMDB_METADATA_PROVIDERS[provider_key] = provider
+    provider = TmdbProvider(_load_cfg, lambda _data: None)
     setattr(adapter, "_publicmetadb_tmdb_metadata_provider", provider)
     return provider
 
