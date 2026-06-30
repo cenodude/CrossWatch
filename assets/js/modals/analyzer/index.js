@@ -2,10 +2,21 @@
 /* Modal for analyzing sync issues and provider feature coverage. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-const fjson = async (u, o) => {
-  const r = await fetch(u, o);
-  if (!r.ok) throw new Error(r.status);
-  return r.json();
+const fjson = async (u, o = {}) => {
+  const controller = new AbortController();
+  const external = o.signal;
+  const abort = () => controller.abort(external?.reason);
+  if (external?.aborted) abort();
+  else external?.addEventListener?.("abort", abort, { once: true });
+  const timer = setTimeout(() => controller.abort("Analyzer request timed out"), 120000);
+  try {
+    const r = await fetch(u, { ...o, signal: controller.signal });
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  } finally {
+    clearTimeout(timer);
+    external?.removeEventListener?.("abort", abort);
+  }
 };
 const Q = (s, r = document) => r.querySelector(s);
 const QA = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -122,6 +133,8 @@ function css() {
   .an-modal .an-intro-sub{margin-top:4px;font-size:12px;line-height:1.45;color:rgba(205,215,235,.74)}
   .an-modal .an-intro-meta{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
   .an-modal .an-intro-meta .mini{display:inline-flex;align-items:center;min-height:28px;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:rgba(230,237,250,.84)}
+  .an-modal .an-intro-meta button.mini{cursor:pointer;font-family:inherit}
+  .an-modal .an-intro-meta button.mini:disabled{cursor:default;opacity:.45}
   .an-modal .pill,.an-modal .close-btn{appearance:none;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.02));color:#edf3ff;border-radius:14px;padding:8px 12px;font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;flex:0 0 auto;box-shadow:0 10px 24px rgba(0,0,0,.16),inset 0 1px 0 rgba(255,255,255,.04);transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease,background .14s ease}
   .an-modal .pill:hover,.an-modal .close-btn:hover{transform:translateY(-1px);border-color:rgba(123,112,255,.4);box-shadow:0 14px 30px rgba(0,0,0,.24),0 0 0 1px rgba(123,112,255,.14) inset}
   .an-modal .pill:active,.an-modal .close-btn:active{transform:none}
@@ -295,58 +308,123 @@ function css() {
   document.head.appendChild(el);
 }
 
+function injectAnalyzerCSS() {
+  const existing = document.getElementById("cw-analyzer-redesign-css");
+  if (existing?.tagName === "LINK") return Promise.resolve();
+  existing?.remove();
+  const link = document.createElement("link");
+  const cssUrl = new URL("./styles.css", import.meta.url);
+  const version = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__;
+  if (version) cssUrl.searchParams.set("v", version);
+  link.id = "cw-analyzer-redesign-css";
+  link.rel = "stylesheet";
+  link.href = cssUrl.href;
+  return new Promise(resolve => {
+    link.addEventListener("load", resolve, { once: true });
+    link.addEventListener("error", resolve, { once: true });
+    document.head.appendChild(link);
+  });
+}
+
 function gridTemplateFrom(widths) {
   return widths.map(w => `${w}px`).join(" ");
 }
 
+let activeCleanup = null;
+
 export default {
   async mount(root) {
+    activeCleanup?.();
     css();
+    await injectAnalyzerCSS();
     root.classList.add("modal-root","an-modal");
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
       shell.classList.add("analyzer-modal-shell");
-      shell.style.setProperty("--cxModalMaxW", "960px");
-      shell.style.setProperty("--cxModalMaxH", "86vh");
+      shell.style.setProperty("--cxModalW", "1180px");
+      shell.style.setProperty("--cxModalMaxW", "1180px");
+      shell.style.setProperty("--cxModalMaxH", "700px");
     }
     root.innerHTML = `
-      <div class="cx-head">
-        <div class="cx-left">
-          <div class="cx-mark"><span class="material-symbols-rounded" aria-hidden="true">troubleshoot</span></div>
-          <div class="cx-title">Analyzer</div>
-          <button class="pill ghost" id="an-toggle-ids">IDs: hidden</button>
-          <button class="pill ghost" id="an-scope">Scope: issues</button>
-          <input id="an-search" type="search" placeholder="title, year, provider, feature...">
+      <div class="an-app">
+        <div class="cx-head">
+          <div class="cx-head-left">
+            <div class="an-head-text">
+              <div class="cx-title">Sync Analyzer</div>
+              <div class="an-head-sub">Understand what is aligned, what needs attention, and why.</div>
+            </div>
+          </div>
+          <div class="an-actions">
+            <button class="pill" id="an-run" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Analyze</span></button>
+            <button class="close-btn" id="an-close" type="button"><span class="material-symbols-rounded" aria-hidden="true">close</span><span>Close</span></button>
+          </div>
         </div>
-        <div class="an-actions">
-          <button class="pill" id="an-run" type="button">Analyze</button>
-          <button class="close-btn" id="an-close">Close</button>
+
+        <div class="an-layout">
+          <aside class="an-sidebar">
+            <div class="an-side-label">View</div>
+            <nav class="an-view-nav" aria-label="Analyzer view">
+              <button class="an-view-btn active" id="an-scope-issues" type="button" data-scope="issues" aria-pressed="true">
+                <span class="material-symbols-rounded" aria-hidden="true">problem</span>
+                <span><strong>Needs attention</strong><small>Missing, blocked and risky items</small></span>
+              </button>
+              <button class="an-view-btn" id="an-scope-all" type="button" data-scope="all" aria-pressed="false">
+                <span class="material-symbols-rounded" aria-hidden="true">dataset</span>
+                <span><strong>All scoped items</strong><small>Browse healthy and affected data</small></span>
+              </button>
+            </nav>
+
+            <div class="an-side-label an-pair-label">Sync pairs</div>
+            <p class="an-side-hint">Choose the routes you want to compare.</p>
+            <div class="an-pairs" id="an-pairs"></div>
+
+            <div class="an-side-status">
+              <div class="an-status-title">Analysis status</div>
+              <div class="count-stack">
+                <span id="an-issues-count" title="Items missing at one or more destinations."><i class="an-status-dot issue-dot"></i><b>Issues</b><em>0</em></span>
+                <span id="an-system-count" title="Background state and integrity diagnostics."><i class="an-status-dot system-dot"></i><b>System</b><em>0</em></span>
+                <span id="an-blocked-count"><i class="an-status-dot blocked-dot"></i><b>Blocked</b><em>0</em></span>
+              </div>
+              <div class="stats empty" id="an-stats"></div>
+            </div>
+          </aside>
+
+          <main class="an-main">
+            <section class="an-intro">
+              <div class="an-intro-copy">
+                <div class="an-eyebrow">Current comparison</div>
+                <div class="an-intro-title">Items that need your attention</div>
+                <div class="an-intro-sub" id="an-summary-copy">Analyzer compares every selected route independently, so one healthy destination cannot hide another destination's gap.</div>
+              </div>
+              <div class="an-intro-meta" id="an-summary-meta">
+                <span class="mini">Scoped 0</span>
+                <span class="mini">Visible 0</span>
+                <span class="mini">Issues 0</span>
+              </div>
+            </section>
+
+            <section class="an-workspace">
+              <div class="an-workspace-head">
+                <div class="an-workspace-copy">
+                  <span class="material-symbols-rounded" aria-hidden="true">fact_check</span>
+                  <span><strong id="an-results-title">Issue results</strong><small>Select a row to see the reason and available details.</small></span>
+                </div>
+                <div class="an-tools">
+                  <label class="an-search-wrap">
+                    <span class="material-symbols-rounded" aria-hidden="true">search</span>
+                    <input id="an-search" type="search" placeholder="Search title, provider or feature">
+                  </label>
+                  <button class="pill ghost" id="an-toggle-ids" type="button"><span class="material-symbols-rounded" aria-hidden="true">key</span><span>Show IDs</span></button>
+                </div>
+              </div>
+              <div class="an-wrap" id="an-wrap">
+                <div class="an-grid" id="an-grid"></div>
+                <div class="an-split" id="an-split" title="Drag to resize the result and detail panes"></div>
+                <div class="an-issues" id="an-issues"></div>
+              </div>
+            </section>
+          </main>
         </div>
-      </div>
-      <div class="an-intro">
-        <div class="an-intro-copy">
-          <div class="an-intro-title">Find missing, blocked, and out-of-scope deltas</div>
-          <div class="an-intro-sub" id="an-summary-copy">Analyzer compares the selected source and destination pairs so you can see why a title is not lining up between providers.</div>
-        </div>
-        <div class="an-intro-meta" id="an-summary-meta">
-          <span class="mini">Scoped 0</span>
-          <span class="mini">Visible 0</span>
-          <span class="mini">Issues 0</span>
-        </div>
-      </div>
-      <div class="an-pairs" id="an-pairs"></div>
-      <div class="an-wrap" id="an-wrap">
-        <div class="an-grid" id="an-grid"></div>
-        <div class="an-split" id="an-split" title="drag to resize"></div>
-        <div class="an-issues" id="an-issues"></div>
-      </div>
-      <div class="an-footer">
-        <div class="count-stack">
-          <span class="mono" id="an-issues-count" title="Issues are sync delta problems in the selected pairs, like missing peers or blocked items.">Issues: 0</span>
-          <span class="mono" id="an-system-count" title="System findings are analyzer diagnostics about state files, providers, metadata, or other background integrity checks.">System: 0</span>
-          <span class="mono" id="an-blocked-count">Blocked: 0</span>
-        </div>
-        <div class="stats empty" id="an-stats"></div>
       </div>
     `;
 
@@ -401,8 +479,20 @@ export default {
     const btnRun = Q("#an-run", root);
     const btnToggleIDs = Q("#an-toggle-ids", root);
     const btnClose = Q("#an-close", root);
-    const btnScope = Q("#an-scope", root);
+    const btnScopeIssues = Q("#an-scope-issues", root);
+    const btnScopeAll = Q("#an-scope-all", root);
+    const introTitle = Q(".an-intro-title", root);
+    const resultsTitle = Q("#an-results-title", root);
     const split = Q("#an-split", root);
+
+    const setStatusCount = (el, label, value, detail = "") => {
+      if (!el) return;
+      const labelEl = Q("b", el);
+      const valueEl = Q("em", el);
+      if (labelEl) labelEl.textContent = label;
+      if (valueEl) valueEl.textContent = String(value);
+      if (detail) el.title = detail;
+    };
 
     let COLS = JSON.parse(localStorage.getItem("an.cols") || "null");
     if (!Array.isArray(COLS) || COLS.length !== 4) COLS = [110, 110, 360, 90];
@@ -427,15 +517,38 @@ export default {
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
     let BLOCKS_BY_PF = new Map();
+    let ISSUE_ITEMS = [];
+    let ISSUE_OFFSET = 0;
+    let ALL_TOTAL = 0;
+    let ALL_OFFSET = 0;
+    let ANALYSIS_TIMINGS = {};
+    let requestController = new AbortController();
+    let analyzePromise = null;
+    const PAGE_SIZE = 250;
+    const cleanup = () => {
+      requestController.abort();
+      clearTimeout(waitSlowTimer);
+      if (activeCleanup === cleanup) activeCleanup = null;
+    };
+    activeCleanup = cleanup;
     const setSummary = () => {
-      const scoped = ITEMS.filter(inPairScope);
       if (summaryCopy) {
         summaryCopy.textContent = SCOPE === "issues"
-          ? "Showing only items with detected delta issues for the selected pairs."
-          : "Showing all scoped items for the selected pairs, including healthy matches.";
+          ? "Each result is missing, blocked, unresolved, or otherwise risky for at least one selected route."
+          : "Browse the current provider state for the selected routes, including healthy items.";
       }
+      if (introTitle) introTitle.textContent = SCOPE === "issues" ? "Items that need your attention" : "All items in the selected routes";
+      if (resultsTitle) resultsTitle.textContent = SCOPE === "issues" ? "Issue results" : "Scoped item browser";
       if (summaryMeta) {
-        summaryMeta.innerHTML = `<span class="mini" title="Scoped items are rows included by the selected pair filter.">Scoped ${scoped.length}</span><span class="mini" title="Visible items are the rows currently shown in the top table after search and scope filters.">Visible ${VIEW.length}</span><span class="mini" title="Issues are sync delta problems in the selected pairs, such as missing peers.">Issues ${UNSYNCED.size}</span><span class="mini" title="System findings are analyzer diagnostics about files, metadata, providers, or state health.">System ${EXTRA_FINDINGS.length}</span>`;
+        const total = SCOPE === "all" ? ALL_TOTAL : ISSUE_ITEMS.length;
+        const offset = SCOPE === "all" ? ALL_OFFSET : ISSUE_OFFSET;
+        const timing = Number(ANALYSIS_TIMINGS?.total || 0);
+        const page = total
+          ? `<button class="mini" id="an-page-prev" type="button" ${offset <= 0 ? "disabled" : ""}>Previous</button><span class="mini">${offset + 1}-${Math.min(offset + ITEMS.length, total)} of ${total}</span><button class="mini" id="an-page-next" type="button" ${offset + ITEMS.length >= total ? "disabled" : ""}>Next</button>`
+          : "";
+        summaryMeta.innerHTML = `<span class="mini" title="Scoped items are rows included by the selected pair filter.">Scoped ${total}</span><span class="mini" title="Visible items are the rows currently shown in the top table after search and scope filters.">Visible ${VIEW.length}</span><span class="mini" title="Issues are sync delta problems in the selected pairs, such as missing peers.">Issues ${UNSYNCED.size}</span><span class="mini" title="System findings are analyzer diagnostics about files, metadata, providers, or state health.">System ${EXTRA_FINDINGS.length}</span>${timing ? `<span class="mini">${timing} ms</span>` : ""}${page}`;
+        Q("#an-page-prev", summaryMeta)?.addEventListener("click", () => SCOPE === "all" ? loadAllPage(Math.max(0, ALL_OFFSET - PAGE_SIZE)) : showIssuePage(Math.max(0, ISSUE_OFFSET - PAGE_SIZE)));
+        Q("#an-page-next", summaryMeta)?.addEventListener("click", () => SCOPE === "all" ? loadAllPage(ALL_OFFSET + PAGE_SIZE) : showIssuePage(ISSUE_OFFSET + PAGE_SIZE));
       }
     };
 
@@ -1290,7 +1403,7 @@ function renderPairs() {
           const cls = `an-pair-chip${on ? " on" : ""}`;
           return `<button type="button" class="${cls}" data-id="${esc(
             String(p.id || "")
-          )}"><span class="mono">${src}</span><span class="dir"><span class="material-symbols-rounded" aria-hidden="true">${dir}</span></span><span class="mono">${dst}</span>${badge}</button>`;
+          )}" aria-pressed="${on ? "true" : "false"}"><span class="mono">${src}</span><span class="dir"><span class="material-symbols-rounded" aria-hidden="true">${dir}</span></span><span class="mono">${dst}</span>${badge}</button>`;
         })
         .join("");
       pairBar.innerHTML = html;
@@ -1327,9 +1440,9 @@ function renderPairs() {
       });
     }
 
-    async function getActivePairMap() {
+    async function getActivePairMap(signal) {
       try {
-        const arr = await fjson("/api/pairs", { cache: "no-store" });
+        const arr = await fjson("/api/pairs", { cache: "no-store", signal });
         const map = new Map();
         const on = feat =>
           feat && (typeof feat.enable === "boolean" ? feat.enable : !!feat);
@@ -1364,7 +1477,7 @@ function renderPairs() {
           const srcLabel = p.source_label || src;
           const dstLabel = p.target_label || dst;
           const F = p.features || {};
-          for (const feat of ["history", "watchlist", "ratings"]) {
+          for (const feat of ["history", "watchlist", "ratings", "progress"]) {
             if (!on(F[feat])) continue;
             add(src, feat, dst);
             add(src, feat, dstLabel);
@@ -1384,17 +1497,55 @@ function renderPairs() {
       }
     }
 
+    async function loadAllPage(offset = 0) {
+      showWait("Loading item page...");
+      try {
+        const sep = withPairs("/api/analyzer/state").includes("?") ? "&" : "?";
+        const data = await fjson(
+          `${withPairs("/api/analyzer/state")}${sep}offset=${Math.max(0, offset)}&limit=${PAGE_SIZE}`,
+          { signal: requestController.signal }
+        );
+        ITEMS = Array.isArray(data.items) ? data.items : [];
+        ALL_TOTAL = Number(data.total || 0);
+        ALL_OFFSET = Number(data.offset || 0);
+        filter(search.value || "");
+      } catch (error) {
+        if (!requestController.signal.aborted) {
+          issues.innerHTML = `<div class="issue"><div class="h">Could not load this page</div><div>${escHtml(error?.message || error)}</div></div>`;
+        }
+      } finally {
+        hideWait();
+      }
+    }
+
+    function showIssuePage(offset = 0) {
+      ISSUE_OFFSET = Math.max(0, Math.min(Number(offset || 0), Math.max(0, ISSUE_ITEMS.length - 1)));
+      ITEMS = ISSUE_ITEMS.slice(ISSUE_OFFSET, ISSUE_OFFSET + PAGE_SIZE);
+      filter(search.value || "");
+    }
+
     async function load() {
       restoreSplit();
       dragY();
       showWait("Loading pairs...");
-      await getActivePairMap();
+      await getActivePairMap(requestController.signal);
+      if (requestController.signal.aborted) {
+        hideWait();
+        return;
+      }
       setWaitText("Reading scoped state...");
       let s;
       try {
-        s = await fjson(withPairs("/api/analyzer/state"));
+        const stateUrl = withPairs("/api/analyzer/state");
+        s = await fjson(`${stateUrl}${stateUrl.includes("?") ? "&" : "?"}offset=0&limit=0`, {
+          signal: requestController.signal
+        });
       } catch {
-        s = { counts: {}, items: [] };
+        if (requestController.signal.aborted) {
+          hideWait();
+          return;
+        }
+        s = { counts: {}, items: [], total: 0 };
         issues.innerHTML = `
           <div class="issue">
             <div class="h">No scoped state yet</div>
@@ -1402,14 +1553,15 @@ function renderPairs() {
           </div>`;
       }
       ITEMS = s.items || [];
+      ALL_TOTAL = Number(s.total || 0);
       VIEW = ITEMS.slice();
       const countsText = renderCounts(s.counts);
       stats.innerHTML = countsText;
       if (!countsText) stats.classList.add("empty");
       else stats.classList.remove("empty");
-      issuesCount.textContent = "Issues: 0";
-      if (systemCount) systemCount.textContent = "System: 0";
-      if (blockedCount) blockedCount.textContent = "Blocked: 0";
+      setStatusCount(issuesCount, "Issues", 0);
+      setStatusCount(systemCount, "System", 0);
+      setStatusCount(blockedCount, "Blocked", 0);
       draw();
       setWaitText("Analyzing...");
       try {
@@ -1420,17 +1572,36 @@ function renderPairs() {
     }
 
     async function analyze(silent = false) {
+      if (analyzePromise) return analyzePromise;
+      analyzePromise = analyzeRun(silent).finally(() => {
+        analyzePromise = null;
+      });
+      return analyzePromise;
+    }
+
+    async function analyzeRun(silent = false) {
       if (!silent) showWait("Analyzing...");
-      const pairMap = await getActivePairMap();
-      const [meta, status] = await Promise.all([
-        fjson(withPairs("/api/analyzer/problems")).catch(() => ({ problems: [] })),
-        fjson("/api/status").catch(() => null),
-        refreshBlocked().catch(() => null)
-      ]);
+      const pairMap = await getActivePairMap(requestController.signal);
+      if (requestController.signal.aborted) return;
+      let meta;
+      let status;
+      try {
+        [meta, status] = await Promise.all([
+          fjson(withPairs("/api/analyzer/problems"), { signal: requestController.signal }),
+          fjson("/api/status", { signal: requestController.signal }).catch(() => null),
+          refreshBlocked().catch(() => null)
+        ]);
+      } catch (error) {
+        if (requestController.signal.aborted) return;
+        issues.innerHTML = `<div class="issue"><div class="h">Analyzer failed</div><div>${escHtml(error?.message || error)}</div></div>`;
+        if (!silent) hideWait();
+        return;
+      }
 
       PAIR_STATS = meta.pair_stats || [];
       PAIR_EXCLUSIONS = meta.pair_exclusions || [];
       SUMMARY = meta.summary || {};
+      ANALYSIS_TIMINGS = meta.timings_ms || {};
       PAIR_SCOPE_KEYS = buildPairScopeKeys(pairMap);
       renderPairs();
 
@@ -1519,6 +1690,19 @@ function renderPairs() {
       UNSYNCED = new Set(
         keep.map(p => tagOf(p.provider, p.feature, p.key))
       );
+      ISSUE_ITEMS = keep.map(p => ({
+        provider: p.provider,
+        feature: p.feature,
+        key: p.key,
+        title: p.title || p.item_title || "",
+        year: p.year,
+        type: p.item_type || p.type_name || "",
+        series_title: p.series_title || "",
+        season: p.season,
+        episode: p.episode,
+        ids: p.ids || {}
+      }));
+      if (SCOPE === "issues") showIssuePage(0);
 
       UNSYNCED_META = new Map(
         keep.map(p => [
@@ -1591,15 +1775,16 @@ function renderPairs() {
       if (per.history) parts.push(`H:${per.history}`);
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
-      issuesCount.textContent = parts.join(" | ");
-      if (systemCount) systemCount.textContent = `System: ${EXTRA_FINDINGS.length}`;
+      if (per.progress) parts.push(`P:${per.progress}`);
+      setStatusCount(issuesCount, "Issues", keep.length, parts.slice(1).join(" · ") || "Missing or mismatched items");
+      setStatusCount(systemCount, "System", EXTRA_FINDINGS.length);
       if (blockedCount) {
         const scoped = ITEMS.filter(inPairScope);
         const n = scoped.reduce(
           (acc, r) => acc + (isBlocked(r.provider, r.feature, r.key) ? 1 : 0),
           0
         );
-        blockedCount.textContent = `Blocked: ${n}`;
+        setStatusCount(blockedCount, "Blocked", n);
       }
 
       filter(search.value || "");
@@ -1628,35 +1813,50 @@ function renderPairs() {
       e.preventDefault();
       e.stopPropagation();
       if (btnRun.disabled) return;
-      const prev = btnRun.textContent;
+      const label = Q("span:last-child", btnRun);
+      const prev = label?.textContent || "Analyze";
       btnRun.disabled = true;
-      btnRun.textContent = "Analyzing...";
+      btnRun.classList.add("busy");
+      if (label) label.textContent = "Analyzing";
       try {
         await analyze(false);
       } finally {
         btnRun.disabled = false;
-        btnRun.textContent = prev;
+        btnRun.classList.remove("busy");
+        if (label) label.textContent = prev;
       }
     });
 
     btnToggleIDs.onclick = () => {
       SHOW_IDS = !SHOW_IDS;
-      btnToggleIDs.textContent = `IDs: ${
-        SHOW_IDS ? "shown" : "hidden"
-      }`;
+      const label = Q("span:last-child", btnToggleIDs);
+      if (label) label.textContent = SHOW_IDS ? "Hide IDs" : "Show IDs";
       grid.classList.toggle("show-ids", SHOW_IDS);
     };
-    btnScope.onclick = () => {
-      SCOPE = SCOPE === "issues" ? "all" : "issues";
-      btnScope.textContent = `Scope: ${SCOPE}`;
-      filter(search.value || "");
+    const selectScope = async nextScope => {
+      if (nextScope === SCOPE) return;
+      SCOPE = nextScope;
+      btnScopeIssues?.classList.toggle("active", SCOPE === "issues");
+      btnScopeAll?.classList.toggle("active", SCOPE === "all");
+      btnScopeIssues?.setAttribute("aria-pressed", String(SCOPE === "issues"));
+      btnScopeAll?.setAttribute("aria-pressed", String(SCOPE === "all"));
+      if (SCOPE === "all") await loadAllPage(0);
+      else {
+        showIssuePage(0);
+        ALL_OFFSET = 0;
+      }
     };
+    btnScopeIssues.onclick = () => selectScope("issues");
+    btnScopeAll.onclick = () => selectScope("all");
     search.addEventListener("input", e => filter(e.target.value));
     btnClose.addEventListener("click", () => {
+      cleanup();
       if (window.cxCloseModal) window.cxCloseModal();
     });
 
     await load();
   },
-  unmount() {}
+  unmount() {
+    activeCleanup?.();
+  }
 };
