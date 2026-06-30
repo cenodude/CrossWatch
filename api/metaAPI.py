@@ -445,16 +445,27 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
     return True
 
 
-def _read_meta_cache(p: Path) -> dict[str, Any] | None:
+def _read_meta_cache(
+    entity: str,
+    tmdb_id: str | int,
+    locale: str | None,
+) -> dict[str, Any] | None:
     return read_metadata_cache(
-        p,
-        cache_root=_meta_cache_dir(),
+        _meta_cache_dir(),
+        entity,
+        tmdb_id,
+        locale,
         ttl_seconds=_cfg_meta_ttl_secs(),
     )
 
 
-def _write_meta_cache(p: Path, payload: dict[str, Any]) -> None:
-    write_metadata_cache(p, payload, cache_root=_meta_cache_dir())
+def _write_meta_cache(
+    entity: str,
+    tmdb_id: str | int,
+    locale: str | None,
+    payload: dict[str, Any],
+) -> None:
+    write_metadata_cache(_meta_cache_dir(), entity, tmdb_id, locale, payload)
 
 
 def _merge_meta_cache_payload(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
@@ -514,8 +525,7 @@ def get_meta(
     need_key = tuple(sorted(k for k, v in eff_need.items() if v))
     eff_locale = locale or _cfg_ui_locale()
     if _meta_cache_enabled():
-        p = _meta_cache_path(entity, tmdb_id, eff_locale or "en-US")
-        cached = _read_meta_cache(p)
+        cached = _read_meta_cache(entity, tmdb_id, eff_locale or "en-US")
         if cached and _need_satisfied(cached, eff_need):
             _meta_debug(
                 "meta_cache_hit",
@@ -541,7 +551,9 @@ def get_meta(
             payload = _merge_meta_cache_payload(cached, dict(res))
             payload["locale"] = eff_locale or payload.get("locale") or None
             _write_meta_cache(
-                _meta_cache_path(entity, tmdb_id, eff_locale or "en-US"),
+                entity,
+                tmdb_id,
+                eff_locale or "en-US",
                 payload,
             )
             _prune_meta_cache_if_needed()

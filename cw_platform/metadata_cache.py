@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -36,14 +37,6 @@ def _cache_locale(value: Any) -> str:
     return text
 
 
-def _path_under_root(path: Path | str, cache_root: Path | str) -> Path:
-    # Resolve symlinks before enforcing the trusted cache boundary.
-    root = Path(cache_root).resolve()
-    target = Path(path).resolve()
-    target.relative_to(root)
-    return target
-
-
 def metadata_cache_path(
     cache_root: Path | str,
     entity: str,
@@ -52,25 +45,31 @@ def metadata_cache_path(
 ) -> Path:
     cache_id = _cache_tmdb_id(tmdb_id)
     cache_locale = _cache_locale(locale)
-    root = Path(cache_root).resolve()
+    root = os.path.realpath(os.fspath(cache_root))
     media = "movie" if str(entity or "").strip().lower() == "movie" else "show"
-    media_root = (root / media).resolve()
-    media_root.relative_to(root)
-    media_root.mkdir(parents=True, exist_ok=True)
+    media_root = os.path.realpath(os.path.join(root, media))
+    root_prefix = root if root.endswith(os.sep) else root + os.sep
+    if not media_root.startswith(root_prefix):
+        raise ValueError("Metadata cache media path escaped its root")
+    Path(media_root).mkdir(parents=True, exist_ok=True)
     name = f"{cache_id}.{cache_locale}.json"
-    path = (media_root / name).resolve()
-    path.relative_to(media_root)
-    return path
+    path = os.path.realpath(os.path.join(media_root, name))
+    media_prefix = media_root if media_root.endswith(os.sep) else media_root + os.sep
+    if not path.startswith(media_prefix):
+        raise ValueError("Metadata cache path escaped its media root")
+    return Path(path)
 
 
 def read_metadata_cache(
-    path: Path | str,
-    *,
     cache_root: Path | str,
+    entity: str,
+    tmdb_id: str | int,
+    locale: str | None,
+    *,
     ttl_seconds: int | None,
 ) -> dict[str, Any] | None:
     try:
-        target = _path_under_root(path, cache_root)
+        target = metadata_cache_path(cache_root, entity, tmdb_id, locale)
         data = json.loads(target.read_text("utf-8"))
         if not isinstance(data, dict):
             return None
@@ -100,13 +99,14 @@ def merge_metadata_cache_payload(
 
 
 def write_metadata_cache(
-    path: Path | str,
-    payload: Mapping[str, Any],
-    *,
     cache_root: Path | str,
+    entity: str,
+    tmdb_id: str | int,
+    locale: str | None,
+    payload: Mapping[str, Any],
 ) -> bool:
     try:
-        target = _path_under_root(path, cache_root)
+        target = metadata_cache_path(cache_root, entity, tmdb_id, locale)
         data = dict(payload)
         data["fetched_at"] = time.time()
         target.parent.mkdir(parents=True, exist_ok=True)

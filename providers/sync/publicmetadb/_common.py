@@ -12,7 +12,6 @@ from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.config_base import CONFIG_BASE
 from cw_platform.metadata_cache import (
     merge_metadata_cache_payload,
-    metadata_cache_path,
     prune_metadata_cache,
     read_metadata_cache,
     write_metadata_cache,
@@ -259,12 +258,12 @@ def enrich_index_metadata(
         entity, tmdb_id = identity
         if identity not in cache:
             resolved: Mapping[str, Any] | None = None
-            disk_path: Path | None = None
             if disk_root is not None:
-                disk_path = metadata_cache_path(disk_root, entity, tmdb_id, locale or "en-US")
                 persisted = read_metadata_cache(
-                    disk_path,
-                    cache_root=disk_root,
+                    disk_root,
+                    entity,
+                    tmdb_id,
+                    locale or "en-US",
                     ttl_seconds=_metadata_cache_ttl_seconds(adapter),
                 )
                 needs_title = not str(item.get("series_title" if str(item.get("type") or "").lower() == "episode" else "title") or "").strip()
@@ -293,18 +292,22 @@ def enrich_index_metadata(
                         need={"title": True, "year": True},
                     )
                     resolved = fetched if isinstance(fetched, Mapping) and fetched else None
-                    if resolved is not None and disk_path is not None and disk_root is not None:
+                    if resolved is not None and disk_root is not None:
                         previous = read_metadata_cache(
-                            disk_path,
-                            cache_root=disk_root,
+                            disk_root,
+                            entity,
+                            tmdb_id,
+                            locale or "en-US",
                             ttl_seconds=None,
                         )
                         payload = merge_metadata_cache_payload(previous, resolved)
                         payload["locale"] = locale or payload.get("locale") or None
                         if write_metadata_cache(
-                            disk_path,
+                            disk_root,
+                            entity,
+                            tmdb_id,
+                            locale or "en-US",
                             payload,
-                            cache_root=disk_root,
                         ):
                             cache_written = True
                 except Exception as exc:
