@@ -11,7 +11,9 @@
 
   let H = new Set();
   let R = new Set();
+  let P = new Set();
   let S = new Set();
+  let lastLibraries = [];
   let hydrated = false;
   let connected = false;
 
@@ -124,9 +126,11 @@
   function syncHidden() {
     const selH = Q("#jfy_lib_history");
     const selR = Q("#jfy_lib_ratings");
+    const selP = Q("#jfy_lib_progress");
     const selS = Q("#jfy_lib_scrobble");
     if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selP) selP.innerHTML = [...P].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
@@ -134,14 +138,17 @@
     const rows = Qa("#jfy_lib_matrix .lm-row:not(.hide)");
     const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
     const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
+    const allProg = rows.length && rows.every(r => r.querySelector(".lm-dot.prog")?.classList.contains("on"));
     const allScr = rows.length && rows.every(r => r.querySelector(".lm-dot.scr")?.classList.contains("on"));
-    const h = Q("#jfy_hist_all"), r = Q("#jfy_rate_all"), s = Q("#jfy_scr_all");
+    const h = Q("#jfy_hist_all"), r = Q("#jfy_rate_all"), p = Q("#jfy_prog_all"), s = Q("#jfy_scr_all");
     if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
     if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
+    if (p) { p.classList.toggle("on", !!allProg); p.setAttribute("aria-pressed", allProg ? "true" : "false"); }
     if (s) { s.classList.toggle("on", !!allScr); s.setAttribute("aria-pressed", allScr ? "true" : "false"); }
   }
 
   function renderLibraries(libs) {
+    lastLibraries = Array.isArray(libs) ? libs : [];
     const box = Q("#jfy_lib_matrix"); if (!box) return;
     box.innerHTML = "";
     const f = document.createDocumentFragment();
@@ -153,6 +160,7 @@
         <div class="lm-name">${ESC(it.title)}</div>
         <button type="button" class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
         <button type="button" class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>
+        <button type="button" class="lm-dot prog${P.has(id) ? " on" : ""}" data-kind="progress" aria-pressed="${P.has(id)}" title="Toggle Progress"></button>
         <button type="button" class="lm-dot scr${S.has(id) ? " on" : ""}" data-kind="scrobble" aria-pressed="${S.has(id)}" title="Toggle Scrobble"></button>`;
       f.appendChild(row);
     });
@@ -170,7 +178,11 @@
     renderLibraries(libs);
   }
 
-  async function jfyLoadLibraries() {
+  async function jfyLoadLibraries(force = false) {
+    if (!force && lastLibraries.length) {
+      renderLibraries(lastLibraries);
+      return;
+    }
     try {
       const r = await fetch(jfyApi(LIB_URL), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
@@ -189,9 +201,12 @@
   async function hydrateFromConfig(force = false) {
     if (hydrated && !force) return;
     try {
-      const r = await fetch("/api/config", { cache: "no-store" });
-      if (!r.ok) return;
-      const cfg = await r.json();
+      let cfg = !force && window.__cfg && Object.keys(window.__cfg).length ? window.__cfg : null;
+      if (!cfg) {
+        const r = await fetch("/api/config", { cache: "no-store" });
+        if (!r.ok) return;
+        cfg = await r.json();
+      }
       window.__cfg = cfg;
       const jf = getJfyCfgBlock(cfg);
 
@@ -205,10 +220,12 @@
 
       H = new Set((jf.history?.libraries || []).map(String));
       R = new Set((jf.ratings?.libraries || []).map(String));
+      P = new Set((jf.progress?.libraries || []).map(String));
       S = new Set((jf.scrobble?.libraries || []).map(String));
 
       hydrated = true;
-      await jfyLoadLibraries();
+      if (lastLibraries.length) renderLibraries(lastLibraries);
+      else await jfyLoadLibraries();
     } catch { }
   }
 
@@ -314,6 +331,7 @@
       jf.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
       jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
       jf.ratings = Object.assign({}, jf.ratings || {}, { libraries: Array.from(R) });
+      jf.progress = Object.assign({}, jf.progress || {}, { libraries: Array.from(P) });
       jf.scrobble = Object.assign({}, jf.scrobble || {}, { libraries: Array.from(S) });
     }
     return cfg;
@@ -365,6 +383,20 @@
       return;
     }
 
+    if (btn.id === "jfy_prog_all") {
+      ev.preventDefault(); ev.stopPropagation();
+      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
+      P = new Set();
+      Qa("#jfy_lib_matrix .lm-dot.prog").forEach((b) => {
+        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (on) { const r = b.closest(".lm-row"); if (r) P.add(String(r.dataset.id || "")); }
+      });
+      syncHidden();
+      repaint();
+      syncSelectAll();
+      return;
+    }
+
     if (btn.closest("#jfy_lib_matrix")) {
       ev.preventDefault(); ev.stopPropagation();
       const row = btn.closest(".lm-row"); if (!row) return;
@@ -373,6 +405,7 @@
       btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
       if (kind === "history") { (on ? H.add(id) : H.delete(id)); }
       else if (kind === "ratings") { (on ? R.add(id) : R.delete(id)); }
+      else if (kind === "progress") { (on ? P.add(id) : P.delete(id)); }
       else if (kind === "scrobble") { (on ? S.add(id) : S.delete(id)); }
       syncHidden();
       repaint();
@@ -415,7 +448,7 @@
     if (t && t.id === "btn-jfy-login") jfyLogin();
     if (t && t.id === "btn-jfy-delete") jfyDeleteToken();
     if (t && t.id === "btn-jfy-auto") jfyAuto();
-    if (t && t.id === "btn-jfy-load-libraries") jfyLoadLibraries();
+    if (t && t.id === "btn-jfy-load-libraries") jfyLoadLibraries(true);
   }, true);
 
   document.addEventListener("change", (ev) => {

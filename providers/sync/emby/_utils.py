@@ -59,6 +59,10 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
         em.setdefault("history", {}).setdefault("libraries", [])
         changed = True
 
+    if "progress" not in em or "libraries" not in (em.get("progress") or {}):
+        em.setdefault("progress", {}).setdefault("libraries", [])
+        changed = True
+
     if "ratings" not in em or "libraries" not in (em.get("ratings") or {}):
         em.setdefault("ratings", {}).setdefault("libraries", [])
         changed = True

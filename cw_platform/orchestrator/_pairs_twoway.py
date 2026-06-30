@@ -192,7 +192,7 @@ def _effective_library_whitelist(
     feature: str,
     fcfg: Mapping[str, Any],
 ) -> list[str]:
-    if feature not in ("history", "ratings"):
+    if feature not in ("history", "ratings", "progress"):
         return []
 
     libs: list[str] = []
