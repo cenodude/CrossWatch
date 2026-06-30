@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import importlib
+import logging
+import time
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import json
@@ -27,6 +30,10 @@ PROVIDERS_SYNC_DIR = REPO_ROOT / "providers" / "sync"
 ORCH_ROOT_DIR = REPO_ROOT / "cw_platform"
 ORCH_DIR = ORCH_ROOT_DIR / "orchestrator"
 _LOCK = threading.Lock()
+_ANALYSIS_LOCK = threading.Lock()
+_ANALYSIS_CACHE_LOCK = threading.Lock()
+_ANALYSIS_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+_LOG = logging.getLogger("crosswatch.analyzer")
 
 _DEFAULT_INSTANCE = "default"
 _PROV_TOKEN_SEPS = ("@", "#", ":")
@@ -258,6 +265,25 @@ def _parse_pairs_raw(pairs_raw: str | None) -> list[str]:
             continue
         seen.add(v)
         out.append(v)
+    return out
+
+
+def _pair_id(pair: Mapping[str, Any]) -> str:
+    return str(pair.get("id") or pair.get("pair_id") or "").strip()
+
+
+def _config_for_pairs(cfg: dict[str, Any], pairs_raw: str | None) -> dict[str, Any]:
+    """Return a shallow config view containing only explicitly selected pairs."""
+    selected = set(_parse_pairs_raw(pairs_raw))
+    if not selected:
+        return cfg
+    out = dict(cfg or {})
+    out["_analyzer_pairs_selected"] = True
+    out["pairs"] = [
+        pair
+        for pair in (cfg.get("pairs") or [])
+        if isinstance(pair, dict) and _pair_id(pair) in selected
+    ]
     return out
 
 
@@ -599,6 +625,34 @@ def _collect_items(s: dict[str, Any]) -> list[dict[str, Any]]:
                 "ids": it.get("ids") or {},
             }
         )
+    return out
+
+
+def _scoped_item_rows(s: dict[str, Any], cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = _collect_items(s)
+    routes = _pair_map(cfg, s)
+    if not routes:
+        return [] if cfg.get("pairs") or cfg.get("_analyzer_pairs_selected") else rows
+    scope: set[tuple[str, str]] = set(routes.keys())
+    for (src, feat), targets in routes.items():
+        scope.add((_norm_prov_token(src), feat))
+        scope.update((_norm_prov_token(dst), feat) for dst in targets)
+    return [
+        row
+        for row in rows
+        if (_norm_prov_token(str(row.get("provider") or "")), str(row.get("feature") or "").lower()) in scope
+    ]
+
+
+def _counts_from_rows(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
+    for row in rows:
+        prov = str(row.get("provider") or "")
+        feat = str(row.get("feature") or "").lower()
+        cur = out.setdefault(prov, {"history": 0, "watchlist": 0, "ratings": 0, "progress": 0, "total": 0})
+        if feat in ("history", "watchlist", "ratings", "progress"):
+            cur[feat] += 1
+            cur["total"] += 1
     return out
 
 
@@ -1121,7 +1175,10 @@ def _cw_state_unresolved_problems(
         keys = data.get("keys") or []
         items = data.get("items") or {}
         hints = data.get("hints") or {}
-        count = (len(keys) if isinstance(keys, list) else 0) + (len(items) if isinstance(items, dict) else 0)
+        unique_keys = {str(x) for x in keys if x} if isinstance(keys, list) else set()
+        if isinstance(items, dict):
+            unique_keys.update(str(x) for x in items.keys() if x)
+        count = len(unique_keys)
         if count > 0:
             preview: list[dict[str, Any]] = []
             seen: set[str] = set()
@@ -1336,21 +1393,25 @@ def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
     for path in sorted(CWS_DIR.glob("*.json")):
         data, err = _json_load_file(path)
         if err:
+            probs.append(_artifact_problem("error", "cw_state_diagnostic_read_failed", path, "Analyzer could not read this state artifact.", error=err))
             continue
-        meta = _cw_state_meta(path)
-        kind = str(meta.get("kind") or "")
-        if kind == "watermarks":
-            probs.extend(_cw_state_watermark_problems(path, data, meta, now_epoch=now_epoch))
-        elif kind == "shadow":
-            probs.extend(_cw_state_shadow_problems(path, data, meta, now_epoch=now_epoch))
-        elif kind == "unresolved":
-            probs.extend(_cw_state_unresolved_problems(state, path, data, meta, now_epoch=now_epoch))
-        elif kind == "flap":
-            probs.extend(_cw_state_flap_problems(path, data, meta, promote_after=promote_after))
-        elif kind == "blackbox":
-            probs.extend(_cw_state_blackbox_problems(state, path, data, meta, now_epoch=now_epoch, cooldown_days=cooldown_days))
-        elif kind == "pair_state":
-            probs.extend(_cw_state_pair_state_problems(path, data, meta, active_pairs=active_pairs))
+        try:
+            meta = _cw_state_meta(path)
+            kind = str(meta.get("kind") or "")
+            if kind == "watermarks":
+                probs.extend(_cw_state_watermark_problems(path, data, meta, now_epoch=now_epoch))
+            elif kind == "shadow":
+                probs.extend(_cw_state_shadow_problems(path, data, meta, now_epoch=now_epoch))
+            elif kind == "unresolved":
+                probs.extend(_cw_state_unresolved_problems(state, path, data, meta, now_epoch=now_epoch))
+            elif kind == "flap":
+                probs.extend(_cw_state_flap_problems(path, data, meta, promote_after=promote_after))
+            elif kind == "blackbox":
+                probs.extend(_cw_state_blackbox_problems(state, path, data, meta, now_epoch=now_epoch, cooldown_days=cooldown_days))
+            elif kind == "pair_state":
+                probs.extend(_cw_state_pair_state_problems(path, data, meta, active_pairs=active_pairs))
+        except Exception as exc:
+            probs.append(_artifact_problem("error", "cw_state_diagnostic_failed", path, "Analyzer could not inspect this state artifact.", error=f"{type(exc).__name__}: {exc}"))
     return probs
 
 
@@ -1868,6 +1929,104 @@ def _indices_for(s: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
             out[key] = _alias_index(_bucket(s, p, f) or {})
     return out
 
+
+def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | None:
+    typ = str(item.get("type") or "").strip().lower()
+    if typ not in {"episode", "season"}:
+        return None
+    sig = _history_show_signature(dict(item))
+    if not sig:
+        return None
+    return (sig, typ, item.get("season"), item.get("episode") if typ == "episode" else None)
+
+
+def _history_exact_indices(s: dict[str, Any]) -> dict[str, set[tuple[str, str, Any, Any]]]:
+    out: dict[str, set[tuple[str, str, Any, Any]]] = {}
+    for prov, feat, _, item in _iter_items(s):
+        if feat != "history" or not isinstance(item, dict):
+            continue
+        key = _history_exact_key(item)
+        if key is not None:
+            out.setdefault(_norm_prov_token(prov), set()).add(key)
+    return out
+
+
+@dataclass
+class _AnalysisContext:
+    state: dict[str, Any]
+    cfg: dict[str, Any]
+    pairs: dict[tuple[str, str], list[str]]
+    aliases: dict[tuple[str, str], dict[str, str]]
+    history_exact: dict[str, set[tuple[str, str, Any, Any]]]
+    pair_libs: dict[tuple[str, str, str], set[str]]
+    pair_types: dict[tuple[str, str, str], set[str]]
+
+
+def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _AnalysisContext:
+    config = cfg if cfg is not None else _cfg()
+    return _AnalysisContext(
+        state=s,
+        cfg=config,
+        pairs=_pair_map(config, s),
+        aliases=_indices_for(s),
+        history_exact=_history_exact_indices(s),
+        pair_libs=_pair_lib_filters(config),
+        pair_types=_pair_type_filters(config),
+    )
+
+
+def _target_has_peer(
+    ctx: _AnalysisContext,
+    prov: str,
+    feat: str,
+    item_key: str,
+    item: dict[str, Any],
+    dst: str,
+) -> bool:
+    prov_key = _norm_prov_token(prov)
+    feat_key = str(feat or "").lower()
+    dst_key = _norm_prov_token(dst)
+    if not _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst_key, item):
+        return True
+    if not _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst_key, item):
+        return True
+
+    vv = dict(item)
+    vv["_key"] = item_key
+    target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
+    if not any(alias in target_aliases for alias in _alias_keys(vv)):
+        return False
+    if feat_key == "history":
+        exact_key = _history_exact_key(item)
+        if exact_key is not None:
+            return exact_key in (ctx.history_exact.get(dst_key) or set())
+    return True
+
+
+def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[str, Any]) -> list[str]:
+    prov_key = _norm_prov_token(prov)
+    feat_key = str(feat or "").lower()
+    return [
+        dst
+        for dst in ctx.pairs.get((prov_key, feat_key), [])
+        if _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst, item)
+        and _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst, item)
+    ]
+
+
+def _missing_targets(
+    ctx: _AnalysisContext,
+    prov: str,
+    feat: str,
+    item_key: str,
+    item: dict[str, Any],
+) -> list[str]:
+    return [
+        dst
+        for dst in _eligible_targets(ctx, prov, feat, item)
+        if not _target_has_peer(ctx, prov, feat, item_key, item, dst)
+    ]
+
 def _has_peer_by_pairs(
     s: dict[str, Any],
     pairs: dict[tuple[str, str], list[str]],
@@ -1888,75 +2047,42 @@ def _has_peer_by_pairs(
     if not targets:
         return True
 
-    filtered_targets: list[str] = []
-    for dst in targets:
-        if _passes_pair_lib_filter(pair_libs, prov_key, feat_key, dst, item) and _passes_pair_type_filter(pair_types, prov_key, feat_key, dst, item):
-            filtered_targets.append(dst)
+    ctx = _AnalysisContext(
+        state=s,
+        cfg={},
+        pairs=pairs,
+        aliases=idx_cache,
+        history_exact=_history_exact_indices(s),
+        pair_libs=pair_libs or {},
+        pair_types=pair_types or {},
+    )
+    filtered_targets = _eligible_targets(ctx, prov_key, feat_key, item)
     if not filtered_targets:
         return True
-
-    vv = dict(item)
-    vv["_key"] = item_key
-    keys = set(_alias_keys(vv))
-    for dst in filtered_targets:
-        dst_key = _norm_prov_token(dst)
-        idx = idx_cache.get((dst_key, feat_key)) or {}
-        if any(k in idx for k in keys):
-            if feat_key == "history" and str(item.get("type") or "").strip().lower() in {"episode", "season"}:
-                if _history_exact_peer_present(s, dst, item):
-                    return True
-                continue
-            return True
-    return False
+    return all(_target_has_peer(ctx, prov_key, feat_key, item_key, item, dst) for dst in filtered_targets)
 
 
-def _refresh_missing_peer_flags(
+def _pair_stats(
     s: dict[str, Any],
-    pairs: dict[tuple[str, str], list[str]],
-    idx_cache: dict[tuple[str, str], dict[str, str]],
-    pair_libs: dict[tuple[str, str, str], set[str]] | None = None,
-    pair_types: dict[tuple[str, str, str], set[str]] | None = None,
-) -> None:
-    for prov, feat, key, item in _iter_items(s):
-        if feat not in ("history", "watchlist", "ratings", "progress"):
-            continue
-        if not isinstance(item, dict):
-            continue
-        item["_ignore_missing_peer"] = _has_peer_by_pairs(
-            s,
-            pairs,
-            prov,
-            feat,
-            key,
-            item,
-            idx_cache,
-            pair_libs,
-            pair_types,
-        )
-
-def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
+    cfg: dict[str, Any] | None = None,
+    ctx: _AnalysisContext | None = None,
+) -> list[dict[str, Any]]:
     stats: list[dict[str, Any]] = []
-    cfg = _cfg()
-    pairs = _pair_map(cfg, s)
-    idx_cache = _indices_for(s)
-    pair_libs = _pair_lib_filters(cfg)
-    pair_types = _pair_type_filters(cfg)
-    _refresh_missing_peer_flags(s, pairs, idx_cache, pair_libs, pair_types)
-    for (prov, feat), targets in pairs.items():
+    analysis = ctx or _analysis_context(s, cfg)
+    for (prov, feat), targets in analysis.pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         for dst in targets:
             total = 0
             synced = 0
-            idx = idx_cache.get((dst, feat)) or {}
 
             for k, v in src_items.items():
-                if v.get("_ignore_missing_peer"):
+                if not isinstance(v, dict):
                     continue
-                if not _passes_pair_lib_filter(pair_libs, prov, feat, dst, v) or not _passes_pair_type_filter(pair_types, prov, feat, dst, v):
+                if not _passes_pair_lib_filter(analysis.pair_libs, prov, feat, dst, v) or not _passes_pair_type_filter(analysis.pair_types, prov, feat, dst, v):
                     continue
 
                 total += 1
-                if _has_peer_by_pairs(s, pairs, prov, feat, k, v, idx_cache, pair_libs, pair_types):
+                if _target_has_peer(analysis, prov, feat, k, v, dst):
                     synced += 1
 
             stats.append(
@@ -1972,16 +2098,15 @@ def _pair_stats(s: dict[str, Any]) -> list[dict[str, Any]]:
     return stats
 
 
-def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
-    cfg = _cfg()
-    pairs = _pair_map(cfg, s)
-    pair_libs = _pair_lib_filters(cfg)
-    pair_types = _pair_type_filters(cfg)
-    idx_cache = _indices_for(s)
-    _refresh_missing_peer_flags(s, pairs, idx_cache, pair_libs, pair_types)
+def _pair_exclusions(
+    s: dict[str, Any],
+    cfg: dict[str, Any] | None = None,
+    ctx: _AnalysisContext | None = None,
+) -> list[dict[str, Any]]:
+    analysis = ctx or _analysis_context(s, cfg)
     out: list[dict[str, Any]] = []
 
-    for (prov, feat), targets in pairs.items():
+    for (prov, feat), targets in analysis.pairs.items():
         if not targets:
             continue
         src_items = _bucket(s, prov, feat) or {}
@@ -1998,18 +2123,16 @@ def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
             for v in src_items.values():
                 if not isinstance(v, dict):
                     continue
-                if v.get("_ignore_missing_peer"):
-                    continue
 
                 scanned_total += 1
 
-                if not _passes_pair_type_filter(pair_types, prov, feat, dst, v):
+                if not _passes_pair_type_filter(analysis.pair_types, prov, feat, dst, v):
                     t = _item_type(v)
                     if t:
                         excluded_types[t] = excluded_types.get(t, 0) + 1
                     continue
 
-                if not _passes_pair_lib_filter(pair_libs, prov, feat, dst, v):
+                if not _passes_pair_lib_filter(analysis.pair_libs, prov, feat, dst, v):
                     lid = _item_library_id(v) or "unknown"
                     excluded_libs[lid] = excluded_libs.get(lid, 0) + 1
                     continue
@@ -2032,8 +2155,8 @@ def _pair_exclusions(s: dict[str, Any]) -> list[dict[str, Any]]:
             if excluded_libs:
                 rec["excluded_libraries"] = excluded_libs
 
-            allowed_types = pair_types.get((prov, feat, dst)) if pair_types else None
-            allowed_libs = pair_libs.get((prov, feat, dst)) if pair_libs else None
+            allowed_types = analysis.pair_types.get((prov, feat, dst))
+            allowed_libs = analysis.pair_libs.get((prov, feat, dst))
             if allowed_types:
                 rec["allowed_types"] = sorted(allowed_types)
             if allowed_libs:
@@ -2215,11 +2338,11 @@ def _history_show_sets(s: dict[str, Any]) -> tuple[dict[str, set[str]], dict[str
 
     return show_sets, labels
 
-def _history_normalization_issues(s: dict[str, Any]) -> list[dict[str, Any]]:
+def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
 
-    cfg = _cfg()
-    pairs = _pair_map(cfg, s)
+    config = cfg if cfg is not None else _cfg()
+    pairs = _pair_map(config, s)
     show_sets, labels = _history_show_sets(s)
     tmdb_enabled = bool(_tmdb_key())
 
@@ -2431,38 +2554,6 @@ def _target_id_compat_hint(dst: str, item: Mapping[str, Any]) -> str:
     return ""
 
 
-def _history_exact_peer_present(s: dict[str, Any], dst: str, item: Mapping[str, Any]) -> bool:
-    typ = str(item.get("type") or "").strip().lower()
-    if typ not in {"episode", "season"}:
-        return False
-
-    sig = _history_show_signature(dict(item))
-    if not sig:
-        return False
-
-    season = item.get("season")
-    episode = item.get("episode")
-    bucket = _bucket(s, dst, "history") or {}
-
-    for rec in bucket.values():
-        if not isinstance(rec, dict):
-            continue
-        if _history_show_signature(rec) != sig:
-            continue
-        rtyp = str(rec.get("type") or "").strip().lower()
-        if typ == "episode":
-            if (
-                rtyp == "episode"
-                and rec.get("season") == season
-                and rec.get("episode") == episode
-            ):
-                return True
-        elif typ == "season":
-            if rtyp == "season" and rec.get("season") == season:
-                return True
-    return False
-
-
 def _item_label(item: Mapping[str, Any], fallback: str = "") -> str:
     return str(item.get("series_title") or item.get("title") or fallback or "").strip()
 
@@ -2492,16 +2583,22 @@ def _fallback_ids_for_item(item: Mapping[str, Any], ids: Mapping[str, Any] | Non
             out[ns] = value
     return out
 
-def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list[dict[str, Any]]:
+def _problems(
+    s: dict[str, Any],
+    allowed_scopes: set[str] | None = None,
+    *,
+    cfg: dict[str, Any] | None = None,
+    ctx: _AnalysisContext | None = None,
+    include_system: bool = True,
+) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     core = ("tmdb", "imdb", "tvdb")
 
-    cfg = _cfg()
-    pairs = _pair_map(cfg, s)
-    idx_cache = _indices_for(s)
-    pair_libs = _pair_lib_filters(cfg)
-    pair_types = _pair_type_filters(cfg)
-    _refresh_missing_peer_flags(s, pairs, idx_cache, pair_libs, pair_types)
+    analysis = ctx or _analysis_context(s, cfg)
+    analysis_scope: set[tuple[str, str]] = set(analysis.pairs.keys())
+    for (src, feature), route_targets in analysis.pairs.items():
+        analysis_scope.add((_norm_prov_token(src), feature))
+        analysis_scope.update((_norm_prov_token(dst), feature) for dst in route_targets)
     cw_state = _read_cw_state(allowed_scopes)
     manual = _load_manual_state()
     manual_blocks = _manual_add_blocks(manual)
@@ -2565,31 +2662,23 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                 lst.append(meta)
 
 
-    for (prov, feat), targets in pairs.items():
+    for (prov, feat), targets in analysis.pairs.items():
         src_items = _bucket(s, prov, feat) or {}
         if not targets:
             continue
 
         for k, v in src_items.items():
-            if v.get("_ignore_missing_peer"):
+            if not isinstance(v, dict):
                 continue
-
-            filtered_targets: list[str] = []
-            union_targets: list[dict[str, str]] = []
-            for t in targets:
-                if _passes_pair_lib_filter(pair_libs, prov, feat, t, v) and _passes_pair_type_filter(pair_types, prov, feat, t, v):
-                    filtered_targets.append(t)
-                    union_targets.append(idx_cache.get((t, feat)) or {})
-
-            if not union_targets:
+            filtered_targets = _eligible_targets(analysis, prov, feat, v)
+            if not filtered_targets:
                 continue
-
-            merged_keys = set().union(*[set(d.keys()) for d in union_targets]) if union_targets else set()
             vv = dict(v)
             vv["_key"] = k
             alias_keys = _alias_keys(vv)
+            missing_targets = _missing_targets(analysis, prov, feat, k, v)
 
-            if not _has_peer_by_pairs(s, pairs, prov, feat, k, v, idx_cache, pair_libs, pair_types):
+            if missing_targets:
                 blocks = manual_blocks.get((prov, feat))
                 blocked = False
                 if blocks:
@@ -2607,13 +2696,18 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                     "key": k,
                     "title": v.get("title"),
                     "year": v.get("year"),
-                    "targets": filtered_targets,
+                    "item_type": v.get("type"),
+                    "series_title": v.get("series_title"),
+                    "season": v.get("season"),
+                    "episode": v.get("episode"),
+                    "ids": v.get("ids") or {},
+                    "targets": missing_targets,
                     **({"manual_ref": str(MANUAL_STATE_PATH)} if blocked else {}),
                 }
                 hints: list[dict[str, Any]] = []
                 if blocked:
                     hints.append({"kind": "blocked_manual", "message": f"Blocked by manual list ({MANUAL_STATE_PATH}).", "source": str(MANUAL_STATE_PATH)})
-                for dst in filtered_targets:
+                for dst in missing_targets:
                     idx_key = (str(dst).upper(), feat.lower())
                     uidx = unresolved_index.get(idx_key) or {}
                     for ak in alias_keys:
@@ -2628,7 +2722,7 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                             hints.append(h)
                 if hints:
                     prob["hints"] = hints
-                details = _missing_peer_show_hints(s, feat, v, filtered_targets)
+                details = _missing_peer_show_hints(s, feat, v, missing_targets)
                 if blocked:
                     details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + (details or []))
                 if details:
@@ -2636,6 +2730,8 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
                 probs.append(prob)
 
     for p, f, k, it in _iter_items(s):
+        if (analysis_scope or analysis.cfg.get("_analyzer_pairs_selected")) and (_norm_prov_token(p), f) not in analysis_scope:
+            continue
         ids = it.get("ids") or {}
         item_label = _item_label(it, k)
         for ns in core:
@@ -2707,14 +2803,15 @@ def _problems(s: dict[str, Any], allowed_scopes: set[str] | None = None) -> list
             )
 
     try:
-        probs.extend(_history_normalization_issues(s))
+        probs.extend(_history_normalization_issues(s, analysis.cfg))
     except Exception:
         pass
 
-    try:
-        probs.extend(_system_diagnostics())
-    except Exception:
-        pass
+    if include_system:
+        try:
+            probs.extend(_system_diagnostics())
+        except Exception as exc:
+            probs.append(_problem("error", "analyzer_system_diagnostics_failed", "Analyzer system diagnostics failed.", error=f"{type(exc).__name__}: {exc}"))
 
     return sorted(probs, key=_problem_sort_key)
 
@@ -2978,8 +3075,91 @@ def _suggest(s: dict[str, Any], prov: str, feat: str, key: str) -> dict[str, Any
         raise HTTPException(404, "Item not found")
     return {"suggestions": [], "needs": []}
 
+
+def _path_stamp(path: Path) -> tuple[str, int, int]:
+    try:
+        stat = path.stat()
+        return (str(path), int(stat.st_mtime_ns), int(stat.st_size))
+    except OSError:
+        return (str(path), 0, 0)
+
+
+def _analysis_signature(pairs_raw: str | None) -> tuple[Any, ...]:
+    artifacts = sorted(CWS_DIR.glob("*.json")) if CWS_DIR.exists() else []
+    return (
+        tuple(_parse_pairs_raw(pairs_raw)),
+        _path_stamp(CONFIG_DIR / "config.json"),
+        _path_stamp(STATE_PATH),
+        _path_stamp(MANUAL_STATE_PATH),
+        tuple(_path_stamp(path) for path in artifacts),
+    )
+
+
+def _cached_analysis(pairs_raw: str | None) -> dict[str, Any]:
+    signature = _analysis_signature(pairs_raw)
+    with _ANALYSIS_CACHE_LOCK:
+        cached = _ANALYSIS_CACHE.get(signature)
+        if cached is not None:
+            out = dict(cached)
+            timings = dict(out.get("timings_ms") or {})
+            timings["cache_hit"] = True
+            out["timings_ms"] = timings
+            return out
+
+    with _ANALYSIS_LOCK:
+        with _ANALYSIS_CACHE_LOCK:
+            cached = _ANALYSIS_CACHE.get(signature)
+            if cached is not None:
+                out = dict(cached)
+                timings = dict(out.get("timings_ms") or {})
+                timings["cache_hit"] = True
+                out["timings_ms"] = timings
+                return out
+
+        started = time.perf_counter()
+        handles = _load_state_handles(pairs_raw)
+        state = _merge_states(handles)
+        loaded = time.perf_counter()
+        base_cfg = _cfg()
+        selected_cfg = _config_for_pairs(base_cfg, pairs_raw)
+        context = _analysis_context(state, selected_cfg)
+        indexed = time.perf_counter()
+        scopes = {h.get("safe") for h in handles if h.get("safe")}
+        allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+        problems = _problems(state, allowed, cfg=selected_cfg, ctx=context)
+        analyzed = time.perf_counter()
+        stats = _pair_stats(state, selected_cfg, context)
+        exclusions = _pair_exclusions(state, selected_cfg, context)
+        completed = time.perf_counter()
+        timings = {
+            "state_load": round((loaded - started) * 1000, 1),
+            "index": round((indexed - loaded) * 1000, 1),
+            "problems": round((analyzed - indexed) * 1000, 1),
+            "summaries": round((completed - analyzed) * 1000, 1),
+            "total": round((completed - started) * 1000, 1),
+            "cache_hit": False,
+        }
+        result = {
+            "problems": problems,
+            "summary": _diagnostic_summary(problems),
+            "pair_stats": stats,
+            "pair_exclusions": exclusions,
+            "timings_ms": timings,
+        }
+        _LOG.info(
+            "analyzer_complete pairs=%s items=%s problems=%s total_ms=%s",
+            ",".join(_parse_pairs_raw(pairs_raw)) or "all",
+            sum(v.get("total", 0) for v in _counts(state).values()),
+            len(problems),
+            timings["total"],
+        )
+        with _ANALYSIS_CACHE_LOCK:
+            _ANALYSIS_CACHE.clear()
+            _ANALYSIS_CACHE[signature] = result
+        return dict(result)
+
 @router.get("/analyzer/state", response_class=JSONResponse)
-def api_state(pairs: str | None = None) -> dict[str, Any]:
+def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250) -> dict[str, Any]:
     try:
         handles = _load_state_handles(pairs)
         s = _merge_states(handles)
@@ -2988,22 +3168,24 @@ def api_state(pairs: str | None = None) -> dict[str, Any]:
             s = {}
         else:
             raise
-    return {"counts": _counts(s), "items": _collect_items(s)}
+    selected_cfg = _config_for_pairs(_cfg(), pairs)
+    items = _scoped_item_rows(s, selected_cfg)
+    start = max(0, int(offset or 0))
+    page_size = max(0, min(int(limit or 0), 500))
+    page = items[start : start + page_size] if page_size else []
+    return {
+        "counts": _counts_from_rows(items),
+        "items": page,
+        "total": len(items),
+        "offset": start,
+        "limit": page_size,
+        "has_more": start + len(page) < len(items),
+    }
 
 
 @router.get("/analyzer/problems", response_class=JSONResponse)
 def api_problems(pairs: str | None = None) -> dict[str, Any]:
-    handles = _load_state_handles(pairs)
-    s = _merge_states(handles)
-    scopes = {h.get("safe") for h in handles if h.get("safe")}
-    allowed = set(x for x in scopes if isinstance(x, str) and x) or None
-    probs = _problems(s, allowed)
-    return {
-        "problems": probs,
-        "summary": _diagnostic_summary(probs),
-        "pair_stats": _pair_stats(s),
-        "pair_exclusions": _pair_exclusions(s),
-    }
+    return _cached_analysis(pairs)
 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
