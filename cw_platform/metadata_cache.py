@@ -10,13 +10,38 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping
 
-_SAFE_PART_RE = re.compile(r"[^a-zA-Z0-9._-]+")
+_LOCALE_RE = re.compile(r"[a-zA-Z0-9]{1,8}(?:-[a-zA-Z0-9]{1,8})*")
 _WRITE_LOCK = RLock()
 
 
-def _safe_part(value: Any, *, default: str) -> str:
-    text = _SAFE_PART_RE.sub("_", str(value or "").strip()).strip("._-")
-    return text or default
+def _cache_tmdb_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if "/" in text or "\\" in text or not text.isascii() or not text.isdecimal():
+        raise ValueError("TMDb ID must be a positive integer")
+    normalized = str(int(text))
+    if normalized == "0":
+        raise ValueError("TMDb ID must be a positive integer")
+    return normalized
+
+
+def _cache_locale(value: Any) -> str:
+    text = str(value or "en-US").strip()
+    if (
+        "/" in text
+        or "\\" in text
+        or len(text) > 64
+        or _LOCALE_RE.fullmatch(text) is None
+    ):
+        raise ValueError("Locale must be a valid language tag")
+    return text
+
+
+def _path_under_root(path: Path | str, cache_root: Path | str) -> Path:
+    # Resolve symlinks before enforcing the trusted cache boundary.
+    root = Path(cache_root).resolve()
+    target = Path(path).resolve()
+    target.relative_to(root)
+    return target
 
 
 def metadata_cache_path(
@@ -25,20 +50,28 @@ def metadata_cache_path(
     tmdb_id: str | int,
     locale: str | None,
 ) -> Path:
+    cache_id = _cache_tmdb_id(tmdb_id)
+    cache_locale = _cache_locale(locale)
     root = Path(cache_root).resolve()
     media = "movie" if str(entity or "").strip().lower() == "movie" else "show"
     media_root = (root / media).resolve()
     media_root.relative_to(root)
     media_root.mkdir(parents=True, exist_ok=True)
-    name = f"{_safe_part(tmdb_id, default='x')}.{_safe_part(locale or 'en-US', default='en-US')}.json"
+    name = f"{cache_id}.{cache_locale}.json"
     path = (media_root / name).resolve()
     path.relative_to(media_root)
     return path
 
 
-def read_metadata_cache(path: Path | str, *, ttl_seconds: int | None) -> dict[str, Any] | None:
+def read_metadata_cache(
+    path: Path | str,
+    *,
+    cache_root: Path | str,
+    ttl_seconds: int | None,
+) -> dict[str, Any] | None:
     try:
-        data = json.loads(Path(path).read_text("utf-8"))
+        target = _path_under_root(path, cache_root)
+        data = json.loads(target.read_text("utf-8"))
         if not isinstance(data, dict):
             return None
         if ttl_seconds is not None:
@@ -66,9 +99,14 @@ def merge_metadata_cache_payload(
     return out
 
 
-def write_metadata_cache(path: Path | str, payload: Mapping[str, Any]) -> bool:
-    target = Path(path)
+def write_metadata_cache(
+    path: Path | str,
+    payload: Mapping[str, Any],
+    *,
+    cache_root: Path | str,
+) -> bool:
     try:
+        target = _path_under_root(path, cache_root)
         data = dict(payload)
         data["fetched_at"] = time.time()
         target.parent.mkdir(parents=True, exist_ok=True)

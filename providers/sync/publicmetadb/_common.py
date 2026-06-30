@@ -262,7 +262,11 @@ def enrich_index_metadata(
             disk_path: Path | None = None
             if disk_root is not None:
                 disk_path = metadata_cache_path(disk_root, entity, tmdb_id, locale or "en-US")
-                persisted = read_metadata_cache(disk_path, ttl_seconds=_metadata_cache_ttl_seconds(adapter))
+                persisted = read_metadata_cache(
+                    disk_path,
+                    cache_root=disk_root,
+                    ttl_seconds=_metadata_cache_ttl_seconds(adapter),
+                )
                 needs_title = not str(item.get("series_title" if str(item.get("type") or "").lower() == "episode" else "title") or "").strip()
                 needs_year = item.get("year") in (None, "")
                 persisted_value: dict[str, Any] | None = dict(persisted) if isinstance(persisted, Mapping) else None
@@ -289,11 +293,19 @@ def enrich_index_metadata(
                         need={"title": True, "year": True},
                     )
                     resolved = fetched if isinstance(fetched, Mapping) and fetched else None
-                    if resolved is not None and disk_path is not None:
-                        previous = read_metadata_cache(disk_path, ttl_seconds=None)
+                    if resolved is not None and disk_path is not None and disk_root is not None:
+                        previous = read_metadata_cache(
+                            disk_path,
+                            cache_root=disk_root,
+                            ttl_seconds=None,
+                        )
                         payload = merge_metadata_cache_payload(previous, resolved)
                         payload["locale"] = locale or payload.get("locale") or None
-                        if write_metadata_cache(disk_path, payload):
+                        if write_metadata_cache(
+                            disk_path,
+                            payload,
+                            cache_root=disk_root,
+                        ):
                             cache_written = True
                 except Exception as exc:
                     provider_error = exc

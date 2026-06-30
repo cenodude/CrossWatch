@@ -446,11 +446,15 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
 
 
 def _read_meta_cache(p: Path) -> dict[str, Any] | None:
-    return read_metadata_cache(p, ttl_seconds=_cfg_meta_ttl_secs())
+    return read_metadata_cache(
+        p,
+        cache_root=_meta_cache_dir(),
+        ttl_seconds=_cfg_meta_ttl_secs(),
+    )
 
 
 def _write_meta_cache(p: Path, payload: dict[str, Any]) -> None:
-    write_metadata_cache(p, payload)
+    write_metadata_cache(p, payload, cache_root=_meta_cache_dir())
 
 
 def _merge_meta_cache_payload(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
