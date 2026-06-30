@@ -12,7 +12,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # --- minimal OS deps ---
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates tzdata bash curl \
+ && apt-get install -y --no-install-recommends ca-certificates tzdata bash curl util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

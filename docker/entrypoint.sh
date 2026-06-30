@@ -75,8 +75,11 @@ ensure_group() {
     current_gid="$(gid_for_group "${APP_GROUP}")"
     if [[ "${current_gid}" != "${APP_GID}" ]]; then
       existing_group="$(name_for_gid "${APP_GID}")"
-      [[ -z "${existing_group}" ]] \
-        || die "Group '${APP_GROUP}' has GID ${current_gid}, but requested GID ${APP_GID} already belongs to '${existing_group}'"
+      if [[ -n "${existing_group}" ]]; then
+        warn "Requested GID ${APP_GID} already belongs to group '${existing_group}'; using it instead of '${APP_GROUP}'"
+        APP_GROUP="${existing_group}"
+        return 0
+      fi
       groupmod -g "${APP_GID}" "${APP_GROUP}"
     fi
     return 0
@@ -87,7 +90,8 @@ ensure_group() {
     if [[ "${existing_group}" == "${DEFAULT_APP_GROUP}" ]]; then
       groupmod -n "${APP_GROUP}" "${existing_group}"
     else
-      die "Cannot create group '${APP_GROUP}' with GID ${APP_GID}; GID already belongs to '${existing_group}'"
+      warn "Requested GID ${APP_GID} already belongs to group '${existing_group}'; using it instead of '${APP_GROUP}'"
+      APP_GROUP="${existing_group}"
     fi
   else
     groupadd -g "${APP_GID}" "${APP_GROUP}"
@@ -134,19 +138,33 @@ ensure_user() {
 }
 
 prep_runtime() {
-  # Ensure runtime directory exists and is writable
-  mkdir -p "${RUNTIME_DIR}" || true
-  if [[ "$(id -u)" -eq 0 && -w "$(dirname "${RUNTIME_DIR}")" ]]; then
-    chown -R "${APP_USER}:${APP_GROUP}" "${RUNTIME_DIR}" || true
+  mkdir -p "${RUNTIME_DIR}" \
+    || die "Cannot create runtime directory '${RUNTIME_DIR}'"
+
+  if [[ "$(id -u)" -eq 0 ]]; then
+    chown -R "${APP_USER}:${APP_GROUP}" "${RUNTIME_DIR}" \
+      || die "Cannot set ownership of runtime directory '${RUNTIME_DIR}' to ${APP_USER}:${APP_GROUP}"
+
+    if ! setpriv --reuid="${APP_UID}" --regid="${APP_GID}" --init-groups \
+        /usr/bin/test -w "${RUNTIME_DIR}" \
+      || ! setpriv --reuid="${APP_UID}" --regid="${APP_GID}" --init-groups \
+        /usr/bin/test -x "${RUNTIME_DIR}"; then
+      die "Runtime directory '${RUNTIME_DIR}' is not writable by ${APP_USER}:${APP_GROUP}"
+    fi
+  elif [[ ! -w "${RUNTIME_DIR}" || ! -x "${RUNTIME_DIR}" ]]; then
+    die "Runtime directory '${RUNTIME_DIR}' is not writable by $(id -un):$(id -gn)"
   fi
 }
 
 run_as() {
-  # Execute given command as app user (root drops privileges)
   if [[ "$(id -u)" -eq 0 ]]; then
-    exec su -s /bin/bash -c "$*" "${APP_USER}"
+    exec setpriv \
+      --reuid="${APP_UID}" \
+      --regid="${APP_GID}" \
+      --init-groups \
+      "$@"
   else
-    exec bash -lc "$*"
+    exec "$@"
   fi
 }
 
@@ -167,13 +185,19 @@ main() {
 
   if [[ "$#" -gt 0 ]]; then
     # Run a custom command
-    run_as "$*"
+    run_as "$@"
   else
     # Default: start FastAPI server (reload mode if requested)
     if [[ "${RELOAD:-no}" == "yes" ]]; then
-      run_as "watchmedo auto-restart --pattern='*.py' --recursive -- python -m crosswatch --host ${WEB_HOST} --port ${WEB_PORT}"
+      run_as watchmedo auto-restart \
+        --pattern="*.py" \
+        --recursive \
+        -- \
+        python -m crosswatch \
+        --host "${WEB_HOST}" \
+        --port "${WEB_PORT}"
     else
-      run_as "python -m crosswatch --host ${WEB_HOST} --port ${WEB_PORT}"
+      run_as python -m crosswatch --host "${WEB_HOST}" --port "${WEB_PORT}"
     fi
   fi
 }
