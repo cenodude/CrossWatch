@@ -25,6 +25,13 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from cw_platform.config_base import load_config
+from cw_platform.metadata_cache import (
+    merge_metadata_cache_payload,
+    metadata_cache_path,
+    prune_metadata_cache,
+    read_metadata_cache,
+    write_metadata_cache,
+)
 
 try:
     from _logging import log as cw_log
@@ -115,9 +122,9 @@ def _shorten(txt: str, limit: int = 280) -> str:
 def _cfg_meta_ttl_secs() -> int:
     try:
         md = (load_config() or {}).get("metadata") or {}
-        return max(1, int(md.get("ttl_hours", 72))) * 3600
+        return max(1, int(md.get("ttl_hours", 720))) * 3600
     except Exception:
-        return 72 * 3600
+        return 720 * 3600
 
 
 def _meta_cache_enabled() -> bool:
@@ -163,12 +170,7 @@ def _cache_matches(cache_root: Path, stem: str) -> list[Path]:
 
 
 def _meta_cache_path(entity: str, tmdb_id: str | int, locale: str | None) -> Path:
-    t = "movie" if str(entity).lower() == "movie" else "show"
-    safe_id = _safe_cache_part(tmdb_id)
-    loc = _safe_cache_part(locale or "en-US", default="en-US")
-    sub = _meta_cache_dir() / t
-    sub.mkdir(parents=True, exist_ok=True)
-    return sub / f"{safe_id}.{loc}.json"
+    return metadata_cache_path(_meta_cache_dir(), entity, tmdb_id, locale)
 
 
 def _cfg_ui_locale() -> str | None:
@@ -444,66 +446,22 @@ def _need_satisfied(meta: dict[str, Any], need: dict[str, Any] | None) -> bool:
 
 
 def _read_meta_cache(p: Path) -> dict[str, Any] | None:
-    try:
-        if not p.exists():
-            return None
-        data = json.loads(p.read_text("utf-8"))
-        if not isinstance(data, dict):
-            return None
-        raw_ts = data.get("fetched_at")
-        try:
-            fetched_ts = float(raw_ts) if raw_ts is not None else 0.0
-        except (TypeError, ValueError):
-            fetched_ts = 0.0
-        if (time.time() - fetched_ts) > _cfg_meta_ttl_secs():
-            return None
-        return data
-    except Exception:
-        return None
+    return read_metadata_cache(p, ttl_seconds=_cfg_meta_ttl_secs())
 
 
 def _write_meta_cache(p: Path, payload: dict[str, Any]) -> None:
-    try:
-        tmp = p.with_suffix(p.suffix + ".tmp")
-        data = dict(payload)
-        data["fetched_at"] = time.time()
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(p)
-    except Exception:
-        pass
+    write_metadata_cache(p, payload)
 
 
 def _merge_meta_cache_payload(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
-    prev = base if isinstance(base, dict) else {}
-    out = {**prev, **extra}
-    out["ids"] = {**(prev.get("ids") or {}), **(extra.get("ids") or {})}
-    out["detail"] = {**(prev.get("detail") or {}), **(extra.get("detail") or {})}
-    out["images"] = {**(prev.get("images") or {}), **(extra.get("images") or {})}
-    return out
+    return merge_metadata_cache_payload(base, extra)
 
 
 def _prune_meta_cache_if_needed() -> None:
     try:
         md = (load_config() or {}).get("metadata") or {}
         cap_mb = int(md.get("meta_cache_max_mb", 0))
-        if cap_mb <= 0:
-            return
-        root = _meta_cache_dir()
-        files = list(root.rglob("*.json"))
-        total = sum(f.stat().st_size for f in files)
-        cap = cap_mb * 1024 * 1024
-        if total <= cap:
-            return
-        files.sort(key=lambda f: f.stat().st_mtime)
-        target = int(cap * 0.9)
-        for f in files:
-            try:
-                total -= f.stat().st_size
-                f.unlink(missing_ok=True)
-            except Exception:
-                pass
-            if total <= target:
-                break
+        prune_metadata_cache(_meta_cache_dir(), max_mb=cap_mb)
     except Exception:
         pass
 
