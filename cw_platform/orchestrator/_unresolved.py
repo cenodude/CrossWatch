@@ -7,6 +7,7 @@ from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
 import json
+import logging
 import time
 
 __all__ = [
@@ -16,6 +17,7 @@ __all__ = [
 ]
 
 STATE_DIR = Path("/config/.cw_state")
+_LOG = logging.getLogger("crosswatch.orchestrator.unresolved")
 
 from ._scope import scoped_file, scope_safe
 
@@ -37,7 +39,7 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
-def _atomic_write(path: Path, data: Mapping[str, Any]) -> None:
+def _atomic_write(path: Path, data: Mapping[str, Any]) -> tuple[bool, str | None]:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -46,8 +48,11 @@ def _atomic_write(path: Path, data: Mapping[str, Any]) -> None:
             encoding="utf-8",
         )
         tmp.replace(path)
-    except Exception:
-        pass
+        return True, None
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        _LOG.error("unresolved_state_write_failed path=%s error=%s", path, error)
+        return False, error
 
 
 def _blocking_path(dst: str, feature: str) -> Path:
@@ -252,6 +257,10 @@ def record_unresolved(
     added = 0
 
     for it in (items or []):
+        item_hint = None
+        if isinstance(it, Mapping):
+            raw_hint = it.get("_cw_unresolved_hint") or it.get("hint") or it.get("reason")
+            item_hint = str(raw_hint).strip() if raw_hint is not None else None
         ck, min_item = _to_ck_and_min(it)
         if not ck:
             continue
@@ -262,9 +271,10 @@ def record_unresolved(
                 data["items"][ck] = min_item
             added += 1
 
-        if hint:
+        effective_hint = item_hint or hint
+        if effective_hint:
             hints = data.setdefault("hints", {})
-            hints[ck] = {"reason": str(hint), "ts": now}
+            hints[ck] = {"reason": str(effective_hint), "ts": now}
 
-    _atomic_write(path, data)
-    return {"ok": True, "count": added, "path": str(path)}
+    ok, error = _atomic_write(path, data)
+    return {"ok": ok, "count": added if ok else 0, "path": str(path), **({"error": error} if error else {})}
