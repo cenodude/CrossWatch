@@ -380,7 +380,13 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
       const card = $("#stats-card"), foot = $("#insights-footer");
       if (!card || !foot) return;
       clearTimeout(timer);
-      timer = setTimeout(() => card.style.paddingBottom = `${(foot.getBoundingClientRect().height || foot.offsetHeight || 120) + 14}px`, 0);
+      timer = setTimeout(() => {
+        if ($("main#layout")?.classList.contains("details-open")) {
+          card.style.removeProperty("padding-bottom");
+          return;
+        }
+        card.style.paddingBottom = `${(foot.getBoundingClientRect().height || foot.offsetHeight || 120) + 14}px`;
+      }, 0);
     };
     w.addEventListener("resize", ensure.reserve, { passive: true });
     return ensure;

@@ -59,7 +59,6 @@
     html[data-cw-theme] #page-editor .cw-search-bar,
     html[data-cw-theme] #page-editor .cw-search-results,
     html[data-cw-theme] #page-editor .cw-search-item,
-    html[data-cw-theme] #page-editor .cw-import-panel,
     html[data-cw-theme] #page-editor .cw-policy-action{
       background:#20242d!important;
       background-image:none!important;
@@ -238,7 +237,6 @@
     html[data-cw-theme="flat-light"] #page-editor .cw-search-bar,
     html[data-cw-theme="flat-light"] #page-editor .cw-search-results,
     html[data-cw-theme="flat-light"] #page-editor .cw-search-item,
-    html[data-cw-theme="flat-light"] #page-editor .cw-import-panel,
     html[data-cw-theme="flat-light"] #page-editor .cw-policy-action{
       background:#f5f7fb!important;
       border-color:rgba(16,24,40,.16)!important;
