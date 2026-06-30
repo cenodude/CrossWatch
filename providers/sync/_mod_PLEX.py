@@ -253,7 +253,7 @@ def _plex_tv_resource_for_connection(
         return None, None
 
     try:
-        u = urlparse(str(baseurl).strip())
+        u = urlparse(str(baseurl).strip(), scheme="")
         want_host = (u.hostname or "").strip().lower()
         want_port = int(u.port or 32400)
         want_scheme = (u.scheme or "").strip().lower()
@@ -288,7 +288,7 @@ def _plex_tv_resource_for_connection(
             if not uri:
                 continue
             try:
-                cu = urlparse(uri)
+                cu = urlparse(uri, scheme="")
                 host = (cu.hostname or "").strip().lower()
                 port = int(cu.port or 32400)
                 scheme = (cu.scheme or "").strip().lower()
