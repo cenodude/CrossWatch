@@ -343,9 +343,9 @@
       <${tag} class="cw-rating-widget-card"${hrefAttr} title="${esc(titleParts.join(" | "))}">
         <img src="${esc(poster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
         <span class="cw-rating-score"><span>${esc(item?.rating || "")}</span></span>
-        ${ratedLabel ? `<span class="cw-rating-time">Rated ${esc(ratedLabel)}</span>` : ""}
         <span class="cw-rating-overlay">
           <span class="cw-rating-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
+          ${ratedLabel ? `<span class="cw-rating-age">${esc(ratedLabel)}</span>` : ""}
         </span>
       </${tag}>`;
   }

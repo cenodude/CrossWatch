@@ -179,9 +179,10 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults"]);
 const OVERVIEW_KEYS = GROUPS
-  .filter((group) => group.id !== "danger")
-  .flatMap((group) => group.keys);
+  .flatMap((group) => group.keys)
+  .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
 
 const renderActionRow = ({ key, kind, icon, title, desc, extra = "" }) => `
   <div class="action-row" data-op="${key}" data-kind="${kind}" tabindex="0" aria-label="Inspect ${title} status">
@@ -633,7 +634,6 @@ export default {
       const {
         manageLock = true,
         skipConfirm = false,
-        trackerOptions = null,
       } = options;
       if (manageLock && operationBusy) return false;
 
@@ -660,8 +660,8 @@ export default {
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
           const chkSnaps = $("#cxm-cw-snaps", root);
-          const clearState = trackerOptions?.clear_state ?? !!(chkState && chkState.checked);
-          const clearSnaps = trackerOptions?.clear_snapshots ?? !!(chkSnaps && chkSnaps.checked);
+          const clearState = !!(chkState && chkState.checked);
+          const clearSnaps = !!(chkSnaps && chkSnaps.checked);
 
           if (!clearState && !clearSnaps) {
             setStatus("Select at least one option for tracker cleanup.", "err");
@@ -792,7 +792,7 @@ export default {
     if (overviewRunBtn) {
       overviewRunBtn.addEventListener("click", async () => {
         if (operationBusy) return;
-        if (!confirm("Run every visible maintenance tool except Factory reset? This clears sync state, retry data, tracker data, recent scrobbles, statistics, metadata, currently playing and saved captures.")) {
+        if (!confirm("Run the Overview maintenance tools? This clears sync state, retry data, recent scrobbles, statistics, metadata and currently playing. Local tracker data, captures and Factory reset are excluded.")) {
           return;
         }
 
@@ -810,9 +810,6 @@ export default {
             const result = await runOp(op.kind, actionBtn, {
               manageLock: false,
               skipConfirm: true,
-              trackerOptions: op.kind === "tracker"
-                ? { clear_state: true, clear_snapshots: true }
-                : null,
             });
             if (!result || !root.isConnected) return;
             results.push(result);
