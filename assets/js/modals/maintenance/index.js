@@ -250,9 +250,6 @@ export default {
       <div class="cw-maint">
         <div class="cx-head">
           <div class="cx-head-left">
-            <div class="head-icon">
-              <span class="material-symbols-rounded" aria-hidden="true">handyman</span>
-            </div>
             <div class="head-text">
               <div class="head-title">Maintenance tools</div>
               <div class="head-sub">Reset, rebuild or clean the local CrossWatch data without touching provider accounts.</div>

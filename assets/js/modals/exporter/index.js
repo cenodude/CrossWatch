@@ -13,6 +13,18 @@ function injectCSS(){
   document.head.appendChild(el);
 }
 
+async function injectExporterStyles(){
+  if(document.querySelector('link[data-cw-exporter-styles]')) return;
+  await new Promise(resolve=>{
+    const link=document.createElement("link");
+    link.rel="stylesheet";
+    link.href=new URL("./styles.css",import.meta.url).href;
+    link.dataset.cwExporterStyles="";
+    link.onload=link.onerror=resolve;
+    document.head.appendChild(link);
+  });
+}
+
 const closeModal=()=>window.cxCloseModal?window.cxCloseModal():document.querySelector(".cx-modal-shell")?.dispatchEvent(new CustomEvent("cw-modal-close",{bubbles:true}));
 async function downloadFile(u){const r=await fetch(u);if(!r.ok)throw new Error(`Download failed: ${r.status}`);const blob=await r.blob(),cd=r.headers.get("Content-Disposition")||"",m=/filename="([^"]+)"/i.exec(cd),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=m?.[1]||"export.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000)}
 
@@ -36,6 +48,9 @@ function enableColumnResize(table,key="cw.exporter.cols.v2"){
 export default {
   async mount(root){
     injectCSS();
+    await injectExporterStyles();
+    const shell=root.closest(".cx-modal-shell");
+    shell?.classList.add("cw-exporter-modal");
     root.classList.add("cw-exporter-modal");
     root.style.setProperty("--cxModalMaxW","1200px");
     root.style.setProperty("--cxModalMaxH","84vh");

@@ -61,7 +61,6 @@ const COMPACT_STYLE = `
 const HTML = `
   <div class="cx-head">
     <div class="head-left">
-      <div class="head-icon" aria-hidden="true"><span class="material-symbols-rounded">settings</span></div>
       <div class="head-copy">
         <div class="head-title">Insights settings</div>
         <div class="head-sub">Choose which features and profiles shape the statistics panel.</div>

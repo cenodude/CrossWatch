@@ -29,6 +29,18 @@ const css = () => {
   el.textContent = CSS + (THEME_CSS || "");
 };
 
+async function injectCompareStyles() {
+  if (document.querySelector('link[data-cw-compare-styles]')) return;
+  await new Promise((resolve) => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = new URL("./styles.css", import.meta.url).href;
+    link.dataset.cwCompareStyles = "";
+    link.onload = link.onerror = resolve;
+    document.head.appendChild(link);
+  });
+}
+
 function kindOf(r) {
   if (!r || typeof r !== "object") return "unknown";
   const t = String(r.type || r.media_type || r.entity || "").toLowerCase();
@@ -188,7 +200,8 @@ export default {
   async mount(root, props = {}) {
     this._root = root;
     css();
-    Object.entries({ "--cxModalMaxW": "1700px", "--cxModalMaxH": "94vh", "--ccSplitW": SPLIT }).forEach(([k, v]) => root.style.setProperty(k, v));
+    await injectCompareStyles();
+    Object.entries({ "--cxModalMaxW": "1180px", "--cxModalMaxH": "700px", "--ccSplitW": SPLIT }).forEach(([k, v]) => root.style.setProperty(k, v));
     root.classList.add("modal-root", "cc-modal");
     root.innerHTML = ROOT_HTML;
 
@@ -446,7 +459,6 @@ export default {
     } catch {}
   },
 };
-
 
 
 
