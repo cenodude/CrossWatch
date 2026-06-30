@@ -340,12 +340,14 @@ def html() -> str:
                 <div class="lm-col"><span class="sub">Select all:</span></div>
                 <div class="lm-col"><button id="emby_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
                 <div class="lm-col"><button id="emby_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>
+                <div class="lm-col"><button id="emby_prog_all" type="button" class="lm-dot prog" title="Toggle all Progress" aria-pressed="false"></button><span class="sub">Progress</span></div>
                 <div class="lm-col"><button id="emby_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble" aria-pressed="false"></button><span class="sub">Scrobble</span></div>
               </div>
               <div id="emby_lib_matrix" class="lm-rows"></div>
               <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
               <select id="emby_lib_history" class="lm-hidden" multiple></select>
               <select id="emby_lib_ratings" class="lm-hidden" multiple></select>
+              <select id="emby_lib_progress" class="lm-hidden" multiple></select>
               <select id="emby_lib_scrobble" class="lm-hidden" multiple></select>
             </div>
           </div>

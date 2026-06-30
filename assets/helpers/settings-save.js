@@ -124,12 +124,13 @@ function _cwReadLibrarySource(prefix, numeric = false) {
   const readRows = (rootSelector, rowCls, dotCls) => {
     const rows = document.querySelectorAll(`${rootSelector} .${rowCls}`);
     if (!rows.length) return null;
-    const out = { H: [], R: [], S: [] };
+    const out = { H: [], R: [], P: [], S: [] };
     rows.forEach((row) => {
       const id = cast(row.dataset.id);
       if (id == null) return;
       if (row.querySelector(`.${dotCls}hist.on`)) out.H.push(id);
       if (row.querySelector(`.${dotCls}rate.on`)) out.R.push(id);
+      if (row.querySelector(`.${dotCls}prog.on`)) out.P.push(id);
       if (row.querySelector(`.${dotCls}scr.on`)) out.S.push(id);
     });
     return out;
@@ -142,13 +143,13 @@ function _cwReadLibrarySource(prefix, numeric = false) {
   };
   return readRows(`#${prefix}_lib_matrix`, "lm-row", "lm-dot.")
     || readRows(`#${prefix}_lib_whitelist`, "whrow", "whtog.")
-    || { H: readSelect("history"), R: readSelect("ratings"), S: readSelect("scrobble") };
+    || { H: readSelect("history"), R: readSelect("ratings"), P: readSelect("progress"), S: readSelect("scrobble") };
 }
 
 function _cwApplyLibraryConfig(target, prev, src, numeric = false) {
   if (!target || !src) return false;
   let dirty = false;
-  for (const [shortKey, longKey] of [["H", "history"], ["R", "ratings"], ["S", "scrobble"]]) {
+  for (const [shortKey, longKey] of [["H", "history"], ["R", "ratings"], ["P", "progress"], ["S", "scrobble"]]) {
     const nextVals = src[shortKey] || [], prevVals = prev?.[longKey]?.libraries || [];
     if (_cwSameList(nextVals, prevVals, numeric)) continue;
     target[longKey] = { ...(target[longKey] || {}), libraries: nextVals };
@@ -162,7 +163,7 @@ function _cwHydrated(prefix, sectionId, ...flags) {
     || _cwEl(sectionId)?.dataset?.hydrated === "1"
     || document.querySelectorAll(`#${prefix}_lib_matrix .lm-row`).length > 0
     || document.querySelectorAll(`#${prefix}_lib_whitelist .whrow`).length > 0
-    || !!document.querySelector(`#${prefix}_lib_history option, #${prefix}_lib_ratings option, #${prefix}_lib_scrobble option`);
+    || !!document.querySelector(`#${prefix}_lib_history option, #${prefix}_lib_ratings option, #${prefix}_lib_progress option, #${prefix}_lib_scrobble option`);
 }
 
 function _cwToNumList(xs) {
@@ -776,10 +777,11 @@ async function saveSettings() {
       if (uiAid !== null && uiAid !== prevAid) { next.account_id = uiAid; mark(); }
       if (!!_cwEl("plex_verify_ssl")?.checked !== !!prev?.verify_ssl) { next.verify_ssl = !!_cwEl("plex_verify_ssl")?.checked; mark(); }
       if (_cwHydrated("plex", "sec-plex", window.__plexHydrated === true)) {
-        const st = window.__plexState || { hist: new Set(), rate: new Set(), scr: new Set() };
+        const st = window.__plexState || { hist: new Set(), rate: new Set(), prog: new Set(), scr: new Set() };
         const src = {
           H: _cwSelectNums("plex_lib_history") ?? _cwToNumList(st.hist),
           R: _cwSelectNums("plex_lib_ratings") ?? _cwToNumList(st.rate),
+          P: _cwSelectNums("plex_lib_progress") ?? _cwToNumList(st.prog),
           S: _cwSelectNums("plex_lib_scrobble") ?? _cwToNumList(st.scr)
         };
         if (_cwApplyLibraryConfig(next, prev, src, true)) mark();

@@ -1062,7 +1062,7 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
     if not isinstance(plex["scrobble"].get("libraries"), list):
         plex["scrobble"]["libraries"] = []
         changed = True
-    for sec in ("history", "ratings", "scrobble"):
+    for sec in ("history", "progress", "ratings", "scrobble"):
         libs = plex[sec]["libraries"]
         norm = sorted({str(x).strip() for x in libs if str(x).strip()})
         if libs != norm:

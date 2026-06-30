@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 from contextlib import contextmanager
+import copy
 import os
 
 from ._pairs_utils import (
@@ -29,6 +30,43 @@ def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) 
             _deep_merge_provider_overrides(cur, v)
         else:
             dst[kk] = v
+
+
+def _config_with_pair_progress_libraries(
+    cfg: dict[str, Any],
+    fcfg: Mapping[str, Any],
+    providers: tuple[str, str],
+) -> dict[str, Any]:
+    lib_cfg = fcfg.get("libraries")
+    if not isinstance(lib_cfg, Mapping):
+        return cfg
+
+    overrides: dict[str, list[str]] = {}
+    for provider in providers:
+        name = str(provider or "").upper().strip()
+        if name not in {"PLEX", "EMBY", "JELLYFIN"}:
+            continue
+        raw = lib_cfg.get(name) or lib_cfg.get(name.lower())
+        if isinstance(raw, (list, tuple)):
+            values = [str(value).strip() for value in raw if str(value).strip()]
+            if values:
+                overrides[name.lower()] = values
+
+    if not overrides:
+        return cfg
+
+    out = copy.deepcopy(cfg)
+    for provider_key, values in overrides.items():
+        provider_cfg = out.setdefault(provider_key, {})
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            out[provider_key] = provider_cfg
+        progress_cfg = provider_cfg.setdefault("progress", {})
+        if not isinstance(progress_cfg, dict):
+            progress_cfg = {}
+            provider_cfg["progress"] = progress_cfg
+        progress_cfg["libraries"] = values
+    return out
 
 
 
@@ -346,7 +384,11 @@ def run_pairs(ctx) -> dict[str, Any]:
 
             with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
                 prev_cfg = ctx.config
-                ctx.config = pair_cfg_view
+                ctx.config = (
+                    _config_with_pair_progress_libraries(pair_cfg_view, fcfg, (src, dst))
+                    if feature == "progress"
+                    else pair_cfg_view
+                )
                 try:
                     if not injected:
                         inject_ctx_into_provider(sops, ctx)

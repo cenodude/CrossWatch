@@ -12,7 +12,9 @@
 
   let H = new Set(); // history lib ids
   let R = new Set(); // ratings lib ids
+  let P = new Set(); // progress lib ids
   let S = new Set(); // scrobble lib ids
+  let lastLibraries = [];
   let hydrated = false;
   let connected = false;
 
@@ -127,9 +129,11 @@
   function syncHidden() {
     const selH = Q("#emby_lib_history");
     const selR = Q("#emby_lib_ratings");
+    const selP = Q("#emby_lib_progress");
     const selS = Q("#emby_lib_scrobble");
     if (selH) selH.innerHTML = [...H].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selR) selR.innerHTML = [...R].map(id => `<option selected value="${id}">${id}</option>`).join("");
+    if (selP) selP.innerHTML = [...P].map(id => `<option selected value="${id}">${id}</option>`).join("");
     if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
@@ -137,14 +141,17 @@
     const rows = Qa("#emby_lib_matrix .lm-row:not(.hide)");
     const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
     const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
+    const allProg = rows.length && rows.every(r => r.querySelector(".lm-dot.prog")?.classList.contains("on"));
     const allScr = rows.length && rows.every(r => r.querySelector(".lm-dot.scr")?.classList.contains("on"));
-    const h = Q("#emby_hist_all"), r = Q("#emby_rate_all"), s = Q("#emby_scr_all");
+    const h = Q("#emby_hist_all"), r = Q("#emby_rate_all"), p = Q("#emby_prog_all"), s = Q("#emby_scr_all");
     if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
     if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
+    if (p) { p.classList.toggle("on", !!allProg); p.setAttribute("aria-pressed", allProg ? "true" : "false"); }
     if (s) { s.classList.toggle("on", !!allScr); s.setAttribute("aria-pressed", allScr ? "true" : "false"); }
   }
 
   function renderLibraries(libs) {
+    lastLibraries = Array.isArray(libs) ? libs : [];
     const box = Q("#emby_lib_matrix"); if (!box) return;
     box.innerHTML = "";
     const f = document.createDocumentFragment();
@@ -156,6 +163,7 @@
         <div class="lm-name">${ESC(it.title)}</div>
         <button class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
         <button class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>
+        <button class="lm-dot prog${P.has(id) ? " on" : ""}" data-kind="progress" aria-pressed="${P.has(id)}" title="Toggle Progress"></button>
         <button class="lm-dot scr${S.has(id) ? " on" : ""}" data-kind="scrobble" aria-pressed="${S.has(id)}" title="Toggle Scrobble"></button>`;
       f.appendChild(row);
     });
@@ -165,7 +173,11 @@
     syncSelectAll();
   }
 
-  async function embyLoadLibraries() {
+  async function embyLoadLibraries(force = false) {
+    if (!force && lastLibraries.length) {
+      renderLibraries(lastLibraries);
+      return;
+    }
     try {
       const r = await fetch(embyApi(LIB_URL), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
@@ -185,9 +197,12 @@
   async function hydrateFromConfig(force = false) {
     if (hydrated && !force) return;
     try {
-      const r = await fetch("/api/config", { cache: "no-store" });
-      if (!r.ok) return;
-      const cfg = await r.json();
+      let cfg = !force && window.__cfg && Object.keys(window.__cfg).length ? window.__cfg : null;
+      if (!cfg) {
+        const r = await fetch("/api/config", { cache: "no-store" });
+        if (!r.ok) return;
+        cfg = await r.json();
+      }
       window.__cfg = cfg;
       const em = getEmbyCfgBlock(cfg);
 
@@ -201,10 +216,12 @@
 
       H = new Set((em.history?.libraries || []).map(String));
       R = new Set((em.ratings?.libraries || []).map(String));
+      P = new Set((em.progress?.libraries || []).map(String));
       S = new Set((em.scrobble?.libraries || []).map(String));
 
       hydrated = true;
-      await embyLoadLibraries();
+      if (lastLibraries.length) renderLibraries(lastLibraries);
+      else await embyLoadLibraries();
     } catch { /* ignore */ }
   }
 
@@ -322,10 +339,12 @@
 
     em.history = em.history || {};
     em.ratings = em.ratings || {};
+    em.progress = em.progress || {};
     em.scrobble = em.scrobble || {};
 
     em.history.libraries = [...H];
     em.ratings.libraries = [...R];
+    em.progress.libraries = [...P];
     em.scrobble.libraries = [...S];
 
     return cfg;
@@ -345,6 +364,7 @@
       if (id) {
         if (kind === "history") { on ? H.add(id) : H.delete(id); }
         if (kind === "ratings") { on ? R.add(id) : R.delete(id); }
+        if (kind === "progress") { on ? P.add(id) : P.delete(id); }
         if (kind === "scrobble") { on ? S.add(id) : S.delete(id); }
       }
       syncHidden();
@@ -387,6 +407,19 @@
       Qa("#emby_lib_matrix .lm-dot.scr").forEach((x) => {
         x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
         if (on) { const r = x.closest(".lm-row"); if (r) S.add(String(r.dataset.id || "")); }
+      });
+      syncHidden(); syncSelectAll(); return;
+    }
+
+    if (ev?.target?.id === "emby_prog_all") {
+      const b = Q("#emby_prog_all");
+      if (!b) return;
+      const on = !b.classList.contains("on");
+      b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
+      P = new Set();
+      Qa("#emby_lib_matrix .lm-dot.prog").forEach((x) => {
+        x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
+        if (on) { const r = x.closest(".lm-row"); if (r) P.add(String(r.dataset.id || "")); }
       });
       syncHidden(); syncSelectAll(); return;
     }
@@ -448,7 +481,7 @@
     if (t && t.id === "btn-emby-login") embyLogin();
     if (t && t.id === "btn-emby-delete") embyDeleteToken();
     if (t && t.id === "btn-emby-auto") embyAuto();
-    if (t && t.id === "btn-emby-load-libraries") embyLoadLibraries();
+    if (t && t.id === "btn-emby-load-libraries") embyLoadLibraries(true);
   }, true);
 
   document.addEventListener("change", (ev) => {

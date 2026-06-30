@@ -457,13 +457,26 @@ async function plexDeleteToken() {
 }
 
 
-  function getPlexState() { return (w.__plexState ||= { hist: new Set(), rate: new Set(), scr: new Set(), libs: [], hydrated: false, connected: false }); }
+  function getPlexState() {
+    const st = (w.__plexState ||= { hist: new Set(), rate: new Set(), prog: new Set(), scr: new Set(), libs: [], hydrated: false, connected: false });
+    st.prog ||= new Set();
+    return st;
+  }
 
   // Config
   async function hydratePlexFromConfigRaw() {
     try {
       const r = await fetch("/api/config", { cache: "no-store" }); if (!r.ok) return;
       const cfg = await r.json(); const p = getPlexCfgBlock(cfg);
+      w.__cfg = cfg;
+      const st = getPlexState();
+      st.hist = new Set((p.history?.libraries || []).map(x => String(x)));
+      st.rate = new Set((p.ratings?.libraries || []).map(x => String(x)));
+      st.prog = new Set((p.progress?.libraries || []).map(x => String(x)));
+      st.scr  = new Set((p.scrobble?.libraries || []).map(x => String(x)));
+      st.hydrated = true;
+      w.__plexHydrated = true;
+      if (st.libs.length) mountPlexLibraryMatrix();
       await waitFor("#plex_server_url"); await waitFor("#plex_username");
       const set = (id, val) => { const el = $(id); if (el != null && val != null) el.value = String(val); };
       const tok = String(p.account_token || '').trim();
@@ -479,18 +492,12 @@ async function plexDeleteToken() {
       await refreshPlexSelectedUserScopeNotice();
       try { const cb = $("plex_verify_ssl"); if (cb) cb.checked = !!p.verify_ssl; } catch {}
 
-      const st = getPlexState();
-      st.hist = new Set((p.history?.libraries || []).map(x => String(x)));
-      st.rate = new Set((p.ratings?.libraries || []).map(x => String(x)));
-      st.scr  = new Set((p.scrobble?.libraries || []).map(x => String(x)));
-      st.hydrated = true;
-      w.__plexHydrated = true;
-
-      ["plex_lib_history", "plex_lib_ratings", "plex_lib_scrobble"].forEach(id => {
+      ["plex_lib_history", "plex_lib_ratings", "plex_lib_progress", "plex_lib_scrobble"].forEach(id => {
         const el = $(id); if (!el) return;
         Array.from(el.options || []).forEach(o => {
           if (id === "plex_lib_history") o.selected = st.hist.has(o.value);
           if (id === "plex_lib_ratings") o.selected = st.rate.has(o.value);
+          if (id === "plex_lib_progress") o.selected = st.prog.has(o.value);
           if (id === "plex_lib_scrobble") o.selected = st.scr.has(o.value);
         });
       });
@@ -1026,6 +1033,7 @@ const tags = [
       };
       fill("plex_lib_history");
       fill("plex_lib_ratings");
+      fill("plex_lib_progress");
       fill("plex_lib_scrobble");
     } catch (e) {
       console.warn("[plex] library select fill failed", e);
@@ -1059,8 +1067,10 @@ const tags = [
       if (host) host.innerHTML = '<div class="sub">Loading libraries…</div>';
     } catch {}
     try { getPlexState().libs = []; } catch {}
-    try { await hydratePlexFromConfigRaw(); } catch {}
+    const hydrate = hydratePlexFromConfigRaw().catch(() => {});
     try { await plexLoadLibraries(); } catch {}
+    try { mountPlexLibraryMatrix(); } catch {}
+    await hydrate;
     try { mountPlexLibraryMatrix(); } catch {}
   }
 
@@ -1069,6 +1079,7 @@ const tags = [
     const host    = $("plex_lib_matrix");
     const histSel = $("plex_lib_history");
     const rateSel = $("plex_lib_ratings");
+    const progSel = $("plex_lib_progress");
     const scrSel  = $("plex_lib_scrobble");
     const filter  = $("plex_lib_filter");
     if (!host) return;
@@ -1091,6 +1102,7 @@ const tags = [
          <div class="lm-name" title="#${lib.id}">${lib.title} <span class="lm-id">#${lib.id}</span></div>
          <button type="button" class="lm-dot hist ${st.hist.has(lib.id) ? "on" : ""}" aria-label="History" aria-pressed="${st.hist.has(lib.id)}"></button>
          <button type="button" class="lm-dot rate ${st.rate.has(lib.id) ? "on" : ""}" aria-label="Ratings" aria-pressed="${st.rate.has(lib.id)}"></button>
+         <button type="button" class="lm-dot prog ${st.prog.has(lib.id) ? "on" : ""}" aria-label="Progress" aria-pressed="${st.prog.has(lib.id)}"></button>
          <button type="button" class="lm-dot scr ${st.scr.has(lib.id) ? "on" : ""}" aria-label="Scrobble" aria-pressed="${st.scr.has(lib.id)}"></button>
        </div>`;
 
@@ -1117,12 +1129,14 @@ const tags = [
       applyFilter();
       setSelFromSet(histSel, st.hist);
       setSelFromSet(rateSel, st.rate);
+      setSelFromSet(progSel, st.prog);
       setSelFromSet(scrSel,  st.scr);
     }
 
     function toggleOne(id, which) {
       if (which === "hist") { st.hist.has(id) ? st.hist.delete(id) : st.hist.add(id); render(); return; }
       if (which === "rate") { st.rate.has(id) ? st.rate.delete(id) : st.rate.add(id); render(); return; }
+      if (which === "prog") { st.prog.has(id) ? st.prog.delete(id) : st.prog.add(id); render(); return; }
       if (which === "scr")  { st.scr.has(id) ? st.scr.delete(id) : st.scr.add(id);  render(); return; }
     }
 
@@ -1130,7 +1144,7 @@ const tags = [
       host.addEventListener("click", (ev) => {
         const btn = ev.target.closest(".lm-dot"); if (!btn) return;
         const row = ev.target.closest(".lm-row"); const id = row?.dataset?.id; if (!id) return;
-        const which = btn.classList.contains("hist") ? "hist" : (btn.classList.contains("scr") ? "scr" : "rate");
+        const which = btn.classList.contains("hist") ? "hist" : (btn.classList.contains("scr") ? "scr" : (btn.classList.contains("prog") ? "prog" : "rate"));
         toggleOne(id, which);
       });
 
@@ -1155,6 +1169,13 @@ const tags = [
         render();
       });
 
+      $("plex_prog_all")?.addEventListener("click", () => {
+        const visible = Array.from(host.querySelectorAll(".lm-row:not(.hide)")).map(r => r.dataset.id);
+        const allOn = visible.every(id => st.prog.has(id));
+        if (allOn) visible.forEach(id => st.prog.delete(id)); else visible.forEach(id => st.prog.add(id));
+        render();
+      });
+
       filter?.addEventListener("input", applyFilter);
 
       histSel?.addEventListener("change", () => {
@@ -1165,6 +1186,11 @@ const tags = [
       rateSel?.addEventListener("change", () => {
         if (syncing) return;
         st.rate = new Set(Array.from(rateSel.selectedOptions || []).map(o => String(o.value)));
+        render();
+      });
+      progSel?.addEventListener("change", () => {
+        if (syncing) return;
+        st.prog = new Set(Array.from(progSel.selectedOptions || []).map(o => String(o.value)));
         render();
       });
       scrSel?.addEventListener("change", () => {
@@ -1214,15 +1240,17 @@ const tags = [
     const st = getPlexState();
     const uiReady = !!st.hydrated ||
       !!document.querySelector("#plex_lib_matrix .lm-row") ||
-      !!document.querySelector("#plex_lib_history option, #plex_lib_ratings option, #plex_lib_scrobble option");
+      !!document.querySelector("#plex_lib_history option, #plex_lib_ratings option, #plex_lib_progress option, #plex_lib_scrobble option");
     if (uiReady) {
       const toInts = (set) => Array.from(set || []).map(x => parseInt(String(x), 10)).filter(Number.isFinite);
       const hist = toInts(st.hist);
       const rate = toInts(st.rate);
+      const prog = toInts(st.prog);
       const scr  = toInts(st.scr);
       plex.scrobble = Object.assign({}, plex.scrobble || {}, { libraries: scr });
       plex.history  = Object.assign({}, plex.history  || {}, { libraries: hist });
       plex.ratings  = Object.assign({}, plex.ratings  || {}, { libraries: rate });
+      plex.progress = Object.assign({}, plex.progress || {}, { libraries: prog });
     }
     return cfg;
   }

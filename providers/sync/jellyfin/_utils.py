@@ -57,7 +57,7 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
     jf = _jellyfin(cfg2, instance_id)
     changed = False
 
-    for sec in ("history", "ratings", "scrobble"):
+    for sec in ("history", "progress", "ratings", "scrobble"):
         if sec not in jf or not isinstance(jf.get(sec), dict):
             jf[sec] = {}
             changed = True

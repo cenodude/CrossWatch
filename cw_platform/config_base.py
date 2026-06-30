@@ -207,6 +207,9 @@ DEFAULT_CFG: dict[str, Any] = {
             "libraries": [],                            # Whitelist of library GUIDs; empty = all
             "include_marked_watched": True,             # Include items manually marked as watched in Plex
         },
+        "progress": {
+            "libraries": [],                            # Whitelist for resumable items; empty = all
+        },
         "ratings": {
             "libraries": [],                            # Whitelist of library GUIDs; empty = all
         },
@@ -214,6 +217,8 @@ DEFAULT_CFG: dict[str, Any] = {
         # Ratings / History
         "rating_workers": 12,                           # Parallel workers for Plex ratings indexing. 12–16 is ideal on a local NAS.
         "history_workers": 12,                          # Parallel workers for Plex history indexing. 12–16 is ideal on a local NAS.
+        "progress_clock_drift_seconds": 30,             # Timestamp tolerance before a newer target blocks a progress write.
+        "progress_replay_enabled": False,               # Allow progress writes to already watched Plex items.
 
         # Watchlist via Discover (with PMS fallback toggle)
         "watchlist_allow_pms_fallback": False,          # Allow PMS watchlist fallback when needed. Keep False for strict Discover-only behavior.
@@ -426,6 +431,10 @@ DEFAULT_CFG: dict[str, Any] = {
             "libraries": []                             # whitelist of library GUIDs (from /api/jellyfin/libraries.key); empty = all
         },
 
+        "progress": {
+            "libraries": []                             # whitelist for resumable items; empty = all
+        },
+
         # Ratings settings
         "ratings": {
             "ratings_query_limit": 2000,                # ratings query limit, default 2000
@@ -469,6 +478,10 @@ DEFAULT_CFG: dict[str, Any] = {
                 "agent:themoviedb:en", "agent:themoviedb", "agent:imdb"
             ],
             "libraries": []                             # whitelist of library GUIDs (from /api/emby/libraries.key); empty = all
+        },
+
+        "progress": {
+            "libraries": []                             # whitelist for resumable items; empty = all
         },
 
         # Ratings settings

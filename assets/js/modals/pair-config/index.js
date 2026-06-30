@@ -665,9 +665,11 @@ function applySubDisable(feature){
 function countProviderLibraries(state, providerName){
   const historyLibs = state.options?.history?.libraries?.[providerName];
   const ratingsLibs = state.options?.ratings?.libraries?.[providerName];
+  const progressLibs = state.options?.progress?.libraries?.[providerName];
   const historyCount = Array.isArray(historyLibs) ? historyLibs.length : 0;
   const ratingsCount = Array.isArray(ratingsLibs) ? ratingsLibs.length : 0;
-  return historyCount + ratingsCount;
+  const progressCount = Array.isArray(progressLibs) ? progressLibs.length : 0;
+  return historyCount + ratingsCount + progressCount;
 }
 
 function getProviderOverrideCount(state, providerKey){
@@ -792,6 +794,10 @@ function renderFeaturePanel(state){
               <div class="field-label">Ratings</div>
               <div class="chip-row" id="plx-rate-libs"></div>
             </div>
+            <div class="opt-row">
+              <div class="field-label">Progress</div>
+              <div class="chip-row" id="plx-prog-libs"></div>
+            </div>
             <button type="button" class="cx-btn small" id="plx-libs-load">Load libraries</button>
           </div>
         </div>
@@ -829,6 +835,10 @@ function renderFeaturePanel(state){
               <div class="field-label">Ratings</div>
               <div class="chip-row" id="jf-rate-libs"></div>
             </div>
+            <div class="opt-row">
+              <div class="field-label">Progress</div>
+              <div class="chip-row" id="jf-prog-libs"></div>
+            </div>
             <button type="button" class="cx-btn small" id="jf-libs-load">Load libraries</button>
           </div>
         </div>
@@ -865,6 +875,10 @@ function renderFeaturePanel(state){
             <div class="opt-row">
               <div class="field-label">Ratings</div>
               <div class="chip-row" id="em-rate-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Progress</div>
+              <div class="chip-row" id="em-prog-libs"></div>
             </div>
             <button type="button" class="cx-btn small" id="em-libs-load">Load libraries</button>
           </div>

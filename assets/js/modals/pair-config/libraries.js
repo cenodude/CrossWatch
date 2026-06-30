@@ -87,10 +87,13 @@ export function createLibraryController({
     let hostId = "";
     if (kind === "PLEX" && feature === "history") hostId = "plx-hist-libs";
     else if (kind === "PLEX" && feature === "ratings") hostId = "plx-rate-libs";
+    else if (kind === "PLEX" && feature === "progress") hostId = "plx-prog-libs";
     else if (kind === "JELLYFIN" && feature === "history") hostId = "jf-hist-libs";
     else if (kind === "JELLYFIN" && feature === "ratings") hostId = "jf-rate-libs";
+    else if (kind === "JELLYFIN" && feature === "progress") hostId = "jf-prog-libs";
     else if (kind === "EMBY" && feature === "history") hostId = "em-hist-libs";
     else if (kind === "EMBY" && feature === "ratings") hostId = "em-rate-libs";
+    else if (kind === "EMBY" && feature === "progress") hostId = "em-prog-libs";
     const host = ID(hostId);
     if (!host) return;
     const info = getFeatureLibraries(state, feature, kind);
@@ -138,6 +141,9 @@ export function createLibraryController({
         }),
         fetchPairLibraries(kind, "ratings").then((libs) => {
           renderPairLibChips(state, kind, "ratings", libs);
+        }),
+        fetchPairLibraries(kind, "progress").then((libs) => {
+          renderPairLibChips(state, kind, "progress", libs);
         }),
       ]).finally(() => {
         if (btn) {
