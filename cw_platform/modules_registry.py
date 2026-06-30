@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from collections.abc import Mapping
 from importlib import import_module
 from typing import Any
 
@@ -47,3 +48,22 @@ def load_sync_ops(name: str) -> Any | None:
         return None
     mod = import_module(path)
     return getattr(mod, "OPS", None)
+
+
+def state_read_features(ops: Any) -> dict[str, bool]:
+    """Return features that can provide a complete provider-state inventory.
+    Providers may still support writes for a feature that cannot be enumerated
+    completely. Captures and provider-state imports must only use the latter.
+    """
+    fn = getattr(ops, "state_read_features", None)
+    if not callable(fn):
+        fn = getattr(ops, "features", None)
+    if not callable(fn):
+        return {}
+    try:
+        raw = fn() or {}
+    except Exception:
+        return {}
+    if not isinstance(raw, Mapping):
+        return {}
+    return {str(key): bool(value) for key, value in raw.items()}
