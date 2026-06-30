@@ -76,7 +76,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
 os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
@@ -215,6 +215,7 @@ class EMBYConfig:
     history_backdate: bool = False
     history_backdate_tolerance_s: int = 300
     history_libraries: list[str] | None = None
+    progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
 
 
@@ -318,6 +319,7 @@ class EMBYModule:
         hi_qlim = int(hi.get("history_query_limit", 25) or 25)
         hi_wdel = int(hi.get("history_write_delay_ms", 0) or 0)
         hi_gprio = hi.get("history_guid_priority") or wl_gprio
+        pr = dict(em.get("progress") or {})
         ra = dict(em.get("ratings") or {})
 
         def _list_str(v: Any) -> list[str] | None:
@@ -366,6 +368,7 @@ class EMBYModule:
             history_write_delay_ms=hi_wdel,
             history_guid_priority=list(hi_gprio),
             history_libraries=_list_str(hi.get("libraries")),
+            progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
             history_force_overwrite=force_overwrite,
             history_backdate=backdate,
