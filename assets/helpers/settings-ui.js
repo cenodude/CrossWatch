@@ -1328,7 +1328,7 @@ async function loadConfig() {
     _setSelectValue("debug", mode);
   })();
   _setVal("metadata_locale", cfg.metadata?.locale || "");
-  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 72));
+  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 720));
 
   
   (function () {

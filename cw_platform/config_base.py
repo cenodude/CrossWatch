@@ -554,7 +554,7 @@ DEFAULT_CFG: dict[str, Any] = {
     # --- Metadata (TMDb resolver) -------------------------------------------
     "metadata": {
         "locale": "en-US",                              # example: "en-US" / "nl-NL"
-        "ttl_hours": 72,                                # Coarse cache TTL
+        "ttl_hours": 720,                               # Metadata cache TTL (30 days)
     },
 
     # --- Anime ID Mapping ----------------------------------------------------
