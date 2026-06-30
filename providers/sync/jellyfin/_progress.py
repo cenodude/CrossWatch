@@ -9,6 +9,8 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key
 
 from ._common import (
+    jf_item_library_ids,
+    jf_selected_library_ids,
     make_logger,
     normalize as jelly_normalize,
     resolve_item_id,
@@ -58,39 +60,74 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     if not http or not uid:
         return {}
 
-    params: dict[str, Any] = {
+    base_params: dict[str, Any] = {
         "Recursive": True,
         "IncludeItemTypes": "Movie,Episode",
-        "Fields": "UserData,ProviderIds,RunTimeTicks,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,Name",
+        "Fields": "UserData,ProviderIds,RunTimeTicks,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
         "EnableUserData": True,
         "IsResumable": True,
-        "Limit": 10_000,
     }
-
-    try:
-        r = http.get(f"/Users/{uid}/Items", params=params)
-        if getattr(r, "status_code", 0) != 200:
-            _warn("http_failed", op="build_index", status=getattr(r, "status_code", None))
-            return {}
-        body = r.json() or {}
-        rows = body.get("Items") or []
-        if not isinstance(rows, list):
-            return {}
-    except Exception as e:
-        _warn("http_failed", op="build_index", error=str(e))
-        return {}
+    allowed = jf_selected_library_ids(adapter.cfg, "progress")
+    if not allowed:
+        _dbg("library_scope_not_configured")
+    parents: list[str | None] = list(sorted(allowed))
+    if not parents:
+        parents.append(None)
+    rows: list[tuple[Mapping[str, Any], str | None]] = []
+    seen_item_ids: set[str] = set()
+    page_size = 500
+    for parent_id in parents:
+        start = 0
+        while True:
+            params = dict(base_params)
+            params.update({"StartIndex": start, "Limit": page_size, "EnableTotalRecordCount": True})
+            if parent_id:
+                params["ParentId"] = parent_id
+            try:
+                r = http.get(f"/Users/{uid}/Items", params=params)
+                if getattr(r, "status_code", 0) != 200:
+                    _warn("library_scope_query_failed", source_library_id=parent_id, allowed_library_ids=sorted(allowed), status=getattr(r, "status_code", None))
+                    break
+                body = r.json() or {}
+                page = body.get("Items") or []
+                if not isinstance(page, list):
+                    break
+            except Exception as e:
+                _warn("library_scope_query_failed", source_library_id=parent_id, allowed_library_ids=sorted(allowed), error=str(e))
+                break
+            new_count = 0
+            for raw in page:
+                if not isinstance(raw, Mapping):
+                    continue
+                item_id = str(raw.get("Id") or "").strip()
+                if item_id and item_id in seen_item_ids:
+                    _dbg("duplicate_progress_item", provider_item_id=item_id, source_library_id=parent_id, item_title=str(raw.get("Name") or ""), media_type=str(raw.get("Type") or ""))
+                    continue
+                if item_id:
+                    seen_item_ids.add(item_id)
+                rows.append((raw, parent_id))
+                new_count += 1
+            start += len(page)
+            total = int(body.get("TotalRecordCount") or 0)
+            if not page or (total and start >= total) or len(page) < page_size or new_count == 0:
+                break
 
     out: dict[str, dict[str, Any]] = {}
     total_rows = 0
     dup_keys = 0
-    for raw in rows:
-        if not isinstance(raw, Mapping):
-            continue
+    for raw, source_library_id in rows:
         total_rows += 1
+        if allowed:
+            memberships = jf_item_library_ids(raw)
+            if memberships and not (memberships & allowed):
+                _dbg("outside_library_scope", provider_item_id=str(raw.get("Id") or ""), source_library_id=source_library_id, allowed_library_ids=sorted(allowed), item_title=str(raw.get("Name") or ""), media_type=str(raw.get("Type") or ""), provider_ids=dict(raw.get("ProviderIds") or {}))
+                continue
         try:
             item = jelly_normalize(raw)
         except Exception:
             continue
+        if source_library_id:
+            item["library_id"] = source_library_id
 
         ud = _pick_user_data(raw)
         pos_ms = _ticks_to_ms(ud.get("PlaybackPositionTicks"))
@@ -144,7 +181,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             action=action,
         )
 
-    _info("index_done", count=len(out), rows=total_rows, dup_keys=dup_keys)
+    _info("index_done", count=len(out), rows=total_rows, dup_keys=dup_keys, allowed_library_ids=sorted(allowed), scope_enabled=bool(allowed))
     return out
 
 
@@ -161,10 +198,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         it0 = dict(it or {})
         ck = canonical_key(it0) or ""
         ids = dict(it0.get("ids") or {})
-        iids = resolve_item_ids(adapter, it0)
+        iids = resolve_item_ids(adapter, it0, feature="progress")
         if not iids:
             _dbg("resolve_miss", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids)
-            unresolved.append({"item": it0, "hint": "not_found"})
+            unresolved.append({"item": it0, "hint": str(getattr(adapter, "_jellyfin_last_resolve_hint", "") or "not_found")})
             continue
         _dbg("resolve_hit", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids, resolved=len(iids))
 
@@ -212,7 +249,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     for it in items or []:
         it0 = dict(it or {})
         ck = canonical_key(it0) or ""
-        iid = resolve_item_id(adapter, it0)
+        iid = resolve_item_id(adapter, it0, feature="progress")
         if not iid:
             _dbg("resolve_miss", canonical_key=str(ck))
             unresolved.append({"item": it0, "hint": "not_found"})

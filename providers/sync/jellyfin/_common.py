@@ -2,7 +2,7 @@
 # JELLYFIN Module for common functions
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
-from typing import Any, Mapping, Iterable
+from typing import Any, Mapping, Iterable, Sequence
 
 import json
 import os
@@ -202,6 +202,44 @@ def with_jf_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> dict
 
 def jf_scope_history(cfg: CfgLike) -> dict[str, Any]:
     return jf_library_scope(cfg, "history")
+
+
+def jf_selected_library_ids(cfg: CfgLike, feature: str = "history") -> set[str]:
+    scope = jf_scope_history(cfg) if feature == "history" else jf_library_scope(cfg, feature)
+    parent = scope.get("ParentId")
+    if parent:
+        return {str(parent)}
+    ancestors = scope.get("AncestorIds") or []
+    return {str(value) for value in ancestors if value}
+
+
+def jf_item_library_ids(item: Mapping[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for key in ("LibraryId", "CollectionFolderId"):
+        value = item.get(key)
+        if value:
+            out.add(str(value))
+    ancestors = item.get("AncestorIds") or []
+    if isinstance(ancestors, (list, tuple, set)):
+        out.update(str(value) for value in ancestors if value)
+    return out
+
+
+def jf_filter_library_candidates(
+    rows: Iterable[Mapping[str, Any]],
+    allowed: set[str],
+    *,
+    trust_query_scope: bool = False,
+) -> list[Mapping[str, Any]]:
+    candidates = list(rows)
+    if not allowed:
+        return candidates
+    matched = [row for row in candidates if jf_item_library_ids(row) & allowed]
+    if matched:
+        return matched
+    if trust_query_scope and not any(jf_item_library_ids(row) for row in candidates):
+        return candidates
+    return []
 
 
 def jf_scope_ratings(cfg: CfgLike) -> dict[str, Any]:
@@ -594,9 +632,10 @@ def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> list[st
 
 
 # provider index
-def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
+def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[str, list[dict[str, Any]]]:
     cache = getattr(adapter, "_provider_index_cache", None)
-    if isinstance(cache, dict) and cache:
+    scope_key = tuple(sorted(jf_selected_library_ids(adapter.cfg, feature or "history")))
+    if isinstance(cache, dict) and cache and getattr(adapter, "_provider_index_scope", None) == scope_key:
         return cache
 
     http = adapter.client
@@ -615,7 +654,7 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
             "Limit": limit,
             "EnableTotalRecordCount": True,
         }
-        params.update(jf_scope_any(adapter.cfg))
+        params.update(jf_library_scope(adapter.cfg, feature) if feature else jf_scope_any(adapter.cfg))
         r = http.get(f"/Users/{uid}/Items", params=params)
         body = r.json() or {}
         items = body.get("Items") or []
@@ -650,6 +689,7 @@ def build_provider_index(adapter: Any) -> dict[str, list[dict[str, Any]]]:
         rows.sort(key=lambda r: str(r.get("Id") or ""))
     _dbg('index_done', source='provider_index', count=len(out))
     setattr(adapter, "_provider_index_cache", out)
+    setattr(adapter, "_provider_index_scope", scope_key)
     return out
 
 
@@ -937,12 +977,12 @@ def update_userdata(http: Any, user_id: str, item_id: str, payload: Mapping[str,
 
 # resolver (movie/show/episode)
 def _pick_from_candidates(
-    cands: list[dict[str, Any]],
+    cands: Sequence[Mapping[str, Any]],
     *,
     want_type: str | None,
     want_year: int | None,
 ) -> str | None:
-    def score_val(row: dict[str, Any]) -> tuple[int, int, str]:
+    def score_val(row: Mapping[str, Any]) -> tuple[int, int, str]:
         t = (row.get("Type") or "").strip()
         y = row.get("ProductionYear")
         s = 0
@@ -967,9 +1007,54 @@ def _pick_from_candidates(
     return str(iid) if iid and not looks_like_bad_id(iid) else None
 
 
-def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
+def _direct_query_by_pairs(
+    http: Any,
+    uid: str,
+    pairs: list[str],
+    include_types: str,
+    scope: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    if not pairs:
+        return []
+    q: dict[str, Any] = {
+        "AnyProviderIdEquals": ",".join(pairs),
+        "IncludeItemTypes": include_types,
+        "Recursive": True,
+        "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
+        "Limit": 50,
+        "UserId": uid,
+    }
+    q.update(scope or {})
+    try:
+        r = http.get(f"/Users/{uid}/Items", params=q)
+        if getattr(r, "status_code", 0) != 200:
+            return []
+        body = r.json() or {}
+        return body.get("Items") or []
+    except Exception:
+        return []
+
+
+def _episode_number_matches(row: Mapping[str, Any], season: Any, episode: Any) -> bool:
+    row_season = row.get("ParentIndexNumber")
+    row_episode = row.get("IndexNumber")
+    if row_season is None or row_episode is None or season is None or episode is None:
+        return False
+    try:
+        return (
+            int(row_season) == int(season)
+            and int(row_episode) == int(episode)
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "history") -> str | None:
     http = adapter.client
     uid = adapter.cfg.user_id
+    selected_libs = jf_selected_library_ids(adapter.cfg, feature)
+    setattr(adapter, "_jellyfin_last_resolve_hint", None)
+    outside_scope_seen = False
 
     # Prefer native Jellyfin item id when present.
     raw_iid = it.get("jellyfin_item_id") or it.get("_jellyfin_item_id")
@@ -984,8 +1069,24 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
 
     jf = ids.get("jellyfin")
     if jf and not looks_like_bad_id(jf):
-        _dbg('resolve_hit', kind='direct', method='provider_id', item_id=str(jf))
-        return str(jf)
+        if selected_libs:
+            try:
+                response = http.get(
+                    f"/Users/{uid}/Items/{jf}",
+                    params={"Fields": "LibraryId,CollectionFolderId,AncestorIds,ParentId,Type"},
+                )
+                row = response.json() or {} if getattr(response, "status_code", 0) == 200 else {}
+            except Exception:
+                row = {}
+            if not jf_filter_library_candidates([row] if row else [], selected_libs):
+                outside_scope_seen = True
+                setattr(adapter, "_jellyfin_last_resolve_hint", "outside_library_scope")
+                _dbg('target_candidate_outside_library_scope', item_id=str(jf), allowed_library_ids=sorted(selected_libs), resolution_method='provider_id')
+            else:
+                return str(jf)
+        else:
+            _dbg('resolve_hit', kind='direct', method='provider_id', item_id=str(jf))
+            return str(jf)
 
     t = _lookup_type(it)
     title = (it.get("title") or "").strip()
@@ -997,20 +1098,23 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
     strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
 
     prio = guid_priority_from_cfg(getattr(getattr(adapter, "cfg", None), "watchlist_guid_priority", None))
-    pairs = all_ext_pairs(ids, prio)
+    episode_pairs = all_ext_pairs(ids, prio)
+    series_pairs = all_ext_pairs(show_ids, prio) if show_ids else []
+    pairs = list(episode_pairs)
 
-    if show_ids:
-        spairs = all_ext_pairs(show_ids, prio)
-        for p in spairs:
+    if series_pairs:
+        for p in series_pairs:
             if p not in pairs:
                 pairs.append(p)
 
-    idx = build_provider_index(adapter)
-
     # Movies
     if t == "movie":
+        idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
         for pref in pairs:
-            cands = idx.get(pref) or []
+            raw_cands = idx.get(pref) or []
+            cands = jf_filter_library_candidates(raw_cands, selected_libs)
+            if raw_cands and not cands and selected_libs:
+                outside_scope_seen = True
             iid = _pick_from_candidates(cands, want_type="movie", want_year=year)
             if iid:
                 _dbg('resolve_hit', kind='movie', method='provider_index', pref=pref, item_id=iid)
@@ -1025,11 +1129,15 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                     "Fields": "ProviderIds,ProductionYear,Type",
                     "Limit": 50,
                 }
-                q.update(jf_scope_any(adapter.cfg))
+                q.update(jf_library_scope(adapter.cfg, feature))
                 r = http.get("/Items", params=q)
                 t_l = title.lower()
                 cand: list[Mapping[str, Any]] = []
-                for row in (r.json() or {}).get("Items") or []:
+                raw_rows = (r.json() or {}).get("Items") or []
+                scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
+                if raw_rows and not scoped_rows and selected_libs:
+                    outside_scope_seen = True
+                for row in scoped_rows:
                     if (row.get("Type") or "") != "Movie":
                         continue
                     nm = (row.get("Name") or "").strip().lower()
@@ -1045,12 +1153,18 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             except Exception:
                 pass
         _dbg('resolve_miss', kind='movie', title=title, year=year)
+        if outside_scope_seen:
+            setattr(adapter, "_jellyfin_last_resolve_hint", "outside_library_scope")
         return None
 
     # Shows
     if t in ("show", "series"):
+        idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
         for pref in pairs:
-            rows = idx.get(pref) or []
+            raw_rows = idx.get(pref) or []
+            rows = jf_filter_library_candidates(raw_rows, selected_libs)
+            if raw_rows and not rows and selected_libs:
+                outside_scope_seen = True
             cands = [row for row in rows if (row.get("Type") or "").strip() == "Series"]
             iid = _pick_from_candidates(cands, want_type="show", want_year=year)
             if iid:
@@ -1066,11 +1180,15 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                     "Fields": "ProviderIds,ProductionYear,Type",
                     "Limit": 50,
                 }
-                q.update(jf_scope_any(adapter.cfg))
+                q.update(jf_library_scope(adapter.cfg, feature))
                 r = http.get("/Items", params=q)
                 title_lc = title.lower()
                 cand = []
-                for row in (r.json() or {}).get("Items") or []:
+                raw_rows = (r.json() or {}).get("Items") or []
+                scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
+                if raw_rows and not scoped_rows and selected_libs:
+                    outside_scope_seen = True
+                for row in scoped_rows:
                     if (row.get("Type") or "") != "Series":
                         continue
                     nm = (row.get("Name") or "").strip().lower()
@@ -1088,14 +1206,95 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             except Exception:
                 pass
         _dbg('resolve_miss', kind='series', title=title, year=year)
+        if outside_scope_seen:
+            setattr(adapter, "_jellyfin_last_resolve_hint", "outside_library_scope")
         return None
 
     # Episodes
+    scope = jf_library_scope(adapter.cfg, feature)
+    for pref in episode_pairs:
+        rows = _direct_query_by_pairs(http, uid, [pref], "Episode,Series", scope)
+        episode_rows: list[Mapping[str, Any]] = []
+        seen_episode_ids: set[str] = set()
+        filtered_rows = jf_filter_library_candidates(rows, selected_libs, trust_query_scope=True)
+        if rows and not filtered_rows and selected_libs:
+            outside_scope_seen = True
+        for row in filtered_rows:
+            iid = str(row.get("Id") or "").strip()
+            if (row.get("Type") or "") != "Episode" or not iid or looks_like_bad_id(iid):
+                continue
+            if iid not in seen_episode_ids:
+                seen_episode_ids.add(iid)
+                episode_rows.append(row)
+        provider_type, _, provider_value = pref.partition(".")
+        if len(episode_rows) == 1:
+            iid = str(episode_rows[0]["Id"])
+            _dbg(
+                'resolve_hit',
+                kind='episode',
+                method='exact_episode_provider_id',
+                provider_type=provider_type,
+                provider_value=provider_value,
+                item_id=iid,
+            )
+            return iid
+        if len(episode_rows) > 1:
+            numbered = [
+                row
+                for row in episode_rows
+                if _episode_number_matches(row, season, episode)
+            ]
+            if len(numbered) == 1:
+                iid = str(numbered[0]["Id"])
+                _dbg(
+                    'resolve_hit',
+                    kind='episode',
+                    method='episode_provider_id_number_disambiguation',
+                    provider_type=provider_type,
+                    provider_value=provider_value,
+                    season=season,
+                    episode=episode,
+                    item_id=iid,
+                )
+                return iid
+            _dbg(
+                'resolve_miss',
+                kind='episode',
+                method='ambiguous_episode_provider_id',
+                provider_type=provider_type,
+                provider_value=provider_value,
+                candidate_count=len(episode_rows),
+                numbered_candidate_count=len(numbered),
+                season=season,
+                episode=episode,
+            )
+
     series_row: dict[str, Any] | None = None
-    if pairs:
-        series_row = find_series_in_index(adapter, pairs)
-        if series_row:
-            _dbg('resolve_hit', kind='series', method='provider_index_candidate')
+    matched_series_pair: str | None = None
+    for pref in series_pairs:
+        rows = _direct_query_by_pairs(http, uid, [pref], "Series", scope)
+        scoped_rows = jf_filter_library_candidates(rows, selected_libs, trust_query_scope=True)
+        if rows and not scoped_rows and selected_libs:
+            outside_scope_seen = True
+        series_rows = [row for row in scoped_rows if (row.get("Type") or "") == "Series"]
+        if series_rows:
+            series_row = dict(series_rows[0])
+            matched_series_pair = pref
+            break
+    if not series_row and series_pairs:
+        idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
+        for pref in series_pairs:
+            raw_rows = idx.get(pref) or []
+            rows = jf_filter_library_candidates(raw_rows, selected_libs)
+            if raw_rows and not rows and selected_libs:
+                outside_scope_seen = True
+            series_row = next(
+                (dict(row) for row in rows if (row.get("Type") or "").strip() == "Series"),
+                None,
+            )
+            if series_row:
+                matched_series_pair = pref
+                break
     if not series_row and series_title and not strict:
         try:
             q = {
@@ -1106,11 +1305,15 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 "Fields": "ProviderIds,ProductionYear,Type",
                 "Limit": 50,
             }
-            q.update(jf_scope_any(adapter.cfg))
+            q.update(jf_library_scope(adapter.cfg, feature))
             r = http.get("/Items", params=q)
             t_l = series_title.lower()
             cands = []
-            for row in (r.json() or {}).get("Items") or []:
+            raw_rows = (r.json() or {}).get("Items") or []
+            scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
+            if raw_rows and not scoped_rows and selected_libs:
+                outside_scope_seen = True
+            for row in scoped_rows:
                 if (row.get("Type") or "") != "Series":
                     continue
                 nm = (row.get("Name") or "").strip().lower()
@@ -1133,7 +1336,16 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 if isinstance(s, int) and isinstance(e, int) and s == int(season) and e == int(episode):
                     iid = row.get("Id")
                     if iid and not looks_like_bad_id(iid):
-                        _dbg('resolve_hit', kind='episode', method='series_episodes', season=int(season), episode=int(episode), item_id=str(iid))
+                        _dbg(
+                            'resolve_hit',
+                            kind='episode',
+                            method='show_provider_id_episode_number',
+                            provider_type=(matched_series_pair or '').partition('.')[0],
+                            provider_value=(matched_series_pair or '').partition('.')[2],
+                            season=int(season),
+                            episode=int(episode),
+                            item_id=str(iid),
+                        )
                         return str(iid)
 
     if title and not strict:
@@ -1146,10 +1358,14 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
                 "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId",
                 "Limit": 50,
             }
-            q.update(jf_scope_any(adapter.cfg))
+            q.update(jf_library_scope(adapter.cfg, feature))
             r = http.get("/Items", params=q)
             t_l = title.lower()
-            for row in (r.json() or {}).get("Items") or []:
+            raw_rows = (r.json() or {}).get("Items") or []
+            scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
+            if raw_rows and not scoped_rows and selected_libs:
+                outside_scope_seen = True
+            for row in scoped_rows:
                 if (row.get("Type") or "") != "Episode":
                     continue
                 nm = (row.get("Name") or "").strip().lower()
@@ -1164,10 +1380,12 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any]) -> str | None:
             pass
 
     _dbg('resolve_miss', kind='episode', title=title, series_title=series_title, season=season, episode=episode)
+    if outside_scope_seen:
+        setattr(adapter, "_jellyfin_last_resolve_hint", "outside_library_scope")
     return None
 
 
-def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
+def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "history") -> list[str]:
     http = getattr(adapter, "client", None)
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None)
     if not http or not uid:
@@ -1180,7 +1398,8 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
         if s and not looks_like_bad_id(s):
             return [s]
 
-    one = resolve_item_id(adapter, it)
+    one = resolve_item_id(adapter, it, feature=feature)
+    selected_libs = jf_selected_library_ids(adapter.cfg, feature)
 
     ids = dict(it.get("ids") or {})
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
@@ -1202,7 +1421,7 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
             if p not in pairs:
                 pairs.append(p)
 
-    idx = build_provider_index(adapter)
+    idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
 
     def _valid(iid: Any) -> str | None:
         s = str(iid or "").strip()
@@ -1213,7 +1432,7 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
     # Movies
     if t == "movie":
         for pref in pairs:
-            rows = idx.get(pref) or []
+            rows = jf_filter_library_candidates(idx.get(pref) or [], selected_libs)
             cands = [row for row in rows if (row.get("Type") or "") == "Movie"]
             if isinstance(year, int):
                 yr = int(year)
@@ -1240,10 +1459,10 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
                     "Fields": "ProviderIds,ProductionYear,Type",
                     "Limit": 50,
                 }
-                q.update(jf_scope_any(adapter.cfg))
+                q.update(jf_library_scope(adapter.cfg, feature))
                 r = http.get("/Items", params=q)
                 t_l = title.lower()
-                for row in (r.json() or {}).get("Items") or []:
+                for row in jf_filter_library_candidates((r.json() or {}).get("Items") or [], selected_libs, trust_query_scope=True):
                     if (row.get("Type") or "") != "Movie":
                         continue
                     nm = (row.get("Name") or "").strip().lower()
@@ -1261,7 +1480,7 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
     # Episodes
     if t == "episode":
         for pref in pairs:
-            rows = idx.get(pref) or []
+            rows = jf_filter_library_candidates(idx.get(pref) or [], selected_libs)
             cands = [row for row in rows if (row.get("Type") or "") == "Episode"]
             for row in cands:
                 try:
@@ -1287,10 +1506,10 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any]) -> list[str]:
                     "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesName",
                     "Limit": 200,
                 }
-                q.update(jf_scope_any(adapter.cfg))
+                q.update(jf_library_scope(adapter.cfg, feature))
                 r = http.get("/Items", params=q)
                 st_l = series_title.lower()
-                for row in (r.json() or {}).get("Items") or []:
+                for row in jf_filter_library_candidates((r.json() or {}).get("Items") or [], selected_libs, trust_query_scope=True):
                     if (row.get("Type") or "") != "Episode":
                         continue
                     sn = (row.get("SeriesName") or "").strip().lower()

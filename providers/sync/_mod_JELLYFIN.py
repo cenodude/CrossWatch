@@ -74,7 +74,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 os.environ.setdefault("CW_JELLYFIN_VERSION", __VERSION__)
 os.environ.setdefault("CW_JELLYFIN_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
@@ -207,6 +207,7 @@ class JFConfig:
     history_write_delay_ms: int = 0
     history_guid_priority: list[str] | None = None
     history_libraries: list[str] | None = None
+    progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
 
 
@@ -310,6 +311,7 @@ class JELLYFINModule:
         hi_qlim = int(hi.get("history_query_limit", 25) or 25)
         hi_wdel = int(hi.get("history_write_delay_ms", 0) or 0)
         hi_gprio = hi.get("history_guid_priority") or wl_gprio
+        pr = dict(jf.get("progress") or {})
         ra = dict(jf.get("ratings") or {})
 
         def _list_str(v: Any) -> list[str] | None:
@@ -336,6 +338,7 @@ class JELLYFINModule:
             history_write_delay_ms=hi_wdel,
             history_guid_priority=list(hi_gprio),
             history_libraries=_list_str(hi.get("libraries")),
+            progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
         )
         self.client = JFClient(self.cfg)
