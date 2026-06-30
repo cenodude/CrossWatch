@@ -163,9 +163,6 @@ header{position:sticky;top:0;z-index:10;background:rgba(13,15,20,.96);padding:10
 .tab.active{color:#f6f7ff;border-color:rgba(120,104,255,.55);background:linear-gradient(180deg,rgba(50,42,92,.98),rgba(34,27,64,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 10px 22px rgba(44,30,106,.24)}
 .tab:hover{border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(24,27,39,.96),rgba(12,15,25,.98));transform:translateY(-1px)}
 .tab.active:hover{border-color:rgba(132,115,255,.72);background:linear-gradient(180deg,rgba(58,48,104,.98),rgba(39,31,73,.98))}
-#cw-about-menu.cw-menu{position:absolute;top:calc(100%+6px);right:0;min-width:148px;padding:6px;display:flex;flex-direction:column;gap:4px;border-radius:16px;border:1px solid rgba(255,255,255,.1);background:rgba(12,14,23,.96);box-shadow:0 18px 42px rgba(0,0,0,.38);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
-#cw-about-menu .cw-menu-item{display:flex;align-items:center;min-height:32px;padding:0 10px;border-radius:10px;border:1px solid transparent;background:rgba(255,255,255,.03);color:var(--fg);font-weight:700;font-size:13px}
-#cw-about-menu .cw-menu-item:hover{background:rgba(255,255,255,.07);border-color:rgba(124,92,255,.28)}
 @media(max-width:960px){header{padding:9px 12px;gap:8px}
 .tabs{gap:5px}
 .tab{min-height:34px;padding:0 13px;border-radius:15px;font-size:12px}
@@ -1461,3 +1458,15 @@ html[data-cw-theme=flat-light] body #conn-badges .conn-pill.ok.has-vip::before{b
 html[data-cw-theme=flat-light] body #conn-badges .conn-provider-visual{background:radial-gradient(88% 72% at 18% 14%,rgba(var(--conn-provider-rgb,16,24,40),.28),transparent 54%),radial-gradient(72% 58% at 82% 76%,rgba(var(--conn-provider-rgb,16,24,40),.16),transparent 68%),rgba(16,24,40,.045)}
 html[data-cw-theme=flat-light] body #conn-badges .conn-provider-visual::after{mix-blend-mode:multiply;opacity:.48;filter:saturate(1.38) brightness(.94) contrast(1.18)}
 html[data-cw-theme=flat-light] body #conn-badges .conn-pill.has-vip .conn-slot{color:rgba(139,94,24,.70)!important;filter:drop-shadow(0 1px 1px rgba(255,255,255,.9)) drop-shadow(0 2px 4px rgba(16,24,40,.20))}
+
+/* Primary navigation: compact text tabs with an active underline. */
+header .tabs{align-self:stretch;gap:4px}
+header .tabs .cw-tabmenu{align-self:stretch}
+header .tabs .tab{position:relative;align-self:stretch;min-height:38px;padding:0 12px;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;color:var(--muted)!important;font-size:14px;font-weight:800;letter-spacing:-.015em;transform:none!important;overflow:visible}
+header .tabs .tab::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent);transform:scaleX(0);transform-origin:center;transition:transform .16s ease}
+header .tabs .tab:hover,header .tabs .tab.active{background:transparent!important;color:var(--fg)!important;box-shadow:none!important;transform:none!important}
+header .tabs .tab.active::after{transform:scaleX(1)}
+header .tabs .tab:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 48%,transparent);outline-offset:-2px}
+html[data-cw-theme] header .tabs .tab{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--muted)!important;-webkit-text-fill-color:var(--muted)!important;text-shadow:none!important}
+html[data-cw-theme] header .tabs .tab:hover,html[data-cw-theme] header .tabs .tab.active{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--fg)!important;-webkit-text-fill-color:var(--fg)!important}
+html[data-cw-theme] header .tabs .tab :is(span,b,strong){color:inherit!important;-webkit-text-fill-color:inherit!important}

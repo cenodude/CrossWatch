@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
 from cw_platform.config_base import load_config
@@ -15,20 +15,6 @@ from cw_platform.config_base import load_config
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
 _ASSET_VERSION_CACHE: dict[str, float | str] = {"ts": 0.0, "val": CURRENT_VERSION}
-
-# Static favicon
-FAVICON_SVG: str = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-<defs><linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#2de2ff"/><stop offset="0.5" stop-color="#5f69d6"/><stop offset="1" stop-color="#7a6aa8"/></linearGradient></defs>
-<rect width="64" height="64" rx="14" fill="#0b0b0f"/>
-<rect x="10" y="16" width="44" height="28" rx="6" fill="none" stroke="url(#g)" stroke-width="3"/>
-<rect x="24" y="46" width="16" height="3" rx="1.5" fill="url(#g)"/>
-<circle cx="20" cy="30" r="2.5" fill="url(#g)"/>
-<circle cx="32" cy="26" r="2.5" fill="url(#g)"/>
-<circle cx="44" cy="22" r="2.5" fill="url(#g)"/>
-<path d="M20 30 L32 26 L44 22" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>"""
-
 
 DEFAULT_MANIFEST: str = r"""{
   "name": "CrossWatch",
@@ -70,10 +56,13 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
             content = fallback
         return Response(content=content, media_type=media_type, headers=headers)
 
-    @app.get("/favicon.svg", include_in_schema=False, tags=["ui"])
     @app.get("/favicon.ico", include_in_schema=False, tags=["ui"])
-    def favicon() -> Response:
-        return Response(FAVICON_SVG, media_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
+    def favicon_ico() -> FileResponse:
+        return FileResponse(assets_dir / "pwa" / "favicon.ico", media_type="image/x-icon", headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/favicon.svg", include_in_schema=False, tags=["ui"])
+    def favicon_svg_compat() -> FileResponse:
+        return FileResponse(assets_dir / "pwa" / "favicon-64.png", media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/manifest.webmanifest", include_in_schema=False, tags=["ui"])
     def manifest_webmanifest() -> Response:
@@ -226,7 +215,7 @@ def _get_index_html_static() -> str:
   });
 })();
 </script>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="alternate icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__"><link rel="alternate icon" href="/favicon.ico?v=__CW_VERSION__">
 <meta name="theme-color" content="#0b0b0f">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/assets/pwa/apple-touch-icon.png">
@@ -280,13 +269,17 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .sub,#page-settings p,#page-settings small,#page-settings label,#page-settings .cw-settings-pane-kicker,#page-settings .cw-settings-overview-kicker,#page-settings .cw-settings-jumpbar,#page-settings .cw-hub-desc{color:var(--cw-ov-soft)!important}
 #page-settings h3,#page-settings h4,#page-settings strong,#page-settings .cw-panel-title,#page-settings .cw-settings-nav-title{color:var(--cw-ov-fg)!important}
 #page-settings .chip,#page-settings .pill,#page-settings .cw-provider-head-icon,#page-settings .auth-dot{filter:saturate(.88)}
-#cw-settings-menu.cw-menu,#cw-about-menu.cw-menu{position:absolute;top:calc(100% + 6px);right:0;min-width:190px;padding:6px;display:flex;flex-direction:column;gap:4px;border-radius:16px;border:1px solid rgba(255,255,255,.10);background:rgba(12,14,23,.96);box-shadow:0 18px 42px rgba(0,0,0,.38);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
-#cw-settings-menu.cw-menu{right:-18px}
-#cw-settings-menu .cw-menu-item,#cw-about-menu .cw-menu-item{display:flex;align-items:center;min-height:32px;padding:0 10px;border-radius:10px;border:1px solid transparent;background:rgba(255,255,255,.03);color:var(--fg);font-weight:700;font-size:13px}
-#cw-settings-menu .cw-menu-item:hover,#cw-about-menu .cw-menu-item:hover{background:rgba(255,255,255,.07);border-color:rgba(124,92,255,.28)}
-#cw-settings-menu .cw-menu-item.danger{color:rgba(255,186,194,.96);background:rgba(255,92,112,.08);border-color:rgba(255,92,112,.12)}
-#cw-settings-menu .cw-menu-item.danger:hover{color:#fff1f4;background:rgba(255,92,112,.14);border-color:rgba(255,120,138,.28)}
-#cw-settings-menu .cw-menu-sep{height:1px;margin:4px 2px;border:0;background:rgba(255,255,255,.08)}
+#cw-settings-menu.cw-menu,#cw-about-menu.cw-menu{--menu-bg:rgba(12,14,23,.94);--menu-active:rgba(124,92,255,.15);--menu-active-border:rgba(142,124,255,.28);--menu-text:color-mix(in srgb,var(--cw-theme-text) 68%,var(--cw-theme-muted));--menu-text-active:color-mix(in srgb,var(--cw-theme-text) 86%,var(--cw-theme-muted));position:absolute;top:calc(100% + 6px);right:0;padding:7px;display:flex;flex-direction:column;gap:1px;border-radius:12px;border:1px solid var(--cw-theme-border);background:var(--menu-bg)!important;box-shadow:0 18px 40px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.035)!important;backdrop-filter:blur(16px) saturate(115%);-webkit-backdrop-filter:blur(16px) saturate(115%)}
+#cw-settings-menu.cw-menu{right:-8px;width:218px}#cw-about-menu.cw-menu{width:148px}
+#cw-settings-menu .cw-menu-item,#cw-about-menu .cw-menu-item{position:relative;width:100%;display:grid!important;grid-template-columns:19px minmax(0,1fr);align-items:center;justify-content:initial!important;column-gap:12px;min-height:36px;padding:0 9px;border-radius:8px;border:1px solid transparent;background:transparent!important;color:var(--menu-text);font-weight:700;font-size:12.5px;line-height:1.15;text-align:left;cursor:pointer;transform:none!important;transition:background .16s ease,border-color .16s ease,color .16s ease}
+#cw-settings-menu .cw-menu-icon,#cw-about-menu .cw-menu-icon{display:grid;place-items:center;width:19px;font-size:19px;line-height:1;color:color-mix(in srgb,var(--cw-theme-text) 62%,var(--cw-theme-muted));font-variation-settings:"FILL" 0,"wght" 425,"GRAD" 0,"opsz" 20}
+#cw-settings-menu .cw-menu-item:hover,#cw-about-menu .cw-menu-item:hover,#cw-settings-menu .cw-menu-item:focus-visible,#cw-about-menu .cw-menu-item:focus-visible,#cw-settings-menu .cw-menu-item.active{background:var(--menu-active)!important;border-color:var(--menu-active-border)!important;color:var(--menu-text-active)!important;outline:0}
+#cw-settings-menu .cw-menu-item.active::before{content:"";position:absolute;left:-1px;top:7px;bottom:7px;width:2px;border-radius:2px;background:var(--cw-theme-accent)}
+#cw-settings-menu .cw-menu-item.danger{color:var(--cw-theme-danger)}#cw-settings-menu .cw-menu-item.danger .cw-menu-icon{color:var(--cw-theme-danger)}
+#cw-settings-menu .cw-menu-item.danger:hover{background:color-mix(in srgb,var(--cw-theme-danger) 12%,transparent)!important;border-color:color-mix(in srgb,var(--cw-theme-danger) 30%,transparent)!important;color:var(--cw-theme-danger)!important}
+#cw-settings-menu .cw-menu-sep{height:1px;margin:4px 3px;border:0;background:var(--cw-theme-border)}
+html[data-cw-theme=flat-dark] :is(#cw-settings-menu.cw-menu,#cw-about-menu.cw-menu){--menu-bg:rgba(23,26,34,.94);--menu-active:rgba(125,134,201,.14);--menu-active-border:rgba(125,134,201,.34);box-shadow:0 18px 38px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.035)!important}
+html[data-cw-theme=flat-light] :is(#cw-settings-menu.cw-menu,#cw-about-menu.cw-menu){--menu-bg:rgba(255,255,255,.96);--menu-active:rgba(70,86,166,.09);--menu-active-border:rgba(70,86,166,.25);box-shadow:0 18px 38px rgba(16,24,40,.16),inset 0 1px 0 rgba(255,255,255,.9)!important}
 .cw-field-inline-error{margin-top:8px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(7,9,13,.98),rgba(3,5,8,.99));color:rgba(245,247,255,.96);font-size:12px;line-height:1.45;box-shadow:0 14px 28px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)}
 .cw-field-inline-error.hidden{display:none}
 #page-settings .cw-settings-panel.cw-settings-shell{padding:18px;border-radius:26px;background:radial-gradient(120% 140% at 0% 0%,rgba(92,96,182,.12),transparent 38%),radial-gradient(90% 120% at 100% 100%,rgba(54,120,210,.08),transparent 48%),linear-gradient(180deg,rgba(11,14,21,.96),rgba(6,8,12,.985))!important;border:1px solid rgba(255,255,255,.08)!important;box-shadow:0 24px 46px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.03)!important}
@@ -469,16 +462,16 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <span class="tab-caret" aria-hidden="true"></span>
       </button>
       <div class="cw-menu hidden" id="cw-settings-menu" role="menu" aria-labelledby="tab-settings">
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('overview')">Settings overview</button>
+        <button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect('overview')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">settings</span><span>Settings overview</span></button>
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')">Connections</button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')">Sync pairs</button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')">Scrobbler</button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')">Scheduling</button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')">UI and Security</button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')">Maintenance</button>
+        <button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">link</span><span>Connections</span></button>
+        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>
+        <button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">music_note</span><span>Scrobbler</span></button>
+        <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">calendar_month</span><span>Scheduling</span></button>
+        <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">shield</span><span>UI and Security</span></button>
+        <button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()">Log out</button>
+        <button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>
       </div>
     </div>
     <div class="cw-tabmenu" id="tab-about-menu">
@@ -489,8 +482,8 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <span class="tab-caret" aria-hidden="true"></span>
       </button>
       <div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')">About</button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')">Help</button>
+        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About</span></button>
+        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
       </div>
     </div>
   </nav>
@@ -1518,6 +1511,7 @@ __CW_ASSET_BLOCK__
 
 
 <script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
+<script>(()=>{const sync=e=>{const pane=String(e?.detail?.pane||window.__cwSettingsPane||'overview').toLowerCase();document.querySelectorAll('#cw-settings-menu .cw-menu-item[data-settings-pane]').forEach(item=>{const active=item.dataset.settingsPane===pane;item.classList.toggle('active',active);if(active)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current')})};document.addEventListener('cw-settings-pane-changed',sync);document.addEventListener('DOMContentLoaded',sync,{once:true})})();</script>
 
 <script>(()=>{const scrollTo=id=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});window.cwProvidersJump=sectionId=>(window.cwSettingsSelect?.('providers'),setTimeout(()=>{window.openSection?.(sectionId);scrollTo(sectionId)},0));window.cwOverviewJump=(sectionId,authGroupId='')=>(window.cwSettingsSelect?.('providers'),setTimeout(async()=>{if(sectionId==='sec-auth'){window.openSection?.('sec-auth');try{await window.mountAuthProviders?.()}catch{}if(authGroupId){window.openSection?.(authGroupId);scrollTo(authGroupId)}else scrollTo('sec-auth');return}window.openSection?.(sectionId);scrollTo(sectionId)},0))})();</script>
 <script>
