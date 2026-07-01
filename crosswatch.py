@@ -54,6 +54,7 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
     StreamingResponse,
 )
 from starlette.middleware.gzip import GZipMiddleware
@@ -357,6 +358,15 @@ _apply_auth_reset_env_once()
 app = FastAPI()
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
+def _is_closed_log_stream(request: Request, err: Exception) -> bool:
+    return (
+        request.method == "GET"
+        and request.url.path == "/api/logs/stream"
+        and isinstance(err, RuntimeError)
+        and str(err) == "No response returned."
+    )
+
+
 @app.middleware("http")
 async def conditional_access_logger(request: Request, call_next):
     _apply_debug_env_from_config()
@@ -368,8 +378,12 @@ async def conditional_access_logger(request: Request, call_next):
         response = await call_next(request)
         status = getattr(response, "status_code", 0) or 0
     except Exception as e:
-        err = e
-        status = 500
+        if _is_closed_log_stream(request, e):
+            response = Response(status_code=204)
+            status = 204
+        else:
+            err = e
+            status = 500
     finally:
         if not _is_http_debug_enabled():
             path = request.url.path
