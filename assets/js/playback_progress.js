@@ -163,7 +163,7 @@ html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-shape{background:#2a2f39}h
     const meta = it?.provider_metadata && typeof it.provider_metadata === "object" ? it.provider_metadata : {};
     const showIds = meta.show_ids && typeof meta.show_ids === "object" ? meta.show_ids : {};
     const ids = it?.ids && typeof it.ids === "object" ? it.ids : {};
-    const source = media === "movie" ? ids : (showIds.tmdb ? showIds : ids);
+    const source = media === "movie" ? ids : showIds;
     const tmdb = source?.tmdb || it?.tmdb;
     if (!tmdb) return "";
     const typ = media === "movie" ? "movie" : "tv";

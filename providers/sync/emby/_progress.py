@@ -9,6 +9,8 @@ from typing import Any, Iterable, Mapping
 from cw_platform.id_map import canonical_key
 
 from ._common import (
+    _ids_from_provider_ids,
+    chunked,
     emby_item_library_ids,
     make_logger,
     normalize as emby_normalize,
@@ -54,6 +56,43 @@ def _pick_user_data(row: Mapping[str, Any]) -> Mapping[str, Any]:
     return ud if isinstance(ud, Mapping) else {}
 
 
+def _series_ids_by_item_id(
+    http: Any,
+    uid: str,
+    rows: Iterable[tuple[Mapping[str, Any], str | None]],
+) -> dict[str, dict[str, str]]:
+    series_ids = sorted(
+        {
+            str(raw.get("SeriesId") or "").strip()
+            for raw, _source_library_id in rows
+            if str(raw.get("SeriesId") or "").strip()
+        }
+    )
+    out: dict[str, dict[str, str]] = {}
+    for batch in chunked(series_ids, 100):
+        try:
+            response = http.get(
+                f"/Users/{uid}/Items",
+                params={
+                    "Ids": ",".join(batch),
+                    "Fields": "ProviderIds,ProductionYear,Type,Name",
+                },
+            )
+            if getattr(response, "status_code", 0) != 200:
+                continue
+            body = response.json() or {}
+            for row in body.get("Items") or []:
+                if not isinstance(row, Mapping):
+                    continue
+                series_id = str(row.get("Id") or "").strip()
+                provider_ids = row.get("ProviderIds")
+                if series_id and isinstance(provider_ids, Mapping):
+                    out[series_id] = _ids_from_provider_ids(provider_ids)
+        except Exception as exc:
+            _warn("series_metadata_query_failed", series_ids=batch, error=str(exc))
+    return out
+
+
 def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     http = getattr(adapter, "client", None)
     uid = getattr(getattr(adapter, "cfg", None), "user_id", None)
@@ -65,7 +104,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         "IncludeItemTypes": "Movie,Episode",
         "Fields": "UserData,ProviderIds,RunTimeTicks,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
         "EnableUserData": True,
-        "IsResumable": True,
+        "Filters": "IsResumable",
     }
     allowed = emby_selected_library_ids(adapter.cfg, "progress")
     if not allowed:
@@ -112,6 +151,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             if not page or (total and start >= total) or len(page) < page_size or new_count == 0:
                 break
 
+    series_ids_by_item_id = _series_ids_by_item_id(http, str(uid), rows)
     out: dict[str, dict[str, Any]] = {}
     total_rows = 0
     dup_keys = 0
@@ -126,6 +166,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             item = emby_normalize(raw)
         except Exception:
             continue
+        series_id = str(raw.get("SeriesId") or "").strip()
+        if series_id and series_ids_by_item_id.get(series_id):
+            item["show_ids"] = dict(series_ids_by_item_id[series_id])
         if source_library_id:
             item["library_id"] = source_library_id
 
