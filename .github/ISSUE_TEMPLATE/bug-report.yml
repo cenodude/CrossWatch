@@ -1,108 +1,150 @@
 name: "Bug report (CrossWatch)"
-description: "Report a problem with CrossWatch sync/scrobble/UI."
-title: "[bug] <short summary>"
-labels: ["bug", "needs-triage"]
-assignees: []
+description: "Report a problem with CrossWatch."
+title: "[bug] "
+labels:
+
+* "bug"
+* "needs-triage"
+  assignees: []
 
 body:
-  - type: markdown
-    attributes:
-      value: |
-        ## Before you hit “Submit”
-        Please do this first, it saves both of us time:
 
-        1. **Simplify your setup first.**  
-           Enable **only the pair that’s causing trouble** and disable/remove the rest.  
+* type: markdown
+  attributes:
+  value: |
+  ## Before submitting
 
-        2. Go to **Settings → Maintenance**  
-           Enable **Debug** and **MOD Debug**.
+  ```
+  For synchronization issues:
 
-        3. **Reproduce the issue again** after enabling debug.
-        
-        4. Collect logs from **both places**:
-           - **Docker console logs**
-           - **CrossWatch Sync Output**
-           
-        5. If the issue is “some items don’t sync”:  
-           run the **Analyzer** first. It often tells you what’s missing and why.
+  1. Open **Sync Output**
+  2. Clear the existing log
+  3. Run the affected synchronization again
+  4. Click **Debug**
+  5. Copy or attach the debug log below
 
-  - type: markdown
-    attributes:
-      value: |
-        **Please don't paste secrets** (tokens, usernames, API keys, etc.).
-          If the field was filled in → replace with `<REDACTED>`
+  For missing or incorrectly matched items, also run the **Analyzer**.
 
-  - type: input
-    id: version
-    attributes:
-      label: CrossWatch version
-      description: From Settings → About (e.g., v0.x.y) or paste short commit SHA.
-      placeholder: v0.x.y or 8-char SHA
-    validations:
-      required: true
+  Do not include tokens, API keys, passwords, usernames, or other private information. Replace sensitive values with `<REDACTED>`.
+  ```
 
-  - type: checkboxes
-    id: providers
-    attributes:
-      label: Connected providers involved
-      options:
-        - label: Plex
-        - label: Emby
-        - label: Jellyfin
-        - label: MDBlist
-        - label: Tautulli
-        - label: AniList
-        - label: Trakt
-        - label: SIMKL
-        - label: CrossWatch Internal Tracker (CW)
+* type: input
+  id: version
+  attributes:
+  label: CrossWatch version
+  description: From Settings → About, the Docker image tag, or a short commit SHA.
+  placeholder: "v0.x.y or commit SHA"
+  validations:
+  required: true
 
-  - type: input
-    id: server_version
-    attributes:
-      label: Media server version (if applicable)
-      placeholder: "Plex 1.41.x / Jellyfin 10.9.x / Emby 4.x / Tautulli 2.x"
+* type: checkboxes
+  id: providers
+  attributes:
+  label: Providers involved
+  options:
+  - label: Plex
+  - label: Emby
+  - label: Jellyfin
+  - label: MDBList
+  - label: PublicMetaDB
+  - label: Tautulli
+  - label: AniList
+  - label: Trakt
+  - label: SIMKL
+  - label: CrossWatch Internal Tracker
 
-  - type: checkboxes
-    id: areas
-    attributes:
-      label: Affected area(s)
-      options:
-        - label: Synchronization → Watchlist
-        - label: Synchronization → Ratings
-        - label: Synchronization → History
-        - label: Scrobble/Webhook
-        - label: Scrobble/Watcher
-        - label: Scheduler
-        - label: Web UI (modals, pairs, progress)
-        - label: Metadata / IDs
-        - label: Config / API
+* type: input
+  id: provider_versions
+  attributes:
+  label: Provider or media server versions
+  placeholder: "Plex 1.41.x, Jellyfin 10.11.x, Emby 4.x"
 
-  - type: textarea
-    id: summary
-    attributes:
-      label: Summary
-      placeholder: Clear and concise description of the problem.
-    validations:
-      required: true
+* type: checkboxes
+  id: areas
+  attributes:
+  label: Affected area
+  options:
+  - label: Watchlist or favorites
+  - label: History or watched state
+  - label: Playback progress or resume position
+  - label: Ratings
+  - label: Scrobble or webhook
+  - label: Scheduler
+  - label: Analyzer or item matching
+  - label: Metadata or IDs
+  - label: Library selection or duplicate items
+  - label: Web UI
+  - label: Configuration or API
 
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs
-      description: |
-        Attach a file or paste an excerpt (redact tokens).
-        Docker:
-        `docker logs crosswatch --since=30m > crosswatch.log`
-      render: bash
+* type: textarea
+  id: summary
+  attributes:
+  label: What happened?
+  description: Describe the problem and what you expected to happen.
+  placeholder: |
+  Jellyfin playback progress does not sync to Plex.
 
-  - type: checkboxes
-    id: tried
-    attributes:
-      label: Troubleshooting already tried
-      description: |
-        Clean Everything in Maintenance. This will reset your state etc.
-      options:
-        - label: Settings → Maintenance → Clean Everything
-        - label: Retried on latest CrossWatch version
-        - label: Re-ran the same pair one-way
-        - label: Restarted container  (to rule out transient issues)
+  ```
+  Expected:
+  Plex should receive the same resume position.
+
+  Actual:
+  The resume position remains unchanged.
+  ```
+
+  validations:
+  required: true
+
+* type: textarea
+  id: reproduction
+  attributes:
+  label: How can we reproduce it?
+  description: Keep the steps as short as possible.
+  placeholder: |
+  1. Play an item in Jellyfin.
+  2. Stop at 25 percent.
+  3. Run the Jellyfin to Plex pair.
+  4. Check the item in Plex.
+  validations:
+  required: true
+
+* type: textarea
+  id: example
+  attributes:
+  label: Example item
+  description: Optional, but useful for matching and synchronization issues.
+  placeholder: |
+  Title:
+  Year:
+  Season and episode:
+  Source library:
+  Target library:
+
+* type: textarea
+  id: debug_log
+  attributes:
+  label: Sync Output debug log
+  description: |
+  For synchronization issues, clear Sync Output, reproduce the problem, click Debug, then attach or paste the redacted log.
+  placeholder: "Attach the log or paste the relevant section."
+
+* type: textarea
+  id: analyzer
+  attributes:
+  label: Analyzer output
+  description: Add this for missing, unmatched, or incorrectly matched items.
+  placeholder: "Paste the Analyzer result here."
+
+* type: textarea
+  id: additional_context
+  attributes:
+  label: Additional context
+  description: Add screenshots, Docker logs, or other relevant details when needed.
+
+* type: checkboxes
+  id: confirmation
+  attributes:
+  label: Confirmation
+  options:
+  - label: I removed tokens, API keys, passwords, usernames, and other sensitive information.
+  required: true
