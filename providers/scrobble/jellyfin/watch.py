@@ -156,11 +156,12 @@ def _jf_bt(cfg: dict[str, Any]) -> tuple[str, str]:
 def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
     e = cfg.get("jellyfin") or {}
     did = str(e.get("device_id") or "crosswatch")
+    auth = f'MediaBrowser Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0", Token="{tok}"'
     return {
         "Accept": "application/json",
         "X-Emby-Token": tok,
         "X-MediaBrowser-Token": tok,
-        "Authorization": f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0"',
+        "Authorization": auth,
     }
 
 

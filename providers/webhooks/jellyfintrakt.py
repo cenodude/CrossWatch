@@ -83,11 +83,12 @@ def _jf_conn(cfg: dict[str, Any]) -> tuple[str, str, str, float, bool, str]:
 
 
 def _jf_headers(tok: str, did: str) -> dict[str, str]:
+    auth = f'MediaBrowser Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0", Token="{tok}"'
     return {
         'Accept': 'application/json',
         'X-Emby-Token': tok,
         'X-MediaBrowser-Token': tok,
-        'Authorization': f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0"',
+        'Authorization': auth,
     }
 
 
