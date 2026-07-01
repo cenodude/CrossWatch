@@ -2,149 +2,124 @@ name: "Bug report (CrossWatch)"
 description: "Report a problem with CrossWatch."
 title: "[bug] "
 labels:
-
-* "bug"
-* "needs-triage"
-  assignees: []
+  - "bug"
+  - "needs-triage"
+assignees: []
 
 body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Before submitting
 
-* type: markdown
-  attributes:
-  value: |
-  ## Before submitting
+        For synchronization issues:
 
-  ```
-  For synchronization issues:
+        1. Open **Sync Output**
+        2. Clear the existing log
+        3. Run the affected synchronization again
+        4. Click **Debug**
+        5. Copy or attach the debug log below
 
-  1. Open **Sync Output**
-  2. Clear the existing log
-  3. Run the affected synchronization again
-  4. Click **Debug**
-  5. Copy or attach the debug log below
+        For missing or incorrectly matched items, also run the **Analyzer**.
 
-  For missing or incorrectly matched items, also run the **Analyzer**.
+        Do not include tokens, API keys, passwords, usernames, or other private information.
+        Replace sensitive values with `<REDACTED>`.
 
-  Do not include tokens, API keys, passwords, usernames, or other private information. Replace sensitive values with `<REDACTED>`.
-  ```
+  - type: input
+    id: version
+    attributes:
+      label: CrossWatch version
+      description: From Settings → About, the Docker image tag, or a short commit SHA.
+      placeholder: "v0.x.y or commit SHA"
+    validations:
+      required: true
 
-* type: input
-  id: version
-  attributes:
-  label: CrossWatch version
-  description: From Settings → About, the Docker image tag, or a short commit SHA.
-  placeholder: "v0.x.y or commit SHA"
-  validations:
-  required: true
+  - type: checkboxes
+    id: providers
+    attributes:
+      label: Providers involved
+      options:
+        - label: Plex
+        - label: Emby
+        - label: Jellyfin
+        - label: MDBList
+        - label: PublicMetaDB
+        - label: Tautulli
+        - label: AniList
+        - label: Trakt
+        - label: SIMKL
+        - label: CrossWatch Internal Tracker
 
-* type: checkboxes
-  id: providers
-  attributes:
-  label: Providers involved
-  options:
-  - label: Plex
-  - label: Emby
-  - label: Jellyfin
-  - label: MDBList
-  - label: PublicMetaDB
-  - label: Tautulli
-  - label: AniList
-  - label: Trakt
-  - label: SIMKL
-  - label: CrossWatch Internal Tracker
+  - type: checkboxes
+    id: areas
+    attributes:
+      label: Affected area
+      options:
+        - label: Watchlist or favorites
+        - label: History or watched state
+        - label: Playback progress or resume position
+        - label: Ratings
+        - label: Scrobble or webhook
+        - label: Scheduler
+        - label: Analyzer or item matching
+        - label: Metadata or IDs
+        - label: Library selection or duplicate items
+        - label: Web UI
+        - label: Configuration or API
 
-* type: input
-  id: provider_versions
-  attributes:
-  label: Provider or media server versions
-  placeholder: "Plex 1.41.x, Jellyfin 10.11.x, Emby 4.x"
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected to happen.
+      placeholder: |
+        Jellyfin playback progress does not sync to Plex.
 
-* type: checkboxes
-  id: areas
-  attributes:
-  label: Affected area
-  options:
-  - label: Watchlist or favorites
-  - label: History or watched state
-  - label: Playback progress or resume position
-  - label: Ratings
-  - label: Scrobble or webhook
-  - label: Scheduler
-  - label: Analyzer or item matching
-  - label: Metadata or IDs
-  - label: Library selection or duplicate items
-  - label: Web UI
-  - label: Configuration or API
+        Expected:
+        Plex should receive the same resume position.
 
-* type: textarea
-  id: summary
-  attributes:
-  label: What happened?
-  description: Describe the problem and what you expected to happen.
-  placeholder: |
-  Jellyfin playback progress does not sync to Plex.
+        Actual:
+        The resume position remains unchanged.
+    validations:
+      required: true
 
-  ```
-  Expected:
-  Plex should receive the same resume position.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Keep the steps as short as possible.
+      placeholder: |
+        1. Play an item in Jellyfin.
+        2. Stop at 25 percent.
+        3. Run the Jellyfin to Plex pair.
+        4. Check the item in Plex.
+    validations:
+      required: true
 
-  Actual:
-  The resume position remains unchanged.
-  ```
+  - type: textarea
+    id: debug_log
+    attributes:
+      label: Sync Output debug log
+      description: For synchronization issues, clear Sync Output, reproduce the problem, click Debug, then attach or paste the redacted log.
+      placeholder: "Attach the log or paste the relevant section."
 
-  validations:
-  required: true
+  - type: textarea
+    id: analyzer
+    attributes:
+      label: Analyzer output
+      description: Add this for missing, unmatched, or incorrectly matched items.
+      placeholder: "Paste the Analyzer result here."
 
-* type: textarea
-  id: reproduction
-  attributes:
-  label: How can we reproduce it?
-  description: Keep the steps as short as possible.
-  placeholder: |
-  1. Play an item in Jellyfin.
-  2. Stop at 25 percent.
-  3. Run the Jellyfin to Plex pair.
-  4. Check the item in Plex.
-  validations:
-  required: true
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional context
+      description: Add screenshots, Docker logs, example items, server versions, or other relevant details when needed.
 
-* type: textarea
-  id: example
-  attributes:
-  label: Example item
-  description: Optional, but useful for matching and synchronization issues.
-  placeholder: |
-  Title:
-  Year:
-  Season and episode:
-  Source library:
-  Target library:
-
-* type: textarea
-  id: debug_log
-  attributes:
-  label: Sync Output debug log
-  description: |
-  For synchronization issues, clear Sync Output, reproduce the problem, click Debug, then attach or paste the redacted log.
-  placeholder: "Attach the log or paste the relevant section."
-
-* type: textarea
-  id: analyzer
-  attributes:
-  label: Analyzer output
-  description: Add this for missing, unmatched, or incorrectly matched items.
-  placeholder: "Paste the Analyzer result here."
-
-* type: textarea
-  id: additional_context
-  attributes:
-  label: Additional context
-  description: Add screenshots, Docker logs, or other relevant details when needed.
-
-* type: checkboxes
-  id: confirmation
-  attributes:
-  label: Confirmation
-  options:
-  - label: I removed tokens, API keys, passwords, usernames, and other sensitive information.
-  required: true
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I removed tokens, API keys, passwords, usernames, and other sensitive information.
+          required: true
