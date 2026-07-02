@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from cw_platform.config_base import DEFAULT_CFG, load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 from providers.sync.emby._utils import (
     ensure_whitelist_defaults as emby_ensure_whitelist_defaults,
     fetch_libraries_from_cfg as emby_fetch_libraries_from_cfg,
@@ -48,6 +49,7 @@ def _provider_auth():
 # Helpers
 def _status_from_msg(msg: str) -> int:
     m = (msg or "").lower()
+    if "version too old" in m or "requires jellyfin" in m: return 400
     if any(x in m for x in ("401", "403", "invalid credential", "unauthor")): return 401
     if "timeout" in m: return 504
     if any(x in m for x in ("dns", "ssl", "connection", "refused", "unreachable", "getaddrinfo", "name or service")): return 502
@@ -151,7 +153,7 @@ def _validate_tautulli_credentials(server_url: str, api_key: str, *, timeout: fl
             params={"apikey": key, "cmd": "get_server_info"},
             headers={"Accept": "application/json", "User-Agent": "CrossWatch/TautulliAuth"},
             timeout=timeout,
-            verify=bool(verify_ssl),
+            verify=coerce_bool(verify_ssl, True),
         )
     except requests.Timeout:
         return False, "validation_timeout"
@@ -740,7 +742,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         if "password" in payload:
             jf["password"] = str(payload.get("password") or "")
         if "verify_ssl" in payload:
-            jf["verify_ssl"] = bool(payload.get("verify_ssl"))
+            jf["verify_ssl"] = coerce_bool(payload.get("verify_ssl"))
 
         server = str(jf.get("server") or "").strip()
         username = str(jf.get("username") or "").strip()
@@ -762,12 +764,16 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                         "user_id": res.get("user_id") or jf2.get("user_id") or "",
                         "username": jf2.get("user") or jf2.get("username") or None,
                         "server": jf2.get("server") or None,
+                        "server_version": res.get("server_version") or jf2.get("server_version") or None,
                         "instance": inst,
                     },
                     200,
                 )
 
             msg = res.get("error") or "Login failed"
+            return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
+        except RuntimeError as exc:
+            msg = str(exc) or "Login failed"
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
         except Exception:
             return JSONResponse({"ok": False, "error": "Login failed"}, 500)
@@ -789,6 +795,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {
             "connected": bool(jf.get("access_token") and jf.get("server")),
             "user": jf.get("user") or jf.get("username") or None,
+            "server_version": jf.get("server_version") or None,
             "instance": inst,
         }
 
@@ -823,7 +830,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             raise HTTPException(status_code=401, detail="Not connected to Jellyfin (missing server/token).")
 
         timeout = float(jf.get("timeout", 15) or 15)
-        verify = bool(jf.get("verify_ssl", False))
+        verify = coerce_bool(jf.get("verify_ssl", False))
         devid = str(jf.get("device_id") or "crosswatch").strip() or "crosswatch"
 
         base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{devid}", Version="1.0"'
@@ -913,7 +920,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             em["password"] = str(payload.get("password") or "")
 
         if "verify_ssl" in payload:
-            em["verify_ssl"] = bool(payload.get("verify_ssl"))
+            em["verify_ssl"] = coerce_bool(payload.get("verify_ssl"))
         if "timeout" in payload:
             em["timeout"] = _to_int(payload.get("timeout"), 15)
 
@@ -993,7 +1000,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                         f"{server}/Users/Me",
                         headers={"X-Emby-Token": token, "Accept": "application/json"},
                         timeout=float(em.get("timeout", 15) or 15),
-                        verify=bool(em.get("verify_ssl", False)),
+                        verify=coerce_bool(em.get("verify_ssl", False)),
                     )
                     if r.ok:
                         me = r.json() or {}
@@ -1034,7 +1041,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             raise HTTPException(status_code=401, detail="Not connected to Emby (missing server/token).")
 
         timeout = float(em.get("timeout", 15) or 15)
-        verify = bool(em.get("verify_ssl", False))
+        verify = coerce_bool(em.get("verify_ssl", False))
         device_id = str(em.get("device_id") or "crosswatch").strip() or "crosswatch"
         stored_user_id = str(em.get("user_id") or "").strip()
         auth = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="1.0", Token="{token}"'
@@ -1614,7 +1621,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             raise HTTPException(status_code=400, detail="server_url required")
         if not final_key:
             raise HTTPException(status_code=400, detail="api_key required")
-        ok, reason = _validate_tautulli_credentials(final_server, final_key, verify_ssl=bool(t.get("verify_ssl", True)))
+        ok, reason = _validate_tautulli_credentials(final_server, final_key, verify_ssl=coerce_bool(t.get("verify_ssl", True), True))
         if not ok:
             _safe_log(log_fn, "TAUTULLI", f"[TAUTULLI] validation failed reason={reason} instance={inst}")
             return {"ok": False, "error": reason, "instance": inst}
@@ -1643,7 +1650,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             server,
             key,
             timeout=float(t.get("timeout", 10) or 10),
-            verify_ssl=bool(t.get("verify_ssl", True)),
+            verify_ssl=coerce_bool(t.get("verify_ssl", True), True),
         )
         return {"connected": bool(ok), "instance": inst, **({} if ok else {"reason": reason})}
 

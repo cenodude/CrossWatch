@@ -217,8 +217,6 @@ DEFAULT_CFG: dict[str, Any] = {
         # Ratings / History
         "rating_workers": 12,                           # Parallel workers for Plex ratings indexing. 12–16 is ideal on a local NAS.
         "history_workers": 12,                          # Parallel workers for Plex history indexing. 12–16 is ideal on a local NAS.
-        "progress_clock_drift_seconds": 30,             # Timestamp tolerance before a newer target blocks a progress write.
-        "progress_replay_enabled": False,               # Allow progress writes to already watched Plex items.
 
         # Watchlist via Discover (with PMS fallback toggle)
         "watchlist_allow_pms_fallback": False,          # Allow PMS watchlist fallback when needed. Keep False for strict Discover-only behavior.
@@ -400,6 +398,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "device_id": "crosswatch",                      # Client device id
         "username": "",                                 # Optional (login username)
         "user": "",                                     # Optional (display name; hydrated after auth)
+        "server_version": "",                           # Detected during authentication; Jellyfin 10.9+ required
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 15.0,                                # HTTP timeout (seconds)
         "max_retries": 3,                               # Retry budget for API calls
@@ -432,7 +431,7 @@ DEFAULT_CFG: dict[str, Any] = {
         },
 
         "progress": {
-            "libraries": []                             # whitelist for resumable items; empty = all
+            "libraries": [],                            # whitelist for resumable items; empty = all
         },
 
         # Ratings settings
@@ -481,7 +480,7 @@ DEFAULT_CFG: dict[str, Any] = {
         },
 
         "progress": {
-            "libraries": []                             # whitelist for resumable items; empty = all
+            "libraries": [],                            # whitelist for resumable items; empty = all
         },
 
         # Ratings settings

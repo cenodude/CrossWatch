@@ -18,12 +18,13 @@ from ._pairs_metrics import ApiMetrics, persist_api_totals
 from ..provider_instances import build_pair_config_view, build_provider_config_view, normalize_instance_id
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
+from ..value_coercion import coerce_bool
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
     for k, v in (src or {}).items():
         kk = str(k)
         if kk == "strict_id_matching":
-            dst["strict_id_matching"] = bool(v)
+            dst["strict_id_matching"] = coerce_bool(v)
             continue
         cur = dst.get(kk)
         if isinstance(cur, dict) and isinstance(v, Mapping):
@@ -32,31 +33,35 @@ def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) 
             dst[kk] = v
 
 
-def _config_with_pair_progress_libraries(
+def _config_with_pair_progress_options(
     cfg: dict[str, Any],
     fcfg: Mapping[str, Any],
     providers: tuple[str, str],
 ) -> dict[str, Any]:
     lib_cfg = fcfg.get("libraries")
-    if not isinstance(lib_cfg, Mapping):
-        return cfg
-
     overrides: dict[str, list[str]] = {}
+    provider_keys: list[str] = []
     for provider in providers:
         name = str(provider or "").upper().strip()
         if name not in {"PLEX", "EMBY", "JELLYFIN"}:
             continue
-        raw = lib_cfg.get(name) or lib_cfg.get(name.lower())
-        if isinstance(raw, (list, tuple)):
-            values = [str(value).strip() for value in raw if str(value).strip()]
-            if values:
-                overrides[name.lower()] = values
+        provider_key = name.lower()
+        if provider_key not in provider_keys:
+            provider_keys.append(provider_key)
+        if isinstance(lib_cfg, Mapping):
+            raw = lib_cfg.get(name) or lib_cfg.get(provider_key)
+            if isinstance(raw, (list, tuple)):
+                values = [str(value).strip() for value in raw if str(value).strip()]
+                if values:
+                    overrides[provider_key] = values
 
-    if not overrides:
+    has_replay = "replay_enabled" in fcfg
+    has_tolerance = "timestamp_tolerance_seconds" in fcfg
+    if not provider_keys or (not overrides and not has_replay and not has_tolerance):
         return cfg
 
     out = copy.deepcopy(cfg)
-    for provider_key, values in overrides.items():
+    for provider_key in provider_keys:
         provider_cfg = out.setdefault(provider_key, {})
         if not isinstance(provider_cfg, dict):
             provider_cfg = {}
@@ -65,7 +70,16 @@ def _config_with_pair_progress_libraries(
         if not isinstance(progress_cfg, dict):
             progress_cfg = {}
             provider_cfg["progress"] = progress_cfg
-        progress_cfg["libraries"] = values
+        if provider_key in overrides:
+            progress_cfg["libraries"] = overrides[provider_key]
+        if has_replay:
+            progress_cfg["replay_enabled"] = coerce_bool(fcfg.get("replay_enabled", False))
+        if has_tolerance:
+            try:
+                tolerance = int(fcfg.get("timestamp_tolerance_seconds", 30))
+            except (TypeError, ValueError):
+                tolerance = 30
+            progress_cfg["timestamp_tolerance_seconds"] = max(0, min(300, tolerance))
     return out
 
 
@@ -192,10 +206,10 @@ def _feature_list_for_pair(pair: Mapping[str, Any]) -> list[str]:
         out: list[str] = []
         for fname, fcfg in fmap.items():
             if isinstance(fcfg, dict):
-                if bool(fcfg.get("enable", True)):
+                if coerce_bool(fcfg.get("enable", True), True):
                     out.append(str(fname))
-            elif isinstance(fcfg, bool):
-                if fcfg:
+            elif isinstance(fcfg, (bool, str, int, float)):
+                if coerce_bool(fcfg):
                     out.append(str(fname))
             else:
                 out.append(str(fname))
@@ -290,7 +304,7 @@ def run_pairs(ctx) -> dict[str, Any]:
 
     emit(
         "run:start",
-        dry_run=bool(ctx.dry_run or sync_cfg.get("dry_run", False)),
+        dry_run=coerce_bool(ctx.dry_run) or coerce_bool(sync_cfg.get("dry_run", False)),
         mode="v3",
     )
 
@@ -305,7 +319,7 @@ def run_pairs(ctx) -> dict[str, Any]:
     errors_total = 0
     attempted_add_duplicate_keys_total = 0
 
-    pairs = [p for p in (cfg.get("pairs") or []) if p.get("enabled", True)]
+    pairs = [p for p in (cfg.get("pairs") or []) if coerce_bool(p.get("enabled", True), True)]
     provs = ctx.providers or {}
 
     features_ran: set[str] = set()
@@ -329,7 +343,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                 if isinstance(pv, Mapping):
                     _deep_merge_provider_overrides(blk, pv)
                 elif pv is not None and k in {"plex", "jellyfin", "emby"}:
-                    blk["strict_id_matching"] = bool(pv)
+                    blk["strict_id_matching"] = coerce_bool(pv)
 
         feat_map = dict(pair.get("features") or {})
         mode = str(pair.get("mode") or "one-way").lower().strip()
@@ -379,13 +393,13 @@ def run_pairs(ctx) -> dict[str, Any]:
 
         for feature in features:
             fcfg = feat_map.get(feature) or {}
-            if isinstance(fcfg, dict) and not bool(fcfg.get("enable", True)):
+            if isinstance(fcfg, dict) and not coerce_bool(fcfg.get("enable", True), True):
                 continue
 
             with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
                 prev_cfg = ctx.config
                 ctx.config = (
-                    _config_with_pair_progress_libraries(pair_cfg_view, fcfg, (src, dst))
+                    _config_with_pair_progress_options(pair_cfg_view, fcfg, (src, dst))
                     if feature == "progress"
                     else pair_cfg_view
                 )
