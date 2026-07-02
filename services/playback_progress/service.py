@@ -1038,8 +1038,6 @@ class PlaybackProgressService:
         instance_id: str,
         instance_label: str,
     ) -> PlaybackActionResult:
-        if provider == "plex":
-            return PlaybackActionResult(True, provider, instance_id, "remove_progress", remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""), message="Cleanup skipped because Plex clears resume progress through mark-unwatched.")
         caps = adapter.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
         if not caps.remove_progress:
             return PlaybackActionResult(True, provider, instance_id, "remove_progress", remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""), message="Cleanup skipped because remove progress is unsupported.")

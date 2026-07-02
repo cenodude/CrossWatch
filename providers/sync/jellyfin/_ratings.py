@@ -20,6 +20,7 @@ from ._common import (
     _pair_scope,
     _is_capture_mode,
 )
+from ._routes import items as items_route, user_data as user_data_route, user_params
 
 def _unresolved_path() -> str:
     return str(state_file("jellyfin_ratings.unresolved.json"))
@@ -181,18 +182,13 @@ def _rate(http: Any, uid: str, item_id: str, rating: float | None) -> bool:
             r_val = max(0.0, min(10.0, r_val))
             payload["Rating"] = round(r_val, 1)
 
-        r1 = http.post(f"/UserItems/{item_id}/UserData", params={"userId": uid}, json=payload)
+        r1 = http.post(user_data_route(item_id), params=user_params(uid), json=payload)
         ok = getattr(r1, "status_code", 0) in (200, 204)
         if ok:
             return True
 
-        r2 = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
-        ok2 = getattr(r2, "status_code", 0) in (200, 204)
-
-        if not ok2:
-            body = _body_snip(r1) if getattr(r1,'status_code',0) not in (200,204) else _body_snip(r2)
-            _warn("write_failed", op="rate", user_id=uid, item_id=item_id, status1=getattr(r1,'status_code',None), status2=getattr(r2,'status_code',None), body=body)
-        return ok2
+        _warn("write_failed", op="rate", user_id=uid, item_id=item_id, status=getattr(r1, 'status_code', None), body=_body_snip(r1))
+        return False
     except Exception as e:
         _warn("write_failed", op="rate", item_id=item_id, error=repr(e))
         return False
@@ -215,11 +211,17 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if pid:
             scope_libs = [str(pid)]
         else:
-            anc = scope_params.get("AncestorIds")
+            anc = scope_params.get("ParentIds")
             if isinstance(anc, (list, tuple)):
                 scope_libs = [str(x) for x in anc if x]
 
     roots = jf_get_library_roots(adapter)
+    query_parents: list[str | None] = []
+    query_parents.extend(sorted(scope_libs))
+    if not query_parents:
+        query_parents = [None]
+    scope_index = 0
+    seen_pages: set[tuple[str, ...]] = set()
 
     out: dict[str, dict[str, Any]] = {}
     total_seen = 0
@@ -245,14 +247,24 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             "sortBy": "SortName",
             "sortOrder": "Ascending",
         }
-        if scope_params:
-            params.update(scope_params)
+        current_parent = query_parents[scope_index]
+        if current_parent:
+            params["ParentId"] = current_parent
 
-        r = http.get(f"/Users/{uid}/Items", params=params)
+        r = http.get(items_route(), params=user_params(uid, params))
         body = r.json() or {}
         rows = body.get("Items") or []
+        signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
+        if rows and signature in seen_pages:
+            rows = []
+        seen_pages.add(signature)
         if not rows:
-            break
+            scope_index += 1
+            if scope_index >= len(query_parents):
+                break
+            start = 0
+            seen_pages.clear()
+            continue
 
         for row in rows:
             total_seen += 1
@@ -328,8 +340,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 prog.tick(total_seen, total=max(total_seen, start))
             except Exception:
                 pass
-        if len(rows) < page:
-            break
+        total = int(body.get("TotalRecordCount") or 0)
+        if len(rows) < page or (total and start >= total):
+            scope_index += 1
+            if scope_index >= len(query_parents):
+                break
+            start = 0
+            seen_pages.clear()
 
     if prog:
         try:

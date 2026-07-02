@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping
 import requests
 
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 
 from ._log import log as cw_log
 
@@ -74,7 +75,24 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
+_MIN_PROGRESS_WRITE_VERSION = (10, 9)
+_JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def _version_tuple(value: Any) -> tuple[int, ...] | None:
+    try:
+        parts = str(value or "").strip().split(".")
+        if len(parts) < 2 or not all(part.isdigit() for part in parts):
+            return None
+        return tuple(int(part) for part in parts)
+    except Exception:
+        return None
+
+
+def _progress_version_supported(value: Any) -> bool:
+    parsed = _version_tuple(value)
+    return bool(parsed and parsed[:2] >= _MIN_PROGRESS_WRITE_VERSION)
 os.environ.setdefault("CW_JELLYFIN_VERSION", __VERSION__)
 os.environ.setdefault("CW_JELLYFIN_UA", f"CrossWatch/{__VERSION__} (Jellyfin)")
 __all__ = ["get_manifest", "JELLYFINModule", "OPS"]
@@ -209,6 +227,8 @@ class JFConfig:
     history_libraries: list[str] | None = None
     progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
+    progress_replay_enabled: bool = False
+    progress_timestamp_tolerance_seconds: int = 30
 
 
 class JFClient:
@@ -279,6 +299,27 @@ class JFClient:
     def system_info(self) -> requests.Response:
         return self.get(self.BASE_PATH_INFO)
 
+    def server_version(self, *, ttl_seconds: int = 300) -> str | None:
+        now = time.time()
+        cached = _JF_VERSION_CACHE.get(self.base)
+        if cached and now - cached[0] < max(1, int(ttl_seconds)):
+            return cached[1]
+        version: str | None = None
+        try:
+            response = self.system_info()
+            if getattr(response, "status_code", 0) == 200:
+                body = response.json() or {}
+                raw = body.get("Version") or body.get("ServerVersion")
+                version = str(raw).strip() if raw is not None and str(raw).strip() else None
+        except Exception:
+            version = None
+        _JF_VERSION_CACHE[self.base] = (now, version)
+        return version
+
+    def progress_write_supported(self) -> tuple[bool, str | None]:
+        version = self.server_version()
+        return _progress_version_supported(version), version
+
     def user_probe(self) -> requests.Response:
         path = self.BASE_PATH_USER.format(user_id=self.cfg.user_id)
         return self.get(path)
@@ -320,15 +361,21 @@ class JELLYFINModule:
             rows = [str(x).strip() for x in v if str(x).strip()]
             return rows or None
 
+        def _int_value(value: Any, default: int) -> int:
+            try:
+                return int(value)
+            except Exception:
+                return int(default)
+
         self.cfg = JFConfig(
             server=str(jf.get("server") or "").strip(),
             access_token=str(jf.get("access_token") or "").strip(),
             user_id=str(jf.get("user_id") or "").strip(),
             device_id=str(jf.get("device_id") or "crosswatch"),
-            verify_ssl=bool(jf.get("verify_ssl", True)),
+            verify_ssl=coerce_bool(jf.get("verify_ssl", True), True),
             timeout=float((cfg or {}).get("timeout", jf.get("timeout", 15.0))),
             max_retries=int((cfg or {}).get("max_retries", jf.get("max_retries", 3))),
-            strict_id_matching=bool(jf.get("strict_id_matching", False)),
+            strict_id_matching=coerce_bool(jf.get("strict_id_matching", False)),
             watchlist_mode=wl_mode,
             watchlist_playlist_name=wl_pname,
             watchlist_query_limit=wl_qlim,
@@ -340,6 +387,8 @@ class JELLYFINModule:
             history_libraries=_list_str(hi.get("libraries")),
             progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
+            progress_replay_enabled=coerce_bool(pr.get("replay_enabled", jf.get("progress_replay_enabled", False))),
+            progress_timestamp_tolerance_seconds=_int_value(pr.get("timestamp_tolerance_seconds", jf.get("progress_clock_drift_seconds", 30)), 30),
         )
         self.client = JFClient(self.cfg)
 
@@ -535,6 +584,11 @@ class JELLYFINModule:
         dry_run: bool = False,
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
+        if f == "progress":
+            supported, version = self.client.progress_write_supported()
+            if not supported:
+                _info(f, "write_skipped", op="add", reason="unsupported_server_version", server_version=version)
+                return {"ok": False, "count": 0, "unresolved": [], "error": "unsupported_server_version", "server_version": version}
         if not self._is_enabled(f):
             _info(f, "write_skipped", op="add", reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
@@ -553,7 +607,7 @@ class JELLYFINModule:
             }
         cnt, unres = mod.add(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unres)
-        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys}
+        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
     def remove(
         self,
         feature: str,
@@ -580,7 +634,7 @@ class JELLYFINModule:
             }
         cnt, unres = mod.remove(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unres)
-        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys}
+        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
 class _JellyfinOPS:
     def name(self) -> str:
         return "JELLYFIN"
@@ -614,6 +668,13 @@ class _JellyfinOPS:
         user_id = (jf.get("user_id") or au.get("user_id") or "").strip()
 
         return bool(server and token and user_id)
+
+    def progress_write_capability(self, cfg: Mapping[str, Any]) -> tuple[bool, str, str | None]:
+        try:
+            supported, version = self._adapter(cfg).client.progress_write_supported()
+        except Exception:
+            supported, version = False, None
+        return supported, "" if supported else "unsupported_server_version", version
 
     def _adapter(self, cfg: Mapping[str, Any]) -> JELLYFINModule:
         return JELLYFINModule(cfg)

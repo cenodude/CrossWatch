@@ -32,6 +32,7 @@ from ._common import (
     _pair_scope,
     _is_capture_mode,
 )
+from ._routes import favorite as favorite_route, items as items_route, user_params
 
 def _unresolved_path() -> str:
     return str(state_file("jellyfin_watchlist.unresolved.json"))
@@ -222,11 +223,12 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     out: dict[str, dict[str, Any]] = {}
     done = 0
+    seen_pages: set[tuple[str, ...]] = set()
 
     while True:
         r = http.get(
-            f"/Users/{uid}/Items",
-            params={
+            items_route(),
+            params=user_params(uid, {
                 "IncludeItemTypes": "Movie,Series",
                 "Recursive": True,
                 "EnableUserData": True,
@@ -237,7 +239,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 "EnableTotalRecordCount": True,
                 "StartIndex": start,
                 "Limit": page_size,
-            },
+            }),
         )
 
         try:
@@ -254,6 +256,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             rows = []
             if total is None:
                 total = 0
+        signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
+        if rows and signature in seen_pages:
+            break
+        seen_pages.add(signature)
 
         for row in rows:
             try:
@@ -279,9 +285,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 def _favorite(http: Any, uid: str, item_id: str, flag: bool) -> bool:
     try:
         r = (
-            http.post(f"/Users/{uid}/FavoriteItems/{item_id}")
+            http.post(favorite_route(item_id), params=user_params(uid))
             if flag
-            else http.delete(f"/Users/{uid}/FavoriteItems/{item_id}")
+            else http.delete(favorite_route(item_id), params=user_params(uid))
         )
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
@@ -299,8 +305,8 @@ def _verify_favorite(
     for attempt in range(max(1, retries)):
         try:
             r = http.get(
-                f"/Users/{uid}/Items/{iid}",
-                params={"Fields": "UserData", "EnableUserData": True},
+                items_route(iid),
+                params=user_params(uid, {"Fields": "UserData", "EnableUserData": True}),
             )
             if getattr(r, "status_code", 0) == 200:
                 ud = (r.json() or {}).get("UserData") or {}
@@ -310,8 +316,8 @@ def _verify_favorite(
                     return True
             else:
                 r2 = http.get(
-                    f"/Users/{uid}/Items",
-                    params={"Ids": iid, "Fields": "UserData", "EnableUserData": True},
+                    items_route(),
+                    params=user_params(uid, {"Ids": iid, "Fields": "UserData", "EnableUserData": True}),
                 )
                 if getattr(r2, "status_code", 0) == 200:
                     arr = (r2.json() or {}).get("Items") or []

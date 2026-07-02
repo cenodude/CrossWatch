@@ -3,10 +3,12 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key
+from providers.sync._progress_policy import decide_progress_write, select_progress_record
 
 from ._common import (
     _ids_from_provider_ids,
@@ -54,6 +56,50 @@ def _ms_to_ticks(v_ms: Any) -> int | None:
 def _pick_user_data(row: Mapping[str, Any]) -> Mapping[str, Any]:
     ud = row.get("UserData")
     return ud if isinstance(ud, Mapping) else {}
+
+
+def _same_origin(provider: str = "EMBY") -> bool:
+    source = str(os.getenv("CW_PAIR_SRC") or "").upper().strip()
+    target = str(os.getenv("CW_PAIR_DST") or provider).upper().strip()
+    source_instance = str(os.getenv("CW_PAIR_SRC_INSTANCE") or "default").lower().strip()
+    target_instance = str(os.getenv("CW_PAIR_DST_INSTANCE") or "default").lower().strip()
+    return source == target == provider and source_instance == target_instance
+
+
+def _active_item_ids(http: Any, uid: str) -> set[str]:
+    try:
+        response = http.get("/Sessions")
+        if getattr(response, "status_code", 0) != 200:
+            return set()
+        rows = response.json() or []
+        return {
+            str((row.get("NowPlayingItem") or {}).get("Id"))
+            for row in rows
+            if isinstance(row, Mapping)
+            and str(row.get("UserId") or "") == str(uid)
+            and isinstance(row.get("NowPlayingItem"), Mapping)
+            and (row.get("NowPlayingItem") or {}).get("Id")
+        }
+    except Exception:
+        return set()
+
+
+def _target_state(http: Any, uid: str, item_id: str) -> dict[str, Any]:
+    response = http.get(
+        f"/Users/{uid}/Items/{item_id}",
+        params={"Fields": "UserData,RunTimeTicks,LibraryId,CollectionFolderId"},
+    )
+    if getattr(response, "status_code", 0) != 200:
+        raise RuntimeError(f"target_state_http_{getattr(response, 'status_code', 0)}")
+    row = response.json() or {}
+    user_data = _pick_user_data(row)
+    return {
+        "watched": bool(user_data.get("Played") or user_data.get("IsPlayed")),
+        "progress_ms": _ticks_to_ms(user_data.get("PlaybackPositionTicks")),
+        "duration_ms": _ticks_to_ms(row.get("RunTimeTicks")),
+        "timestamp": user_data.get("LastPlayedDate") or user_data.get("LastPlayed") or row.get("DateLastSaved"),
+        "library_id": row.get("LibraryId") or row.get("CollectionFolderId"),
+    }
 
 
 def _series_ids_by_item_id(
@@ -117,6 +163,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     page_size = 500
     for parent_id in parents:
         start = 0
+        seen_pages: set[tuple[str, ...]] = set()
         while True:
             params = dict(base_params)
             params.update({"StartIndex": start, "Limit": page_size, "EnableTotalRecordCount": True})
@@ -134,7 +181,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             except Exception as e:
                 _warn("library_scope_query_failed", source_library_id=parent_id, allowed_library_ids=sorted(allowed), error=str(e))
                 break
-            new_count = 0
+            signature = tuple(str(raw.get("Id") or "") for raw in page if isinstance(raw, Mapping))
+            if page and signature in seen_pages:
+                _warn("pagination_repeated_page", source_library_id=parent_id, start_index=start)
+                break
+            seen_pages.add(signature)
             for raw in page:
                 if not isinstance(raw, Mapping):
                     continue
@@ -145,10 +196,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 if item_id:
                     seen_item_ids.add(item_id)
                 rows.append((raw, parent_id))
-                new_count += 1
             start += len(page)
             total = int(body.get("TotalRecordCount") or 0)
-            if not page or (total and start >= total) or len(page) < page_size or new_count == 0:
+            if not page or (total and start >= total) or len(page) < page_size:
                 break
 
     series_ids_by_item_id = _series_ids_by_item_id(http, str(uid), rows)
@@ -157,6 +207,10 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
     dup_keys = 0
     for raw, source_library_id in rows:
         total_rows += 1
+        raw_type = str(raw.get("Type") or "").strip()
+        if raw_type not in {"Movie", "Episode"}:
+            _warn("unsupported_progress_row_type", provider_item_id=str(raw.get("Id") or ""), media_type=raw_type)
+            continue
         if allowed:
             memberships = emby_item_library_ids(raw)
             if memberships and not (memberships & allowed):
@@ -169,6 +223,9 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         series_id = str(raw.get("SeriesId") or "").strip()
         if series_id and series_ids_by_item_id.get(series_id):
             item["show_ids"] = dict(series_ids_by_item_id[series_id])
+        if raw_type == "Episode" and not item.get("show_ids") and not item.get("season") and not item.get("episode"):
+            _warn("incomplete_episode_progress_row", provider_item_id=str(raw.get("Id") or ""))
+            continue
         if source_library_id:
             item["library_id"] = source_library_id
 
@@ -189,23 +246,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         if not ck:
             continue
 
-        action = "new"
         prev = out.get(ck)
-        if not isinstance(prev, Mapping):
-            out[ck] = item
-        else:
-            try:
-                p0 = int(prev.get("progress_ms") or 0)
-                p1 = int(item.get("progress_ms") or 0)
-            except Exception:
-                p0, p1 = 0, 0
-            if p0 and p1 and p1 < p0:
-                out[ck] = item
-                dup_keys += 1
-                action = "replace_lower"
-            elif p0 and p1:
-                dup_keys += 1
-                action = "dup_keep"
+        selected, action = select_progress_record(prev, item)
+        out[ck] = selected
+        if isinstance(prev, Mapping):
+            dup_keys += 1
 
         _dbg(
             "item",
@@ -215,11 +260,11 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
             series_title=str(item.get("series_title") or ""),
             season=item.get("season"),
             episode=item.get("episode"),
-            chosen_lastPlayedAt=str(item.get("progress_at") or ""),
-            chosen_viewOffset=int(item.get("progress_ms") or 0),
-            duration_ms=item.get("duration_ms"),
-            ids=dict(item.get("ids") or {}),
-            emby_item_id=str(item.get("emby_item_id") or item.get("jellyfin_item_id") or ""),
+            chosen_lastPlayedAt=str(selected.get("progress_at") or ""),
+            chosen_viewOffset=int(selected.get("progress_ms") or 0),
+            duration_ms=selected.get("duration_ms"),
+            ids=dict(selected.get("ids") or {}),
+            emby_item_id=str((selected.get("ids") or {}).get("emby") or ""),
             action=action,
         )
 
@@ -233,8 +278,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     if not http or not uid:
         return 0, [{"item": dict(x), "hint": "not_configured"} for x in (items or [])]
 
-    ok = 0
+    applied = 0
     unresolved: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
+    active_items = _active_item_ids(http, str(uid))
+    replay_enabled = bool(getattr(adapter.cfg, "progress_replay_enabled", False))
+    tolerance = int(getattr(adapter.cfg, "progress_timestamp_tolerance_seconds", 30) or 30)
 
     for it in items or []:
         it0 = dict(it or {})
@@ -243,14 +292,19 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         iids = resolve_item_ids(adapter, it0, feature="progress")
         if not iids:
             _dbg("resolve_miss", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids)
-            unresolved.append({"item": it0, "hint": str(getattr(adapter, "_emby_last_resolve_hint", "") or "not_found")})
+            reason = str(getattr(adapter, "_emby_last_resolve_hint", "") or "not_found")
+            entry = {"status": "unresolved", "reason": reason, "item": it0}
+            unresolved.append(entry)
+            results.append(entry)
             continue
         _dbg("resolve_hit", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids, resolved=len(iids))
 
         ms = it0.get("progress_ms") or it0.get("progress") or it0.get("viewOffset")
         ticks = _ms_to_ticks(ms)
         if ticks is None:
-            unresolved.append({"item": it0, "hint": "missing_progress"})
+            entry = {"status": "unresolved", "reason": "missing_progress", "item": it0}
+            unresolved.append(entry)
+            results.append(entry)
             continue
 
         payload: dict[str, Any] = {"PlaybackPositionTicks": int(ticks)}
@@ -258,25 +312,58 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if isinstance(pa, str) and pa.strip():
             payload["LastPlayedDate"] = pa.strip()
 
-        any_ok = False
         for iid in iids:
             try:
+                target = _target_state(http, str(uid), str(iid))
+                decision = decide_progress_write(
+                    active_session=str(iid) in active_items,
+                    source_timestamp=pa,
+                    target_timestamp=target.get("timestamp"),
+                    source_progress_ms=ms,
+                    source_duration_ms=it0.get("duration_ms"),
+                    target_progress_ms=target.get("progress_ms"),
+                    target_duration_ms=target.get("duration_ms"),
+                    target_watched=bool(target.get("watched")),
+                    same_origin=_same_origin(),
+                    replay_enabled=replay_enabled,
+                    timestamp_tolerance_seconds=tolerance,
+                )
+                context = {
+                    "provider": "emby", "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default",
+                    "remote_item_id": str(iid), "library_id": target.get("library_id") or it0.get("library_id"),
+                    "source_timestamp": pa, "target_timestamp": target.get("timestamp"),
+                    "source_progress": ms, "target_progress": target.get("progress_ms"), "reason": decision.reason,
+                }
+                if not decision.apply:
+                    results.append({"status": "skipped", **context})
+                    _dbg("write_skipped", **{key: value for key, value in context.items() if key != "provider"})
+                    continue
+                if decision.unwatch_first:
+                    unwatch = http.delete(f"/Users/{uid}/PlayedItems/{iid}")
+                    if getattr(unwatch, "status_code", 0) not in (200, 204):
+                        entry = {"status": "failed", **context, "reason": "replay_unwatch_failed", "hint": f"http_{getattr(unwatch, 'status_code', 0)}", "item": it0}
+                        unresolved.append(entry)
+                        results.append(entry)
+                        continue
                 r = http.post(f"/Users/{uid}/Items/{iid}/UserData", json=payload)
                 sc = int(getattr(r, "status_code", 0) or 0)
                 _dbg("write_prepare", op="add", canonical_key=str(ck), item_id=str(iid), progress_ms=_ticks_to_ms(payload.get("PlaybackPositionTicks")), status=sc)
                 if sc in (200, 204):
-                    ok += 1
-                    any_ok = True
+                    applied += 1
+                    results.append({"status": "applied", **context})
                 else:
-                    unresolved.append({"item": it0, "hint": f"http_{sc}", "item_id": str(iid)})
+                    entry = {"status": "failed", **context, "hint": f"http_{sc}", "item": it0}
+                    unresolved.append(entry)
+                    results.append(entry)
             except Exception as e:
                 _warn("write_failed", op="add", canonical_key=str(ck), item_id=str(iid), error=str(e))
-                unresolved.append({"item": it0, "hint": f"exception:{e}", "item_id": str(iid)})
-        if not any_ok:
-            unresolved.append({"item": it0, "hint": "all_writes_failed"})
+                entry = {"status": "failed", "reason": "target_state_or_write_failed", "item": it0, "remote_item_id": str(iid), "hint": f"exception:{e}"}
+                unresolved.append(entry)
+                results.append(entry)
 
-    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
-    return ok, unresolved
+    setattr(adapter, "_progress_write_results", results)
+    _info("write_done", op="add", ok=len(unresolved) == 0, applied=applied, skipped=sum(1 for row in results if row.get("status") == "skipped"), unresolved=sum(1 for row in results if row.get("status") == "unresolved"), failed=sum(1 for row in results if row.get("status") == "failed"))
+    return applied, unresolved
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
@@ -287,6 +374,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     ok = 0
     unresolved: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     for it in items or []:
         it0 = dict(it or {})
@@ -294,7 +382,9 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         iid = resolve_item_id(adapter, it0, feature="progress")
         if not iid:
             _dbg("resolve_miss", canonical_key=str(ck))
-            unresolved.append({"item": it0, "hint": "not_found"})
+            entry = {"status": "unresolved", "reason": "not_found", "item": it0}
+            unresolved.append(entry)
+            results.append(entry)
             continue
         _dbg("resolve_hit", canonical_key=str(ck), resolved=1, resolved_id=str(iid))
 
@@ -305,11 +395,17 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             _dbg("write_prepare", op="remove", canonical_key=str(ck), item_id=str(iid), status=sc)
             if sc in (200, 204):
                 ok += 1
+                results.append({"status": "applied", "provider": "emby", "remote_item_id": str(iid), "library_id": it0.get("library_id"), "source_progress": 0, "reason": "clear_progress"})
             else:
-                unresolved.append({"item": it0, "hint": f"http_{sc}"})
+                entry = {"status": "failed", "reason": "clear_progress_failed", "item": it0, "remote_item_id": str(iid), "hint": f"http_{sc}"}
+                unresolved.append(entry)
+                results.append(entry)
         except Exception as e:
             _warn("write_failed", op="remove", canonical_key=str(ck), item_id=str(iid), error=str(e))
-            unresolved.append({"item": it0, "hint": f"exception:{e}"})
+            entry = {"status": "failed", "reason": "clear_progress_failed", "item": it0, "remote_item_id": str(iid), "hint": f"exception:{e}"}
+            unresolved.append(entry)
+            results.append(entry)
 
+    setattr(adapter, "_progress_write_results", results)
     _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved

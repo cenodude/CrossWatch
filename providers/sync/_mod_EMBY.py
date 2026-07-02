@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterable, Mapping
 import requests
 
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 
 from ._log import log as cw_log
 
@@ -76,7 +77,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
 os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
@@ -217,6 +218,8 @@ class EMBYConfig:
     history_libraries: list[str] | None = None
     progress_libraries: list[str] | None = None
     ratings_libraries: list[str] | None = None
+    progress_replay_enabled: bool = False
+    progress_timestamp_tolerance_seconds: int = 30
 
 
 class EMBYClient:
@@ -355,10 +358,10 @@ class EMBYModule:
             access_token=str(em.get("access_token") or "").strip(),
             user_id=str(em.get("user_id") or "").strip(),
             device_id=str(em.get("device_id") or "crosswatch"),
-            verify_ssl=bool(em.get("verify_ssl", True)),
+            verify_ssl=coerce_bool(em.get("verify_ssl", True), True),
             timeout=float((cfg or {}).get("timeout", em.get("timeout", 15.0))),
             max_retries=int((cfg or {}).get("max_retries", em.get("max_retries", 3))),
-            strict_id_matching=bool(em.get("strict_id_matching", False)),
+            strict_id_matching=coerce_bool(em.get("strict_id_matching", False)),
             watchlist_mode=wl_mode,
             watchlist_playlist_name=wl_pname,
             watchlist_query_limit=wl_qlim,
@@ -370,6 +373,8 @@ class EMBYModule:
             history_libraries=_list_str(hi.get("libraries")),
             progress_libraries=_list_str(pr.get("libraries")),
             ratings_libraries=_list_str(ra.get("libraries")),
+            progress_replay_enabled=coerce_bool(pr.get("replay_enabled", em.get("progress_replay_enabled", False))),
+            progress_timestamp_tolerance_seconds=_i(pr.get("timestamp_tolerance_seconds", em.get("progress_clock_drift_seconds", 30)), 30),
             history_force_overwrite=force_overwrite,
             history_backdate=backdate,
             history_backdate_tolerance_s=bd_tolerance,
@@ -587,7 +592,7 @@ class EMBYModule:
             }
         cnt, unresolved = mod.add(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
     def remove(
         self,
         feature: str,
@@ -614,7 +619,7 @@ class EMBYModule:
             }
         cnt, unresolved = mod.remove(self, lst)
         confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
 class _EmbyOPS:
     def name(self) -> str:
         return "EMBY"

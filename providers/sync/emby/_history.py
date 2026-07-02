@@ -627,7 +627,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             elif lib_ids:
                 scope_libs = [str(lib_ids)]
             if not scope_libs:
-                anc = scope_cfg.get("AncestorIds")
+                anc = scope_cfg.get("ParentIds")
                 if isinstance(anc, (list, tuple)):
                     scope_libs = [str(x) for x in anc if x]
 
@@ -654,8 +654,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
     def _scan(
         include_types: str,
         *,
-        allow_scope: bool,
-        drop_parentid: bool,
+        parent_id: str | None,
         filter_row: Any | None = None,
     ) -> tuple[int, int, int]:
         start = 0
@@ -663,6 +662,7 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
         added_presence = 0
         skipped_untimed = 0
         page = 0
+        seen_pages: set[tuple[str, ...]] = set()
 
         while True:
             t0 = time.monotonic()
@@ -684,21 +684,8 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                 "UserId": uid,
             }
 
-            scope: Mapping[str, Any] | None = (
-                scope_cfg if (allow_scope and isinstance(scope_cfg, Mapping)) else {}
-            )
-
-            if allow_scope and isinstance(scope, Mapping):
-                for k, v in scope.items():
-                    if k == "IncludeItemTypes":
-                        continue
-                    if drop_parentid and k == "ParentId":
-                        continue
-                    params[k] = v
-                if "IncludeItemTypes" in scope:
-                    want = {x.strip() for x in include_types.split(",") if x.strip()}
-                    got = {x.strip() for x in str(scope["IncludeItemTypes"]).split(",") if x.strip()}
-                    params["IncludeItemTypes"] = ",".join(sorted(want | got))
+            if parent_id:
+                params["ParentId"] = parent_id
 
             r = http.get(f"/Users/{uid}/Items", params=params)
             if getattr(r, "status_code", 0) != 200:
@@ -711,6 +698,12 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             except Exception as e:
                 _warn("parse_failed", op="index", error=str(e))
                 rows = []
+
+            signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
+            if rows and signature in seen_pages:
+                _warn("pagination_repeated_page", scan=include_types, source_library_id=parent_id, start_index=start)
+                break
+            seen_pages.add(signature)
 
             page += 1
             took_ms = int((time.monotonic() - t0) * 1000)
@@ -894,8 +887,8 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
                     continue
 
                 lib_id: str | None = None
-                if scope_libs:
-                    lib_id = scope_libs[0]
+                if parent_id:
+                    lib_id = parent_id
                 else:
                     candidates: list[str] = []
                     mlid = m.get("library_id") if isinstance(m, dict) else None
@@ -939,8 +932,13 @@ def build_index(adapter: Any, since: Any | None = None, limit: int | None = None
             _dbg("skipped_untimed_items", count=skipped_untimed)
         return added_events, added_presence, skipped_untimed
 
-    _scan("Movie,Video", allow_scope=True, drop_parentid=True, filter_row=_is_movieish)
-    _scan("Episode", allow_scope=True, drop_parentid=False, filter_row=None)
+    query_parents: list[str | None] = []
+    query_parents.extend(sorted(scope_libs))
+    if not query_parents:
+        query_parents = [None]
+    for query_parent in query_parents:
+        _scan("Movie,Video", parent_id=query_parent, filter_row=_is_movieish)
+        _scan("Episode", parent_id=query_parent, filter_row=None)
 
     events.sort(key=lambda x: x[0], reverse=True)
     if isinstance(limit, int) and limit > 0:
