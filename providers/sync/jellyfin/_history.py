@@ -23,6 +23,7 @@ from ._common import (
     _pair_scope,
     _is_capture_mode,
 )
+from ._routes import items as items_route, played as played_route, user_params
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 def _unresolved_path() -> str:
@@ -251,11 +252,11 @@ def _prefetch_series_meta(http: Any, uid: str, series_ids: Iterable[str]) -> Non
             continue
         try:
             r = http.get(
-                f"/Users/{uid}/Items",
-                params={
+                items_route(),
+                params=user_params(uid, {
                     'Ids': ids,
                     'Fields': 'ProviderIds,ProductionYear,Type,Name',
-                },
+                }),
             )
             if getattr(r, 'status_code', 0) != 200:
                 continue
@@ -312,7 +313,7 @@ def _series_ids_for(http: Any, uid: str, series_id: str | None) -> dict[str, str
 def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
     try:
         params = {"datePlayed": date_played_iso} if date_played_iso else None
-        r = http.post(f"/Users/{uid}/PlayedItems/{item_id}", params=params)
+        r = http.post(played_route(item_id), params=user_params(uid, params))
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
@@ -320,7 +321,7 @@ def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | No
 
 def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
     try:
-        r = http.delete(f"/Users/{uid}/PlayedItems/{item_id}")
+        r = http.delete(played_route(item_id), params=user_params(uid))
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
@@ -350,9 +351,9 @@ def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tupl
             continue
         try:
             r = http.get(
-                f"/Users/{uid}/Items",
+                items_route(),
                 params={
-                    'UserId': uid,
+                    'userId': uid,
                     'Ids': qids,
                     'Fields': 'UserData',
                     'Recursive': 'false',
@@ -408,7 +409,7 @@ def build_index(
         if pid:
             scope_libs = [str(pid)]
         else:
-            anc = scope_params.get("AncestorIds") or scope_params.get("ancestorIds")
+            anc = scope_params.get("ParentIds") or scope_params.get("parentIds")
             if isinstance(anc, (list, tuple)):
                 scope_libs = [str(x) for x in anc if x]
 
@@ -417,13 +418,18 @@ def build_index(
         _dbg("index_fetch_counts", source="library_roots", roots=list(sorted(roots.keys())))
 
     start = 0
+    query_parents: list[str | None] = []
+    query_parents.extend(sorted(scope_libs))
+    if not query_parents:
+        query_parents = [None]
+    scope_index = 0
+    seen_pages: set[tuple[str, ...]] = set()
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     page = 0
 
     while True:
         t0 = time.monotonic()
         params: dict[str, Any] = {
-            "UserId": uid,
             "SortBy": "DatePlayed",
             "SortOrder": "Descending",
             "IncludeItemTypes": "Movie,Episode",
@@ -439,17 +445,30 @@ def build_index(
             "Limit": page_size,
         }
 
-        if scope_params:
-            params.update(scope_params)
+        current_parent = query_parents[scope_index]
+        if current_parent:
+            params["ParentId"] = current_parent
 
-        r = http.get(f"/Users/{uid}/Items", params=params)
+        r = http.get(items_route(), params=user_params(uid, params))
         body = r.json() or {}
         rows = body.get("Items") or []
+        raw_count = len(rows)
+        signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
+        if rows and signature in seen_pages:
+            _warn("pagination_repeated_page", source_library_id=current_parent, start_index=start)
+            rows = []
+            raw_count = 0
+        seen_pages.add(signature)
         page += 1
         took_ms = int((time.monotonic() - t0) * 1000)
         _dbg("index_fetch_counts", source="page", page=page, start=start, got=len(rows), limit=page_size, latency_ms=took_ms)
         if not rows:
-            break
+            scope_index += 1
+            if scope_index >= len(query_parents):
+                break
+            start = 0
+            seen_pages.clear()
+            continue
 
         series_ids: set[str] = set()
         for r0 in rows:
@@ -535,11 +554,16 @@ def build_index(
                 out_ev["library_id"] = lib_id
             events.append((ts, {"key": ev_key}, out_ev))
 
-        start += len(body.get("Items") or [])
+        start += raw_count
         if isinstance(limit, int) and limit > 0 and len(events) >= int(limit):
             break
-        if not rows:
-            break
+        total = int(body.get("TotalRecordCount") or 0)
+        if not rows or raw_count < page_size or (total and start >= total):
+            scope_index += 1
+            if scope_index >= len(query_parents):
+                break
+            start = 0
+            seen_pages.clear()
 
     events.sort(key=lambda x: x[0], reverse=True)
     if isinstance(limit, int) and limit > 0:

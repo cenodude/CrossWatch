@@ -16,6 +16,8 @@ from .._log import log as cw_log
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
+from ._routes import favorite as favorite_route, user_data as user_data_route, user_params
+
 _DEF_TYPES = {"movie", "show", "episode"}
 _IMDB_PAT = re.compile(r"(?:tt)?(\d{5,9})$")
 _NUM_PAT = re.compile(r"(\d{1,10})$")
@@ -191,7 +193,7 @@ def jf_library_scope(cfg: CfgLike, feature: str) -> dict[str, Any]:
         return {}
     if len(libs) == 1:
         return {"ParentId": libs[0], "Recursive": True}
-    return {"AncestorIds": libs, "Recursive": True}
+    return {"ParentIds": sorted(set(libs)), "Recursive": True}
 
 
 def with_jf_scope(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> dict[str, Any]:
@@ -209,8 +211,25 @@ def jf_selected_library_ids(cfg: CfgLike, feature: str = "history") -> set[str]:
     parent = scope.get("ParentId")
     if parent:
         return {str(parent)}
-    ancestors = scope.get("AncestorIds") or []
-    return {str(value) for value in ancestors if value}
+    parents = scope.get("ParentIds") or []
+    return {str(value) for value in parents if value}
+
+
+def jf_scoped_params(params: Mapping[str, Any], cfg: CfgLike, feature: str) -> list[dict[str, Any]]:
+    base = {key: value for key, value in dict(params or {}).items() if key not in {"AncestorIds", "ParentIds", "ParentId"}}
+    libraries = sorted(jf_selected_library_ids(cfg, feature))
+    if not libraries:
+        return [base]
+    return [{**base, "ParentId": library_id, "Recursive": True} for library_id in libraries]
+
+
+def jf_get_scoped_items(http: Any, uid: str, params: Mapping[str, Any], cfg: CfgLike, feature: str) -> list[Mapping[str, Any]]:
+    rows: list[Mapping[str, Any]] = []
+    for query in jf_scoped_params(params, cfg, feature):
+        response = http.get("/Items", params={**query, "userId": uid})
+        if getattr(response, "status_code", 0) == 200:
+            rows.extend(row for row in ((response.json() or {}).get("Items") or []) if isinstance(row, Mapping))
+    return sorted(rows, key=lambda row: (str(row.get("Id") or ""), str(row.get("LibraryId") or row.get("CollectionFolderId") or "")))
 
 
 def jf_item_library_ids(item: Mapping[str, Any]) -> set[str]:
@@ -282,7 +301,7 @@ def jf_scope_any(cfg: CfgLike) -> dict[str, Any]:
         return {}
     if len(libs) == 1:
         return {"ParentId": libs[0], "Recursive": True}
-    return {"AncestorIds": libs, "Recursive": True}
+    return {"ParentIds": sorted(set(libs)), "Recursive": True}
 
 
 # library roots / mapping
@@ -644,6 +663,12 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
     start = 0
     limit = 500
     total: int | None = None
+    parents: list[str | None] = []
+    parents.extend(sorted(jf_selected_library_ids(adapter.cfg, feature or "history")))
+    if not parents:
+        parents = [None]
+    parent_index = 0
+    seen_pages: set[tuple[str, ...]] = set()
 
     while True:
         params: dict[str, Any] = {
@@ -654,10 +679,16 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
             "Limit": limit,
             "EnableTotalRecordCount": True,
         }
-        params.update(jf_library_scope(adapter.cfg, feature) if feature else jf_scope_any(adapter.cfg))
-        r = http.get(f"/Users/{uid}/Items", params=params)
+        parent_id = parents[parent_index]
+        if parent_id:
+            params["ParentId"] = parent_id
+        r = http.get("/Items", params={**params, "userId": uid})
         body = r.json() or {}
         items = body.get("Items") or []
+        signature = tuple(str(row.get("Id") or "") for row in items if isinstance(row, Mapping))
+        if items and signature in seen_pages:
+            break
+        seen_pages.add(signature)
         if total is None:
             total = int(body.get("TotalRecordCount") or 0)
             _dbg('index_fetch_counts', source='provider_index', total=total)
@@ -682,8 +713,12 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
                 if m_tvdb:
                     out.setdefault(f"tvdb.{int(m_tvdb.group(1))}", []).append(row)
         start += len(items)
-        if not items or (total is not None and start >= total):
-            break
+        if not items or len(items) < limit or (total is not None and total > 0 and start >= total):
+            parent_index += 1
+            if parent_index >= len(parents):
+                break
+            start, total = 0, None
+            seen_pages.clear()
 
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
@@ -735,7 +770,7 @@ def find_playlist_id_by_name(http: Any, user_id: str, name: str) -> str | None:
         "recursive": True,
         "SearchTerm": name,
     }
-    r = http.get(f"/Users/{user_id}/Items", params=q)
+    r = http.get("/Items", params=q)
     if getattr(r, "status_code", 0) != 200:
         return None
     items = (r.json() or {}).get("Items") or []
@@ -745,7 +780,7 @@ def find_playlist_id_by_name(http: Any, user_id: str, name: str) -> str | None:
             return it.get("Id")
     if not items:
         q = {"userId": user_id, "includeItemTypes": "Playlist", "recursive": True}
-        r = http.get(f"/Users/{user_id}/Items", params=q)
+        r = http.get("/Items", params=q)
         if getattr(r, "status_code", 0) != 200:
             return None
         for it in (r.json() or {}).get("Items") or []:
@@ -817,8 +852,9 @@ def playlist_remove_entries(http: Any, playlist_id: str, entry_ids: Iterable[str
 def find_collection_id_by_name(http: Any, user_id: str, name: str) -> str | None:
     try:
         r = http.get(
-            f"/Users/{user_id}/Items",
+            "/Items",
             params={
+                "userId": user_id,
                 "IncludeItemTypes": "BoxSet",
                 "Recursive": True,
                 "SearchTerm": name,
@@ -835,8 +871,8 @@ def find_collection_id_by_name(http: Any, user_id: str, name: str) -> str | None
             ):
                 return str(row.get("Id"))
         r2 = http.get(
-            f"/Users/{user_id}/Items",
-            params={"IncludeItemTypes": "BoxSet", "Recursive": True},
+            "/Items",
+            params={"userId": user_id, "IncludeItemTypes": "BoxSet", "Recursive": True},
         )
         if getattr(r2, "status_code", 0) != 200:
             return None
@@ -865,8 +901,9 @@ def create_collection(http: Any, name: str) -> str | None:
 def get_collection_items(http: Any, user_id: str, collection_id: str) -> dict[str, Any]:
     try:
         r = http.get(
-            f"/Users/{user_id}/Items",
+            "/Items",
             params={
+                "userId": user_id,
                 "ParentId": collection_id,
                 "Recursive": True,
                 "IncludeItemTypes": "Movie,Series",
@@ -896,8 +933,9 @@ def collection_fetch_all(
     total: int | None = None
     while True:
         r = http.get(
-            f"/Users/{user_id}/Items",
+            "/Items",
             params={
+                "userId": user_id,
                 "IncludeItemTypes": "Movie,Series",
                 "ParentId": collection_id,
                 "Recursive": False,
@@ -943,8 +981,9 @@ def collection_remove_items(http: Any, collection_id: str, item_ids: Iterable[st
 
 # misc writes
 def mark_favorite(http: Any, user_id: str, item_id: str, flag: bool) -> bool:
-    path = f"/Users/{user_id}/FavoriteItems/{item_id}"
-    r = http.post(path) if flag else http.delete(path)
+    path = favorite_route(item_id)
+    params = user_params(user_id)
+    r = http.post(path, params=params) if flag else http.delete(path, params=params)
     ok = getattr(r, "status_code", 0) in (200, 204)
     if not ok:
         body_snip = "no-body"
@@ -966,8 +1005,8 @@ def mark_favorite(http: Any, user_id: str, item_id: str, flag: bool) -> bool:
 def update_userdata(http: Any, user_id: str, item_id: str, payload: Mapping[str, Any]) -> bool:
     try:
         r = http.post(
-            f"/Items/{item_id}/UserData",
-            params={"userId": user_id},
+            user_data_route(item_id),
+            params=user_params(user_id),
             json=dict(payload),
         )
         return getattr(r, "status_code", 0) in (200, 204)
@@ -1022,15 +1061,18 @@ def _direct_query_by_pairs(
         "Recursive": True,
         "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,ParentId,CollectionFolderId,AncestorIds,LibraryId,Name",
         "Limit": 50,
-        "UserId": uid,
     }
-    q.update(scope or {})
+    scope_values = dict(scope or {})
+    parent_ids = [str(value) for value in scope_values.pop("ParentIds", []) if value]
+    q.update(scope_values)
     try:
-        r = http.get(f"/Users/{uid}/Items", params=q)
-        if getattr(r, "status_code", 0) != 200:
-            return []
-        body = r.json() or {}
-        return body.get("Items") or []
+        rows: list[Mapping[str, Any]] = []
+        queries = [{**q, "ParentId": value, "Recursive": True} for value in sorted(parent_ids)] or [q]
+        for query in queries:
+            r = http.get("/Items", params={**query, "userId": uid})
+            if getattr(r, "status_code", 0) == 200:
+                rows.extend((r.json() or {}).get("Items") or [])
+        return rows
     except Exception:
         return []
 
@@ -1072,8 +1114,8 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         if selected_libs:
             try:
                 response = http.get(
-                    f"/Users/{uid}/Items/{jf}",
-                    params={"Fields": "LibraryId,CollectionFolderId,AncestorIds,ParentId,Type"},
+                    f"/Items/{jf}",
+                    params={"userId": uid, "Fields": "LibraryId,CollectionFolderId,AncestorIds,ParentId,Type"},
                 )
                 row = response.json() or {} if getattr(response, "status_code", 0) == 200 else {}
             except Exception:
@@ -1129,11 +1171,9 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                     "Fields": "ProviderIds,ProductionYear,Type",
                     "Limit": 50,
                 }
-                q.update(jf_library_scope(adapter.cfg, feature))
-                r = http.get("/Items", params=q)
                 t_l = title.lower()
                 cand: list[Mapping[str, Any]] = []
-                raw_rows = (r.json() or {}).get("Items") or []
+                raw_rows = jf_get_scoped_items(http, uid, q, adapter.cfg, feature)
                 scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
                 if raw_rows and not scoped_rows and selected_libs:
                     outside_scope_seen = True
@@ -1180,11 +1220,9 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                     "Fields": "ProviderIds,ProductionYear,Type",
                     "Limit": 50,
                 }
-                q.update(jf_library_scope(adapter.cfg, feature))
-                r = http.get("/Items", params=q)
                 title_lc = title.lower()
                 cand = []
-                raw_rows = (r.json() or {}).get("Items") or []
+                raw_rows = jf_get_scoped_items(http, uid, q, adapter.cfg, feature)
                 scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
                 if raw_rows and not scoped_rows and selected_libs:
                     outside_scope_seen = True
@@ -1305,11 +1343,9 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                 "Fields": "ProviderIds,ProductionYear,Type",
                 "Limit": 50,
             }
-            q.update(jf_library_scope(adapter.cfg, feature))
-            r = http.get("/Items", params=q)
             t_l = series_title.lower()
             cands = []
-            raw_rows = (r.json() or {}).get("Items") or []
+            raw_rows = jf_get_scoped_items(http, uid, q, adapter.cfg, feature)
             scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
             if raw_rows and not scoped_rows and selected_libs:
                 outside_scope_seen = True
@@ -1358,10 +1394,8 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                 "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId",
                 "Limit": 50,
             }
-            q.update(jf_library_scope(adapter.cfg, feature))
-            r = http.get("/Items", params=q)
             t_l = title.lower()
-            raw_rows = (r.json() or {}).get("Items") or []
+            raw_rows = jf_get_scoped_items(http, uid, q, adapter.cfg, feature)
             scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs, trust_query_scope=True)
             if raw_rows and not scoped_rows and selected_libs:
                 outside_scope_seen = True
@@ -1402,6 +1436,9 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
     selected_libs = jf_selected_library_ids(adapter.cfg, feature)
 
     ids = dict(it.get("ids") or {})
+    native_id = str(ids.get("jellyfin") or "").strip()
+    if one and native_id and str(one) == native_id:
+        return [str(one)]
     show_ids = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else None
 
     t = _lookup_type(it)
@@ -1459,10 +1496,8 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
                     "Fields": "ProviderIds,ProductionYear,Type",
                     "Limit": 50,
                 }
-                q.update(jf_library_scope(adapter.cfg, feature))
-                r = http.get("/Items", params=q)
                 t_l = title.lower()
-                for row in jf_filter_library_candidates((r.json() or {}).get("Items") or [], selected_libs, trust_query_scope=True):
+                for row in jf_filter_library_candidates(jf_get_scoped_items(http, uid, q, adapter.cfg, feature), selected_libs, trust_query_scope=True):
                     if (row.get("Type") or "") != "Movie":
                         continue
                     nm = (row.get("Name") or "").strip().lower()
@@ -1506,10 +1541,8 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
                     "Fields": "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesName",
                     "Limit": 200,
                 }
-                q.update(jf_library_scope(adapter.cfg, feature))
-                r = http.get("/Items", params=q)
                 st_l = series_title.lower()
-                for row in jf_filter_library_candidates((r.json() or {}).get("Items") or [], selected_libs, trust_query_scope=True):
+                for row in jf_filter_library_candidates(jf_get_scoped_items(http, uid, q, adapter.cfg, feature), selected_libs, trust_query_scope=True):
                     if (row.get("Type") or "") != "Episode":
                         continue
                     sn = (row.get("SeriesName") or "").strip().lower()

@@ -229,6 +229,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     out: dict[str, dict[str, Any]] = {}
     done = 0
+    seen_pages: set[tuple[str, ...]] = set()
 
     while True:
         r = http.get(
@@ -261,6 +262,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             rows = []
             if total is None:
                 total = 0
+        signature = tuple(str(row.get("Id") or "") for row in rows if isinstance(row, Mapping))
+        if rows and signature in seen_pages:
+            break
+        seen_pages.add(signature)
 
         for row in rows:
             try:

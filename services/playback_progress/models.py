@@ -126,9 +126,15 @@ class PlaybackActionResult:
     remote_status: int | None = None
     history_result: dict[str, Any] | None = None
     playback_cleanup_result: dict[str, Any] | None = None
+    status: str = ""
+    reason: str = ""
+    decision_context: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return clean_mapping(asdict(self))
+        data = asdict(self)
+        if not data.get("status"):
+            data["status"] = "applied" if self.ok else "failed"
+        return clean_mapping(data)
 
 
 @dc_dataclass

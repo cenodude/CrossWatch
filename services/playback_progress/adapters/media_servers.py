@@ -193,6 +193,15 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             if not configured:
                 reason = f"{self.provider_label} is not connected for this instance."
         can_use = bool(configured and self.ops is not None)
+        can_write = can_use
+        if can_use and self.provider == "jellyfin" and hasattr(self.ops, "progress_write_capability"):
+            try:
+                can_write, write_reason, _version = self.ops.progress_write_capability(config_view)
+                if not can_write:
+                    reason = write_reason or "unsupported_server_version"
+            except Exception:
+                can_write = False
+                reason = "unsupported_server_version"
         return PlaybackCapabilities(
             provider=self.provider,
             provider_label=self.provider_label,
@@ -200,12 +209,12 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             instance_label=instance_label,
             configured=configured,
             read=can_use,
-            remove_progress=can_use,
+            remove_progress=can_write,
             mark_watched=can_use,
-            update_progress=can_use,
-            bulk_remove_progress=can_use,
+            update_progress=can_write,
+            bulk_remove_progress=can_write,
             bulk_mark_watched=can_use,
-            bulk_update_progress=can_use,
+            bulk_update_progress=can_write,
             supports_movies=True,
             supports_episodes=True,
             supports_anime=False,
@@ -245,18 +254,13 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             remote_id = key if key and not key.startswith("unknown:") else ""
         media_type = str(row.get("type") or "movie").strip().lower()
         if media_type not in {"movie", "episode", "anime_episode"}:
-            media_type = "episode" if media_type in {"show", "season"} else "movie"
+            return None
         title = _first_str(row.get("series_title") if media_type in {"episode", "anime_episode"} else None, row.get("title"))
         episode_title = _first_str(row.get("title")) if media_type in {"episode", "anime_episode"} else ""
         series_title = _first_str(row.get("series_title")) if media_type in {"episode", "anime_episode"} else ""
         show_ids = clean_mapping(row.get("show_ids") if isinstance(row.get("show_ids"), Mapping) else {})
         if media_type in {"episode", "anime_episode"}:
             show_ids = _resolve_with_metadata(metadata_provider, entity="tv", title=series_title or title, year=None, ids=show_ids)
-            if not _has_metadata_ids(ids) and _has_metadata_ids(show_ids):
-                ids = dict(ids)
-                for key_name in ("tmdb", "imdb", "tvdb"):
-                    if show_ids.get(key_name):
-                        ids.setdefault(key_name, show_ids.get(key_name))
         else:
             ids = _resolve_with_metadata(metadata_provider, entity="movie", title=title, year=row.get("year"), ids=ids)
         progress_ms = _int(row.get("progress_ms") or row.get("viewOffset") or row.get("view_offset"))
@@ -317,12 +321,14 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
     def remove_progress(self, config_view: Mapping[str, Any], record: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackActionResult:
         if self.ops is None:
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message=f"{self.provider_label} playback support is unavailable.", error_code="provider_unavailable")
-        if self.provider == "plex":
-            return self._remove_plex_progress(config_view, record, instance_id=instance_id)
         item = _history_item(record, self.provider)
         try:
             result = self.ops.remove(config_view, [item], feature="progress")
             ok = _successful_write(result)
+            decisions = result.get("results") if isinstance(result.get("results"), list) else []
+            decision = decisions[0] if decisions and isinstance(decisions[0], Mapping) else {}
+            status = str(decision.get("status") or ("applied" if ok else "failed"))
+            decision_reason = str(decision.get("reason") or "")
             return PlaybackActionResult(
                 ok=ok,
                 provider=self.provider,
@@ -333,6 +339,9 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
                 message=f"Playback record removed from {self.provider_label}." if ok else f"{self.provider_label} remove progress failed.",
                 error_code="" if ok else "progress_remove_failed",
                 playback_cleanup_result=clean_mapping(result),
+                status=status,
+                reason=decision_reason,
+                decision_context=clean_mapping(decision),
             )
         except Exception:
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message=f"{self.provider_label} remove progress failed.", retryable=True, remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""))
@@ -412,6 +421,10 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
         try:
             result = self.ops.add(config_view, [item], feature="progress")
             ok = _successful_write(result)
+            decisions = result.get("results") if isinstance(result.get("results"), list) else []
+            decision = decisions[0] if decisions and isinstance(decisions[0], Mapping) else {}
+            status = str(decision.get("status") or ("applied" if ok else "failed"))
+            decision_reason = str(decision.get("reason") or "")
             return PlaybackActionResult(
                 ok=ok,
                 provider=self.provider,
@@ -419,9 +432,12 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
                 operation="update_progress",
                 remote_id=str(record.get("remote_id") or ""),
                 canonical_key=str(record.get("canonical_key") or ""),
-                message=f"Progress updated on {self.provider_label} to {progress_percent:g}%." if ok else f"{self.provider_label} update progress failed.",
+                message=(f"Progress update skipped on {self.provider_label}: {decision_reason}." if status == "skipped" else (f"Progress updated on {self.provider_label} to {progress_percent:g}%." if ok else f"{self.provider_label} update progress failed.")),
                 error_code="" if ok else "progress_update_failed",
                 playback_cleanup_result=clean_mapping(result),
+                status=status,
+                reason=decision_reason,
+                decision_context=clean_mapping(decision),
             )
         except Exception:
             return public_failure(provider=self.provider, instance_id=instance_id, operation="update_progress", message=f"{self.provider_label} update progress failed.", retryable=True, remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""))
