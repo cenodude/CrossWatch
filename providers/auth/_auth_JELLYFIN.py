@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import secrets
+import re
 from collections.abc import Mapping, MutableMapping
 from typing import Any, cast
 from urllib.parse import urljoin
@@ -30,6 +31,8 @@ UA = "CrossWatch/1.0"
 __VERSION__ = "2.0.0"
 HTTP_TIMEOUT_POST = 15
 HTTP_TIMEOUT_GET = 10
+MINIMUM_SERVER_VERSION = (10, 9)
+MINIMUM_SERVER_VERSION_TEXT = "10.9"
 
 
 def _clean_base(url: str) -> str:
@@ -62,6 +65,27 @@ def _headers(token: str | None, device_id: str) -> dict[str, str]:
     return h
 
 
+def _server_version_tuple(value: Any) -> tuple[int, int] | None:
+    match = re.match(r"^\s*(\d+)\.(\d+)", str(value or ""))
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _validate_server_version(value: Any) -> str:
+    version = str(value or "").strip()
+    parsed = _server_version_tuple(version)
+    if parsed is None:
+        raise RuntimeError(
+            f"Unable to determine Jellyfin server version; CrossWatch requires Jellyfin {MINIMUM_SERVER_VERSION_TEXT} or newer."
+        )
+    if parsed < MINIMUM_SERVER_VERSION:
+        raise RuntimeError(
+            f"Jellyfin version too old: detected {version}; CrossWatch requires Jellyfin {MINIMUM_SERVER_VERSION_TEXT} or newer."
+        )
+    return version
+
+
 def _raise_with_details(resp: Any, default: str) -> None:
     msg = default
     try:
@@ -83,10 +107,10 @@ class JellyfinAuth(AuthProvider):
 
     def manifest(self) -> AuthManifest:
         return AuthManifest(
-            name="JELLYFIN",
-            label="Jellyfin",
-            flow="token",
-            fields=[
+            "JELLYFIN",
+            "Jellyfin",
+            "token",
+            [
                 {
                     "key": "jellyfin.server",
                     "label": "Server URL",
@@ -106,8 +130,9 @@ class JellyfinAuth(AuthProvider):
                     "required": False,
                 },
             ],
-            actions={"start": True, "finish": False, "refresh": False, "disconnect": True},
-            notes="Sign in with your Jellyfin account to obtain a user access token.",
+            {"start": True, "finish": False, "refresh": False, "disconnect": True},
+            None,
+            "Sign in with your Jellyfin account to obtain a user access token.",
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -191,6 +216,30 @@ class JellyfinAuth(AuthProvider):
         display = (user_obj.get("Name") or user).strip()
 
         try:
+            server_info = requests.get(
+                urljoin(base, "System/Info"),
+                headers=_headers(token, dev_id),
+                timeout=HTTP_TIMEOUT_GET,
+            )
+        except rx.RequestException as exc:
+            raise RuntimeError(
+                f"Unable to determine Jellyfin server version; CrossWatch requires Jellyfin {MINIMUM_SERVER_VERSION_TEXT} or newer."
+            ) from exc
+        if not server_info.ok:
+            raise RuntimeError(
+                f"Unable to determine Jellyfin server version; CrossWatch requires Jellyfin {MINIMUM_SERVER_VERSION_TEXT} or newer."
+            )
+        try:
+            server_info_data = server_info.json() or {}
+        except Exception as exc:
+            raise RuntimeError(
+                f"Unable to determine Jellyfin server version; CrossWatch requires Jellyfin {MINIMUM_SERVER_VERSION_TEXT} or newer."
+            ) from exc
+        server_version = _validate_server_version(
+            server_info_data.get("Version") or server_info_data.get("ServerVersion")
+        )
+
+        try:
             me = requests.get(
                 urljoin(base, "Users/Me"),
                 headers=_headers(token, dev_id),
@@ -205,10 +254,16 @@ class JellyfinAuth(AuthProvider):
         jf["access_token"] = token
         jf["user_id"] = user_id or jf.get("user_id") or ""
         jf["user"] = display or user
+        jf["server_version"] = server_version
         jf.pop("password", None)
 
         log("Jellyfin: access token stored", level="SUCCESS", module="AUTH")
-        return {"ok": True, "mode": "user_token", "user_id": jf.get("user_id") or ""}
+        return {
+            "ok": True,
+            "mode": "user_token",
+            "user_id": jf.get("user_id") or "",
+            "server_version": server_version,
+        }
 
     def finish(self, cfg: MutableMapping[str, Any], *, instance_id: Any = None, **payload: Any) -> AuthStatus:
         return self.get_status(cfg, instance_id)

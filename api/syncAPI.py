@@ -15,6 +15,7 @@ import asyncio
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from cw_platform.value_coercion import coerce_bool
 
 __all__ = ["router", "_is_sync_running", "_load_state", "_find_state_path"]
 
@@ -55,8 +56,8 @@ _ALLOWED_RATING_MODES: tuple[str, ...] = ("only_new", "from_date", "all")
 def _normalize_progress_block(v: dict | bool | None) -> dict:
     if isinstance(v, bool):
         return {
-            "enable": bool(v),
-            "add": bool(v),
+            "enable": coerce_bool(v),
+            "add": coerce_bool(v),
             "remove": False,
             "min_seconds": 60,
             "delta_seconds": 30,
@@ -65,9 +66,9 @@ def _normalize_progress_block(v: dict | bool | None) -> dict:
         }
 
     d = dict(v or {})
-    d["enable"] = bool(d.get("enable", d.get("enabled", False)))
-    d["add"] = bool(d.get("add", True))
-    d["remove"] = bool(d.get("remove", False))
+    d["enable"] = coerce_bool(d.get("enable", d.get("enabled", False)))
+    d["add"] = coerce_bool(d.get("add", True), True)
+    d["remove"] = coerce_bool(d.get("remove", False))
 
     def _i(x: Any, default: int) -> int:
         try:
@@ -92,7 +93,10 @@ def _normalize_progress_block(v: dict | bool | None) -> dict:
     d["min_seconds"] = max(0, min_s)
     d["delta_seconds"] = max(0, delta_s)
     d["max_percent"] = float(min(100.0, max(0.0, max_p)))
-    d["propagate_timestamp_updates"] = bool(
+    d["replay_enabled"] = coerce_bool(d.get("replay_enabled", False))
+    tolerance = _i(d.get("timestamp_tolerance_seconds"), 30)
+    d["timestamp_tolerance_seconds"] = max(0, min(300, tolerance))
+    d["propagate_timestamp_updates"] = coerce_bool(
         d.get("propagate_timestamp_updates", d.get("propagateTimestampUpdates", False))
     )
 
@@ -105,14 +109,14 @@ def _normalize_progress_block(v: dict | bool | None) -> dict:
 def _normalize_ratings_block(v: dict | bool | None) -> dict:
     if isinstance(v, bool):
         return {
-            "enable": bool(v), "add": bool(v), "remove": False,
+            "enable": coerce_bool(v), "add": coerce_bool(v), "remove": False,
             "types": ["movies", "shows"], "mode": "only_new", "from_date": "",
         }
 
     d = dict(v or {})
-    d["enable"] = bool(d.get("enable", d.get("enabled", False)))
-    d["add"] = bool(d.get("add", True))
-    d["remove"] = bool(d.get("remove", False))
+    d["enable"] = coerce_bool(d.get("enable", d.get("enabled", False)))
+    d["add"] = coerce_bool(d.get("add", True), True)
+    d["remove"] = coerce_bool(d.get("remove", False))
 
     t = d.get("types", [])
     if isinstance(t, str):
@@ -152,15 +156,15 @@ def _normalize_features(f: dict | None) -> dict:
             if isinstance(v, (bool, dict)):
                 f[k] = _normalize_progress_block(v)
         elif isinstance(v, bool):
-            f[k] = {"enable": bool(v), "add": bool(v), "remove": False}
+            f[k] = {"enable": coerce_bool(v), "add": coerce_bool(v), "remove": False}
         elif isinstance(v, dict):
-            v.setdefault("enable", True)
-            v.setdefault("add", True)
-            v.setdefault("remove", False)
+            v["enable"] = coerce_bool(v.get("enable", True), True)
+            v["add"] = coerce_bool(v.get("add", True), True)
+            v["remove"] = coerce_bool(v.get("remove", False))
         if isinstance(f.get(k), dict) and ("use_anime_mapping" in f[k] or "anime_only_sync" in f[k]):
-            use_map = bool(f[k].get("use_anime_mapping", False))
+            use_map = coerce_bool(f[k].get("use_anime_mapping", False))
             f[k]["use_anime_mapping"] = use_map
-            f[k]["anime_only_sync"] = bool(f[k].get("anime_only_sync", False)) if use_map else False
+            f[k]["anime_only_sync"] = coerce_bool(f[k].get("anime_only_sync", False)) if use_map else False
     return f
 
 _PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "PUBLICMETADB", "CROSSWATCH"}
@@ -191,22 +195,22 @@ def _normalize_pair_providers(p: Any) -> dict[str, Any]:
         if not key:
             continue
         if isinstance(v, bool):
-            out[key] = {"strict_id_matching": bool(v)}
+            out[key] = {"strict_id_matching": coerce_bool(v)}
             continue
         if not isinstance(v, dict):
             continue
         blk: dict[str, Any] = {}
         if "strict_id_matching" in v:
-            blk["strict_id_matching"] = bool(v.get("strict_id_matching"))
+            blk["strict_id_matching"] = coerce_bool(v.get("strict_id_matching"))
         if key == "trakt":
             if "history_ignore_dropped_shows" in v:
-                blk["history_ignore_dropped_shows"] = bool(v.get("history_ignore_dropped_shows"))
+                blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
         if key == "mdblist":
             if "history_ignore_dropped_shows" in v:
-                blk["history_ignore_dropped_shows"] = bool(v.get("history_ignore_dropped_shows"))
+                blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
         if key == "simkl":
             if "history_ignore_dropped_shows" in v:
-                blk["history_ignore_dropped_shows"] = bool(v.get("history_ignore_dropped_shows"))
+                blk["history_ignore_dropped_shows"] = coerce_bool(v.get("history_ignore_dropped_shows"))
         for kk, vv in v.items():
             if kk in {"strict_id_matching", "history_ignore_dropped_shows"}:
                 continue
@@ -534,7 +538,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
 
         if req_pair_id:
             pair = next((p for p in (cfg.get("pairs") or []) if str(p.get("id") or "") == req_pair_id), None)
-            if not pair or pair.get("enabled", True) is False:
+            if not pair or not coerce_bool(pair.get("enabled", True), True):
                 _sync_progress_ui(f"[!] Pair not found or disabled: {req_pair_id}")
                 _sync_progress_ui("[SYNC] exit code: 1")
                 return
@@ -560,12 +564,12 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 for _, fcfg in (fmap.items() or []):
                     if isinstance(fcfg, bool) and fcfg:
                         return True
-                    if isinstance(fcfg, dict) and fcfg.get("enable"):
+                    if isinstance(fcfg, dict) and coerce_bool(fcfg.get("enable", True), True):
                         return True
                 return False
 
             for pair in (cfg.get("pairs") or []):
-                if not pair.get("enabled", True):
+                if not coerce_bool(pair.get("enabled", True), True):
                     continue
                 if "features" in pair and not _pair_has_enabled_features(pair):
                     src = pair.get("source") or "?"
@@ -576,7 +580,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                     )
 
             mgr = OrchestratorClass(config=cfg)
-            dry = bool(((cfg.get("sync") or {}).get("dry_run") or False)) or bool((overrides or {}).get("dry_run"))
+            dry = coerce_bool((cfg.get("sync") or {}).get("dry_run", False)) or coerce_bool((overrides or {}).get("dry_run"))
             result = mgr.run_pairs(
                 dry_run=dry,
                 progress=_sync_progress_ui,
@@ -1740,7 +1744,7 @@ def api_pairs_add(payload: PairIn = Body(...)) -> dict[str, Any]:
         item.setdefault("mode", "one-way")
         item["source_instance"] = _norm_instance_id(item.get("source_instance"))
         item["target_instance"] = _norm_instance_id(item.get("target_instance"))
-        item["enabled"] = bool(item.get("enabled", False))
+        item["enabled"] = coerce_bool(item.get("enabled", False))
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
         _enforce_pair_feature_constraints(item)
         prov = _normalize_pair_providers(item.get("providers"))
@@ -2064,7 +2068,7 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
             pair = next((p for p in pairs if str(p.get("id") or "") == pair_id), None)
             if not pair:
                 return {"ok": False, "error": f"Pair not found: {pair_id}"}
-            if pair.get("enabled", True) is False:
+            if not coerce_bool(pair.get("enabled", True), True):
                 return {"ok": False, "error": f"Pair disabled: {pair_id}"}
             pairs = [pair]
         if not any(p.get("enabled", True) for p in pairs):
@@ -2171,7 +2175,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
         if not isinstance(enabled, dict):
             return ()
         try:
-            return tuple(sorted((str(k), bool(v)) for k, v in enabled.items()))
+            return tuple(sorted((str(k), coerce_bool(v)) for k, v in enabled.items()))
         except Exception:
             return ()
     async def agen():

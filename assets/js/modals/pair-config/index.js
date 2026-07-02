@@ -204,7 +204,7 @@ function defaultState(){
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
       history:{enable:false,add:false,remove:false},
       playlists:{enable:false,add:true,remove:false},
-      progress:{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,propagate_timestamp_updates:false}
+      progress:{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}
     },
     pairProviders:{},
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -369,12 +369,12 @@ const commonFeatures=(state)=>{
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
   k==="playlists"?{enable:false,add:true,remove:false}:
-  k==="progress"?{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,propagate_timestamp_updates:false}:
+  k==="progress"?{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}:
   {enable:false,add:false,remove:false};
 function getOpts(state,key){
   if(!state.visited.has(key)){
     if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},state.options.ratings||{});
-    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,propagate_timestamp_updates:false},state.options.progress||{});
+    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false},state.options.progress||{});
     else state.options[key]=state.options[key]??defaultFor(key);
     state.visited.add(key);
   }
@@ -656,7 +656,7 @@ function applySubDisable(feature){
     ],
     history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
-    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp"]
+    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":"cx-pl-enable")?.checked;
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
@@ -1519,6 +1519,8 @@ left.innerHTML = `
     const minS = Number.isFinite(pr.min_seconds) ? pr.min_seconds : 60;
     const deltaS = Number.isFinite(pr.delta_seconds) ? pr.delta_seconds : 30;
     const maxP = Number.isFinite(pr.max_percent) ? pr.max_percent : 80;
+    const replayEnabled = pr.replay_enabled === true || ["1", "true", "yes", "on"].includes(String(pr.replay_enabled ?? "").trim().toLowerCase());
+    const timestampTolerance = Number.isFinite(Number(pr.timestamp_tolerance_seconds)) ? Math.max(0, Math.min(300, Math.round(Number(pr.timestamp_tolerance_seconds)))) : 30;
 
     left.innerHTML = `<div class="panel-title">Progress | Basics</div>
       <div class="grid2">
@@ -1530,7 +1532,7 @@ left.innerHTML = `
           <label class="switch"><input id="cx-pr-remove" type="checkbox" ${pr.remove ? "checked" : ""}><span class="slider"></span></label></div>
       </div>`;
 
-    right.innerHTML = `<div class="panel-title">Advanced</div>
+    right.innerHTML = `<div class="panel-title">Advanced Playback Progress</div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="cx-pr-min" data-tip-id="cx-pr-min">Minimum seconds</label>
           <input id="cx-pr-min" class="input small" type="number" min="0" max="36000" value="${minS}"></div>
@@ -1538,7 +1540,12 @@ left.innerHTML = `
           <input id="cx-pr-delta" class="input small" type="number" min="0" max="36000" value="${deltaS}"></div>
         <div class="opt-row"><label for="cx-pr-maxp" data-tip-id="cx-pr-maxp">Ignore near complete (%)</label>
           <input id="cx-pr-maxp" class="input small" type="number" min="0" max="100" step="1" value="${maxP}"></div>
+        <div class="opt-row"><label for="cx-pr-replay" data-tip-id="cx-pr-replay">Replay watched items</label>
+          <label class="switch"><input id="cx-pr-replay" type="checkbox" ${replayEnabled ? "checked" : ""}><span class="slider"></span></label></div>
+        <div class="opt-row"><label for="cx-pr-tolerance" data-tip-id="cx-pr-tolerance">Timestamp tolerance (s)</label>
+          <input id="cx-pr-tolerance" class="input small" type="number" min="0" max="300" step="1" value="${timestampTolerance}"></div>
       </div>
+      <div class="muted" style="margin-top:10px;color:#f0b35a">Warning: replay progress marks watched targets unwatched before writing the resume position.</div>
       <div class="muted" style="margin-top:10px">Tip: Progress does not infer clears from absence. It only syncs resume positions.</div>`;
 
     applySubDisable("progress");
@@ -1827,13 +1834,16 @@ function bindChangeHandlers(state,root){
       const minS=parseInt(ID("cx-pr-min")?.value||"60",10);
       const delS=parseInt(ID("cx-pr-delta")?.value||"30",10);
       const maxP=parseFloat(ID("cx-pr-maxp")?.value||"95");
+      const tolerance=parseInt(ID("cx-pr-tolerance")?.value||"30",10);
       state.options.progress=Object.assign({},prev,{
         enable:!!ID("cx-pr-enable")?.checked,
         add:!!ID("cx-pr-add")?.checked,
         remove:!!ID("cx-pr-remove")?.checked,
         min_seconds: Number.isFinite(minS)?Math.max(0,minS):60,
         delta_seconds: Number.isFinite(delS)?Math.max(0,delS):30,
-        max_percent: Number.isFinite(maxP)?Math.min(100,Math.max(0,maxP)):80
+        max_percent: Number.isFinite(maxP)?Math.min(100,Math.max(0,maxP)):80,
+        replay_enabled:!!ID("cx-pr-replay")?.checked,
+        timestamp_tolerance_seconds:Number.isFinite(tolerance)?Math.max(0,Math.min(300,tolerance)):30
       });
       state.visited.add("progress");
     }

@@ -272,13 +272,14 @@
     const server = (Q("#jfy_server")?.value || "").trim();
     const username = (Q("#jfy_user")?.value || "").trim();
     const password = Q("#jfy_pass")?.value || "";
+    const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
     const btn = Q("button.btn.jellyfin"), msg = Q("#jfy_msg");
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
     setMsgBanner(msg, null, '');
     try {
       const r = await fetch(jfyApi("/api/jellyfin/login"), {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server, username, password }), cache: "no-store"
+        body: JSON.stringify({ server, username, password, verify_ssl }), cache: "no-store"
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', 'Login failed'); return; }

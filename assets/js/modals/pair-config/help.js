@@ -39,6 +39,8 @@ export const HELP_TEXT = {
   "cx-pr-min": "Progress: Minimum seconds\nIgnore tiny offsets (scrubbing).",
   "cx-pr-delta": "Progress: Change threshold\nOnly write when the difference is large enough.",
   "cx-pr-maxp": "Progress: Ignore near complete (%)\nWhen near completion, history sync should handle watched state.",
+  "cx-pr-replay": "Replay watched items\nUnwatch the target, then apply resume progress.",
+  "cx-pr-tolerance": "Timestamp tolerance\nProtect targets newer by more than this many seconds.",
 
   "cx-jf-wl-mode": "Jellyfin: Watchlist mode\nJellyfin has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
   "cx-em-wl-mode": "Emby: Watchlist mode\nEmby has no native Watchlist. CrossWatch maps it to:\n• Favorites: sets the Favorite flag\n• Playlist: writes to a named playlist (episodes only; no shows)\n• Collections: writes to a named collection\nChanging mode does not move existing items.\nTip: Favorites or Collections are the most compatible.",
