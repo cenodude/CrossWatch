@@ -12,7 +12,9 @@ from cw_platform.id_map import canonical_key as _canonical_key, minimal as id_mi
 
 from .._log import log as cw_log
 from ._common import (
+    SIMKLFetchError,
     adapter_headers,
+    cache_anime_mappings,
     fetch_activities,
     extract_latest_ts,
     get_watermark,
@@ -32,8 +34,6 @@ BASE = "https://api.simkl.com"
 URL_ALL_ITEMS = f"{BASE}/sync/all-items"
 URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
-URL_TV_EPISODES = f"{BASE}/tv/episodes"
-URL_ANIME_EPISODES = f"{BASE}/anime/episodes"
 
 
 def _unresolved_path() -> str:
@@ -44,7 +44,6 @@ ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", 
 _MOVIE_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl")  # anime IDs excluded to prevent SIMKL misrouting to anime bucket
 _EPISODE_LOOKUP_ID_KEYS = ("tvdb", "anidb")
 
-_EP_LOOKUP_MEMO: dict[str, dict[tuple[int, int], dict[str, Any]]] = {}
 def _maybe_map_tvdb(adapter: Any, ids: Mapping[str, Any]) -> dict[str, str]:
     def _fetch_rows() -> Iterable[Mapping[str, Any]]:
         headers = _headers(adapter, force_refresh=True)
@@ -227,163 +226,6 @@ def _thaw_key(item: Mapping[str, Any]) -> str:
     typ = str(item.get("type") or "").lower()
     return simkl_key_of(item) if typ == "episode" else simkl_key_of(id_minimal(item))
 
-
-def _episode_lookup(
-    session: Any,
-    headers: Mapping[str, str],
-    *,
-    timeout: float,
-    show_ids: Mapping[str, Any],
-    kind: str,
-) -> dict[tuple[int, int], dict[str, Any]]:
-    ids = dict(show_ids or {})
-    candidates = [
-        str(ids.get("simkl") or "").strip(),
-        str(ids.get("tvdb") or "").strip(),
-        str(ids.get("tmdb") or "").strip(),
-        str(ids.get("imdb") or "").strip(),
-    ]
-    candidates = [c for c in candidates if c]
-    if not candidates:
-        return {}
-
-    base_url = URL_ANIME_EPISODES if str(kind).lower() == "anime" else URL_TV_EPISODES
-
-    for cand in candidates:
-        memo_key = f"{str(kind).lower()}:{cand}"
-        if memo_key in _EP_LOOKUP_MEMO:
-            return _EP_LOOKUP_MEMO[memo_key]
-
-    def _as_title(v: Any) -> str | None:
-        if isinstance(v, str):
-            t = v.strip()
-            return t or None
-        if isinstance(v, Mapping):
-            for k in ("en", "title", "name", "original", "en_title"):
-                t = _as_title(v.get(k))
-                if t:
-                    return t
-            for vv in v.values():
-                t = _as_title(vv)
-                if t:
-                    return t
-        if isinstance(v, list):
-            for it in v:
-                t = _as_title(it)
-                if t:
-                    return t
-        return None
-
-    def _pick_title(row: Mapping[str, Any]) -> str | None:
-        for key in ("title", "name", "en_title", "episode_title", "episodeName", "episodeTitle", "episode_name"):
-            t = _as_title(row.get(key))
-            if t:
-                return t
-        ep = row.get("episode")
-        if isinstance(ep, Mapping):
-            for key in ("title", "name", "en_title", "episode_title"):
-                t = _as_title(ep.get(key))
-                if t:
-                    return t
-        for key in ("titles", "names"):
-            t = _as_title(row.get(key))
-            if t:
-                return t
-        return None
-
-    def _extract_ids(row: Mapping[str, Any]) -> dict[str, str]:
-        raw = row.get("ids")
-        d = dict(raw) if isinstance(raw, Mapping) else {}
-        if d.get("simkl_id") and not d.get("simkl"):
-            d["simkl"] = d["simkl_id"]
-        return {k: str(d[k]) for k in ID_KEYS if d.get(k)}
-
-    for cand in candidates:
-        out: dict[tuple[int, int], dict[str, Any]] = {}
-        url = f"{base_url}/{cand}"
-        params = simkl_api_params_from_headers(
-            headers,
-            extended="full_anime_seasons" if str(kind).lower() == "anime" else "full",
-        )
-        try:
-            resp = session.get(url, headers=dict(headers), params=params, timeout=timeout)
-            if not resp.ok:
-                _warn("http_failed", op="episode_lookup", kind=str(kind).lower(), candidate=cand, status=resp.status_code)
-                _EP_LOOKUP_MEMO[memo_key] = {}
-                continue
-            body = resp.json() if (resp.text or "").strip() else []
-        except Exception as exc:
-            _warn("http_failed", op="episode_lookup", kind=str(kind).lower(), candidate=cand, error=str(exc))
-            _EP_LOOKUP_MEMO[memo_key] = {}
-            continue
-
-        if not isinstance(body, list):
-            _dbg("parse_failed", op="episode_lookup", kind=str(kind).lower(), candidate=cand, reason="non_list_body")
-            _EP_LOOKUP_MEMO[memo_key] = {}
-            continue
-        if not body:
-            _dbg("resolve_miss", op="episode_lookup", kind=str(kind).lower(), candidate=cand, reason="empty_response")
-            _EP_LOOKUP_MEMO[memo_key] = {}
-            continue
-
-        for row in body:
-            if not isinstance(row, Mapping):
-                continue
-            s_num = _safe_int(row.get("season") or row.get("season_number"))
-            e_num = _safe_int(row.get("episode") or row.get("episode_number") or row.get("number"))
-            if not s_num or not e_num:
-                continue
-            ep_meta: dict[str, Any] = {
-                "title": _pick_title(row),
-                "ids": _extract_ids(row),
-            }
-            tvdb_map = row.get("tvdb")
-            if isinstance(tvdb_map, Mapping):
-                tvdb_season = _safe_int(tvdb_map.get("season") or tvdb_map.get("tvdb_season"))
-                tvdb_episode = _safe_int(tvdb_map.get("episode") or tvdb_map.get("tvdb_number"))
-                if tvdb_season and tvdb_episode:
-                    ep_meta["tvdb"] = {"season": tvdb_season, "episode": tvdb_episode}
-            out[(s_num, e_num)] = ep_meta
-
-        if out:
-            for k in candidates:
-                _EP_LOOKUP_MEMO[f"{str(kind).lower()}:{k}"] = out
-            _dbg("resolve_hit", op="episode_lookup", kind=str(kind).lower(), candidate=cand, episodes=len(out))
-            return out
-
-        _EP_LOOKUP_MEMO[memo_key] = {}
-
-    return {}
-
-
-def _map_tvdb_episode_to_simkl_anime(
-    adapter: Any,
-    *,
-    show_ids: Mapping[str, Any],
-    season: int,
-    episode: int,
-) -> tuple[int, int] | None:
-    if season <= 0 or episode <= 0:
-        return None
-    lookup = _episode_lookup(
-        adapter.client.session,
-        _headers(adapter),
-        timeout=adapter.cfg.timeout,
-        show_ids=show_ids,
-        kind="anime",
-    )
-    if not lookup:
-        return None
-    for (simkl_season, simkl_episode), meta in lookup.items():
-        tvdb_map = meta.get("tvdb") if isinstance(meta, Mapping) else None
-        if not isinstance(tvdb_map, Mapping):
-            continue
-        if (
-            _safe_int(tvdb_map.get("season")) == int(season)
-            and _safe_int(tvdb_map.get("episode")) == int(episode)
-        ):
-            return simkl_season, simkl_episode
-    return None
 
 def _show_ids_of_episode(item: Mapping[str, Any]) -> dict[str, Any]:
     show_ids = _raw_show_ids(item)
@@ -663,21 +505,54 @@ def _fetch_all_items(
     )
     if since_iso:
         params["date_from"] = since_iso
-    resp = session.get(URL_ALL_ITEMS, headers=headers, params=params, timeout=timeout)
+    try:
+        resp = session.get(URL_ALL_ITEMS, headers=headers, params=params, timeout=timeout)
+    except Exception as exc:
+        _warn("http_failed", op="index", method="GET", url=URL_ALL_ITEMS, error=str(exc))
+        raise SIMKLFetchError("history all-items request failed") from exc
     if not resp.ok:
         _warn("http_failed", op="index", method="GET", url=URL_ALL_ITEMS, status=resp.status_code)
-        return {"movies": [], "shows": [], "anime": []}
+        raise SIMKLFetchError(f"history all-items request failed with HTTP {resp.status_code}")
     try:
-        body = resp.json() or {}
-    except Exception:
-        body = {}
+        body = resp.json()
+    except Exception as exc:
+        _warn("http_failed", op="index", method="GET", url=URL_ALL_ITEMS, reason="invalid_json")
+        raise SIMKLFetchError("history all-items returned invalid JSON") from exc
     out: dict[str, list[dict[str, Any]]] = {"movies": [], "shows": [], "anime": []}
-    if not isinstance(body, Mapping):
+    # SIMKL preserves a legacy response contract: applications with an internal
+    # app ID <= 58447 receive JSON null for an empty result, while newer apps
+    # receive the documented {}. SIMKL cannot change the legacy shape without
+    # breaking backward compatibility, so CrossWatch accepts both.
+    if body is None:
+        _dbg("index_empty_response", shape="null", compatibility="legacy")
         return out
+    if not isinstance(body, Mapping):
+        response_headers = getattr(resp, "headers", {})
+        content_type = ""
+        if isinstance(response_headers, Mapping):
+            content_type = str(
+                response_headers.get("Content-Type")
+                or response_headers.get("content-type")
+                or ""
+            ).split(";", 1)[0].strip()
+        json_count = len(body) if isinstance(body, (list, tuple)) else None
+        _warn(
+            "http_failed",
+            op="index",
+            method="GET",
+            url=URL_ALL_ITEMS,
+            status=getattr(resp, "status_code", None),
+            reason="invalid_response_shape",
+            content_type=content_type or "unknown",
+            json_type=type(body).__name__,
+            json_count=json_count,
+        )
+        raise SIMKLFetchError("history all-items returned an invalid response shape")
     for kind in ("movies", "shows", "anime"):
         rows = body.get(kind)
         if isinstance(rows, list):
             out[kind] = [x for x in rows if isinstance(x, dict) and not _is_null_env(x)]
+    cache_anime_mappings(out["anime"])
     return out
 
 
@@ -1008,7 +883,16 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     _dbg("index_reconcile", reason=reason, strategy=strategy, date_from=date_from or "-", watermark=wm or "-")
 
     headers = _headers(adapter, force_refresh=True)
-    rows_by_kind = _fetch_all_items(session, headers, since_iso=date_from, timeout=timeout)
+    try:
+        rows_by_kind = _fetch_all_items(session, headers, since_iso=date_from, timeout=timeout)
+    except SIMKLFetchError:
+        if not cached:
+            raise
+        _warn("index_reconcile", reason="all_items_fetch_failed", source="cache_fallback")
+        _info("index_done", count=len(cached), source="cache_fallback")
+        out = dict(cached)
+        _apply_since_limit(out, since=since, limit=limit)
+        return out
     movie_rows = list(rows_by_kind.get("movies") or [])
     show_rows = list(rows_by_kind.get("shows") or [])
     anime_rows = list(rows_by_kind.get("anime") or [])
@@ -1019,19 +903,15 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     _dedupe_history_movies(fetched)
     _dbg("index_fetch_counts", movies=movies_cnt, episodes=eps_cnt, from_date=date_from or "")
 
-    # SIMKL history deltas are filtered by watched_at
+    # An empty delta is complete: retain the cache and let the activity
+    # watermark advance below. Do not turn it into another full-library call.
     if strategy == "delta" and not fetched and (movies_cnt == 0 and eps_cnt == 0):
-        _dbg("index_reconcile", reason="incremental_empty", strategy="full_replace", date_from="-", watermark=wm or "-")
-        rows_by_kind = _fetch_all_items(session, headers, since_iso=None, timeout=timeout)
-        movie_rows = list(rows_by_kind.get("movies") or [])
-        show_rows = list(rows_by_kind.get("shows") or [])
-        anime_rows = list(rows_by_kind.get("anime") or [])
-        fetched, thaw, latest_ts_movies, latest_ts_shows, latest_ts_anime, movies_cnt, eps_cnt = _parse_rows(
-            movie_rows, show_rows, anime_rows, limit=None
+        _dbg(
+            "index_reconcile",
+            reason="incremental_empty",
+            strategy="delta_keep_cache",
+            watermark=wm or "-",
         )
-        _dedupe_history_movies(fetched)
-        _dbg("index_fetch_counts", movies=movies_cnt, episodes=eps_cnt, from_date="")
-        strategy = "full_replace"
 
     # Build final index
     if strategy == "delta":
@@ -1092,7 +972,8 @@ def _show_add_entry(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | N
     ids = _ids_of(item)
     if not ids:
         return None
-    ids = _maybe_map_tvdb(adapter, ids)
+    if _is_anime_like(item, ids):
+        ids = _maybe_map_tvdb(adapter, ids)
     entry: dict[str, Any] = {"ids": ids}
     if _is_anime_like(item, ids):
         entry["use_tvdb_anime_seasons"] = True
@@ -1107,7 +988,8 @@ def _show_scope_entry(
     force_anime: bool = False,
 ) -> dict[str, Any] | None:
     show_ids = {k: str(raw_show_ids[k]) for k in ID_KEYS if raw_show_ids.get(k)}
-    show_ids = _maybe_map_tvdb(adapter, show_ids)
+    if force_anime or _is_anime_like(item, show_ids):
+        show_ids = _maybe_map_tvdb(adapter, show_ids)
     if not show_ids:
         return None
 
@@ -1126,21 +1008,6 @@ def _show_scope_entry(
         show["year"] = int(series_year)
 
     return show
-
-
-def _season_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, str] | None:
-    show_ids_raw = _raw_show_ids(item)
-    if not show_ids_raw:
-        return None
-    show = _show_scope_entry(adapter, item, show_ids_raw)
-    if not show:
-        return None
-
-    s_num = _safe_int(item.get("season") or item.get("season_number"))
-    watched_at = item.get("watched_at") or item.get("watchedAt")
-    if not s_num or not isinstance(watched_at, str) or not watched_at:
-        return None
-    return show, s_num, watched_at
 
 
 def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str, dict[str, str]] | None:
@@ -1163,23 +1030,7 @@ def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str,
     if s_num == 0 and not episode_ids:
         return None
 
-    anime_force = False
-    mapped = None
-    if s_num > 0:
-        try:
-            mapped = _map_tvdb_episode_to_simkl_anime(
-                adapter,
-                show_ids=show_ids_raw,
-                season=s_num,
-                episode=e_num,
-            )
-        except Exception:
-            mapped = None
-    if mapped is not None:
-        anime_force = True
-        s_num, e_num = mapped
-        episode_ids = {}
-
+    anime_force = s_num > 0 and _is_anime_like(item, show_ids_raw)
     show = _show_scope_entry(adapter, item, show_ids_raw, force_anime=anime_force)
     if not show:
         return None

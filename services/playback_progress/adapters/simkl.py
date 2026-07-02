@@ -134,6 +134,7 @@ def _history_item(record: Mapping[str, Any]) -> dict[str, Any]:
 
 def _progress_body_from_record(record: Mapping[str, Any], progress_percent: float) -> dict[str, Any]:
     item = _history_item(record)
+    metadata = _as_mapping(record.get("provider_metadata"))
     media_type = str(record.get("media_type") or item.get("type") or "").lower()
     ids = clean_mapping(item.get("ids") if isinstance(item.get("ids"), Mapping) else {})
     body: dict[str, Any] = {"progress": progress_percent}
@@ -150,8 +151,14 @@ def _progress_body_from_record(record: Mapping[str, Any], progress_percent: floa
     show_ids = clean_mapping(item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else {})
     parent = "anime" if media_type == "anime_episode" else "show"
     episode: dict[str, Any] = {}
-    if ids:
-        episode["ids"] = ids
+    episode_ids = _as_mapping(metadata.get("episode_ids"))
+    supported_episode_ids = {
+        key: value
+        for key, value in episode_ids.items()
+        if key in {"tvdb", "anidb"} and value not in (None, "")
+    }
+    if supported_episode_ids:
+        episode["ids"] = supported_episode_ids
     if item.get("season") is not None:
         episode["season"] = item.get("season")
     if item.get("episode") is not None:
@@ -391,7 +398,11 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
             can_mark_watched=caps.mark_watched,
             can_update_progress=caps.update_progress,
             capability_messages=[] if caps.configured else [caps.reason],
-            provider_metadata={"history_item": history_item, "show_ids": container_ids},
+            provider_metadata={
+                "history_item": history_item,
+                "show_ids": container_ids,
+                "episode_ids": episode_ids,
+            },
         )
 
     def remove_progress(
