@@ -617,16 +617,14 @@ def build_snapshots_for_feature(
                     dbg("snapshot.memo", provider=name, feature=feature, count=_eventish_count(feature, cached_idx), raw_count=len(cached_idx))
                     continue
 
-        degraded = False
         try:
             idx_raw = ops.build_index(config, feature=feature)  # type: ignore[call-arg]
         except Exception as e:
             emit_info(
                 f"[!] snapshot.failed provider={name} feature={feature} error={e}"
             )
-            dbg("provider.degraded", provider=name, feature=feature)
-            degraded = True
-            idx_raw = None
+            dbg("snapshot.failed", provider=name, feature=feature)
+            raise
 
         canon: SnapIndex = {}
 
@@ -657,12 +655,12 @@ def build_snapshots_for_feature(
         snaps[name] = canon
 
         if snap_ttl_sec > 0:
-            if degraded or not canon:
+            if not canon:
                 dbg(
                     "snapshot.no_cache_empty",
                     provider=name,
                     feature=feature,
-                    degraded=bool(degraded),
+                    degraded=False,
                 )
             else:
                 snap_cache[memo_key] = (now, canon)

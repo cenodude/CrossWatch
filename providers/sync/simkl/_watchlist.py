@@ -13,6 +13,7 @@ from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
 from ._common import (
+    SIMKLFetchError,
     adapter_headers,
     coalesce_date_from,
     fetch_activities,
@@ -28,9 +29,8 @@ from ._common import (
 )
 
 BASE = "https://api.simkl.com"
-URL_INDEX_ALL = f"{BASE}/sync/all-items/"
+URL_INDEX_ALL = f"{BASE}/sync/all-items"
 URL_INDEX_BUCKET = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
-URL_INDEX_IDS = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
 URL_ADD = f"{BASE}/sync/add-to-list"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 
@@ -400,37 +400,6 @@ def _merge_upsert(dst: dict[str, dict[str, Any]], src: Mapping[str, Mapping[str,
         }
 
 
-def _keys_from_write_resp(body: Any) -> list[str]:
-    keys: list[str] = []
-    if not isinstance(body, dict):
-        return keys
-
-    def _collect(parent: Mapping[str, Any]) -> None:
-        for bucket, media_type in (("movies", "movie"), ("shows", "show")):
-            value = parent.get(bucket)
-            if isinstance(value, list):
-                for item in value:
-                    ids = _ids_filter(
-                        (item.get("ids") or item) if isinstance(item, Mapping) else {},
-                    )
-                    if ids:
-                        m = {"type": media_type, "ids": ids, "simkl_bucket": bucket}
-                        keys.append(simkl_key_of(m))
-
-    for top in ("added", "removed", "deleted"):
-        section = body.get(top)
-        if isinstance(section, Mapping):
-            _collect(section)
-    _collect(body)
-    seen: set[str] = set()
-    uniq: list[str] = []
-    for key in keys:
-        if key not in seen:
-            uniq.append(key)
-            seen.add(key)
-    return uniq
-
-
 _SIG_ID_ORDER = ("tmdb", "imdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 
@@ -519,8 +488,7 @@ def _pull_bucket(
     force_refresh: bool = False,
 ) -> dict[str, dict[str, Any]]:
     session = adapter.client.session
-    url_ids = URL_INDEX_IDS.format(bucket=bucket)
-    url_full = URL_INDEX_BUCKET.format(bucket=bucket)
+    url = URL_INDEX_BUCKET.format(bucket=bucket)
     base_params: dict[str, Any] = {"extended": "ids_only" if ids_only else "full"}
     if bucket == "anime":
         base_params["extended"] = "full_anime_seasons"
@@ -544,11 +512,25 @@ def _pull_bucket(
             )
             if resp.status_code != 200:
                 _warn("http_failed", op="index", bucket=bucket, method="GET", url=url, status=resp.status_code)
-                return {}
+                raise SIMKLFetchError(f"watchlist bucket {bucket} request failed with HTTP {resp.status_code}")
             try:
                 data = resp.json()
-            except Exception:
-                data = None
+            except Exception as exc:
+                _warn("http_failed", op="index", bucket=bucket, method="GET", url=url, reason="invalid_json")
+                raise SIMKLFetchError(f"watchlist bucket {bucket} returned invalid JSON") from exc
+            # SIMKL app IDs <= 58447 receive legacy JSON null for an empty
+            # result; newer apps receive {}. Both must remain compatible.
+            if data is None:
+                _dbg(
+                    "index_empty_response",
+                    bucket=bucket,
+                    shape="null",
+                    compatibility="legacy",
+                )
+                return {}
+            if not isinstance(data, (Mapping, list)):
+                _warn("http_failed", op="index", bucket=bucket, method="GET", url=url, reason="invalid_response_shape")
+                raise SIMKLFetchError(f"watchlist bucket {bucket} returned an invalid response shape")
             rows = _rows_from_data(data, bucket)
             if not rows:
                 return {}
@@ -567,21 +549,12 @@ def _pull_bucket(
                     continue
             return out_local
         except Exception as exc:
+            if isinstance(exc, SIMKLFetchError):
+                raise
             _warn("http_failed", op="index", bucket=bucket, method="GET", url=url, error=str(exc))
-            return {}
+            raise SIMKLFetchError(f"watchlist bucket {bucket} request failed") from exc
 
-    first_url = url_ids if ids_only else url_full
-    result = _do_fetch(first_url, dict(base_params), force_refresh)
-    if not result:
-        alt_params = dict(base_params)
-        alt_params.pop("date_from", None)
-        if ids_only:
-            alt_params["extended"] = "full"
-            alt_url = url_full
-        else:
-            alt_url = first_url
-        result = _do_fetch(alt_url, alt_params, True)
-    return result
+    return _do_fetch(url, dict(base_params), force_refresh)
 
 
 def _pull_all_watchlist(
@@ -606,14 +579,25 @@ def _pull_all_watchlist(
         )
         if resp.status_code != 200:
             _warn("http_failed", op="index", method="GET", url=URL_INDEX_ALL, status=resp.status_code)
-            return {}
+            raise SIMKLFetchError(f"watchlist aggregate request failed with HTTP {resp.status_code}")
         try:
             data = resp.json()
-        except Exception:
-            data = None
+        except Exception as exc:
+            _warn("http_failed", op="index", method="GET", url=URL_INDEX_ALL, reason="invalid_json")
+            raise SIMKLFetchError("watchlist aggregate returned invalid JSON") from exc
+        # SIMKL app IDs <= 58447 receive legacy JSON null for an empty result;
+        # newer apps receive {}. Both must remain compatible.
+        if data is None:
+            _dbg("index_empty_response", shape="null", compatibility="legacy")
+            data = {}
+        if not isinstance(data, Mapping):
+            _warn("http_failed", op="index", method="GET", url=URL_INDEX_ALL, reason="invalid_response_shape")
+            raise SIMKLFetchError("watchlist aggregate returned an invalid response shape")
     except Exception as exc:
+        if isinstance(exc, SIMKLFetchError):
+            raise
         _warn("http_failed", op="index", method="GET", url=URL_INDEX_ALL, error=str(exc))
-        return {}
+        raise SIMKLFetchError("watchlist aggregate request failed") from exc
 
     out: dict[str, dict[str, Any]] = {}
     count = 0
@@ -637,7 +621,7 @@ def _pull_all_watchlist(
 
 
 
-def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
+def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("watchlist") if callable(prog_mk) else None
     done = 0
@@ -969,6 +953,30 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
 
     _info("index_done", count=len(items), source="mixed")
     return items
+
+
+def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, Any]]:
+    shadow = _shadow_load()
+    raw_items = shadow.get("items") or {}
+    cached = (
+        {
+            str(key): dict(value)
+            for key, value in raw_items.items()
+            if isinstance(key, str) and isinstance(value, Mapping)
+        }
+        if isinstance(raw_items, Mapping)
+        else {}
+    )
+    buckets_seen = shadow.get("buckets_seen") or {}
+
+    try:
+        return _build_index_live(adapter, limit=limit)
+    except SIMKLFetchError:
+        if not isinstance(buckets_seen, Mapping) or not _has_all_buckets(cached, buckets_seen):
+            raise
+        _warn("index_reconcile", reason="watchlist_fetch_failed", source="shadow_fallback")
+        _info("index_done", count=len(cached), source="shadow_fallback")
+        return cached
 
 
 def _split_buckets(

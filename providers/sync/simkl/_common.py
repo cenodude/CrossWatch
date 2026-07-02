@@ -14,6 +14,12 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
+
+
+class SIMKLFetchError(RuntimeError):
+    """Raised when a SIMKL read cannot produce a good snapshot"""
+
+
 def simkl_user_agent() -> str:
     env_ua = str(os.getenv("CW_UA") or "").strip()
     if env_ua:
@@ -335,6 +341,35 @@ def save_anime_tvdb_map(mp: Mapping[str, str]) -> None:
         anime_tvdb_map_path(),
         {"updated_at": int(time.time()), "map": dict(mp)},
     )
+
+
+def cache_anime_mappings(rows: Iterable[Mapping[str, Any]]) -> None:
+    """Merge TVDB mappings learned from a normal anime snapshot into the local cache."""
+    rows_list = [row for row in rows if isinstance(row, Mapping)]
+    if not rows_list:
+        return
+
+    tvdb_map, _updated = load_anime_tvdb_map()
+    observed_tvdb = False
+
+    for row in rows_list:
+        show = row.get("show") if isinstance(row.get("show"), Mapping) else row
+        ids = dict(show.get("ids") or {}) if isinstance(show, Mapping) else {}
+        simkl_id = str(ids.get("simkl") or ids.get("simkl_id") or "").strip()
+        tvdb = str(ids.get("tvdb") or "").strip()
+        observed_tvdb = observed_tvdb or bool(tvdb)
+        for key in ("simkl", "tmdb", "imdb"):
+            value = str(ids.get(key) or "").strip()
+            if not value:
+                continue
+            token = f"{key}:{value}"
+            if tvdb and tvdb_map.get(token) != tvdb:
+                tvdb_map[token] = tvdb
+
+    if observed_tvdb:
+        global _ANIME_TVDB_MAP_MEMO
+        _ANIME_TVDB_MAP_MEMO = dict(tvdb_map)
+        save_anime_tvdb_map(tvdb_map)
 
 
 def ensure_anime_tvdb_map(
@@ -689,6 +724,7 @@ __all__ = [
     "anime_tvdb_map_path",
     "load_anime_tvdb_map",
     "save_anime_tvdb_map",
+    "cache_anime_mappings",
     "ensure_anime_tvdb_map",
     "maybe_map_tvdb_ids",
     "fetch_activities",
