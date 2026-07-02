@@ -439,6 +439,8 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
         def _iter_rating_rows(path: str, tnum: int) -> Iterable[Mapping[str, Any]]:
             nonlocal total
             start = 0
+            expected_total: int | None = None
+            seen_pages: set[tuple[str, ...]] = set()
             while True:
                 params = {
                     "type": int(tnum),
@@ -461,6 +463,12 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                     raise RuntimeError(f"PLEX ratings fast query parse failed (ct={(r.headers or {}).get('Content-Type')}; head={head!r})")
 
                 mc = cont.get("MediaContainer") or {}
+                try:
+                    raw_total = mc.get("totalSize")
+                    if raw_total is not None:
+                        expected_total = int(str(raw_total))
+                except Exception:
+                    pass
                 if start == 0:
                     try:
                         total += int(mc.get("totalSize") or 0)
@@ -471,12 +479,16 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
                 rows = mc.get("Metadata") or []
                 if not rows:
                     break
+                signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows if isinstance(row, Mapping))
+                if signature in seen_pages:
+                    break
+                seen_pages.add(signature)
                 for row in rows:
                     if isinstance(row, Mapping):
                         yield cast(Mapping[str, Any], row)
-                if len(rows) < page_size:
-                    break
                 start += len(rows)
+                if len(rows) < page_size or (expected_total is not None and start >= expected_total):
+                    break
 
         def _consume_rows(rows: list[Mapping[str, Any]], tnum: int) -> bool:
             nonlocal scanned, added, fb_try, fb_ok

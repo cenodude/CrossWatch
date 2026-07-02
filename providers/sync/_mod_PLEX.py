@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
+from cw_platform.value_coercion import coerce_bool
+
 from ._log import log as cw_log
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -35,7 +37,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "1.2"
+__VERSION__ = "1.3"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -947,9 +949,9 @@ class PLEXModule:
             password=plex_cfg.get("password"),
             timeout=float(plex_cfg.get("timeout", cfg.get("timeout", 10.0))),
             max_retries=int(plex_cfg.get("max_retries", cfg.get("max_retries", 3))),
-            watchlist_allow_pms_fallback=bool(plex_cfg.get("watchlist_allow_pms_fallback", True)),
+            watchlist_allow_pms_fallback=coerce_bool(plex_cfg.get("watchlist_allow_pms_fallback", True), True),
             watchlist_page_size=int(plex_cfg.get("watchlist_page_size", 100)),
-            strict_id_matching=bool(plex_cfg.get("strict_id_matching", False)),
+            strict_id_matching=coerce_bool(plex_cfg.get("strict_id_matching", False)),
         )
 
         configure_plex_context(baseurl=self.cfg.baseurl or "", token=(self.cfg.pms_token or self.cfg.token or ""))
@@ -1207,7 +1209,7 @@ class PLEXModule:
                         if uk:
                             unresolved_keys.add(str(uk))
             confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys and not str(k).startswith("unknown:")]
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else []}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -1259,7 +1261,7 @@ class PLEXModule:
                         if uk:
                             unresolved_keys.add(str(uk))
             confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys and not str(k).startswith("unknown:")]
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else []}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

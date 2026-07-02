@@ -475,6 +475,7 @@ def _iter_marked_watched_from_library(
             continue
 
         start = 0
+        seen_pages: set[tuple[str, ...]] = set()
         while True:
             params = {
                 "type": plex_type,
@@ -494,6 +495,10 @@ def _iter_marked_watched_from_library(
             rows, total = _rows_from(r)
             if not rows:
                 break
+            signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
+            if signature in seen_pages:
+                break
+            seen_pages.add(signature)
 
             stop = False
             for row in rows:
