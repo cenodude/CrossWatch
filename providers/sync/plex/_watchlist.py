@@ -495,6 +495,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         raw = 0
         coll = 0
         typ: dict[str, int] = {}
+        seen_pages: set[tuple[str, ...]] = set()
     
         while True:
             params = dict(base_params)
@@ -529,6 +530,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     
             if not rows:
                 break
+            signature = tuple(str(row.get("ratingKey") or row.get("key") or row.get("guid") or "") for row in rows)
+            if signature in seen_pages:
+                break
+            seen_pages.add(signature)
     
             stop = False
             for row in rows:
@@ -551,9 +556,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     
             if stop:
                 break
-            if total is None and start > 0 and len(rows) < page_size:
-                break
             start += len(rows)
+            if len(rows) < page_size or (total is not None and start >= total):
+                break
     
         _UNRES.unfreeze(out.keys())
         _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)

@@ -16,19 +16,11 @@ from requests.exceptions import ConnectionError, SSLError
 
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 
 from ._common import make_logger, plex_headers
 def _boolish(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    s = str(value).strip().lower()
-    if s in ("0", "false", "no", "off", "n"):
-        return False
-    if s in ("1", "true", "yes", "on", "y"):
-        return True
-    return default
+    return coerce_bool(value, default)
 
 
 _dbg, _info, _warn, _error, _log = make_logger("utils")
