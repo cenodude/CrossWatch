@@ -55,6 +55,14 @@ def _status_from_msg(msg: str) -> int:
     if any(x in m for x in ("dns", "ssl", "connection", "refused", "unreachable", "getaddrinfo", "name or service")): return 502
     return 502
 
+def _public_jellyfin_runtime_error(exc: RuntimeError) -> str:
+    error_text = str(exc).lower()
+    if "version too old" in error_text:
+        return "Jellyfin version too old; CrossWatch requires Jellyfin 10.9 or newer."
+    if "unable to determine jellyfin server version" in error_text:
+        return "Unable to determine Jellyfin server version; CrossWatch requires Jellyfin 10.9 or newer."
+    return "Login failed"
+
 def _import_provider(modname: str, symbol: str = "PROVIDER"):
     try:
         mod = importlib.import_module(modname)
@@ -773,9 +781,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             msg = res.get("error") or "Login failed"
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
         except RuntimeError as exc:
-            msg = str(exc) or "Login failed"
+            msg = _public_jellyfin_runtime_error(exc)
+            _safe_log(log_fn, "JELLYFIN", f"[JELLYFIN:{inst}] Login failed error_type={type(exc).__name__}")
             return JSONResponse({"ok": False, "error": msg}, _status_from_msg(msg))
-        except Exception:
+        except Exception as exc:
+            _safe_log(log_fn, "JELLYFIN", f"[JELLYFIN:{inst}] Login failed error_type={type(exc).__name__}")
             return JSONResponse({"ok": False, "error": "Login failed"}, 500)
 
     @app.post("/api/jellyfin/token/delete", tags=["auth"])
