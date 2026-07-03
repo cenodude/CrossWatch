@@ -37,7 +37,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "1.3"
+__VERSION__ = "1.4"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -409,19 +409,36 @@ class PLEXClient:
         self._user_scope_kind: str | None = None
         self._token_stack: list[tuple[str | None, str | None, str | None, int | None, int | None, bool, str | None]] = []
 
-    def connect(self) -> PLEXClient:
-        try:
-            if self.cfg.token:
-                self._account = MyPlexAccount(token=self.cfg.token)
-                _ = self._account.username
-            elif self.cfg.username and self.cfg.password:
-                self._account = MyPlexAccount(self.cfg.username, self.cfg.password)
-                _ = self._account.username
-            else:
-                raise PLEXAuthError("Missing Plex auth (account token or username/password)")
+    def _ensure_account(self) -> MyPlexAccount:
+        if self._account is not None:
+            return self._account
+        if self.cfg.token:
+            self._account = MyPlexAccount(token=self.cfg.token)
+        elif self.cfg.username and self.cfg.password:
+            self._account = MyPlexAccount(self.cfg.username, self.cfg.password)
+        else:
+            raise PLEXAuthError("Missing Plex account auth (account token or username/password)")
+        _ = self._account.username
+        return self._account
 
-            cloud_token = self.cfg.token or self._account.authenticationToken
+    def connect(self) -> PLEXClient:
+        started = time.perf_counter()
+        try:
             pms_token = (self.cfg.pms_token or "").strip() or None
+            direct_pms = bool(self.cfg.baseurl and pms_token)
+            account: MyPlexAccount | None = None
+            cloud_token: str | None = None
+            if direct_pms:
+                cloud_token = (self.cfg.token or "").strip() or None
+                if not cloud_token and self.cfg.username and self.cfg.password:
+                    account = self._ensure_account()
+                    cloud_token = str(account.authenticationToken or "").strip() or None
+            else:
+                account = self._ensure_account()
+                cloud_token = (self.cfg.token or "").strip() or str(account.authenticationToken or "").strip() or None
+            connection_token = pms_token or cloud_token
+            if not connection_token:
+                raise PLEXAuthError("Missing Plex auth (PMS token or account login)")
             self._pms_token = pms_token
             self.cloud_token = cloud_token
 
@@ -431,11 +448,11 @@ class PLEXClient:
             self.session.headers.setdefault("X-Plex-Platform", "CrossWatch")
             self.session.headers.setdefault("X-Plex-Version", __VERSION__)
             self.session.headers.setdefault("Accept", "application/xml")
-            self.session.headers["X-Plex-Token"] = pms_token or cloud_token
+            self.session.headers["X-Plex-Token"] = connection_token
 
             if self.cfg.baseurl:
                 try:
-                    self.server = PlexServer(self.cfg.baseurl, (pms_token or cloud_token), timeout=self.cfg.timeout)
+                    self.server = PlexServer(self.cfg.baseurl, connection_token, timeout=self.cfg.timeout)
                     self.server._session = self.session  # type: ignore[attr-defined]
                     self._pms_baseurl = str(getattr(self.server, "baseurl", None) or self.cfg.baseurl or "")
                     if self._pms_baseurl and (pms_token or cloud_token):
@@ -447,6 +464,8 @@ class PLEXClient:
 
                 # Shared users need a server-scoped resource token for PMS endpoints.
                 if not pms_token:
+                    if not cloud_token:
+                        raise PLEXAuthError("Missing Plex account token for PMS resource discovery")
                     try:
                         baseurl = str(self.cfg.baseurl or "").strip()
                         mid = (self.cfg.machine_id or "").strip() or None
@@ -472,10 +491,17 @@ class PLEXClient:
                         configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token))
 
                 self._post_connect_user_scope(str(pms_token or cloud_token))
+                _dbg(
+                    "connect_done",
+                    mode="direct_pms",
+                    cloud_auth_deferred=bool(direct_pms and account is None),
+                    elapsed_ms=int((time.perf_counter() - started) * 1000),
+                )
                 return self
 
             try:
-                res = self._pick_resource(self._account)
+                account = self._ensure_account()
+                res = self._pick_resource(account)
                 res_tok = str(getattr(res, "accessToken", None) or "").strip() or None
                 res_mid = str(getattr(res, "clientIdentifier", None) or "").strip() or None
                 self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore[assignment]
@@ -494,6 +520,12 @@ class PLEXClient:
                 return self
 
             self._post_connect_user_scope(str(pms_token or cloud_token))
+            _dbg(
+                "connect_done",
+                mode="cloud_resource",
+                cloud_auth_deferred=False,
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+            )
             return self
 
         except Exception as e:
@@ -873,9 +905,7 @@ class PLEXClient:
         self._user_scope_kind = prev_scope_kind
 
     def account(self) -> MyPlexAccount:
-        if not self._account:
-            raise PLEXAuthError("MyPlexAccount not available (need account token or login).")
-        return self._account
+        return self._ensure_account()
 
     def ping(self) -> bool:
         try:
