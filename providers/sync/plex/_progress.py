@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, ids_from_guid, ids_from, minimal as id_minimal
 from cw_platform.value_coercion import coerce_bool
-from providers.sync._progress_policy import decide_progress_write
+from providers.sync._progress_policy import decide_progress_write, select_progress_record
 
 from ._common import (
     active_pms_token,
@@ -185,22 +186,99 @@ def _library_id(value: Any) -> str | None:
     return None
 
 
-def _fetch_resume_items(srv: Any, *, page_size: int = 100) -> dict[str, str | None]:
-    items: dict[str, str | None] = {}
+def _page_total(root: Any) -> int | None:
+    attributes = getattr(root, "attrib", {}) or {}
+    return _to_int(attributes.get("totalSize") or attributes.get("totalRecordCount"))
 
-    def _q(path: str) -> None:
+
+def _library_sort_key(section: tuple[str, int]) -> tuple[int, str]:
+    library_id = section[0]
+    return (0, f"{int(library_id):020d}") if library_id.isdigit() else (1, library_id)
+
+
+def _progress_sections(srv: Any, allowed: set[str]) -> list[tuple[str, int]]:
+    root = srv.query("/library/sections")  # type: ignore[attr-defined]
+    rows = list(root) if root is not None else []
+    sections: list[tuple[str, int]] = []
+    found: set[str] = set()
+    for element in rows:
+        attributes = getattr(element, "attrib", {}) or {}
+        library_id = str(attributes.get("key") or attributes.get("ratingKey") or "").strip()
+        library_type = str(attributes.get("type") or "").strip().lower()
+        if not library_id or library_type not in {"movie", "show"}:
+            continue
+        if allowed and library_id not in allowed:
+            continue
+        found.add(library_id)
+        sections.append((library_id, 1 if library_type == "movie" else 4))
+    missing = sorted(allowed - found)
+    if missing:
+        raise RuntimeError(f"plex_progress_libraries_not_found:{','.join(missing)}")
+    return sorted(sections, key=_library_sort_key)
+
+
+def _row_with_ids(element: Any, library_id: str) -> tuple[dict[str, Any], dict[str, str]]:
+    attributes = getattr(element, "attrib", {}) or {}
+    row = dict(attributes)
+    # Plex section rows do not reliably repeat the owning section ID.
+    row["librarySectionID"] = library_id
+    ids: dict[str, str] = {}
+    guid_rows: list[dict[str, str]] = []
+    try:
+        for guid in element.findall("./Guid"):  # type: ignore[attr-defined]
+            guid_id = (getattr(guid, "attrib", {}) or {}).get("id")
+            if not guid_id:
+                continue
+            guid_rows.append({"id": str(guid_id)})
+            for id_type, id_value in ids_from_guid(str(guid_id)).items():
+                if id_type != "guid" and id_value:
+                    ids[id_type] = id_value
+    except Exception:
+        pass
+    if guid_rows:
+        row["Guid"] = guid_rows
+    main_guid = attributes.get("guid")
+    if main_guid:
+        for id_type, id_value in ids_from_guid(str(main_guid)).items():
+            if id_type != "guid" and id_value:
+                ids[id_type] = id_value
+    return row, ids
+
+
+def _fetch_resume_items(
+    srv: Any,
+    *,
+    page_size: int = 100,
+    allowed_library_ids: set[str] | None = None,
+) -> dict[str, tuple[dict[str, Any], dict[str, str]]]:
+    started = time.perf_counter()
+    items: dict[str, tuple[dict[str, Any], dict[str, str]]] = {}
+    allowed = set(allowed_library_ids or set())
+    sections = _progress_sections(srv, allowed)
+
+    def _q(library_id: str, plex_type: int) -> None:
         start = 0
         seen_pages: set[tuple[str, ...]] = set()
         while True:
-            key = f"{path}?X-Plex-Container-Start={start}&X-Plex-Container-Size={int(page_size)}&includeUserState=1"
-            root = srv.query(key)  # type: ignore[attr-defined]
+            path = f"/library/sections/{library_id}/all"
+            root = srv.query(  # type: ignore[attr-defined]
+                path,
+                params={
+                    "type": int(plex_type),
+                    "viewOffset>>": 0,
+                    "X-Plex-Container-Start": start,
+                    "X-Plex-Container-Size": int(page_size),
+                    "includeUserState": 1,
+                    "includeGuids": 1,
+                },
+            )
             rows = list(root) if root is not None else []
             signature = tuple(
                 str((getattr(el, "attrib", {}) or {}).get("ratingKey") or (getattr(el, "attrib", {}) or {}).get("key") or "")
                 for el in rows
             )
             if rows and signature in seen_pages:
-                _warn("pagination_repeated_page", source=path, start_index=start)
+                _warn("pagination_repeated_page", source=path, library_id=library_id, start_index=start)
                 break
             seen_pages.add(signature)
             for el in rows:
@@ -208,67 +286,35 @@ def _fetch_resume_items(srv: Any, *, page_size: int = 100) -> dict[str, str | No
                 rk = a.get("ratingKey") or a.get("key")
                 if not rk:
                     continue
-                key_id = str(rk)
-                lid = _library_id(a)
-                if key_id in items:
-                    _dbg("duplicate_progress_item", provider_item_id=key_id, source_library_id=lid)
-                    if not items[key_id] and lid:
-                        items[key_id] = lid
+                progress_ms = _to_int(a.get("viewOffset"))
+                if progress_ms is None or progress_ms <= 0:
                     continue
-                items[key_id] = lid
+                if (_to_int(a.get("viewCount")) or 0) > 0:
+                    continue
+                key_id = str(rk)
+                row, ids = _row_with_ids(el, library_id)
+                if key_id in items:
+                    _dbg("duplicate_progress_item", provider_item_id=key_id, source_library_id=library_id)
+                    continue
+                items[key_id] = (row, ids)
             start += len(rows)
-            if not rows or len(rows) < page_size:
+            total = _page_total(root)
+            if not rows or len(rows) < page_size or (total is not None and start >= total):
                 break
 
-    for p in ("/hubs/continueWatching/items", "/library/onDeck", "/library/recentlyViewed"):
-        try:
-            _q(p)
-        except Exception:
-            continue
+    for library_id, plex_type in sections:
+        _q(library_id, plex_type)
 
     if _mods_debug():
-        _dbg("index_fetch_counts", source="resume", count=len(items), page_size=int(page_size))
+        _dbg(
+            "index_fetch_counts",
+            source="selected_libraries",
+            count=len(items),
+            libraries=len(sections),
+            page_size=int(page_size),
+            elapsed_ms=int((time.perf_counter() - started) * 1000),
+        )
     return items
-
-
-def _fetch_metadata_row(srv: Any, rk: str) -> tuple[dict[str, Any] | None, dict[str, str]]:
-    try:
-        key = f"/library/metadata/{str(rk).strip()}?includeUserState=1&includeGuids=1"
-        root = srv.query(key)  # type: ignore[attr-defined]
-        rows = list(root) if root is not None else []
-        if not rows:
-            return None, {}
-
-        el = rows[0]
-        a = getattr(el, "attrib", {}) or {}
-        row = dict(a)
-
-        ids: dict[str, str] = {}
-        guid_rows: list[dict[str, str]] = []
-
-        try:
-            for g in el.findall("./Guid"):  # type: ignore[attr-defined]
-                gid = (getattr(g, "attrib", {}) or {}).get("id")
-                if gid:
-                    guid_rows.append({"id": str(gid)})
-                    for k, v in ids_from_guid(str(gid)).items():
-                        if k != "guid" and v:
-                            ids[k] = v
-        except Exception:
-            pass
-        if guid_rows:
-            row["Guid"] = guid_rows
-
-        # Some agents encode tmdb/imdb in the main guid string.
-        g0 = a.get("guid")
-        if g0:
-            for k, v in ids_from_guid(str(g0)).items():
-                if k != "guid" and v:
-                    ids[k] = v
-
-        return row, ids
-    except Exception:
-        return None, {}
 
 
 def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
@@ -281,8 +327,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         if need_scope and not did_switch:
             raise_home_scope_not_applied("progress", sel_aid, sel_uname)
 
-        resume_items = _fetch_resume_items(srv, page_size=150)
         allowed = plex_feature_library_ids(adapter, "progress")
+        resume_items = _fetch_resume_items(srv, page_size=150, allowed_library_ids=allowed)
         if not allowed:
             _dbg("library_scope_not_configured")
         out: dict[str, dict[str, Any]] = {}
@@ -290,10 +336,8 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
         token = active_pms_token(adapter)
 
         for rk in sorted(resume_items):
-            a, ext_ids = _fetch_metadata_row(srv, rk)
-            if not a:
-                continue
-            library_id = resume_items.get(rk) or _library_id(a)
+            a, ext_ids = resume_items[rk]
+            library_id = _library_id(a)
             if allowed and not library_id:
                 _dbg("missing_library_id", provider_item_id=str(rk), allowed_library_ids=sorted(allowed), item_title=str(a.get("title") or ""), media_type=str(a.get("type") or ""), provider_ids=dict(ext_ids))
                 continue
@@ -360,17 +404,22 @@ def build_index(adapter: Any, **_kwargs: Any) -> Mapping[str, dict[str, Any]]:
                 norm["duration_ms"] = int(dur_ms)
 
             ck = canonical_key(norm)
+            selected = norm
             if ck:
-                out[ck] = norm
+                selected, action = select_progress_record(out.get(ck), norm)
+                out[ck] = selected
+            else:
+                action = "missing_canonical_key"
 
             if dbg:
                 _dbg(
                     "item",
-                    ratingKey=str(rk),
-                    type=base.get("type"),
-                    chosen_viewOffset=int(pos_ms),
-                    chosen_lastViewedAt=ts,
-                    ids=dict(base.get("ids") or {}),
+                    action=action,
+                    ratingKey=str((selected.get("ids") or {}).get("plex") or rk),
+                    type=selected.get("type") or base.get("type"),
+                    chosen_viewOffset=int(selected.get("progress_ms") or pos_ms),
+                    chosen_lastViewedAt=selected.get("progress_at") or ts,
+                    ids=dict(selected.get("ids") or base.get("ids") or {}),
                     canonical_key=str(ck),
                 )
 
