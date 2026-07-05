@@ -32,7 +32,6 @@ if (typeof window.DETAILS_QUEUE_MAX === "undefined") window.DETAILS_QUEUE_MAX = 
 if (typeof window.DETAILS_BATCH_ROWS === "undefined") window.DETAILS_BATCH_ROWS = 80;
 if (typeof window.DETAILS_FRAME_BUDGET_MS === "undefined") window.DETAILS_FRAME_BUDGET_MS = 8;
 if (typeof window._detOpenSeq === "undefined") window._detOpenSeq = 0;
-if (typeof window._detBuf === "undefined") window._detBuf = "";
 if (typeof window.syncBuf === "undefined") window.syncBuf = [];
 if (typeof window._syncFlushRAF === "undefined") window._syncFlushRAF = null;
 if (typeof window._detSeenLines === "undefined") window._detSeenLines = [];
@@ -271,16 +270,6 @@ function _structuredLogRow(raw, fallbackProvider = "") {
 
   row.append(badge, level, msg, time);
   return row;
-}
-
-function _upgradeSyncLogRows(el) {
-  if (!el) return;
-  el.querySelectorAll(":scope > .cf-line:not([data-structured])").forEach((line) => {
-    const row = _structuredLogRow(line.textContent || "", "SYNC");
-    row.classList.add("cf-line", "cf-fade-in");
-    row.dataset.structured = "1";
-    line.replaceWith(row);
-  });
 }
 
 function _detailsStickBottom() {
@@ -753,22 +742,16 @@ async function openDetailsLog() {
   } catch (_) {}
   if (openSeq !== window._detOpenSeq || !_detailsVisible() || window._detailsTab !== "sync") return;
 
-  const CF = window.ClientFormatter;
-  const useFormatter = !window.appDebug && CF && CF.processChunk && CF.renderInto;
-
   el.innerHTML = "";
-  el.classList?.toggle("cf-log", !!useFormatter);
-  el.classList?.remove("cf-log-plain");
-  if (!useFormatter) el.classList?.add("cf-log-plain");
+  el.classList?.remove("cf-log");
+  el.classList?.add("cf-log-plain");
   window.detStickBottom = true;
-  window._detBuf = "";
   window.syncBuf.length = 0;
   _resetDetailsDropped("sync");
   window._detSeenLines = [];
   window._detReplayActive = false;
   window._detReplayCursor = 0;
   window._detDidConnectOnce = false;
-  try { CF?.reset?.(); } catch {}
 
   try { window.esDet?.close(); } catch {}
   try { window.esDetSummary?.close(); } catch {}
@@ -821,15 +804,8 @@ async function openDetailsLog() {
     window._syncFlushRAF = requestAnimationFrame(() => {
       window._syncFlushRAF = null;
       _runDetailsBatch(window.syncBuf, (line) => {
-        if (!useFormatter) {
-          appendRaw(line);
-          return;
-        }
-        const { tokens, buf } = CF.processChunk(window._detBuf, line);
-        window._detBuf = buf;
-        for (const tok of tokens) CF.renderInto(el, tok, false);
+        appendRaw(line);
       }, () => {
-        if (useFormatter) _upgradeSyncLogRows(el);
         _pruneDetailsLog(el);
         if (window.detStickBottom) el.scrollTop = el.scrollHeight;
         updateSlider();
@@ -864,11 +840,9 @@ async function openDetailsLog() {
       if (ev.data === "::CLEAR::") {
         el.textContent = "";
         window.syncBuf.length = 0;
-        window._detBuf = "";
         window._detSeenLines = [];
         window._detReplayActive = false;
         window._detReplayCursor = 0;
-        try { CF?.reset?.(); } catch {}
         _resetDetailsDropped("sync");
         updateSlider();
         _scheduleDetailsConsoleStatus();
@@ -892,15 +866,6 @@ async function openDetailsLog() {
       _updateDetailsConsoleStatus();
       try { window.esDet?.close(); } catch (_) {}
       window.esDet = null;
-
-      if (useFormatter && window._detBuf && window._detBuf.trim()) {
-        const { tokens } = CF.processChunk("", window._detBuf);
-        window._detBuf = "";
-        for (const tok of tokens) CF.renderInto(el, tok, false);
-        _upgradeSyncLogRows(el);
-        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-        updateSlider();
-      }
 
       if (!window._detRetryTO) {
         if (authSetupPending() || window._detailsTab !== "sync" || !_detailsVisible()) return;
@@ -943,7 +908,6 @@ async function openDetailsLog() {
 }
 
 function closeDetailsLog() {
-  window._detBuf = "";
   window._detReplayActive = false;
   window._detReplayCursor = 0;
   try { closeSyncLog(); } catch {}
@@ -978,7 +942,6 @@ function toggleDetails() {
 function resetDetailsSyncLog() {
   const el = document.getElementById("det-log");
   if (el) el.textContent = "";
-  window._detBuf = "";
   window.syncBuf.length = 0;
   if (window._syncFlushRAF) { cancelAnimationFrame(window._syncFlushRAF); window._syncFlushRAF = null; }
   window._detSeenLines = [];
@@ -987,7 +950,6 @@ function resetDetailsSyncLog() {
   window._detDidConnectOnce = false;
   window.detStickBottom = true;
   _resetDetailsDropped("sync");
-  try { window.ClientFormatter?.reset?.(); } catch {}
 }
 
 window.addEventListener("beforeunload", () => {

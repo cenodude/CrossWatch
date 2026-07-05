@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from datetime import datetime, timezone, date
 from contextlib import contextmanager
@@ -344,6 +344,8 @@ def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
     ev = str(obj.get("event") or "")
     if ev == "ui:spotlight":
         return {}
+    if ev == "apply:unresolved":
+        return {}
     if "confirmed_keys" in obj and not ev:
         return _slim_counts(cast(dict[str, Any], obj))
 
@@ -430,6 +432,64 @@ def _spot_sig(it: dict) -> str:
         y = str(it.get("year") or it.get("release_year") or "")
         typ = (it.get("type") or "").lower()
         return f"{typ}|title:{t}|year:{y}"
+
+def _friendly_unresolved_reason(raw: Any) -> str:
+    r = str(raw or "").strip()
+    low = r.lower()
+    if not low:
+        return "unresolved"
+    if any(t in low for t in ("missing_id", "no_id", "unmatched", "no_confirmations", "provider_unresolved", "id_mismatch")):
+        return "ID mismatch"
+    if "provider_down" in low or "unavailable" in low:
+        return "provider unavailable"
+    if "not_removed" in low:
+        return "not removed"
+    if "exception" in low:
+        return "error"
+    if "failed" in low:
+        return "request failed"
+    if "fallback" in low or "unconfirmed" in low:
+        return "unconfirmed"
+    return r
+
+def _format_unresolved_line(it: Mapping[str, Any]) -> str:
+    series = str(it.get("series_title") or it.get("show_title") or "").strip()
+    title = str(it.get("title") or it.get("name") or "").strip()
+    reason = _friendly_unresolved_reason(it.get("reason"))
+    code = ""
+    season = it.get("season")
+    episode = it.get("episode")
+    try:
+        if season not in (None, "") and episode not in (None, ""):
+            code = f"S{int(season):02d}E{int(episode):02d}"
+    except Exception:
+        code = ""
+    head = series or title or "Unknown"
+    if code:
+        head = f"{head} - {code}"
+    return f"{head} | {reason}"
+
+def _emit_unresolved_details() -> None:
+    with SUMMARY_LOCK:
+        items = list(SUMMARY.get("unresolved_items") or [])
+    if not items:
+        return
+    seen: set[str] = set()
+    lines: list[str] = []
+    for it in items:
+        if not isinstance(it, Mapping):
+            continue
+        line = _format_unresolved_line(it)
+        sig = line.strip().lower()
+        if not sig or sig in seen:
+            continue
+        seen.add(sig)
+        lines.append(line)
+    if not lines:
+        return
+    _sync_progress_ui(f"[i] Unresolved items ({len(lines)}):")
+    for line in lines:
+        _sync_progress_ui(f"[i] {line}")
 
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     rt = _rt()
@@ -632,6 +692,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             f"[i] Done. Total added: {added}, Total removed: {removed}, Total updated: {updated}, "
             f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}{extra}"
         )
+        if unresolved > 0:
+            try:
+                _emit_unresolved_details()
+            except Exception:
+                pass
         _sync_progress_ui("[SYNC] exit code: 0")
     except Exception as e:
         _sync_progress_ui(f"[!] Sync error: {e}")
@@ -683,7 +748,22 @@ def _parse_sync_line(line: str) -> None:
                 apply_phase["total"] = int(apply_phase.get("total") or 0) + delta
                 _summary_set("_phase", phase)
                 return
-            
+
+            if ev == "apply:unresolved":
+                raw_items = o.get("items")
+                if isinstance(raw_items, list) and raw_items:
+                    feat_u = str(o.get("feature") or "")
+                    prov_u = str(o.get("provider") or "")
+                    with SUMMARY_LOCK:
+                        bucket = SUMMARY.setdefault("unresolved_items", [])
+                        for it in raw_items:
+                            if isinstance(it, dict):
+                                rec = dict(it)
+                                rec.setdefault("feature", feat_u)
+                                rec.setdefault("provider", prov_u)
+                                bucket.append(rec)
+                return
+
             feat = str(o.get("feature") or "").lower()
             if feat in ("watchlist", "history", "ratings", "progress", "playlists"):
                 F = SUMMARY.setdefault("features", {})

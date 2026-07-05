@@ -129,8 +129,6 @@ def _normalize(
     unresolved_keys: list[str] = []
 
     if isinstance(unresolved_list, list) and unresolved_list:
-        emit("apply:unresolved", provider=dst, feature=feature, count=len(unresolved_list))
-
         def _unwrap(x: Mapping[str, Any]) -> tuple[Mapping[str, Any], str | None]:
             inner = x.get("item")
             if isinstance(inner, Mapping):
@@ -138,6 +136,24 @@ def _normalize(
                 return inner, (str(hint).strip() or None) if hint is not None else None
             hint = x.get("hint") or x.get("reason") or x.get("error")
             return x, (str(hint).strip() or None) if hint is not None else None
+
+        unresolved_details: list[dict[str, Any]] = []
+        for raw in unresolved_list:
+            if not isinstance(raw, Mapping):
+                continue
+            item_u, hint_u = _unwrap(raw)
+            if not isinstance(item_u, Mapping):
+                continue
+            detail: dict[str, Any] = {}
+            for field in ("type", "title", "name", "year", "season", "episode", "series_title", "show_title"):
+                val = item_u.get(field)
+                if val not in (None, ""):
+                    detail[field] = val
+            if hint_u:
+                detail["reason"] = str(hint_u)
+            unresolved_details.append(detail)
+
+        emit("apply:unresolved", provider=dst, feature=feature, count=len(unresolved_list), items=unresolved_details)
 
         def _has_ids(x: Mapping[str, Any] | None) -> bool:
             _id_keys = ("tmdb", "imdb", "tvdb", "trakt", "slug")

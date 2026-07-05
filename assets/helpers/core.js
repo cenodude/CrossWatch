@@ -757,15 +757,20 @@
   }
 
   function recomputeRunDisabled() {
-    const disabled = !!state.busy || !!UI.summary?.running || !(UI.status ? !!UI.status.can_run : true);
+    const running = !!state.busy || !!UI.summary?.running || !!(window.syncBar?.isRunning?.());
+    const disabled = running || !(UI.status ? !!UI.status.can_run : true);
     const runButton = byId("run");
     if (runButton) {
-      runButton.classList.toggle("loading", !!state.busy || !!UI.summary?.running);
-      runButton.setAttribute("aria-busy", String(!!state.busy || !!UI.summary?.running));
+      runButton.classList.toggle("loading", running);
+      runButton.setAttribute("aria-busy", String(running));
     }
+    byId("cw-sync-split")?.classList.toggle("running", running);
     [byId("run"), byId("run-menu")].forEach((btn) => {
       if (btn) btn.disabled = disabled;
     });
+    if (disabled && !byId("cw-sync-menu")?.classList.contains("hidden")) {
+      try { cwCloseSyncMenu(); } catch {}
+    }
   }
 
   window.setTimeline = function setTimeline(timeline) {
@@ -1297,7 +1302,7 @@
   }
 
   async function runSync(opts) {
-    if (state.busy) return;
+    if (state.busy || window.syncBar?.isRunning?.()) return;
     try { cwCloseSyncMenu(); } catch {}
 
     let pairId = "";
