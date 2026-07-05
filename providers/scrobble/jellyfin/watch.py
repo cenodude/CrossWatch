@@ -724,18 +724,23 @@ class JellyfinWatchService:
 
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
         sk = str(ev.session_key or "")
-        if sk and sk in self._allowed_sessions:
-            return True
-
         libs = self._scrobble_whitelist(cfg)
+
         if libs:
+            # A whitelist must be validated per event
             view_id = self._session_view_id(ev.raw or {}, cfg)
             if not view_id or view_id not in libs:
+                if sk:
+                    self._allowed_sessions.discard(sk)
                 if _is_debug():
                     item = ((ev.raw or {}).get("NowPlayingItem") or {}) if isinstance(ev.raw, Mapping) else {}
                     name = (item.get("Name") or item.get("SeriesName") or "?") if isinstance(item, Mapping) else "?"
                     self._dbg(f"event filtered by scrobble whitelist: view={view_id or 'none'} allowed={sorted(libs)} item={name}")
                 return False
+            return True
+
+        if sk and sk in self._allowed_sessions:
+            return True
 
         if sk:
             self._allowed_sessions.add(sk)
@@ -1099,6 +1104,10 @@ class JellyfinWatchService:
                 except Exception:
                     pass
                 try:
+                    self._allowed_sessions.discard(sid)
+                except Exception:
+                    pass
+                try:
                     self._cw_last_heartbeat.pop(sid, None)
                 except Exception:
                     pass
@@ -1148,6 +1157,10 @@ class JellyfinWatchService:
                 del self._last[sid]
                 try:
                     self._filtered_sessions.discard(sid)
+                except Exception:
+                    pass
+                try:
+                    self._allowed_sessions.discard(sid)
                 except Exception:
                     pass
                 try:

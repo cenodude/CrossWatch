@@ -742,10 +742,20 @@ class WatchService:
         cache_key: str | None = None
         if sk:
             cache_key = f"{sk}|{_norm_user(ev.account or '')}|{str(ev.server_uuid or '').strip().lower()}"
-            if cache_key in self._allowed_sessions:
-                return True
 
         cfg = self._active_cfg()
+
+        # # A whitelist must be validated per event
+        libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
+        if libs:
+            sid = self._plex_section_id(ev)
+            if not sid or sid not in libs:
+                if cache_key:
+                    self._allowed_sessions.discard(cache_key)
+                return False
+
+        if cache_key and cache_key in self._allowed_sessions:
+            return True
 
         def _allow() -> bool:
             if cache_key:
@@ -756,13 +766,6 @@ class WatchService:
         if bool(filt.get("ignore_live_tv_dvr")) and _is_live_tv_dvr_event(ev):
             return False
 
-        libs = _as_set_str((((cfg.get("plex") or {}).get("scrobble") or {}).get("libraries")))
-        if libs:
-            sid = self._plex_section_id(ev)
-            if not sid:
-                return False
-            if sid not in libs:
-                return False
         return _allow()
 
     def _find_rating_key(self, raw: dict[str, Any]) -> int | None:
