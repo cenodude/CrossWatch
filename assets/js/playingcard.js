@@ -92,6 +92,24 @@
     return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
   };
 
+  const firstPositive = (...vals) => {
+    for (const v of vals) {
+      const n = Array.isArray(v) ? Number(v[0]) : Number(v);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  };
+
+  const runtimeMinsFor = (p, meta) => {
+    if (!meta) return 0;
+    const det = meta.detail || {};
+    const mt = String(p?.media_type || p?.type || "").toLowerCase();
+    if (mt === "episode") {
+      return firstPositive(det.episode_run_time, meta.episode_run_time, det.runtime, meta.runtime, meta.runtime_minutes, det.runtime_minutes);
+    }
+    return firstPositive(meta.runtime_minutes, det.runtime_minutes, meta.runtime, det.runtime);
+  };
+
   const metaKey = (p) => `${String(p?.media_type || p?.type || "").toLowerCase()}:${String(tmdbIdOf(p) || "")}`;
   const sourceLabel = (src) => {
     const s = String(src || "").toLowerCase();
@@ -418,7 +436,7 @@
   #playing-detail .pc-poster{display:block;width:100%;height:100%;border:0;border-radius:inherit;box-shadow:none;box-sizing:border-box}
   #playing-detail .pc-body{min-width:0;padding:14px 0;justify-content:flex-start}
   #playing-detail .pc-title{font-size:18px;line-height:1.15}
-  #playing-detail .pc-overview{margin-top:10px;max-height:7.25em;line-height:1.45;-webkit-line-clamp:5}
+  #playing-detail .pc-overview{margin-top:10px;max-height:4.35em;line-height:1.45;-webkit-line-clamp:3}
   #playing-detail .pc-close{position:static;width:24px;height:24px;min-width:24px}
   #playing-detail .pc-stats{min-width:0;display:grid;grid-template-rows:auto auto;align-content:center;gap:9px;padding:14px 6px 14px 14px;border-left:1px solid rgba(255,255,255,.08)}
   #playing-detail .pc-progress-wrap{margin:0;align-self:start}
@@ -436,6 +454,15 @@
   @media (max-width:680px){#playing-detail{bottom:max(10px,env(safe-area-inset-bottom));width:calc(100vw - 20px);border-radius:18px}#playing-detail .pc-inner{grid-template-columns:64px minmax(0,1fr);gap:12px;padding:12px}#playing-detail .pc-poster-link{width:64px;height:96px;grid-row:auto;border-radius:10px}#playing-detail .pc-body{padding:2px 0}#playing-detail .pc-title{font-size:15px;line-height:1.15}#playing-detail .pc-title-actions{gap:6px}#playing-detail .pc-nav{padding:2px 4px}#playing-detail .pc-nav-count{min-width:32px;font-size:10px}#playing-detail .pc-nav-btn{width:24px;height:24px}#playing-detail .pc-meta{gap:4px;margin-top:4px}#playing-detail .pc-chip{min-height:21px;font-size:9px;padding:0 7px}#playing-detail .pc-overview{margin-top:6px;max-height:4.35em;font-size:11px;-webkit-line-clamp:3}#playing-detail .pc-overview-more{font-size:9px}#playing-detail .pc-stats{grid-column:1 / -1;grid-template-rows:auto auto;padding:10px 0 0;border-left:0;border-top:1px solid rgba(255,255,255,.08)}#playing-detail .pc-info-block{min-height:58px}}
   @media (max-width:460px){#playing-detail .pc-stats-bottom{grid-template-columns:1fr}#playing-detail .pc-overview{-webkit-line-clamp:1;max-height:1.5em}}
   @media (hover:none){#playing-detail.show:hover{transform:translate(-50%,0);box-shadow:0 20px 48px rgba(0,0,0,.6)}}
+  /* the card must never grow taller than the 190px poster. */
+  @media (min-width:821px){
+    #playing-detail .pc-inner{min-height:190px;max-height:190px;height:190px;overflow:hidden}
+    #playing-detail .pc-body{min-height:0;max-height:190px;overflow:hidden}
+    #playing-detail .pc-stats{min-height:0;max-height:190px;overflow:hidden}
+    #playing-detail .pc-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;min-width:0}
+    #playing-detail .pc-meta{overflow:hidden}
+    #playing-detail .pc-overview-more{display:none!important}
+  }
   `;
 
   const style = document.createElement("style");
@@ -566,6 +593,7 @@
     cacheAt: 0,
     cachePayload: null,
     serverTs: 0,
+    durationByKey: new Map(),
   };
 
   const stopStatusPoll = () => {
@@ -745,15 +773,11 @@
     renderBaseMeta(p, releaseLabel);
     const runtimeMin = meta.runtime_minutes ?? det.runtime_minutes ?? meta.runtime ?? det.runtime;
     if (runtimeMin) addChip(runtimeLabel(runtimeMin));
-    if (!p?.duration_ms && runtimeMin) {
-      const pct = Math.max(0, Math.min(100, Number(p?.progress) || 0));
-      if (pct > 0) {
-        const totalMs = Number(runtimeMin) * 60 * 1000;
-        if (totalMs > 0) {
-          const remainingMs = Math.max(0, totalMs - totalMs * (pct / 100));
-          const remainingStr = formatTime(remainingMs);
-          if (remainingStr && !progTimeEl.textContent) progTimeEl.textContent = `${remainingStr} left`;
-        }
+    const metaRuntimeMin = runtimeMinsFor(p, meta);
+    if (metaRuntimeMin > 0) {
+      const durKey = keyOf(p);
+      if (!(Number(CARD.durationByKey.get(durKey)) > 0)) {
+        CARD.durationByKey.set(durKey, metaRuntimeMin * 60 * 1000);
       }
     }
     if (!p?.overview) {
@@ -770,6 +794,7 @@
     const tmdbUrl = buildTmdbUrl(Object.assign({}, p, { tmdb: tmdbIdOf(p) || (meta.ids && (meta.ids.tmdb || meta.ids.id)) }));
     setPosterLink(tmdbUrl, p?.title);
     detail.style.setProperty("--pc-backdrop", backdrop ? `url("${backdrop}")` : "none");
+    renderProgress(p);
   };
 
   const startStatusPoll = () => {
@@ -822,16 +847,23 @@
   nextBtn?.addEventListener("click", () => applySelectionOffset(1), true);
 
   const renderProgress = (p) => {
-    const pct = visualProgress(p);
+    const key = keyOf(p);
+    let totalMs = Number(p?.duration_ms) || 0;
+    if (totalMs > 0) {
+      CARD.durationByKey.set(key, totalMs);
+    } else {
+      totalMs = Number(CARD.durationByKey.get(key)) || 0;
+    }
+    const itemForPct = (totalMs > 0 && !(Number(p?.duration_ms) > 0)) ? { ...p, duration_ms: totalMs } : p;
+    const pct = visualProgress(itemForPct);
     progEl.style.width = `${pct}%`;
     progPctEl.textContent = `${Math.round(pct)}% watched`;
-    let timeLabel = "";
-    const totalMs = Number(p?.duration_ms) || 0;
     if (totalMs > 0) {
       const remainingStr = formatTime(Math.max(0, totalMs - totalMs * (pct / 100)));
-      if (remainingStr) timeLabel = `${remainingStr} left`;
+      progTimeEl.textContent = remainingStr ? `${remainingStr} left` : "";
+    } else {
+      progTimeEl.textContent = "";
     }
-    progTimeEl.textContent = timeLabel;
   };
 
   async function renderSelectedStream() {

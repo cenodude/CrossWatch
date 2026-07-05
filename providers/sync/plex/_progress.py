@@ -783,10 +783,37 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
             try:
                 obj = srv.fetchItem(int(rk))  # type: ignore[attr-defined]
-                duration = _to_int(getattr(obj, "duration", None)) or _to_int(it0.get("duration_ms")) or 0
-                _timeline_progress(adapter, srv, rk, 0, duration)
-                ok += 1
-                results.append({"status": "applied", "provider": "plex", "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default", "remote_item_id": str(rk), "library_id": _library_id(obj) or it0.get("library_id"), "source_progress": 0, "target_progress": _to_int(getattr(obj, "viewOffset", None)), "reason": "clear_progress"})
+                library_id = _library_id(obj) or it0.get("library_id")
+
+                mark_unplayed = getattr(obj, "markUnplayed", None) or getattr(obj, "markUnwatched", None)
+                if callable(mark_unplayed):
+                    mark_unplayed()
+                else:
+                    srv.query("/:/unscrobble", params={"key": str(rk), "identifier": "com.plexapp.plugins.library"})  # type: ignore[attr-defined]
+
+                try:
+                    verify_obj = srv.fetchItem(int(rk))  # type: ignore[attr-defined]
+                    remaining = _to_int(getattr(verify_obj, "viewOffset", None))
+                except Exception:
+                    remaining = _to_int(getattr(obj, "viewOffset", None))
+
+                context = {
+                    "provider": "plex",
+                    "provider_instance": os.getenv("CW_PAIR_DST_INSTANCE") or "default",
+                    "remote_item_id": str(rk),
+                    "library_id": library_id,
+                    "source_progress": 0,
+                }
+
+                if remaining is not None and remaining > 0:
+                    entry = {"status": "failed", "reason": "clear_progress_unconfirmed", "target_progress": int(remaining), "item": it0, **context}
+                    unresolved.append(entry)
+                    results.append(entry)
+                    if _mods_debug():
+                        _warn("clear_unconfirmed", op="remove", rating_key=str(rk), remaining_view_offset=int(remaining), canonical_key=str(canonical_key(id_minimal(it0)) or ""))
+                else:
+                    ok += 1
+                    results.append({"status": "applied", **context, "target_progress": 0, "reason": "clear_progress"})
             except Exception as e:
                 if _mods_debug():
                     _warn("write_failed", op="remove", rating_key=str(rk), canonical_key=str(canonical_key(id_minimal(it0)) or ""), error=str(e))

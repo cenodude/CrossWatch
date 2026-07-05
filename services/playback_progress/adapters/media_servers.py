@@ -23,11 +23,9 @@ except Exception:
 
 try:
     from providers.sync._mod_PLEX import OPS as PLEX_OPS, PLEXModule
-    from providers.sync.plex._progress import _resolve_rating_key as _plex_resolve_rating_key
 except Exception:
     PLEX_OPS = None  # type: ignore[assignment]
     PLEXModule = None  # type: ignore[assignment]
-    _plex_resolve_rating_key = None  # type: ignore[assignment]
 
 
 def _int(value: Any) -> int | None:
@@ -329,6 +327,15 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             decision = decisions[0] if decisions and isinstance(decisions[0], Mapping) else {}
             status = str(decision.get("status") or ("applied" if ok else "failed"))
             decision_reason = str(decision.get("reason") or "")
+            if ok:
+                message = f"Playback record removed from {self.provider_label}."
+                error_code = ""
+            elif decision_reason == "clear_progress_unconfirmed":
+                message = f"{self.provider_label} accepted the request, but the resume point is still present."
+                error_code = "progress_remove_unconfirmed"
+            else:
+                message = f"{self.provider_label} remove progress failed."
+                error_code = "progress_remove_failed"
             return PlaybackActionResult(
                 ok=ok,
                 provider=self.provider,
@@ -336,8 +343,8 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
                 operation="remove_progress",
                 remote_id=str(record.get("remote_id") or ""),
                 canonical_key=str(record.get("canonical_key") or ""),
-                message=f"Playback record removed from {self.provider_label}." if ok else f"{self.provider_label} remove progress failed.",
-                error_code="" if ok else "progress_remove_failed",
+                message=message,
+                error_code=error_code,
                 playback_cleanup_result=clean_mapping(result),
                 status=status,
                 reason=decision_reason,
@@ -345,31 +352,6 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             )
         except Exception:
             return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message=f"{self.provider_label} remove progress failed.", retryable=True, remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""))
-
-    def _remove_plex_progress(self, config_view: Mapping[str, Any], record: Mapping[str, Any], *, instance_id: str) -> PlaybackActionResult:
-        if PLEXModule is None:
-            return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="Plex playback support is unavailable.", error_code="provider_unavailable")
-        try:
-            module = PLEXModule(config_view)
-            item = _history_item(record, self.provider)
-            remote_id = str(record.get("remote_id") or "").strip()
-            rating_key = remote_id if remote_id.isdigit() else ""
-            if not rating_key and _plex_resolve_rating_key is not None:
-                rating_key = str(_plex_resolve_rating_key(module, item) or "")
-            if not rating_key:
-                return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="Plex item could not be resolved.", error_code="not_found", remote_id=remote_id, canonical_key=str(record.get("canonical_key") or ""))
-            server = getattr(getattr(module, "client", None), "server", None)
-            if not server:
-                return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="Plex Media Server is not available.", error_code="server_unavailable", retryable=True, remote_id=remote_id, canonical_key=str(record.get("canonical_key") or ""))
-            obj = server.fetchItem(int(rating_key))
-            mark_unplayed = getattr(obj, "markUnplayed", None) or getattr(obj, "markUnwatched", None)
-            if callable(mark_unplayed):
-                mark_unplayed()
-            else:
-                server.query(f"/:/unscrobble?key={rating_key}&identifier=com.plexapp.plugins.library")
-            return PlaybackActionResult(True, self.provider, instance_id, "remove_progress", remote_id=remote_id or rating_key, canonical_key=str(record.get("canonical_key") or ""), message="Playback record removed from Plex.")
-        except Exception:
-            return public_failure(provider=self.provider, instance_id=instance_id, operation="remove_progress", message="Plex remove progress failed.", retryable=True, remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""))
 
     def mark_watched(
         self,
