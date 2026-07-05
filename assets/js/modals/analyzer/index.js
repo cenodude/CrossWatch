@@ -381,9 +381,9 @@ export default {
             <div class="an-side-status">
               <div class="an-status-title">Analysis status</div>
               <div class="count-stack">
-                <span id="an-issues-count" title="Items missing at one or more destinations."><i class="an-status-dot issue-dot"></i><b>Issues</b><em>0</em></span>
-                <span id="an-system-count" title="Background state and integrity diagnostics."><i class="an-status-dot system-dot"></i><b>System</b><em>0</em></span>
-                <span id="an-blocked-count"><i class="an-status-dot blocked-dot"></i><b>Blocked</b><em>0</em></span>
+                <button type="button" id="an-issues-count" class="an-status-row active" aria-pressed="true" title="Items missing at one or more destinations."><i class="an-status-dot issue-dot"></i><b>Issues</b><em>0</em></button>
+                <button type="button" id="an-system-count" class="an-status-row" aria-pressed="false" title="Background state and integrity diagnostics."><i class="an-status-dot system-dot"></i><b>System</b><em>0</em></button>
+                <button type="button" id="an-blocked-count" class="an-status-row" aria-pressed="false" title="Items held back by a manual block list or an active blackbox."><i class="an-status-dot blocked-dot"></i><b>Blocked</b><em>0</em></button>
               </div>
               <div class="stats empty" id="an-stats"></div>
             </div>
@@ -517,6 +517,8 @@ export default {
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
     let BLOCKS_BY_PF = new Map();
+    let BLOCKED_FINDINGS = [];
+    let DETAIL_VIEW = "issues";
     let ISSUE_ITEMS = [];
     let ISSUE_OFFSET = 0;
     let ALL_TOTAL = 0;
@@ -810,8 +812,16 @@ export default {
         return;
       }
       const row = e.target.closest(".row:not(.head)");
-      if (row) select(row.getAttribute("data-tag"));
+      if (row) {
+        DETAIL_VIEW = "issues";
+        updateStatusActive();
+        select(row.getAttribute("data-tag"));
+      }
     });
+
+    issuesCount?.addEventListener("click", () => setDetailView("issues"));
+    systemCount?.addEventListener("click", () => setDetailView("system"));
+    blockedCount?.addEventListener("click", () => setDetailView("blocked"));
 
     function escHtml(s) {
       return String(s)
@@ -1183,7 +1193,82 @@ export default {
     async function select(tag) {
       SELECTED = tag;
       draw();
+      if (DETAIL_VIEW === "issues") renderIssueDetail(tag);
+    }
 
+    function updateStatusActive() {
+      const map = [[issuesCount, "issues"], [systemCount, "system"], [blockedCount, "blocked"]];
+      for (const [el, v] of map) {
+        if (!el) continue;
+        const on = v === DETAIL_VIEW;
+        el.classList.toggle("active", on);
+        el.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+    }
+
+    function systemFindings() {
+      return (EXTRA_FINDINGS || []).filter(p => p && p.type !== "cw_state_blackbox_active");
+    }
+
+    function renderIssuesEmpty() {
+      const notes = renderScopeExclusions();
+      const extras = renderGenericFindingBlocks(EXTRA_FINDINGS);
+      if ((NORMALIZATION && NORMALIZATION.length) || extras) {
+        issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + extras + notes;
+      } else {
+        const ok = `<div class="issue"><div class="h">No issues detected</div><div>The selected source and destination pairs are currently aligned for this scope.</div></div>`;
+        issues.innerHTML = notes + ok;
+      }
+      issues.scrollTop = 0;
+    }
+
+    function renderSystemDetail() {
+      const findings = systemFindings();
+      const blocks = renderGenericFindingBlocks(findings);
+      if (!blocks && !(NORMALIZATION && NORMALIZATION.length)) {
+        issues.innerHTML =
+          `<div class="issue"><div class="h">No system findings</div><div>No background state or integrity diagnostics for the selected routes.</div></div>`;
+        issues.scrollTop = 0;
+        return;
+      }
+      const header = findings.length
+        ? `<div class="issue"><div class="h">System findings</div><div style="opacity:.85">Background diagnostics for the current state. They don't always mean the selected pair is unsynced, but they can explain risky or inconsistent state.</div></div>`
+        : "";
+      issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + header + blocks;
+      issues.scrollTop = 0;
+    }
+
+    function renderBlockedDetail() {
+      const blocks = renderGenericFindingBlocks(BLOCKED_FINDINGS);
+      if (!blocks) {
+        issues.innerHTML =
+          `<div class="issue"><div class="h">No blocked items</div><div>Nothing is currently held back by a manual block list or an active blackbox for the selected routes.</div></div>`;
+        issues.scrollTop = 0;
+        return;
+      }
+      issues.innerHTML =
+        `<div class="issue"><div class="h">Blocked items</div><div style="opacity:.85">Items intentionally held back by a manual block list or an active blackbox. They are not synced by design.</div></div>` + blocks;
+      issues.scrollTop = 0;
+    }
+
+    function renderActiveDetail() {
+      if (DETAIL_VIEW === "system") { renderSystemDetail(); return; }
+      if (DETAIL_VIEW === "blocked") { renderBlockedDetail(); return; }
+      if (SELECTED && ITEMS.some(r => tagOf(r.provider, r.feature, r.key) === SELECTED)) {
+        renderIssueDetail(SELECTED);
+      } else {
+        renderIssuesEmpty();
+      }
+    }
+
+    function setDetailView(view) {
+      DETAIL_VIEW = (view === "system" || view === "blocked") ? view : "issues";
+      updateStatusActive();
+      renderActiveDetail();
+      if (issues) issues.scrollTop = 0;
+    }
+
+    function renderIssueDetail(tag) {
       const [provider, feature, key] = tag.split("::");
       const it = ITEMS.find(r => tagOf(r.provider, r.feature, r.key) === tag);
       if (!it) {
@@ -1617,6 +1702,9 @@ function renderPairs() {
           p.type !== "blocked_manual" &&
           p.type !== "history_show_normalization"
       );
+      BLOCKED_FINDINGS = all.filter(
+        p => p && (p.type === "blocked_manual" || p.type === "cw_state_blackbox_active")
+      );
 
       LIMIT_INFO = {};
       LIMIT_AFFECTED = new Map();
@@ -1728,7 +1816,18 @@ function renderPairs() {
         const msgs = details
           .map(d => String((d && d.message) || "").trim())
           .filter(Boolean);
-        const reasons = msgs.slice();
+        const hintMsgs = (Array.isArray(p.hints) ? p.hints : [])
+          .map(h => {
+            if (!h || typeof h !== "object") return "";
+            if (h.message) return String(h.message).trim();
+            const parts = [];
+            if (h.provider) parts.push(String(h.provider).toUpperCase());
+            if (Array.isArray(h.reasons) && h.reasons.length) parts.push(h.reasons.map(String).join(", "));
+            else if (h.kind) parts.push(String(h.kind));
+            return parts.join(": ").trim();
+          })
+          .filter(Boolean);
+        const reasons = [...msgs, ...hintMsgs];
         try {
           const featLower = String(p.feature || "").toLowerCase();
           const targets = (p.targets || []).map(t => String(t || "").toUpperCase());
@@ -1777,35 +1876,27 @@ function renderPairs() {
       if (per.ratings) parts.push(`R:${per.ratings}`);
       if (per.progress) parts.push(`P:${per.progress}`);
       setStatusCount(issuesCount, "Issues", keep.length, parts.slice(1).join(" · ") || "Missing or mismatched items");
-      setStatusCount(systemCount, "System", EXTRA_FINDINGS.length);
-      if (blockedCount) {
-        const scoped = ITEMS.filter(inPairScope);
-        const n = scoped.reduce(
-          (acc, r) => acc + (isBlocked(r.provider, r.feature, r.key) ? 1 : 0),
-          0
-        );
-        setStatusCount(blockedCount, "Blocked", n);
-      }
-
-      filter(search.value || "");
-
-      if (!keep.length) {
-        const notes = renderScopeExclusions();
-        const extras = renderGenericFindingBlocks(EXTRA_FINDINGS);
-        if ((NORMALIZATION && NORMALIZATION.length) || extras) {
-          issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + extras + notes;
-        } else {
-          const ok = `<div class="issue"><div class="h">No issues detected</div><div>The selected source and destination pairs are currently aligned for this scope.</div></div>`;
-          issues.innerHTML = notes + ok;
+      setStatusCount(systemCount, "System", systemFindings().length);
+      const blockedTotal = BLOCKED_FINDINGS.reduce((acc, p) => {
+        if (p.type === "cw_state_blackbox_active") {
+          const c = Number(p.count);
+          const n = Number.isFinite(c) && c > 0
+            ? c
+            : (Array.isArray(p.affected_items) ? p.affected_items.length : 0) || 1;
+          return acc + n;
         }
-        if (!silent) hideWait();
-        return;
-      }
+        return acc + 1;
+      }, 0);
+      setStatusCount(blockedCount, "Blocked", blockedTotal);
 
-      const first = keep[0];
-      const tag = tagOf(first.provider, first.feature, first.key);
-      await select(tag);
-      SELECTED = tag;
+      if (keep.length) {
+        const first = keep[0];
+        SELECTED = tagOf(first.provider, first.feature, first.key);
+      } else if (SELECTED && !ITEMS.some(r => tagOf(r.provider, r.feature, r.key) === SELECTED)) {
+        SELECTED = null;
+      }
+      filter(search.value || "");
+      setDetailView(DETAIL_VIEW);
       if (!silent) hideWait();
     }
 
