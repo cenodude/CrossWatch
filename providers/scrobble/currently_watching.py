@@ -256,6 +256,8 @@ def _update_stream(source: str, payload: dict[str, Any], clear_on_stop: bool) ->
         st = str(payload.get("state") or "").lower()
 
         existing_started = 0
+        existing_duration_ms: Optional[int] = None
+        existing_cover: Optional[str] = None
         for alias_key in alias_keys:
             existing = streams.get(alias_key)
             if not isinstance(existing, dict):
@@ -264,6 +266,14 @@ def _update_stream(source: str, payload: dict[str, Any], clear_on_stop: bool) ->
                 existing_started = max(existing_started, int(existing.get("started") or 0))
             except Exception:
                 pass
+            if existing_duration_ms is None:
+                ed = _coerce_int(existing.get("duration_ms"))
+                if ed and ed > 0:
+                    existing_duration_ms = ed
+            if not existing_cover:
+                ec = str(existing.get("cover") or "").strip()
+                if ec:
+                    existing_cover = ec
             if alias_key != key:
                 streams.pop(alias_key, None)
 
@@ -274,6 +284,12 @@ def _update_stream(source: str, payload: dict[str, Any], clear_on_stop: bool) ->
             if not existing_started:
                 existing_started = now
             payload["started"] = existing_started
+            # Preserve stable auxiliary fields when the incoming payload lacks them.
+            incoming_duration = _coerce_int(payload.get("duration_ms"))
+            if (incoming_duration is None or incoming_duration <= 0) and existing_duration_ms:
+                payload["duration_ms"] = existing_duration_ms
+            if not str(payload.get("cover") or "").strip() and existing_cover:
+                payload["cover"] = existing_cover
             streams[key] = payload
 
         if not streams:

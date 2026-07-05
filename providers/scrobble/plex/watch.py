@@ -1237,7 +1237,7 @@ class WatchService:
             )
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)}", "DEBUG")
             try:
-                _cw_update("plex", ev, provider_instance=str(self._instance_id or "default"))
+                _cw_update("plex", ev, duration_ms=d, provider_instance=str(self._instance_id or "default"))
             except Exception:
                 pass
             if sk and ev.action == "start":
