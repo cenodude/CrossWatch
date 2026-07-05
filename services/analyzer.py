@@ -43,13 +43,6 @@ _CW_STATE_PARSE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^(?P<provider>[a-z0-9]+)[._](?P<feature>[a-z0-9_]+)(?:\.(?P<scope>.+))?\.(?P<kind>shadow|index|unresolved|flap|blackbox)\.json$", re.I),
     re.compile(r"^(?P<provider>[a-z0-9]+)\.(?P<feature>[a-z0-9_]+)\.(?P<kind>shadow|index|unresolved|flap|blackbox)(?:\.(?P<scope>.+))?\.json$", re.I),
 )
-_CW_STATE_WATERMARK_KEYS: dict[str, set[str]] = {
-    "TRAKT": {"history", "ratings", "watchlist"},
-    "SIMKL": {"history", "ratings", "watchlist", "watchlist_removed"},
-    "MDBLIST": {"history", "history_journal", "ratings", "ratings_journal", "watchlist", "watchlist_removed"},
-    "PUBLICMETADB": {"history", "ratings", "watchlist"},
-    "PLEX": {"history"},
-}
 
 def _split_prov_token(v: Any) -> tuple[str, str]:
     raw = str(v or "").strip()
@@ -1069,14 +1062,12 @@ def _state_preview_for_key(
 
 def _cw_state_watermark_problems(path: Path, data: Any, meta: Mapping[str, Any], *, now_epoch: int | None) -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
-    provider = str(meta.get("provider") or "").upper()
     if not isinstance(data, dict):
         return [_artifact_meta_problem("error", "cw_state_watermark_invalid", path, "Watermark file must be an object.", meta)]
-    allowed = _CW_STATE_WATERMARK_KEYS.get(provider)
+    # Watermarks are provider-owned runtime state, not user config: validate that
+    # values are parseable timestamps, but do not warn about unknown feature keys.
     seen_valid = 0
     for key, value in data.items():
-        if allowed and str(key) not in allowed:
-            probs.append(_artifact_meta_problem("info", "cw_state_watermark_unknown_feature", path, "Watermark contains a non-standard feature key.", meta, watermark_key=str(key)))
         ep = _parse_epochish(value)
         if ep is None:
             probs.append(_artifact_meta_problem("warn", "cw_state_watermark_invalid", path, "Watermark value could not be parsed as a timestamp.", meta, watermark_key=str(key), value=value))
@@ -1930,6 +1921,15 @@ def _indices_for(s: dict[str, Any]) -> dict[tuple[str, str], dict[str, str]]:
     return out
 
 
+def _hist_num(v: Any) -> Any:
+    try:
+        if v is None or v == "":
+            return None
+        return int(v)
+    except Exception:
+        return v
+
+
 def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | None:
     typ = str(item.get("type") or "").strip().lower()
     if typ not in {"episode", "season"}:
@@ -1937,7 +1937,9 @@ def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | N
     sig = _history_show_signature(dict(item))
     if not sig:
         return None
-    return (sig, typ, item.get("season"), item.get("episode") if typ == "episode" else None)
+    season = _hist_num(item.get("season"))
+    episode = _hist_num(item.get("episode")) if typ == "episode" else None
+    return (sig, typ, season, episode)
 
 
 def _history_exact_indices(s: dict[str, Any]) -> dict[str, set[tuple[str, str, Any, Any]]]:
@@ -1993,14 +1995,14 @@ def _target_has_peer(
 
     vv = dict(item)
     vv["_key"] = item_key
-    target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
-    if not any(alias in target_aliases for alias in _alias_keys(vv)):
-        return False
+    # For history episodes/seasons, exact show+season+episode identity wins over
+    # generic alias overlap: provider episode IDs differ across Emby/Jellyfin.
     if feat_key == "history":
         exact_key = _history_exact_key(item)
         if exact_key is not None:
             return exact_key in (ctx.history_exact.get(dst_key) or set())
-    return True
+    target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
+    return any(alias in target_aliases for alias in _alias_keys(vv))
 
 
 def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[str, Any]) -> list[str]:
