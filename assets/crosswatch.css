@@ -876,7 +876,6 @@ to{left:6px}
 #details .wlog-level.level-error{color:#ec7180}
 #details .det-structured-line .wlog-msg{min-width:0;color:var(--det-console-text)!important;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
 #details .wlog-time{padding-top:2px;color:var(--det-console-muted);font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
-#details :is(.cf-event:not(.det-structured-line)){margin:0!important;padding:8px 9px!important;border-bottom:1px solid var(--det-console-border)!important;border-radius:0!important}
 #details .det-console-footer{display:flex;align-items:center;gap:14px;min-height:48px;padding:0 15px;border-top:1px solid var(--det-console-border);background:var(--det-console-bg);color:var(--det-console-muted);font-size:11px;font-weight:650}
 #details .det-live-state{display:inline-flex;align-items:center;gap:7px;color:var(--det-console-muted)}
 #details .det-live-dot{width:7px;height:7px;border-radius:50%;background:var(--det-console-muted)}

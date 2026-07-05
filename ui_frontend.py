@@ -126,7 +126,6 @@ def _asset_block() -> str:
         '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__"></script>',
         '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/auth/auth.tmdb.js?v=__CW_VERSION__" defer></script>',
-        '<script src="/assets/js/client-formatter.js?v=__CW_VERSION__" defer></script>',
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
         '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
     ))

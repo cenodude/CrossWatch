@@ -1,5 +1,4 @@
 /* assets/js/main.js */
-/* refactored */
 /* CrossWatch - Main UI Module */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
@@ -431,12 +430,12 @@
   const runBtn = () => document.getElementById("run");
   const setRunButtonState = (running) => {
     const btn = runBtn();
-    if (!btn) return;
-    btn.toggleAttribute("disabled", !!running);
-    if (!running) safe(window.recomputeRunDisabled);
-    btn.setAttribute("aria-busy", running ? "true" : "false");
-    btn.classList.toggle("glass", !!running);
-    btn.title = running ? "Synchronization running…" : "Run synchronization";
+    if (btn) {
+      btn.setAttribute("aria-busy", running ? "true" : "false");
+      btn.classList.toggle("glass", !!running);
+      btn.title = running ? "Synchronization running…" : "Run synchronization";
+    }
+    safe(window.recomputeRunDisabled);
   };
 
   const wireRunButton = () => {
