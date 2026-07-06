@@ -52,6 +52,9 @@ const SIMPLE_OPS = {
   stats: "/api/maintenance/reset-stats",
   playing: "/api/maintenance/reset-currently-watching",
   captures: "/api/snapshots/clear",
+  "events-health": "/api/maintenance/events-health",
+  "events-optimize": "/api/maintenance/events-optimize",
+  "events-rebuild": "/api/maintenance/events-rebuild",
 };
 const OPS = [
   {
@@ -117,6 +120,30 @@ const OPS = [
     desc: 'Removes stuck items from the local Currently Playing list.',
   },
   {
+    key: "events-health",
+    kind: "events-health",
+    icon: "health_and_safety",
+    title: "Health check",
+    tag: "diagnostics",
+    desc: "Checks database integrity, archive size and event totals.",
+  },
+  {
+    key: "events-optimize",
+    kind: "events-optimize",
+    icon: "tune",
+    title: "Optimize archive",
+    tag: "maintenance",
+    desc: "Compacts and re-indexes the event archive to reclaim space.",
+  },
+  {
+    key: "events-rebuild",
+    kind: "events-rebuild",
+    icon: "database",
+    title: "Rebuild archive",
+    tag: "event history",
+    desc: "Deletes the current event archive and rebuilds what can be derived from current runtime state.",
+  },
+  {
     key: "captures",
     kind: "captures",
     icon: "photo_library",
@@ -163,6 +190,13 @@ const GROUPS = [
     keys: ["stats", "meta"],
   },
   {
+    id: "events",
+    icon: "history",
+    title: "Events",
+    desc: "Check, optimize and rebuild the event history archive.",
+    keys: ["events-health", "events-optimize", "events-rebuild"],
+  },
+  {
     id: "captures",
     icon: "photo_library",
     title: "Captures",
@@ -179,7 +213,7 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults"]);
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild"]);
 const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
@@ -305,6 +339,12 @@ export default {
                     <span>Reports & Metadata</span>
                   </button>
                   <button type="button" class="category-run-btn" data-run-group="reports" aria-label="Run all Reports and Metadata tools">Run</button>
+                </div>
+                <div class="side-nav-item" data-group="events">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-events">
+                    <span class="material-symbols-rounded" aria-hidden="true">history</span>
+                    <span>Events</span>
+                  </button>
                 </div>
                 <div class="side-nav-item" data-group="captures">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-captures">
@@ -443,6 +483,28 @@ export default {
       }
       details.push(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
       return `${label} completed · ${details.join(" · ")}.`;
+    };
+
+    const eventsReceipt = (kind, res) => {
+      if (!res || typeof res !== "object") return null;
+      if (kind === "events-health") {
+        const bits = [
+          `integrity ${res.integrity || "?"}`,
+          `${new Intl.NumberFormat().format(res.events || 0)} events`,
+          `${new Intl.NumberFormat().format(res.acknowledged || 0)} acknowledged`,
+          formatBytes(res.size_bytes || 0),
+        ];
+        if (res.wal_size_bytes) bits.push(`WAL ${formatBytes(res.wal_size_bytes)}`);
+        bits.push(`schema v${res.schema_version ?? "?"}`);
+        return `Health check · ${res.healthy ? "healthy" : "issues found"} · ${bits.join(" · ")}.`;
+      }
+      if (kind === "events-optimize") {
+        return `Optimize archive · freed ${formatBytes(res.reclaimed_bytes || 0)} · ${formatBytes(res.before_bytes || 0)} → ${formatBytes(res.after_bytes || 0)} · ${res.duration_ms ?? 0} ms.`;
+      }
+      if (kind === "events-rebuild") {
+        return `Rebuild archive · ${new Intl.NumberFormat().format(res.events || 0)} events rebuilt from runtime state.`;
+      }
+      return null;
     };
 
     const formatMetric = ({ value, format }) => {
@@ -639,6 +701,11 @@ export default {
         return false;
       }
 
+      if (!skipConfirm && kind === "events-rebuild" && !confirm("This removes the current event archive and rebuilds it from current runtime state.\n\nHistorical events that only exist in the event database may be lost.\n\nThis does not change CrossWatch configuration or provider runtime state.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
+
       if (manageLock) setOperationBusy(true);
       startActionFeedback(btn);
       const label = btn?.dataset?.label || OPS.find((item) => item.kind === kind)?.title || kind;
@@ -647,13 +714,14 @@ export default {
       try {
         let res = null;
         if (SIMPLE_OPS[kind]) {
-          res = await post(SIMPLE_OPS[kind], kind === "stats" ? {
+          const body = kind === "stats" ? {
             recalc: false,
             purge_file: true,
             purge_state: false,
             purge_reports: true,
             purge_insights: true,
-          } : undefined);
+          } : kind === "events-rebuild" ? { confirm: true } : undefined;
+          res = await post(SIMPLE_OPS[kind], body);
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
           const chkSnaps = $("#cxm-cw-snaps", root);
@@ -726,7 +794,8 @@ export default {
         }
 
         if (selectedInsightKind === kind) await loadActionInsight(kind);
-        setStatus(completionReceipt(label, res), "ok");
+        const evReceipt = eventsReceipt(kind, res);
+        setStatus(evReceipt || completionReceipt(label, res), "ok");
         finishActionFeedback(btn, "success");
         return res || { ok: true };
       } catch (e) {

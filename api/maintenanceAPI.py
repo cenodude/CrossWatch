@@ -369,6 +369,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             CONFIG_DIR / "statistics.json",
             CONFIG_DIR / "sync_reports",
             CW_STATE_DIR,
+            CONFIG_DIR / ".cw_databases",
             _cw_tracker_root(CONFIG_DIR),
             CACHE_DIR,
             CONFIG_DIR / "tls",
@@ -377,7 +378,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         captures = _path_usage(Path(snapshots_dir))
         response.update(
             title="Factory reset",
-            note="Deletes all local runtime data and backs up config.json. Saved captures are kept.",
+            note="Deletes all local runtime data and backs up config.json. The event history archive (.cw_databases) is also removed. Saved captures are kept.",
             metrics=[
                 _metric("Files removed", sum(int(item["files"] or 0) for item in usages)),
                 _metric("Data removed", sum(int(item["bytes"] or 0) for item in usages), "bytes"),
@@ -385,6 +386,46 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Capture storage kept", captures["bytes"], "bytes"),
             ],
         )
+    elif action in ("events-health", "events-optimize", "events-rebuild"):
+        from cw_platform import event_archive as _ea
+        st = _ea.status()
+        db_path = Path(_ea.events_db_path())
+        usage = _path_usage(db_path)
+        events = int(st.get("events") or 0)
+        acknowledged = int(st.get("acknowledged") or 0)
+        runs = int(st.get("runs") or 0)
+        size = int(usage.get("bytes") or 0)
+        if action == "events-health":
+            response.update(
+                title="Health check",
+                note="Checks database integrity, archive size and event totals. Read-only.",
+                metrics=[
+                    _metric("Events", events),
+                    _metric("Acknowledged", acknowledged),
+                    _metric("Archive size", size, "bytes"),
+                    _metric("Available", "yes" if st.get("available") else "no"),
+                ],
+            )
+        elif action == "events-optimize":
+            response.update(
+                title="Optimize archive",
+                note="Compacts and re-indexes the event archive to reclaim space.",
+                metrics=[
+                    _metric("Events", events),
+                    _metric("Archive size", size, "bytes"),
+                    _metric("Last updated", usage.get("modified"), "datetime"),
+                ],
+            )
+        else:
+            response.update(
+                title="Rebuild archive",
+                note="Deletes the current event archive and rebuilds what can be derived from current runtime state. Historical events that only exist in the database may be lost.",
+                metrics=[
+                    _metric("Events removed", events),
+                    _metric("Sync runs removed", runs),
+                    _metric("Archive size", size, "bytes"),
+                ],
+            )
     else:
         return {"ok": False, "error": "unknown_maintenance_action", "action": action}
 
@@ -656,6 +697,35 @@ def action_status(action: str) -> dict[str, Any]:
     return maintenance_action_status(action)
 
 
+@router.post("/events-health")
+def maintenance_events_health() -> dict[str, Any]:
+    try:
+        from cw_platform.event_archive.maintenance import health
+        return health()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@router.post("/events-optimize")
+def maintenance_events_optimize() -> dict[str, Any]:
+    try:
+        from cw_platform.event_archive.maintenance import optimize
+        return optimize()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@router.post("/events-rebuild")
+def maintenance_events_rebuild(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
+    if not bool((payload or {}).get("confirm")):
+        return {"ok": False, "error": "confirmation_required", "confirm": False}
+    try:
+        from cw_platform.event_archive.maintenance import rebuild
+        return rebuild()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @router.post("/reset-all-default")
 def reset_all_to_default(payload: dict[str, Any] | None = Body(None)) -> dict[str, Any]:
     _, CONFIG_DIR, *_rest = _cw()
@@ -688,7 +758,7 @@ def reset_all_to_default(payload: dict[str, Any] | None = Body(None)) -> dict[st
             return report
 
     files = ["last_sync.json", "state.json", "statistics.json"]
-    dirs = [".cw_state", "sync_reports", ".cw_provider", "cache", "tls"]
+    dirs = [".cw_state", ".cw_databases", "sync_reports", ".cw_provider", "cache", "tls"]
 
     for name in files:
         p = CONFIG_DIR / name

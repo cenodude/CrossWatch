@@ -497,6 +497,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     overrides = overrides or {}
     _summary_reset()
     LOG_BUFFERS["SYNC"] = []
+    os.environ["CW_RUN_ID"] = str(run_id)
     _sync_progress_ui("::CLEAR::")
     _sync_progress_ui(f"SYNC start: orchestrator pairs run_id={run_id}")
 

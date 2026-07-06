@@ -528,6 +528,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
       </div>
         <button id="btn-details" class="btn cw-hub-action" onclick="toggleDetails()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">description</span><span>View details</span></button>
         <button class="btn cw-hub-action" onclick="openAnalyzer()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>Analyzer</span></button>
+        <button class="btn cw-hub-action" onclick="openEvents()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
         <button class="btn cw-hub-action" onclick="openExporter()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">ios_share</span><span>Exporter</span></button>
       </div>
     </div>
