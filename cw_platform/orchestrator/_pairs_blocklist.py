@@ -64,12 +64,12 @@ def blocked_keys_for_destination(
     pair_key: str | None = None,
     cross_feature_unresolved: bool = True,
 ) -> set[str]:
-    g_tomb, p_tomb, unr, bb = _breakdown(
+    g_tomb, p_tomb, _unr, bb = _breakdown(
         state_store, dst, feature,
         pair_key=pair_key,
         cross_feature_unresolved=cross_feature_unresolved,
     )
-    return g_tomb | p_tomb | unr | bb
+    return g_tomb | p_tomb | bb
 
 def _ts_epoch(v: Any) -> int | None:
     if v is None:
@@ -206,10 +206,16 @@ def apply_blocklist(
         blackbox = set()
 
     pair_tomb_eff: set[str] = set() if ignore_pair_tomb else set(pair_tomb)
-    bl = global_tomb | pair_tomb_eff | unresolved | blackbox
+    bl = global_tomb | pair_tomb_eff | blackbox
 
-    if emit is not None:
+    items_in = list(items or [])
+    input_count = len(items_in)
+
+    def _emit_counts(result_list: list[dict[str, Any]]) -> None:
+        if emit is None:
+            return
         try:
+            kept_bb = filter_with(state_store, items_in, extra_block=blackbox) if blackbox else items_in
             emit(
                 "debug",
                 msg="blocked.counts",
@@ -219,29 +225,31 @@ def apply_blocklist(
                 blocked_global_tomb=0,
                 blocked_pair_tomb=len(pair_tomb_eff),
                 blocked_unresolved=len(unresolved),
-                blocked_blackbox=len(blackbox),
-                blocked_total=len(bl),
+                blocked_blackbox=input_count - len(kept_bb),
+                blocked_total=input_count - len(result_list),
             )
         except Exception:
             pass
 
-    items_list = list(items or [])
-    if not items_list or not bl:
-        return items_list
+    if not items_in or not bl:
+        _emit_counts(items_in)
+        return items_in
 
     feature_norm = str(feature or "").lower()
     if feature_norm not in {"history", "ratings"}:
-        return filter_with(state_store, items_list, extra_block=bl)
+        result = filter_with(state_store, items_in, extra_block=bl)
+        _emit_counts(result)
+        return result
 
-    hard = (global_tomb | unresolved | blackbox)
-    if hard:
-        items_list = filter_with(state_store, items_list, extra_block=hard)
+    hard = (global_tomb | blackbox)
+    filtered = filter_with(state_store, items_in, extra_block=hard) if hard else items_in
 
     if ignore_pair_tomb or not pair_tomb_eff:
-        return items_list
+        _emit_counts(filtered)
+        return filtered
 
     out: list[dict[str, Any]] = []
-    for it in items_list:
+    for it in filtered:
         try:
             blocked = (
                 _history_is_blocked_by_tomb(it, pmap)
@@ -257,4 +265,5 @@ def apply_blocklist(
             except Exception:
                 pass
         out.append(it)
+    _emit_counts(out)
     return out

@@ -578,8 +578,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                     t["blocked"] += int(o.get("adds_blocked", 0) or 0) + int(o.get("removes_blocked", 0) or 0)
                 elif msg == "blocked.manual":
                     t["blocked"] += int(o.get("blocked_items", o.get("blocked_keys", 0)) or 0)
-                elif msg == "blocked.unresolved":
-                    t["blocked"] += int(o.get("blocked", 0) or 0)
+                elif msg == "blocked.counts":
+                    t["blocked"] += int(o.get("blocked_blackbox", 0) or 0) + int(o.get("blocked_manual", 0) or 0)
+
+            elif ev == "blocked.counts":
+                t["blocked"] += int(o.get("blocked_blackbox", 0) or 0) + int(o.get("blocked_manual", 0) or 0)
 
             elif ev == "run:done":
                 t["blocked"] = max(t["blocked"], int(o.get("blocked", 0) or 0))

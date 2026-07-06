@@ -531,8 +531,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # Blackbox (including flapper protection)
         "blackbox": {
             "enabled": True,                            # Turn off to fully disable blackbox logic
-            "promote_after": 1,                         # Promote an item to blackbox after N consecutive unresolved/fail events
-            "unresolved_days": 0,                       # Minimum unresolved age (days) before it counts (0 = immediate)
+            "promote_after": 3,                         # Promote an item to blackbox after N consecutive failed writes
             "pair_scoped": True,                        # Track per source-target pair to avoid blocking the same title elsewhere
             "cooldown_days": 30,                        # Auto-prune/decay blackbox entries after this cooldown period
             "block_adds": True,                         # When blackboxed, block planned ADDs for that item

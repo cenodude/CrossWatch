@@ -58,7 +58,6 @@ def _flap_path(dst: str, feature: str, pair: str | None = None) -> Path:
 _DEFAULT_BB: dict[str, Any] = {
     "enabled": True,
     "promote_after": 3,
-    "unresolved_days": 0,
     "pair_scoped": True,
     "cooldown_days": 30,
     "block_adds": True,
@@ -124,43 +123,6 @@ def _promote(dst: str, feature: str, key: str, *, reason: str, ts: int, pair: st
         data[key] = {"reason": str(reason or "flapper"), "since": int(ts)}
         _write_json(path, data)
 
-def maybe_promote_to_blackbox(
-    dst: str,
-    feature: str,
-    key: str,
-    *,
-    cfg: Mapping[str, Any],
-    ts: int | None = None,
-    pair: str | None = None,
-    unresolved_map: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, Any]:
-    ts = int(ts or time.time())
-    bb = _load_bb_cfg(cfg)
-    promote_after = int(bb.get("promote_after", 3) or 3)
-    unresolved_days = int(bb.get("unresolved_days", 0) or 0)
-    pair_scoped = bool(bb.get("pair_scoped", True))
-    if not pair_scoped:
-        pair = None
-
-    counters = load_flap_counters(dst, feature)
-    row = counters.get(key) or {}
-    cons = int(row.get("consecutive") or 0)
-
-    if cons >= promote_after:
-        _promote(dst, feature, key, reason=f"flapper:consecutive>={promote_after}", ts=ts, pair=pair)
-        return {"promoted": True, "reason": "consecutive", "since": ts}
-
-    if unresolved_days > 0 and unresolved_map:
-        meta = unresolved_map.get(key) or {}
-        uts = int(meta.get("ts") or 0)
-        if uts > 0:
-            age_days = (ts - uts) / 86400.0
-            if age_days >= unresolved_days:
-                _promote(dst, feature, key, reason=f"unresolved_age>={unresolved_days}d", ts=ts, pair=pair)
-                return {"promoted": True, "reason": "unresolved_age", "since": ts}
-
-    return {"promoted": False, "reason": None, "since": None}
-
 def _normalize_keys(keys: Iterable[str] | None) -> tuple[list[str], list[str]]:
     ordered: list[str] = []
     unique: list[str] = []
@@ -186,7 +148,6 @@ def record_attempts(
     op: str = "add",
     pair: str | None = None,
     cfg: Mapping[str, Any] | None = None,
-    unresolved_map: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     bb = _load_bb_cfg(cfg)
     ts = int(time.time())
@@ -195,7 +156,6 @@ def record_attempts(
     flap_data = _read_json(flap_path)
 
     promote_after = int(bb.get("promote_after", 3) or 3)
-    unresolved_days = int(bb.get("unresolved_days", 0) or 0)
     pair_scoped = bool(bb.get("pair_scoped", True))
     scoped_pair = pair if pair_scoped else None
     bb_path = _bb_path(dst, feature, scoped_pair)
@@ -219,14 +179,6 @@ def record_attempts(
         if cons >= promote_after:
             should_promote = True
             promote_reason = f"flapper:consecutive>={promote_after}"
-        elif unresolved_days > 0 and unresolved_map:
-            meta = unresolved_map.get(key) or {}
-            uts = int(meta.get("ts") or 0)
-            if uts > 0:
-                age_days = (ts - uts) / 86400.0
-                if age_days >= unresolved_days:
-                    should_promote = True
-                    promote_reason = f"unresolved_age>={unresolved_days}d"
 
         if should_promote and key not in bb_data:
             bb_data[key] = {"reason": promote_reason or str(reason or "flapper"), "since": int(ts)}

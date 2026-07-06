@@ -26,7 +26,7 @@ from ._snapshots import (
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._unresolved import load_unresolved_keys, record_unresolved
+from ._unresolved import load_unresolved_keys, record_unresolved, clear_unresolved
 from ._planner import diff, diff_ratings, diff_progress, _pick_rating
 from ._phantoms import PhantomGuard
 from ._tombstones import clear_items_for_feature
@@ -1138,25 +1138,13 @@ def run_one_way_feature(
     except Exception:
         unresolved_known = set()
 
-    if unresolved_known and adds:
-        _before = len(adds)
+    if unresolved_known:
         try:
-            adds = [it for it in adds if _ck(it) not in unresolved_known]
+            retried = sum(1 for it in adds if _ck(it) in unresolved_known) + sum(1 for it in updates if _ck(it) in unresolved_known)
         except Exception:
-            pass
-        _blocked = _before - len(adds)
-        if _blocked:
-            emit("debug", msg="blocked.unresolved", feature=feature, dst=dst, blocked=_blocked)
-
-    if unresolved_known and updates:
-        _before = len(updates)
-        try:
-            updates = [it for it in updates if _ck(it) not in unresolved_known]
-        except Exception:
-            pass
-        _blocked = _before - len(updates)
-        if _blocked:
-            emit("debug", msg="blocked.unresolved", feature=feature, dst=dst, blocked=_blocked)
+            retried = 0
+        if retried:
+            emit("debug", msg="unresolved.retry", feature=feature, dst=dst, retried=retried)
 
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes), updates=len(updates),
@@ -1396,6 +1384,7 @@ def run_one_way_feature(
             
                 if success_keys and not ambiguous_partial:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
+                    clear_unresolved(dst, feature, success_keys)
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,
