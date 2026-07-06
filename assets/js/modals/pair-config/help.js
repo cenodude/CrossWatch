@@ -11,6 +11,8 @@ export const HELP_TEXT = {
   "gl-observed": "Include observed deletes\nIf off, observed deletes are ignored and delta-delete providers are disabled (safer).",
   "gl-bb-enable": "Blackbox: Enabled\nAutomatic flapper protection and failure quarantine.",
   "gl-bb-pair": "Blackbox: Pair scoped\nKeep blackbox decisions per pair instead of global.",
+  "gl-bb-section": "Blackbox\nUnresolved is only a reporting state: items that fail to write are recorded, shown in diagnostics, and retried on every sync. Blackbox is the quarantine state and the only thing that stops an item from being planned again.",
+  "gl-bb-promote": "Promote after (failed writes)\nNumber of consecutive failed write attempts before an item is moved to the blackbox. Until then the item keeps being retried; unresolved alone never blocks it.",
   "gl-section-main": "Globals\nThese are the overall safety and behavior settings for this connection. The defaults are good enough for most users, so only change them when you have a specific reason.",
   "gl-section-advanced": "Advanced\nThese are extra retention and blackbox safety controls. The defaults are good enough for most users, so you usually do not need to change anything here.",
 

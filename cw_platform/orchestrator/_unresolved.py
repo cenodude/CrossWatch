@@ -14,6 +14,7 @@ __all__ = [
     "load_unresolved_keys",
     "load_unresolved_map",
     "record_unresolved",
+    "clear_unresolved",
 ]
 
 STATE_DIR = Path("/config/.cw_state")
@@ -278,3 +279,48 @@ def record_unresolved(
 
     ok, error = _atomic_write(path, data)
     return {"ok": ok, "count": added if ok else 0, "path": str(path), **({"error": error} if error else {})}
+
+
+def clear_unresolved(
+    dst: str,
+    feature: str,
+    keys: Iterable[str],
+) -> dict[str, Any]:
+    key_set = {str(k) for k in (keys or []) if k}
+    if not dst or not key_set:
+        return {"ok": True, "count": 0}
+
+    removed = 0
+
+    pend = _pending_path(dst, feature)
+    pdata = _read_json(pend)
+    if pdata:
+        pchanged = False
+        klist = pdata.get("keys")
+        if isinstance(klist, list):
+            kept = [k for k in klist if str(k) not in key_set]
+            if len(kept) != len(klist):
+                removed += len(klist) - len(kept)
+                pdata["keys"] = kept
+                pchanged = True
+        for bucket in ("items", "hints"):
+            sub = pdata.get(bucket)
+            if isinstance(sub, dict):
+                for k in [k for k in sub.keys() if str(k) in key_set]:
+                    sub.pop(k, None)
+                    pchanged = True
+        if pchanged:
+            _atomic_write(pend, pdata)
+
+    blk = _blocking_path(dst, feature)
+    bdata = _read_json(blk)
+    if bdata:
+        bchanged = False
+        for k in [k for k in bdata.keys() if str(k) in key_set]:
+            bdata.pop(k, None)
+            removed += 1
+            bchanged = True
+        if bchanged:
+            _atomic_write(blk, bdata)
+
+    return {"ok": True, "count": removed}

@@ -212,7 +212,7 @@ function defaultState(){
     globals:{
       dry_run:false,verify_after_write:false,drop_guard:false,allow_mass_delete:true,one_way_remove_mode:"source_deletes",
       tombstone_ttl_days:30,include_observed_deletes:true,
-      blackbox:{enabled:true,promote_after:1,unresolved_days:0,cooldown_days:30,pair_scoped:true,block_adds:true,block_removes:true}
+      blackbox:{enabled:true,promote_after:3,cooldown_days:30,pair_scoped:true,block_adds:true,block_removes:true}
     },
     cfgRaw:null,
     visited:new Set()
@@ -332,7 +332,7 @@ async function loadConfigBits(state){
     tombstone_ttl_days:Number.isFinite(s.tombstone_ttl_days)?s.tombstone_ttl_days:30,
     include_observed_deletes:!!s.include_observed_deletes,
     blackbox:Object.assign(
-      {enabled:true,promote_after:1,unresolved_days:0,cooldown_days:30,pair_scoped:true,block_adds:true,block_removes:true},
+      {enabled:true,promote_after:3,cooldown_days:30,pair_scoped:true,block_adds:true,block_removes:true},
       s.blackbox||{}
     ),
     runtime:Object.assign(
@@ -940,14 +940,14 @@ function renderFeaturePanel(state){
     right.innerHTML=`<div class="panel-title">Advanced <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
-      <div class="panel-title small" style="margin-top:10px">Blackbox</div>
+      <div class="panel-title small" style="margin-top:10px">Blackbox <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
       <div class="grid2 compact">
         <div class="opt-row"><label for="gl-bb-enable">Enabled</label><label class="switch"><input id="gl-bb-enable" type="checkbox" ${bb.enabled?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="gl-bb-pair">Pair scoped</label><label class="switch"><input id="gl-bb-pair" type="checkbox" ${bb.pair_scoped?"checked":""}><span class="slider"></span></label></div>
-        <div class="opt-row"><label for="gl-bb-promote">Promote after (days)</label><input id="gl-bb-promote" class="input small" type="number" min="0" max="365" step="1" value="${bb.promote_after??1}"></div>
-        <div class="opt-row"><label for="gl-bb-unresolved">Unresolved days</label><input id="gl-bb-unresolved" class="input small" type="number" min="0" max="365" step="1" value="${bb.unresolved_days??0}"></div>
+        <div class="opt-row"><label for="gl-bb-promote">Promote after (failed writes) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-promote">help</button></label><input id="gl-bb-promote" class="input small" type="number" min="0" max="365" step="1" value="${bb.promote_after??3}"></div>
         <div class="opt-row"><label for="gl-bb-cooldown">Cooldown days</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
-      </div>`;
+      </div>
+      <div class="muted">Unresolved is a reporting state: failed writes are logged and retried every sync. Blackbox is the quarantine state: after this many failed writes an item is blackboxed and only then stops being planned.</div>`;
     return;
   }
 
@@ -1853,7 +1853,6 @@ function bindChangeHandlers(state,root){
         enabled:!!Q("#gl-bb-enable")?.checked,
         pair_scoped:!!Q("#gl-bb-pair")?.checked,
         promote_after:Math.min(365,Math.max(0,parseInt(Q("#gl-bb-promote")?.value||"0",10)||0)),
-        unresolved_days:Math.min(365,Math.max(0,parseInt(Q("#gl-bb-unresolved")?.value||"0",10)||0)),
         cooldown_days:Math.min(365,Math.max(0,parseInt(Q("#gl-bb-cooldown")?.value||"0",10)||0))
       };
       bb.block_adds = bb.enabled;
@@ -1948,7 +1947,6 @@ async function saveConfigBits(state){
         enabled:!!ID("gl-bb-enable")?.checked,
         pair_scoped:!!ID("gl-bb-pair")?.checked,
         promote_after:Math.min(365,Math.max(0,parseInt(ID("gl-bb-promote")?.value||"0",10)||0)),
-        unresolved_days:Math.min(365,Math.max(0,parseInt(ID("gl-bb-unresolved")?.value||"0",10)||0)),
         cooldown_days:Math.min(365,Math.max(0,parseInt(ID("gl-bb-cooldown")?.value||"0",10)||0))
       };
       bb.block_adds = bb.enabled; bb.block_removes = bb.enabled;

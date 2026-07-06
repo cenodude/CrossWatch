@@ -80,7 +80,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._tombstones import clear_items_for_feature, keys_for_feature
-from ._unresolved import load_unresolved_keys, record_unresolved
+from ._unresolved import load_unresolved_keys, record_unresolved, clear_unresolved
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
 from ._pairs_blocklist import apply_blocklist
@@ -1342,19 +1342,12 @@ def _two_way_sync(
     try:
         unresolved_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
         unresolved_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
-
-        preA, preB = len(add_to_A), len(add_to_B)
-        add_to_A = [it for it in add_to_A if _ck(it) not in unresolved_A]
-        add_to_B = [it for it in add_to_B if _ck(it) not in unresolved_B]
-
-        blkA = preA - len(add_to_A)
-        blkB = preB - len(add_to_B)
-        if blkA:
-            emit("debug", msg="blocked.counts", feature=feature, dst=a,
-                 pair=f"{a}-{b}", blocked_unresolved=blkA, blocked_total=blkA)
-        if blkB:
-            emit("debug", msg="blocked.counts", feature=feature, dst=b,
-                 pair=f"{a}-{b}", blocked_unresolved=blkB, blocked_total=blkB)
+        retryA = sum(1 for it in add_to_A if _ck(it) in unresolved_A)
+        retryB = sum(1 for it in add_to_B if _ck(it) in unresolved_B)
+        if retryA:
+            emit("debug", msg="unresolved.retry", feature=feature, dst=a, pair=f"{a}-{b}", retried=retryA)
+        if retryB:
+            emit("debug", msg="unresolved.retry", feature=feature, dst=b, pair=f"{a}-{b}", retried=retryB)
     except Exception:
         pass
 
@@ -1720,6 +1713,7 @@ def _two_way_sync(
             
                 if success_A:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
+                    clear_unresolved(a, feature, success_A)
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,
@@ -1836,6 +1830,7 @@ def _two_way_sync(
             
                 if success_B:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
+                    clear_unresolved(b, feature, success_B)
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,
