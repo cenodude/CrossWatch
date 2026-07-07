@@ -9,6 +9,8 @@ import os
 import re
 import datetime as _dt
 
+from ._pairs_oneway import _emit_item_failures
+
 try:
     from ._pairs_oneway import (
         _history_bucket_sec as _hist_bucket_sec,
@@ -97,15 +99,7 @@ from ._pairs_utils import (
     filter_manual_block as _filter_manual_block,
 )
 
-try:
-    from ._blackbox import load_blackbox_keys, record_attempts, record_success  # type: ignore
-except Exception:
-    def load_blackbox_keys(dst: str, feature: str, pair: str | None = None) -> set[str]:
-        return set()
-    def record_attempts(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
-        return {"ok": True, "count": 0}
-    def record_success(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
-        return {"ok": True, "count": 0}
+from ._blackbox import load_blackbox_keys, record_attempts, record_success
 
 _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
@@ -1704,12 +1698,13 @@ def _two_way_sync(
             try:
                 failed_A = [k for k in attempted_A if k not in set(success_A) and k not in skipped_keys_A]
                 if failed_A and not ambiguous_partial_A:
-                    record_attempts(a, feature, failed_A,
+                    _bb_A = record_attempts(a, feature, failed_A,
                         reason="two:apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
                     failed_items_A = [k2i_A[k] for k in failed_A if k in k2i_A]
                     if failed_items_A:
                         record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
+                    _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A)
             
                 if success_A:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
@@ -1821,12 +1816,13 @@ def _two_way_sync(
             try:
                 failed_B = [k for k in attempted_B if k not in set(success_B) and k not in skipped_keys_B]
                 if failed_B and not ambiguous_partial_B:
-                    record_attempts(b, feature, failed_B,
+                    _bb_B = record_attempts(b, feature, failed_B,
                         reason="two:apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
                     failed_items_B = [k2i_B[k] for k in failed_B if k in k2i_B]
                     if failed_items_B:
                         record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
+                    _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B)
             
                 if success_B:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)

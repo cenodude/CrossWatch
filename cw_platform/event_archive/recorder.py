@@ -303,27 +303,6 @@ class RunRecorder:
             return
 
         if event == "ui:spotlight":
-            action = str(f.get("action") or "")
-            op = {"add": "add", "remove": "remove", "update": "update"}.get(action, action)
-            src, dst = self._ctx_providers()
-            origin, conf = (src, "inferred") if src else ("", "unknown")
-            for it in (f.get("items") or []):
-                if not isinstance(it, Mapping):
-                    continue
-                self._add(
-                    event_type="write_succeeded",
-                    operation=op,
-                    severity="info",
-                    source_provider=src or None,
-                    destination_provider=dst or None,
-                    source_instance=self._si or None,
-                    destination_instance=self._di or None,
-                    origin_provider=origin or None,
-                    origin_confidence=conf,
-                    item_key=str(it.get("key") or "") or None,
-                    **_item_fields(it),
-                )
-            self._flush()
             return
 
         if event.endswith("apply:add:done") or event.endswith("apply:remove:done") or event.endswith("apply:update:done"):
@@ -356,17 +335,62 @@ class RunRecorder:
             self._flush()
             return
 
+        if event == "archive:item_failures":
+            dst = _norm_prov(f.get("provider")) or self._dst
+            src = self._src if self._src and self._src != dst else self._a
+            op = str(f.get("op") or "add")
+            for row in (f.get("items") or []):
+                if not isinstance(row, Mapping):
+                    continue
+                k = str(row.get("key") or "")
+                if not k:
+                    continue
+                raw_it = row.get("item")
+                it: Mapping[str, Any] = raw_it if isinstance(raw_it, Mapping) else {}
+                reason = str(row.get("reason") or "apply:add:failed")
+                base = dict(
+                    source_provider=src or None, destination_provider=dst or None,
+                    source_instance=self._si or None, destination_instance=self._di or None,
+                    item_key=k, **_item_fields(it),
+                )
+                self._add(event_type="write_failed", operation=op, severity="error",
+                          reason_code=reason, reason=reason, **base)
+                self._add(event_type="unresolved_recorded", operation=op, severity="warn",
+                          reason_code=reason, reason=reason, **base)
+                if row.get("promoted"):
+                    self._add(event_type="blackbox_promoted", operation="quarantine", severity="warn",
+                              reason_code="flapper", reason="flapper", **base)
+            self._flush()
+            return
+
         if event == "debug" and str(f.get("msg") or "") == "blocked.counts":
             bb = int(f.get("blocked_blackbox") or 0)
+            dst_p = _norm_prov(f.get("dst")) or None
+            pair_k = str(f.get("pair") or self._pair) or None
+            rows = f.get("blackbox_items") or []
             if bb > 0:
                 self._add(
                     event_type="blackbox_blocked",
                     severity="warn",
-                    destination_provider=_norm_prov(f.get("dst")) or None,
-                    pair_key=str(f.get("pair") or self._pair) or None,
+                    destination_provider=dst_p,
+                    pair_key=pair_k,
                     reason_code="blackbox",
                     detail={"blocked": bb},
                 )
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                k = str(row.get("key") or "")
+                if not k:
+                    continue
+                raw_it = row.get("item")
+                it: Mapping[str, Any] = raw_it if isinstance(raw_it, Mapping) else {}
+                self._add(
+                    event_type="blackbox_blocked", operation="add", severity="warn",
+                    destination_provider=dst_p, pair_key=pair_k, item_key=k,
+                    reason_code="blackbox", reason="blackbox", **_item_fields(it),
+                )
+            if bb > 0 or rows:
                 self._flush()
             return
 

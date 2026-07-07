@@ -185,6 +185,10 @@ def build_group_context(group_id: Any = None, *, conn: sqlite3.Connection | None
     if g.get("item_key"):
         rel = _safe(lambda: _groups.list_groups(item_key=g.get("item_key"), visibility="all", limit=20, conn=c).get("items")) or []
         out["related_groups"] = [r for r in rel if str(r.get("id")) != str(g.get("id"))]
+    elif str(g.get("operation") or "") == "run":
+        run_id = next((e.get("run_id") for e in out["events"] if e.get("run_id")), None)
+        out["run_items"] = _safe(lambda: _groups.run_problem_items(
+            run_id, g.get("first_event_at"), g.get("last_event_at"), conn=c).get("items")) or []
     return out
 
 

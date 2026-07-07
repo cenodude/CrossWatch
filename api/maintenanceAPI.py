@@ -421,8 +421,8 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             )
         else:
             response.update(
-                title="Rebuild archive",
-                note="Deletes the current event archive and rebuilds what can be derived from current runtime state. Historical events that only exist in the database may be lost.",
+                title="Clear archive",
+                note="Deletes all events from the archive. New syncs record events again automatically. This cannot be undone.",
                 metrics=[
                     _metric("Events removed", events),
                     _metric("Sync runs removed", runs),
@@ -726,7 +726,8 @@ def maintenance_events_rebuild(payload: dict[str, Any] | None = Body(None)) -> d
         return {"ok": False, "error": "confirmation_required", "confirm": False}
     try:
         from cw_platform.event_archive.maintenance import rebuild
-        return rebuild()
+        # DB-driven archive: clear only, do not re-import from runtime JSON state.
+        return rebuild(reimport=False)
     except Exception:
         _LOG.exception("events-rebuild failed")
         return {"ok": False, "error": "internal_error"}

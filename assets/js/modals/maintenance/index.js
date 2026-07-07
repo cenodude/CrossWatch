@@ -139,9 +139,9 @@ const OPS = [
     key: "events-rebuild",
     kind: "events-rebuild",
     icon: "database",
-    title: "Rebuild archive",
+    title: "Clear archive",
     tag: "event history",
-    desc: "Deletes the current event archive and rebuilds what can be derived from current runtime state.",
+    desc: "Deletes all events from the archive. New syncs record events again automatically.",
   },
   {
     key: "captures",

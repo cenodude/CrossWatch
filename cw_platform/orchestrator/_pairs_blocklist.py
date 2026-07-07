@@ -216,6 +216,18 @@ def apply_blocklist(
             return
         try:
             kept_bb = filter_with(state_store, items_in, extra_block=blackbox) if blackbox else items_in
+            blocked_items: list[dict[str, Any]] = []
+            if blackbox:
+                kept_ids = {id(x) for x in kept_bb}
+                for it in items_in:
+                    if id(it) in kept_ids:
+                        continue
+                    try:
+                        ck = canonical_key(it)
+                    except Exception:
+                        ck = ""
+                    if ck:
+                        blocked_items.append({"key": ck, "item": it})
             emit(
                 "debug",
                 msg="blocked.counts",
@@ -227,6 +239,7 @@ def apply_blocklist(
                 blocked_unresolved=len(unresolved),
                 blocked_blackbox=input_count - len(kept_bb),
                 blocked_total=input_count - len(result_list),
+                blackbox_items=blocked_items,
             )
         except Exception:
             pass

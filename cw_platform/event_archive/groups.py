@@ -34,7 +34,7 @@ _SEVERITY = {
 }
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 4
+CORRELATION_VERSION = 7
 
 
 def _P(v: Any) -> str:
@@ -114,29 +114,27 @@ def _derive_status(events: list[dict[str, Any]]) -> str:
     if "sync_run_started" in types:
         return "running"
 
-    def latest(types_: tuple[str, ...]) -> int | None:
-        ts = [int(e.get("created_at") or 0) for e in events if e.get("event_type") in types_]
-        return max(ts) if ts else None
-
-    resolve_ts = latest(_RESOLVE_TYPES)
-    blackbox_ts = latest(("blackbox_promoted",))
-    unresolved_ts = latest(("unresolved_recorded",))
-    failed_ts = latest(("write_failed",))
-    pending_ts = latest(("write_attempted",))
-    fails = [t for t in (blackbox_ts, unresolved_ts, failed_ts) if t is not None]
-    latest_fail = max(fails) if fails else None
-
-    if resolve_ts is not None and (latest_fail is None or resolve_ts >= latest_fail):
-        return "resolved"
-    if blackbox_ts is not None and (resolve_ts is None or blackbox_ts > resolve_ts):
-        return "blackboxed"
-    if unresolved_ts is not None and (resolve_ts is None or unresolved_ts > resolve_ts):
-        return "unresolved"
-    if failed_ts is not None and (resolve_ts is None or failed_ts > resolve_ts):
-        return "failed"
-    if pending_ts is not None:
-        return "pending"
-    return "informational"
+ 
+    status_by_type = {
+        "write_succeeded": "resolved",
+        "unresolved_cleared": "resolved",
+        "blackbox_promoted": "blackboxed",
+        "blackbox_blocked": "blackboxed",
+        "unresolved_recorded": "unresolved",
+        "write_failed": "failed",
+        "write_attempted": "pending",
+    }
+    best_status = None
+    best_ts = -1
+    for e in events:
+        st = status_by_type.get(str(e.get("event_type") or ""))
+        if st is None:
+            continue
+        ts = int(e.get("created_at") or 0)
+        if ts >= best_ts:
+            best_ts = ts
+            best_status = st
+    return best_status or "informational"
 
 
 def _detail(e: dict[str, Any]) -> dict[str, Any]:
@@ -169,8 +167,10 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
             d = _detail(fin)
             errs = int(d.get("errors") or 0)
             unres = int(d.get("unresolved") or 0)
+            blocked = sum(int(_detail(e).get("blocked") or 0) for e in events if e.get("event_type") == "blackbox_blocked")
             head = "Sync run completed successfully" if errs == 0 else "Sync run completed with errors"
-            return f"{head}, {errs} errors, {unres} unresolved{tail}"
+            bb = f", {blocked} blackboxed" if blocked else ""
+            return f"{head}, {errs} errors, {unres} unresolved{bb}{tail}"
         return f"Sync run in progress{tail}"
 
     # provider health thread
@@ -234,6 +234,11 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
     if not phrases:
         et = (events[-1].get("event_type") if events else "") or "event"
         phrases = [str(et).replace("_", " ")]
+
+    tail = {"unresolved": "recorded unresolved", "blackboxed": "blackboxed"}.get(status)
+    if tail and tail in phrases and phrases[-1] != tail:
+        phrases.remove(tail)
+        phrases.append(tail)
     if len(phrases) == 1:
         s = phrases[0]
     else:
@@ -575,6 +580,76 @@ def group_events(group_id: Any, *, order: str | None = "asc", limit: int = 500, 
     except Exception:
         return {"items": [], "total": 0}
     return {"items": [dict(r) for r in rows], "total": total, "limit": lim, "offset": off}
+
+
+def run_problem_items(run_id: Any, since: Any = None, until: Any = None, *, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+    """Item threads that had a failure/unresolved/blackbox event during this run.
+
+    Matches on run_id when present, but also on the run's time window: imported
+    events carry a report-derived run_id that differs from the live run's id, so
+    the window is the reliable link between a run and its problem items.
+    """
+    c = conn or get_conn()
+    rid = str(run_id or "").strip()
+    match: list[str] = []
+    params: list[Any] = []
+    if rid:
+        match.append("run_id = ?")
+        params.append(rid)
+    if since is not None and until is not None:
+        match.append("(created_at >= ? AND created_at <= ?)")
+        params.extend([int(since), int(until)])
+    if c is None or not match:
+        return {"items": []}
+    try:
+        rows = c.execute(
+            f"SELECT {','.join('g.' + col for col in _GROUP_COLUMNS)} FROM event_groups g "
+            "WHERE g.item_key IS NOT NULL AND g.item_key <> '' AND g.id IN ("
+            "  SELECT DISTINCT group_id FROM events WHERE group_id IS NOT NULL "
+            "  AND event_type IN ('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked') "
+            f"  AND ({' OR '.join(match)})"
+            ") ORDER BY g.last_event_at DESC, g.id DESC",
+            params,
+        ).fetchall()
+    except Exception as exc:
+        _LOG.warning("run problem items failed: %s", exc)
+        return {"items": []}
+    return {"items": [dict(r) for r in rows]}
+
+
+def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
+              conn: sqlite3.Connection | None = None, **filters: Any) -> dict[str, Any]:
+    """Grouped list as a tree: run threads are parents, the item threads that had
+    a problem during each run are nested as `children`; items owned by a run are
+    lifted out of the top level. Standalone item threads stay at the top level."""
+    c = conn or get_conn()
+    if c is None:
+        return {"items": [], "total": 0, "limit": limit, "offset": offset}
+    flat = list_groups(order=order, limit=2000, offset=0, conn=c, **filters).get("items") or []
+    runs: list[dict[str, Any]] = []
+    items: list[dict[str, Any]] = []
+    others: list[dict[str, Any]] = []
+    for g in flat:
+        if str(g.get("operation") or "") == "run":
+            runs.append(g)
+        elif g.get("item_key"):
+            items.append(g)
+        else:
+            others.append(g)
+    items_by_id = {g["id"]: g for g in items}
+    owned: set[Any] = set()
+    for r in runs:
+        res = run_problem_items(None, r.get("first_event_at"), r.get("last_event_at"), conn=c).get("items") or []
+        kids = [items_by_id[x["id"]] for x in res if x["id"] in items_by_id]
+        r["children"] = kids
+        owned.update(k["id"] for k in kids)
+    top = runs + [g for g in items if g["id"] not in owned] + others
+    rev = str(order or "newest").strip().lower() not in ("oldest", "asc")
+    top.sort(key=lambda g: (int(g.get("last_event_at") or 0), int(g.get("id") or 0)), reverse=rev)
+    total = len(top)
+    lim = max(1, min(int(limit or 50), 500))
+    off = max(0, int(offset or 0))
+    return {"items": top[off:off + lim], "total": total, "limit": lim, "offset": off}
 
 
 def acknowledge_group(group_id: Any, *, by: str | None = None, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
