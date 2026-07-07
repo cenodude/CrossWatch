@@ -505,6 +505,7 @@ export default {
     let PAIRS = [];
     let PAIR_FILTER = new Set();
     let PAIR_STATS = [];
+    let PAIR_ISSUE_COUNTS = {};
     let PAIR_EXCLUSIONS = [];
     let PAIR_SCOPE_KEYS = new Set();
     let UNSYNCED = new Set();
@@ -1470,8 +1471,6 @@ function renderPairs() {
             synced: 0,
             unsynced: 0
           };
-          const total = stAB.total + stBA.total;
-          const unsynced = stAB.unsynced + stBA.unsynced;
           const on =
             !PAIR_FILTER.size || PAIR_FILTER.has(String(p.id));
           const mode = String(p.mode || "one-way").toLowerCase();
@@ -1482,9 +1481,8 @@ function renderPairs() {
             mode === "mirror"
               ? "swap_horiz"
               : "arrow_forward";
-          const badge = total
-            ? `<span class="mono">${unsynced || 0}/${total}</span>`
-            : "";
+          const issueN = PAIR_ISSUE_COUNTS[String(p.id)] || 0;
+          const badge = `<span class="an-pair-count${issueN ? " has" : ""}" title="${issueN} issue${issueN === 1 ? "" : "s"} for this pair">${issueN}</span>`;
           const cls = `an-pair-chip${on ? " on" : ""}`;
           return `<button type="button" class="${cls}" data-id="${esc(
             String(p.id || "")
@@ -1774,6 +1772,28 @@ function renderPairs() {
         per[p.feature] = (per[p.feature] || 0) + 1;
         keep.push(p);
       }
+
+      PAIR_ISSUE_COUNTS = {};
+      const onFeat = f => f && (typeof f.enable === "boolean" ? f.enable : !!f);
+      for (const pr of (PAIRS || [])) {
+        const src = String(pr.source || "").toUpperCase();
+        const dst = String(pr.target || "").toUpperCase();
+        const srcL = String(pr.source_label || src).toUpperCase();
+        const dstL = String(pr.target_label || dst).toUpperCase();
+        const two = _isTwoWayMode(pr.mode);
+        const F = pr.features || {};
+        let n = 0;
+        for (const it of keep) {
+          if (!onFeat(F[String(it.feature || "").toLowerCase()])) continue;
+          const ip = String(it.provider || "").toUpperCase();
+          const tgts = (it.targets || []).map(t => String(t || "").toUpperCase());
+          const fwd = (ip === src || ip === srcL) && (tgts.includes(dst) || tgts.includes(dstL));
+          const rev = two && (ip === dst || ip === dstL) && (tgts.includes(src) || tgts.includes(srcL));
+          if (fwd || rev) n++;
+        }
+        PAIR_ISSUE_COUNTS[String(pr.id)] = n;
+      }
+      renderPairs();
 
       UNSYNCED = new Set(
         keep.map(p => tagOf(p.provider, p.feature, p.key))

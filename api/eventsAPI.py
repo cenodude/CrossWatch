@@ -3,10 +3,13 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import JSONResponse
+
+_LOG = logging.getLogger("crosswatch.api.events")
 
 from cw_platform.event_archive import (
     get_conn,
@@ -222,5 +225,6 @@ def events_clear(payload: dict[str, Any] | None = Body(None)) -> JSONResponse:
             conn.execute("DELETE FROM sync_runs")
             conn.execute("DELETE FROM event_imports")
         return _ok({"ok": True, "cleared": True})
-    except Exception as exc:
-        return _ok({"ok": False, "error": str(exc)}, status_code=500)
+    except Exception:
+        _LOG.exception("events clear failed")
+        return _ok({"ok": False, "error": "internal_error"}, status_code=500)

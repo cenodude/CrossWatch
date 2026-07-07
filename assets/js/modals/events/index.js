@@ -58,17 +58,12 @@ const routeOf = (e) => {
   return b || a || "";
 };
 
-const epTag = (s, e) => `S${String(s).padStart(2, "0")}E${String(e).padStart(2, "0")}`;
-
 const titleOf = (e) => {
-  const hasEp = e.season != null && e.episode != null && (e.media_type === "episode" || !e.media_type);
-  const tag = hasEp ? epTag(e.season, e.episode) : "";
-  let t = String(e.title || "").trim();
-  // Drop a title that is just the episode code (or empty) to avoid "S27E06 S27E06".
-  if (tag && t.toUpperCase() === tag) t = "";
-  if (hasEp) return t ? `${t} ${tag}` : tag;
-  if (e.media_type === "movie" && e.year && t) return `${t} (${e.year})`;
-  return t || e.item_key || "";
+  let t = e.title || e.item_key || "";
+  if (e.media_type === "episode" && e.season != null && e.episode != null) {
+    t = `${t} S${String(e.season).padStart(2, "0")}E${String(e.episode).padStart(2, "0")}`;
+  }
+  return t;
 };
 
 const isRating = (e) => e.event_type === "write_succeeded" && e.feature === "ratings" && (e.old_value != null || e.new_value != null);
@@ -292,6 +287,7 @@ function createDropdown({ label, items, value, onChange, align = "auto" }) {
     set value(v) { cur = v; render(); },
     reset() { cur = opts[0]?.value ?? ""; render(); },
     setItems(next) { opts = next.slice(); if (!opts.some((i) => i.value === cur)) cur = opts[0]?.value ?? ""; render(); },
+    labelOf(v) { return opts.find((i) => i.value === v)?.label ?? String(v ?? ""); },
     close,
   };
 }
@@ -332,6 +328,7 @@ export default {
     let visibility = ls("cw.events.visibility", "open");
     let order = ls("cw.events.order", "newest");
     let mode = ls("cw.events.mode", "grouped");
+    let detailTab = ls("cw.events.detailtab", "timeline");
 
     const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false };
     const dropdowns = [];
@@ -340,7 +337,10 @@ export default {
       <div class="ev-app">
         <div class="cx-head">
           <div class="ev-head-left">
-            <div class="ev-title">Events</div>
+            <div class="ev-head-text">
+              <div class="ev-title">Events</div>
+              <div class="ev-sub">Searchable history of what synced, what failed, and why.</div>
+            </div>
           </div>
           <div class="ev-actions">
             <button class="close-btn" id="ev-close" type="button"><span class="material-symbols-rounded" aria-hidden="true">close</span><span>Close</span></button>
@@ -350,25 +350,28 @@ export default {
         <div class="ev-toolbar">
           <div class="ev-toolbar-row">
             <label class="ev-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input id="ev-q" type="text" placeholder="Search title, item, reason, run…"></label>
-            <div class="ev-filters" id="ev-filters"></div>
-          </div>
-          <div class="ev-toolbar-row ev-toolbar-sub">
-            <div class="ev-vis"><span class="ev-vis-label">Visibility:</span><span id="ev-seg"></span></div>
-            <label class="ev-date"><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-since" type="date" aria-label="Since"></label>
-            <label class="ev-date"><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-until" type="date" aria-label="Until"></label>
-            <button class="ev-tbtn" id="ev-more" type="button" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
-            <button class="ev-tbtn" id="ev-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
+            <div class="ev-vis"><span id="ev-seg"></span></div>
+            <span id="ev-cat"></span>
+            <span id="ev-mode"></span>
+            <button class="ev-tbtn" id="ev-more" type="button" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
+            <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
           </div>
           <div class="ev-morefilters" id="ev-morefilters" hidden>
-            <label class="ev-mini"><span>Reason code</span><input id="ev-reason" type="text" placeholder="e.g. simkl_not_found"></label>
-            <label class="ev-mini"><span>Run id</span><input id="ev-run" type="text" placeholder="e.g. 9f3c2d8e"></label>
+            <div class="ev-mf-row">
+              <span id="ev-range"></span>
+              <label class="ev-date" id="ev-since-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-since" type="date" aria-label="Since"></label>
+              <label class="ev-date" id="ev-until-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-until" type="date" aria-label="Until"></label>
+              <div class="ev-filters" id="ev-filters"></div>
+              <button class="ev-linkbtn" id="ev-clear-hidden" type="button">Clear filters</button>
+            </div>
+            <div class="ev-mf-summary" id="ev-mf-summary" hidden></div>
           </div>
         </div>
 
         <div class="ev-layout">
           <div class="ev-col-list">
             <div class="ev-list-head">
-              <div class="ev-list-head-left"><span id="ev-mode"></span><div class="ev-count" id="ev-count">—</div></div>
+              <div class="ev-list-head-left"><div class="ev-count" id="ev-count">—</div></div>
               <div class="ev-list-head-right">
                 <span id="ev-sort"></span>
                 <div class="ev-pagemini">
@@ -398,9 +401,12 @@ export default {
     const countEl = Q("#ev-count", root);
     const sinceEl = Q("#ev-since", root);
     const untilEl = Q("#ev-until", root);
-    const reasonEl = Q("#ev-reason", root);
-    const runEl = Q("#ev-run", root);
+    const sinceWrap = Q("#ev-since-wrap", root);
+    const untilWrap = Q("#ev-until-wrap", root);
     const moreWrap = Q("#ev-morefilters", root);
+    const moreBtn = Q("#ev-more", root);
+    const moreDotEl = Q("#ev-more-dot", root);
+    const summaryEl = Q("#ev-mf-summary", root);
     const pageLabelEl = Q("#ev-pagelabel", root);
     const layoutEl = Q(".ev-layout", root);
     const splitEl = Q("#ev-split", root);
@@ -437,18 +443,33 @@ export default {
       ev.preventDefault();
     });
 
+    let dateRange = ls("cw.events.range", "all");
+    const ddRange = createDropdown({
+      label: "All time", value: dateRange,
+      items: [
+        { value: "all", label: "All time" },
+        { value: "24h", label: "Last 24 hours" },
+        { value: "7d", label: "Last 7 days" },
+        { value: "30d", label: "Last 30 days" },
+        { value: "custom", label: "Custom range" },
+      ],
+      onChange: (v) => { dateRange = v; lset("cw.events.range", v); syncRangeUI(); load(0); },
+    });
     const ddType = createDropdown({ label: "All types", items: EVENT_TYPES.map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" })), onChange: () => load(0) });
     const ddProvider = createDropdown({ label: "Any provider", items: [{ value: "", label: "Any provider" }], onChange: () => load(0) });
     const ddOrigin = createDropdown({ label: "Any origin", items: [{ value: "", label: "Any origin" }], onChange: () => load(0) });
     const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
-    const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0), align: "right" });
+    const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0) });
     const ddCategory = createDropdown({
       label: "Any outcome", align: "right",
       items: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
       onChange: () => load(0),
     });
-    dropdowns.push(ddCategory, ddType, ddProvider, ddOrigin, ddFeature, ddPair);
-    for (const dd of dropdowns) filtersEl.appendChild(dd.el);
+    Q("#ev-cat", root).appendChild(ddCategory.el);
+    Q("#ev-range", root).appendChild(ddRange.el);
+    const hiddenDds = [ddType, ddProvider, ddOrigin, ddFeature, ddPair];
+    for (const dd of hiddenDds) filtersEl.appendChild(dd.el);
+    dropdowns.push(ddCategory, ddRange, ...hiddenDds);
 
     const ddSort = createDropdown({
       label: "Newest first", value: order,
@@ -481,8 +502,62 @@ export default {
       return Number.isFinite(n) ? String(n) : "";
     };
 
-    const filtersActive = () => !!(qEl.value.trim() || ddType.value || ddProvider.value || ddOrigin.value ||
-      ddFeature.value || ddPair.value || (grouped() && ddCategory.value) || sinceEl.value || untilEl.value || reasonEl.value.trim() || runEl.value.trim());
+    const syncRangeUI = () => {
+      const custom = dateRange === "custom";
+      sinceWrap.hidden = !custom;
+      untilWrap.hidden = !custom;
+    };
+
+    const rangeEpoch = () => {
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (dateRange === "24h") return { since: String(nowSec - 86400), until: "" };
+      if (dateRange === "7d") return { since: String(nowSec - 7 * 86400), until: "" };
+      if (dateRange === "30d") return { since: String(nowSec - 30 * 86400), until: "" };
+      if (dateRange === "custom") return { since: dateToEpoch(sinceEl.value, false), until: dateToEpoch(untilEl.value, true) };
+      return { since: "", until: "" };
+    };
+
+    const RANGE_LABEL = { "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days" };
+    const customRangeLabel = () => {
+      const s = sinceEl.value, u = untilEl.value;
+      if (s && u) return `${s} → ${u}`;
+      if (s) return `From ${s}`;
+      if (u) return `Until ${u}`;
+      return "Custom range";
+    };
+
+    const hiddenActive = () => !!(ddType.value || ddProvider.value || ddOrigin.value || ddFeature.value || ddPair.value || (dateRange && dateRange !== "all"));
+    const filtersActive = () => !!(qEl.value.trim() || (grouped() && ddCategory.value) || hiddenActive());
+
+    const clearHidden = (k) => {
+      const all = !k;
+      if (all || k === "range") { dateRange = "all"; lset("cw.events.range", "all"); ddRange.value = "all"; sinceEl.value = ""; untilEl.value = ""; syncRangeUI(); }
+      if (all || k === "type") ddType.reset();
+      if (all || k === "provider") ddProvider.reset();
+      if (all || k === "origin") ddOrigin.reset();
+      if (all || k === "feature") ddFeature.reset();
+      if (all || k === "pair") ddPair.reset();
+      load(0);
+    };
+
+    const updateHidden = () => {
+      const chips = [];
+      if (dateRange && dateRange !== "all") chips.push({ k: "range", label: dateRange === "custom" ? customRangeLabel() : RANGE_LABEL[dateRange] });
+      if (ddType.value) chips.push({ k: "type", label: ddType.labelOf(ddType.value) });
+      if (ddProvider.value) chips.push({ k: "provider", label: ddProvider.labelOf(ddProvider.value) });
+      if (ddOrigin.value) chips.push({ k: "origin", label: `Origin: ${ddOrigin.labelOf(ddOrigin.value)}` });
+      if (ddFeature.value) chips.push({ k: "feature", label: ddFeature.labelOf(ddFeature.value) });
+      if (ddPair.value) chips.push({ k: "pair", label: ddPair.labelOf(ddPair.value) });
+      const active = chips.length > 0;
+      moreDotEl.hidden = !active;
+      moreBtn.classList.toggle("has-active", active);
+      if (!active) { summaryEl.hidden = true; summaryEl.innerHTML = ""; return; }
+      summaryEl.hidden = false;
+      summaryEl.innerHTML = chips.map((c) => `<button type="button" class="ev-chip" data-k="${esc(c.k)}"><span>${esc(c.label)}</span><span class="material-symbols-rounded" aria-hidden="true">close</span></button>`).join("")
+        + `<button type="button" class="ev-chip ev-chip-clear" id="ev-chip-clear">Clear all</button>`;
+      summaryEl.querySelectorAll(".ev-chip[data-k]").forEach((b) => b.addEventListener("click", () => clearHidden(b.dataset.k)));
+      Q("#ev-chip-clear", summaryEl)?.addEventListener("click", () => clearHidden());
+    };
 
     const buildQuery = (page) => {
       const p = new URLSearchParams();
@@ -494,12 +569,9 @@ export default {
       if (ddFeature.value) p.set("feature", ddFeature.value);
       if (ddPair.value) p.set("pair_key", ddPair.value);
       if (grouped() && ddCategory.value) p.set("category", ddCategory.value);
-      if (reasonEl.value.trim()) p.set("reason_code", reasonEl.value.trim());
-      if (runEl.value.trim()) p.set("run_id", runEl.value.trim());
-      const s = dateToEpoch(sinceEl.value, false);
-      const u = dateToEpoch(untilEl.value, true);
-      if (s) p.set("since", s);
-      if (u) p.set("until", u);
+      const { since, until } = rangeEpoch();
+      if (since) p.set("since", since);
+      if (until) p.set("until", until);
       p.set("visibility", visibility);
       p.set("order", order);
       p.set("limit", String(PAGE_SIZE));
@@ -514,18 +586,28 @@ export default {
       const sv = groupSev(g);
       const feat = FEATURE_LABEL[g.feature] || g.feature || "";
       const route = routeOf(g);
-      const meta = [feat, route, `${g.event_count || 1} event${g.event_count === 1 ? "" : "s"}`].filter(Boolean).join(" · ");
+      const count = `${g.event_count || 1} event${g.event_count === 1 ? "" : "s"}`;
+      const meta = [count, feat, route].filter(Boolean).join(" · ");
       const item = titleOf(g);
-      const primary = item || g.summary || "";
-      const showSummary = item && g.summary && g.summary !== item;
+      const s = g.summary || "";
+      let headline, detail;
+      if (item) {
+        headline = item;
+        detail = (s && s !== item) ? s : "";
+      } else {
+        const i = s.indexOf(", ");
+        if (i > 0) { headline = s.slice(0, i); detail = s.slice(i + 2); }
+        else { headline = s; detail = ""; }
+      }
+      headline = headline || statusLabel(g.status);
       return `
       <div class="ev-row${g.acknowledged_at ? " acked" : ""}" data-id="${g.id}">
         <span class="ev-dot ${sv}"></span>
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(g)}</span></span>
         <span class="ev-line">
-          <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span><span class="ev-ptext">${esc(primary)}</span></span>
-          ${showSummary ? `<span class="ev-summary">${esc(g.summary)}</span>` : ""}
-          <span class="ev-meta">${esc(meta)}</span>
+          <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span><span class="ev-ptext">${esc(headline)}</span></span>
+          ${detail ? `<span class="ev-summary">${esc(detail)}</span>` : ""}
+          <span class="ev-meta"><span class="material-symbols-rounded ev-meta-ic" aria-hidden="true">format_list_bulleted</span>${esc(meta)}</span>
         </span>
         <span class="ev-time">${esc(TS(g.last_event_at))}</span>
         <span class="ev-rowact">
@@ -670,6 +752,7 @@ export default {
 
     const load = async (page) => {
       if (page != null) state.page = page;
+      updateHidden();
       const url = grouped() ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/search?view=events&${buildQuery(state.page)}`;
       try {
         const data = await fjson(url);
@@ -807,6 +890,56 @@ export default {
       return `<div class="ev-cards">${cards.join("")}</div>`;
     };
 
+    // context summary 
+    const EVENT_DESC = {
+      write_failed: "Provider write failed while adding the item.",
+      write_succeeded: "Item written successfully.",
+      write_attempted: "Write attempted on destination.",
+      unresolved_recorded: "Item marked unresolved and will be retried in future sync runs.",
+      unresolved_cleared: "Unresolved state cleared.",
+      blackbox_promoted: "Promoted to blackbox after repeated failures.",
+      blackbox_blocked: "Blocked by blackbox.",
+      plan_created: "Included in the sync plan.",
+      provider_health: "Provider health checked.",
+      sync_run_started: "Sync run started.",
+      sync_run_finished: "Sync run completed.",
+      tombstone_created: "Tombstone created.",
+      tombstone_pruned: "Tombstone pruned.",
+    };
+    const eventDesc = (e) => EVENT_DESC[e.event_type] || "";
+
+    const providerLines = (c) => {
+      const ph = c.provider_health;
+      if (!ph || ph.status_available === false) return "Status unavailable";
+      const entries = Object.entries(ph.providers || {});
+      return entries.map(([n, h]) => h.configured === false ? `${esc(n)} — not configured` : esc(instLabel(n, h.instance))).join("<br>") || "–";
+    };
+
+    const ctxSummary = (c) => {
+      const ps = c.pair_state;
+      const pairState = (ps && ps.matched !== false) ? (ps.enabled ? "Active" : "Disabled") : "Unmatched";
+      const ph = c.provider_health;
+      let health = "Unknown", healthCls = "neutral", lastCheck = "";
+      if (ph && ph.status_available !== false) {
+        const entries = Object.entries(ph.providers || {});
+        const anyDown = entries.some(([, h]) => h.configured !== false && h.status !== "unknown" && !h.connected);
+        const allOk = entries.length > 0 && entries.every(([, h]) => h.connected || h.status === "ok");
+        health = anyDown ? "Degraded" : (allOk ? "Healthy" : "Unknown");
+        healthCls = anyDown ? "bad" : (allOk ? "ok" : "neutral");
+        lastCheck = ph.checked_at ? TS(ph.checked_at) : "";
+      }
+      const us = c.unresolved_state;
+      const uPresent = !!(us && us.present);
+      const meta = (us && us.meta) || {};
+      const uSince = meta.since ?? meta.first_seen ?? meta.first_seen_at ?? meta.ts ?? meta.created_at;
+      return { pairState, pairEnabled: ps && ps.enabled, pairLabel: ps && ps.label, pairMode: ps && ps.mode, health, healthCls, lastCheck, uPresent, uSince };
+    };
+
+    const flashCopy = (btn) => {
+      const ic = btn?.querySelector(".material-symbols-rounded");
+      if (ic) { const t = ic.textContent; ic.textContent = "check"; setTimeout(() => { ic.textContent = t; }, 1200); }
+    };
+
     // ---- group detail ------------------------------------------------------
     const renderGroupDetail = (detail) => {
       const g = detail.group || {};
@@ -816,35 +949,120 @@ export default {
       const sv = groupSev(g);
       const ps = c.pair_state;
       const routeShort = provShort(g.source_provider, g.destination_provider) || "–";
-      const pairLabel = (ps && ps.matched && ps.label) ? `${ps.label}${ps.mode ? ` (${modeLabel(ps.mode).toLowerCase()})` : ""}` : (g.pair_key || "–");
+      const pairFull = (ps && ps.matched && ps.label) ? ps.label : (g.pair_key || "–");
       const origin = g.origin_provider ? instLabel(g.origin_provider, g.origin_instance) : "unknown";
       const dest = instLabel(g.destination_provider, g.destination_instance) || "–";
       const item = titleOf(g);
+      const feat = FEATURE_LABEL[g.feature] || g.feature || "–";
+      const reason = g.reason || g.reason_code || "";
+      const runId = events.map((e) => e.run_id).find(Boolean) || "";
+      const cx = ctxSummary(c);
+      const modeTxt = modeLabel(cx.pairMode) || "–";
+      const st = String(g.status || "").toLowerCase();
+      const isProblem = ["failed", "unresolved", "blackboxed"].includes(st);
 
-      const kv = [
-        ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status))}</span>`],
-        ["Feature", esc(FEATURE_LABEL[g.feature] || g.feature || "–")],
-        ["Operation", esc(g.operation || "–")],
-        ["Route", esc(routeShort)],
-        ["Origin", esc(origin)],
-        ["Destination", esc(dest)],
-        ["Pair", esc(pairLabel)],
-        ["Item", g.item_key ? `<span class="mono">${esc(g.item_key)}</span>` : "–"],
-        ["Events", esc(String(g.event_count || events.length))],
-        ["First seen", esc(TS(g.first_event_at))],
-        ["Last seen", esc(TS(g.last_event_at))],
-        ["Reason", esc(g.reason || g.reason_code || "–")],
-      ].map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("");
+      const pill = (text, cls) => `<span class="ev-pill ${cls}">${esc(text)}</span>`;
+      const card = (title, pillHTML, lines, extra = "") => `
+        <div class="ev-card">
+          <div class="ev-card-head"><span class="ev-card-title">${esc(title)}</span>${pillHTML || ""}</div>
+          <div class="ev-card-body">${lines.filter(Boolean).map((l) => `<div class="ev-card-line">${l}</div>`).join("")}</div>
+          ${extra}
+        </div>`;
 
-      const timeline = events.map((e) => `
+      const problemSub = st === "failed" ? `${g.operation || "sync"} operation failed on destination provider`
+        : st === "unresolved" ? `${g.operation || "sync"} failed, recorded unresolved for retry`
+        : st === "blackboxed" ? "Promoted to blackbox after repeated failures"
+        : "Completed";
+      const scard = (icon, cls, title, mainHTML, subs, badge = "") => `
+        <div class="ev-scard">
+          <div class="ev-scard-head"><span class="ev-scard-ic ${cls}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></span><span class="ev-scard-title ${cls}">${esc(title)}</span></div>
+          <div class="ev-scard-main">${mainHTML}</div>
+          ${subs.filter(Boolean).map((s) => `<div class="ev-scard-sub">${s}</div>`).join("")}
+          ${badge}
+        </div>`;
+      const summaryCards =
+        scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", isProblem ? "Problem" : "Outcome",
+          `<span class="mono">${esc(reason || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
+        scard("swap_horiz", "info", "Route", esc(routeShort), [esc(modeTxt)],
+          feat && feat !== "–" ? `<span class="ev-badge info">${esc(feat)}</span>` : "") +
+        scard("inventory_2", "info", "Item", g.item_key ? `<span class="mono">${esc(g.item_key)}</span>` : "–", [item ? esc(item) : ""]) +
+        scard(groupIcon(g), sv, "State", esc(statusLabel(g.status)), [`Since ${esc(TS(g.first_event_at))}`]);
+
+      const timeline = events.map((e) => {
+        const es = sevOf(e);
+        const desc = eventDesc(e);
+        return `
         <div class="ev-tl" data-id="${e.id}">
           <span class="ev-tl-time">${esc(TS(e.created_at))}</span>
-          <span class="ev-tl-dot ${sevOf(e)}"></span>
+          <span class="ev-tl-dot ${es}"></span>
           <span class="ev-tl-body">
-            <span class="ev-tl-head"><span class="ev-badge ${sevOf(e)}">${esc(badgeOf(e))}</span><span class="ev-tl-title">${esc(titleLine(e))}</span></span>
-            ${e.reason && e.reason !== e.reason_code ? `<span class="ev-tl-reason">${esc(e.reason)}</span>` : ""}
+            <span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>
+            ${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}
+            ${e.reason_code ? `<span class="ev-tl-code mono">${esc(e.reason_code)}</span>` : ""}
           </span>
-        </div>`).join("");
+        </div>`;
+      }).join("");
+
+      const livePill = (label, val, cls) => `<span class="ev-livepill ${cls}"><span class="ev-livepill-k">${esc(label)}</span><span class="ev-livepill-v">${esc(val)}</span></span>`;
+      const liveBar = `
+        <div class="ev-livebar">
+          <span class="ev-live">Live now</span>
+          ${livePill("Pair", cx.pairState, cx.pairState === "Active" ? "ok" : "neutral")}
+          ${livePill("Provider", cx.health, cx.healthCls)}
+          ${livePill("Unresolved", cx.uPresent ? "Yes" : "No", cx.uPresent ? "warn" : "neutral")}
+          <button class="ev-livemore" id="ev-live-details" type="button"><span>Full context</span><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+        </div>`;
+
+      const kvGrid = (rows) => `<div class="ev-kv">${rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("")}</div>`;
+
+      const detailsPane =
+        `<div class="ev-dsec"><h5>Event</h5>${kvGrid([
+          ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status))}</span>`],
+          ["Title", esc(g.summary || "–")],
+          ["Item", item ? esc(item) : "–"],
+          ["Reason", esc(reason || "–")],
+          ["Events", esc(String(g.event_count || events.length))],
+          ["First seen", esc(TS(g.first_event_at))],
+          ["Last seen", esc(TS(g.last_event_at))],
+        ])}</div>` +
+        `<div class="ev-dsec"><h5>Route</h5>${kvGrid([
+          ["Feature", esc(feat)],
+          ["Operation", esc(g.operation || "–")],
+          ["Route", esc(routeShort)],
+          ["Origin", esc(origin)],
+          ["Destination", esc(dest)],
+          ["Pair", esc(pairFull)],
+          ["Mode", esc(modeTxt)],
+        ])}</div>` +
+        `<div class="ev-dsec"><h5>Current context <span class="ev-h4-note">live now</span></h5>${kvGrid([
+          ["Pair state", esc(cx.pairState)],
+          ["Provider health", esc(cx.health)],
+          ["Unresolved state", cx.uPresent ? "Yes" : "No"],
+          ["Last provider check", cx.lastCheck ? esc(cx.lastCheck) : "–"],
+        ])}</div>`;
+
+      const eventIds = events.map((e) => e.id).join(", ");
+      const rawFields = {
+        status: g.status, feature: g.feature, operation: g.operation, route: routeShort,
+        origin, destination: dest, reason, first_seen: TS(g.first_event_at), last_seen: TS(g.last_event_at), event_count: g.event_count,
+      };
+      const rawPane =
+        `<div class="ev-dsec"><h5>Identifiers</h5>${kvGrid([
+          ["Thread ID", `<span class="mono">${esc(String(g.id))}</span>`],
+          ["Run ID", runId ? `<span class="mono">${esc(runId)}</span>` : "–"],
+          ["Event IDs", `<span class="mono">${esc(eventIds || "–")}</span>`],
+          ["Pair ID", `<span class="mono">${esc((ps && ps.id) || g.pair_key || "–")}</span>`],
+          ["Item key", g.item_key ? `<span class="mono">${esc(g.item_key)}</span>` : "–"],
+        ])}</div>` +
+        `<div class="ev-dsec"><h5>Raw fields</h5>
+          <details class="ev-tech"><summary>Fields</summary><div class="ev-tech-body"><pre class="cw-scrollbars">${esc(JSON.stringify(rawFields, null, 2))}</pre></div></details>
+          <details class="ev-tech"><summary>Full payload</summary><div class="ev-tech-body"><div class="ev-tech-kv"><span>Group hash</span><span class="mono">${esc(g.group_hash || "–")}</span></div><pre class="cw-scrollbars">${esc(JSON.stringify({ group: g, context: c, events }, null, 2))}</pre></div></details>
+        </div>` +
+        `<div class="ev-dsec"><h5>Actions</h5><div class="ev-rawacts">
+          <button class="ev-tbtn" id="ev-copy-raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy raw data</span></button>
+          <button class="ev-tbtn" id="ev-copy-item" type="button"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy item key</span></button>
+          <button class="ev-tbtn" id="ev-copy-run" type="button"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy run ID</span></button>
+        </div></div>`;
 
       const relHTML = related.length
         ? related.slice(0, 12).map((r) => `
@@ -854,7 +1072,11 @@ export default {
             <span class="ev-rel-title">${esc(r.summary || titleOf(r) || "")}</span>
             <span class="ev-rel-time">${esc(TS(r.last_event_at))}</span>
           </button>`).join("")
-        : `<div class="ev-empty ev-empty-inline">No related groups found.</div>`;
+        : "";
+
+      const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
+      const ackIcon = g.acknowledged_at ? "check_circle" : "check";
+      const tabAttr = (t) => detailTab === t ? "" : " hidden";
 
       detailEl.innerHTML = `
         <div class="ev-dhead">
@@ -862,36 +1084,55 @@ export default {
             <span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span>
             <span class="ev-dhead-spacer"></span>
             <span class="ev-dtime">${esc(TS(g.last_event_at))}</span>
-            <button class="ev-icon-btn" id="ev-copy" type="button" title="Copy thread" aria-label="Copy thread"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
+            <button class="ev-hbtn" id="ev-copy" type="button" title="Copy thread"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy</span></button>
+            <button class="ev-hbtn ev-hbtn-accent${g.acknowledged_at ? " on" : ""}" id="ev-ack-detail" type="button"><span class="material-symbols-rounded" aria-hidden="true">${ackIcon}</span><span>${ackLabel}</span></button>
           </div>
           <div class="ev-dtitle">${esc(g.summary || item || "")}</div>
           ${item ? `<div class="ev-ditem">${esc(item)}</div>` : ""}
         </div>
-        <h4>Overview</h4><div class="ev-kv">${kv}</div>
-        <h4>Current context <span class="ev-h4-note">live now — may differ from the timeline</span></h4>
-        ${renderCards(c, g)}
-        <h4>Thread timeline <span class="ev-h4-note">${events.length} event${events.length === 1 ? "" : "s"}, in order</span></h4>
-        <div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div>
-        <h4>Related groups</h4>
-        <div class="ev-related">${relHTML}</div>
-        <details class="ev-tech"><summary>Technical details</summary><div class="ev-tech-body"><div class="ev-tech-kv"><span>Group hash</span><span class="mono">${esc(g.group_hash || "–")}</span></div><div class="ev-tech-kv"><span>Pair key</span><span class="mono">${esc(g.pair_key || "–")}</span></div><pre class="cw-scrollbars">${esc(JSON.stringify({ group: g, context: c }, null, 2))}</pre></div></details>`;
+        <div class="ev-scards">${summaryCards}</div>
+        <div class="ev-tabs" role="tablist">
+          <button class="ev-tab${detailTab === "timeline" ? " on" : ""}" data-tab="timeline" type="button"><span class="material-symbols-rounded" aria-hidden="true">timeline</span>Timeline</button>
+          <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Details</button>
+          <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Raw data</button>
+        </div>
+        <div class="ev-tabpanes">
+          <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}>
+            ${liveBar}
+            <div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div>
+          </div>
+          <div class="ev-tabpane" data-pane="details"${tabAttr("details")}>${detailsPane}</div>
+          <div class="ev-tabpane" data-pane="raw"${tabAttr("raw")}>${rawPane}</div>
+        </div>
+        ${relHTML ? `<h4>Related threads</h4><div class="ev-related">${relHTML}</div>` : ""}`;
       detailEl.scrollTop = 0;
 
-      Q("#ev-copy", detailEl)?.addEventListener("click", () => {
-        const summary = [
+      const panes = detailEl.querySelectorAll(".ev-tabpane");
+      const switchTab = (name) => {
+        detailTab = name; lset("cw.events.detailtab", name);
+        detailEl.querySelectorAll(".ev-tab").forEach((x) => x.classList.toggle("on", x.dataset.tab === name));
+        panes.forEach((p) => { p.hidden = p.dataset.pane !== name; });
+      };
+      detailEl.querySelectorAll(".ev-tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+      Q("#ev-live-details", detailEl)?.addEventListener("click", () => switchTab("details"));
+
+      Q("#ev-ack-detail", detailEl)?.addEventListener("click", () => {
+        if (g.acknowledged_at) unacknowledgeRow(g.id); else acknowledgeRow(g.id);
+      });
+      Q("#ev-copy", detailEl)?.addEventListener("click", (ev) => {
+        navigator.clipboard?.writeText([
           `Thread: ${g.summary || ""}`, `Status: ${g.status}`,
-          `Feature: ${g.feature || ""}`, `Route: ${routeShort}`, `Pair: ${pairLabel}`,
+          `Feature: ${g.feature || ""}`, `Route: ${routeShort}`, `Pair: ${pairFull}`,
           `Item: ${g.item_key || ""}`, `Events: ${g.event_count}`,
           `First seen: ${TS(g.first_event_at)}`, `Last seen: ${TS(g.last_event_at)}`,
-          `Reason: ${g.reason || g.reason_code || ""}`,
-          "",
+          `Reason: ${reason}`, "",
           ...events.map((e) => `  ${TS(e.created_at)} · ${badgeOf(e)} · ${titleLine(e)}`),
-        ].join("\n");
-        navigator.clipboard?.writeText(summary);
-        const b = Q("#ev-copy", detailEl);
-        if (b) { const ic = b.querySelector(".material-symbols-rounded"); if (ic) { ic.textContent = "check"; setTimeout(() => { ic.textContent = "content_copy"; }, 1200); } }
+        ].join("\n"));
+        flashCopy(ev.currentTarget);
       });
-      Q("#ev-open-analyzer", detailEl)?.addEventListener("click", () => { try { window.cxCloseModal?.(); window.openAnalyzer?.(); } catch {} });
+      Q("#ev-copy-raw", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(JSON.stringify({ group: g, context: c, events }, null, 2)); flashCopy(ev.currentTarget); });
+      Q("#ev-copy-item", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(g.item_key || ""); flashCopy(ev.currentTarget); });
+      Q("#ev-copy-run", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(runId); flashCopy(ev.currentTarget); });
       detailEl.querySelectorAll(".ev-rel").forEach((a) => a.addEventListener("click", () => a.dataset.gid && select(a.dataset.gid)));
     };
 
@@ -1011,8 +1252,8 @@ export default {
     const resetFilters = () => {
       qEl.value = "";
       ddCategory.reset(); ddType.reset(); ddProvider.reset(); ddOrigin.reset(); ddFeature.reset(); ddPair.reset();
-      sinceEl.value = ""; untilEl.value = "";
-      reasonEl.value = ""; runEl.value = "";
+      dateRange = "all"; lset("cw.events.range", "all"); ddRange.value = "all";
+      sinceEl.value = ""; untilEl.value = ""; syncRangeUI();
       load(0);
     };
 
@@ -1056,12 +1297,9 @@ export default {
 
     let searchTimer = null;
     qEl.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => load(0), 250); });
-    let filterTimer = null;
-    const deb = () => { clearTimeout(filterTimer); filterTimer = setTimeout(() => load(0), 250); };
-    reasonEl.addEventListener("input", deb);
-    runEl.addEventListener("input", deb);
     sinceEl.addEventListener("change", () => load(0));
     untilEl.addEventListener("change", () => load(0));
+    Q("#ev-clear-hidden", root).addEventListener("click", () => clearHidden());
 
     Q("#ev-more", root).addEventListener("click", (ev) => {
       const btn = ev.currentTarget;
@@ -1078,7 +1316,6 @@ export default {
     cleanup = () => {
       alive = false;
       clearTimeout(searchTimer);
-      clearTimeout(filterTimer);
       clearTimeout(toastTimer);
       window.removeEventListener("pointermove", onSplitMove, true);
       window.removeEventListener("pointerup", endSplit, true);
@@ -1087,6 +1324,7 @@ export default {
       cleanup = null;
     };
 
+    syncRangeUI();
     await populateFilters();
     await load(0);
     doRefresh(false);

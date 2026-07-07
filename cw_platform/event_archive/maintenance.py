@@ -3,12 +3,15 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
 from .db import events_db_path, get_conn, close_conn
+
+_LOG = logging.getLogger("crosswatch.event_archive")
 from .schema import SCHEMA_VERSION
 from .importer import import_all
 from .query import status
@@ -56,8 +59,9 @@ def health(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
             "size_bytes": _db_size(p),
             "wal_size_bytes": _file_size(Path(str(p) + "-wal")),
         })
-    except Exception as exc:
-        out.update({"healthy": False, "error": str(exc)})
+    except Exception:
+        _LOG.exception("events health check failed")
+        out.update({"healthy": False, "error": "internal_error"})
     return out
 
 

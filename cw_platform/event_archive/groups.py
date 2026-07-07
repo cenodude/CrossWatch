@@ -362,7 +362,7 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
         ).fetchall()
     except Exception as exc:
         _LOG.warning("event correlation query failed: %s", exc)
-        return {"ok": False, "error": str(exc), "grouped": 0}
+        return {"ok": False, "error": "internal_error", "grouped": 0}
     if not rows:
         return {"ok": True, "grouped": 0, "groups_touched": 0}
 
@@ -389,7 +389,7 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
                 _recompute(c, gid, now)
     except Exception as exc:
         _LOG.warning("event correlation failed: %s", exc)
-        return {"ok": False, "error": str(exc), "grouped": 0}
+        return {"ok": False, "error": "internal_error", "grouped": 0}
     return {"ok": True, "grouped": len(rows), "groups_touched": len(touched)}
 
 
@@ -593,8 +593,9 @@ def acknowledge_group(group_id: Any, *, by: str | None = None, conn: sqlite3.Con
                 (ts, by, gid),
             )
         row = c.execute("SELECT acknowledged_at, acknowledged_by FROM event_groups WHERE id=?", (gid,)).fetchone()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("group acknowledge failed")
+        return {"ok": False, "error": "internal_error"}
     if row is None:
         return {"ok": False, "id": gid, "found": False}
     return {"ok": True, "id": gid, "acknowledged_at": int(row[0]) if row[0] is not None else ts, "acknowledged_by": row[1]}
@@ -612,8 +613,9 @@ def unacknowledge_group(group_id: Any, *, conn: sqlite3.Connection | None = None
         with c:
             c.execute("UPDATE event_groups SET acknowledged_at=NULL, acknowledged_by=NULL WHERE id=?", (gid,))
         row = c.execute("SELECT id FROM event_groups WHERE id=?", (gid,)).fetchone()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("group unacknowledge failed")
+        return {"ok": False, "error": "internal_error"}
     if row is None:
         return {"ok": False, "id": gid, "found": False}
     return {"ok": True, "id": gid, "acknowledged_at": None}

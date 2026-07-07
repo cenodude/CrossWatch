@@ -3,11 +3,14 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from typing import Any
 
 from .db import get_conn, events_db_path
+
+_LOG = logging.getLogger("crosswatch.event_archive")
 
 _MAX_LIMIT = 500
 _DEFAULT_LIMIT = 50
@@ -177,8 +180,9 @@ def acknowledge(event_id: Any, *, by: str | None = None, conn: sqlite3.Connectio
                 (ts, by, eid),
             )
         row = c.execute("SELECT acknowledged_at, acknowledged_by FROM events WHERE id=?", (eid,)).fetchone()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("acknowledge failed")
+        return {"ok": False, "error": "internal_error"}
     if row is None:
         return {"ok": False, "id": eid, "found": False}
     return {"ok": True, "id": eid, "acknowledged_at": int(row[0]) if row[0] is not None else ts, "acknowledged_by": row[1]}
@@ -196,8 +200,9 @@ def unacknowledge(event_id: Any, *, conn: sqlite3.Connection | None = None) -> d
         with c:
             c.execute("UPDATE events SET acknowledged_at=NULL, acknowledged_by=NULL WHERE id=?", (eid,))
         row = c.execute("SELECT id FROM events WHERE id=?", (eid,)).fetchone()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("unacknowledge failed")
+        return {"ok": False, "error": "internal_error"}
     if row is None:
         return {"ok": False, "id": eid, "found": False}
     return {"ok": True, "id": eid, "acknowledged_at": None}

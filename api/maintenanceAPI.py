@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -12,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body
+
+_LOG = logging.getLogger("crosswatch.api.maintenance")
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
@@ -702,8 +705,9 @@ def maintenance_events_health() -> dict[str, Any]:
     try:
         from cw_platform.event_archive.maintenance import health
         return health()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("events-health failed")
+        return {"ok": False, "error": "internal_error"}
 
 
 @router.post("/events-optimize")
@@ -711,8 +715,9 @@ def maintenance_events_optimize() -> dict[str, Any]:
     try:
         from cw_platform.event_archive.maintenance import optimize
         return optimize()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("events-optimize failed")
+        return {"ok": False, "error": "internal_error"}
 
 
 @router.post("/events-rebuild")
@@ -722,8 +727,9 @@ def maintenance_events_rebuild(payload: dict[str, Any] | None = Body(None)) -> d
     try:
         from cw_platform.event_archive.maintenance import rebuild
         return rebuild()
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+    except Exception:
+        _LOG.exception("events-rebuild failed")
+        return {"ok": False, "error": "internal_error"}
 
 
 @router.post("/reset-all-default")
