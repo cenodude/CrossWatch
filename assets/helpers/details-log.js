@@ -126,6 +126,14 @@ function _detailsVisible() {
   return !!(details && !details.classList.contains("hidden"));
 }
 
+function _cwModalOpen() {
+  return !!(document.body && document.body.dataset && document.body.dataset.cxModalOpen);
+}
+
+function _streamsAllowed() {
+  return _detailsVisible() && !_cwModalOpen();
+}
+
 function _watchLogKnownTags() {
   return ["WATCH", "SCROBBLE", "PLEX", "JELLYFIN", "EMBY", "TRAKT", "SIMKL", "MDBLIST", "TMDB", "TRBL"];
 }
@@ -523,7 +531,7 @@ function openDebugLog() {
   const el = document.getElementById("det-debug-log");
   const details = document.getElementById("details");
   const tabDebug = document.getElementById("det-tab-debug");
-  if (!el || !details || details.classList.contains("hidden") || window._detailsTab !== "debug") return;
+  if (!el || !details || details.classList.contains("hidden") || _cwModalOpen() || window._detailsTab !== "debug") return;
   if (window.esDebug || window._debugOpening) return;
   window._debugOpening = true;
 
@@ -619,7 +627,7 @@ async function openWatcherLog() {
   const el = document.getElementById("det-watch-log");
   const details = document.getElementById("details");
   const tabWatch = document.getElementById("det-tab-watcher");
-  if (!el || !details || details.classList.contains("hidden") || window._detailsTab !== "watcher") return;
+  if (!el || !details || details.classList.contains("hidden") || _cwModalOpen() || window._detailsTab !== "watcher") return;
   if (window.esWatch || window._watchOpening) return;
   window._watchOpening = true;
 
@@ -728,7 +736,7 @@ async function openDetailsLog() {
   const el = document.getElementById("det-log");
   const slider = document.getElementById("det-scrub");
   if (!el) return;
-  if (!_detailsVisible() || window._detailsTab !== "sync" || window.esDet) return;
+  if (!_detailsVisible() || _cwModalOpen() || window._detailsTab !== "sync" || window.esDet) return;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const tabSync = document.getElementById("det-tab-sync");
   const openSeq = ++window._detOpenSeq;
@@ -815,7 +823,7 @@ async function openDetailsLog() {
   };
 
   const connect = () => {
-    if (authSetupPending() || !_detailsVisible() || window._detailsTab !== "sync") return;
+    if (authSetupPending() || !_streamsAllowed() || window._detailsTab !== "sync") return;
     try { window.esDet?.close(); } catch (_) {}
     if (window._detDidConnectOnce) _beginDetailReplayFilter();
     const url = new URL("/api/logs/stream", document.baseURI);
@@ -951,6 +959,26 @@ function resetDetailsSyncLog() {
   window.detStickBottom = true;
   _resetDetailsDropped("sync");
 }
+
+function _wireModalStreamPause() {
+  if (window._cwModalStreamPauseWired || !document.body) return;
+  window._cwModalStreamPauseWired = true;
+  let wasOpen = _cwModalOpen();
+  const obs = new MutationObserver(() => {
+    const open = _cwModalOpen();
+    if (open === wasOpen) return;
+    wasOpen = open;
+    if (open) {
+      try { closeDetailsLog(); } catch {}
+    } else if (_detailsVisible()) {
+      try { setDetailsTab(window._detailsTab || "sync"); } catch {}
+    }
+  });
+  obs.observe(document.body, { attributes: true, attributeFilter: ["data-cx-modal-open"] });
+}
+
+if (document.body) _wireModalStreamPause();
+else document.addEventListener("DOMContentLoaded", _wireModalStreamPause, { once: true });
 
 window.addEventListener("beforeunload", () => {
   try { closeDetailsLog(); } catch {}
