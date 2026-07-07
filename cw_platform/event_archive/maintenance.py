@@ -79,11 +79,13 @@ def optimize(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     t0 = time.time()
     steps: list[str] = []
     for stmt in ("PRAGMA wal_checkpoint(TRUNCATE)", "VACUUM", "ANALYZE", "PRAGMA optimize"):
+        step = stmt.split("(")[0].replace("PRAGMA ", "").strip()
         try:
             c.execute(stmt)
-            steps.append(stmt.split("(")[0].replace("PRAGMA ", "").strip())
-        except Exception as exc:
-            return {"ok": False, "path": str(path), "error": f"{stmt}: {exc}", "before_bytes": before, "steps": steps}
+            steps.append(step)
+        except Exception:
+            _LOG.exception("events optimize step failed: %s", step)
+            return {"ok": False, "path": str(path), "error": "optimize_failed", "step": step, "before_bytes": before, "steps": steps}
     after = _db_size(p)
     return {
         "ok": True, "path": str(path), "steps": steps,
@@ -107,8 +109,9 @@ def rebuild(
             if fp.exists():
                 fp.unlink()
                 removed.append(fp.name)
-        except Exception as exc:
-            return {"ok": False, "path": str(path), "error": f"remove {fp.name}: {exc}"}
+        except Exception:
+            _LOG.exception("events rebuild could not remove %s", fp.name)
+            return {"ok": False, "path": str(path), "error": "remove_failed", "file": fp.name}
     c = get_conn()
     if c is None:
         return {"ok": False, "available": False, "path": str(path), "removed": removed}
