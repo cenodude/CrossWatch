@@ -104,7 +104,7 @@
 .cw-maint .group-icon .material-symbols-rounded { font-size: 26px; font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 22; }
 .cw-maint .group-title { color: var(--maint-text); font-size: 17px; font-weight: 820; line-height: 1.2; }
 .cw-maint .group-desc { margin: 8px 0 0 42px; color: var(--maint-muted); font-size: 11.5px; line-height: 1.35; }
-.cw-maint .group-actions { min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.cw-maint .group-actions { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
 .cw-maint .group-actions.single { grid-template-columns: 1fr; }
 .cw-maint .group-actions.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* Action cards and feedback */

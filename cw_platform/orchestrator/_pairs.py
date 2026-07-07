@@ -1,5 +1,5 @@
 # cw_platform/orchestration/_pairs.py
-# Main orchestration logic for data pair synchronization.
+# CrossWatch - Main orchestration logic for data pair synchronization.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from collections.abc import Mapping
@@ -294,6 +294,17 @@ def run_pairs(ctx) -> dict[str, Any]:
     ctx.emit = metrics.emit
     emit = ctx.emit
 
+    _event_rec = None
+    try:
+        from ..event_archive import RunRecorder as _RunRecorder
+        import time as _t
+        _rid = str(os.environ.get("CW_RUN_ID") or int(_t.time()))
+        _event_rec = _RunRecorder(ctx.emit, run_id=_rid)
+        ctx.emit = _event_rec.emit
+        emit = ctx.emit
+    except Exception:
+        _event_rec = None
+
     try:
         ttl_days = int(sync_cfg.get("tombstone_ttl_days", 30))
         ctx.tomb_prune(max(1, ttl_days) * 24 * 3600)
@@ -571,6 +582,11 @@ def run_pairs(ctx) -> dict[str, Any]:
         pairs=len(pairs),
         mode="v3",
     )
+    if _event_rec is not None:
+        try:
+            _event_rec.close()
+        except Exception:
+            pass
     return {
         "ok": True,
         "updated": updated_total,
