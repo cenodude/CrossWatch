@@ -231,15 +231,6 @@ def _rows_flap(data: Mapping[str, Any], provider, feature, pair, src_file) -> li
                 created_at=ts or None, source_mtime=ts or None, source_file=src_file,
                 detail={"consecutive": cons},
             ))
-        else:
-            ts = int(m.get("last_success_ts") or 0)
-            if ts:
-                out.append(_mk(
-                    event_type="write_succeeded", operation=op, severity="info",
-                    feature=feature, pair_key=pair, destination_provider=provider,
-                    origin_confidence="unknown", item_key=str(ck),
-                    created_at=ts or None, source_mtime=ts or None, source_file=src_file,
-                ))
     return out
 
 
@@ -274,28 +265,4 @@ def _rows_tombstones(p: Path) -> list[dict[str, Any]]:
 
 
 def _rows_report(p: Path) -> list[dict[str, Any]]:
-    data = _read_json(p)
-    if not isinstance(data, Mapping):
-        return []
-    run_id = str(data.get("finished_at") or data.get("started_at") or p.name)
-    src_file = str(p)
-    out: list[dict[str, Any]] = []
-    feats = _as_map(data.get("features"))
-    for name, lane in feats.items():
-        if not isinstance(lane, Mapping):
-            continue
-        feature = str(name).lower()
-        for kind, op in (("spotlight_add", "add"), ("spotlight_remove", "remove"), ("spotlight_update", "update")):
-            for it in _as_list(lane.get(kind)):
-                if not isinstance(it, Mapping):
-                    continue
-                ts = int(it.get("ts") or 0)
-                out.append(_mk(
-                    event_type="write_succeeded", operation=op, severity="info",
-                    run_id=run_id, feature=feature, item_key=str(it.get("key") or "") or None,
-                    source_provider=str(it.get("source") or "").upper() or None,
-                    title=str(it.get("title") or "") or None,
-                    media_type=str(it.get("type") or "") or None,
-                    created_at=ts or None, source_mtime=ts or None, source_file=src_file,
-                ))
-    return out
+    return []

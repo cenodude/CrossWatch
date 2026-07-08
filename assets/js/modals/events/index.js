@@ -18,8 +18,6 @@ const fjson = async (u, o = {}) => {
 
 const Q = (s, r = document) => r.querySelector(s);
 
-const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
-
 const TS = (v) => {
   const n = Number(v || 0);
   if (!n) return "";
@@ -119,7 +117,8 @@ const iconOf = (e) => {
 const sevOf = (e) => {
   if (e.event_type === "write_failed") return "error";
   if (e.event_type === "write_succeeded") return isRating(e) ? "rating" : "ok";
-  if (["unresolved_recorded", "blackbox_promoted", "blackbox_blocked", "plan_created", "api_rate_limit"].includes(e.event_type)) return "warn";
+  if (["blackbox_promoted", "blackbox_blocked"].includes(e.event_type)) return "error";
+  if (["unresolved_recorded", "plan_created", "api_rate_limit"].includes(e.event_type)) return "warn";
   if (["tombstone_created", "tombstone_pruned"].includes(e.event_type)) return "warn";
   if (e.event_type === "unresolved_cleared") return "ok";
   const s = String(e.severity || "").toLowerCase();
@@ -158,7 +157,10 @@ const EVENT_TYPES = [
 
 // ---- group helpers ---------------------------------------------------------
 const GROUP_SEV = { success: "ok", warning: "warn", error: "error", info: "info" };
-const groupSev = (g) => GROUP_SEV[String(g.severity || "").toLowerCase()] || "info";
+const groupSev = (g) => {
+  if (String(g.status || "").toLowerCase() === "blackboxed") return "error";
+  return GROUP_SEV[String(g.severity || "").toLowerCase()] || "info";
+};
 const STATUS_ICON = {
   completed: "task_alt", resolved: "check_circle", blackboxed: "inventory_2", unresolved: "shield",
   failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt",
@@ -309,7 +311,6 @@ function createSegmented({ items, value, onChange, cls = "" }) {
 }
 
 let cleanup = null;
-let lastAutoRefresh = 0;
 
 export default {
   async mount(root) {
@@ -330,7 +331,7 @@ export default {
     let mode = ls("cw.events.mode", "grouped");
     let detailTab = ls("cw.events.detailtab", "timeline");
 
-    const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false };
+    const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false, collapsed: new Set() };
     const dropdowns = [];
 
     root.innerHTML = `
@@ -355,6 +356,7 @@ export default {
             <span id="ev-mode"></span>
             <button class="ev-tbtn" id="ev-more" type="button" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
             <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
+            <button class="ev-tbtn" id="ev-clear" type="button" title="Delete all events from the archive"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span><span>Clear</span></button>
           </div>
           <div class="ev-morefilters" id="ev-morefilters" hidden>
             <div class="ev-mf-row">
@@ -388,7 +390,6 @@ export default {
           <div class="ev-detail cw-scrollbars" id="ev-detail"><div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select an event thread to see details and current context.</div></div></div>
         </div>
 
-        <div class="ev-note">Times are shown in your local time${TZ ? ` (${esc(TZ)})` : ""}.</div>
         <div class="ev-toast" id="ev-toast" hidden></div>
       </div>`;
 
@@ -582,7 +583,7 @@ export default {
     const pageCount = () => Math.max(1, Math.ceil((state.total || 0) / PAGE_SIZE));
 
     // ---- rows --------------------------------------------------------------
-    const groupRowHTML = (g) => {
+    const groupRowHTML = (g, opts = {}) => {
       const sv = groupSev(g);
       const feat = FEATURE_LABEL[g.feature] || g.feature || "";
       const route = routeOf(g);
@@ -600,9 +601,12 @@ export default {
         else { headline = s; detail = ""; }
       }
       headline = headline || statusLabel(g.status);
+      const twist = opts.expandable
+        ? `<button class="ev-twist${opts.expanded ? " open" : ""}" type="button" data-twist="${g.id}" aria-label="${opts.expanded ? "Collapse" : "Expand"}"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>`
+        : `<span class="ev-twist-sp" aria-hidden="true"></span>`;
       return `
-      <div class="ev-row${g.acknowledged_at ? " acked" : ""}" data-id="${g.id}">
-        <span class="ev-dot ${sv}"></span>
+      <div class="ev-row${opts.child ? " ev-row-child" : ""}${g.acknowledged_at ? " acked" : ""}" data-id="${g.id}">
+        ${twist}
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(g)}</span></span>
         <span class="ev-line">
           <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span><span class="ev-ptext">${esc(headline)}</span></span>
@@ -624,7 +628,7 @@ export default {
       const item = titleOf(e);
       return `
       <div class="ev-row${e.acknowledged_at ? " acked" : ""}" data-id="${e.id}">
-        <span class="ev-dot ${sv}"></span>
+        <span class="ev-twist-sp" aria-hidden="true"></span>
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${iconOf(e)}</span></span>
         <span class="ev-line">
           <span class="ev-primary"><span class="ev-badge ${sv}">${esc(badgeOf(e))}</span><span class="ev-ptext">${esc(titleLine(e))}</span></span>
@@ -639,16 +643,46 @@ export default {
     };
 
     const grouped = () => mode === "grouped";
-    const rowHTML = (x) => grouped() ? groupRowHTML(x) : eventRowHTML(x);
+
+    const findGroup = (id) => {
+      const s = String(id);
+      for (const g of state.items) {
+        if (String(g.id) === s) return g;
+        for (const k of (g.children || [])) if (String(k.id) === s) return k;
+      }
+      return null;
+    };
+
+    const buildRows = () => {
+      if (!grouped()) return state.items.map(eventRowHTML).join("");
+      const out = [];
+      for (const g of state.items) {
+        const kids = g.children || [];
+        const expandable = kids.length > 0;
+        const expanded = expandable && !state.collapsed.has(String(g.id));
+        out.push(groupRowHTML(g, { expandable, expanded }));
+        if (expanded) for (const k of kids) out.push(groupRowHTML(k, { child: true }));
+      }
+      return out.join("");
+    };
+
+    const applyDefaultCollapse = () => {
+      state.collapsed.clear();
+      const runs = state.items.filter((g) => (g.children || []).length > 0);
+      if (runs.length < 2) return;
+      let latest = runs[0];
+      for (const g of runs) if (Number(g.last_event_at || 0) > Number(latest.last_event_at || 0)) latest = g;
+      for (const g of runs) if (String(g.id) !== String(latest.id)) state.collapsed.add(String(g.id));
+    };
 
     const bindRow = (el) => {
       el.addEventListener("click", (ev) => {
-        if (ev.target.closest(".ev-rowact")) return;
+        if (ev.target.closest(".ev-rowact") || ev.target.closest(".ev-twist")) return;
         select(el.dataset.id, el);
       });
       el.querySelector(".ev-ack")?.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        const item = state.items.find((x) => String(x.id) === String(el.dataset.id));
+        const item = findGroup(el.dataset.id);
         if (item && item.acknowledged_at) unacknowledgeRow(el.dataset.id);
         else acknowledgeRow(el.dataset.id);
       });
@@ -678,8 +712,8 @@ export default {
         actions = `<button class="ev-linkbtn" id="ev-empty-open">Back to Open</button>`;
       } else {
         icon = "inbox"; head = "No events in the archive.";
-        hint = "Run a sync to generate events, or rebuild the archive from runtime state.";
-        actions = `<button class="ev-linkbtn" id="ev-empty-rebuild">Rebuild archive</button>`;
+        hint = "Run a sync to start recording events here.";
+        actions = "";
       }
       return `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><div class="ev-empty-head">${esc(head)}</div><div class="ev-empty-hint">${esc(hint)}</div><div class="ev-empty-actions">${actions}</div></div>`;
     };
@@ -741,11 +775,16 @@ export default {
         Q("#ev-empty-reset", listEl)?.addEventListener("click", resetFilters);
         Q("#ev-empty-all", listEl)?.addEventListener("click", () => { seg.value = "all"; visibility = "all"; lset("cw.events.visibility", "all"); load(0); });
         Q("#ev-empty-open", listEl)?.addEventListener("click", () => { seg.value = "open"; visibility = "open"; lset("cw.events.visibility", "open"); load(0); });
-        Q("#ev-empty-rebuild", listEl)?.addEventListener("click", rebuildArchive);
         return;
       }
-      listEl.innerHTML = state.items.map(rowHTML).join("");
+      listEl.innerHTML = buildRows();
       listEl.querySelectorAll(".ev-row").forEach(bindRow);
+      listEl.querySelectorAll(".ev-twist").forEach((b) => b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const id = String(b.dataset.twist);
+        if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+        renderList();
+      }));
       if (state.selected) listEl.querySelector(`.ev-row[data-id="${state.selected}"]`)?.classList.add("sel");
       renderPager();
     };
@@ -753,12 +792,13 @@ export default {
     const load = async (page) => {
       if (page != null) state.page = page;
       updateHidden();
-      const url = grouped() ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/search?view=events&${buildQuery(state.page)}`;
+      const url = grouped() ? `/api/events/tree?${buildQuery(state.page)}` : `/api/events/search?view=events&${buildQuery(state.page)}`;
       try {
         const data = await fjson(url);
         if (!alive) return;
         state.items = data.items || [];
         state.total = data.total || 0;
+        applyDefaultCollapse();
         const pc = pageCount();
         if (state.page > 0 && state.page >= pc) { return load(pc - 1); }
         renderList();
@@ -790,6 +830,14 @@ export default {
       try { res = await fjson(ackURL(id, "acknowledge"), { method: "POST" }); } catch { return; }
       if (!res?.ok) return;
       const idx = state.items.findIndex((x) => String(x.id) === String(id));
+      if (idx < 0) {
+        await load(state.page);
+        showToast(grouped() ? "Thread acknowledged." : "Event acknowledged.", async () => {
+          try { await fjson(ackURL(id, "unacknowledge"), { method: "POST" }); } catch { return; }
+          await load(state.page); select(id);
+        });
+        return;
+      }
       const item = idx >= 0 ? state.items[idx] : null;
       if (item) item.acknowledged_at = res.acknowledged_at;
 
@@ -820,6 +868,7 @@ export default {
       try { res = await fjson(ackURL(id, "unacknowledge"), { method: "POST" }); } catch { return; }
       if (!res?.ok) return;
       const idx = state.items.findIndex((x) => String(x.id) === String(id));
+      if (idx < 0) { await load(state.page); showToast("Restored."); return; }
       const item = idx >= 0 ? state.items[idx] : null;
       if (item) item.acknowledged_at = null;
       if (visibility === "acknowledged") {
@@ -875,7 +924,7 @@ export default {
 
       const bb = c.blackbox_state;
       const bPresent = !!(bb && bb.present);
-      cards.push(card("Blackbox state", pill(bPresent ? "Yes" : "No", bPresent ? "warn" : "neutral"), [bPresent ? "Blackboxed" : "Not blackboxed"]));
+      cards.push(card("Blackbox state", pill(bPresent ? "Yes" : "No", bPresent ? "error" : "neutral"), [bPresent ? "Blackboxed" : "Not blackboxed"]));
 
       const tb = c.tombstone_state;
       const tPresent = !!(tb && tb.present);
@@ -980,15 +1029,26 @@ export default {
           ${subs.filter(Boolean).map((s) => `<div class="ev-scard-sub">${s}</div>`).join("")}
           ${badge}
         </div>`;
+      const STATUS_EVENT_TYPES = {
+        resolved: ["write_succeeded", "unresolved_cleared"], blackboxed: ["blackbox_promoted", "blackbox_blocked"],
+        unresolved: ["unresolved_recorded"], failed: ["write_failed"], pending: ["write_attempted"],
+        completed: ["sync_run_finished"], running: ["sync_run_started"],
+      };
+      const statusAt = (() => {
+        const wanted = STATUS_EVENT_TYPES[st] || [];
+        let ts = 0;
+        for (const e of events) { if (wanted.includes(e.event_type)) { const t = Number(e.created_at || 0); if (t >= ts) ts = t; } }
+        return ts || g.last_event_at || g.first_event_at;
+      })();
       const summaryCards =
         scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", isProblem ? "Problem" : "Outcome",
           `<span class="mono">${esc(reason || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
         scard("swap_horiz", "info", "Route", esc(routeShort), [esc(modeTxt)],
           feat && feat !== "–" ? `<span class="ev-badge info">${esc(feat)}</span>` : "") +
         scard("inventory_2", "info", "Item", g.item_key ? `<span class="mono">${esc(g.item_key)}</span>` : "–", [item ? esc(item) : ""]) +
-        scard(groupIcon(g), sv, "State", esc(statusLabel(g.status)), [`Since ${esc(TS(g.first_event_at))}`]);
+        scard(groupIcon(g), sv, "State", esc(statusLabel(g.status)), [`Since ${esc(TS(statusAt))}`]);
 
-      const timeline = events.map((e) => {
+      const timeline = events.slice().reverse().map((e) => {
         const es = sevOf(e);
         const desc = eventDesc(e);
         return `
@@ -1006,7 +1066,6 @@ export default {
       const livePill = (label, val, cls) => `<span class="ev-livepill ${cls}"><span class="ev-livepill-k">${esc(label)}</span><span class="ev-livepill-v">${esc(val)}</span></span>`;
       const liveBar = `
         <div class="ev-livebar">
-          <span class="ev-live">Live now</span>
           ${livePill("Pair", cx.pairState, cx.pairState === "Active" ? "ok" : "neutral")}
           ${livePill("Provider", cx.health, cx.healthCls)}
           ${livePill("Unresolved", cx.uPresent ? "Yes" : "No", cx.uPresent ? "warn" : "neutral")}
@@ -1064,14 +1123,21 @@ export default {
           <button class="ev-tbtn" id="ev-copy-run" type="button"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy run ID</span></button>
         </div></div>`;
 
-      const relHTML = related.length
-        ? related.slice(0, 12).map((r) => `
+      const relRow = (r, primary) => `
           <button class="ev-rel" type="button" data-gid="${r.id}">
             <span class="ev-rel-ic ${groupSev(r)}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(r)}</span></span>
             <span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status))}</span>
-            <span class="ev-rel-title">${esc(r.summary || titleOf(r) || "")}</span>
+            <span class="ev-rel-title">${esc(primary || "")}</span>
             <span class="ev-rel-time">${esc(TS(r.last_event_at))}</span>
-          </button>`).join("")
+          </button>`;
+      const relHTML = related.length
+        ? related.slice(0, 12).map((r) => relRow(r, r.summary || titleOf(r))).join("")
+        : "";
+
+      const runItems = detail.run_items || [];
+      const runItemsHTML = runItems.length
+        ? `<h4>Problem items in this run <span class="ev-h4-note">${runItems.length} item${runItems.length === 1 ? "" : "s"}</span></h4>
+           <div class="ev-related">${runItems.slice(0, 100).map((r) => relRow(r, titleOf(r) || r.summary)).join("")}</div>`
         : "";
 
       const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
@@ -1098,7 +1164,7 @@ export default {
         </div>
         <div class="ev-tabpanes">
           <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}>
-            ${liveBar}
+            ${g.item_key ? liveBar : runItemsHTML}
             <div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div>
           </div>
           <div class="ev-tabpane" data-pane="details"${tabAttr("details")}>${detailsPane}</div>
@@ -1257,42 +1323,17 @@ export default {
       load(0);
     };
 
-    const rebuildArchive = async () => {
-      const ok = window.confirm(
-        "Rebuild the events archive?\n\n" +
-        "This clears the SQLite event archive and rebuilds it from current runtime state (sync reports and provider state). " +
-        "Acknowledgements will be reset.\n\n" +
-        "This does not change any sync behavior and cannot be undone."
-      );
-      if (!ok) return;
-      const btn = Q("#ev-rebuild", root);
-      btn?.classList.add("busy");
-      try {
-        await fjson("/api/maintenance/events-rebuild", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) });
-        await populateFilters();
-        clearDetail();
-        await load(0);
-      } catch {} finally { btn?.classList.remove("busy"); }
-    };
-
     let refreshing = false;
-    const doRefresh = async (force) => {
+    const doRefresh = async () => {
       if (refreshing) return;
-      const now = Date.now();
-      if (!force && now - lastAutoRefresh < 8000) { await load(state.page); return; }
       refreshing = true;
-      lastAutoRefresh = now;
       const btn = Q("#ev-refresh", root);
       btn?.classList.add("busy");
-      let warn = false;
       try {
-        try { await fjson("/api/events/import", { method: "POST" }); } catch { warn = true; }
-        if (!alive) return;
         await populateFilters();
         if (!alive) return;
         await load(state.page);
       } finally { refreshing = false; btn?.classList.remove("busy"); }
-      if (alive && warn) showToast("Couldn't fetch latest — showing archived events.");
     };
 
     let searchTimer = null;
@@ -1308,7 +1349,19 @@ export default {
       btn.setAttribute("aria-expanded", String(open));
       btn.classList.toggle("on", open);
     });
-    Q("#ev-refresh", root).addEventListener("click", () => doRefresh(true));
+    Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
+    Q("#ev-clear", root).addEventListener("click", async () => {
+      if (!window.confirm("Delete all events from the archive?\n\nThis clears the SQLite event archive. New syncs will record events again.\nThis cannot be undone.")) return;
+      const btn = Q("#ev-clear", root);
+      btn?.classList.add("busy");
+      try {
+        const res = await fjson("/api/events/clear", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+        if (!alive) return;
+        state.selected = null; state.collapsed.clear(); clearDetail();
+        await load(0);
+        showToast(res?.ok ? `Archive cleared (${state.total} remaining).` : "Clear failed.");
+      } catch (err) { showToast(`Clear failed: ${err.message}`); } finally { btn?.classList.remove("busy"); }
+    });
     Q("#ev-prev-top", root).addEventListener("click", () => { if (state.page > 0) load(state.page - 1); });
     Q("#ev-next-top", root).addEventListener("click", () => { if (state.page < pageCount() - 1) load(state.page + 1); });
     Q("#ev-close", root).addEventListener("click", () => { window.cxCloseModal?.(); });
@@ -1327,7 +1380,6 @@ export default {
     syncRangeUI();
     await populateFilters();
     await load(0);
-    doRefresh(false);
   },
   unmount() { cleanup?.(); },
 };

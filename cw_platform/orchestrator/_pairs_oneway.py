@@ -9,6 +9,16 @@ import os
 import re
 import datetime as _dt
 
+
+def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -> None:
+    try:
+        prom = set((bb_res or {}).get("promoted_keys") or [])
+        items = [{"key": k, "item": key2item.get(k), "promoted": k in prom, "reason": "apply:add:failed"} for k in keys]
+        emit("archive:item_failures", provider=provider, feature=feature, pair=pair, op="add", items=items)
+    except Exception:
+        pass
+
+
 from ..provider_instances import normalize_instance_id
 
 from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
@@ -47,15 +57,7 @@ from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_dele
 from ._pairs_blocklist import apply_blocklist
 
 # Blackbox imports
-try:  # pragma: no cover
-    from ._blackbox import load_blackbox_keys, record_attempts, record_success  # type: ignore
-except Exception:  # pragma: no cover
-    def load_blackbox_keys(dst: str, feature: str) -> set[str]:
-        return set()
-    def record_attempts(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
-        return {"ok": True, "count": 0}
-    def record_success(dst: str, feature: str, keys, **kwargs) -> dict[str, Any]:
-        return {"ok": True, "count": 0}
+from ._blackbox import load_blackbox_keys, record_attempts, record_success
 
 _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
@@ -1145,7 +1147,7 @@ def run_one_way_feature(
             retried = 0
         if retried:
             emit("debug", msg="unresolved.retry", feature=feature, dst=dst, retried=retried)
-
+            
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes), updates=len(updates),
         src_count=len(src_idx), dst_count=len(dst_full))
@@ -1302,9 +1304,8 @@ def run_one_way_feature(
             prov_unresolved_set: set[str] = set(prov_unresolved_keys)
 
             new_unresolved = (unresolved_after - unresolved_before) | (prov_unresolved_set - unresolved_before)
-            unresolved_new_total += len(new_unresolved)
             still_unresolved = set(attempted_keys) & (unresolved_after | prov_unresolved_set)
-            
+                        
             prov_confirmed_keys_raw = (add_res or {}).get("confirmed_keys")
             prov_skipped_keys_raw = (add_res or {}).get("skipped_keys")
 
@@ -1341,15 +1342,17 @@ def run_one_way_feature(
                 try:
                     record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
                     new_unresolved = set(attempted_keys)
-                    unresolved_new_total += len(new_unresolved)
                     still_unresolved = set(attempted_keys)
                     confirmed_keys = []
                     skipped_keys_set = set()
                     have_exact_keys = False
                 except Exception:
                     pass
-            
+
+            unresolved_new_total += len(still_unresolved)
+
             ambiguous_partial = (not have_exact_keys) and bool(res_add.get("skipped")) and prov_confirmed and (prov_confirmed < len(confirmed_keys))
+
             strict_pessimist = (not have_exact_keys) and (not verify_after_write) and bool(still_unresolved)
             if strict_pessimist or ambiguous_partial:
                 added_effective = 0
@@ -1376,12 +1379,18 @@ def run_one_way_feature(
             failed_keys = [k for k in attempted_keys if k not in set(success_keys) and k not in skipped_keys_set]
             try:
                 if failed_keys and not ambiguous_partial:
-                    record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
+                    _bb = record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
-                    failed_items = [key2item[k] for k in failed_keys if k in key2item]
+                    promoted_keys = {str(x) for x in ((_bb or {}).get("promoted_keys") or []) if x}
+                    failed_items = [key2item[k] for k in failed_keys if k in key2item and k not in promoted_keys]
                     if failed_items:
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
-            
+                    if promoted_keys:
+                        clear_unresolved(dst, feature, promoted_keys)
+                        unresolved_new_total = max(0, unresolved_new_total - len(promoted_keys & set(still_unresolved)))
+                        
+                    _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb)
+                            
                 if success_keys and not ambiguous_partial:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
                     clear_unresolved(dst, feature, success_keys)
@@ -1575,13 +1584,19 @@ def run_one_way_feature(
 
     emit("feature:done", src=src, dst=dst, feature=feature)
 
+    unresolved_total = (
+        int((res_update or {}).get("unresolved", 0))
+        + int(unresolved_new_total)
+        + int((res_remove or {}).get("unresolved", 0))
+    )
+
     return {
         "ok": True,
         "updated": int(updated_effective),
         "added": int(added_effective),
         "removed": int(removed_count),
         "skipped": int((res_update or {}).get("skipped", 0)) + int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
-        "unresolved": int((res_update or {}).get("unresolved", 0)) + int((res_add or {}).get("unresolved", 0)) + int((res_remove or {}).get("unresolved", 0)),
+        "unresolved": unresolved_total,
         "errors": int((res_update or {}).get("errors", 0)) + int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
         "skipped_exact": int((res_update or {}).get("skipped_exact", 0)) + int((res_add or {}).get("skipped_exact", 0)),
         "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),

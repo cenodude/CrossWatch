@@ -1,7 +1,7 @@
 /* assets/js/modals/core/styles.css */
 /* Extracted from modals and shared by all modals. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
-.cx-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(1px);z-index:9998;display:flex;align-items:center;justify-content:center}
+.cx-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998;display:flex;align-items:center;justify-content:center}
 .cx-modal-shell{position:fixed;width:var(--cxModalW,auto);max-width:min(var(--cxModalMaxW,1200px),calc(100vw - 40px));height:min(var(--cxModalMaxH,92vh),calc(100vh - 40px));overflow:hidden;border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.55);display:flex;flex-direction:column;background:#14161c;border:1px solid rgba(255,255,255,.08)}
 body.cx-modal-open #save-fab,body.cx-modal-open #save-frost,body.cx-modal-open .savebar,body.cx-modal-open .actions.sticky{display:none!important}
 .cx-modal-shell .cx-card{display:flex;flex-direction:column;min-height:0;height:100%}

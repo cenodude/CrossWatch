@@ -526,10 +526,10 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <button id="run-menu" class="btn acc cw-split-edge" type="button" title="Sync options" aria-label="Sync options" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleSyncMenu(event)"><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></button>
         <div class="cw-menu cw-sync-menu hidden" id="cw-sync-menu" role="menu" aria-labelledby="run-menu"></div>
       </div>
-        <button id="btn-details" class="btn cw-hub-action" onclick="toggleDetails()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">description</span><span>View details</span></button>
-        <button class="btn cw-hub-action" onclick="openAnalyzer()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>Analyzer</span></button>
-        <button class="btn cw-hub-action" onclick="openEvents()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
-        <button class="btn cw-hub-action" onclick="openExporter()"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">ios_share</span><span>Exporter</span></button>
+        <button id="btn-details" class="btn cw-hub-action" onclick="toggleDetails()" title="Show the sync results and stats" aria-label="Show the latest sync results and stats"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">description</span><span>View details</span></button>
+        <button class="btn cw-hub-action" onclick="openAnalyzer()" title="Finds missing, unresolved or inconsistent sync items between providers" aria-label="Finds missing, unresolved or inconsistent sync items between providers"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>Analyzer</span></button>
+        <button class="btn cw-hub-action" onclick="openEvents()" title="Searchable history of what synced, what failed, and why" aria-label="Searchable history of what synced, what failed, and why"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
+        <button class="btn cw-hub-action" onclick="openExporter()" title="Export your watchlist, history and ratings to a file" aria-label="Export your watchlist, history and ratings to a file"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">ios_share</span><span>Exporter</span></button>
       </div>
     </div>
 

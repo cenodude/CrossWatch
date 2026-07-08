@@ -514,6 +514,7 @@ export default {
     let SCOPE = "issues";
     let NORMALIZATION = [];
     let EXTRA_FINDINGS = [];
+    let UNRESOLVED_FINDINGS = [];
     let SUMMARY = {};
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
@@ -549,7 +550,7 @@ export default {
         const page = total
           ? `<button class="mini" id="an-page-prev" type="button" ${offset <= 0 ? "disabled" : ""}>Previous</button><span class="mini">${offset + 1}-${Math.min(offset + ITEMS.length, total)} of ${total}</span><button class="mini" id="an-page-next" type="button" ${offset + ITEMS.length >= total ? "disabled" : ""}>Next</button>`
           : "";
-        summaryMeta.innerHTML = `<span class="mini" title="Scoped items are rows included by the selected pair filter.">Scoped ${total}</span><span class="mini" title="Visible items are the rows currently shown in the top table after search and scope filters.">Visible ${VIEW.length}</span><span class="mini" title="Issues are sync delta problems in the selected pairs, such as missing peers.">Issues ${UNSYNCED.size}</span><span class="mini" title="System findings are analyzer diagnostics about files, metadata, providers, or state health.">System ${EXTRA_FINDINGS.length}</span>${timing ? `<span class="mini">${timing} ms</span>` : ""}${page}`;
+        summaryMeta.innerHTML = `<span class="mini" title="Scoped items are rows included by the selected pair filter.">Scoped ${total}</span><span class="mini" title="Visible items are the rows currently shown in the top table after search and scope filters.">Visible ${VIEW.length}</span><span class="mini" title="Issues are sync delta problems in the selected pairs, such as missing peers, plus unresolved items from the last sync.">Issues ${UNSYNCED.size + unresolvedIssueCount()}</span><span class="mini" title="System findings are analyzer diagnostics about files, metadata, providers, or state health.">System ${EXTRA_FINDINGS.length}</span>${timing ? `<span class="mini">${timing} ms</span>` : ""}${page}`;
         Q("#an-page-prev", summaryMeta)?.addEventListener("click", () => SCOPE === "all" ? loadAllPage(Math.max(0, ALL_OFFSET - PAGE_SIZE)) : showIssuePage(Math.max(0, ISSUE_OFFSET - PAGE_SIZE)));
         Q("#an-page-next", summaryMeta)?.addEventListener("click", () => SCOPE === "all" ? loadAllPage(ALL_OFFSET + PAGE_SIZE) : showIssuePage(ISSUE_OFFSET + PAGE_SIZE));
       }
@@ -1211,11 +1212,28 @@ export default {
       return (EXTRA_FINDINGS || []).filter(p => p && p.type !== "cw_state_blackbox_active");
     }
 
+    function unresolvedIssueCount() {
+      return (UNRESOLVED_FINDINGS || []).reduce((acc, p) => {
+        const c = Number(p && p.count);
+        const n = Number.isFinite(c) && c > 0
+          ? c
+          : (Array.isArray(p && p.affected_items) ? p.affected_items.length : 0) || 1;
+        return acc + n;
+      }, 0);
+    }
+
+    function renderUnresolvedSection() {
+      const blocks = renderGenericFindingBlocks(UNRESOLVED_FINDINGS);
+      if (!blocks) return "";
+      return `<div class="issue"><div class="h">Unresolved items</div><div style="opacity:.85">These were attempted during the last sync but could not be matched or written at the destination. They need attention until they resolve or are cleared.</div></div>` + blocks;
+    }
+
     function renderIssuesEmpty() {
       const notes = renderScopeExclusions();
+      const unresolved = renderUnresolvedSection();
       const extras = renderGenericFindingBlocks(EXTRA_FINDINGS);
-      if ((NORMALIZATION && NORMALIZATION.length) || extras) {
-        issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + extras + notes;
+      if (unresolved || (NORMALIZATION && NORMALIZATION.length) || extras) {
+        issues.innerHTML = renderNormalizationPanel(NORMALIZATION) + unresolved + extras + notes;
       } else {
         const ok = `<div class="issue"><div class="h">No issues detected</div><div>The selected source and destination pairs are currently aligned for this scope.</div></div>`;
         issues.innerHTML = notes + ok;
@@ -1330,11 +1348,13 @@ export default {
       );
       const limitBlock = renderLimitPanel(tag);
       const scopeBlock = renderScopeExclusions();
+      const unresolvedSection = renderUnresolvedSection();
       issues.innerHTML =
         limitBlock +
         header +
         normalizationBlock +
         scopeBlock +
+        unresolvedSection +
         localSystemSection +
         allSystemSection;
       issues.scrollTop = 0;
@@ -1698,7 +1718,11 @@ function renderPairs() {
           p &&
           p.type !== "missing_peer" &&
           p.type !== "blocked_manual" &&
-          p.type !== "history_show_normalization"
+          p.type !== "history_show_normalization" &&
+          p.type !== "cw_state_unresolved_backlog"
+      );
+      UNRESOLVED_FINDINGS = all.filter(
+        p => p && p.type === "cw_state_unresolved_backlog"
       );
       BLOCKED_FINDINGS = all.filter(
         p => p && (p.type === "blocked_manual" || p.type === "cw_state_blackbox_active")
@@ -1890,12 +1914,14 @@ function renderPairs() {
         }
       } catch {}
 
-      const parts = [`Issues: ${keep.length}`];
+      const unresolvedTotal = unresolvedIssueCount();
+      const parts = [`Issues: ${keep.length + unresolvedTotal}`];
       if (per.history) parts.push(`H:${per.history}`);
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
       if (per.progress) parts.push(`P:${per.progress}`);
-      setStatusCount(issuesCount, "Issues", keep.length, parts.slice(1).join(" · ") || "Missing or mismatched items");
+      if (unresolvedTotal) parts.push(`U:${unresolvedTotal}`);
+      setStatusCount(issuesCount, "Issues", keep.length + unresolvedTotal, parts.slice(1).join(" · ") || "Missing, mismatched or unresolved items");
       setStatusCount(systemCount, "System", systemFindings().length);
       const blockedTotal = BLOCKED_FINDINGS.reduce((acc, p) => {
         if (p.type === "cw_state_blackbox_active") {

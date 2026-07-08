@@ -25,6 +25,7 @@ from cw_platform.event_archive import (
     import_all as _import_all,
     correlate as _correlate,
     list_groups as _list_groups,
+    list_tree as _list_tree,
     group_events as _group_events,
     acknowledge_group as _acknowledge_group,
     unacknowledge_group as _unacknowledge_group,
@@ -121,6 +122,37 @@ def events_groups(
         destination_provider=destination_provider, source_provider=source_provider,
         feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,
         since=since, until=until, visibility=visibility, order=order, limit=limit, offset=offset,
+    ))
+
+
+@router.get("/tree")
+def events_tree(
+    q: str | None = None,
+    event_type: str | None = None,
+    provider: str | None = None,
+    origin_provider: str | None = None,
+    destination_provider: str | None = None,
+    source_provider: str | None = None,
+    feature: str | None = None,
+    pair_key: str | None = None,
+    item_key: str | None = None,
+    run_id: str | None = None,
+    reason_code: str | None = None,
+    status: str | None = None,
+    category: str | None = None,
+    since: int | None = None,
+    until: int | None = None,
+    visibility: str = Query("open"),
+    order: str = Query("newest"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    return _ok(_list_tree(
+        order=order, limit=limit, offset=offset,
+        q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
+        destination_provider=destination_provider, source_provider=source_provider,
+        feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,
+        since=since, until=until, visibility=visibility,
     ))
 
 

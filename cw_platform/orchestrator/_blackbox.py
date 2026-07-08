@@ -164,6 +164,7 @@ def record_attempts(
     flap_changed = False
     bb_changed = False
     promoted = 0
+    promoted_keys: list[str] = []
 
     for key in unique_keys:
         row = flap_data.setdefault(key, {})
@@ -184,13 +185,14 @@ def record_attempts(
             bb_data[key] = {"reason": promote_reason or str(reason or "flapper"), "since": int(ts)}
             bb_changed = True
             promoted += 1
+            promoted_keys.append(key)
 
     if flap_changed:
         _write_json(flap_path, flap_data)
     if bb_changed:
         _write_json(bb_path, bb_data)
 
-    return {"ok": True, "count": len(ordered_keys), "promoted": promoted, "pair": scoped_pair or "global"}
+    return {"ok": True, "count": len(ordered_keys), "promoted": promoted, "promoted_keys": promoted_keys, "pair": scoped_pair or "global"}
 
 
 def record_success(

@@ -1,24 +1,36 @@
-# --- VCS ---
+# VCS
 .git
 .gitignore
-.vscode
-.idea
+.gitattributes
+
+# Docker files not needed in image
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# GitHub
+.github/
+
+# IDE
+.vscode/
+.idea/
 *.swp
 *.swo
 
-# --- Python cache ---
+# local agent
+.agents/
+.codex/
+
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.pkl
-*.egg-info
+*.egg-info/
 .eggs/
-
-# --- Test / Coverage ---
-**/pytest.ini
-
 .pytest_cache/
+.pytest_tmp/
 .coverage
 .coverage.*
 htmlcov/
@@ -29,43 +41,87 @@ htmlcov/
 .hypothesis/
 .cw_state/
 
-
-# --- Virtual envs ---
+# VE
 .venv/
-env/
 venv/
+env/
 
-# --- Local configs / runtime ---
+# E2EDEV
+node_modules/
+**/node_modules/
+package.json
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# Android
+android-companion/
+.android/
+.gradle/
+Android/
+AndroidStudioProjects/
+android-sdk/
+sdk/
+*.apk
+*.aab
+*.keystore
+
+# Config
 config/
+config.json
 logs/
 *.log
+.env
+.env.*
+.env.bash
 state.json
 profiles.json
 
-# --- OS / misc ---
+# RT
+data/
+backup/
+backups/
+archive/
+archives/
+snapshots/
+reports/
+runtime/
+instance/
+uploads/
+downloads/
+exports/
+tmp/
+temp/
+
+# OS
 .DS_Store
 Thumbs.db
 **/@eaDir
 **/@eaDir/**
 
-# --- Build artifacts ---
+# Build
 dist/
 build/
-**/tests/
-**/tests/**
+coverage/
+images/
 *.egg
 *.whl
 *.sarif
-images/
+
+# Tests
+**/tests/
+**/tests/**
+**/pytest.ini
+
+# Docs
 docs/
-.github/
-.bashrc
-.dockerignore
-.env.bash
-.gitattributes
-Dockerfile
-LICENSE
 README.md
 SECURITY.md
 CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+SUMMARY.md
+
+# Dev requirements
 requirements-dev.txt
