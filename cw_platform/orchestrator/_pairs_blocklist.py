@@ -254,7 +254,7 @@ def apply_blocklist(
         _emit_counts(result)
         return result
 
-    hard = (global_tomb | blackbox)
+    hard = global_tomb | blackbox
     filtered = filter_with(state_store, items_in, extra_block=hard) if hard else items_in
 
     if ignore_pair_tomb or not pair_tomb_eff:

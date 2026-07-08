@@ -1147,7 +1147,7 @@ def run_one_way_feature(
             retried = 0
         if retried:
             emit("debug", msg="unresolved.retry", feature=feature, dst=dst, retried=retried)
-
+            
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes), updates=len(updates),
         src_count=len(src_idx), dst_count=len(dst_full))
@@ -1304,9 +1304,8 @@ def run_one_way_feature(
             prov_unresolved_set: set[str] = set(prov_unresolved_keys)
 
             new_unresolved = (unresolved_after - unresolved_before) | (prov_unresolved_set - unresolved_before)
-            unresolved_new_total += len(new_unresolved)
             still_unresolved = set(attempted_keys) & (unresolved_after | prov_unresolved_set)
-            
+                        
             prov_confirmed_keys_raw = (add_res or {}).get("confirmed_keys")
             prov_skipped_keys_raw = (add_res or {}).get("skipped_keys")
 
@@ -1343,15 +1342,17 @@ def run_one_way_feature(
                 try:
                     record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
                     new_unresolved = set(attempted_keys)
-                    unresolved_new_total += len(new_unresolved)
                     still_unresolved = set(attempted_keys)
                     confirmed_keys = []
                     skipped_keys_set = set()
                     have_exact_keys = False
                 except Exception:
                     pass
-            
+
+            unresolved_new_total += len(still_unresolved)
+
             ambiguous_partial = (not have_exact_keys) and bool(res_add.get("skipped")) and prov_confirmed and (prov_confirmed < len(confirmed_keys))
+
             strict_pessimist = (not have_exact_keys) and (not verify_after_write) and bool(still_unresolved)
             if strict_pessimist or ambiguous_partial:
                 added_effective = 0
@@ -1380,11 +1381,14 @@ def run_one_way_feature(
                 if failed_keys and not ambiguous_partial:
                     _bb = record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
-                    failed_items = [key2item[k] for k in failed_keys if k in key2item]
+                    promoted_keys = {str(x) for x in ((_bb or {}).get("promoted_keys") or []) if x}
+                    failed_items = [key2item[k] for k in failed_keys if k in key2item and k not in promoted_keys]
                     if failed_items:
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
+                    if promoted_keys:
+                        clear_unresolved(dst, feature, promoted_keys)
                     _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb)
-            
+                            
                 if success_keys and not ambiguous_partial:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
                     clear_unresolved(dst, feature, success_keys)

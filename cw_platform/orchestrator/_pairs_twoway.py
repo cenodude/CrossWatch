@@ -1651,9 +1651,9 @@ def _two_way_sync(
             prov_unresolved_set_A: set[str] = set(prov_unresolved_keys_A)
 
             new_unresolved_A = (unresolved_after_A - unresolved_before_A) | (prov_unresolved_set_A - unresolved_before_A)
-            unresolved_new_A_total += len(new_unresolved_A)
             still_unresolved_A = set(attempted_A) & (unresolved_after_A | prov_unresolved_set_A)
-            
+            unresolved_new_A_total += len(still_unresolved_A)
+   
             prov_confirmed_keys_A_raw = (resA_add or {}).get("confirmed_keys")
             prov_skipped_keys_A_raw = (resA_add or {}).get("skipped_keys")
 
@@ -1701,11 +1701,14 @@ def _two_way_sync(
                     _bb_A = record_attempts(a, feature, failed_A,
                         reason="two:apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
-                    failed_items_A = [k2i_A[k] for k in failed_A if k in k2i_A]
+                    promoted_A = {str(x) for x in ((_bb_A or {}).get("promoted_keys") or []) if x}
+                    failed_items_A = [k2i_A[k] for k in failed_A if k in k2i_A and k not in promoted_A]
                     if failed_items_A:
                         record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
+                    if promoted_A:
+                        clear_unresolved(a, feature, promoted_A)
                     _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A)
-            
+               
                 if success_A:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
                     clear_unresolved(a, feature, success_A)
@@ -1769,9 +1772,9 @@ def _two_way_sync(
             prov_unresolved_set_B: set[str] = set(prov_unresolved_keys_B)
 
             new_unresolved_B = (unresolved_after_B - unresolved_before_B) | (prov_unresolved_set_B - unresolved_before_B)
-            unresolved_new_B_total += len(new_unresolved_B)
             still_unresolved_B = set(attempted_B) & (unresolved_after_B | prov_unresolved_set_B)
-            
+            unresolved_new_B_total += len(still_unresolved_B)
+           
             prov_confirmed_keys_B_raw = (resB_add or {}).get("confirmed_keys")
             prov_skipped_keys_B_raw = (resB_add or {}).get("skipped_keys")
 
@@ -1819,11 +1822,14 @@ def _two_way_sync(
                     _bb_B = record_attempts(b, feature, failed_B,
                         reason="two:apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
-                    failed_items_B = [k2i_B[k] for k in failed_B if k in k2i_B]
+                    promoted_B = {str(x) for x in ((_bb_B or {}).get("promoted_keys") or []) if x}
+                    failed_items_B = [k2i_B[k] for k in failed_B if k in k2i_B and k not in promoted_B]
                     if failed_items_B:
                         record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
+                    if promoted_B:
+                        clear_unresolved(b, feature, promoted_B)
                     _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B)
-            
+                
                 if success_B:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
                     clear_unresolved(b, feature, success_B)
