@@ -1707,6 +1707,8 @@ def _two_way_sync(
                         record_unresolved(a, feature, failed_items_A, hint="apply:add:failed")
                     if promoted_A:
                         clear_unresolved(a, feature, promoted_A)
+                        unresolved_new_A_total = max(0, unresolved_new_A_total - len(promoted_A & set(still_unresolved_A)))
+                        
                     _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A)
                
                 if success_A:
@@ -1828,6 +1830,8 @@ def _two_way_sync(
                         record_unresolved(b, feature, failed_items_B, hint="apply:add:failed")
                     if promoted_B:
                         clear_unresolved(b, feature, promoted_B)
+                        unresolved_new_B_total = max(0, unresolved_new_B_total - len(promoted_B & set(still_unresolved_B)))
+                        
                     _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B)
                 
                 if success_B:

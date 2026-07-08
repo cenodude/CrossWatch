@@ -1387,6 +1387,8 @@ def run_one_way_feature(
                         record_unresolved(dst, feature, failed_items, hint="apply:add:failed")
                     if promoted_keys:
                         clear_unresolved(dst, feature, promoted_keys)
+                        unresolved_new_total = max(0, unresolved_new_total - len(promoted_keys & set(still_unresolved)))
+                        
                     _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb)
                             
                 if success_keys and not ambiguous_partial:
@@ -1582,13 +1584,19 @@ def run_one_way_feature(
 
     emit("feature:done", src=src, dst=dst, feature=feature)
 
+    unresolved_total = (
+        int((res_update or {}).get("unresolved", 0))
+        + int(unresolved_new_total)
+        + int((res_remove or {}).get("unresolved", 0))
+    )
+
     return {
         "ok": True,
         "updated": int(updated_effective),
         "added": int(added_effective),
         "removed": int(removed_count),
         "skipped": int((res_update or {}).get("skipped", 0)) + int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
-        "unresolved": int((res_update or {}).get("unresolved", 0)) + int((res_add or {}).get("unresolved", 0)) + int((res_remove or {}).get("unresolved", 0)),
+        "unresolved": unresolved_total,
         "errors": int((res_update or {}).get("errors", 0)) + int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
         "skipped_exact": int((res_update or {}).get("skipped_exact", 0)) + int((res_add or {}).get("skipped_exact", 0)),
         "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),
