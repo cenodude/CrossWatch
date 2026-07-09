@@ -292,13 +292,37 @@ def _feature_items(block: Mapping[str, Any], feature: str) -> dict[str, Any]:
         return {}
     return dict(items) if isinstance(items, Mapping) else {}
 
+_RATING_TIME_KEYS = ("rated_at", "ratedAt", "user_rated_at", "user_ratedAt")
+_UPDATE_TIME_KEYS = ("updated_at", "updatedAt")
+
+def _rating_time(item: Mapping[str, Any]) -> Any:
+    for key in _RATING_TIME_KEYS:
+        value = item.get(key)
+        if _iso_epoch(value):
+            return value
+    return ""
+
+
+def _rating_epoch(item: Mapping[str, Any]) -> int:
+    value = _rating_time(item)
+    return _iso_epoch(value) if value else 0
+
+
+
+def _update_epoch(item: Mapping[str, Any]) -> int:
+    for key in _UPDATE_TIME_KEYS:
+        value = item.get(key)
+        ts = _iso_epoch(value)
+        if ts:
+            return ts
+    return 0
 
 def _unwrap_rating_item(value: Any) -> dict[str, Any]:
     item = _as_dict(value)
     nested = _as_dict(item.get("item"))
     if nested:
         merged = dict(nested)
-        for key in ("rating", "user_rating", "rated_at", "ratedAt"):
+        for key in ("rating", "user_rating", *_RATING_TIME_KEYS, *_UPDATE_TIME_KEYS):
             if item.get(key) not in (None, ""):
                 merged[key] = item[key]
         return merged
@@ -349,13 +373,6 @@ def _history_key(raw_key: str, item: Mapping[str, Any]) -> str:
         ]
     )
 
-
-def _rating_sort_epoch(item: Mapping[str, Any]) -> int:
-    for key in ("rated_at", "ratedAt", "user_rated_at", "user_ratedAt", "updated_at", "updatedAt"):
-        ts = _iso_epoch(item.get(key))
-        if ts:
-            return ts
-    return 0
 
 
 def _history_sort_epoch(item: Mapping[str, Any]) -> int:
@@ -569,8 +586,9 @@ def _rating_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, s
         "episode": _episode_number(item),
         "episode_label": _episode_label(item),
         "rating": rating,
-        "rated_at": str(item.get("rated_at") or item.get("ratedAt") or item.get("user_rated_at") or item.get("user_ratedAt") or ""),
-        "sort_epoch": _rating_sort_epoch(item),
+        "rated_at": str(_rating_time(item) or ""),
+        "sort_epoch": _rating_epoch(item),
+        "updated_epoch": _update_epoch(item),
         "ids": _ids(item),
         "tmdb": _tmdb_id(item),
         "poster": _poster_url(item),
@@ -680,7 +698,15 @@ def latest_ratings_widget(
                     continue
                 put(row)
 
-    items = sorted(rows.values(), key=lambda x: (int(x.get("sort_epoch") or 0), str(x.get("title") or "")), reverse=True)
+    items = sorted(
+        rows.values(),
+        key=lambda x: (
+            int(x.get("sort_epoch") or 0),
+            int(x.get("updated_epoch") or 0),
+            str(x.get("title") or ""),
+        ),
+        reverse=True,
+    )
     cap = max(1, min(int(limit or 12), 24))
     selected = _resolve_missing_art_rows(items[:cap], size="w342")
     return {"ok": True, "items": selected, "total": len(items)}
