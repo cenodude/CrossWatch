@@ -8,7 +8,8 @@ const fjson = async (u, o = {}) => {
   const abort = () => controller.abort(external?.reason);
   if (external?.aborted) abort();
   else external?.addEventListener?.("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort("Analyzer request timed out"), 120000);
+  const timeoutMs = Number(o.timeoutMs) > 0 ? Number(o.timeoutMs) : 120000;
+  const timer = setTimeout(() => controller.abort("Analyzer request timed out"), timeoutMs);
   try {
     const r = await fetch(u, { ...o, signal: controller.signal });
     if (!r.ok) throw new Error(r.status);
@@ -127,7 +128,7 @@ function css() {
   .an-modal .cx-mark .material-symbols-rounded{font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24;font-size:18px;line-height:1;color:#f3f6ff}
   .an-modal .cx-title{display:inline-flex;align-items:center;gap:10px;font-weight:900;font-size:18px;letter-spacing:.08em;text-transform:uppercase;color:#f3f6ff;text-shadow:0 0 18px rgba(104,122,255,.16)}
   .an-modal .an-actions{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
-  .an-modal .an-intro{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:10px 14px 12px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.006))}
+  .an-modal .an-intro{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;min-height:52px;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.06);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.006))}
   .an-modal .an-intro-copy{min-width:0}
   .an-modal .an-intro-title{font-size:14px;font-weight:800;letter-spacing:.01em;color:#f4f7ff}
   .an-modal .an-intro-sub{margin-top:4px;font-size:12px;line-height:1.45;color:rgba(205,215,235,.74)}
@@ -141,7 +142,7 @@ function css() {
   .an-modal .pill.ghost,.an-modal .close-btn{background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.012))}
   .an-modal #an-run{background:linear-gradient(135deg,rgba(112,92,255,.92),rgba(72,144,255,.88));border-color:rgba(143,165,255,.38);box-shadow:0 16px 34px rgba(45,96,255,.26),0 0 18px rgba(116,97,255,.18)}
   .an-modal .pill[disabled],.an-modal .close-btn[disabled]{opacity:.55;pointer-events:none}
-  .an-modal #an-toggle-ids{min-width:112px}
+  .an-modal #an-toggle-ids{width:40px;padding-inline:0}
   .an-modal .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.045);box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
   .an-modal input[type=search]{flex:1 1 320px;min-width:240px;max-width:440px;width:auto;height:38px;background:rgba(6,10,19,.82);border:1px solid rgba(255,255,255,.1);color:#e6eeff;border-radius:14px;padding:0 13px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02),0 8px 24px rgba(0,0,0,.12)}
   .an-modal input[type=search]:focus{outline:none;border-color:rgba(120,136,255,.52);box-shadow:0 0 0 3px rgba(115,97,255,.14),inset 0 0 0 1px rgba(255,255,255,.02)}
@@ -149,6 +150,7 @@ function css() {
   .an-modal .an-pair-chip{font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border-radius:999px;border:1px solid rgba(255,255,255,.1);background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));color:#dbe6ff;font-weight:800;letter-spacing:.06em;text-transform:uppercase;box-shadow:0 10px 22px rgba(0,0,0,.16);transition:transform .14s ease,box-shadow .14s ease,border-color .14s ease,background .14s ease;opacity:.92}
   .an-modal .an-pair-chip:hover{transform:translateY(-1px);border-color:rgba(139,92,246,.4);box-shadow:0 14px 28px rgba(0,0,0,.22),0 0 0 1px rgba(139,92,246,.12) inset}
   .an-modal .an-pair-chip.on{background:linear-gradient(180deg,rgba(107,92,255,.28),rgba(58,130,246,.12));border-color:rgba(118,110,255,.5);box-shadow:0 16px 30px rgba(0,0,0,.24),0 0 18px rgba(110,94,255,.14)}
+  .an-modal .an-pair-prof{flex:0 0 auto;font-size:9px;font-weight:800;letter-spacing:.03em;line-height:1;padding:2px 5px;margin-left:-2px;border-radius:999px;background:color-mix(in srgb,var(--an-accent,#7b5cff) 22%,transparent);border:1px solid color-mix(in srgb,var(--an-accent,#7b5cff) 42%,transparent);color:var(--an-text,#dbe3ff)}
   .an-modal .an-pair-chip span.dir{display:inline-flex;align-items:center;justify-content:center;opacity:.82}
   .an-modal .an-pair-chip span.dir .material-symbols-rounded{font-size:15px;line-height:1;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 20}
   .an-modal .an-wrap{flex:1;min-height:0;display:grid;grid-template-rows:minmax(230px,1fr) 10px minmax(180px,.8fr);overflow:hidden;padding:10px 14px 0;gap:0}
@@ -174,6 +176,10 @@ function css() {
   .an-modal .row .prov{font-weight:800;letter-spacing:.05em;color:#dce7ff;text-transform:uppercase}
   .an-modal .row .feat{opacity:.82;text-transform:capitalize}
   .an-modal .row .counts{font-size:12px;opacity:.8}
+  .an-modal .head .cell{position:relative}
+  .an-modal .col-resize{position:absolute;top:0;right:-5px;width:11px;height:100%;cursor:col-resize;z-index:4;touch-action:none}
+  .an-modal .col-resize::after{content:"";position:absolute;top:22%;bottom:22%;left:5px;width:2px;border-radius:2px;background:rgba(255,255,255,.16)}
+  .an-modal .col-resize:hover::after,.an-modal .col-resize.dragging::after{background:var(--an-accent,#7b6bff);box-shadow:0 0 8px rgba(123,107,255,.5)}
   .an-modal .sort{cursor:pointer;user-select:none;font-weight:800;letter-spacing:.05em;text-transform:uppercase;font-size:11px;color:#adbbdb}
   .an-modal .sort span.label{margin-right:4px}
   .an-modal .sort span.dir{opacity:.72;font-size:10px}
@@ -215,6 +221,9 @@ function css() {
   .wait-ring{width:64px;height:64px;border-radius:50%;position:relative;filter:drop-shadow(0 0 12px rgba(122,107,255,.55))}
   .wait-ring::before{content:"";position:absolute;inset:0;border-radius:50%;padding:4px;background:conic-gradient(#7a6bff,#23d5ff,#7a6bff);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:wait-spin 1.1s linear infinite}
   .wait-text{font-weight:800;color:#dbe8ff;text-shadow:0 0 12px rgba(122,107,255,.28)}
+  .wait-retry{cursor:pointer;font-family:inherit;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#dbe8ff;padding:7px 16px;border-radius:999px;border:1px solid rgba(122,107,255,.45);background:rgba(122,107,255,.14)}
+  .wait-retry:hover{background:rgba(122,107,255,.26)}
+  .wait-retry.hidden{display:none}
   @keyframes wait-spin{to{transform:rotate(360deg)}}
   html[data-cw-theme="flat-dark"] .an-modal,
   html[data-cw-theme="flat-dark"] .an-modal .cx-head,
@@ -385,21 +394,15 @@ export default {
                 <button type="button" id="an-system-count" class="an-status-row" aria-pressed="false" title="Background state and integrity diagnostics."><i class="an-status-dot system-dot"></i><b>System</b><em>0</em></button>
                 <button type="button" id="an-blocked-count" class="an-status-row" aria-pressed="false" title="Items held back by a manual block list or an active blackbox."><i class="an-status-dot blocked-dot"></i><b>Blocked</b><em>0</em></button>
               </div>
-              <div class="stats empty" id="an-stats"></div>
             </div>
           </aside>
 
           <main class="an-main">
             <section class="an-intro">
               <div class="an-intro-copy">
-                <div class="an-eyebrow">Current comparison</div>
                 <div class="an-intro-title">Items that need your attention</div>
-                <div class="an-intro-sub" id="an-summary-copy">Analyzer compares every selected route independently, so one healthy destination cannot hide another destination's gap.</div>
               </div>
               <div class="an-intro-meta" id="an-summary-meta">
-                <span class="mini">Scoped 0</span>
-                <span class="mini">Visible 0</span>
-                <span class="mini">Issues 0</span>
               </div>
             </section>
 
@@ -414,7 +417,7 @@ export default {
                     <span class="material-symbols-rounded" aria-hidden="true">search</span>
                     <input id="an-search" type="search" placeholder="Search title, provider or feature">
                   </label>
-                  <button class="pill ghost" id="an-toggle-ids" type="button"><span class="material-symbols-rounded" aria-hidden="true">key</span><span>Show IDs</span></button>
+                  <button class="pill ghost" id="an-toggle-ids" type="button" title="Show IDs" aria-label="Show IDs" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">key</span></button>
                 </div>
               </div>
               <div class="an-wrap" id="an-wrap">
@@ -435,29 +438,41 @@ export default {
       <div class="wait-card" role="status" aria-live="assertive">
         <div class="wait-ring"></div>
         <div class="wait-text" id="an-wait-text">Loading...</div>
+        <button class="wait-retry hidden" id="an-wait-retry" type="button">Retry</button>
       </div>`;
     root.appendChild(wait);
 
     let waitSlowTimer = null;
+    let waitRetryTimer = null;
     let waitShownAt = 0;
     const setWaitText = t => {
       const el = Q("#an-wait-text", root);
       if (el) el.textContent = t;
+    };
+    const setWaitRetryVisible = v => {
+      const b = Q("#an-wait-retry", root);
+      if (b) b.classList.toggle("hidden", !v);
     };
     function showWait(text) {
       waitShownAt = performance.now();
       const el = Q("#an-wait", root);
       if (el) el.classList.remove("hidden");
       setWaitText(text || "Working...");
+      setWaitRetryVisible(false);
       clearTimeout(waitSlowTimer);
+      clearTimeout(waitRetryTimer);
       waitSlowTimer = setTimeout(
         () => setWaitText(`${text} (still working...)`),
         3000
       );
+      waitRetryTimer = setTimeout(() => setWaitRetryVisible(true), 8000);
     }
     function hideWait() {
       clearTimeout(waitSlowTimer);
+      clearTimeout(waitRetryTimer);
       waitSlowTimer = null;
+      waitRetryTimer = null;
+      setWaitRetryVisible(false);
       const minVisible = 250;
       const elapsed = performance.now() - waitShownAt;
       const doHide = () => Q("#an-wait", root).classList.add("hidden");
@@ -469,8 +484,6 @@ export default {
     const grid = Q("#an-grid", root);
     const issues = Q("#an-issues", root);
     const pairBar = Q("#an-pairs", root);
-    const stats = Q("#an-stats", root);
-    const summaryCopy = Q("#an-summary-copy", root);
     const summaryMeta = Q("#an-summary-meta", root);
     const issuesCount = Q("#an-issues-count", root);
     const systemCount = Q("#an-system-count", root);
@@ -520,6 +533,11 @@ export default {
     let LIMIT_AFFECTED = new Map();
     let BLOCKS_BY_PF = new Map();
     let BLOCKED_FINDINGS = [];
+    let CORE_EXTRA = [];
+    let BLOCKED_MANUAL = [];
+    let PAIR_ACTIVITY = {};
+    let PROFILE_LABELS = {};
+    let DETAIL_LOADED = new Set();
     let DETAIL_VIEW = "issues";
     let ISSUE_ITEMS = [];
     let ISSUE_OFFSET = 0;
@@ -536,21 +554,15 @@ export default {
     };
     activeCleanup = cleanup;
     const setSummary = () => {
-      if (summaryCopy) {
-        summaryCopy.textContent = SCOPE === "issues"
-          ? "Each result is missing, blocked, unresolved, or otherwise risky for at least one selected route."
-          : "Browse the current provider state for the selected routes, including healthy items.";
-      }
       if (introTitle) introTitle.textContent = SCOPE === "issues" ? "Items that need your attention" : "All items in the selected routes";
       if (resultsTitle) resultsTitle.textContent = SCOPE === "issues" ? "Issue results" : "Scoped item browser";
       if (summaryMeta) {
         const total = SCOPE === "all" ? ALL_TOTAL : ISSUE_ITEMS.length;
         const offset = SCOPE === "all" ? ALL_OFFSET : ISSUE_OFFSET;
-        const timing = Number(ANALYSIS_TIMINGS?.total || 0);
         const page = total
           ? `<button class="mini" id="an-page-prev" type="button" ${offset <= 0 ? "disabled" : ""}>Previous</button><span class="mini">${offset + 1}-${Math.min(offset + ITEMS.length, total)} of ${total}</span><button class="mini" id="an-page-next" type="button" ${offset + ITEMS.length >= total ? "disabled" : ""}>Next</button>`
           : "";
-        summaryMeta.innerHTML = `<span class="mini" title="Scoped items are rows included by the selected pair filter.">Scoped ${total}</span><span class="mini" title="Visible items are the rows currently shown in the top table after search and scope filters.">Visible ${VIEW.length}</span><span class="mini" title="Issues are sync delta problems in the selected pairs, such as missing peers, plus unresolved items from the last sync.">Issues ${UNSYNCED.size + unresolvedIssueCount()}</span><span class="mini" title="System findings are analyzer diagnostics about files, metadata, providers, or state health.">System ${EXTRA_FINDINGS.length}</span>${timing ? `<span class="mini">${timing} ms</span>` : ""}${page}`;
+        summaryMeta.innerHTML = page;
         Q("#an-page-prev", summaryMeta)?.addEventListener("click", () => SCOPE === "all" ? loadAllPage(Math.max(0, ALL_OFFSET - PAGE_SIZE)) : showIssuePage(Math.max(0, ISSUE_OFFSET - PAGE_SIZE)));
         Q("#an-page-next", summaryMeta)?.addEventListener("click", () => SCOPE === "all" ? loadAllPage(ALL_OFFSET + PAGE_SIZE) : showIssuePage(ISSUE_OFFSET + PAGE_SIZE));
       }
@@ -661,23 +673,28 @@ export default {
     function renderHeader() {
       const dirMark = k =>
         SORT_KEY === k ? (SORT_DIR === "asc" ? "^" : "v") : "";
+      const cols = [
+        ["provider", "Provider"],
+        ["feature", "Feature"],
+        ["title", "Title"],
+        ["type", "Type"]
+      ];
+      const cells = cols
+        .map(
+          ([k, label], i) =>
+            `<div class="cell sort" data-k="${k}"><span class="label">${label}</span><span class="dir">${dirMark(
+              k
+            )}</span>${
+              i < cols.length - 1
+                ? `<span class="col-resize" data-ci="${i}" title="Drag to resize"></span>`
+                : ""
+            }</div>`
+        )
+        .join("");
       return `
         <div class="row head" style="grid-template-columns:${gridTemplateFrom(
           COLS
-        )}">
-          <div class="cell sort" data-k="provider"><span class="label">Provider</span><span class="dir">${dirMark(
-            "provider"
-          )}</span></div>
-          <div class="cell sort" data-k="feature"><span class="label">Feature</span><span class="dir">${dirMark(
-            "feature"
-          )}</span></div>
-          <div class="cell sort" data-k="title"><span class="label">Title</span><span class="dir">${dirMark(
-            "title"
-          )}</span></div>
-          <div class="cell sort" data-k="type"><span class="label">Type</span><span class="dir">${dirMark(
-            "type"
-          )}</span></div>
-        </div>`;
+        )}">${cells}</div>`;
     }
 
 
@@ -692,37 +709,6 @@ export default {
       if (!set) return false;
       return set.has(_normKey(key));
     }
-    async function refreshBlocked() {
-      const pairs = new Map();
-      for (const r of ITEMS || []) {
-        const k = _pfKey(r.provider, r.feature);
-        if (!pairs.has(k)) pairs.set(k, { provider: r.provider, feature: r.feature });
-      }
-      if (!pairs.size) {
-        BLOCKS_BY_PF = new Map();
-        return;
-      }
-      const next = new Map();
-      await Promise.all(
-        Array.from(pairs.values()).map(async ({ provider, feature }) => {
-          try {
-            const u = `/api/editor?source=state&kind=${encodeURIComponent(
-              String(feature || "")
-            )}&provider=${encodeURIComponent(String(provider || ""))}`;
-            const res = await fjson(u, { cache: "no-store" });
-            const blocks = Array.isArray(res && res.manual_blocks)
-              ? res.manual_blocks
-              : [];
-            const set = new Set(blocks.map(_normKey).filter(Boolean));
-            next.set(_pfKey(provider, feature), set);
-          } catch {
-            next.set(_pfKey(provider, feature), new Set());
-          }
-        })
-      );
-      BLOCKS_BY_PF = next;
-    }
-
     function renderBody(rows) {
       return rows
         .map(r => {
@@ -819,6 +805,45 @@ export default {
         updateStatusActive();
         select(row.getAttribute("data-tag"));
       }
+    });
+
+    grid.addEventListener("pointerdown", e => {
+      const rez = e.target.closest(".col-resize");
+      if (!rez) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const ci = Number(rez.getAttribute("data-ci"));
+      if (!Number.isInteger(ci) || ci < 0 || ci >= COLS.length) return;
+      const startX = e.clientX;
+      const startW = COLS[ci] || 60;
+      const MINW = 60;
+      let moved = false;
+      rez.classList.add("dragging");
+      try { rez.setPointerCapture(e.pointerId); } catch {}
+      const mv = ev => {
+        const dx = ev.clientX - startX;
+        if (Math.abs(dx) > 2) moved = true;
+        COLS[ci] = Math.max(MINW, Math.round(startW + dx));
+        setCols();
+      };
+      const up = () => {
+        rez.removeEventListener("pointermove", mv);
+        rez.removeEventListener("pointerup", up);
+        rez.removeEventListener("pointercancel", up);
+        rez.classList.remove("dragging");
+        if (moved) {
+          try { localStorage.setItem("an.cols", JSON.stringify(COLS)); } catch {}
+        }
+        const suppress = ev => {
+          ev.stopPropagation();
+          grid.removeEventListener("click", suppress, true);
+        };
+        grid.addEventListener("click", suppress, true);
+        setTimeout(() => grid.removeEventListener("click", suppress, true), 0);
+      };
+      rez.addEventListener("pointermove", mv);
+      rez.addEventListener("pointerup", up);
+      rez.addEventListener("pointercancel", up);
     });
 
     issuesCount?.addEventListener("click", () => setDetailView("issues"));
@@ -1195,7 +1220,79 @@ export default {
     async function select(tag) {
       SELECTED = tag;
       draw();
-      if (DETAIL_VIEW === "issues") renderIssueDetail(tag);
+      if (DETAIL_VIEW === "issues") {
+        renderIssueDetail(tag);
+        if (UNSYNCED.has(tag) && !DETAIL_LOADED.has(tag)) {
+          await loadItemDetail(tag);
+          if (SELECTED === tag && DETAIL_VIEW === "issues") {
+            draw();
+            renderIssueDetail(tag);
+          }
+        }
+      }
+    }
+
+    function hintMessage(h) {
+      if (!h || typeof h !== "object") return "";
+      if (h.message) return String(h.message).trim();
+      const parts = [];
+      if (h.provider) parts.push(String(h.provider).toUpperCase());
+      if (Array.isArray(h.reasons) && h.reasons.length) parts.push(h.reasons.map(String).join(", "));
+      else if (h.reason) parts.push(String(h.reason));
+      else if (h.kind) parts.push(String(h.kind));
+      return parts.join(": ").trim();
+    }
+
+    async function loadItemDetail(tag) {
+      const [provider, feature, key] = tag.split("::");
+      let d;
+      try {
+        const base = withPairs("/api/analyzer/detail");
+        const sep = base.includes("?") ? "&" : "?";
+        d = await fjson(
+          `${base}${sep}provider=${encodeURIComponent(provider)}&feature=${encodeURIComponent(feature)}&key=${encodeURIComponent(key)}`,
+          { signal: requestController.signal }
+        );
+      } catch {
+        return;
+      }
+      DETAIL_LOADED.add(tag);
+      const details = Array.isArray(d.target_show_info) ? d.target_show_info : [];
+      const msgs = details.map(x => String((x && x.message) || "").trim()).filter(Boolean);
+      const hintMsgs = (Array.isArray(d.hints) ? d.hints : []).map(hintMessage).filter(Boolean);
+      const merged = [];
+      for (const r of [...hintMsgs, ...(UNSYNCED_REASON.get(tag) || []), ...msgs]) {
+        if (r && !merged.includes(r)) merged.push(r);
+      }
+      if (merged.length) UNSYNCED_REASON.set(tag, merged);
+    }
+
+    async function loadSystemFindings() {
+      let sys;
+      try {
+        sys = await fjson(withPairs("/api/analyzer/system"), { signal: requestController.signal });
+      } catch {
+        return;
+      }
+      if (requestController.signal.aborted) return;
+      const list = Array.isArray(sys && sys.problems) ? sys.problems : [];
+      EXTRA_FINDINGS = CORE_EXTRA.concat(list.filter(p => p && p.type !== "cw_state_unresolved_backlog"));
+      UNRESOLVED_FINDINGS = list.filter(p => p && p.type === "cw_state_unresolved_backlog");
+      BLOCKED_FINDINGS = BLOCKED_MANUAL.concat(list.filter(p => p && p.type === "cw_state_blackbox_active"));
+      setStatusCount(systemCount, "System", systemFindings().length);
+      const blockedTotal = BLOCKED_FINDINGS.reduce((acc, p) => {
+        if (p.type === "cw_state_blackbox_active") {
+          const c = Number(p.count);
+          const n = Number.isFinite(c) && c > 0 ? c : (Array.isArray(p.affected_items) ? p.affected_items.length : 0) || 1;
+          return acc + n;
+        }
+        return acc + 1;
+      }, 0);
+      setStatusCount(blockedCount, "Blocked", blockedTotal);
+      const unresolvedTotal = unresolvedIssueCount();
+      setStatusCount(issuesCount, "Issues", UNSYNCED.size, "Unique items needing attention");
+      setSummary();
+      renderActiveDetail();
     }
 
     function updateStatusActive() {
@@ -1305,10 +1402,19 @@ export default {
         ? `Missing at ${missingTargets.join(" & ")}`
         : "Missing at other provider";
 
-      const reasons = UNSYNCED_REASON.get(tag) || [];
+      const allReasons = UNSYNCED_REASON.get(tag) || [];
+      // Drop any reason fully contained in a longer.
+      const reasons = allReasons.filter(
+        (r, i) =>
+          !allReasons.some(
+            (o, j) => j !== i && o.length > r.length && o.includes(r)
+          )
+      );
       const reasonBadge =
         unsynced && reasons.length
-          ? ` <span class="badge mono">${escHtml(reasons[0])}</span>`
+          ? reasons
+              .map(r => ` <span class="badge mono">${escHtml(r)}</span>`)
+              .join("")
           : "";
 
       const blockedBadge = blocked
@@ -1444,7 +1550,63 @@ function renderScopeExclusions() {
   </div>`;
 }
 
-function renderPairs() {
+function profileLabel(provider, instance) {
+      const inst = String(instance || "").trim();
+      if (!inst || inst.toLowerCase() === "default") return "";
+      const prov = String(provider || "").toUpperCase();
+      return (PROFILE_LABELS[prov] && PROFILE_LABELS[prov][inst]) || inst;
+    }
+
+    function lastRunPairId(list) {
+      let best = null;
+      let bestNs = -1;
+      for (const p of list) {
+        const id = String(p.id || "");
+        const ns = Number((PAIR_ACTIVITY && PAIR_ACTIVITY[id]) || 0);
+        if (ns > bestNs) {
+          bestNs = ns;
+          best = id;
+        }
+      }
+      return bestNs > 0 ? best : null;
+    }
+
+    async function loadPairActivity() {
+      try {
+        const j = await fjson("/api/analyzer/pair-activity", { cache: "no-store", timeoutMs: 30000, signal: requestController.signal });
+        const out = {};
+        for (const p of (j && Array.isArray(j.pairs) ? j.pairs : [])) {
+          if (p && p.id) out[String(p.id)] = Number(p.last_run_ns || 0);
+        }
+        PAIR_ACTIVITY = out;
+      } catch {
+        PAIR_ACTIVITY = {};
+      }
+    }
+
+    async function loadProfileLabels() {
+      try {
+        const j = await fjson("/api/provider-instances", { cache: "no-store", timeoutMs: 30000, signal: requestController.signal });
+        const map = j && typeof j === "object" ? j : {};
+        const out = {};
+        for (const [prov, raw] of Object.entries(map)) {
+          const ids = [];
+          for (const x of (Array.isArray(raw) ? raw : [])) {
+            const id = typeof x === "string" ? x : (x && x.id ? String(x.id) : "");
+            const norm = String(id || "").trim();
+            if (norm && norm.toLowerCase() !== "default") ids.push(norm);
+          }
+          const labels = {};
+          ids.forEach((id, i) => { labels[id] = `P${String(i + 1).padStart(2, "0")}`; });
+          out[String(prov || "").toUpperCase()] = labels;
+        }
+        PROFILE_LABELS = out;
+      } catch {
+        PROFILE_LABELS = {};
+      }
+    }
+
+    function renderPairs() {
       if (!pairBar) return;
       const list = (PAIRS || []).filter(p => p && p.enabled);
       if (!PAIR_FILTER.size && list.length) {
@@ -1453,11 +1615,18 @@ function renderPairs() {
           if (raw) {
             const ids = JSON.parse(raw);
             if (Array.isArray(ids))
-              ids.forEach(id => PAIR_FILTER.add(String(id)));
+              ids.forEach(id => {
+                if (list.some(p => String(p.id) === String(id))) PAIR_FILTER.add(String(id));
+              });
           }
         } catch {}
         if (!PAIR_FILTER.size) {
-          for (const p of list) PAIR_FILTER.add(String(p.id));
+          if (list.length === 1) {
+            PAIR_FILTER.add(String(list[0].id));
+          } else {
+            const lastId = lastRunPairId(list);
+            PAIR_FILTER.add(String(lastId || list[0].id));
+          }
         }
       }
       if (!list.length) {
@@ -1504,9 +1673,13 @@ function renderPairs() {
           const issueN = PAIR_ISSUE_COUNTS[String(p.id)] || 0;
           const badge = `<span class="an-pair-count${issueN ? " has" : ""}" title="${issueN} issue${issueN === 1 ? "" : "s"} for this pair">${issueN}</span>`;
           const cls = `an-pair-chip${on ? " on" : ""}`;
+          const srcProf = profileLabel(src, p.source_instance);
+          const dstProf = profileLabel(dst, p.target_instance);
+          const prof = (label, name) =>
+            label ? `<span class="an-pair-prof" title="${escHtml(name)} profile ${escHtml(label)}">${escHtml(label)}</span>` : "";
           return `<button type="button" class="${cls}" data-id="${esc(
             String(p.id || "")
-          )}" aria-pressed="${on ? "true" : "false"}"><span class="mono">${src}</span><span class="dir"><span class="material-symbols-rounded" aria-hidden="true">${dir}</span></span><span class="mono">${dst}</span>${badge}</button>`;
+          )}" aria-pressed="${on ? "true" : "false"}"><span class="mono">${src}</span>${prof(srcProf, src)}<span class="dir"><span class="material-symbols-rounded" aria-hidden="true">${dir}</span></span><span class="mono">${dst}</span>${prof(dstProf, dst)}${badge}</button>`;
         })
         .join("");
       pairBar.innerHTML = html;
@@ -1545,7 +1718,7 @@ function renderPairs() {
 
     async function getActivePairMap(signal) {
       try {
-        const arr = await fjson("/api/pairs", { cache: "no-store", signal });
+        const arr = await fjson("/api/pairs", { cache: "no-store", timeoutMs: 30000, signal });
         const map = new Map();
         const on = feat =>
           feat && (typeof feat.enable === "boolean" ? feat.enable : !!feat);
@@ -1631,6 +1804,7 @@ function renderPairs() {
       restoreSplit();
       dragY();
       showWait("Loading pairs...");
+      await Promise.all([loadPairActivity(), loadProfileLabels()]);
       await getActivePairMap(requestController.signal);
       if (requestController.signal.aborted) {
         hideWait();
@@ -1658,10 +1832,6 @@ function renderPairs() {
       ITEMS = s.items || [];
       ALL_TOTAL = Number(s.total || 0);
       VIEW = ITEMS.slice();
-      const countsText = renderCounts(s.counts);
-      stats.innerHTML = countsText;
-      if (!countsText) stats.classList.add("empty");
-      else stats.classList.remove("empty");
       setStatusCount(issuesCount, "Issues", 0);
       setStatusCount(systemCount, "System", 0);
       setStatusCount(blockedCount, "Blocked", 0);
@@ -1691,8 +1861,7 @@ function renderPairs() {
       try {
         [meta, status] = await Promise.all([
           fjson(withPairs("/api/analyzer/problems"), { signal: requestController.signal }),
-          fjson("/api/status", { signal: requestController.signal }).catch(() => null),
-          refreshBlocked().catch(() => null)
+          fjson("/api/status", { signal: requestController.signal }).catch(() => null)
         ]);
       } catch (error) {
         if (requestController.signal.aborted) return;
@@ -1709,6 +1878,13 @@ function renderPairs() {
       renderPairs();
 
       const all = meta.problems || [];
+      BLOCKS_BY_PF = new Map();
+      for (const finding of all) {
+        if (!finding || finding.type !== "blocked_manual" || !finding.key) continue;
+        const pf = _pfKey(finding.provider, finding.feature);
+        if (!BLOCKS_BY_PF.has(pf)) BLOCKS_BY_PF.set(pf, new Set());
+        BLOCKS_BY_PF.get(pf).add(_normKey(finding.key));
+      }
       const normalization = all.filter(
         p => p && p.type === "history_show_normalization"
       );
@@ -1727,6 +1903,9 @@ function renderPairs() {
       BLOCKED_FINDINGS = all.filter(
         p => p && (p.type === "blocked_manual" || p.type === "cw_state_blackbox_active")
       );
+      CORE_EXTRA = EXTRA_FINDINGS.slice();
+      BLOCKED_MANUAL = BLOCKED_FINDINGS.slice();
+      DETAIL_LOADED = new Set();
 
       LIMIT_INFO = {};
       LIMIT_AFFECTED = new Map();
@@ -1867,11 +2046,13 @@ function renderPairs() {
             const parts = [];
             if (h.provider) parts.push(String(h.provider).toUpperCase());
             if (Array.isArray(h.reasons) && h.reasons.length) parts.push(h.reasons.map(String).join(", "));
+            else if (h.reason) parts.push(String(h.reason));
             else if (h.kind) parts.push(String(h.kind));
             return parts.join(": ").trim();
           })
           .filter(Boolean);
-        const reasons = [...msgs, ...hintMsgs];
+        // Provider specific hints will be shown first
+        const reasons = [...hintMsgs, ...msgs];
         try {
           const featLower = String(p.feature || "").toLowerCase();
           const targets = (p.targets || []).map(t => String(t || "").toUpperCase());
@@ -1915,13 +2096,13 @@ function renderPairs() {
       } catch {}
 
       const unresolvedTotal = unresolvedIssueCount();
-      const parts = [`Issues: ${keep.length + unresolvedTotal}`];
+      const parts = [`Issues: ${keep.length}`];
       if (per.history) parts.push(`H:${per.history}`);
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
       if (per.progress) parts.push(`P:${per.progress}`);
       if (unresolvedTotal) parts.push(`U:${unresolvedTotal}`);
-      setStatusCount(issuesCount, "Issues", keep.length + unresolvedTotal, parts.slice(1).join(" · ") || "Missing, mismatched or unresolved items");
+      setStatusCount(issuesCount, "Issues", keep.length, parts.slice(1).join(" · ") || "Unique items needing attention");
       setStatusCount(systemCount, "System", systemFindings().length);
       const blockedTotal = BLOCKED_FINDINGS.reduce((acc, p) => {
         if (p.type === "cw_state_blackbox_active") {
@@ -1944,6 +2125,16 @@ function renderPairs() {
       filter(search.value || "");
       setDetailView(DETAIL_VIEW);
       if (!silent) hideWait();
+
+      if (SELECTED && UNSYNCED.has(SELECTED) && DETAIL_VIEW === "issues") {
+        loadItemDetail(SELECTED).then(() => {
+          if (SELECTED && DETAIL_VIEW === "issues" && !requestController.signal.aborted) {
+            draw();
+            renderIssueDetail(SELECTED);
+          }
+        });
+      }
+      loadSystemFindings();
     }
 
     btnRun.addEventListener("click", async e => {
@@ -1966,8 +2157,10 @@ function renderPairs() {
 
     btnToggleIDs.onclick = () => {
       SHOW_IDS = !SHOW_IDS;
-      const label = Q("span:last-child", btnToggleIDs);
-      if (label) label.textContent = SHOW_IDS ? "Hide IDs" : "Show IDs";
+      const label = SHOW_IDS ? "Hide IDs" : "Show IDs";
+      btnToggleIDs.title = label;
+      btnToggleIDs.setAttribute("aria-label", label);
+      btnToggleIDs.setAttribute("aria-pressed", String(SHOW_IDS));
       grid.classList.toggle("show-ids", SHOW_IDS);
     };
     const selectScope = async nextScope => {
@@ -1989,6 +2182,13 @@ function renderPairs() {
     btnClose.addEventListener("click", () => {
       cleanup();
       if (window.cxCloseModal) window.cxCloseModal();
+    });
+
+    Q("#an-wait-retry", root)?.addEventListener("click", () => {
+      try { requestController.abort("retry"); } catch {}
+      requestController = new AbortController();
+      analyzePromise = null;
+      load();
     });
 
     await load();

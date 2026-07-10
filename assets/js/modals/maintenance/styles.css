@@ -24,7 +24,7 @@
 .cw-maint .maint-sidebar { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px; overflow: auto; border-right: 1px solid var(--maint-border); background: var(--maint-panel); scrollbar-width: thin; scrollbar-color: var(--cw-scrollbar-thumb, var(--maint-muted)) var(--cw-scrollbar-track, transparent); }
 .cw-maint .sidebar-label { margin: 10px 9px 4px; color: var(--maint-muted); font-size: 10px; font-weight: 850; letter-spacing: .1em; text-transform: uppercase; }
 .cw-maint .side-nav { --nav-accent: var(--maint-accent); display: grid; gap: 3px; }
-.cw-maint .side-nav-item { --nav-accent: var(--maint-accent); min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; }
+.cw-maint .side-nav-item { --nav-accent: var(--maint-accent); min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0; }
 .cw-maint .side-nav-item[data-group="local"] { --nav-accent: var(--maint-good); }
 .cw-maint .side-nav-item[data-group="danger"] { --nav-accent: var(--maint-danger); }
 .cw-maint .side-nav-btn { position: relative; width: 100%; min-height: 46px; gap: 10px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; color: var(--maint-muted); background: transparent; cursor: pointer; text-align: left; font-size: 13px; font-weight: 700; transition: background .14s ease, border-color .14s ease, color .14s ease; }
@@ -35,15 +35,16 @@
 .cw-maint .side-nav-btn[data-target="cxm-group-danger"] { --nav-accent: var(--maint-danger); }
 .cw-maint .side-nav-btn.danger, .cw-maint .side-nav-btn.danger .material-symbols-rounded { color: var(--maint-danger); }
 .cw-maint .category-run-btn {
-  display: none; position: relative; min-width: 44px; min-height: 30px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--nav-accent) 38%, var(--maint-border)); border-radius: 7px; color: var(--nav-accent); background: color-mix(in srgb, var(--nav-accent) 8%, var(--maint-card)); box-shadow: none;
-  cursor: pointer; font-size: 10px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; transition: background .14s ease, border-color .14s ease, transform .14s ease;
+  display: none; position: relative; align-items: center; justify-content: center; min-width: 52px; min-height: 46px; padding: 0 14px; border: 1px solid color-mix(in srgb, var(--nav-accent) 38%, var(--maint-border)); border-left: 0; border-radius: 0 8px 8px 0; color: var(--nav-accent); background: color-mix(in srgb, var(--nav-accent) 13%, var(--maint-card)); box-shadow: none;
+  cursor: pointer; font-size: 10px; font-weight: 850; letter-spacing: .04em; text-transform: uppercase; transition: background .14s ease, border-color .14s ease;
 }
-.cw-maint .side-nav-item.active .category-run-btn { display: block; animation: cw-maint-run-reveal .2s ease-out; }
+.cw-maint .side-nav-item.active .category-run-btn { display: inline-flex; animation: cw-maint-run-reveal .2s ease-out; }
+.cw-maint .side-nav-item.active:has(.category-run-btn) .side-nav-btn { border-radius: 8px 0 0 8px; }
 @keyframes cw-maint-run-reveal {
-  from { opacity: 0; transform: translateX(-5px) scale(.94); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-.cw-maint .category-run-btn:hover { border-color: color-mix(in srgb, var(--nav-accent) 62%, var(--maint-border)); background: color-mix(in srgb, var(--nav-accent) 15%, var(--maint-card)); transform: translateX(1px); }
+.cw-maint .category-run-btn:hover { background: color-mix(in srgb, var(--nav-accent) 22%, var(--maint-card)); }
 .cw-maint .category-run-btn.busy { color: transparent; }
 .cw-maint .category-run-btn.busy::after { content: ""; position: absolute; inset: 50% auto auto 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border: 2px solid color-mix(in srgb, var(--nav-accent) 28%, transparent); border-top-color: var(--nav-accent); border-radius: 50%; animation: cw-maint-spin .65s linear infinite; }
 @keyframes cw-maint-spin {
@@ -162,7 +163,7 @@ html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.action-ro
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-title, .group-title, .action-title) { color: var(--maint-text) !important; -webkit-text-fill-color: var(--maint-text) !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-sub, .group-desc, .action-desc, .status-line) { color: var(--maint-muted) !important; -webkit-text-fill-color: var(--maint-muted) !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-icon, .action-icon, .group-icon, .side-nav-btn, .header-action, .run-btn) { -webkit-text-fill-color: currentColor !important; }
-html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .category-run-btn { color: var(--nav-accent) !important; -webkit-text-fill-color: currentColor !important; border-color: color-mix(in srgb, var(--nav-accent) 38%, var(--maint-border)) !important; background: color-mix(in srgb, var(--nav-accent) 8%, var(--maint-card)) !important; box-shadow: none !important; }
+html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .category-run-btn { color: var(--nav-accent) !important; -webkit-text-fill-color: currentColor !important; border-color: color-mix(in srgb, var(--nav-accent) 38%, var(--maint-border)) !important; border-left: 0 !important; background: color-mix(in srgb, var(--nav-accent) 13%, var(--maint-card)) !important; box-shadow: none !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .category-run-btn.busy { color: transparent !important; -webkit-text-fill-color: transparent !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.header-action, .run-btn, .storage-details summary) { border-color: var(--maint-border) !important; background: var(--maint-card) !important; box-shadow: none !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .action-group.danger { border-color: color-mix(in srgb, var(--maint-danger) 38%, var(--maint-border)) !important; background: color-mix(in srgb, var(--maint-danger) 6%, var(--maint-panel)) !important; }
@@ -199,6 +200,7 @@ html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .run-btn.resul
   .cw-maint .sidebar-label, .cw-maint .sidebar-status { display: none; }
   .cw-maint .side-nav-btn { width: auto; min-height: 32px; flex: 0 0 auto; gap: 5px; padding: 0 8px; font-size: 9px; }
   .cw-maint .side-nav-btn .material-symbols-rounded { width: auto; flex-basis: auto; font-size: 16px; }
+  .cw-maint .category-run-btn { min-width: 0; min-height: 32px; padding: 0 9px; }
   .cw-maint .action-group { grid-template-columns: 1fr; }
   .cw-maint .group-info { display: flex; align-items: center; gap: 10px; }
   .cw-maint .group-desc { margin: 0; }

@@ -171,6 +171,16 @@
     }).join("");
   }
 
+  function ratingSourceIcons(sources, max = 3) {
+    return sourceRows(sources, max).map(({ provider, instance }) => {
+      const logo = providerLogo(provider);
+      const label = sourceLabel({ provider, instance });
+      return logo
+        ? `<span class="cw-rating-provider-icon" title="${esc(label)}" aria-label="${esc(label)}"><img src="${esc(logo)}" alt=""></span>`
+        : `<span class="cw-rating-provider-icon cw-rating-provider-icon--text" title="${esc(label)}" aria-label="${esc(label)}">${esc(providerShort(provider).slice(0, 3))}</span>`;
+    }).join("");
+  }
+
   function scrobbleProfileLabel(instance) {
     const raw = String(instance || "default").trim() || "default";
     if (raw.toLowerCase() === "default") return "Default";
@@ -343,10 +353,8 @@
       <${tag} class="cw-rating-widget-card"${hrefAttr} title="${esc(titleParts.join(" | "))}">
         <img src="${esc(poster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
         <span class="cw-rating-score"><span>${esc(item?.rating || "")}</span></span>
-        <span class="cw-rating-overlay">
-          <span class="cw-rating-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
-          ${ratedLabel ? `<span class="cw-rating-age">${esc(ratedLabel)}</span>` : ""}
-        </span>
+        ${ratedLabel ? `<span class="cw-rating-age-badge">${esc(ratedLabel)}</span>` : ""}
+        <span class="cw-rating-provider-icons" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${ratingSourceIcons(item?.sources, 3)}</span>
       </${tag}>`;
   }
 

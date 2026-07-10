@@ -38,6 +38,8 @@ if (typeof window._detSeenLines === "undefined") window._detSeenLines = [];
 if (typeof window._detReplayActive === "undefined") window._detReplayActive = false;
 if (typeof window._detReplayCursor === "undefined") window._detReplayCursor = 0;
 if (typeof window._detDidConnectOnce === "undefined") window._detDidConnectOnce = false;
+if (typeof window._detLastSeq === "undefined") window._detLastSeq = 0;
+if (typeof window._debugLastSeq === "undefined") window._debugLastSeq = 0;
 if (typeof window._detailsDropped === "undefined") window._detailsDropped = { sync: 0, watcher: 0, debug: 0 };
 if (typeof window._detailsStatusRAF === "undefined") window._detailsStatusRAF = null;
 
@@ -135,47 +137,22 @@ function _streamsAllowed() {
 }
 
 function _watchLogKnownTags() {
-  return ["WATCH", "SCROBBLE", "PLEX", "JELLYFIN", "EMBY", "TRAKT", "SIMKL", "MDBLIST", "TMDB", "TRBL"];
+  return [
+    "WATCH",
+    "WATCHM",
+    "SCROBBLE",
+    "WEBHOOK",
+    "PLEX-WATCH",
+    "JELLYFIN-WATCH",
+    "EMBY-WATCH",
+    "TRAKT-SCROBBLE",
+    "SIMKL-SCROBBLE",
+    "MDBLIST-SCROBBLE",
+  ];
 }
 
 function _watchLogTagsFromConfig(cfg) {
-  const norm = (t) => {
-    const s = String(t || "").trim().toUpperCase();
-    if (!s) return "";
-    if (s === "JFIN" || s === "JELLY") return "JELLYFIN";
-    return s;
-  };
-
-  const sc = (cfg && typeof cfg === "object") ? (cfg.scrobble || {}) : {};
-  let watchCfg = (sc && typeof sc === "object" && sc.watch && typeof sc.watch === "object") ? sc.watch : null;
-  if (!watchCfg && cfg && typeof cfg.watch === "object") watchCfg = cfg.watch;
-  watchCfg = watchCfg || {};
-
-  const routes = Array.isArray(watchCfg.routes) ? watchCfg.routes : [];
-  const tags = [];
-  if (routes.length) {
-    for (const raw of routes) {
-      if (!raw || typeof raw !== "object") continue;
-      if (raw.enabled === false) continue;
-      const provider = norm(raw.provider);
-      const sink = norm(raw.sink);
-      if (provider && !tags.includes(provider)) tags.push(provider);
-      if (sink && !tags.includes(sink)) tags.push(sink);
-    }
-  } else {
-    const provider = norm(watchCfg.provider || "plex");
-    const sinksRaw = String(watchCfg.sink || "trakt");
-    const sinks = sinksRaw.split(/[,&+]/g).map(norm).filter(Boolean);
-    if (provider && !tags.includes(provider)) tags.push(provider);
-    for (const sink of sinks) {
-      if (sink && !tags.includes(sink)) tags.push(sink);
-    }
-  }
-
-  for (const extra of ["WATCH", "SCROBBLE"]) {
-    if (!tags.includes(extra)) tags.push(extra);
-  }
-  return tags;
+  return _watchLogKnownTags();
 }
 
 function _isAppDebugMode(cfg) {
@@ -253,7 +230,131 @@ function _parseLogParts(raw, fallbackProvider = "") {
   };
 }
 
+function _cwUnresEsc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+function _renderUnresolvedList(items) {
+  if (!items.length) return `<div class="cw-unres-empty">No unresolved items.</div>`;
+  const counts = new Map();
+  for (const it of items) {
+    const r = it.reason || "unresolved";
+    counts.set(r, (counts.get(r) || 0) + 1);
+  }
+  let head = `<div class="cw-unres-summary">`;
+  for (const [r, n] of counts) head += `<span class="cw-unres-chip">${_cwUnresEsc(r)} <b>${n}</b></span>`;
+  head += `</div>`;
+
+  let html = `<ul class="cw-unres-list">`;
+  for (const it of items) {
+    const label = it.code ? `${_cwUnresEsc(it.title)} · ${_cwUnresEsc(it.code)}` : _cwUnresEsc(it.title);
+    html += `<li class="cw-unres-item"><span class="cw-unres-item-t">${label}</span>` +
+            `<span class="cw-unres-item-r">${_cwUnresEsc(it.reason || "unresolved")}</span></li>`;
+  }
+  html += `</ul>`;
+  return head + html;
+}
+
+function _ensureUnresolvedStyles() {
+  if (document.getElementById("cw-unres-css")) return;
+  const css = `
+  .cw-unres-modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center}
+  .cw-unres-modal.hidden{display:none}
+  .cw-unres-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+  .cw-unres-card{position:relative;max-width:720px;width:calc(100% - 32px);max-height:80vh;display:flex;flex-direction:column;
+    background:var(--card,#1b1d22);color:var(--text,#e8eaed);border:1px solid rgba(255,255,255,.1);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  .cw-unres-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .cw-unres-title{font-weight:600}
+  .cw-unres-close{background:transparent;border:0;color:inherit;font-size:16px;cursor:pointer;opacity:.7}
+  .cw-unres-close:hover{opacity:1}
+  .cw-unres-body{padding:0 16px 16px;overflow:auto}
+  .cw-unres-summary{position:sticky;top:0;z-index:1;background:var(--card,#1b1d22);display:flex;flex-wrap:wrap;gap:6px;
+    padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+  .cw-unres-chip{font-size:11px;background:rgba(255,255,255,.08);border-radius:10px;padding:2px 9px}
+  .cw-unres-chip b{font-weight:600}
+  .cw-unres-list{list-style:none;margin:0;padding:0}
+  .cw-unres-item{display:flex;align-items:center;gap:12px;padding:5px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05)}
+  .cw-unres-item-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cw-unres-item-r{flex:0 0 auto;font-size:11px;opacity:.6;white-space:nowrap}
+  .cw-unres-loading,.cw-unres-empty,.cw-unres-error{padding:24px 0;text-align:center;opacity:.7}
+  .cw-unres-link{color:#8ea2ff;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .cw-unres-link:hover{color:#b8c6ff}`;
+  const style = document.createElement("style");
+  style.id = "cw-unres-css";
+  style.textContent = css;
+  document.head.appendChild(style);
+}
+
+async function _showUnresolvedModal() {
+  _ensureUnresolvedStyles();
+  let modal = document.getElementById("cw-unresolved-modal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "cw-unresolved-modal";
+    modal.className = "cw-unres-modal hidden";
+    modal.innerHTML =
+      `<div class="cw-unres-backdrop"></div>` +
+      `<div class="cw-unres-card">` +
+      `<div class="cw-unres-h"><div class="cw-unres-title">Unresolved items</div>` +
+      `<button class="cw-unres-close" type="button" aria-label="Close">✕</button></div>` +
+      `<div class="cw-unres-body cw-scrollbars"><div class="cw-unres-loading">Loading…</div></div>` +
+      `</div>`;
+    document.body.appendChild(modal);
+    const close = () => modal.classList.add("hidden");
+    modal.querySelector(".cw-unres-close").addEventListener("click", close);
+    modal.querySelector(".cw-unres-backdrop").addEventListener("click", close);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+  }
+  const body = modal.querySelector(".cw-unres-body");
+  const titleEl = modal.querySelector(".cw-unres-title");
+  body.innerHTML = `<div class="cw-unres-loading">Loading…</div>`;
+  modal.classList.remove("hidden");
+  try {
+    const r = await fetch("/api/run/unresolved", { headers: { Accept: "application/json" } });
+    const data = await r.json();
+    const items = Array.isArray(data.items) ? data.items : [];
+    titleEl.textContent = `Unresolved items (${data.total ?? items.length})`;
+    body.innerHTML = _renderUnresolvedList(items);
+  } catch (_) {
+    body.innerHTML = `<div class="cw-unres-error">Failed to load unresolved items.</div>`;
+  }
+}
+
+function _unresolvedMoreRow() {
+  // Render like a normal structured log line (SYNC / INFO / message) so it sits
+  // flush with the rest of the log; only the message is a clickable link.
+  const row = document.createElement("div");
+  row.className = "wlog-line det-structured-line";
+  row.dataset.provider = "SYNC";
+  row.dataset.level = "info";
+
+  const badge = document.createElement("span");
+  badge.className = "wlog-tag";
+  badge.textContent = "SYNC";
+
+  const level = document.createElement("span");
+  level.className = "wlog-level level-info";
+  level.textContent = "INFO";
+
+  const msg = document.createElement("span");
+  msg.className = "wlog-msg";
+  const link = document.createElement("a");
+  link.className = "cw-unres-link";
+  link.href = "#";
+  link.textContent = "Show the full unresolved list";
+  link.addEventListener("click", (e) => { e.preventDefault(); _showUnresolvedModal(); });
+  msg.appendChild(link);
+
+  const time = document.createElement("time");
+  time.className = "wlog-time";
+  time.textContent = "";
+
+  row.append(badge, level, msg, time);
+  return row;
+}
+
 function _structuredLogRow(raw, fallbackProvider = "") {
+  if (String(raw ?? "").includes("::CW_UNRESOLVED_MORE::")) return _unresolvedMoreRow();
   const parts = _parseLogParts(raw, fallbackProvider);
   const row = document.createElement("div");
   row.className = "wlog-line det-structured-line";
@@ -482,6 +583,7 @@ function closeSyncLog() {
   try { window.esDetSummary?.close?.(); } catch {}
   window.esDet = null;
   window.esDetSummary = null;
+  window._detLastSeq = 0;
   window.syncBuf.length = 0;
   if (window._syncFlushRAF) { cancelAnimationFrame(window._syncFlushRAF); window._syncFlushRAF = null; }
   if (window._detStaleIV) { clearInterval(window._detStaleIV); window._detStaleIV = null; }
@@ -514,6 +616,7 @@ function closeWatcherLog() {
 function closeDebugLog() {
   try { window.esDebug?.close?.(); } catch {}
   window.esDebug = null;
+  window._debugLastSeq = 0;
   window.debugBuf.length = 0;
   if (window._debugFlushRAF) { cancelAnimationFrame(window._debugFlushRAF); window._debugFlushRAF = null; }
   if (window._debugRetryTO) { clearTimeout(window._debugRetryTO); window._debugRetryTO = null; }
@@ -545,10 +648,14 @@ function openDebugLog() {
       el.__cwScrollWired = true;
     }
 
-    el.innerHTML = "";
-    window.debugStickBottom = true;
-    window.debugBuf.length = 0;
-    _resetDetailsDropped("debug");
+    const debugSince = Math.max(0, Number(window._debugLastSeq || 0) || 0);
+    const debugReconnect = debugSince > 0 && el.childElementCount > 0;
+    if (!debugReconnect) {
+      el.innerHTML = "";
+      window.debugStickBottom = true;
+      window.debugBuf.length = 0;
+      _resetDetailsDropped("debug");
+    }
     let lastMsgAt = Date.now();
 
     const scheduleFlush = () => {
@@ -571,7 +678,8 @@ function openDebugLog() {
 
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "DEBUG");
-    url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    if (debugReconnect) url.searchParams.set("since", String(debugSince));
+    else url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
     url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
 
@@ -587,9 +695,17 @@ function openDebugLog() {
       tabDebug?.classList.remove("stale");
       if (!ev?.data) return;
       lastMsgAt = Date.now();
+      const seq = Number(ev?.lastEventId || 0) || 0;
+      if (seq > 0) window._debugLastSeq = seq;
       _enqueueDetailsItem(window.debugBuf, ev.data, "debug");
       scheduleFlush();
     };
+    es.addEventListener("ping", () => {
+      lastMsgAt = Date.now();
+      tabDebug?.classList.add("connected");
+      tabDebug?.classList.remove("stale");
+      _updateDetailsConsoleStatus();
+    });
     es.onerror = () => {
       tabDebug?.classList.remove("connected");
       tabDebug?.classList.add("stale");
@@ -760,6 +876,7 @@ async function openDetailsLog() {
   window._detReplayActive = false;
   window._detReplayCursor = 0;
   window._detDidConnectOnce = false;
+  window._detLastSeq = 0;
 
   try { window.esDet?.close(); } catch {}
   try { window.esDetSummary?.close(); } catch {}
@@ -825,10 +942,13 @@ async function openDetailsLog() {
   const connect = () => {
     if (authSetupPending() || !_streamsAllowed() || window._detailsTab !== "sync") return;
     try { window.esDet?.close(); } catch (_) {}
-    if (window._detDidConnectOnce) _beginDetailReplayFilter();
+    const initialConnect = !window._detDidConnectOnce;
+    if (!initialConnect) _beginDetailReplayFilter();
+    const since = Math.max(0, Number(window._detLastSeq || 0) || 0);
     const url = new URL("/api/logs/stream", document.baseURI);
     url.searchParams.set("tag", "SYNC");
-    url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    if (!initialConnect && since > 0) url.searchParams.set("since", String(since));
+    else url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
     url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
     window.esDet = new EventSource(url.toString());
@@ -844,6 +964,8 @@ async function openDetailsLog() {
       tabSync?.classList.add("connected");
       tabSync?.classList.remove("stale");
       if (!ev?.data) return;
+      const seq = Number(ev?.lastEventId || 0) || 0;
+      if (seq > 0) window._detLastSeq = seq;
 
       if (ev.data === "::CLEAR::") {
         el.textContent = "";
@@ -867,6 +989,13 @@ async function openDetailsLog() {
       scheduleFlush();
       retryMs = 1000;
     };
+
+    window.esDet.addEventListener("ping", () => {
+      lastMsgAt = Date.now();
+      tabSync?.classList.add("connected");
+      tabSync?.classList.remove("stale");
+      _updateDetailsConsoleStatus();
+    });
 
     window.esDet.onerror = () => {
         tabSync?.classList.remove("connected");
@@ -956,6 +1085,7 @@ function resetDetailsSyncLog() {
   window._detReplayActive = false;
   window._detReplayCursor = 0;
   window._detDidConnectOnce = false;
+  window._detLastSeq = 0;
   window.detStickBottom = true;
   _resetDetailsDropped("sync");
 }

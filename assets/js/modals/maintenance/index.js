@@ -495,6 +495,7 @@ export default {
           formatBytes(res.size_bytes || 0),
         ];
         if (res.wal_size_bytes) bits.push(`WAL ${formatBytes(res.wal_size_bytes)}`);
+        if (res.exists === false) bits.push("file missing");
         bits.push(`schema v${res.schema_version ?? "?"}`);
         return `Health check · ${res.healthy ? "healthy" : "issues found"} · ${bits.join(" · ")}.`;
       }

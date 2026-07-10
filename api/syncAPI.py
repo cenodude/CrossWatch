@@ -346,6 +346,16 @@ def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
         return {}
     if ev == "apply:unresolved":
         return {}
+    if ev == "archive:item_failures":
+        return {}
+    if ev == "debug" and str(obj.get("msg") or "") == "blocked.counts" and isinstance(obj.get("blackbox_items"), list):
+        out = dict(cast(dict[str, Any], obj))
+        out["blackbox_items"] = len(out["blackbox_items"])
+        return out
+    if ev == "feature:error" and obj.get("traceback"):
+        out = dict(cast(dict[str, Any], obj))
+        out.pop("traceback", None)
+        return out
     if "confirmed_keys" in obj and not ev:
         return _slim_counts(cast(dict[str, Any], obj))
 
@@ -438,6 +448,14 @@ def _friendly_unresolved_reason(raw: Any) -> str:
     low = r.lower()
     if not low:
         return "unresolved"
+    if "not_in_plex_catalog" in low or "not_in_library" in low or "not_in_catalog" in low:
+        return "Not in library"
+    if "episode_missing" in low:
+        return "Show found · episode missing"
+    if "ambiguous" in low:
+        return "Ambiguous match"
+    if "missing_watched_at" in low:
+        return "Missing watched date"
     if any(t in low for t in ("missing_id", "no_id", "unmatched", "no_confirmations", "provider_unresolved", "id_mismatch")):
         return "ID mismatch"
     if "provider_down" in low or "unavailable" in low:
@@ -469,7 +487,7 @@ def _format_unresolved_line(it: Mapping[str, Any]) -> str:
         head = f"{head} - {code}"
     return f"{head} | {reason}"
 
-def _emit_unresolved_details() -> None:
+def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
     with SUMMARY_LOCK:
         items = list(SUMMARY.get("unresolved_items") or [])
     if not items:
@@ -487,9 +505,22 @@ def _emit_unresolved_details() -> None:
         lines.append(line)
     if not lines:
         return
-    _sync_progress_ui(f"[i] Unresolved items ({len(lines)}):")
-    for line in lines:
-        _sync_progress_ui(f"[i] {line}")
+    try:
+        total = int(total_unresolved or 0)
+    except Exception:
+        total = 0
+    cap = 25
+    shown = lines[:cap]
+    full_total = max(total, len(lines))
+    if full_total > len(shown):
+        _sync_progress_ui(f"[i] Unresolved item examples ({len(shown)} shown, {full_total} total):")
+        for line in shown:
+            _sync_progress_ui(f"[i] {line}")
+        _sync_progress_ui("[i] ::CW_UNRESOLVED_MORE::")
+    else:
+        _sync_progress_ui(f"[i] Unresolved items ({len(shown)}):")
+        for line in shown:
+            _sync_progress_ui(f"[i] {line}")
 
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     rt = _rt()
@@ -698,7 +729,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         )
         if unresolved > 0:
             try:
-                _emit_unresolved_details()
+                _emit_unresolved_details(unresolved)
             except Exception:
                 pass
         _sync_progress_ui("[SYNC] exit code: 0")
@@ -2201,6 +2232,45 @@ def api_run_summary() -> JSONResponse:
 
     return JSONResponse(snap)
 
+@router.get("/run/unresolved")
+def api_run_unresolved() -> JSONResponse:
+    try:
+        from cw_platform.orchestrator._unresolved import load_unresolved_items
+        records = load_unresolved_items()
+    except Exception:
+        records = []
+
+    items: list[dict[str, Any]] = []
+    for rec in records:
+        if not isinstance(rec, Mapping):
+            continue
+        raw_item = rec.get("item")
+        item: Mapping[str, Any] = raw_item if isinstance(raw_item, Mapping) else {}
+        merged: dict[str, Any] = dict(item)
+        merged["reason"] = rec.get("reason")
+        line = _format_unresolved_line(merged)
+        series = str(item.get("series_title") or item.get("show_title") or "").strip()
+        title = str(item.get("title") or item.get("name") or "").strip()
+        code = ""
+        s, e = item.get("season"), item.get("episode")
+        try:
+            if s not in (None, "") and e not in (None, ""):
+                code = f"S{int(s):02d}E{int(e):02d}"
+        except Exception:
+            code = ""
+        items.append({
+            "line": line,
+            "title": series or title or "Unknown",
+            "code": code,
+            "type": str(item.get("type") or ""),
+            "reason": _friendly_unresolved_reason(rec.get("reason")),
+            "reason_code": str(rec.get("reason") or ""),
+            "feature": str(rec.get("feature") or ""),
+        })
+
+    items.sort(key=lambda x: (x["reason"], x["title"].lower(), x["code"]))
+    return JSONResponse({"total": len(items), "items": items})
+
 @router.get("/run/summary/file")
 def api_run_summary_file() -> Response:
     snap0 = _summary_snapshot()
@@ -2265,13 +2335,16 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
     async def agen():
         last_key = None
         last_idx = 0
+        last_hydrate_sig = None
         LOG_BUFFERS = _rt()[0]
 
         while True:
             if await request.is_disconnected():
                 break
+            buf_len = 0
             try:
                 buf = LOG_BUFFERS.get("SYNC") or []
+                buf_len = len(buf)
                 if last_idx > len(buf):
                     last_idx = 0
                 if last_idx < len(buf):
@@ -2293,10 +2366,13 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             snap = dict(_summary_snapshot() or {})
             snap.setdefault("features", {})
             snap.setdefault("enabled", _lanes_enabled_defaults())
-            try:
-                _hydrate_summary_spotlights_from_log(snap)
-            except Exception:
-                pass
+            hydrate_sig = (buf_len, (snap.get("timeline", {}) or {}).get("done"))
+            if hydrate_sig != last_hydrate_sig:
+                last_hydrate_sig = hydrate_sig
+                try:
+                    _hydrate_summary_spotlights_from_log(snap)
+                except Exception:
+                    pass
 
             key = (
                 snap.get("running"),

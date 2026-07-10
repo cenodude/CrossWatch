@@ -32,8 +32,14 @@ const maybeTS = (v) => {
 };
 
 const PAGE_SIZE = 25;
+const RUN_ITEMS_PAGE_SIZE = 100;
 
 const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress" };
+const REASON_LABEL = {
+  not_in_plex_catalog: "Not in library",
+  not_in_library: "Not in library",
+};
+const reasonLabel = (reason) => REASON_LABEL[String(reason || "").toLowerCase()] || String(reason || "");
 
 const provShort = (src, dst) => {
   const a = (src || "").toUpperCase();
@@ -131,10 +137,10 @@ const titleLine = (e) => {
     case "write_succeeded":
       return isRating(e) ? "Rating update" : "Write succeeded";
     case "write_attempted": return "Add attempted";
-    case "write_failed": return `${(e.destination_provider || "Destination").toUpperCase()} rejected item · ${e.reason_code || "failed"}`;
+    case "write_failed": return `${(e.destination_provider || "Destination").toUpperCase()} rejected item · ${reasonLabel(e.reason_code || "failed")}`;
     case "unresolved_recorded": {
       const r = e.reason_code || e.operation || "";
-      return r ? `Recorded as unresolved · ${r}` : "Recorded as unresolved";
+      return r ? `Recorded as unresolved · ${reasonLabel(r)}` : "Recorded as unresolved";
     }
     case "unresolved_cleared": return "Unresolved cleared";
     case "blackbox_promoted": return e.reason_code ? `Item blackboxed · ${e.reason_code}` : "Item blackboxed";
@@ -825,10 +831,23 @@ export default {
       ? `/api/events/groups/${encodeURIComponent(id)}/${action}`
       : `/api/events/${encodeURIComponent(id)}/${action}`;
 
+    const animateRowOut = async (id) => {
+      const row = listEl.querySelector(`.ev-row[data-id="${id}"]`);
+      if (!row) return;
+      row.classList.add("ev-row-leave");
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        row.addEventListener("animationend", finish, { once: true });
+        setTimeout(finish, 260);
+      });
+    };
+
     const acknowledgeRow = async (id) => {
       let res;
       try { res = await fjson(ackURL(id, "acknowledge"), { method: "POST" }); } catch { return; }
       if (!res?.ok) return;
+      if (visibility === "open") await animateRowOut(id);
       const idx = state.items.findIndex((x) => String(x.id) === String(id));
       if (idx < 0) {
         await load(state.page);
@@ -1042,7 +1061,7 @@ export default {
       })();
       const summaryCards =
         scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", isProblem ? "Problem" : "Outcome",
-          `<span class="mono">${esc(reason || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
+          `<span>${esc(reasonLabel(reason) || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
         scard("swap_horiz", "info", "Route", esc(routeShort), [esc(modeTxt)],
           feat && feat !== "–" ? `<span class="ev-badge info">${esc(feat)}</span>` : "") +
         scard("inventory_2", "info", "Item", g.item_key ? `<span class="mono">${esc(g.item_key)}</span>` : "–", [item ? esc(item) : ""]) +
@@ -1134,11 +1153,37 @@ export default {
         ? related.slice(0, 12).map((r) => relRow(r, r.summary || titleOf(r))).join("")
         : "";
 
+      const runItemsSectionHTML = (items, total, limit, offset) => {
+        const shown = items.length;
+        const safeTotal = Math.max(Number(total || 0), shown);
+        if (!safeTotal) return "";
+        const safeLimit = Math.max(1, Number(limit || RUN_ITEMS_PAGE_SIZE));
+        const safeOffset = Math.max(0, Number(offset || 0));
+        const start = shown ? safeOffset + 1 : 0;
+        const end = shown ? Math.min(safeOffset + shown, safeTotal) : 0;
+        const hasPrev = safeOffset > 0;
+        const hasNext = safeOffset + shown < safeTotal;
+        const range = safeTotal > safeLimit
+          ? `Showing ${start}-${end} of ${safeTotal} items`
+          : `${safeTotal} item${safeTotal === 1 ? "" : "s"}`;
+        return `<section id="ev-runitems-section" class="ev-runitems-section">
+          <div class="ev-runitems-head">
+            <h4>Problem items in this run <span class="ev-h4-note">${esc(range)}</span></h4>
+            ${safeTotal > safeLimit ? `<div class="ev-runitems-controls">
+              <button class="ev-pg" id="ev-runitems-prev" type="button" aria-label="Previous problem items" ${hasPrev ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+              <button class="ev-pg" id="ev-runitems-next" type="button" aria-label="Next problem items" ${hasNext ? "" : "disabled"}><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+            </div>` : ""}
+          </div>
+          <div class="ev-related">${shown ? items.map((r) => relRow(r, titleOf(r) || r.summary)).join("") : `<div class="ev-empty ev-empty-inline">No problem items on this page.</div>`}</div>
+        </section>`;
+      };
       const runItems = detail.run_items || [];
-      const runItemsHTML = runItems.length
-        ? `<h4>Problem items in this run <span class="ev-h4-note">${runItems.length} item${runItems.length === 1 ? "" : "s"}</span></h4>
-           <div class="ev-related">${runItems.slice(0, 100).map((r) => relRow(r, titleOf(r) || r.summary)).join("")}</div>`
-        : "";
+      const runItemsHTML = runItemsSectionHTML(
+        runItems,
+        detail.run_items_total,
+        detail.run_items_limit,
+        detail.run_items_offset,
+      );
 
       const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
       const ackIcon = g.acknowledged_at ? "check_circle" : "check";
@@ -1199,7 +1244,40 @@ export default {
       Q("#ev-copy-raw", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(JSON.stringify({ group: g, context: c, events }, null, 2)); flashCopy(ev.currentTarget); });
       Q("#ev-copy-item", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(g.item_key || ""); flashCopy(ev.currentTarget); });
       Q("#ev-copy-run", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(runId); flashCopy(ev.currentTarget); });
-      detailEl.querySelectorAll(".ev-rel").forEach((a) => a.addEventListener("click", () => a.dataset.gid && select(a.dataset.gid)));
+      const bindRelRows = (root = detailEl) => {
+        root.querySelectorAll(".ev-rel").forEach((a) => a.addEventListener("click", () => a.dataset.gid && select(a.dataset.gid)));
+      };
+      const bindRunItemsPager = () => {
+        const section = Q("#ev-runitems-section", detailEl);
+        if (!section) return;
+        const limit = Number(detail.run_items_limit || RUN_ITEMS_PAGE_SIZE);
+        const offset = Number(detail.run_items_offset || 0);
+        const load = async (nextOffset) => {
+          section.querySelectorAll(".ev-pg").forEach((b) => { b.disabled = true; });
+          try {
+            const page = await fjson(`/api/events/groups/${encodeURIComponent(g.id)}/run-items?limit=${RUN_ITEMS_PAGE_SIZE}&offset=${Math.max(0, nextOffset)}`);
+            if (!alive) return;
+            if (!page || page.ok === false) throw new Error("not found");
+            detail.run_items = page.items || [];
+            detail.run_items_total = page.total || 0;
+            detail.run_items_limit = page.limit || RUN_ITEMS_PAGE_SIZE;
+            detail.run_items_offset = page.offset || 0;
+            section.outerHTML = runItemsSectionHTML(detail.run_items, detail.run_items_total, detail.run_items_limit, detail.run_items_offset);
+            const nextSection = Q("#ev-runitems-section", detailEl);
+            if (nextSection) bindRelRows(nextSection);
+            bindRunItemsPager();
+          } catch {
+            section.outerHTML = runItemsSectionHTML(detail.run_items || [], detail.run_items_total, detail.run_items_limit, detail.run_items_offset);
+            const nextSection = Q("#ev-runitems-section", detailEl);
+            if (nextSection) bindRelRows(nextSection);
+            bindRunItemsPager();
+          }
+        };
+        Q("#ev-runitems-prev", section)?.addEventListener("click", () => load(offset - limit));
+        Q("#ev-runitems-next", section)?.addEventListener("click", () => load(offset + limit));
+      };
+      bindRelRows();
+      bindRunItemsPager();
     };
 
     // ---- event detail (raw mode) ------------------------------------------
@@ -1265,7 +1343,7 @@ export default {
       detailEl.innerHTML = `<div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded ev-spin" aria-hidden="true">progress_activity</span><div>Loading context…</div></div>`;
       try {
         if (grouped()) {
-          const detail = await fjson(`/api/events/groups/${encodeURIComponent(id)}`);
+          const detail = await fjson(`/api/events/groups/${encodeURIComponent(id)}?run_items_limit=${RUN_ITEMS_PAGE_SIZE}&run_items_offset=0`);
           if (!alive) return;
           if (!detail || detail.ok === false) throw new Error("not found");
           renderGroupDetail(detail);
