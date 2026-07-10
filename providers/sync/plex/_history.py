@@ -301,6 +301,7 @@ class HistoryCatalog:
             "rk": rk,
             "type": "episode" if kind in ("episode", "anime") else ("show" if kind in ("show", "season") else "movie"),
             "title": entry.get("title"),
+            "series_title": entry.get("series_title") or entry.get("show_title"),
             "year": entry.get("year"),
             "library_id": entry.get("library_id"),
             "ids": dict(entry.get("ids") or {}),
@@ -458,6 +459,8 @@ def _catalog_entry_to_minimal(e: Mapping[str, Any]) -> dict[str, Any]:
     if e.get("library_id") is not None:
         row["library_id"] = e.get("library_id")
     if kind == "episode":
+        if e.get("series_title"):
+            row["series_title"] = e.get("series_title")
         if e.get("show_ids"):
             row["show_ids"] = dict(e.get("show_ids") or {})
         if e.get("season") is not None:
@@ -897,6 +900,7 @@ def _live_watched_entry(meta: Mapping[str, Any], ts: int) -> dict[str, Any] | No
         "rk": str(rk),
         "type": meta.get("type") or "movie",
         "title": meta.get("title"),
+        "series_title": meta.get("series_title") or meta.get("show_title"),
         "year": meta.get("year"),
         "library_id": meta.get("library_id"),
         "ids": ids,
@@ -917,6 +921,109 @@ def _iter_live_watched(adapter: Any, allow: set[str], *, full: bool = True) -> l
         if entry:
             out.append(entry)
     return out
+
+
+def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: HistoryCatalog) -> int:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if not srv:
+        return 0
+    base = _as_base_url(srv)
+    ses = getattr(srv, "_session", None)
+    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
+    if not (base and ses and token):
+        return 0
+
+    headers = dict(getattr(ses, "headers", {}) or {})
+    headers.update(plex_headers(token))
+    headers["Accept"] = "application/json"
+
+    try:
+        page_size = int(_history_cfg_get(adapter, "episode_catalog_page_size", 1000) or 1000)
+    except Exception:
+        page_size = 1000
+    page_size = max(100, min(page_size, 2000))
+
+    try:
+        sections = list(adapter.libraries(types=("show",)) or [])
+    except Exception:
+        sections = []
+
+    added = 0
+    scanned = 0
+    t0 = time.time()
+    for sec_obj in sections:
+        section_id = _marked_section_id(sec_obj) or ""
+        if not section_id or (allow and section_id not in allow):
+            continue
+        start = 0
+        seen_pages: set[tuple[str, ...]] = set()
+        while True:
+            params = {
+                "type": 4,
+                "sort": "episode.addedAt",
+                "includeGuids": 1,
+                "X-Plex-Container-Start": start,
+                "X-Plex-Container-Size": page_size,
+            }
+            try:
+                r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=20)
+            except Exception:
+                break
+            if not getattr(r, "ok", False):
+                break
+            try:
+                ctype = (r.headers.get("content-type") or "").lower()
+                data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
+                mc = data.get("MediaContainer") or {}
+                rows0 = mc.get("Metadata") or []
+                rows = [x for x in rows0 if isinstance(x, Mapping)]
+                total = mc.get("totalSize")
+                total_i = int(total) if total is not None else None
+            except Exception:
+                rows = []
+                total_i = None
+            if not rows:
+                break
+            signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
+            if signature in seen_pages:
+                break
+            seen_pages.add(signature)
+            scanned += len(rows)
+            for row in rows:
+                meta = normalize_discover_row(row, token=token) or {}
+                ids = dict(meta.get("ids") or {})
+                rk = str(ids.get("plex") or row.get("ratingKey") or "").strip()
+                if not rk:
+                    continue
+                existing = cat.by_rk.get(rk) or {}
+                entry = {
+                    "rk": rk,
+                    "type": "episode",
+                    "title": meta.get("title") or row.get("grandparentTitle") or row.get("title"),
+                    "series_title": meta.get("series_title") or meta.get("show_title") or row.get("grandparentTitle"),
+                    "library_id": meta.get("library_id"),
+                    "ids": ids,
+                    "show_ids": dict(meta.get("show_ids") or {}),
+                    "show_rk": (meta.get("show_ids") or {}).get("plex") if isinstance(meta.get("show_ids"), Mapping) else None,
+                    "season": meta.get("season"),
+                    "episode": meta.get("episode"),
+                    "watched": bool(existing.get("watched")),
+                    "view_count": existing.get("view_count"),
+                    "last_viewed_at": existing.get("last_viewed_at"),
+                }
+                cat.add(entry)
+                added += 1
+            start += len(rows)
+            if total_i is not None and start >= total_i:
+                break
+            if len(rows) < page_size:
+                break
+
+    _emit({
+        "event": "plex.catalog", "action": "episode_leaves", "feature": "history", "level": "debug",
+        "scanned": scanned, "added": added, "duration_ms": int((time.time() - t0) * 1000),
+    })
+    return added
 
 
 def _build_history_catalog(adapter: Any, allow: set[str], *, force: bool = False, live: bool = True) -> HistoryCatalog:
@@ -1549,6 +1656,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         unresolved: list[dict[str, Any]] = []
         shadow_batch: list[Mapping[str, Any]] = []
         to_scrobble: list[tuple[Mapping[str, Any], str, str, int]] = []
+        episode_catalog_filled = False
+
+        def _ensure_episode_catalog() -> None:
+            nonlocal episode_catalog_filled
+            if episode_catalog_filled:
+                return
+            episode_catalog_filled = True
+            if _populate_catalog_episode_leaves(adapter, allow, cat):
+                _store_history_catalog(adapter, allow, cat)
 
         for item in items or []:
             key = canonical_key(item) or ""
@@ -1575,14 +1691,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 ok += 1
                 continue
 
+            if not rk and klass == CLASS_SHOW_MATCHED_EPISODE_MISSING:
+                _ensure_episode_catalog()
+                rk, klass = cat.resolve(item, strict=write_strict)
+
             if not rk and klass == CLASS_RESOLVE_AMBIGUOUS:
-                # The catalog is built from the full PMS GUID index + a
-                # live-watched scan, so a definitive miss (not_in_plex_catalog /
-                # show_matched_episode_missing) is authoritative -- the per-item
-                # Plex fallback would fire a live search only to re-confirm it,
-                # which is what made large unresolved backlogs take minutes.
-                # Only an ambiguous catalog match can benefit from a targeted
-                # lookup, so restrict the (expensive) fallback to that case.
                 rk = _resolve_rating_key(adapter, item, strict=write_strict)
 
             if not rk:

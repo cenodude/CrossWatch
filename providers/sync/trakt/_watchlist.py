@@ -35,8 +35,6 @@ def _shadow_path() -> Path:
     return state_file("trakt_watchlist.shadow.json")
 
 
-def _unresolved_path() -> Path:
-    return state_file("trakt_watchlist.unresolved.json")
 
 
 
@@ -145,71 +143,6 @@ def _shadow_save(etag: str | None, items: Mapping[str, Any]) -> None:
         pass
 
 
-# Unresolved state
-def _load_unresolved() -> dict[str, Any]:
-    if _is_capture_mode() or _pair_scope() is None:
-        return {}
-    p = _unresolved_path()
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_unresolved(data: Mapping[str, Any]) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    try:
-        _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
-        tmp = _unresolved_path().with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, _unresolved_path())
-    except Exception as e:
-        _warn("cache_save_failed", cache="unresolved", op="save", error=str(e))
-
-
-def _freeze_item(
-    item: Mapping[str, Any],
-    *,
-    action: str,
-    reasons: list[str],
-    details: Mapping[str, Any] | None = None,
-) -> None:
-    m = id_minimal(item)
-    key = key_of(m)
-    data = _load_unresolved()
-    entry = data.get(key) or {
-        "feature": "watchlist",
-        "action": action,
-        "first_seen": _now_iso(),
-        "attempts": 0,
-    }
-    entry.update({"item": m, "last_attempt": _now_iso()})
-    rset = set(entry.get("reasons", [])) | set(reasons or [])
-    entry["reasons"] = sorted(rset)
-    if details:
-        cur_details = dict(entry.get("details") or {})
-        cur_details.update(details)
-        entry["details"] = cur_details
-    entry["attempts"] = int(entry.get("attempts", 0)) + 1
-    data[key] = entry
-    _save_unresolved(data)
-
-
-def _unfreeze_keys_if_present(keys: Iterable[str]) -> None:
-    data = _load_unresolved()
-    changed = False
-    for k in list(keys or []):
-        if k in data:
-            del data[k]
-            changed = True
-    if changed:
-        _save_unresolved(data)
-
-
-def _is_frozen(item: Mapping[str, Any]) -> bool:
-    return key_of(id_minimal(item)) in _load_unresolved()
-
 # Rate limit logging
 def _log_rate_headers(resp: Any) -> None:
     try:
@@ -270,7 +203,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         total = len(idx)
         _tick(prog, 0, total=total, force=True)
         _tick(prog, total, total=total)
-        _unfreeze_keys_if_present(idx.keys())
         _info("index_done", count=len(idx), source="shadow")
         return idx
 
@@ -280,7 +212,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         total = len(idx)
         _tick(prog, 0, total=total, force=True)
         _tick(prog, total, total=total)
-        _unfreeze_keys_if_present(idx.keys())
         _info("index_done", count=len(idx), source="shadow_fallback")
         return idx
 
@@ -289,7 +220,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     idx: dict[str, dict[str, Any]] = {key_of(m): m for m in items}
     if use_etag:
         _shadow_save(etag, idx)
-    _unfreeze_keys_if_present(idx.keys())
 
     total = len(idx)
     _tick(prog, 0, total=total, force=True)
@@ -307,10 +237,6 @@ def _batch_payload(
     rejected: list[dict[str, Any]] = []
     for it in items or []:
         m = id_minimal(it)
-        if _is_frozen(m):
-            _dbg("write_item_skipped", reason="frozen", item=m)
-            continue
-
         kind = pick_trakt_kind(m)
         ids = ids_for_trakt(m)
         show_ids = dict(m.get("show_ids") or {})
@@ -335,21 +261,14 @@ def _batch_payload(
     return accepted, rejected
 
 
-def _freeze_not_found(
+def _record_not_found(
     not_found: Mapping[str, Any],
     *,
     action: str,
     unresolved: list[dict[str, Any]],
-    add_details: bool,
 ) -> None:
     def freeze_minimal(m: dict[str, Any], details: Mapping[str, Any] | None = None) -> None:
         unresolved.append({"item": m, "hint": "not_found"})
-        _freeze_item(
-            m,
-            action=action,
-            reasons=[f"{action}:not-found"],
-            details=details if add_details else None,
-        )
 
     for t in ("movies", "seasons", "episodes"):
         for obj in (not_found.get(t) or []):
@@ -411,7 +330,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     cfg = _cfg(adapter)
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
     log_rates = _cfg_bool(cfg, "watchlist_log_rate_limits", True)
-    freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
 
     vip = bool(cfg.get("vip"))
     wl_limit = None if vip else int(cfg.get("watchlist_limit") or 100)
@@ -466,7 +384,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             ok += sum(int(added.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             ok += sum(int(existing.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             nf = d.get("not_found") or {}
-            _freeze_not_found(nf, action="add", unresolved=unresolved, add_details=freeze_details)
+            _record_not_found(nf, action="add", unresolved=unresolved)
         elif r.status_code == 420:
             upgrade_url = r.headers.get("X-Upgrade-URL")
             _warn("rate_limit", op="add", status=420, upgrade_url=upgrade_url)
@@ -483,12 +401,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
                 unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
-                _freeze_item(
-                    x,
-                    action="add",
-                    reasons=[f"http:{r.status_code}"],
-                    details={"status": r.status_code} if freeze_details else None,
-                )
     _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
@@ -496,7 +408,6 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     cfg = _cfg(adapter)
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
     log_rates = _cfg_bool(cfg, "watchlist_log_rate_limits", True)
-    freeze_details = _cfg_bool(cfg, "watchlist_freeze_details", True)
 
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
@@ -528,17 +439,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             deleted = d.get("deleted") or d.get("removed") or {}
             ok += sum(int(deleted.get(k) or 0) for k in ("movies", "shows", "seasons", "episodes"))
             nf = d.get("not_found") or {}
-            _freeze_not_found(nf, action="remove", unresolved=unresolved, add_details=freeze_details)
+            _record_not_found(nf, action="remove", unresolved=unresolved)
         else:
             _warn("write_failed", op="remove", status=r.status_code, body=((r.text or "")[:180]))
             for x in sl:
                 unresolved.append({"item": x, "hint": f"http:{r.status_code}"})
-                _freeze_item(
-                    x,
-                    action="remove",
-                    reasons=[f"http:{r.status_code}"],
-                    details={"status": r.status_code} if freeze_details else None,
-                )
 
     _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved

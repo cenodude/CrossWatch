@@ -45,10 +45,6 @@ def _int_or_none(x: Any) -> int | None:
         return None
 
 
-def _unresolved_path() -> Path:
-    return state_file("trakt_history.unresolved.json")
-
-
 def _cache_path() -> Path:
     return state_file("trakt_history.index.json")
 
@@ -187,14 +183,6 @@ def _chunked_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mappin
         yield seq[i : i + size]
 
 
-def _freeze_enabled(adapter: Any) -> bool:
-    v = _cfg_get(adapter, "history_unresolved", False)
-    try:
-        return bool(v)
-    except Exception:
-        return False
-
-
 def _history_number_fallback_enabled(adapter: Any) -> bool:
     return True if not RESOLVE_ENABLE else bool(_cfg_get(adapter, "history_number_fallback", False))
 
@@ -216,28 +204,6 @@ def _history_collection_types(adapter: Any) -> set[str]:
         out = {"movies"}
     return out
 
-
-
-def _load_unresolved() -> dict[str, Any]:
-    if _is_capture_mode() or _pair_scope() is None:
-        return {}
-    p = _unresolved_path()
-    try:
-        return json.loads(p.read_text("utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_unresolved(data: Mapping[str, Any]) -> None:
-    if _is_capture_mode() or _pair_scope() is None:
-        return
-    try:
-        _unresolved_path().parent.mkdir(parents=True, exist_ok=True)
-        tmp = _unresolved_path().with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), "utf-8")
-        os.replace(tmp, _unresolved_path())
-    except Exception as e:
-        _warn("cache_save_failed", cache="unresolved", op="save", error=str(e))
 
 
 def _load_cache_doc() -> dict[str, Any]:
@@ -374,40 +340,6 @@ def _cache_remove_source_items(adapter: Any, items: Iterable[Mapping[str, Any]])
     except Exception as e:
         _warn("cache_save_failed", cache="index", op="remove", error=str(e))
 
-
-
-def _freeze_item_if_enabled(adapter: Any, item: Mapping[str, Any], *, action: str, reasons: list[str]) -> None:
-    if not _freeze_enabled(adapter):
-        return
-    m = id_minimal(item)
-    k = key_of(m)
-    data = _load_unresolved()
-    entry = data.get(k) or {"feature": "history", "action": action, "first_seen": _now_iso(), "attempts": 0}
-    entry.update({"item": m, "last_attempt": _now_iso()})
-    rset = set(entry.get("reasons", [])) | set(reasons or [])
-    entry["reasons"] = sorted(rset)
-    entry["attempts"] = int(entry.get("attempts", 0)) + 1
-    data[k] = entry
-    _save_unresolved(data)
-
-
-def _unfreeze_keys_if_present(adapter: Any, keys: Iterable[str]) -> None:
-    if not _freeze_enabled(adapter):
-        return
-    data = _load_unresolved()
-    changed = False
-    for k in list(keys or []):
-        if k in data:
-            del data[k]
-            changed = True
-    if changed:
-        _save_unresolved(data)
-
-
-def _is_frozen(adapter: Any, item: Mapping[str, Any]) -> bool:
-    if not _freeze_enabled(adapter):
-        return False
-    return key_of(id_minimal(item)) in _load_unresolved()
 
 
 def _hdr_int(headers: Mapping[str, Any], name: str) -> int | None:
@@ -664,7 +596,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     start_at=start_at,
                 )
 
-                base_keys_to_unfreeze: set[str] = set()
                 added = 0
 
                 for m in movies + episodes:
@@ -697,10 +628,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                         continue
 
                     idx[ek] = m
-                    base_keys_to_unfreeze.add(base_key)
                     added += 1
 
-                _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
                 _dbg("index_fetch_counts", source="cache_delta", added=added, count=len(idx))
 
                 count_ok = True
@@ -797,7 +726,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         bump=bump,
     )
     idx: dict[str, dict[str, Any]] = {}
-    base_keys_to_unfreeze: set[str] = set()
     for m in movies + episodes:
         w = _iso8601(m.get("watched_at"))
         ts = _as_epoch(w) if w else None
@@ -847,12 +775,9 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
 
             _warn("index_reconcile", reason="key_collision", key=ek, key2=ek2, imdb=imdb_id or None, trakt=trakt_id or None, tmdb=tmdb_id or None, history_id=hid or None)
             idx[ek2] = m
-            base_keys_to_unfreeze.add(alt_base)
         else:
             idx[ek] = m
-            base_keys_to_unfreeze.add(base_key)
 
-    _unfreeze_keys_if_present(adapter, base_keys_to_unfreeze)
     if prog:
         try:
             if announced_total is not None:
@@ -1139,10 +1064,6 @@ def _batch_add(
         accepted_keys.append(key_of(m))
 
     for it in items or []:
-        if _is_frozen(adapter, it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
-            continue
-
         kind = (pick_trakt_kind(it) or "movies").lower()
         ids = ids_for_trakt(it)
         show_ids = _extract_show_ids_for_episode(it)
@@ -1159,14 +1080,12 @@ def _batch_add(
         if when_error:
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": when_error})
-            _freeze_item_if_enabled(adapter, m, action="add", reasons=[when_error.replace(" ", "-")])
             continue
 
         if kind == "movies":
             if not ids:
                 m = _history_item_minimal(kind, it, ids)
                 unresolved.append({"item": m, "hint": "missing ids"})
-                _freeze_item_if_enabled(adapter, m, action="add", reasons=["missing-ids"])
                 continue
             obj: dict[str, Any] = {"ids": ids}
             if when:
@@ -1183,7 +1102,6 @@ def _batch_add(
             if not ids:
                 m = _history_item_minimal(kind, it, ids)
                 unresolved.append({"item": m, "hint": "missing ids"})
-                _freeze_item_if_enabled(adapter, m, action="add", reasons=["missing-ids"])
                 continue
             skey = _show_key(ids)
             entry = shows_map.setdefault(skey, {"ids": ids, "seasons": {}})
@@ -1207,7 +1125,6 @@ def _batch_add(
                 if season_i is None:
                     m = _history_item_minimal(kind, it, ids)
                     unresolved.append({"item": m, "hint": "invalid season number"})
-                    _freeze_item_if_enabled(adapter, m, action="add", reasons=["season-number-invalid"])
                     continue
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i})
                 if when:
@@ -1216,7 +1133,6 @@ def _batch_add(
                 continue
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "season scope or ids missing"})
-            _freeze_item_if_enabled(adapter, m, action="add", reasons=["season-scope-missing"])
             continue
         if kind == "episodes":
             show_scope_ok = bool(show_ids and season_no is not None and episode_no is not None)
@@ -1229,7 +1145,6 @@ def _batch_add(
             if not show_scope_ok and (season_no is None or episode_no is None) and not (ids and ("trakt" in ids)):
                 m = _history_item_minimal(kind, it, ids)
                 unresolved.append({"item": m, "hint": "missing season/episode"})
-                _freeze_item_if_enabled(adapter, m, action="add", reasons=["missing-season-episode"])
                 continue
 
             if use_ids:
@@ -1267,7 +1182,6 @@ def _batch_add(
 
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "episode scope or ids missing"})
-            _freeze_item_if_enabled(adapter, m, action="add", reasons=["episode-scope-missing"])
 
     body: dict[str, Any] = {}
     if movies:
@@ -1313,10 +1227,6 @@ def _batch_remove(
         accepted_keys.append(key_of(m))
 
     for it in items or []:
-        if _is_frozen(adapter, it):
-            _dbg("skip_frozen", title=id_minimal(it).get("title"))
-            continue
-
         raw_history_id = _parse_raw_history_id(it)
         if raw_history_id is not None:
             m = id_minimal(it)
@@ -1341,7 +1251,6 @@ def _batch_remove(
             if not ids:
                 m = _history_item_minimal(kind, it, ids)
                 unresolved.append({"item": m, "hint": "missing ids"})
-                _freeze_item_if_enabled(adapter, m, action="remove", reasons=["missing-ids"])
                 continue
             movies.append({"ids": ids})
             _accept(_history_item_minimal(kind, it, ids))
@@ -1351,7 +1260,6 @@ def _batch_remove(
             if not ids:
                 m = _history_item_minimal(kind, it, ids)
                 unresolved.append({"item": m, "hint": "missing ids"})
-                _freeze_item_if_enabled(adapter, m, action="remove", reasons=["missing-ids"])
                 continue
             skey = _show_key(ids)
             shows_map.setdefault(skey, {"ids": ids, "seasons": {}})
@@ -1370,14 +1278,12 @@ def _batch_remove(
                 if season_i is None:
                     m = _history_item_minimal(kind, it, ids)
                     unresolved.append({"item": m, "hint": "invalid season number"})
-                    _freeze_item_if_enabled(adapter, m, action="remove", reasons=["season-number-invalid"])
                     continue
                 entry["seasons"].setdefault(season_i, {"number": season_i})
                 _accept(_history_item_minimal(kind, it, ids))
                 continue
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "season scope or ids missing"})
-            _freeze_item_if_enabled(adapter, m, action="remove", reasons=["season-scope-missing"])
             continue
 
         if kind == "episodes":
@@ -1389,7 +1295,6 @@ def _batch_remove(
                 if season_i is None or ep_i is None:
                     m = _history_item_minimal(kind, it, ids)
                     unresolved.append({"item": m, "hint": "invalid season/episode number"})
-                    _freeze_item_if_enabled(adapter, m, action="remove", reasons=["season-episode-number-invalid"])
                     continue
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
                 season_entry.setdefault("episodes", []).append({"number": ep_i})
@@ -1401,7 +1306,6 @@ def _batch_remove(
                 continue
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "episode scope or ids missing"})
-            _freeze_item_if_enabled(adapter, m, action="remove", reasons=["episode-scope-missing"])
 
     body: dict[str, Any] = {}
     if movies:
@@ -1658,13 +1562,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 pass
 
             unresolved.append(u)
-            try:
-                _freeze_item_if_enabled(adapter, u["item"], action="add", reasons=["not-found"])
-            except Exception:
-                pass
 
         if ok_total > 0:
-            _unfreeze_keys_if_present(adapter, accepted_keys)
             unresolved_keys_for_cache: set[str] = set()
             try:
                 for u in unresolved or []:
@@ -1724,7 +1623,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             skipped_keys = list(dict.fromkeys(list(skipped_keys or []) + list(accepted_keys or [])))
         except Exception:
             pass
-        _unfreeze_keys_if_present(adapter, accepted_keys)
         _bust_index_cache("write:add:duplicate")
     elif r.status_code == 420:
         _warn("rate_limit", op="add", status=420)
@@ -1736,7 +1634,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     else:
         _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:200]))
         for m in accepted_minimals:
-            _freeze_item_if_enabled(adapter, m, action="add", reasons=[f"http:{r.status_code}"])
             unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
     _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok_added, unresolved=len(unresolved), skipped=len(skipped_keys))
     return ok_added, unresolved, skipped_keys
@@ -1794,17 +1691,15 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             nf_unresolved = _unresolved_from_not_found(nf, raw_id_map)
             for u in nf_unresolved:
                 unresolved.append(u)
-                _freeze_item_if_enabled(adapter, u["item"], action="remove", reasons=["not-found"])
 
             if part_ok > 0:
                 ok += part_ok
-                _unfreeze_keys_if_present(adapter, accepted_keys)
                 _cache_remove_source_items(adapter, accepted_minimals)
             elif not nf_unresolved:
                 _dbg("write_prepare", op="remove", reason="noop_response", chunk_items=len(part))
         else:
             _warn("write_failed", op="remove", status=r.status_code, body=((r.text or "")[:200]))
             for m in accepted_minimals:
-                _freeze_item_if_enabled(adapter, m, action="remove", reasons=[f"http:{r.status_code}"])
+                unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
     _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
