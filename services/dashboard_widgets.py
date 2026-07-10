@@ -42,6 +42,7 @@ _SHOW_ID_ALIASES = {
     "tvdb_show": "tvdb",
     "trakt_show": "trakt",
 }
+_EPISODE_CODE_RE = re.compile(r"^S\d{1,3}E\d{1,4}$", re.IGNORECASE)
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -460,6 +461,38 @@ def _metadata_lookup_ids(row: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _looks_like_episode_code(value: Any) -> bool:
+    return bool(_EPISODE_CODE_RE.match(str(value or "").strip()))
+
+
+def _resolve_episode_show_title(row: dict[str, Any]) -> None:
+    if _media_type(row) != "episode":
+        return
+    if not _looks_like_episode_code(row.get("title")):
+        return
+    ids = _metadata_lookup_ids(row)
+    ids.pop("title", None)
+    if not any(ids.get(key) for key in ("tmdb", "imdb", "tvdb", "trakt")):
+        return
+    manager = _metadata_manager()
+    if manager is None:
+        return
+    try:
+        res = manager.resolve(
+            entity="show",
+            ids=ids,
+            need={"title": True, "ids": True},
+            strategy="first_success",
+        ) or {}
+    except Exception:
+        return
+    title = _text(res.get("title") or res.get("name"))
+    if not title or _looks_like_episode_code(title):
+        return
+    row["title"] = title
+    row.setdefault("series_title", title)
+
+
 def _art_debug(row: dict[str, Any], reason: str, **fields: Any) -> None:
     row["art_reason"] = reason
     try:
@@ -522,6 +555,7 @@ def _resolve_missing_art(row: dict[str, Any], *, size: str, episode_still: bool 
 
 def _resolve_missing_art_rows(rows: list[dict[str, Any]], *, size: str, episode_still: bool = False) -> list[dict[str, Any]]:
     for row in rows:
+        _resolve_episode_show_title(row)
         _resolve_missing_art(row, size=size, episode_still=episode_still)
     return rows
 

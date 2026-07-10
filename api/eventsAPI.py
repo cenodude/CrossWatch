@@ -146,11 +146,12 @@ def events_tree(
     until: int | None = None,
     visibility: str = Query("open"),
     order: str = Query("newest"),
+    children: bool = Query(True),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
     return _ok(_list_tree(
-        order=order, limit=limit, offset=offset,
+        order=order, limit=limit, offset=offset, include_children=children,
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
         destination_provider=destination_provider, source_provider=source_provider,
         feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,

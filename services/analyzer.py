@@ -7,8 +7,8 @@ import importlib
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping, cast
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import json
 import re
@@ -30,10 +30,52 @@ PROVIDERS_SYNC_DIR = REPO_ROOT / "providers" / "sync"
 ORCH_ROOT_DIR = REPO_ROOT / "cw_platform"
 ORCH_DIR = ORCH_ROOT_DIR / "orchestrator"
 _LOCK = threading.Lock()
-_ANALYSIS_LOCK = threading.Lock()
 _ANALYSIS_CACHE_LOCK = threading.Lock()
 _ANALYSIS_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+_STATE_CACHE_LOCK = threading.Lock()
+_STATE_CACHE: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+_SCOPED_ROWS_CACHE_LOCK = threading.Lock()
+_SCOPED_ROWS_CACHE: dict[tuple[Any, ...], tuple[list[dict[str, Any]], dict[str, dict[str, int]]]] = {}
+_SYSTEM_CACHE_LOCK = threading.Lock()
+_SYSTEM_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+_INFLIGHT_LOCK = threading.Lock()
+_INFLIGHT_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
 _LOG = logging.getLogger("crosswatch.analyzer")
+_TRACKER_PROVIDER_BASES = {"TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
+_MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
+_PLEX_HISTORY_REASON_MESSAGES = {
+    "in_catalog_watched": "Plex catalog already has this item marked watched.",
+    "in_catalog_unwatched": "Plex catalog has this item, but it is not marked watched yet.",
+    "not_in_plex_catalog": "Plex could not find this item in the selected libraries.",
+    "show_matched_episode_missing": "Plex found the show, but not this season and episode in the selected libraries.",
+    "resolve_ambiguous": "Plex found multiple possible matches and skipped the item to avoid writing to the wrong media.",
+    "confirmed_watched_exact_date": "Plex confirmed this item as watched with a matching watched date.",
+    "confirmed_watched_date_mismatch": "Plex confirmed this item as watched, but the watched date differs from the source date.",
+    "confirmed_watched_no_date": "Plex confirmed this item as watched, but Plex did not expose a watched date to compare.",
+    "write_failed": "Plex write failed before the watched state could be confirmed.",
+    "scrobble_failed": "Plex scrobble failed before the watched state could be confirmed.",
+    "missing_watched_at": "The source item has no watched date, so CrossWatch cannot backdate the Plex history write.",
+    "home_scope_not_applied": "Plex Home scope was required but could not be applied.",
+}
+_MEDIA_SERVER_LIBRARY_REASON_MESSAGES = {
+    "not_in_library": "The media server library does not contain this item.",
+    "not_found": "The media server could not find a matching library item.",
+}
+_TRACKER_TO_MEDIA_SERVER_MESSAGE = (
+    "Tracker to media server syncs can have expected gaps because trackers store history "
+    "for items that are not present in your media server libraries."
+)
+
+
+def _sig_lock(sig: tuple[Any, ...]) -> threading.Lock:
+    with _INFLIGHT_LOCK:
+        if len(_INFLIGHT_LOCKS) > 32:
+            _INFLIGHT_LOCKS.clear()
+        lk = _INFLIGHT_LOCKS.get(sig)
+        if lk is None:
+            lk = threading.Lock()
+            _INFLIGHT_LOCKS[sig] = lk
+        return lk
 
 _DEFAULT_INSTANCE = "default"
 _PROV_TOKEN_SEPS = ("@", "#", ":")
@@ -73,6 +115,23 @@ def _prov_token(prov: str, inst: Any = None) -> str:
 def _norm_prov_token(v: Any) -> str:
     base, inst = _split_prov_token(v)
     return _prov_token(base, inst)
+
+
+def _provider_base(v: Any) -> str:
+    base, _ = _split_prov_token(v)
+    return base
+
+
+def _is_tracker_provider(v: Any) -> bool:
+    return _provider_base(v) in _TRACKER_PROVIDER_BASES
+
+
+def _is_media_server_provider(v: Any) -> bool:
+    return _provider_base(v) in _MEDIA_SERVER_PROVIDER_BASES
+
+
+def _is_tracker_to_media_server(src: Any, targets: Iterable[Any]) -> bool:
+    return _is_tracker_provider(src) and any(_is_media_server_provider(t) for t in targets)
 
 
 def _sev_rank(value: Any) -> int:
@@ -622,19 +681,33 @@ def _collect_items(s: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _scoped_item_rows(s: dict[str, Any], cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = _collect_items(s)
     routes = _pair_map(cfg, s)
     if not routes:
-        return [] if cfg.get("pairs") or cfg.get("_analyzer_pairs_selected") else rows
+        return [] if cfg.get("pairs") or cfg.get("_analyzer_pairs_selected") else _collect_items(s)
     scope: set[tuple[str, str]] = set(routes.keys())
     for (src, feat), targets in routes.items():
         scope.add((_norm_prov_token(src), feat))
         scope.update((_norm_prov_token(dst), feat) for dst in targets)
-    return [
-        row
-        for row in rows
-        if (_norm_prov_token(str(row.get("provider") or "")), str(row.get("feature") or "").lower()) in scope
-    ]
+    out: list[dict[str, Any]] = []
+    for prov_tok, feat, key, item in _iter_items(s):
+        if (_norm_prov_token(prov_tok), feat) not in scope:
+            continue
+        base, inst = _split_prov_token(prov_tok)
+        out.append({
+            "provider": prov_tok,
+            "provider_base": base,
+            "instance": None if inst == _DEFAULT_INSTANCE else inst,
+            "feature": feat,
+            "key": key,
+            "title": item.get("title"),
+            "year": item.get("year"),
+            "type": item.get("type"),
+            "series_title": item.get("series_title"),
+            "season": item.get("season"),
+            "episode": item.get("episode"),
+            "ids": item.get("ids") or {},
+        })
+    return out
 
 
 def _counts_from_rows(rows: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
@@ -1190,6 +1263,11 @@ def _cw_state_unresolved_problems(
                     )
                     if isinstance(hint, dict) and hint.get("reason"):
                         rec["reason"] = str(hint.get("reason"))
+                        _annotate_reason_message(
+                            rec,
+                            str(meta.get("provider") or ""),
+                            str(meta.get("feature") or ""),
+                        )
                     preview.append(rec)
                     if len(preview) >= 5:
                         break
@@ -1238,6 +1316,11 @@ def _cw_state_unresolved_problems(
             rec["reason"] = str(row.get("reason"))
         elif row.get("error"):
             rec["reason"] = str(row.get("error"))
+        _annotate_reason_message(
+            rec,
+            str(meta.get("provider") or ""),
+            str(meta.get("feature") or ""),
+        )
         tries = row.get("attempts")
         if tries is not None:
             try:
@@ -1953,6 +2036,24 @@ def _history_exact_indices(s: dict[str, Any]) -> dict[str, set[tuple[str, str, A
     return out
 
 
+def _history_show_index(s: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    out: dict[str, dict[str, dict[str, Any]]] = {}
+    for prov, feat, _, item in _iter_items(s):
+        if feat != "history" or not isinstance(item, dict):
+            continue
+        sig = _history_show_signature(item)
+        if not sig:
+            continue
+        entry = out.setdefault(_norm_prov_token(prov), {}).setdefault(sig, {"episode_count": 0, "episodes": set()})
+        if str(item.get("type") or "").strip().lower() == "episode":
+            entry["episode_count"] += 1
+            season = item.get("season")
+            episode = item.get("episode")
+            if season is not None and episode is not None:
+                entry["episodes"].add((season, episode))
+    return out
+
+
 @dataclass
 class _AnalysisContext:
     state: dict[str, Any]
@@ -1962,6 +2063,7 @@ class _AnalysisContext:
     history_exact: dict[str, set[tuple[str, str, Any, Any]]]
     pair_libs: dict[tuple[str, str, str], set[str]]
     pair_types: dict[tuple[str, str, str], set[str]]
+    history_show_index: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
 
 def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _AnalysisContext:
@@ -1974,6 +2076,7 @@ def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _
         history_exact=_history_exact_indices(s),
         pair_libs=_pair_lib_filters(config),
         pair_types=_pair_type_filters(config),
+        history_show_index=_history_show_index(s),
     )
 
 
@@ -2386,15 +2489,19 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
             ratio = (larger / max(smaller, 1)) if smaller else float(larger)
             drift = max(extra_a, extra_b)
             severe = drift >= 10 or ratio >= 1.5
-            summary = (
-                "History sets diverge substantially between providers. "
-                "This is larger than a small normalization quirk and usually means one side has many real extra shows."
-                if severe
-                else "These counts can sometimes differ because some shows are split or merged differently between providers."
-            )
+            tracker_to_media = _is_tracker_to_media_server(a, [b])
+            if tracker_to_media:
+                summary = _TRACKER_TO_MEDIA_SERVER_MESSAGE
+            else:
+                summary = (
+                    "History sets diverge substantially between providers. "
+                    "This is larger than a small normalization quirk and usually means one side has many real extra shows."
+                    if severe
+                    else "These counts can sometimes differ because some shows are split or merged differently between providers."
+                )
 
             issue: dict[str, Any] = {
-                "severity": "warn" if severe else "info",
+                "severity": "info" if tracker_to_media else ("warn" if severe else "info"),
                 "type": "history_show_normalization",
                 "feature": "history",
                 "source": a,
@@ -2413,6 +2520,8 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
                 "extra_target": only_b,
                 "tmdb_enabled": tmdb_enabled,
             }
+            if tracker_to_media:
+                issue["sync_context"] = "tracker_to_media_server"
 
             if labels:
                 issue["extra_source_titles"] = [labels.get(sig, sig) for sig in only_a]
@@ -2457,10 +2566,10 @@ def _history_show_signature(rec: dict[str, Any]) -> str | None:
 
 
 def _missing_peer_show_hints(
-    s: dict[str, Any],
     feat: str,
     item: dict[str, Any],
     targets: list[str],
+    show_index: dict[str, dict[str, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     if feat != "history":
         return []
@@ -2474,27 +2583,15 @@ def _missing_peer_show_hints(
     out: list[dict[str, Any]] = []
 
     for dst in targets:
-        bucket = _bucket(s, dst, feat) or {}
-        show_episodes = 0
-        has_episode = False
+        entry = (show_index.get(_norm_prov_token(dst)) or {}).get(sig)
+        show_episodes = int(entry["episode_count"]) if entry else 0
+        has_episode = bool(
+            entry
+            and season is not None
+            and episode is not None
+            and (season, episode) in entry["episodes"]
+        )
         compat_hint = _target_id_compat_hint(dst, item)
-
-        for rec in bucket.values():
-            if not isinstance(rec, dict):
-                continue
-            if _history_show_signature(rec) != sig:
-                continue
-
-            rtyp = str(rec.get("type") or "").strip().lower()
-            if rtyp == "episode":
-                show_episodes += 1
-                if (
-                    season is not None
-                    and episode is not None
-                    and rec.get("season") == season
-                    and rec.get("episode") == episode
-                ):
-                    has_episode = True
 
         dst_name = str(dst or "").upper()
         if show_episodes == 0:
@@ -2585,27 +2682,9 @@ def _fallback_ids_for_item(item: Mapping[str, Any], ids: Mapping[str, Any] | Non
             out[ns] = value
     return out
 
-def _problems(
-    s: dict[str, Any],
-    allowed_scopes: set[str] | None = None,
-    *,
-    cfg: dict[str, Any] | None = None,
-    ctx: _AnalysisContext | None = None,
-    include_system: bool = True,
-) -> list[dict[str, Any]]:
-    probs: list[dict[str, Any]] = []
-    core = ("tmdb", "imdb", "tvdb")
-
-    analysis = ctx or _analysis_context(s, cfg)
-    analysis_scope: set[tuple[str, str]] = set(analysis.pairs.keys())
-    for (src, feature), route_targets in analysis.pairs.items():
-        analysis_scope.add((_norm_prov_token(src), feature))
-        analysis_scope.update((_norm_prov_token(dst), feature) for dst in route_targets)
-    cw_state = _read_cw_state(allowed_scopes)
-    manual = _load_manual_state()
-    manual_blocks = _manual_add_blocks(manual)
+def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
-
+    cw_state = _read_cw_state(allowed_scopes)
     for name, body in (cw_state or {}).items():
         if not isinstance(body, dict):
             continue
@@ -2621,7 +2700,36 @@ def _problems(
                     break
 
         kind: str | None = None
+        pending = False
+        for marker in (".unresolved.pending.", "_unresolved.pending."):
+            if marker in stem:
+                kind = "unresolved"
+                pending = True
+                stem = stem.split(marker, 1)[0]
+                break
+        for marker in (".unresolved.pending", "_unresolved.pending"):
+            if kind is not None:
+                break
+            if stem.endswith(marker):
+                kind = "unresolved"
+                pending = True
+                stem = stem[: -len(marker)]
+                break
+        for marker, knd in (
+            (".unresolved.", "unresolved"),
+            ("_unresolved.", "unresolved"),
+            (".shadow.", "shadow"),
+            ("_shadow.", "shadow"),
+        ):
+            if kind is not None:
+                break
+            if marker in stem:
+                kind = knd
+                stem = stem.split(marker, 1)[0]
+                break
         for knd in ("unresolved", "shadow"):
+            if kind is not None:
+                break
             if stem.endswith(f".{knd}"):
                 kind = knd
                 stem = stem[: -len(knd) - 1]
@@ -2641,12 +2749,49 @@ def _problems(
         feat_key = feat_raw.lower()
         key = (prov_key, feat_key)
         idx = unresolved_index.setdefault(key, {})
-        for uk, rec in body.items():
-            if not isinstance(rec, dict):
-                continue
-            item = rec.get("item") or {}
-            if not isinstance(item, dict):
-                continue
+
+        rows: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+        if pending:
+            items = body.get("items")
+            hints = body.get("hints")
+            raw_keys = body.get("keys")
+            key_order: list[str] = []
+            seen_keys: set[str] = set()
+            if isinstance(raw_keys, list):
+                for raw_key in raw_keys:
+                    uk = str(raw_key or "").strip()
+                    if uk and uk not in seen_keys:
+                        seen_keys.add(uk)
+                        key_order.append(uk)
+            for source in (items, hints):
+                if not isinstance(source, dict):
+                    continue
+                for raw_key in source.keys():
+                    uk = str(raw_key or "").strip()
+                    if uk and uk not in seen_keys:
+                        seen_keys.add(uk)
+                        key_order.append(uk)
+            for uk in key_order:
+                item = items.get(uk) if isinstance(items, dict) else None
+                hint = hints.get(uk) if isinstance(hints, dict) else None
+                rows.append(
+                    (
+                        uk,
+                        item if isinstance(item, dict) else {},
+                        hint if isinstance(hint, dict) else {},
+                    )
+                )
+        else:
+            rows = []
+            for uk, raw_rec in body.items():
+                if not isinstance(raw_rec, dict):
+                    continue
+                rec = cast(dict[str, Any], raw_rec)
+                raw_item = rec.get("item")
+                item = cast(dict[str, Any], raw_item) if isinstance(raw_item, dict) else {}
+                rows.append((str(uk), item, rec))
+
+        for uk, item, rec in rows:
             vv = dict(item)
             alias_key = uk
             if "@" in alias_key:
@@ -2655,14 +2800,130 @@ def _problems(
             aks = _alias_keys(vv)
             if not aks:
                 continue
-            meta: dict[str, Any] = {"file": name, "kind": kind}
+            meta: dict[str, Any] = {"file": name, "kind": "unresolved_pending" if pending else kind}
             reasons = rec.get("reasons")
             if isinstance(reasons, list):
-                meta["reasons"] = reasons
+                meta["reasons"] = [str(r) for r in reasons if str(r or "").strip()]
+            reason = str(rec.get("reason") or rec.get("hint") or rec.get("error") or "").strip()
+            if reason:
+                meta["reason"] = reason
+                meta.setdefault("reasons", [reason])
             for ak in aks:
                 lst = idx.setdefault(ak, [])
                 lst.append(meta)
+    return unresolved_index
 
+
+def _unresolved_reason_message(dst: str, feature: str, reasons: list[str]) -> str:
+    dst_name = str(dst or "").upper()
+    dst_base = _provider_base(dst_name)
+    feature_key = str(feature or "").lower()
+
+    for reason in reasons:
+        r = str(reason or "").strip()
+        if not r:
+            continue
+        if dst_base == "PLEX" and feature_key == "history" and r in _PLEX_HISTORY_REASON_MESSAGES:
+            msg = _PLEX_HISTORY_REASON_MESSAGES[r]
+            if r == "not_in_plex_catalog":
+                return f"{msg} {_TRACKER_TO_MEDIA_SERVER_MESSAGE}"
+            return msg
+        if _is_media_server_provider(dst_name) and r in _MEDIA_SERVER_LIBRARY_REASON_MESSAGES:
+            return _MEDIA_SERVER_LIBRARY_REASON_MESSAGES[r]
+        if r == "missing_ids_for_key":
+            return "The item is missing IDs needed for a safe provider match."
+        if r in {"apply:add:failed", "two:apply:add:failed"}:
+            return "The provider did not confirm this write."
+    return ""
+
+
+def _annotate_reason_message(rec: dict[str, Any], provider: str, feature: str) -> None:
+    reason = str(rec.get("reason") or "").strip()
+    if not reason:
+        return
+    message = _unresolved_reason_message(provider, feature, [reason])
+    if message:
+        rec["reason_message"] = message
+
+
+def _missing_peer_hints(
+    unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]],
+    feat: str,
+    alias_keys: list[str],
+    missing_targets: list[str],
+    blocked: bool,
+) -> list[dict[str, Any]]:
+    hints: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+    if blocked:
+        hints.append({"kind": "blocked_manual", "message": f"Blocked by manual list ({MANUAL_STATE_PATH}).", "source": str(MANUAL_STATE_PATH)})
+    for dst in missing_targets:
+        dst_norm = _norm_prov_token(dst)
+        dst_base = _provider_base(dst_norm)
+        idx_keys = [(dst_norm, feat.lower())]
+        if dst_base and dst_base != dst_norm:
+            idx_keys.append((dst_base, feat.lower()))
+        uidxs = [unresolved_index.get(idx_key) or {} for idx_key in idx_keys]
+        for ak in alias_keys:
+            rows: list[dict[str, Any]] = []
+            for uidx in uidxs:
+                rows = uidx.get(ak, [])
+                if rows:
+                    break
+            for meta in rows:
+                h: dict[str, Any] = {"provider": dst, "feature": feat}
+                reasons = [str(r) for r in (meta.get("reasons") or []) if str(r or "").strip()] if isinstance(meta.get("reasons"), list) else []
+                reason = str(meta.get("reason") or "").strip()
+                if reason and reason not in reasons:
+                    reasons.insert(0, reason)
+                if reason:
+                    h["reason"] = reason
+                if reasons:
+                    h["reasons"] = reasons
+                    msg = _unresolved_reason_message(dst, feat, reasons)
+                    if msg:
+                        h["message"] = msg
+                if "file" in meta:
+                    h["source"] = meta["file"]
+                if "kind" in meta:
+                    h["kind"] = meta["kind"]
+                dedupe = (
+                    str(h.get("provider") or ""),
+                    str(h.get("source") or ""),
+                    str(h.get("kind") or ""),
+                    str(h.get("reason") or ",".join(map(str, h.get("reasons") or []))),
+                )
+                if dedupe in seen:
+                    continue
+                seen.add(dedupe)
+                hints.append(h)
+    return hints
+
+
+def _problems(
+    s: dict[str, Any],
+    allowed_scopes: set[str] | None = None,
+    *,
+    cfg: dict[str, Any] | None = None,
+    ctx: _AnalysisContext | None = None,
+    include_system: bool = True,
+    include_hints: bool = True,
+    timings: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    probs: list[dict[str, Any]] = []
+    core = ("tmdb", "imdb", "tvdb")
+
+    analysis = ctx or _analysis_context(s, cfg)
+    analysis_scope: set[tuple[str, str]] = set(analysis.pairs.keys())
+    for (src, feature), route_targets in analysis.pairs.items():
+        analysis_scope.add((_norm_prov_token(src), feature))
+        analysis_scope.update((_norm_prov_token(dst), feature) for dst in route_targets)
+    manual = _load_manual_state()
+    manual_blocks = _manual_add_blocks(manual)
+    unresolved_index = _unresolved_index(allowed_scopes) if include_hints else {}
+
+    scan_start = time.perf_counter()
+    hint_seconds = 0.0
 
     for (prov, feat), targets in analysis.pairs.items():
         src_items = _bucket(s, prov, feat) or {}
@@ -2688,8 +2949,9 @@ def _problems(
                         if kk in blocks:
                             blocked = True
                             break
+                tracker_to_media = _is_tracker_to_media_server(prov, missing_targets)
                 ptype = "blocked_manual" if blocked else "missing_peer"
-                sev = "info" if blocked else "warn"
+                sev = "info" if (blocked or tracker_to_media) else "warn"
                 prob: dict[str, Any] = {
                     "severity": sev,
                     "type": ptype,
@@ -2706,29 +2968,27 @@ def _problems(
                     "targets": missing_targets,
                     **({"manual_ref": str(MANUAL_STATE_PATH)} if blocked else {}),
                 }
-                hints: list[dict[str, Any]] = []
-                if blocked:
-                    hints.append({"kind": "blocked_manual", "message": f"Blocked by manual list ({MANUAL_STATE_PATH}).", "source": str(MANUAL_STATE_PATH)})
-                for dst in missing_targets:
-                    idx_key = (str(dst).upper(), feat.lower())
-                    uidx = unresolved_index.get(idx_key) or {}
-                    for ak in alias_keys:
-                        for meta in uidx.get(ak, []):
-                            h: dict[str, Any] = {"provider": dst, "feature": feat}
-                            if "reasons" in meta:
-                                h["reasons"] = meta["reasons"]
-                            if "file" in meta:
-                                h["source"] = meta["file"]
-                            if "kind" in meta:
-                                h["kind"] = meta["kind"]
-                            hints.append(h)
-                if hints:
-                    prob["hints"] = hints
-                details = _missing_peer_show_hints(s, feat, v, missing_targets)
-                if blocked:
-                    details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + (details or []))
-                if details:
-                    prob["target_show_info"] = details
+                if tracker_to_media and not blocked:
+                    prob["sync_context"] = "tracker_to_media_server"
+                    prob["message"] = _TRACKER_TO_MEDIA_SERVER_MESSAGE
+                if include_hints:
+                    hints = _missing_peer_hints(unresolved_index, feat, alias_keys, missing_targets, blocked)
+                    if tracker_to_media and not blocked:
+                        hints.append(
+                            {
+                                "kind": "tracker_to_media_server_gap",
+                                "message": _TRACKER_TO_MEDIA_SERVER_MESSAGE,
+                            }
+                        )
+                    if hints:
+                        prob["hints"] = hints
+                    _th = time.perf_counter()
+                    details = _missing_peer_show_hints(feat, v, missing_targets, analysis.history_show_index)
+                    hint_seconds += time.perf_counter() - _th
+                    if blocked:
+                        details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + (details or []))
+                    if details:
+                        prob["target_show_info"] = details
                 probs.append(prob)
 
     for p, f, k, it in _iter_items(s):
@@ -2808,12 +3068,21 @@ def _problems(
         probs.extend(_history_normalization_issues(s, analysis.cfg))
     except Exception:
         pass
+    scan_end = time.perf_counter()
 
+    sys_seconds = 0.0
     if include_system:
+        _sy = time.perf_counter()
         try:
             probs.extend(_system_diagnostics())
         except Exception as exc:
             probs.append(_problem("error", "analyzer_system_diagnostics_failed", "Analyzer system diagnostics failed.", error=f"{type(exc).__name__}: {exc}"))
+        sys_seconds = time.perf_counter() - _sy
+
+    if timings is not None:
+        timings["missing_peer_scan"] = round((scan_end - scan_start - hint_seconds) * 1000, 1)
+        timings["missing_peer_hints"] = round(hint_seconds * 1000, 1)
+        timings["system_diagnostics"] = round(sys_seconds * 1000, 1)
 
     return sorted(probs, key=_problem_sort_key)
 
@@ -3086,7 +3355,7 @@ def _path_stamp(path: Path) -> tuple[str, int, int]:
         return (str(path), 0, 0)
 
 
-def _analysis_signature(pairs_raw: str | None) -> tuple[Any, ...]:
+def _state_signature(pairs_raw: str | None) -> tuple[Any, ...]:
     artifacts = sorted(CWS_DIR.glob("*.json")) if CWS_DIR.exists() else []
     return (
         tuple(_parse_pairs_raw(pairs_raw)),
@@ -3097,47 +3366,87 @@ def _analysis_signature(pairs_raw: str | None) -> tuple[Any, ...]:
     )
 
 
-def _cached_analysis(pairs_raw: str | None) -> dict[str, Any]:
-    signature = _analysis_signature(pairs_raw)
+def _analysis_signature(pairs_raw: str | None, include_system: bool = False, include_hints: bool = False) -> tuple[Any, ...]:
+    return _state_signature(pairs_raw) + (bool(include_system), bool(include_hints))
+
+
+def _with_cache_hit(cached: dict[str, Any]) -> dict[str, Any]:
+    out = dict(cached)
+    timings = dict(out.get("timings_ms") or {})
+    timings["cache_hit"] = True
+    out["timings_ms"] = timings
+    return out
+
+
+def _load_analysis_state(pairs_raw: str | None) -> tuple[dict[str, Any], _AnalysisContext, set[str] | None, dict[str, Any], dict[str, float]]:
+    signature = _state_signature(pairs_raw)
+    with _STATE_CACHE_LOCK:
+        cached = _STATE_CACHE.get(signature)
+    if cached is not None:
+        state, context, allowed, selected_cfg = cached
+        return state, context, allowed, selected_cfg, {"state_load": 0.0, "index_build": 0.0}
+
+    t0 = time.perf_counter()
+    handles = _load_state_handles(pairs_raw)
+    state = _merge_states(handles)
+    t1 = time.perf_counter()
+    selected_cfg = _config_for_pairs(_cfg(), pairs_raw)
+    context = _analysis_context(state, selected_cfg)
+    t2 = time.perf_counter()
+    scopes = {h.get("safe") for h in handles if h.get("safe")}
+    allowed = set(x for x in scopes if isinstance(x, str) and x) or None
+    entry = (state, context, allowed, selected_cfg)
+    with _STATE_CACHE_LOCK:
+        _STATE_CACHE.clear()
+        _STATE_CACHE[signature] = entry
+    return state, context, allowed, selected_cfg, {"state_load": round((t1 - t0) * 1000, 1), "index_build": round((t2 - t1) * 1000, 1)}
+
+
+def _cached_scoped_rows(pairs_raw: str | None) -> tuple[list[dict[str, Any]], dict[str, dict[str, int]]]:
+    signature = _state_signature(pairs_raw)
+    with _SCOPED_ROWS_CACHE_LOCK:
+        cached = _SCOPED_ROWS_CACHE.get(signature)
+        if cached is not None:
+            return cached
+    state, _context, _allowed, selected_cfg, _timings = _load_analysis_state(pairs_raw)
+    rows = _scoped_item_rows(state, selected_cfg)
+    result = (rows, _counts_from_rows(rows))
+    with _SCOPED_ROWS_CACHE_LOCK:
+        _SCOPED_ROWS_CACHE.clear()
+        _SCOPED_ROWS_CACHE[signature] = result
+    return result
+
+
+def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, include_hints: bool = False) -> dict[str, Any]:
+    signature = _analysis_signature(pairs_raw, include_system, include_hints)
     with _ANALYSIS_CACHE_LOCK:
         cached = _ANALYSIS_CACHE.get(signature)
         if cached is not None:
-            out = dict(cached)
-            timings = dict(out.get("timings_ms") or {})
-            timings["cache_hit"] = True
-            out["timings_ms"] = timings
-            return out
+            return _with_cache_hit(cached)
 
-    with _ANALYSIS_LOCK:
+    with _sig_lock(signature):
         with _ANALYSIS_CACHE_LOCK:
             cached = _ANALYSIS_CACHE.get(signature)
             if cached is not None:
-                out = dict(cached)
-                timings = dict(out.get("timings_ms") or {})
-                timings["cache_hit"] = True
-                out["timings_ms"] = timings
-                return out
+                return _with_cache_hit(cached)
 
         started = time.perf_counter()
-        handles = _load_state_handles(pairs_raw)
-        state = _merge_states(handles)
-        loaded = time.perf_counter()
-        base_cfg = _cfg()
-        selected_cfg = _config_for_pairs(base_cfg, pairs_raw)
-        context = _analysis_context(state, selected_cfg)
-        indexed = time.perf_counter()
-        scopes = {h.get("safe") for h in handles if h.get("safe")}
-        allowed = set(x for x in scopes if isinstance(x, str) and x) or None
-        problems = _problems(state, allowed, cfg=selected_cfg, ctx=context)
-        analyzed = time.perf_counter()
+        state, context, allowed, selected_cfg, st_tim = _load_analysis_state(pairs_raw)
+        inner: dict[str, Any] = {}
+        problems = _problems(state, allowed, cfg=selected_cfg, ctx=context, include_system=include_system, include_hints=include_hints, timings=inner)
+        t_after_problems = time.perf_counter()
         stats = _pair_stats(state, selected_cfg, context)
+        t_after_stats = time.perf_counter()
         exclusions = _pair_exclusions(state, selected_cfg, context)
         completed = time.perf_counter()
         timings = {
-            "state_load": round((loaded - started) * 1000, 1),
-            "index": round((indexed - loaded) * 1000, 1),
-            "problems": round((analyzed - indexed) * 1000, 1),
-            "summaries": round((completed - analyzed) * 1000, 1),
+            "state_load": st_tim.get("state_load", 0.0),
+            "index_build": st_tim.get("index_build", 0.0),
+            "missing_peer_scan": inner.get("missing_peer_scan", 0.0),
+            "missing_peer_hints": inner.get("missing_peer_hints", 0.0),
+            "system_diagnostics": inner.get("system_diagnostics", 0.0),
+            "pair_stats": round((t_after_stats - t_after_problems) * 1000, 1),
+            "pair_exclusions": round((completed - t_after_stats) * 1000, 1),
             "total": round((completed - started) * 1000, 1),
             "cache_hit": False,
         }
@@ -3149,34 +3458,88 @@ def _cached_analysis(pairs_raw: str | None) -> dict[str, Any]:
             "timings_ms": timings,
         }
         _LOG.info(
-            "analyzer_complete pairs=%s items=%s problems=%s total_ms=%s",
+            "analyzer_complete pairs=%s scanned=%s problems=%s system=%s hints=%s cache_hit=False timings=%s",
             ",".join(_parse_pairs_raw(pairs_raw)) or "all",
             sum(v.get("total", 0) for v in _counts(state).values()),
             len(problems),
-            timings["total"],
+            include_system,
+            include_hints,
+            timings,
         )
         with _ANALYSIS_CACHE_LOCK:
-            _ANALYSIS_CACHE.clear()
+            if len(_ANALYSIS_CACHE) > 8:
+                _ANALYSIS_CACHE.clear()
             _ANALYSIS_CACHE[signature] = result
         return dict(result)
+
+
+def _cached_system() -> dict[str, Any]:
+    signature = _state_signature(None)
+    with _SYSTEM_CACHE_LOCK:
+        cached = _SYSTEM_CACHE.get(signature)
+        if cached is not None:
+            return _with_cache_hit(cached)
+
+    with _sig_lock(("system",) + signature):
+        with _SYSTEM_CACHE_LOCK:
+            cached = _SYSTEM_CACHE.get(signature)
+            if cached is not None:
+                return _with_cache_hit(cached)
+        started = time.perf_counter()
+        try:
+            probs = _system_diagnostics()
+        except Exception as exc:
+            probs = [_problem("error", "analyzer_system_diagnostics_failed", "Analyzer system diagnostics failed.", error=f"{type(exc).__name__}: {exc}")]
+        elapsed = round((time.perf_counter() - started) * 1000, 1)
+        result = {
+            "problems": sorted(probs, key=_problem_sort_key),
+            "timings_ms": {"system_diagnostics": elapsed, "total": elapsed, "cache_hit": False},
+        }
+        _LOG.info("analyzer_system problems=%s total_ms=%s", len(result["problems"]), elapsed)
+        with _SYSTEM_CACHE_LOCK:
+            _SYSTEM_CACHE.clear()
+            _SYSTEM_CACHE[signature] = result
+        return dict(result)
+
+
+def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: str) -> dict[str, Any]:
+    state, context, allowed, _cfg_sel, _tim = _load_analysis_state(pairs_raw)
+    prov_key = _norm_prov_token(provider)
+    feat_key = str(feature or "").lower()
+    b = _bucket(state, provider, feature)
+    it = b.get(key) if isinstance(b, dict) else None
+    if not isinstance(it, dict):
+        return {"targets": [], "hints": [], "target_show_info": []}
+
+    missing_targets = _missing_targets(context, prov_key, feat_key, key, it)
+    vv = dict(it)
+    vv["_key"] = key
+    alias_keys = _alias_keys(vv)
+
+    manual_blocks = _manual_add_blocks(_load_manual_state())
+    blocks = manual_blocks.get((prov_key, feat_key))
+    blocked = bool(blocks and any(kk in blocks for kk in [key, *alias_keys]))
+
+    hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked)
+    details = _missing_peer_show_hints(feat_key, it, missing_targets, context.history_show_index)
+    if blocked:
+        details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + details)
+    return {"targets": missing_targets, "hints": hints, "target_show_info": details}
 
 @router.get("/analyzer/state", response_class=JSONResponse)
 def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250) -> dict[str, Any]:
     try:
-        handles = _load_state_handles(pairs)
-        s = _merge_states(handles)
+        items, counts = _cached_scoped_rows(pairs)
     except HTTPException as e:
         if e.status_code == 404:
-            s = {}
+            items, counts = [], {}
         else:
             raise
-    selected_cfg = _config_for_pairs(_cfg(), pairs)
-    items = _scoped_item_rows(s, selected_cfg)
     start = max(0, int(offset or 0))
     page_size = max(0, min(int(limit or 0), 500))
     page = items[start : start + page_size] if page_size else []
     return {
-        "counts": _counts_from_rows(items),
+        "counts": counts,
         "items": page,
         "total": len(items),
         "offset": start,
@@ -3186,8 +3549,39 @@ def api_state(pairs: str | None = None, offset: int = 0, limit: int = 250) -> di
 
 
 @router.get("/analyzer/problems", response_class=JSONResponse)
-def api_problems(pairs: str | None = None) -> dict[str, Any]:
-    return _cached_analysis(pairs)
+def api_problems(pairs: str | None = None, include_system: bool = False, include_hints: bool = False) -> dict[str, Any]:
+    return _cached_analysis(pairs, include_system=include_system, include_hints=include_hints)
+
+
+@router.get("/analyzer/system", response_class=JSONResponse)
+def api_system(pairs: str | None = None) -> dict[str, Any]:
+    return _cached_system()
+
+
+@router.get("/analyzer/pair-activity", response_class=JSONResponse)
+def api_pair_activity() -> dict[str, Any]:
+    cfg = _cfg()
+    out: list[dict[str, Any]] = []
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, dict):
+            continue
+        pid = str(pair.get("id") or "").strip()
+        if not pid:
+            continue
+        path = _pick_existing(_state_candidates(_safe_scope_for_pair(pair)))
+        mtime = 0
+        if path is not None:
+            try:
+                mtime = int(path.stat().st_mtime_ns)
+            except OSError:
+                mtime = 0
+        out.append({"id": pid, "last_run_ns": mtime})
+    return {"pairs": out}
+
+
+@router.get("/analyzer/detail", response_class=JSONResponse)
+def api_detail(provider: str, feature: str, key: str, pairs: str | None = None) -> dict[str, Any]:
+    return _detail_for_item(pairs, provider, feature, key)
 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
