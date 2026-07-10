@@ -35,10 +35,6 @@ URL_ADD = f"{BASE}/sync/ratings"
 URL_REMOVE = f"{BASE}/sync/ratings/remove"
 
 
-def _unresolved_path() -> str:
-    return str(state_file("simkl_ratings.unresolved.json"))
-
-
 def _shadow_path() -> str:
     return str(state_file("simkl.ratings.shadow.json"))
 
@@ -147,64 +143,6 @@ def _load_json(path: str) -> dict[str, Any]:
 
 def _save_json(path: str, data: Mapping[str, Any]) -> None:
     save_json_state(path, data)
-
-
-def _load_unresolved() -> dict[str, Any]:
-    data = _load_json(_unresolved_path())
-    if not isinstance(data, dict):
-        return {}
-    cleaned = False
-    for k in list(data.keys()):
-        if _is_unknown_key(k):
-            data.pop(k, None)
-            cleaned = True
-    if cleaned:
-        _save_json(_unresolved_path(), data)
-    return data
-
-
-def _save_unresolved(data: Mapping[str, Any]) -> None:
-    _save_json(_unresolved_path(), data)
-
-
-def _is_frozen(item: Mapping[str, Any]) -> bool:
-    key = simkl_key_of(id_minimal(dict(item)))
-    return key in _load_unresolved()
-
-
-def _freeze(
-    item: Mapping[str, Any],
-    *,
-    action: str,
-    reasons: list[str],
-    ids_sent: Mapping[str, Any],
-    rating: int | None,
-) -> None:
-    key = simkl_key_of(id_minimal(dict(item)))
-    if _is_unknown_key(key):
-        return
-    data = _load_unresolved()
-    row = data.get(key) or {"feature": "ratings", "action": action, "first_seen": _now(), "attempts": 0}
-    row.update({"item": id_minimal(dict(item)), "last_attempt": _now()})
-    existing_reasons: list[str] = list(row.get("reasons", [])) if isinstance(row.get("reasons"), list) else []
-    row["reasons"] = sorted(set(existing_reasons) | set(reasons or []))
-    row["ids_sent"] = dict(ids_sent or {})
-    if rating is not None:
-        row["rating"] = int(rating)
-    row["attempts"] = int(row.get("attempts", 0)) + 1
-    data[key] = row
-    _save_unresolved(data)
-
-
-def _unfreeze_if_present(keys: Iterable[str]) -> None:
-    data = _load_unresolved()
-    changed = False
-    for k in set(keys or []):
-        if k in data:
-            del data[k]
-            changed = True
-    if changed:
-        _save_unresolved(data)
 
 
 def _rshadow_load() -> dict[str, Any]:
@@ -602,7 +540,6 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
                     prog.done(ok=True, total=len(out))
                 except Exception:
                     pass
-            _unfreeze_if_present(thaw)
             try:
                 _rshadow_put_all(out.values())
             except Exception as exc:
@@ -776,7 +713,6 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
     if latest_any is not None:
         update_watermark_if_new("ratings", _as_iso(latest_any))
 
-    _unfreeze_if_present(thaw)
     try:
         _rshadow_replace_all(out.values())
     except Exception as exc:
@@ -921,9 +857,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 unresolved.append({"item": mini, "hint": "missing_or_invalid_type"})
                 continue
 
-            if _is_frozen(it):
-                continue
-
             if typ == "movie" and group == "movies":
                 ent = _movie_entry_add(it)
                 if ent:
@@ -992,7 +925,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     simkl_key_of(id_minimal(dict(item)))
                     for item in confirmed
                 }
-                _unfreeze_if_present(confirmed_keys)
                 ok += len(confirmed)
                 try:
                     _rshadow_put_all(
@@ -1003,25 +935,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 except Exception as exc:
                     _warn("cache_save_failed", cache="shadow", op="add", error=str(exc))
                 for item in rejected:
-                    ids = _ids_of(item)
-                    rating = _norm_rating(item.get("rating"))
                     unresolved.append({"item": id_minimal(dict(item)), "hint": "simkl_not_found"})
-                    if ids and rating is not None:
-                        _freeze(item, action="add", reasons=["not_found"], ids_sent=ids, rating=rating)
             else:
                 _warn("write_failed", op="add", status=resp.status_code, body=(resp.text or '')[:180])
                 for it in attempted:
-                    ids = _ids_of(it)
-                    rating = _norm_rating(it.get("rating"))
-                    if ids and rating is not None:
-                        _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
+                    unresolved.append({"item": id_minimal(dict(it)), "hint": "write_failed"})
         except Exception as exc:
             _warn("write_failed", op="add", error=str(exc))
             for it in attempted:
-                ids = _ids_of(it)
-                rating = _norm_rating(it.get("rating"))
-                if ids and rating is not None:
-                    _freeze(it, action="add", reasons=["write_failed"], ids_sent=ids, rating=rating)
+                unresolved.append({"item": id_minimal(dict(it)), "hint": "write_failed"})
 
     _info("write_done", op="add", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
     return ok, unresolved
@@ -1048,9 +970,6 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             key = simkl_key_of(mini)
             if _is_unknown_key(key):
                 unresolved.append({"item": mini, "hint": "missing_identity"})
-                continue
-
-            if _is_frozen(it):
                 continue
 
             ids = _ids_of(it) or _show_ids_of_episode(it)
@@ -1103,7 +1022,6 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     simkl_key_of(id_minimal(dict(item)))
                     for item in confirmed
                 }
-                _unfreeze_if_present(confirmed_keys)
                 try:
                     sh = _rshadow_load()
                     store: dict[str, Any] = dict(sh.get("items") or {})
@@ -1119,19 +1037,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     pass
                 ok += len(confirmed)
                 for item in rejected:
-                    ids = _ids_of(item) or _show_ids_of_episode(item)
                     unresolved.append({"item": id_minimal(dict(item)), "hint": "simkl_not_found"})
-                    if ids:
-                        _freeze(item, action="remove", reasons=["not_found"], ids_sent=ids, rating=None)
                 continue
             _warn("write_failed", op="remove", status=resp.status_code, body=(resp.text or '')[:180])
         except Exception as exc:
             _warn("write_failed", op="remove", error=str(exc))
 
         for it in attempted:
-            ids = _ids_of(it) or _show_ids_of_episode(it)
-            if ids:
-                _freeze(it, action="remove", reasons=["write_failed"], ids_sent=ids, rating=None)
+            unresolved.append({"item": id_minimal(dict(it)), "hint": "write_failed"})
 
     _info("write_done", op="remove", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
     return ok, unresolved
