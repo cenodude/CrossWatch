@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import time
 from typing import Any
@@ -160,8 +161,19 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
 
     # one sync run with its pair/feature jobs and health checks
     if types & {"sync_run_started", "sync_run_finished"}:
-        pairs = sum(1 for e in events if e.get("event_type") == "plan_created")
-        tail = f", {pairs} pairs" if pairs else ""
+        plan_events = [e for e in events if e.get("event_type") == "plan_created"]
+        pair_keys = {str(e.get("pair_key") or "").strip().upper() for e in plan_events}
+        pair_keys.discard("")
+        pairs = len(pair_keys) or len(plan_events)
+        feats: list[str] = []
+        for e in plan_events:
+            fe = str(e.get("feature") or "").strip().lower()
+            if fe and fe not in feats:
+                feats.append(fe)
+        feat_disp = ", ".join(f.title() for f in feats)
+        tail = f", {pairs} {'pair' if pairs == 1 else 'pairs'}" if pairs else ""
+        if tail and feat_disp:
+            tail += f" ({feat_disp})"
         if "sync_run_finished" in types:
             fin = next((e for e in reversed(events) if e.get("event_type") == "sync_run_finished"), last)
             d = _detail(fin)
@@ -427,6 +439,15 @@ def _vis_clause(visibility: str | None) -> str | None:
     return "g.acknowledged_at IS NULL"
 
 
+def _event_vis_clause(visibility: str | None) -> str | None:
+    v = str(visibility or "open").strip().lower()
+    if v == "all":
+        return None
+    if v == "acknowledged":
+        return "(e.acknowledged_at IS NOT NULL OR EXISTS (SELECT 1 FROM event_groups eg WHERE eg.id=e.group_id AND eg.acknowledged_at IS NOT NULL))"
+    return "e.acknowledged_at IS NULL AND NOT EXISTS (SELECT 1 FROM event_groups eg WHERE eg.id=e.group_id AND eg.acknowledged_at IS NOT NULL)"
+
+
 _CATEGORY_STATUS = {
     "successful": ("resolved", "completed"),
     "problems": ("failed", "blackboxed", "unresolved"),
@@ -450,6 +471,8 @@ def list_groups(
     item_key: str | None = None,
     run_id: str | None = None,
     reason_code: str | None = None,
+    operation: str | None = None,
+    top_level_only: bool = False,
     since: int | None = None,
     until: int | None = None,
     order: str | None = "newest",
@@ -483,6 +506,17 @@ def list_groups(
     eq("destination_provider", destination_provider, up=True)
     eq("source_provider", source_provider, up=True)
     eq("reason_code", reason_code)
+    eq("operation", operation)
+
+    if top_level_only:
+        clauses.append(
+            "(g.operation='run' OR g.item_key IS NULL OR g.item_key='' OR NOT EXISTS ("
+            "SELECT 1 FROM events pe JOIN event_groups rg "
+            "ON rg.operation='run' AND pe.created_at>=rg.first_event_at AND pe.created_at<=rg.last_event_at "
+            "WHERE pe.group_id=g.id AND pe.event_type IN "
+            "('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked')"
+            "))"
+        )
 
     if provider:
         p = provider.upper()
@@ -491,17 +525,25 @@ def list_groups(
 
     if q:
         like = f"%{q}%"
+        evc = _event_vis_clause(visibility)
+        event_where = "e.title LIKE ? OR e.item_key LIKE ? OR e.reason LIKE ? OR e.reason_code LIKE ?"
+        if evc:
+            event_where = f"({event_where}) AND {evc}"
         clauses.append(
             "(g.summary LIKE ? OR g.title LIKE ? OR g.item_key LIKE ? OR g.reason LIKE ? OR g.reason_code LIKE ? "
-            "OR g.id IN (SELECT group_id FROM events WHERE title LIKE ? OR item_key LIKE ? OR reason LIKE ? OR reason_code LIKE ?))"
+            f"OR g.id IN (SELECT e.group_id FROM events e WHERE e.group_id IS NOT NULL AND {event_where}))"
         )
         params.extend([like] * 9)
 
     if event_type:
-        clauses.append("g.id IN (SELECT group_id FROM events WHERE event_type=?)")
+        evc = _event_vis_clause(visibility)
+        suffix = f" AND {evc}" if evc else ""
+        clauses.append(f"g.id IN (SELECT e.group_id FROM events e WHERE e.group_id IS NOT NULL AND e.event_type=?{suffix})")
         params.append(event_type)
     if run_id:
-        clauses.append("g.id IN (SELECT group_id FROM events WHERE run_id=?)")
+        evc = _event_vis_clause(visibility)
+        suffix = f" AND {evc}" if evc else ""
+        clauses.append(f"g.id IN (SELECT e.group_id FROM events e WHERE e.group_id IS NOT NULL AND e.run_id=?{suffix})")
         params.append(run_id)
 
     if since not in (None, ""):
@@ -524,7 +566,7 @@ def list_groups(
     # hide health-only groups 
     explicit = str(visibility or "").strip().lower() == "all" or any(v not in (None, "") for v in (
         q, status, category, event_type, provider, origin_provider,
-        destination_provider, source_provider, feature, pair_key, item_key, run_id, reason_code,
+        destination_provider, source_provider, feature, pair_key, item_key, run_id, reason_code, operation,
     ))
     if not explicit:
         clauses.append(
@@ -582,13 +624,15 @@ def group_events(group_id: Any, *, order: str | None = "asc", limit: int = 500, 
     return {"items": [dict(r) for r in rows], "total": total, "limit": lim, "offset": off}
 
 
-def run_problem_items(run_id: Any, since: Any = None, until: Any = None, *, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
-    """Item threads that had a failure/unresolved/blackbox event during this run.
-
-    Matches on run_id when present, but also on the run's time window: imported
-    events carry a report-derived run_id that differs from the live run's id, so
-    the window is the reliable link between a run and its problem items.
-    """
+def run_problem_items(
+    run_id: Any,
+    since: Any = None,
+    until: Any = None,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
     c = conn or get_conn()
     rid = str(run_id or "").strip()
     match: list[str] = []
@@ -600,31 +644,268 @@ def run_problem_items(run_id: Any, since: Any = None, until: Any = None, *, conn
         match.append("(created_at >= ? AND created_at <= ?)")
         params.extend([int(since), int(until)])
     if c is None or not match:
-        return {"items": []}
+        return {"items": [], "total": 0, "limit": limit, "offset": max(0, int(offset or 0))}
+    off = max(0, int(offset or 0))
+    lim = None if limit is None else max(1, min(int(limit or 100), 500))
+    base_sql = (
+        f"FROM event_groups g "
+        "WHERE g.item_key IS NOT NULL AND g.item_key <> '' AND g.id IN ("
+        "  SELECT DISTINCT group_id FROM events WHERE group_id IS NOT NULL "
+        "  AND event_type IN ('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked') "
+        f"  AND ({' OR '.join(match)})"
+        ")"
+    )
     try:
+        total = int(c.execute(f"SELECT COUNT(*) {base_sql}", params).fetchone()[0])
+        sql = (
+            f"SELECT {','.join('g.' + col for col in _GROUP_COLUMNS)} {base_sql} "
+            "ORDER BY g.last_event_at DESC, g.id DESC"
+        )
+        row_params = list(params)
+        if lim is not None:
+            sql += " LIMIT ? OFFSET ?"
+            row_params.extend([lim, off])
         rows = c.execute(
-            f"SELECT {','.join('g.' + col for col in _GROUP_COLUMNS)} FROM event_groups g "
-            "WHERE g.item_key IS NOT NULL AND g.item_key <> '' AND g.id IN ("
-            "  SELECT DISTINCT group_id FROM events WHERE group_id IS NOT NULL "
-            "  AND event_type IN ('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked') "
-            f"  AND ({' OR '.join(match)})"
-            ") ORDER BY g.last_event_at DESC, g.id DESC",
-            params,
+            sql,
+            row_params,
         ).fetchall()
     except Exception as exc:
         _LOG.warning("run problem items failed: %s", exc)
-        return {"items": []}
-    return {"items": [dict(r) for r in rows]}
+        return {"items": [], "total": 0, "limit": lim if lim is not None else limit, "offset": off}
+    return {"items": [dict(r) for r in rows], "total": total, "limit": lim if lim is not None else total, "offset": off}
+
+
+def _run_children_bulk(
+    runs: list[dict[str, Any]],
+    item_ids: set[Any],
+    *,
+    conn: sqlite3.Connection,
+) -> dict[Any, list[Any]]:
+    out: dict[Any, list[Any]] = {r.get("id"): [] for r in runs}
+    windows: list[tuple[Any, int, int]] = []
+    for run in runs:
+        first_event_at = run.get("first_event_at")
+        last_event_at = run.get("last_event_at")
+        if first_event_at is None or last_event_at is None:
+            continue
+        try:
+            windows.append((run.get("id"), int(first_event_at), int(last_event_at)))
+        except (TypeError, ValueError):
+            continue
+    ids = [int(x) for x in item_ids if x not in (None, "")]
+    if not windows or not ids:
+        return out
+
+    lo = min(x[1] for x in windows)
+    hi = max(x[2] for x in windows)
+    seen: dict[Any, set[Any]] = {run_id: set() for run_id, _, _ in windows}
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT group_id, created_at FROM events "
+            f"WHERE group_id IN ({','.join('?' for _ in ids)}) "
+            "AND event_type IN ('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked') "
+            "AND created_at>=? AND created_at<=? ORDER BY created_at DESC, group_id DESC",
+            [*ids, lo, hi],
+        ).fetchall()
+    except Exception as exc:
+        _LOG.warning("bulk run children failed: %s", exc)
+        return out
+
+    for row in rows:
+        group_id = row["group_id"]
+        created_at = int(row["created_at"] or 0)
+        for run_id, since, until in windows:
+            if since <= created_at <= until and group_id not in seen[run_id]:
+                seen[run_id].add(group_id)
+                out[run_id].append(group_id)
+    return out
+
+
+def _run_child_groups_bulk(
+    runs: list[dict[str, Any]],
+    *,
+    visibility: str | None,
+    conn: sqlite3.Connection,
+) -> dict[Any, list[dict[str, Any]]]:
+    """Load all visible problem children for the current run-parent page."""
+    out: dict[Any, list[dict[str, Any]]] = {r.get("id"): [] for r in runs}
+    windows: list[tuple[Any, int, int]] = []
+    for run in runs:
+        first_event_at = run.get("first_event_at")
+        last_event_at = run.get("last_event_at")
+        if first_event_at is None or last_event_at is None:
+            continue
+        try:
+            windows.append((run.get("id"), int(first_event_at), int(last_event_at)))
+        except (TypeError, ValueError):
+            continue
+    if not windows:
+        return out
+    lo = min(x[1] for x in windows)
+    hi = max(x[2] for x in windows)
+    vis = _vis_clause(visibility)
+    vis_sql = f" AND {vis}" if vis else ""
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT {','.join('g.' + col for col in _GROUP_COLUMNS)}, e.created_at AS problem_at "
+            "FROM events e JOIN event_groups g ON g.id=e.group_id "
+            "WHERE g.item_key IS NOT NULL AND g.item_key<>'' "
+            "AND e.event_type IN ('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked') "
+            f"AND e.created_at>=? AND e.created_at<=?{vis_sql} "
+            "ORDER BY g.last_event_at DESC, g.id DESC",
+            (lo, hi),
+        ).fetchall()
+    except Exception as exc:
+        _LOG.warning("bulk run child groups failed: %s", exc)
+        return out
+    seen: dict[Any, set[Any]] = {run_id: set() for run_id, _, _ in windows}
+    for row in rows:
+        group_id = row["id"]
+        problem_at = int(row["problem_at"] or 0)
+        group = {col: row[col] for col in _GROUP_COLUMNS}
+        for run_id, since, until in windows:
+            if since <= problem_at <= until and group_id not in seen[run_id]:
+                seen[run_id].add(group_id)
+                out[run_id].append(group)
+    return out
+
+
+def _run_child_counts_bulk(
+    runs: list[dict[str, Any]],
+    *,
+    visibility: str | None,
+    conn: sqlite3.Connection,
+) -> dict[Any, int]:
+    out: dict[Any, int] = {r.get("id"): 0 for r in runs}
+    windows: list[tuple[Any, int, int]] = []
+    for run in runs:
+        first_event_at = run.get("first_event_at")
+        last_event_at = run.get("last_event_at")
+        if first_event_at is None or last_event_at is None:
+            continue
+        try:
+            windows.append((run.get("id"), int(first_event_at), int(last_event_at)))
+        except (TypeError, ValueError):
+            continue
+    if not windows:
+        return out
+    lo = min(x[1] for x in windows)
+    hi = max(x[2] for x in windows)
+    vis = _vis_clause(visibility)
+    vis_sql = f" AND {vis}" if vis else ""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT g.id AS group_id, e.created_at AS problem_at "
+            "FROM events e JOIN event_groups g ON g.id=e.group_id "
+            "WHERE g.item_key IS NOT NULL AND g.item_key<>'' "
+            "AND e.event_type IN ('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked') "
+            f"AND e.created_at>=? AND e.created_at<=?{vis_sql} "
+            "ORDER BY e.created_at DESC, g.id DESC",
+            (lo, hi),
+        ).fetchall()
+    except Exception as exc:
+        _LOG.warning("bulk run child counts failed: %s", exc)
+        return out
+    seen: dict[Any, set[Any]] = {run_id: set() for run_id, _, _ in windows}
+    for row in rows:
+        group_id = row["group_id"]
+        problem_at = int(row["problem_at"] or 0)
+        for run_id, since, until in windows:
+            if since <= problem_at <= until and group_id not in seen[run_id]:
+                seen[run_id].add(group_id)
+    for run_id, ids in seen.items():
+        out[run_id] = len(ids)
+    return out
+
+
+def _run_problem_status_counts_bulk(
+    runs: list[dict[str, Any]],
+    *,
+    conn: sqlite3.Connection,
+) -> dict[Any, dict[str, int]]:
+    """Count unique problem groups by status for every visible run."""
+    windows: list[tuple[Any, int, int]] = []
+    for run in runs:
+        first_event_at = run.get("first_event_at")
+        last_event_at = run.get("last_event_at")
+        if first_event_at is None or last_event_at is None:
+            continue
+        try:
+            windows.append((run.get("id"), int(first_event_at), int(last_event_at)))
+        except (TypeError, ValueError):
+            continue
+    out: dict[Any, dict[str, int]] = {run_id: {} for run_id, _, _ in windows}
+    if not windows:
+        return out
+    lo = min(x[1] for x in windows)
+    hi = max(x[2] for x in windows)
+    matched: dict[Any, dict[str, set[Any]]] = {run_id: {} for run_id, _, _ in windows}
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT e.group_id, e.created_at FROM events e "
+            "WHERE e.group_id IS NOT NULL "
+            "AND e.event_type IN ('blackbox_promoted','blackbox_blocked') "
+            "AND e.created_at>=? AND e.created_at<=?",
+            (lo, hi),
+        ).fetchall()
+    except Exception as exc:
+        _LOG.warning("bulk run status counts failed: %s", exc)
+        return out
+    for row in rows:
+        group_id = row["group_id"]
+        created_at = int(row["created_at"] or 0)
+        for run_id, since, until in windows:
+            if since <= created_at <= until:
+                matched[run_id].setdefault("blackboxed", set()).add(group_id)
+    for run_id, statuses in matched.items():
+        out[run_id] = {status: len(group_ids) for status, group_ids in statuses.items()}
+    return out
 
 
 def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
-              conn: sqlite3.Connection | None = None, **filters: Any) -> dict[str, Any]:
+              include_children: bool = True, conn: sqlite3.Connection | None = None, **filters: Any) -> dict[str, Any]:
     """Grouped list as a tree: run threads are parents, the item threads that had
     a problem during each run are nested as `children`; items owned by a run are
     lifted out of the top level. Standalone item threads stay at the top level."""
     c = conn or get_conn()
     if c is None:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
+    visibility = filters.get("visibility", "open")
+    active_filters = any(
+        value not in (None, "")
+        for key, value in filters.items()
+        if key != "visibility"
+    )
+    if not active_filters:
+        parent_page = list_groups(
+            order=order,
+            limit=limit,
+            offset=offset,
+            conn=c,
+            visibility=visibility,
+            top_level_only=True,
+        )
+        top = parent_page.get("items") or []
+        runs = [g for g in top if str(g.get("operation") or "") == "run"]
+        children_by_run = _run_child_groups_bulk(runs, visibility=visibility, conn=c) if include_children else {}
+        child_counts_by_run = _run_child_counts_bulk(runs, visibility=visibility, conn=c) if not include_children else {}
+        status_counts_by_run = _run_problem_status_counts_bulk(runs, conn=c)
+        for run in runs:
+            children = children_by_run.get(run.get("id"), [])
+            run["children"] = children[:500] if include_children else []
+            run["children_total"] = len(children) if include_children else int(child_counts_by_run.get(run.get("id")) or 0)
+            blackboxed = int((status_counts_by_run.get(run.get("id")) or {}).get("blackboxed") or 0)
+            summary = str(run.get("summary") or "")
+            if blackboxed and "blackboxed" not in summary.lower():
+                pair_suffix = re.search(r", \d+ pairs?(?: \([^)]*\))?$", summary)
+                insert_at = pair_suffix.start() if pair_suffix else len(summary)
+                run["summary"] = f"{summary[:insert_at]}, {blackboxed} blackboxed{summary[insert_at:]}"
+        return {
+            "items": top,
+            "total": int(parent_page.get("total") or 0),
+            "limit": int(parent_page.get("limit") or limit),
+            "offset": int(parent_page.get("offset") or offset),
+        }
     flat = list_groups(order=order, limit=2000, offset=0, conn=c, **filters).get("items") or []
     runs: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
@@ -638,10 +919,18 @@ def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
             others.append(g)
     items_by_id = {g["id"]: g for g in items}
     owned: set[Any] = set()
+    children_by_run = _run_children_bulk(runs, set(items_by_id), conn=c)
+    status_counts_by_run = _run_problem_status_counts_bulk(runs, conn=c)
     for r in runs:
-        res = run_problem_items(None, r.get("first_event_at"), r.get("last_event_at"), conn=c).get("items") or []
-        kids = [items_by_id[x["id"]] for x in res if x["id"] in items_by_id]
+        kids = [items_by_id[x] for x in children_by_run.get(r.get("id"), []) if x in items_by_id]
+        kids.sort(key=lambda g: (int(g.get("last_event_at") or 0), int(g.get("id") or 0)), reverse=True)
         r["children"] = kids
+        blackboxed = int((status_counts_by_run.get(r.get("id")) or {}).get("blackboxed") or 0)
+        summary = str(r.get("summary") or "")
+        if blackboxed and "blackboxed" not in summary.lower():
+            pair_suffix = re.search(r", \d+ pairs?$", summary)
+            insert_at = pair_suffix.start() if pair_suffix else len(summary)
+            r["summary"] = f"{summary[:insert_at]}, {blackboxed} blackboxed{summary[insert_at:]}"
         owned.update(k["id"] for k in kids)
     top = runs + [g for g in items if g["id"] not in owned] + others
     rev = str(order or "newest").strip().lower() not in ("oldest", "asc")

@@ -13,10 +13,90 @@ import datetime as _dt
 def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -> None:
     try:
         prom = set((bb_res or {}).get("promoted_keys") or [])
-        items = [{"key": k, "item": key2item.get(k), "promoted": k in prom, "reason": "apply:add:failed"} for k in keys]
-        emit("archive:item_failures", provider=provider, feature=feature, pair=pair, op="add", items=items)
+        all_keys = [k for k in (keys or [])]
+        total = len(all_keys)
+        unresolved_reasons = load_unresolved_map(provider, feature, cross_features=False)
+
+        def _reason_for_key(k: str) -> str:
+            from_state = unresolved_reasons.get(k) if isinstance(unresolved_reasons, dict) else None
+            if isinstance(from_state, Mapping):
+                reason = str(from_state.get("reason") or "").strip()
+                if reason:
+                    return reason
+            item = key2item.get(k)
+            if isinstance(item, Mapping):
+                for field in ("_cw_unresolved_hint", "hint", "reason", "error"):
+                    reason = str(item.get(field) or "").strip()
+                    if reason:
+                        return reason
+            return "apply:add:failed"
+
+        reason_counts: dict[str, int] = {}
+        for k in all_keys:
+            reason = _reason_for_key(k)
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        items = [
+            {"key": k, "item": key2item.get(k), "promoted": k in prom, "reason": _reason_for_key(k)}
+            for k in all_keys
+        ]
+        if prom:
+            reason_counts["promoted"] = len(prom & set(all_keys))
+        emit(
+            "archive:item_failures",
+            provider=provider,
+            feature=feature,
+            pair=pair,
+            op="add",
+            items=items,
+            total=total,
+            shown=len(items),
+            omitted=0,
+            reason_counts=reason_counts,
+        )
     except Exception:
         pass
+
+
+def compute_effective_add(
+    *,
+    attempted_keys,
+    prov_confirmed,
+    confirmed_keys,
+    still_unresolved,
+    skipped_keys,
+    have_exact_keys,
+    verify_after_write,
+    provider_skipped,
+) -> dict[str, Any]:
+    conf = list(confirmed_keys or [])
+    pc = int(prov_confirmed or 0)
+    if have_exact_keys:
+        pc = min(pc or len(conf), len(conf))
+    ambiguous_partial = (not have_exact_keys) and bool(provider_skipped) and bool(pc) and (pc < len(conf))
+    strict_pessimist = (not have_exact_keys) and (not verify_after_write) and bool(still_unresolved)
+    if strict_pessimist or ambiguous_partial:
+        eff = 0
+    else:
+        eff = len(conf) if (verify_after_write or have_exact_keys) else min(pc, len(conf))
+    success_keys = conf if (verify_after_write or have_exact_keys) else conf[:eff]
+    skset = set(skipped_keys or set())
+    sset = set(success_keys)
+    failed_keys = [k for k in (attempted_keys or []) if k not in sset and k not in skset]
+    return {
+        "effective": int(eff),
+        "prov_confirmed": int(pc),
+        "ambiguous_partial": bool(ambiguous_partial),
+        "success_keys": success_keys,
+        "failed_keys": failed_keys,
+    }
+
+
+def select_baseline_keys(success_keys, result) -> list:
+    presence_raw = (result or {}).get("presence_confirmed_keys")
+    if isinstance(presence_raw, list):
+        pcset = {str(x) for x in presence_raw if x}
+        return [k for k in (success_keys or []) if k in pcset]
+    return list(success_keys or [])
 
 
 from ..provider_instances import normalize_instance_id
@@ -29,14 +109,17 @@ from ..anime_mapping.service import (
 )
 from ._snapshots import (
     build_snapshots_for_feature,
+    bust_snapshot_cache,
     coerce_suspect_snapshot,
     module_checkpoint,
+    needs_post_apply_refresh,
     provider_index_semantics,
     prev_checkpoint,
+    refresh_destination_after_apply,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._unresolved import load_unresolved_keys, record_unresolved, clear_unresolved
+from ._unresolved import load_unresolved_keys, load_unresolved_map, record_unresolved, clear_unresolved
 from ._planner import diff, diff_ratings, diff_progress, _pick_rating
 from ._phantoms import PhantomGuard
 from ._tombstones import clear_items_for_feature
@@ -561,10 +644,7 @@ def run_one_way_feature(
 
     def _bust_snapshot(pname: str) -> None:
         try:
-            sc = getattr(ctx, "snap_cache", None)
-            if isinstance(sc, dict):
-                sc.pop((pname, feature), None)
-                sc.pop(pname, None)
+            bust_snapshot_cache(getattr(ctx, "snap_cache", None), pname, feature)
         except Exception:
             pass
 
@@ -1065,7 +1145,7 @@ def run_one_way_feature(
         return observed_removes
 
     if allow_removes:
-        if feature == "ratings":
+        if feature == "ratings" and remove_mode == "mirror":
             removes = list(mirror_removes or [])
             if removes:
                 removes = [it for it in removes if not _present(src_idx, src_alias, it)]
@@ -1214,6 +1294,7 @@ def run_one_way_feature(
     unresolved_new_total = 0
     dry_run_flag = bool(ctx.dry_run or sync_cfg.get("dry_run", False))
     verify_after_write = bool(sync_cfg.get("verify_after_write", False))
+    post_apply_add_res: dict[str, Any] | None = None
 
     if updates:
         if dst_down:
@@ -1335,10 +1416,8 @@ def run_one_way_feature(
             
             prov_confirmed = int((add_res or {}).get("confirmed", (add_res or {}).get("count", 0)) or 0)
             added_provider_reported = prov_confirmed
-            if have_exact_keys:
-                prov_confirmed = min(prov_confirmed or len(confirmed_keys), len(confirmed_keys))
-            
-            if not dry_run_flag and not new_unresolved and prov_confirmed == 0 and adds:
+
+            if not dry_run_flag and not new_unresolved and prov_confirmed == 0 and adds and not have_exact_keys:
                 try:
                     record_unresolved(dst, feature, adds, hint="apply:add:no_confirmations_fallback")
                     new_unresolved = set(attempted_keys)
@@ -1351,14 +1430,22 @@ def run_one_way_feature(
 
             unresolved_new_total += len(still_unresolved)
 
-            ambiguous_partial = (not have_exact_keys) and bool(res_add.get("skipped")) and prov_confirmed and (prov_confirmed < len(confirmed_keys))
+            _decision = compute_effective_add(
+                attempted_keys=attempted_keys,
+                prov_confirmed=prov_confirmed,
+                confirmed_keys=confirmed_keys,
+                still_unresolved=still_unresolved,
+                skipped_keys=skipped_keys_set,
+                have_exact_keys=have_exact_keys,
+                verify_after_write=verify_after_write,
+                provider_skipped=bool(res_add.get("skipped")),
+            )
+            prov_confirmed = _decision["prov_confirmed"]
+            added_effective = _decision["effective"]
+            ambiguous_partial = _decision["ambiguous_partial"]
+            success_keys = _decision["success_keys"]
+            failed_keys = _decision["failed_keys"]
 
-            strict_pessimist = (not have_exact_keys) and (not verify_after_write) and bool(still_unresolved)
-            if strict_pessimist or ambiguous_partial:
-                added_effective = 0
-            else:
-                added_effective = len(confirmed_keys) if (verify_after_write or have_exact_keys) else min(prov_confirmed, len(confirmed_keys))
-            
             if added_effective != prov_confirmed and not have_exact_keys:
                 dbg("apply:add:corrected", dst=dst, feature=feature,
                     provider_count=prov_confirmed, effective=added_effective,
@@ -1374,9 +1461,6 @@ def run_one_way_feature(
                     skipped_inferred=int(res_add.get("skipped_inferred", 0) or 0),
                     skip_basis=str(res_add.get("skip_basis") or "provider_keys"),
                 )
-            
-            success_keys = confirmed_keys if (verify_after_write or have_exact_keys) else confirmed_keys[:added_effective]
-            failed_keys = [k for k in attempted_keys if k not in set(success_keys) and k not in skipped_keys_set]
             try:
                 if failed_keys and not ambiguous_partial:
                     _bb = record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
@@ -1405,12 +1489,14 @@ def run_one_way_feature(
                     guard.record_success(success_keys)
             except Exception:
                 pass
-            if success_keys and not dry_run_flag:
-                for k in success_keys:
+            baseline_keys = select_baseline_keys(success_keys, add_res)
+            if baseline_keys and not dry_run_flag:
+                for k in baseline_keys:
                     v = key2item.get(k)
                     if v:
                         dst_full[k] = v
                 _bust_snapshot(dst)
+            post_apply_add_res = add_res
 
     removed_count = 0
     rem_keys_attempted: list[str] = []
@@ -1482,6 +1568,31 @@ def run_one_way_feature(
                     if k in dst_full:
                         dst_full.pop(k, None)
                 _bust_snapshot(dst)
+
+    if (not dry_run_flag) and (not dst_down) and needs_post_apply_refresh(post_apply_add_res):
+        _r = post_apply_add_res or {}
+        emit("post_apply_refresh:start", provider=dst, instance=dst_inst, feature=feature,
+             reason="accepted_not_live_confirmed",
+             accepted_keys=len(_r.get("accepted_keys") or []),
+             accepted_not_seen_live_keys=len(_r.get("accepted_not_seen_live_keys") or []),
+             presence_confirmed_keys=len(_r.get("presence_confirmed_keys") or []))
+        try:
+            refreshed = refresh_destination_after_apply(
+                ops=dst_ops, config=provider_cfg, feature=feature, provider=dst, snap_cache=ctx.snap_cache,
+            )
+        except Exception:
+            refreshed = None
+        base_update = 0
+        if refreshed:
+            for rk, rv in refreshed.items():
+                if rk not in dst_full:
+                    base_update += 1
+                dst_full[rk] = rv
+        tk = str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()
+        contains_trace = bool(tk) and any(str(k).split("@", 1)[0].lower() == tk for k in (refreshed or {}))
+        emit("post_apply_refresh:done", provider=dst, instance=dst_inst, feature=feature,
+             refreshed_count=len(refreshed or {}), first_keys=list(refreshed or {})[:10],
+             contains_trace_key=contains_trace, baseline_update_count=base_update)
 
     try:
         st = ctx.state_store.load_state() or {}

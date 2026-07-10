@@ -31,10 +31,11 @@ def _db_size(p: Path) -> int:
 def health(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     path = events_db_path()
     p = Path(str(path))
+    exists = p.exists()
     c = conn or get_conn()
     if c is None:
-        return {"ok": False, "available": False, "healthy": False, "path": str(path), "exists": p.exists()}
-    out: dict[str, Any] = {"ok": True, "available": True, "path": str(path), "exists": p.exists()}
+        return {"ok": False, "available": False, "healthy": False, "path": str(path), "exists": exists}
+    out: dict[str, Any] = {"ok": True, "available": True, "path": str(path), "exists": exists}
     try:
         integrity = str(c.execute("PRAGMA integrity_check").fetchone()[0])
         quick = str(c.execute("PRAGMA quick_check").fetchone()[0])
@@ -43,7 +44,7 @@ def health(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         jm = str(c.execute("PRAGMA journal_mode").fetchone()[0])
         st = status(conn=c)
         out.update({
-            "healthy": integrity == "ok" and quick == "ok" and not fk and ver == SCHEMA_VERSION,
+            "healthy": exists and integrity == "ok" and quick == "ok" and not fk and ver == SCHEMA_VERSION,
             "integrity": integrity,
             "quick_check": quick,
             "foreign_key_errors": len(fk),
@@ -59,6 +60,8 @@ def health(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
             "size_bytes": _db_size(p),
             "wal_size_bytes": _file_size(Path(str(p) + "-wal")),
         })
+        if not exists:
+            out["error"] = "database_file_missing"
     except Exception:
         _LOG.exception("events health check failed")
         out.update({"healthy": False, "error": "internal_error"})

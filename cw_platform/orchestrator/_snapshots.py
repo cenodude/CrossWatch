@@ -23,6 +23,82 @@ SnapIndex = dict[str, dict[str, Any]]
 SnapCache = dict[tuple[str, str, str], tuple[float, SnapIndex]]
 
 
+def bust_snapshot_cache(snap_cache: Any, provider: str, feature: str) -> None:
+    if not isinstance(snap_cache, dict):
+        return
+    prov = str(provider or "")
+    feat = str(feature or "")
+    for key in [
+        k for k in list(snap_cache.keys())
+        if isinstance(k, tuple) and len(k) == 3 and str(k[1]) == prov and str(k[2]) == feat
+    ]:
+        snap_cache.pop(key, None)
+
+
+def canonicalize_index(idx_raw: Any, *, feature: str) -> "SnapIndex":
+    canon: SnapIndex = {}
+    if isinstance(idx_raw, list):
+        for raw in idx_raw:
+            if not isinstance(raw, Mapping):
+                continue
+            item = dict(raw)
+            key = canonical_key(item)
+            if key:
+                canon[key] = item
+    elif isinstance(idx_raw, Mapping):
+        for k, raw in idx_raw.items():
+            if not isinstance(raw, Mapping):
+                continue
+            item = dict(raw)
+            computed = canonical_key(item) or ""
+            provider_key = k.split("@", 1)[0] if isinstance(k, str) and k else ""
+            key = _pick_key(provider_key, computed)
+            if key:
+                canon[key] = item
+    return _coalesce_by_shared_ids(canon, feature=feature)
+
+
+def needs_post_apply_refresh(result: Mapping[str, Any] | None) -> bool:
+    r = result or {}
+    not_seen = r.get("accepted_not_seen_live_keys") or []
+    if not_seen:
+        return True
+    accepted = r.get("accepted_keys") or []
+    presence = r.get("presence_confirmed_keys")
+    return bool(accepted) and not presence
+
+
+def refresh_destination_after_apply(
+    *,
+    ops: InventoryOps,
+    config: Mapping[str, Any],
+    feature: str,
+    provider: str,
+    snap_cache: Any,
+) -> "SnapIndex | None":
+    bust_snapshot_cache(snap_cache, provider, feature)
+    idx_raw: Any = None
+    refresher = getattr(ops, "snapshot_refresh", None)
+    if callable(refresher):
+        try:
+            idx_raw = refresher(config, feature=feature)
+        except Exception:
+            idx_raw = None
+    if idx_raw is None:
+        try:
+            idx_raw = ops.build_index(config, feature=feature)  # type: ignore[call-arg]
+        except Exception:
+            return None
+    canon = canonicalize_index(idx_raw, feature=feature)
+    try:
+        scope = pair_scope() or "unscoped"
+        if canon:
+            snap_cache[(scope, provider, feature)] = (time.time(), canon)
+    except Exception:
+        pass
+    return canon
+
+
 def provider_index_semantics(
     ops: InventoryOps,
     config: Mapping[str, Any],
@@ -626,32 +702,7 @@ def build_snapshots_for_feature(
             dbg("snapshot.failed", provider=name, feature=feature)
             raise
 
-        canon: SnapIndex = {}
-
-        if isinstance(idx_raw, list):
-            for raw in idx_raw:
-                if not isinstance(raw, Mapping):
-                    continue
-                item = dict(raw)
-                key = canonical_key(item)
-                if key:
-                    canon[key] = item
-
-        elif isinstance(idx_raw, Mapping):
-            for k, raw in idx_raw.items():
-                if not isinstance(raw, Mapping):
-                    continue
-                item = dict(raw)
-                computed = canonical_key(item) or ""
-                provider_key = k.split("@", 1)[0] if isinstance(k, str) and k else ""
-                key = _pick_key(provider_key, computed)
-                if key:
-                    canon[key] = item
-
-        else:
-            canon = {}
-
-        canon = _coalesce_by_shared_ids(canon, feature=feature)
+        canon = canonicalize_index(idx_raw, feature=feature)
         snaps[name] = canon
 
         if snap_ttl_sec > 0:

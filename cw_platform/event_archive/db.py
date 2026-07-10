@@ -72,7 +72,15 @@ def get_conn() -> sqlite3.Connection | None:
     with _LOCK:
         want = str(events_db_path())
         if _CONN is not None and _CONN_PATH == want:
-            return _CONN
+            if want == ":memory:" or Path(want).exists():
+                return _CONN
+            try:
+                _CONN.close()
+            except Exception:
+                pass
+            _CONN = None
+            _CONN_PATH = None
+            _LOG.warning("event archive database file missing; recreating %s", want)
         if _CONN is not None:
             try:
                 _CONN.close()

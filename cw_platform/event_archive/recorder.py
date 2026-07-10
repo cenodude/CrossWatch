@@ -424,7 +424,12 @@ def _item_fields(it: Mapping[str, Any]) -> dict[str, Any]:
         episode = int(episode) if episode not in (None, "") else None
     except Exception:
         episode = None
-    title = it.get("title") or it.get("series_title") or it.get("show_title") or it.get("name")
+    is_ep = str(it.get("type") or "").lower() == "episode" or (season is not None and episode is not None)
+    if is_ep:
+        title = (it.get("series_title") or it.get("show_title") or it.get("show")
+                 or it.get("grandparent_title") or it.get("title") or it.get("name"))
+    else:
+        title = it.get("title") or it.get("series_title") or it.get("show_title") or it.get("name")
     return {
         "title": str(title) if title else None,
         "year": year,

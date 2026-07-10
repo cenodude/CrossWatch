@@ -9,7 +9,7 @@ import os
 import re
 import datetime as _dt
 
-from ._pairs_oneway import _emit_item_failures
+from ._pairs_oneway import _emit_item_failures, compute_effective_add, select_baseline_keys
 
 try:
     from ._pairs_oneway import (
@@ -74,10 +74,13 @@ from ..anime_mapping.service import (
 )
 from ._snapshots import (
     build_snapshots_for_feature,
+    bust_snapshot_cache,
     coerce_suspect_snapshot,
     module_checkpoint,
+    needs_post_apply_refresh,
     provider_index_semantics,
     prev_checkpoint,
+    refresh_destination_after_apply,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
@@ -376,10 +379,7 @@ def _two_way_sync(
 
     def _bust_snapshot(pname: str) -> None:
         try:
-            sc = getattr(ctx, "snap_cache", None)
-            if isinstance(sc, dict):
-                sc.pop((pname, feature), None)
-                sc.pop(pname, None)
+            bust_snapshot_cache(getattr(ctx, "snap_cache", None), pname, feature)
         except Exception:
             pass
 
@@ -1535,6 +1535,8 @@ def _two_way_sync(
     eff_upd_B = 0
     eff_add_A = 0
     eff_add_B = 0
+    post_apply_A_res: dict[str, Any] | None = None
+    post_apply_B_res: dict[str, Any] | None = None
     unresolved_new_A_total = 0
     unresolved_new_B_total = 0
 
@@ -1674,29 +1676,34 @@ def _two_way_sync(
                 confirmed_A = [k for k in attempted_A if k not in still_unresolved_A]
 
         
-            prov_count_A = _confirmed(resA_add)
-            if have_exact_keys_A:
-                prov_count_A = min(prov_count_A or len(confirmed_A), len(confirmed_A))
-            
-            ambiguous_partial_A = False
             if verify_after_write and _apply_verify_after_write_supported(aops):
                 try:
                     unresolved_again = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
                     confirmed_A = [k for k in confirmed_A if k not in unresolved_again]
                 except Exception:
                     pass
-                eff_add_A = len(confirmed_A)
-            else:
-                ambiguous_partial_A = (not have_exact_keys_A) and bool((resA_add or {}).get("skipped")) and prov_count_A and (prov_count_A < len(confirmed_A))
-                eff_add_A = 0 if still_unresolved_A or ambiguous_partial_A else min(prov_count_A, len(confirmed_A))
-            
+
+            _decision_A = compute_effective_add(
+                attempted_keys=attempted_A,
+                prov_confirmed=_confirmed(resA_add),
+                confirmed_keys=confirmed_A,
+                still_unresolved=still_unresolved_A,
+                skipped_keys=skipped_keys_A,
+                have_exact_keys=have_exact_keys_A,
+                verify_after_write=verify_after_write,
+                provider_skipped=bool((resA_add or {}).get("skipped")),
+            )
+            prov_count_A = _decision_A["prov_confirmed"]
+            eff_add_A = _decision_A["effective"]
+            ambiguous_partial_A = _decision_A["ambiguous_partial"]
+            success_A = _decision_A["success_keys"]
+            failed_A = _decision_A["failed_keys"]
+
             if eff_add_A != prov_count_A and not have_exact_keys_A:
                 dbg("two:apply:add:corrected", dst=a, feature=feature,
                     provider_count=prov_count_A, effective=eff_add_A, newly_unresolved=len(new_unresolved_A))
-            
-            success_A = confirmed_A if (verify_after_write or have_exact_keys_A) else confirmed_A[:eff_add_A]
+
             try:
-                failed_A = [k for k in attempted_A if k not in set(success_A) and k not in skipped_keys_A]
                 if failed_A and not ambiguous_partial_A:
                     _bb_A = record_attempts(a, feature, failed_A,
                         reason="two:apply:add:failed", op="add",
@@ -1726,12 +1733,14 @@ def _two_way_sync(
             except Exception:
                 pass
             
-            if success_A and not dry_run_flag:
-                for k in success_A:
+            baseline_keys_A = select_baseline_keys(success_A, resA_add)
+            if baseline_keys_A and not dry_run_flag:
+                for k in baseline_keys_A:
                     v = k2i_A.get(k)
                     if v:
                         A_eff[k] = v
                 _bust_snapshot(a)
+            post_apply_A_res = resA_add
             emit("two:apply:add:A:done", dst=a, feature=feature,
                  count=_confirmed(resA_add),
                  attempted=int(resA_add.get("attempted", 0)),
@@ -1797,29 +1806,34 @@ def _two_way_sync(
                 confirmed_B = [k for k in attempted_B if k not in still_unresolved_B]
 
         
-            prov_count_B = _confirmed(resB_add)
-            if have_exact_keys_B:
-                prov_count_B = min(prov_count_B or len(confirmed_B), len(confirmed_B))
-            
-            ambiguous_partial_B = False
             if verify_after_write and _apply_verify_after_write_supported(bops):
                 try:
                     unresolved_again = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
                     confirmed_B = [k for k in confirmed_B if k not in unresolved_again]
                 except Exception:
                     pass
-                eff_add_B = len(confirmed_B)
-            else:
-                ambiguous_partial_B = (not have_exact_keys_B) and bool((resB_add or {}).get("skipped")) and prov_count_B and (prov_count_B < len(confirmed_B))
-                eff_add_B = 0 if still_unresolved_B or ambiguous_partial_B else min(prov_count_B, len(confirmed_B))
-            
+
+            _decision_B = compute_effective_add(
+                attempted_keys=attempted_B,
+                prov_confirmed=_confirmed(resB_add),
+                confirmed_keys=confirmed_B,
+                still_unresolved=still_unresolved_B,
+                skipped_keys=skipped_keys_B,
+                have_exact_keys=have_exact_keys_B,
+                verify_after_write=verify_after_write,
+                provider_skipped=bool((resB_add or {}).get("skipped")),
+            )
+            prov_count_B = _decision_B["prov_confirmed"]
+            eff_add_B = _decision_B["effective"]
+            ambiguous_partial_B = _decision_B["ambiguous_partial"]
+            success_B = _decision_B["success_keys"]
+            failed_B = _decision_B["failed_keys"]
+
             if eff_add_B != prov_count_B and not have_exact_keys_B:
                 dbg("two:apply:add:corrected", dst=b, feature=feature,
                     provider_count=prov_count_B, effective=eff_add_B, newly_unresolved=len(new_unresolved_B))
-            
-            success_B = confirmed_B if (verify_after_write or have_exact_keys_B) else confirmed_B[:eff_add_B]
+
             try:
-                failed_B = [k for k in attempted_B if k not in set(success_B) and k not in skipped_keys_B]
                 if failed_B and not ambiguous_partial_B:
                     _bb_B = record_attempts(b, feature, failed_B,
                         reason="two:apply:add:failed", op="add",
@@ -1849,12 +1863,14 @@ def _two_way_sync(
             except Exception:
                 pass
             
-            if success_B and not dry_run_flag:
-                for k in success_B:
+            baseline_keys_B = select_baseline_keys(success_B, resB_add)
+            if baseline_keys_B and not dry_run_flag:
+                for k in baseline_keys_B:
                     v = k2i_B.get(k)
                     if v:
                         B_eff[k] = v
                 _bust_snapshot(b)
+            post_apply_B_res = resB_add
             emit("two:apply:add:B:done", dst=b, feature=feature,
                  count=_confirmed(resB_add),
                  attempted=int(resB_add.get("attempted", 0)),
@@ -1863,6 +1879,36 @@ def _two_way_sync(
                  unresolved=int(resB_add.get("unresolved", 0)),
                  errors=int(resB_add.get("errors", 0)),
                  result=resB_add)
+
+    def _post_apply_refresh(prov: str, inst: str, res: dict[str, Any] | None, ops: Any, eff: dict[str, Any], down: bool) -> None:
+        if dry_run_flag or down or not needs_post_apply_refresh(res):
+            return
+        r = res or {}
+        emit("post_apply_refresh:start", provider=prov, instance=inst, feature=feature,
+             reason="accepted_not_live_confirmed",
+             accepted_keys=len(r.get("accepted_keys") or []),
+             accepted_not_seen_live_keys=len(r.get("accepted_not_seen_live_keys") or []),
+             presence_confirmed_keys=len(r.get("presence_confirmed_keys") or []))
+        try:
+            refreshed = refresh_destination_after_apply(
+                ops=ops, config=provider_cfg, feature=feature, provider=prov, snap_cache=ctx.snap_cache,
+            )
+        except Exception:
+            refreshed = None
+        base_update = 0
+        if refreshed:
+            for rk, rv in refreshed.items():
+                if rk not in eff:
+                    base_update += 1
+                eff[rk] = rv
+        tk = str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()
+        contains_trace = bool(tk) and any(str(k).split("@", 1)[0].lower() == tk for k in (refreshed or {}))
+        emit("post_apply_refresh:done", provider=prov, instance=inst, feature=feature,
+             refreshed_count=len(refreshed or {}), first_keys=list(refreshed or {})[:10],
+             contains_trace_key=contains_trace, baseline_update_count=base_update)
+
+    _post_apply_refresh(a, src_inst, post_apply_A_res, aops, A_eff, a_down)
+    _post_apply_refresh(b, dst_inst, post_apply_B_res, bops, B_eff, b_down)
 
     try:
         st = ctx.state_store.load_state() or {}

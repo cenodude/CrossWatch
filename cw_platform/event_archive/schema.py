@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _CREATE_SYNC_RUNS = """
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -122,6 +122,8 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_events_pair_feature ON events(pair_key, feature)",
     "CREATE INDEX IF NOT EXISTS idx_events_item_key ON events(item_key)",
     "CREATE INDEX IF NOT EXISTS idx_events_reason_code ON events(reason_code)",
+    "CREATE INDEX IF NOT EXISTS idx_events_run_type_group ON events(run_id, event_type, group_id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_group_created_id ON events(group_id, created_at, id)",
 )
 
 _GROUP_INDEXES = (
@@ -133,6 +135,7 @@ _GROUP_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_groups_origin_provider ON event_groups(origin_provider)",
     "CREATE INDEX IF NOT EXISTS idx_groups_status ON event_groups(status)",
     "CREATE INDEX IF NOT EXISTS idx_groups_acknowledged ON event_groups(acknowledged_at)",
+    "CREATE INDEX IF NOT EXISTS idx_groups_ack_last_id ON event_groups(acknowledged_at, last_event_at, id)",
 )
 
 

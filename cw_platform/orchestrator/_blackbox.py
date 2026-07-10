@@ -150,14 +150,24 @@ def record_attempts(
     cfg: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     bb = _load_bb_cfg(cfg)
-    ts = int(time.time())
     ordered_keys, unique_keys = _normalize_keys(keys)
+    pair_scoped = bool(bb.get("pair_scoped", True))
+    scoped_pair = pair if pair_scoped else None
+    if not bool(bb.get("enabled", True)):
+        return {
+            "ok": True,
+            "count": len(ordered_keys),
+            "promoted": 0,
+            "promoted_keys": [],
+            "pair": scoped_pair or "global",
+            "disabled": True,
+        }
+
+    ts = int(time.time())
     flap_path = _flap_path(dst, feature)
     flap_data = _read_json(flap_path)
 
     promote_after = int(bb.get("promote_after", 3) or 3)
-    pair_scoped = bool(bb.get("pair_scoped", True))
-    scoped_pair = pair if pair_scoped else None
     bb_path = _bb_path(dst, feature, scoped_pair)
     bb_data = _read_json(bb_path)
 
