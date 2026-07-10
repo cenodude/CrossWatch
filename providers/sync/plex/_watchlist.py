@@ -24,7 +24,6 @@ from ._common import (
     plex_headers,
     sort_guid_candidates,
     unresolved_home_scope_not_applied,
-    unresolved_store,
     make_logger,
 )
 
@@ -32,8 +31,6 @@ from ._common import (
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from_guid
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from .. import _mod_common as mod_common
-
-_UNRES = unresolved_store("watchlist")
 
 # PMS GUID index cache (optional fallback for managed users)
 _GUID_INDEX_MOVIE: dict[str, Any] = {}
@@ -560,7 +557,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             if len(rows) < page_size or (total is not None and start >= total):
                 break
     
-        _UNRES.unfreeze(out.keys())
         _info("index_done", count=len(out), raw=raw, collections=coll, types=typ)
         return out
     finally:
@@ -608,40 +604,31 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if ck in seen:
                 continue
             seen.add(ck)
-    
-            if _UNRES.is_frozen(it):
-                _dbg("skip_frozen", title=id_minimal(it).get("title"))
-                continue
-    
+
             guids = sort_guid_candidates(candidate_guids_from_ids(it, include_raw_ids=True), priority=_guid_priority(cfg))
             libtype = _libtype_for_item(it)
             title = it.get("title")
             year = it.get("year")
             slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
-    
+
             if not (guids or title or slug):
                 unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
-                _UNRES.freeze(it, action="add", reasons=["no-external-ids"], extra={"guids_tried": guids})
                 continue
-    
+
             if pms_first and pms_enabled:
                 chosen = _pms_find_in_index(libtype, guids)
                 if chosen:
                     try:
                         chosen.addToWatchlist(account=acct)
                         ok += 1
-                        if _UNRES.is_frozen(it):
-                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "already on the watchlist" in msg:
                             ok += 1
-                            if _UNRES.is_frozen(it):
-                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("write_failed", op="add", target="pms", error=str(e))
-    
+
             rk = _discover_resolve_rating_key(
                 session,
                 token,
@@ -658,7 +645,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 cfg=cfg,
                 skip_metadata_match=_uses_anime_mapping_resolver(it),
             )
-    
+
             if rk:
                 ok_flag, status, body, transient = _discover_write_by_rk(
                     session,
@@ -671,45 +658,30 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 )
                 if ok_flag:
                     ok += 1
-                    if _UNRES.is_frozen(it):
-                        _UNRES.unfreeze([canonical_key(it)])
                     continue
                 if transient:
                     unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
                     continue
                 _warn("write_failed", op="add", target="discover", rating_key=rk, status=status, body_snippet=body)
-    
+
             if not pms_first and pms_enabled:
                 chosen = _pms_find_in_index(libtype, guids)
                 if chosen:
                     try:
                         chosen.addToWatchlist(account=acct)
                         ok += 1
-                        if _UNRES.is_frozen(it):
-                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "already on the watchlist" in msg:
                             ok += 1
-                            if _UNRES.is_frozen(it):
-                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("write_failed", op="add", target="pms", error=str(e))
                         unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                         continue
-    
+
             unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
-            _UNRES.freeze(
-                it,
-                action="add",
-                reasons=[
-                    "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
-                    *(["library:guid-index-miss"] if pms_enabled else []),
-                ],
-                extra={"guids_tried": guids},
-            )
-    
+
         _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
@@ -757,40 +729,31 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             if ck in seen:
                 continue
             seen.add(ck)
-    
-            if _UNRES.is_frozen(it):
-                _dbg("skip_frozen", title=id_minimal(it).get("title"))
-                continue
-    
+
             guids = sort_guid_candidates(candidate_guids_from_ids(it, include_raw_ids=True), priority=_guid_priority(cfg))
             libtype = _libtype_for_item(it)
             title = it.get("title")
             year = it.get("year")
             slug = (it.get("ids") or {}).get("slug") if isinstance(it.get("ids"), dict) else None
-    
+
             if not (guids or title or slug):
                 unresolved.append({"item": id_minimal(it), "hint": "no_external_ids"})
-                _UNRES.freeze(it, action="remove", reasons=["no-external-ids"], extra={"guids_tried": guids})
                 continue
-    
+
             if pms_first and pms_enabled:
                 chosen = _pms_find_in_index(libtype, guids)
                 if chosen:
                     try:
                         chosen.removeFromWatchlist(account=acct)
                         ok += 1
-                        if _UNRES.is_frozen(it):
-                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "not on the watchlist" in msg or "is not on the watchlist" in msg:
                             ok += 1
-                            if _UNRES.is_frozen(it):
-                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("write_failed", op="remove", target="pms", error=str(e))
-    
+
             rk = _discover_resolve_rating_key(
                 session,
                 token,
@@ -807,7 +770,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 cfg=cfg,
                 skip_metadata_match=_uses_anime_mapping_resolver(it),
             )
-    
+
             if rk:
                 ok_flag, status, body, transient = _discover_write_by_rk(
                     session,
@@ -820,45 +783,30 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 )
                 if ok_flag:
                     ok += 1
-                    if _UNRES.is_frozen(it):
-                        _UNRES.unfreeze([canonical_key(it)])
                     continue
                 if transient:
                     unresolved.append({"item": id_minimal(it), "hint": f"discover_transient_{status}"})
                     continue
                 _warn("write_failed", op="remove", target="discover", rating_key=rk, status=status, body_snippet=body)
-    
+
             if not pms_first and pms_enabled:
                 chosen = _pms_find_in_index(libtype, guids)
                 if chosen:
                     try:
                         chosen.removeFromWatchlist(account=acct)
                         ok += 1
-                        if _UNRES.is_frozen(it):
-                            _UNRES.unfreeze([canonical_key(it)])
                         continue
                     except Exception as e:
                         msg = str(e).lower()
                         if "not on the watchlist" in msg or "is not on the watchlist" in msg:
                             ok += 1
-                            if _UNRES.is_frozen(it):
-                                _UNRES.unfreeze([canonical_key(it)])
                             continue
                         _warn("write_failed", op="remove", target="pms", error=str(e))
                         unresolved.append({"item": id_minimal(it), "hint": "pms_transient"})
                         continue
-    
+
             unresolved.append({"item": id_minimal(it), "hint": "discover+library failed"})
-            _UNRES.freeze(
-                it,
-                action="remove",
-                reasons=[
-                    "discover:resolve-or-write-failed" if rk else "discover:resolve-empty",
-                    *(["library:guid-index-miss"] if pms_enabled else []),
-                ],
-                extra={"guids_tried": guids},
-            )
-    
+
         _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:

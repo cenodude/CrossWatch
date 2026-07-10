@@ -2024,6 +2024,8 @@ def home_scope_enter(adapter: Any) -> tuple[bool, bool, int | None, str | None]:
 def home_scope_exit(adapter: Any, did_switch: bool) -> None:
     if not did_switch:
         return
+    if getattr(adapter, "_cw_home_scope_sticky", False):
+        return
     cli = getattr(adapter, "client", None)
     if not cli:
         return
@@ -2108,81 +2110,6 @@ def force_episode_title(row: dict[str, Any]) -> None:
         row["title"] = code
 
 
-
-class UnresolvedStore:
-    def __init__(self, feature: str):
-        self.feature = str(feature or "common").strip().lower() or "common"
-
-    def path(self) -> Path:
-        return state_file(f"plex_{self.feature}.unresolved.json")
-
-    def load(self) -> dict[str, Any]:
-        return dict(read_json(self.path()) or {})
-
-    def save(self, data: Mapping[str, Any]) -> None:
-        try:
-            write_json(self.path(), data)
-        except Exception as e:
-            _warn("unresolved_save_failed", feature=self.feature, path=str(self.path()), error=str(e))
-
-    def event_key(self, item: Mapping[str, Any]) -> str:
-        try:
-            base = canonical_key(id_minimal(item)) or canonical_key(item) or ""
-        except Exception:
-            base = canonical_key(item) if "canonical_key" in globals() else ""
-        if self.feature == "history":
-            ts = as_epoch(item.get("watched_at"))
-            return f"{base}@{ts}" if (base and ts) else (base or "")
-        return base or ""
-
-    def freeze(self, item: Mapping[str, Any], *, action: str, reasons: Iterable[str], extra: Mapping[str, Any] | None = None) -> str:
-        key = self.event_key(item)
-        if not key:
-            return ""
-        data = self.load()
-        now = now_iso()
-        entry = data.get(key) or {"feature": self.feature, "action": action, "first_seen": now, "attempts": 0}
-        entry.update({"item": id_minimal(item), "last_attempt": now})
-        if self.feature == "history" and item.get("watched_at") is not None:
-            entry["watched_at"] = item.get("watched_at")
-
-        rset = set(entry.get("reasons", [])) | set([str(x) for x in (reasons or []) if x])
-        entry["reasons"] = sorted(rset)
-
-        if extra:
-            if "guids_tried" in extra:
-                cur = set(entry.get("guids_tried", []))
-                add = [str(x) for x in (extra.get("guids_tried") or []) if x]
-                cur |= set(add[:8])
-                entry["guids_tried"] = sorted(cur)
-            for k, v in extra.items():
-                if k == "guids_tried":
-                    continue
-                entry[k] = v
-
-        entry["attempts"] = int(entry.get("attempts", 0)) + 1
-        data[key] = entry
-        self.save(data)
-        return key
-
-    def unfreeze(self, keys: Iterable[str]) -> int:
-        data = self.load()
-        changed = 0
-        for k in list(keys or []):
-            if k in data:
-                del data[k]
-                changed += 1
-        if changed:
-            self.save(data)
-        return changed
-
-    def is_frozen(self, item: Mapping[str, Any]) -> bool:
-        key = self.event_key(item)
-        return bool(key) and key in self.load()
-
-
-def unresolved_store(feature: str) -> UnresolvedStore:
-    return UnresolvedStore(feature)
 
 def key_of(obj: Any) -> str:
     try:

@@ -3,7 +3,10 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -37,7 +40,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "1.4"
+__VERSION__ = "2.0"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -63,6 +66,7 @@ from .plex._common import (
     set_client_id,
 )
 from .plex._utils import fetch_shared_server_token, resolve_user_scope
+from cw_platform.id_map import canonical_key as _canonical_key
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -138,6 +142,126 @@ def _history_index_semantics(cfg: Mapping[str, Any]) -> str:
         return "present" if bool(hist.get("include_marked_watched", True)) else "delta"
     except Exception:
         return "present"
+
+
+def _src_key(it: Any) -> str:
+    try:
+        k = str(_canonical_key(it) or "").strip()
+    except Exception:
+        k = ""
+    if k and not k.startswith("unknown:"):
+        return k
+    try:
+        return str(plex_key_of(it) or "").strip()
+    except Exception:
+        return k
+
+
+def _key_of_attempt(it: Any) -> str:
+    if isinstance(it, dict) and it.get("key"):
+        return str(it.get("key"))
+    return _src_key(it)
+
+
+def _unresolved_key(u: Any) -> str:
+    if isinstance(u, str):
+        return u
+    if isinstance(u, dict):
+        if u.get("key"):
+            return str(u.get("key"))
+        inner = u.get("item")
+        if isinstance(inner, dict):
+            return _src_key(inner)
+        return _src_key(u)
+    return ""
+
+
+def _split_keys(lst: Iterable[Mapping[str, Any]], unresolved: Any) -> tuple[list[str], list[str], list[str]]:
+    attempted: list[str] = []
+    seen: set[str] = set()
+    for it in lst or []:
+        k = _key_of_attempt(it)
+        if k and k not in seen:
+            attempted.append(k)
+            seen.add(k)
+    ukeys: set[str] = set()
+    if isinstance(unresolved, list):
+        for u in unresolved:
+            k = _unresolved_key(u)
+            if k:
+                ukeys.add(k)
+    confirmed = [k for k in attempted if k not in ukeys and not str(k).startswith("unknown:")]
+    return attempted, sorted(ukeys), confirmed
+
+
+_PLEX_HISTORY_META_FIELDS = (
+    "accepted_keys",
+    "presence_confirmed_keys",
+    "live_confirmed_keys",
+    "accepted_not_seen_live_keys",
+    "date_confirmed_keys",
+    "date_mismatch_keys",
+    "reason_counts",
+)
+
+
+_ADAPTER_CACHE: dict[str, tuple[Any, float]] = {}
+_ADAPTER_LOCK = threading.Lock()
+_ADAPTER_MAX = 8
+_ADAPTER_TTL = 300.0
+_ADAPTER_CACHE_ENABLED = True  # in-code kill switch for the connected-adapter reuse
+
+
+def _adapter_identity(cfg: Mapping[str, Any]) -> str:
+    pl_raw = (cfg or {}).get("plex") if isinstance(cfg, Mapping) else None
+    pl: Mapping[str, Any] = pl_raw if isinstance(pl_raw, Mapping) else {}
+    pms_raw = pl.get("pms")
+    pms: Mapping[str, Any] = pms_raw if isinstance(pms_raw, Mapping) else {}
+
+    def _h(v: Any) -> str:
+        s = str(v or "")
+        return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16] if s else ""
+
+    def _stable(v: Any) -> str:
+        try:
+            return json.dumps(v, sort_keys=True, separators=(",", ":"), default=str)
+        except Exception:
+            return str(v or "")
+
+    behavior = {
+        "fallback_GUID": pl.get("fallback_GUID") if "fallback_GUID" in pl else pl.get("fallback_guid"),
+        "history": pl.get("history") if isinstance(pl.get("history"), Mapping) else {},
+        "progress": pl.get("progress") if isinstance(pl.get("progress"), Mapping) else {},
+        "ratings": pl.get("ratings") if isinstance(pl.get("ratings"), Mapping) else {},
+        "scrobble": pl.get("scrobble") if isinstance(pl.get("scrobble"), Mapping) else {},
+        "strict_id_matching": pl.get("strict_id_matching"),
+        "timeout": pl.get("timeout"),
+        "max_retries": pl.get("max_retries"),
+        "history_workers": pl.get("history_workers"),
+        "rating_workers": pl.get("rating_workers"),
+        "watchlist_allow_pms_fallback": pl.get("watchlist_allow_pms_fallback"),
+        "watchlist_page_size": pl.get("watchlist_page_size"),
+        "watchlist_query_limit": pl.get("watchlist_query_limit"),
+        "watchlist_title_query": pl.get("watchlist_title_query"),
+        "watchlist_use_metadata_match": pl.get("watchlist_use_metadata_match"),
+        "watchlist_guid_priority": pl.get("watchlist_guid_priority"),
+        "progress_clock_drift_seconds": pl.get("progress_clock_drift_seconds"),
+        "progress_replay_enabled": pl.get("progress_replay_enabled"),
+    }
+
+    parts = [
+        str(pl.get("baseurl") or pl.get("server_url") or pms.get("url") or pms.get("baseurl") or pms.get("server_url") or ""),
+        str(pl.get("machine_id") or ""),
+        str(pl.get("server_name") or pl.get("server") or ""),
+        str(pl.get("username") or ""),
+        str(pl.get("account_id") or ""),
+        str(pl.get("client_id") or ""),
+        _h(pl.get("account_token") or pl.get("token")),
+        _h(pl.get("pms_token") or pms.get("token") or pms.get("x_plex_token")),
+        _h(pl.get("home_pin")),
+        _h(_stable(behavior)),
+    ]
+    return "|".join(parts)
 
 
 def _plex_tv_client_id(cfg: Any) -> str:
@@ -964,8 +1088,8 @@ class PLEXModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg
         plex_cfg = dict(cfg.get("plex") or {})
-        baseurl = plex_cfg.get("baseurl") or plex_cfg.get("server_url")
         pms = plex_cfg.get("pms") or {}
+        baseurl = plex_cfg.get("baseurl") or plex_cfg.get("server_url") or pms.get("url") or pms.get("baseurl") or pms.get("server_url")
         self.cfg = PLEXConfig(
             token=plex_cfg.get("account_token") or plex_cfg.get("token"),
             pms_token=plex_cfg.get("pms_token") or pms.get("token") or pms.get("x_plex_token"),
@@ -1212,34 +1336,22 @@ class PLEXModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.add(self, lst)
-            attempted_keys: list[str] = []
-            for it in lst:
-                k = None
-                if isinstance(it, dict):
-                    k = it.get("key")
-                if not k:
-                    try:
-                        k = plex_key_of(it)
-                    except Exception:
-                        k = None
-                if k:
-                    attempted_keys.append(str(k))
-            unresolved_keys: set[str] = set()
-            if isinstance(unresolved, list):
-                for u in unresolved:
-                    if isinstance(u, str):
-                        unresolved_keys.add(u)
-                    elif isinstance(u, dict):
-                        uk = u.get("key")
-                        if not uk:
-                            try:
-                                uk = plex_key_of(u)
-                            except Exception:
-                                uk = None
-                        if uk:
-                            unresolved_keys.add(str(uk))
-            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys and not str(k).startswith("unknown:")]
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else []}
+            _attempted, unresolved_keys, confirmed_keys = _split_keys(lst, unresolved)
+            res: dict[str, Any] = {
+                "ok": True,
+                "count": int(cnt),
+                "unresolved": unresolved,
+                "confirmed_keys": confirmed_keys,
+                "unresolved_keys": unresolved_keys,
+                "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else [],
+            }
+            if feature == "history":
+                hm = getattr(self, "_plex_history_write_meta", None)
+                if isinstance(hm, dict):
+                    for f in _PLEX_HISTORY_META_FIELDS:
+                        if f in hm:
+                            res[f] = hm[f]
+            return res
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -1264,34 +1376,15 @@ class PLEXModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             cnt, unresolved = mod.remove(self, lst)
-            attempted_keys: list[str] = []
-            for it in lst:
-                k = None
-                if isinstance(it, dict):
-                    k = it.get("key")
-                if not k:
-                    try:
-                        k = plex_key_of(it)
-                    except Exception:
-                        k = None
-                if k:
-                    attempted_keys.append(str(k))
-            unresolved_keys: set[str] = set()
-            if isinstance(unresolved, list):
-                for u in unresolved:
-                    if isinstance(u, str):
-                        unresolved_keys.add(u)
-                    elif isinstance(u, dict):
-                        uk = u.get("key")
-                        if not uk:
-                            try:
-                                uk = plex_key_of(u)
-                            except Exception:
-                                uk = None
-                        if uk:
-                            unresolved_keys.add(str(uk))
-            confirmed_keys = [k for k in attempted_keys if k not in unresolved_keys and not str(k).startswith("unknown:")]
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else []}
+            _attempted, unresolved_keys, confirmed_keys = _split_keys(lst, unresolved)
+            return {
+                "ok": True,
+                "count": int(cnt),
+                "unresolved": unresolved,
+                "confirmed_keys": confirmed_keys,
+                "unresolved_keys": unresolved_keys,
+                "results": list(getattr(self, "_progress_write_results", [])) if feature == "progress" else [],
+            }
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -1326,6 +1419,14 @@ class _PlexOPS:
             return _history_index_semantics(cfg)
         return None
 
+    def snapshot_refresh(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]] | None:
+        if str(feature or "").lower() != "history":
+            return None
+        try:
+            return self._adapter(cfg).build_index(feature, force=True)
+        except Exception:
+            return None
+
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         c = cfg or {}
         pl = c.get("plex") or {}
@@ -1341,7 +1442,28 @@ class _PlexOPS:
         return bool(account_token or flat_pms_token or (pms_url and pms_token))
 
     def _adapter(self, cfg: Mapping[str, Any]) -> PLEXModule:
-        return PLEXModule(cfg)
+        if not _ADAPTER_CACHE_ENABLED:
+            return PLEXModule(cfg)
+        key = _adapter_identity(cfg)
+        now = time.time()
+        with _ADAPTER_LOCK:
+            ent = _ADAPTER_CACHE.get(key)
+            if ent is not None and (now - ent[1]) < _ADAPTER_TTL:
+                return ent[0]
+        mod = PLEXModule(cfg)
+        try:
+            setattr(mod, "_cw_home_scope_sticky", True)
+        except Exception:
+            pass
+        with _ADAPTER_LOCK:
+            if len(_ADAPTER_CACHE) >= _ADAPTER_MAX:
+                try:
+                    oldest = min(_ADAPTER_CACHE.items(), key=lambda kv: kv[1][1])[0]
+                    _ADAPTER_CACHE.pop(oldest, None)
+                except Exception:
+                    _ADAPTER_CACHE.clear()
+            _ADAPTER_CACHE[key] = (mod, now)
+        return mod
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)

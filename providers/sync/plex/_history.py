@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 from pathlib import Path
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
+from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
 
 from ._common import (
     _as_base_url,
@@ -40,13 +40,20 @@ from ._common import (
     resolve_obj_by_guids,
     section_allowed,
     state_file,
-    unresolved_store,
     write_json,
     emit,
     make_logger,
 )
 
-_UNRES = unresolved_store("history")
+
+def _event_key(item: Mapping[str, Any]) -> str:
+    try:
+        base = canonical_key(id_minimal(item)) or canonical_key(item) or ""
+    except Exception:
+        base = ""
+    ts = _as_epoch(item.get("watched_at"))
+    return f"{base}@{ts}" if (base and ts) else (base or "")
+
 
 def _shadow_path() -> Path:
     return state_file("plex_history.shadow.json")
@@ -147,12 +154,31 @@ _dbg, _info, _warn, _error, _log = make_logger("history")
 # PMS GUID index cache (used for strict ID matching).
 _GUID_INDEX_MOVIE: dict[str, str] = {}
 _GUID_INDEX_SHOW: dict[str, str] = {}
+_GUID_INDEX_KEY: str | None = None
 
-def _build_guid_index(adapter: Any, allow: set[str]) -> None:
-    if _GUID_INDEX_MOVIE or _GUID_INDEX_SHOW:
-        return
+
+def _guid_index_key(srv: Any, allow: set[str]) -> str:
+    mid = str(getattr(srv, "machineIdentifier", "") or "").strip()
+    libs = ",".join(sorted(str(x) for x in (allow or set())))
+    return f"{mid}|{libs}"
+
+
+def _clear_guid_index() -> None:
+    global _GUID_INDEX_KEY
+    _GUID_INDEX_MOVIE.clear()
+    _GUID_INDEX_SHOW.clear()
+    _GUID_INDEX_KEY = None
+
+
+def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False) -> None:
+    global _GUID_INDEX_KEY
     srv = getattr(getattr(adapter, "client", None), "server", None)
-    if srv and _load_guid_index(srv, allow):
+    key = _guid_index_key(srv, allow)
+    if (not force) and _GUID_INDEX_KEY == key and (_GUID_INDEX_MOVIE or _GUID_INDEX_SHOW):
+        return
+    _clear_guid_index()
+    if (not force) and srv and _load_guid_index(srv, allow):
+        _GUID_INDEX_KEY = key
         _dbg("index_cache_hit", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
         return
     try:
@@ -178,6 +204,7 @@ def _build_guid_index(adapter: Any, allow: set[str]) -> None:
                 continue
         if srv:
             _save_guid_index(srv, allow)
+        _GUID_INDEX_KEY = key
         _dbg("index_fetch_counts", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
     except Exception:
         pass
@@ -189,6 +216,265 @@ def _pms_find_in_guid_index(libtype: str, candidates: list[str]) -> str | None:
         if gg and gg in src:
             return src[gg]
     return None
+
+
+CLASS_IN_CATALOG_WATCHED = "in_catalog_watched"
+CLASS_IN_CATALOG_UNWATCHED = "in_catalog_unwatched"
+CLASS_SHOW_MATCHED_EPISODE_MISSING = "show_matched_episode_missing"
+CLASS_NOT_IN_PLEX_CATALOG = "not_in_plex_catalog"
+CLASS_RESOLVE_AMBIGUOUS = "resolve_ambiguous"
+
+DATE_EXACT = "confirmed_watched_exact_date"
+DATE_MISMATCH = "confirmed_watched_date_mismatch"
+DATE_NO_DATE = "confirmed_watched_no_date"
+DATE_WRITE_FAILED = "write_failed"
+
+_TOKEN_KEYS = ("tmdb", "imdb", "tvdb", "plex")
+
+# Internal tuning defaults.
+_DATE_TOLERANCE_SEC = 60
+_FALLBACK_EMPTY_PAGES_DEFAULT = 3
+_CATALOG_MEM_TTL_SEC = 90
+
+
+def _env_truthy(name: str) -> bool:
+    return str(os.environ.get(name, "") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _fallback_empty_pages() -> int:
+    try:
+        return max(1, int(os.environ.get("CW_PLEX_WATCHED_FALLBACK_EMPTY_PAGES", "") or _FALLBACK_EMPTY_PAGES_DEFAULT))
+    except Exception:
+        return _FALLBACK_EMPTY_PAGES_DEFAULT
+
+
+def _id_tokens(ids: Mapping[str, Any] | None) -> set[str]:
+    out: set[str] = set()
+    if not isinstance(ids, Mapping):
+        return out
+    for k in _TOKEN_KEYS:
+        v = ids.get(k)
+        if v is None or str(v).strip() == "":
+            continue
+        out.add(f"{k}:{str(v).strip().lower()}")
+    return out
+
+
+def _item_show_tokens(item: Mapping[str, Any]) -> set[str]:
+    toks = _id_tokens(extract_show_ids(item))
+    kind = (item.get("type") or "").strip().lower()
+    if not toks and kind in ("show", "season", "episode", "anime"):
+        toks = _id_tokens(ids_from(item))
+    return toks
+
+
+def _item_se(item: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    s = item.get("season") if item.get("season") is not None else item.get("season_number")
+    e = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
+    try:
+        s = int(s) if s is not None else None
+    except Exception:
+        s = None
+    try:
+        e = int(e) if e is not None else None
+    except Exception:
+        e = None
+    return s, e
+
+
+class HistoryCatalog:
+    __slots__ = ("by_rk", "movie_tokens", "show_tokens", "episode_index", "movie_title_year")
+
+    def __init__(self) -> None:
+        self.by_rk: dict[str, dict[str, Any]] = {}
+        self.movie_tokens: dict[str, str] = {}
+        self.show_tokens: dict[str, str] = {}
+        self.episode_index: dict[tuple[str, int, int], set[str]] = {}
+        self.movie_title_year: dict[tuple[str, int | None], set[str]] = {}
+
+    def add(self, entry: Mapping[str, Any]) -> None:
+        rk = str(entry.get("rk") or entry.get("rating_key") or "").strip()
+        if not rk:
+            return
+        kind = (entry.get("type") or "").strip().lower()
+        e: dict[str, Any] = {
+            "rk": rk,
+            "type": "episode" if kind in ("episode", "anime") else ("show" if kind in ("show", "season") else "movie"),
+            "title": entry.get("title"),
+            "year": entry.get("year"),
+            "library_id": entry.get("library_id"),
+            "ids": dict(entry.get("ids") or {}),
+            "guids": [str(g).lower() for g in (entry.get("guids") or []) if g],
+            "show_rk": (str(entry.get("show_rk")).strip() if entry.get("show_rk") else None),
+            "show_ids": dict(entry.get("show_ids") or {}),
+            "season": entry.get("season"),
+            "episode": entry.get("episode"),
+            "watched": bool(entry.get("watched")),
+            "view_count": entry.get("view_count"),
+            "last_viewed_at": entry.get("last_viewed_at"),
+            "added_at": entry.get("added_at"),
+        }
+        self.by_rk[rk] = e
+        if e["type"] == "movie":
+            for tok in _id_tokens(e["ids"]):
+                self.movie_tokens.setdefault(tok, rk)
+            ty = self._title_year(e["title"], e["year"])
+            if ty:
+                self.movie_title_year.setdefault(ty, set()).add(rk)
+        elif e["type"] == "show":
+            for tok in _id_tokens(e["ids"]):
+                self.show_tokens.setdefault(tok, rk)
+        else:
+            show_toks = _id_tokens(e["show_ids"])
+            for tok in show_toks:
+                if e["show_rk"]:
+                    self.show_tokens.setdefault(tok, e["show_rk"])
+            s, ep = e["season"], e["episode"]
+            try:
+                s_i = int(s) if s is not None else None
+                e_i = int(ep) if ep is not None else None
+            except Exception:
+                s_i = e_i = None
+            if s_i is not None and e_i is not None:
+                for tok in show_toks:
+                    self.episode_index.setdefault((tok, s_i, e_i), set()).add(rk)
+
+    @staticmethod
+    def _title_year(title: Any, year: Any) -> tuple[str, int | None] | None:
+        t = str(title or "").strip().lower()
+        if not t:
+            return None
+        try:
+            y = int(year) if year is not None else None
+        except Exception:
+            y = None
+        return (t, y)
+
+    def _has_show(self, show_tokens: set[str]) -> bool:
+        if any(tok in self.show_tokens for tok in show_tokens):
+            return True
+        for (tok, _s, _e) in self.episode_index.keys():
+            if tok in show_tokens:
+                return True
+        return False
+
+    def resolve(self, item: Mapping[str, Any], *, strict: bool = False) -> tuple[str | None, str]:
+        kind = (item.get("type") or "movie").strip().lower()
+        if kind == "anime":
+            kind = "episode"
+
+        if kind in ("episode", "season", "show"):
+            show_tokens = _item_show_tokens(item)
+            s, ep = _item_se(item)
+            if s is not None and ep is not None and show_tokens:
+                rks: set[str] = set()
+                for tok in show_tokens:
+                    rks |= self.episode_index.get((tok, int(s), int(ep)), set())
+                if len(rks) == 1:
+                    rk = next(iter(rks))
+                    e = self.by_rk.get(rk) or {}
+                    return rk, (CLASS_IN_CATALOG_WATCHED if e.get("watched") else CLASS_IN_CATALOG_UNWATCHED)
+                if len(rks) > 1:
+                    return None, CLASS_RESOLVE_AMBIGUOUS
+            if show_tokens and self._has_show(show_tokens):
+                return None, CLASS_SHOW_MATCHED_EPISODE_MISSING
+            return None, CLASS_NOT_IN_PLEX_CATALOG
+
+        tokens = _id_tokens(ids_from(item))
+        hit_rks = {self.movie_tokens[tok] for tok in tokens if tok in self.movie_tokens}
+        if len(hit_rks) == 1:
+            rk = next(iter(hit_rks))
+            e = self.by_rk.get(rk) or {}
+            return rk, (CLASS_IN_CATALOG_WATCHED if e.get("watched") else CLASS_IN_CATALOG_UNWATCHED)
+        if len(hit_rks) > 1:
+            return None, CLASS_RESOLVE_AMBIGUOUS
+        if not strict:
+            ty = self._title_year(item.get("title"), item.get("year"))
+            if ty:
+                cand = self.movie_title_year.get(ty) or set()
+                if len(cand) == 1:
+                    rk = next(iter(cand))
+                    e = self.by_rk.get(rk) or {}
+                    return rk, (CLASS_IN_CATALOG_WATCHED if e.get("watched") else CLASS_IN_CATALOG_UNWATCHED)
+                if len(cand) > 1:
+                    return None, CLASS_RESOLVE_AMBIGUOUS
+        return None, CLASS_NOT_IN_PLEX_CATALOG
+
+    def trace(self, item: Mapping[str, Any], *, strict: bool = False) -> dict[str, Any]:
+        rk, klass = self.resolve(item, strict=strict)
+        entry = self.by_rk.get(rk) if rk else None
+        kind = (item.get("type") or "movie").strip().lower()
+        info: dict[str, Any] = {
+            "source_key": canonical_key(item),
+            "source_ids": dict(ids_from(item) or {}),
+            "type": kind,
+            "season": item.get("season"),
+            "episode": item.get("episode"),
+            "classification": klass,
+            "plex_rating_key": rk,
+            "plex_view_count": (entry or {}).get("view_count") if entry else None,
+            "plex_last_viewed_at": (entry or {}).get("last_viewed_at") if entry else None,
+            "snapshot_present": bool(entry and entry.get("watched")),
+        }
+        if kind in ("episode", "season", "show", "anime"):
+            info["source_show_ids"] = dict(extract_show_ids(item) or {})
+            info["plex_show_rating_key"] = (entry or {}).get("show_rk") if entry else None
+        desired = _as_epoch(item.get("watched_at")) if item.get("watched_at") else None
+        info["source_watched_at"] = item.get("watched_at")
+        ds, delta = _date_status(desired, (entry or {}).get("last_viewed_at") if entry else None, _DATE_TOLERANCE_SEC)
+        info["date_status"] = ds if (entry and entry.get("watched")) else None
+        info["date_delta_seconds"] = delta if (entry and entry.get("watched")) else None
+        return info
+
+    def presence(self) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for e in self.by_rk.values():
+            if not e.get("watched"):
+                continue
+            row = _catalog_entry_to_minimal(e)
+            ts = _as_epoch(e.get("last_viewed_at")) if e.get("last_viewed_at") else None
+            if not ts and e.get("view_count"):
+                row["watched_at_missing"] = True
+                ts = 0
+            row["watched"] = True
+            row["watched_at"] = _iso(int(ts)) if ts else None
+            _force_episode_title(row)
+            key = f"{canonical_key(row)}@{int(ts or 0)}"
+            out[key] = row
+        return out
+
+
+def _catalog_entry_to_minimal(e: Mapping[str, Any]) -> dict[str, Any]:
+    kind = (e.get("type") or "movie").strip().lower()
+    row: dict[str, Any] = {"type": "episode" if kind == "episode" else ("show" if kind == "show" else "movie")}
+    ids = dict(e.get("ids") or {})
+    if e.get("rk"):
+        ids.setdefault("plex", str(e.get("rk")))
+    row["ids"] = {k: v for k, v in ids.items() if v}
+    if e.get("title") is not None:
+        row["title"] = e.get("title")
+    if e.get("year") is not None:
+        row["year"] = e.get("year")
+    if e.get("library_id") is not None:
+        row["library_id"] = e.get("library_id")
+    if kind == "episode":
+        if e.get("show_ids"):
+            row["show_ids"] = dict(e.get("show_ids") or {})
+        if e.get("season") is not None:
+            row["season"] = e.get("season")
+        if e.get("episode") is not None:
+            row["episode"] = e.get("episode")
+    return row
+
+
+def build_catalog_from_entries(entries: Iterable[Mapping[str, Any]]) -> HistoryCatalog:
+    cat = HistoryCatalog()
+    for entry in entries or []:
+        try:
+            cat.add(entry)
+        except Exception:
+            continue
+    return cat
 
 
 def _emit(evt: dict[str, Any]) -> None:
@@ -261,6 +547,9 @@ def _history_cfg_get(adapter: Any, key: str, default: Any = None) -> Any:
     val = cfg.get(key, default) if isinstance(cfg, dict) else default
     return default if val is None else val
 
+def _history_force_full(adapter: Any) -> bool:
+    return _env_truthy("CW_PLEX_HISTORY_FORCE") or bool(_history_cfg_get(adapter, "force_full", False))
+
 def _row_section_id(h: Any) -> str | None:
     for attr in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
         v = getattr(h, attr, None)
@@ -282,24 +571,6 @@ def _load_shadow() -> dict[str, Any]:
 def _save_shadow(data: Mapping[str, Any]) -> None:
     write_json(_shadow_path(), data)
 
-def _shadow_add(item: Mapping[str, Any]) -> None:
-    try:
-        key = _UNRES.event_key(item)
-        if not key:
-            return
-        data = _load_shadow()
-        existing = data.get(key)
-        entry: dict[str, Any] = dict(existing) if isinstance(existing, Mapping) else {}
-        entry["item"] = id_minimal(item)
-        entry["watched_at"] = item.get("watched_at")
-        entry["last_seen"] = _iso(int(datetime.now(timezone.utc).timestamp()))
-        if "first_seen" not in entry:
-            entry["first_seen"] = entry["last_seen"]
-        data[key] = entry
-        _save_shadow(data)
-    except Exception:
-        pass
-
 def _shadow_add_batch(items: list[Mapping[str, Any]]) -> None:
     if not items:
         return
@@ -307,7 +578,7 @@ def _shadow_add_batch(items: list[Mapping[str, Any]]) -> None:
         data = _load_shadow()
         now_iso = _iso(int(datetime.now(timezone.utc).timestamp()))
         for item in items:
-            key = _UNRES.event_key(item)
+            key = _event_key(item)
             if not key:
                 continue
             existing = data.get(key)
@@ -328,7 +599,7 @@ def _shadow_remove(item: Mapping[str, Any]) -> None:
         if not isinstance(data, Mapping) or not data:
             return
 
-        exact = _UNRES.event_key(item)
+        exact = _event_key(item)
         try:
             base = canonical_key(id_minimal(item)) or canonical_key(item) or ""
         except Exception:
@@ -420,6 +691,8 @@ def _iter_marked_watched_from_library(
     adapter: Any,
     allow: set[str],
     since: int | None = None,
+    *,
+    full: bool = False,
 ) -> list[tuple[dict[str, Any], int]]:
     srv = getattr(getattr(adapter, "client", None), "server", None)
     if not srv:
@@ -435,7 +708,7 @@ def _iter_marked_watched_from_library(
         last_ts = int((state.get("last_ts") if isinstance(state, dict) else 0) or 0)
     except Exception:
         last_ts = 0
-    cutoff = max(int(since or 0), last_ts) if (since is not None or last_ts) else 0
+    cutoff = 0 if full else (max(int(since or 0), last_ts) if (since is not None or last_ts) else 0)
 
     headers = dict(getattr(ses, "headers", {}) or {})
     headers.update(plex_headers(token))
@@ -453,46 +726,53 @@ def _iter_marked_watched_from_library(
         except Exception:
             return [], None
 
+    def _int0(v: Any) -> int:
+        try:
+            return int(v or 0)
+        except Exception:
+            return 0
+
     page_size = 200
     results: list[tuple[dict[str, Any], int]] = []
     newest = last_ts
+    summary = {
+        "sections_scanned": 0, "movie_sections": 0, "show_sections": 0,
+        "watched_rows_seen": 0, "watched_rows_returned": 0,
+        "skipped_no_timestamp": 0, "skipped_no_rating_key": 0, "skipped_normalize_failed": 0,
+    }
 
     try:
         sections = list(adapter.libraries(types=("movie", "show")) or [])
     except Exception:
         sections = []
 
-    for sec in sections:
-        section_id = _marked_section_id(sec) or ""
-        if not section_id:
-            continue
-        if allow and section_id not in allow:
-            continue
-
-        section_type = (getattr(sec, "type", "") or "").lower()
-        plex_type = 1 if section_type == "movie" else 4 if section_type == "show" else None
-        if plex_type is None:
-            continue
-
+    def _scan_section(section_id: str, plex_type: int, section_type: str, section_title: str, *, use_unwatched_filter: bool) -> int:
+        nonlocal newest
         start = 0
         seen_pages: set[tuple[str, ...]] = set()
+        sec = {"seen": 0, "vc": 0, "lva": 0, "no_ts": 0, "norm_fail": 0, "no_rk": 0, "ret": 0}
+        last_status: Any = None
+        last_total: Any = None
+        empty_streak = 0
         while True:
-            params = {
+            params: dict[str, Any] = {
                 "type": plex_type,
-                "unwatched": 0,
                 "sort": "lastViewedAt:desc",
                 "includeGuids": 1,
                 "X-Plex-Container-Start": start,
                 "X-Plex-Container-Size": page_size,
             }
+            if use_unwatched_filter:
+                params["unwatched"] = 0
             try:
                 r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=15)
             except Exception:
                 break
+            last_status = getattr(r, "status_code", None)
             if not getattr(r, "ok", False):
                 break
-
             rows, total = _rows_from(r)
+            last_total = total
             if not rows:
                 break
             signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
@@ -501,21 +781,42 @@ def _iter_marked_watched_from_library(
             seen_pages.add(signature)
 
             stop = False
+            page_watched = 0
             for row in rows:
+                view_count = max(_int0(row.get("viewCount")), _int0(row.get("leafCountViewed")))
                 ts = _as_epoch(row.get("lastViewedAt") or row.get("viewedAt"))
-                if not ts:
+                watched = view_count > 0 or bool(ts)
+                if not watched:
                     continue
-                ts_i = int(ts)
-                if cutoff and ts_i < cutoff:
+                page_watched += 1
+                sec["seen"] += 1
+                if view_count > 0:
+                    sec["vc"] += 1
+                if ts:
+                    sec["lva"] += 1
+                ts_i = int(ts) if ts else 0
+                if (not full) and cutoff and ts_i and ts_i < cutoff:
                     stop = True
                     break
-                if ts_i > newest:
+                if ts_i and ts_i > newest:
                     newest = ts_i
                 meta = normalize_discover_row(row, token=token) or {}
-                if meta:
-                    meta['_cw_marked'] = True
+                if not meta:
+                    sec["norm_fail"] += 1
+                    continue
+                if not (meta.get("ids") or {}).get("plex"):
+                    sec["no_rk"] += 1
+                    continue
+                meta['_cw_marked'] = True
+                meta['_cw_view_count'] = view_count
+                if ts_i:
                     meta['watched_at'] = meta.get('watched_at') or _iso(int(ts_i))
-                    results.append((meta, ts_i))
+                else:
+                    meta['watched_at'] = None
+                    meta['_cw_watched_at_missing'] = True
+                    sec["no_ts"] += 1
+                results.append((meta, ts_i))
+                sec["ret"] += 1
 
             if stop:
                 break
@@ -524,6 +825,52 @@ def _iter_marked_watched_from_library(
                 break
             if len(rows) < page_size:
                 break
+            if not use_unwatched_filter:
+                empty_streak = empty_streak + 1 if page_watched == 0 else 0
+                if empty_streak >= _fallback_empty_pages():
+                    break
+
+        _dbg(
+            "live_watched.section",
+            section_id=section_id, section_title=section_title, section_type=section_type,
+            plex_type=plex_type, request_url=f"/library/sections/{section_id}/all",
+            unwatched_filter=bool(use_unwatched_filter),
+            http_status=last_status, totalSize=last_total,
+            rows_seen=sec["seen"], rows_with_viewCount=sec["vc"], rows_with_lastViewedAt=sec["lva"],
+            rows_skipped_no_timestamp=sec["no_ts"], rows_normalized=sec["ret"], rows_returned=sec["ret"],
+            allow_filter_hit=False,
+        )
+        summary["watched_rows_seen"] += sec["seen"]
+        summary["watched_rows_returned"] += sec["ret"]
+        summary["skipped_no_timestamp"] += sec["no_ts"]
+        summary["skipped_no_rating_key"] += sec["no_rk"]
+        summary["skipped_normalize_failed"] += sec["norm_fail"]
+        return sec["ret"]
+
+    for sec_obj in sections:
+        section_id = _marked_section_id(sec_obj) or ""
+        section_type = (getattr(sec_obj, "type", "") or "").lower()
+        section_title = str(getattr(sec_obj, "title", "") or "")
+        if not section_id:
+            continue
+        if allow and section_id not in allow:
+            _dbg("live_watched.section", section_id=section_id, section_title=section_title,
+                 section_type=section_type, allow_filter_hit=True, rows_returned=0)
+            continue
+
+        plex_type = 1 if section_type == "movie" else 4 if section_type == "show" else None
+        if plex_type is None:
+            continue
+
+        summary["sections_scanned"] += 1
+        if plex_type == 1:
+            summary["movie_sections"] += 1
+        else:
+            summary["show_sections"] += 1
+
+        ret = _scan_section(section_id, plex_type, section_type, section_title, use_unwatched_filter=True)
+        if ret == 0 and plex_type == 4:
+            _scan_section(section_id, plex_type, section_type, section_title, use_unwatched_filter=False)
 
     if newest and newest != last_ts:
         try:
@@ -533,7 +880,145 @@ def _iter_marked_watched_from_library(
         except Exception:
             pass
 
+    _emit({
+        "event": "plex.presence", "action": "live_watched_summary", "feature": "history",
+        "level": "debug", "full": bool(full), **summary,
+    })
     return results
+
+
+def _live_watched_entry(meta: Mapping[str, Any], ts: int) -> dict[str, Any] | None:
+    ids = dict(meta.get("ids") or {})
+    rk = ids.get("plex")
+    if not rk:
+        return None
+    show_ids = dict(meta.get("show_ids") or {})
+    return {
+        "rk": str(rk),
+        "type": meta.get("type") or "movie",
+        "title": meta.get("title"),
+        "year": meta.get("year"),
+        "library_id": meta.get("library_id"),
+        "ids": ids,
+        "show_ids": show_ids,
+        "show_rk": show_ids.get("plex"),
+        "season": meta.get("season"),
+        "episode": meta.get("episode"),
+        "watched": True,
+        "view_count": meta.get("_cw_view_count"),
+        "last_viewed_at": int(ts) if ts else None,
+    }
+
+
+def _iter_live_watched(adapter: Any, allow: set[str], *, full: bool = True) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for meta, ts in _iter_marked_watched_from_library(adapter, allow, full=full):
+        entry = _live_watched_entry(meta, ts)
+        if entry:
+            out.append(entry)
+    return out
+
+
+def _build_history_catalog(adapter: Any, allow: set[str], *, force: bool = False, live: bool = True) -> HistoryCatalog:
+    t0 = time.time()
+    allow_list = sorted(str(x) for x in (allow or set()))
+    _emit({"event": "plex.catalog", "action": "start", "feature": "history", "level": "debug",
+           "force": bool(force), "live": bool(live), "allow": allow_list})
+    cat = HistoryCatalog()
+    if force:
+        _clear_guid_index()
+    _build_guid_index(adapter, allow, force=force)
+    for guid, rk in list(_GUID_INDEX_MOVIE.items()):
+        ids = ids_from_guid(str(guid))
+        if ids:
+            cat.add({"rk": rk, "type": "movie", "ids": ids, "watched": False})
+    for guid, rk in list(_GUID_INDEX_SHOW.items()):
+        ids = ids_from_guid(str(guid))
+        if ids:
+            cat.add({"rk": rk, "type": "show", "ids": ids, "watched": False})
+    watched_movies = 0
+    watched_eps = 0
+    if live:
+        for entry in _iter_live_watched(adapter, allow, full=True):
+            cat.add(entry)
+            if (entry.get("type") or "") == "episode":
+                watched_eps += 1
+            else:
+                watched_movies += 1
+    _emit({
+        "event": "plex.catalog", "action": "done", "feature": "history", "level": "debug",
+        "force": bool(force), "live": bool(live), "allow": allow_list,
+        "guid_movies": len(_GUID_INDEX_MOVIE), "guid_shows": len(_GUID_INDEX_SHOW),
+        "watched_movies": watched_movies, "watched_episodes": watched_eps,
+        "catalog_entries": len(cat.by_rk), "duration_ms": int((time.time() - t0) * 1000),
+    })
+    return cat
+
+
+_CATALOG_CACHE: dict[str, Any] = {"cat": None, "ts": 0.0, "key": None}
+
+
+def _user_scope_key(adapter: Any) -> str:
+    def _i(v: Any) -> int:
+        try:
+            return int(v or 0)
+        except Exception:
+            return 0
+    cli = getattr(adapter, "client", None)
+    acct = _i(plex_cfg_get(adapter, "account_id", 0)) or _i(getattr(cli, "user_account_id", None))
+    uname = str(plex_cfg_get(adapter, "username", "") or "").strip().lower() \
+        or str(getattr(cli, "user_username", "") or "").strip().lower()
+    return _wm_key(acct, uname)
+
+
+def _catalog_cache_key(adapter: Any, allow: set[str]) -> str:
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    mid = str(getattr(srv, "machineIdentifier", "") or "")
+    return f"{mid}|{_user_scope_key(adapter)}|{','.join(sorted(str(x) for x in (allow or set())))}"
+
+
+def _store_history_catalog(adapter: Any, allow: set[str], cat: HistoryCatalog) -> None:
+    _CATALOG_CACHE.update({"cat": cat, "ts": time.time(), "key": _catalog_cache_key(adapter, allow)})
+
+
+def _get_history_catalog(adapter: Any, allow: set[str], *, force: bool = False) -> HistoryCatalog:
+    key = _catalog_cache_key(adapter, allow)
+    now = time.time()
+    if (not force) and _CATALOG_CACHE.get("cat") is not None and _CATALOG_CACHE.get("key") == key \
+            and (now - float(_CATALOG_CACHE.get("ts") or 0)) < _CATALOG_MEM_TTL_SEC:
+        return _CATALOG_CACHE["cat"]  # type: ignore[return-value]
+    cat = _build_history_catalog(adapter, allow, force=force)
+    _store_history_catalog(adapter, allow, cat)
+    return cat
+
+
+def _date_status(desired_ts: int | None, confirmed_ts: int | None, tol: int) -> tuple[str, int | None]:
+    if not confirmed_ts:
+        return DATE_NO_DATE, None
+    if not desired_ts:
+        return DATE_EXACT, 0
+    delta = int(confirmed_ts) - int(desired_ts)
+    return (DATE_EXACT, delta) if abs(delta) <= int(tol) else (DATE_MISMATCH, delta)
+
+
+def _new_write_meta() -> dict[str, Any]:
+    return {
+        "accepted_keys": [],
+        "presence_confirmed_keys": [],
+        "live_confirmed_keys": [],
+        "accepted_not_seen_live_keys": [],
+        "date_confirmed_keys": [],
+        "date_mismatch_keys": [],
+        "unresolved_keys": [],
+        "reason_counts": {},
+    }
+
+
+def _set_write_meta(adapter: Any, meta: Mapping[str, Any]) -> None:
+    try:
+        setattr(adapter, "_plex_history_write_meta", dict(meta))
+    except Exception:
+        pass
 
 def _pms_fetch_metadata_row(adapter: Any, rating_key: str) -> Mapping[str, Any] | None:
     srv = getattr(getattr(adapter, "client", None), "server", None)
@@ -577,7 +1062,7 @@ def _pms_row_is_watched(row: Mapping[str, Any]) -> bool:
 
 def _pms_row_watched_ts(row: Mapping[str, Any]) -> int | None:
     return _as_epoch(row.get("lastViewedAt") or row.get("viewedAt"))
-def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, since: int | None = None, limit: int | None = None, *, force: bool = False) -> dict[str, dict[str, Any]]:
     need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
@@ -616,6 +1101,19 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
         allow = plex_feature_library_ids(adapter, "history")
         explicit_user = bool(cfg_acct_id or cfg_uname)
+
+        force = bool(force) or _history_force_full(adapter)
+        if force:
+            wm = None
+            eff_since = None
+
+        scope_ok = not (need_home_scope and not did_home_switch)
+        if not scope_ok:
+            _warn("home_scope_not_applied", op="build_index", selected=(sel_aid or sel_uname))
+
+        cat = _build_history_catalog(adapter, allow, force=force, live=scope_ok)
+        if scope_ok:
+            _store_history_catalog(adapter, allow, cat)
 
         # Optional cursor debugging (helps diagnose 1-item re-add loops).
         if str(os.environ.get("CW_PLEX_HISTORY_DEBUG_CURSOR", "")).strip().lower() in ("1", "true", "yes"):
@@ -788,32 +1286,47 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     break
             _fb_cache_flush()
 
+        base_present: set[str] = set()
+        for r in out.values():
+            try:
+                base_present.add(canonical_key(r))
+            except Exception:
+                pass
+
+        presence = cat.presence()
+        presence_added = 0
+        presence_dropped_keep = 0
+        for key, row in presence.items():
+            if limit and len(out) >= int(limit):
+                break
+            if key in out:
+                continue
+            try:
+                base = canonical_key(row)
+            except Exception:
+                base = ""
+            if base and base in base_present:
+                continue
+            if not _keep_in_snapshot(adapter, row):
+                presence_dropped_keep += 1
+                continue
+            out[key] = row
+            presence_added += 1
+            if base:
+                base_present.add(base)
+
+        _emit({
+            "event": "plex.presence", "action": "done", "feature": "history", "level": "debug",
+            "force": bool(force), "presence_entries": len(presence),
+            "presence_added": presence_added, "presence_dropped_keep": presence_dropped_keep,
+            "snapshot_entries": len(out),
+        })
+        _maybe_trace_snapshot(cat, allow, out)
+
         if out:
             max_seen = max((_as_epoch(r.get("watched_at")) or 0) for r in out.values())
 
-        include_shadow = bool(_history_cfg_get(adapter, "include_shadow", True))
-
-        if include_shadow:
-            shadow = _load_shadow()
-            for _, entry in (shadow or {}).items():
-                item = (entry or {}).get("item")
-                watched_at = (entry or {}).get("watched_at")
-                ts2 = _as_epoch(watched_at) if watched_at else None
-                if not item or not ts2:
-                    continue
-                row = dict(item)
-                row["_cw_marked"] = True
-                _force_episode_title(row)
-                row["watched"] = True
-                row["watched_at"] = _iso(int(ts2))
-                key = f"{canonical_key(row)}@{int(ts2)}"
-                if key not in out and _keep_in_snapshot(adapter, row):
-                    out[key] = row
-                    if limit and len(out) >= int(limit):
-                        break
-
-
-        if include_marked and (not limit or len(out) < int(limit)):
+        if include_marked and scope_ok and not force and (not limit or len(out) < int(limit)):
             st = _load_marked_state() or {}
             marked0 = st.get("items") or {}
             marked: dict[str, Any] = dict(marked0) if isinstance(marked0, Mapping) else {}
@@ -831,7 +1344,11 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                     e = dict(entry)
                     e["_cw_marked"] = True
                     e["watched"] = True
-                    e["watched_at"] = e.get("watched_at") or _iso(int(ts_i))
+                    if ts_i:
+                        e["watched_at"] = e.get("watched_at") or _iso(int(ts_i))
+                    else:
+                        e["watched_at"] = None
+                        e["watched_at_missing"] = True
                     marked[rk] = e
                     changed = True
                 found += 1
@@ -922,20 +1439,91 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
             selected=(cfg_acct_id or cli_acct_id or 0),
             since=(eff_since or 0),
         )
+        _emit({"event": "plex.snapshot", "action": "return", "feature": "history", "level": "info",
+               "force": bool(force), "count": len(out)})
         return out
 
     finally:
         home_scope_exit(adapter, did_home_switch)
 
+def _bump_reason(meta: dict[str, Any], reason: str) -> None:
+    rc = meta.setdefault("reason_counts", {})
+    rc[reason] = int(rc.get(reason, 0)) + 1
+
+
+def _trace_key() -> str:
+    return str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()
+
+
+def _maybe_trace(cat: HistoryCatalog, item: Mapping[str, Any], *, strict: bool, shadow_ignored: bool) -> None:
+    tk = _trace_key()
+    if not tk:
+        return
+    try:
+        if str(canonical_key(item) or "").strip().lower() != tk:
+            return
+        info = cat.trace(item, strict=strict)
+        info["shadow_ignored_as_truth"] = bool(shadow_ignored)
+        _emit({"event": "plex.trace", "action": "history", "feature": "history", "level": "info", **info})
+    except Exception:
+        pass
+
+
+def _parse_trace_item(tk: str) -> dict[str, Any] | None:
+    m = re.match(r"^(?P<prefix>[a-z]+):(?P<id>[^#]+)(#s(?P<s>\d+)e(?P<e>\d+))?$", tk)
+    if not m:
+        return None
+    prefix, idv, s, e = m.group("prefix"), m.group("id"), m.group("s"), m.group("e")
+    if s is not None and e is not None:
+        return {"type": "episode", "show_ids": {prefix: idv}, "season": int(s), "episode": int(e)}
+    return {"type": "movie", "ids": {prefix: idv}}
+
+
+def _maybe_trace_snapshot(cat: HistoryCatalog, allow: set[str], snapshot: Mapping[str, Any]) -> None:
+    tk = _trace_key()
+    if not tk:
+        return
+    try:
+        item = _parse_trace_item(tk)
+        if not item:
+            return
+        info = cat.trace(item, strict=False)
+        info["selected_libraries"] = sorted(str(x) for x in (allow or set()))
+        show_toks = _item_show_tokens(item)
+        info["show_tokens"] = sorted(show_toks)
+        info["show_token_in_catalog"] = bool(show_toks and cat._has_show(show_toks))
+        s, ep = _item_se(item)
+        if s is not None and ep is not None:
+            rks: set[str] = set()
+            for tok in show_toks:
+                rks |= cat.episode_index.get((tok, int(s), int(ep)), set())
+            info["episode_in_index"] = bool(rks)
+            info["matched_episode_rk"] = sorted(rks)
+        pres = cat.presence()
+        info["included_in_presence"] = any(str(k).split("@", 1)[0].lower() == tk for k in pres)
+        skey = next((k for k in snapshot if str(k).split("@", 1)[0].lower() == tk), None)
+        info["in_snapshot"] = skey is not None
+        info["snapshot_key"] = skey
+        info["dropped_by_keep_in_snapshot"] = bool(info["included_in_presence"] and skey is None)
+        _emit({"event": "plex.trace", "action": "snapshot", "feature": "history", "level": "info", **info})
+    except Exception:
+        pass
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     need_home_scope, did_home_switch, sel_aid, sel_uname = home_scope_enter(adapter)
+    meta = _new_write_meta()
+    _set_write_meta(adapter, meta)
     try:
         srv = getattr(getattr(adapter, "client", None), "server", None)
         if not srv:
             unresolved: list[dict[str, Any]] = []
             for item in items or []:
-                _UNRES.freeze(item, action="add", reasons=["no_plex_server"])
-                unresolved.append({"item": id_minimal(item), "hint": "no_plex_server"})
+                k = canonical_key(item) or ""
+                unresolved.append({"item": id_minimal(item), "key": k, "hint": "no_plex_server", "reason": "no_plex_server"})
+                meta["unresolved_keys"].append(k)
+                _bump_reason(meta, "no_plex_server")
+            _set_write_meta(adapter, meta)
             _info("write_skipped", op="add", reason="no_server")
             return 0, unresolved
 
@@ -943,34 +1531,105 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             _info("write_skipped", op="add", reason="home_scope_not_applied", selected=(sel_aid or sel_uname))
             unresolved = []
             for item in items or []:
-                unresolved.append({"item": id_minimal(item), "hint": "home_scope_not_applied"})
+                k = canonical_key(item) or ""
+                unresolved.append({"item": id_minimal(item), "key": k, "hint": "home_scope_not_applied", "reason": "home_scope_not_applied"})
+                meta["unresolved_keys"].append(k)
+                _bump_reason(meta, "home_scope_not_applied")
+            _set_write_meta(adapter, meta)
             return 0, unresolved
+
+        allow = plex_feature_library_ids(adapter, "history")
+        strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
+        write_strict = True
+        force = _history_force_full(adapter)
+        cat = _get_history_catalog(adapter, allow, force=force)
+        tol = _DATE_TOLERANCE_SEC
 
         ok = 0
         unresolved: list[dict[str, Any]] = []
         shadow_batch: list[Mapping[str, Any]] = []
+        to_scrobble: list[tuple[Mapping[str, Any], str, str, int]] = []
+
         for item in items or []:
-            if _UNRES.is_frozen(item):
-                _dbg("skip_frozen", title=id_minimal(item).get("title"))
-                continue
+            key = canonical_key(item) or ""
             ts = _as_epoch(item.get("watched_at"))
             if not ts:
-                _UNRES.freeze(item, action="add", reasons=["missing_watched_at"])
-                unresolved.append({"item": id_minimal(item), "hint": "missing_watched_at"})
+                unresolved.append({"item": id_minimal(item), "key": key, "hint": "missing_watched_at", "reason": "missing_watched_at"})
+                meta["unresolved_keys"].append(key)
+                _bump_reason(meta, "missing_watched_at")
                 continue
-            rating_key = _resolve_rating_key(adapter, item)
-            if not rating_key:
-                _UNRES.freeze(item, action="add", reasons=["not_in_library"])
-                unresolved.append({"item": id_minimal(item), "hint": "not_in_library"})
-                continue
-            if _scrobble_with_date(srv, rating_key, ts):
+
+            rk, klass = cat.resolve(item, strict=write_strict)
+            _maybe_trace(cat, item, strict=write_strict, shadow_ignored=True)
+
+            if klass == CLASS_IN_CATALOG_WATCHED and rk:
+                entry = cat.by_rk.get(rk) or {}
+                ds, _delta = _date_status(int(ts), entry.get("last_viewed_at"), tol)
+                meta["accepted_keys"].append(key)
+                meta["presence_confirmed_keys"].append(key)
+                meta["live_confirmed_keys"].append(key)
+                if ds == DATE_MISMATCH:
+                    meta["date_mismatch_keys"].append(key)
+                else:
+                    meta["date_confirmed_keys"].append(key)
                 ok += 1
-                _UNRES.unfreeze([_UNRES.event_key(item)])
-                shadow_batch.append(item)
+                continue
+
+            if not rk and klass == CLASS_RESOLVE_AMBIGUOUS:
+                # The catalog is built from the full PMS GUID index + a
+                # live-watched scan, so a definitive miss (not_in_plex_catalog /
+                # show_matched_episode_missing) is authoritative -- the per-item
+                # Plex fallback would fire a live search only to re-confirm it,
+                # which is what made large unresolved backlogs take minutes.
+                # Only an ambiguous catalog match can benefit from a targeted
+                # lookup, so restrict the (expensive) fallback to that case.
+                rk = _resolve_rating_key(adapter, item, strict=write_strict)
+
+            if not rk:
+                reason = klass if klass in (
+                    CLASS_SHOW_MATCHED_EPISODE_MISSING, CLASS_NOT_IN_PLEX_CATALOG, CLASS_RESOLVE_AMBIGUOUS
+                ) else CLASS_NOT_IN_PLEX_CATALOG
+                unresolved.append({"item": id_minimal(item), "key": key, "hint": reason, "reason": reason})
+                meta["unresolved_keys"].append(key)
+                _bump_reason(meta, reason)
+                continue
+
+            to_scrobble.append((item, key, str(rk), int(ts)))
+
+        write_workers = 0
+        write_ms = 0
+        if to_scrobble:
+            write_workers = plex_worker_count(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
+            _ensure_session_pool(srv, write_workers)
+            _t_write = time.time()
+            if write_workers > 1 and len(to_scrobble) > 1:
+                with ThreadPoolExecutor(max_workers=write_workers, thread_name_prefix="plex-scrobble") as ex:
+                    scrobble_ok = list(ex.map(lambda t: _scrobble_with_date(srv, t[2], t[3]), to_scrobble))
             else:
-                _UNRES.freeze(item, action="add", reasons=["scrobble_failed"])
-                unresolved.append({"item": id_minimal(item), "hint": "scrobble_failed"})
+                scrobble_ok = [_scrobble_with_date(srv, rk, ts) for (_item, _key, rk, ts) in to_scrobble]
+            write_ms = int((time.time() - _t_write) * 1000)
+
+            for (item, key, _rk, _ts), success in zip(to_scrobble, scrobble_ok):
+                if success:
+                    ok += 1
+                    meta["accepted_keys"].append(key)
+                    meta["accepted_not_seen_live_keys"].append(key)
+                    shadow_batch.append(item)
+                else:
+                    unresolved.append({"item": id_minimal(item), "key": key, "hint": "scrobble_failed", "reason": DATE_WRITE_FAILED})
+                    meta["unresolved_keys"].append(key)
+                    _bump_reason(meta, DATE_WRITE_FAILED)
+
         _shadow_add_batch(shadow_batch)
+        _set_write_meta(adapter, meta)
+        _emit({
+            "event": "plex.write", "action": "summary", "feature": "history", "level": "info",
+            "attempted": ok + len(unresolved), "accepted": len(meta["accepted_keys"]),
+            "presence_confirmed": len(meta["presence_confirmed_keys"]),
+            "accepted_not_seen_live": len(meta["accepted_not_seen_live_keys"]),
+            "unresolved": len(unresolved), "reason_counts": dict(meta["reason_counts"]),
+            "scrobbled": len(to_scrobble), "workers": write_workers, "duration_ms": write_ms,
+        })
         _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
 
@@ -984,8 +1643,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not srv:
             unresolved: list[dict[str, Any]] = []
             for item in items or []:
-                _UNRES.freeze(item, action="remove", reasons=["no_plex_server"])
-                unresolved.append({"item": id_minimal(item), "hint": "no_plex_server"})
+                unresolved.append({"item": id_minimal(item), "key": canonical_key(item) or "", "hint": "no_plex_server", "reason": "no_plex_server"})
             _info("write_skipped", op="remove", reason="no_server")
             return 0, unresolved
 
@@ -993,28 +1651,23 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
             _info("write_skipped", op="remove", reason="home_scope_not_applied", selected=(sel_aid or sel_uname))
             unresolved = []
             for item in items or []:
-                unresolved.append({"item": id_minimal(item), "hint": "home_scope_not_applied"})
+                unresolved.append({"item": id_minimal(item), "key": canonical_key(item) or "", "hint": "home_scope_not_applied", "reason": "home_scope_not_applied"})
             return 0, unresolved
 
         ok = 0
         unresolved: list[dict[str, Any]] = []
         for item in items or []:
-            if _UNRES.is_frozen(item):
-                _dbg("skip_frozen", title=id_minimal(item).get("title"))
-                continue
+            key = canonical_key(item) or ""
             rating_key = _resolve_rating_key(adapter, item)
             if not rating_key:
-                _UNRES.freeze(item, action="remove", reasons=["not_in_library"])
-                unresolved.append({"item": id_minimal(item), "hint": "not_in_library"})
+                unresolved.append({"item": id_minimal(item), "key": key, "hint": "not_in_library", "reason": "not_in_library"})
                 continue
             if _unscrobble(srv, rating_key):
                 ok += 1
-                _UNRES.unfreeze([_UNRES.event_key(item)])
                 _shadow_remove(item)
                 _marked_set_unwatched(rating_key, item)
             else:
-                _UNRES.freeze(item, action="remove", reasons=["unscrobble_failed"])
-                unresolved.append({"item": id_minimal(item), "hint": "unscrobble_failed"})
+                unresolved.append({"item": id_minimal(item), "key": key, "hint": "unscrobble_failed", "reason": "unscrobble_failed"})
         _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
 
@@ -1024,7 +1677,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 def _has_matchable_ids(ids: Mapping[str, Any]) -> bool:
     return has_external_ids(ids)
 
-def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
+def _resolve_rating_key(adapter: Any, item: Mapping[str, Any], *, strict: bool | None = None) -> str | None:
     ids = ids_from(item)
     show_ids = extract_show_ids(item)
     srv = getattr(getattr(adapter, "client", None), "server", None)
@@ -1044,7 +1697,7 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
         kind = "episode"
     is_episode = kind == "episode"
 
-    strict = bool(plex_cfg_get(adapter, "strict_id_matching", False))
+    strict = bool(plex_cfg_get(adapter, "strict_id_matching", False)) if strict is None else bool(strict)
     allow = plex_feature_library_ids(adapter, "history")
 
     season = item.get("season") or item.get("season_number")
@@ -1188,17 +1841,27 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any]) -> str | None:
     return str(rk_val) if rk_val else None
 
 
+def _ensure_session_pool(srv: Any, workers: int) -> None:
+    try:
+        ses = getattr(srv, "_session", None)
+        if ses is None:
+            return
+        want = max(10, int(workers or 0) + 2)
+        if int(getattr(ses, "_cw_pool_size", 0) or 0) >= want:
+            return
+        from requests.adapters import HTTPAdapter
+        for scheme in ("https://", "http://"):
+            try:
+                ses.mount(scheme, HTTPAdapter(pool_connections=want, pool_maxsize=want, max_retries=0))
+            except Exception:
+                continue
+        setattr(ses, "_cw_pool_size", want)
+    except Exception:
+        pass
+
+
 def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
     try:
-        obj = None
-        try:
-            obj = srv.fetchItem(int(rating_key))
-            obj_type = (getattr(obj, "type", "") or "").lower()
-            if obj_type and obj_type not in ("episode", "movie"):
-                return False
-        except Exception:
-            obj = None
-
         base = _as_base_url(srv)
         ses = getattr(srv, "_session", None)
         tok = active_pms_token(srv)
@@ -1223,12 +1886,14 @@ def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
 
             _warn("write_failed", op="scrobble", rating_key=str(rating_key), status=resp.status_code, body_snippet=(resp.text or "")[:200].replace("\n", " "))
 
-        if obj:
-            try:
+        try:
+            obj = srv.fetchItem(int(rating_key))
+            obj_type = (getattr(obj, "type", "") or "").lower()
+            if obj is not None and (not obj_type or obj_type in ("episode", "movie")):
                 obj.markWatched()
                 return True
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         return False
 
