@@ -1,82 +1,62 @@
 # Security Policy
 
-CrossWatch is NOT meant to be exposed directly to the public internet.
+CrossWatch is designed for trusted local use and should not be exposed directly to the public internet.
 
-* Do **NOT** port-forward `8787` from your router or expose the web UI directly to WAN.
-* Run CrossWatch on your **local network**, or access it via:
-  * a **VPN** (WireGuard, Tailscale, etc.)
-  * use CrossWatch authentication to set a username/password
-  * use reverse proxy or use the self-signed certificate build-in CW.
+Use it on your local network, through a VPN such as WireGuard or Tailscale, or behind a reverse proxy with strong authentication and TLS. CrossWatch authentication and its built in self signed certificate can also be enabled.
 
 ## Supported Versions
-> Security fixes land on `main` first, then the next release.
+
+Security fixes are applied to `main` first and included in the next release.
 
 ## Reporting a Vulnerability
 
-**Please do not open public GitHub Issues for security bugs.**\
-Instead, use **GitHub Security Advisories** (preferred):\
-Repo **Security** → **Advisories** → **New draft security advisory**.
+Do not report security issues through public GitHub Issues.
 
-If Advisories are unavailable for some reason:
+Use GitHub Security Advisories:
 
-* open a GitHub Issue titled **“Security: need private contact”**
-* include **no technical details**
-* ask for a private channel
+Repository, **Security**, **Advisories**, **New draft security advisory**
 
-### What to include
+Include:
 
-* A clear description of the issue and impact
-* Reproduction steps or a minimal PoC
-* Any relevant logs **with secrets removed**
-* Suggested fix (optional but appreciated)
+* A description of the issue and its impact
+* Reproduction steps or a minimal proof of concept
+* Relevant logs with secrets removed
+* A suggested fix, when available
 
-### What you can expect
+When Security Advisories are unavailable, open an issue titled **Security: need private contact** without technical details.
 
-* Acknowledgement: typically within a few days
-* Fix/mitigation: as fast as practical depending on severity
-* Coordinated disclosure: we prefer responsible disclosure (often up to \~90 days for public disclosure, sooner if actively exploited)
+## Security Notes
 
-## CrossWatch Security Notes
+### Access
 
-### 1) Don’t expose CrossWatch to the public internet
+Restrict access to trusted users. CrossWatch can read and modify configuration, credentials, provider data and sync state.
 
-CrossWatch is intended for **local use**. If you expose it publicly everybody can access your configurations and UI.
+Do not port forward port `8787` directly to the internet.
 
-Recommended:
-* bind to localhost / LAN only
-* firewall the port
-* if you must access remotely: use a VPN (WireGuard/Tailscale) or a reverse proxy with **strong authentication**
+### Credentials
 
-### 2) Treat the API/UI as “trusted user only”
+Sensitive values are encrypted in `config.json` and masked in logs. This reduces accidental exposure but does not protect against a compromised host.
 
-CrossWatch includes endpoints that read/write configuration and orchestrate sync runs. Keep access restricted.
+Protect the configuration directory, do not commit configuration files, and rotate credentials after suspected exposure.
 
-### 3) Secrets are stored locally
+### TLS
 
-CrossWatch stores tokens/keys in a local `config.json` 
-
-* Sensitive values are stored encrypted in `config.json`
-  * It will reduce accidental leakage but it does not protect against a compromised host.
-* sensitive values are masked **** in logging
-* protect the config directory with proper OS permissions
-* don’t commit config files to git
-* rotate tokens immediately if you suspect exposure
-
-### 4) TLS verification
-
-Some providers support `verify_ssl=false` for self-signed setups. That’s convenient, but it weakens transport security.
+Disabling SSL verification can support self signed provider setups, but it weakens transport security. Use it only on trusted networks.
 
 ## Scope
 
 In scope:
-* vulnerabilities in CrossWatch code (API/UI, sync logic, file handling, auth flows, etc.)
-* sensitive data exposure (tokens, credentials, personal data)
-* RCE, SSRF, path traversal, authz bypass, deserialization bugs, etc.
+
+* CrossWatch API, UI, authentication, sync logic and file handling
+* Credential or personal data exposure
+* Remote code execution
+* Server side request forgery
+* Path traversal
+* Authorization bypass
 
 Out of scope:
-* vulnerabilities in third-party services (Plex/Trakt/SIMKL/Jellyfin/Emby/etc.)
-* “my reverse proxy is misconfigured” (we can still help, but it’s not a product vulnerability)
 
-## Thanks
+* Vulnerabilities in third party services
+* Reverse proxy, firewall or network configuration errors
 
-If you report something responsibly, you’ll get credit in the advisory/release notes (unless you prefer to stay anonymous).
+Responsible reports may receive credit in the advisory or release notes, unless anonymity is requested.
