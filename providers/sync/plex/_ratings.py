@@ -33,12 +33,14 @@ from ._common import (
     season_rating_key_from_show,
     section_allowed,
     unresolved_home_scope_not_applied,
-    unresolved_store,
     emit,
     make_logger,
 )
 
-_UNRES = unresolved_store("ratings")
+from ._history import (
+    _build_guid_index as _hist_build_guid_index,
+    _pms_find_in_guid_index as _hist_find_in_guid_index,
+)
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
@@ -182,11 +184,18 @@ def _resolve_rating_key(adapter: Any, it: Mapping[str, Any]) -> str | None:
     hits: list[Any] = []
 
     if ids or (show_ids and (is_episode or is_season)):
+        guids: list[str] = []
         try:
             guids = item_guid_candidates(ids, show_ids if (is_episode or is_season) else {}, it)
             rk_any = server_find_rating_key_by_guid(srv, guids)
         except Exception:
             rk_any = None
+        if not rk_any and guids:
+            try:
+                _hist_build_guid_index(adapter, allow)
+                rk_any = _hist_find_in_guid_index("movie" if is_movie else "show", guids)
+            except Exception:
+                pass
         if rk_any:
             try:
                 obj = srv.fetchItem(int(rk_any))
@@ -340,8 +349,14 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
     
         client = getattr(adapter, "client", None)
         ses = getattr(srv, "_session", None) or getattr(client, "session", None)
-    
-        tok, tok_source = _preferred_pms_token(adapter)
+
+        tok = str(getattr(srv, "token", None) or getattr(srv, "_token", None) or "").strip()
+        tok_source = "server.token"
+        if not tok:
+            tok = str(active_pms_token(srv) or "").strip()
+            tok_source = "active_pms_token(srv)"
+        if not tok:
+            tok, tok_source = _preferred_pms_token(adapter)
         configure_plex_context(baseurl=base, token=tok)
 
         cli = getattr(adapter, "client", None)
@@ -649,7 +664,6 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not srv:
             unresolved: list[dict[str, Any]] = []
             for it in items or []:
-                _UNRES.freeze(it, action="add", reasons=["no_plex_server"])
                 unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
             _info("write_skipped", op="add", reason="no_server")
             return 0, unresolved
@@ -661,44 +675,34 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if _shared_user_scope_active(adapter):
             unresolved: list[dict[str, Any]] = []
             for it in items or []:
-                _UNRES.freeze(it, action="add", reasons=["shared_user_ratings_unsupported"])
                 unresolved.append({"item": id_minimal(it), "hint": "shared_user_ratings_unsupported"})
             _warn("write_skipped", op="add", reason="shared_user_ratings_unsupported", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
             return 0, unresolved
-    
+
         ok = 0
         unresolved: list[dict[str, Any]] = []
-    
+
         for it in items or []:
-            if _UNRES.is_frozen(it):
-                _dbg("skip_frozen", title=id_minimal(it).get("title"))
-                continue
-    
             rating = _norm_rating(it.get("rating"))
             if rating is None or rating <= 0:
-                _UNRES.freeze(it, action="add", reasons=["missing_or_invalid_rating"])
                 unresolved.append({"item": id_minimal(it), "hint": "missing_or_invalid_rating"})
                 continue
-    
+
             rk = _resolve_rating_key(adapter, it)
             if not rk:
-                _UNRES.freeze(it, action="add", reasons=["not_in_library"])
                 unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
                 continue
-    
+
             existing = _get_existing_rating(srv, rk)
             if existing is not None and existing == rating:
                 _dbg("skip_same_rating", title=id_minimal(it).get("title"))
-                _UNRES.unfreeze([_UNRES.event_key(it)])
                 continue
-    
+
             if _rate(srv, rk, rating):
                 ok += 1
-                _UNRES.unfreeze([_UNRES.event_key(it)])
             else:
-                _UNRES.freeze(it, action="add", reasons=["rate_failed"])
                 unresolved.append({"item": id_minimal(it), "hint": "rate_failed"})
-    
+
         _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
 
@@ -712,7 +716,6 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if not srv:
             unresolved: list[dict[str, Any]] = []
             for it in items or []:
-                _UNRES.freeze(it, action="remove", reasons=["no_plex_server"])
                 unresolved.append({"item": id_minimal(it), "hint": "no_plex_server"})
             _info("write_skipped", op="remove", reason="no_server")
             return 0, unresolved
@@ -724,32 +727,24 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if _shared_user_scope_active(adapter):
             unresolved: list[dict[str, Any]] = []
             for it in items or []:
-                _UNRES.freeze(it, action="remove", reasons=["shared_user_ratings_unsupported"])
                 unresolved.append({"item": id_minimal(it), "hint": "shared_user_ratings_unsupported"})
             _warn("write_skipped", op="remove", reason="shared_user_ratings_unsupported", selected=(sel_aid or sel_uname), unresolved=len(unresolved))
             return 0, unresolved
-    
+
         ok = 0
         unresolved: list[dict[str, Any]] = []
-    
+
         for it in items or []:
-            if _UNRES.is_frozen(it):
-                _dbg("skip_frozen", title=id_minimal(it).get("title"))
-                continue
-    
             rk = _resolve_rating_key(adapter, it)
             if not rk:
-                _UNRES.freeze(it, action="remove", reasons=["not_in_library"])
                 unresolved.append({"item": id_minimal(it), "hint": "not_in_library"})
                 continue
-    
+
             if _rate(srv, rk, 0):
                 ok += 1
-                _UNRES.unfreeze([_UNRES.event_key(it)])
             else:
-                _UNRES.freeze(it, action="remove", reasons=["clear_failed"])
                 unresolved.append({"item": id_minimal(it), "hint": "clear_failed"})
-    
+
         _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
         return ok, unresolved
     finally:
