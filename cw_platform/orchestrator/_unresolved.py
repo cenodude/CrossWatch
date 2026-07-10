@@ -13,12 +13,17 @@ import time
 __all__ = [
     "load_unresolved_keys",
     "load_unresolved_map",
+    "load_unresolved_items",
     "record_unresolved",
     "clear_unresolved",
 ]
 
 STATE_DIR = Path("/config/.cw_state")
 _LOG = logging.getLogger("crosswatch.orchestrator.unresolved")
+_GENERIC_FAILURE_HINTS = {
+    "apply:add:failed",
+    "two:apply:add:failed",
+}
 
 from ._scope import scoped_file, scope_safe
 
@@ -144,11 +149,20 @@ def load_unresolved_map(
     scope = scope_safe()
 
     if feature and not cross_features:
-        p = _blocking_path(dst_lower, feature)
-        data = _read_json(p)
-        if data:
-            for k, v in data.items():
-                out[str(k)] = v if isinstance(v, dict) else {}
+        blocking = _read_json(_blocking_path(dst_lower, feature))
+        for k, v in blocking.items():
+            out[str(k)] = v if isinstance(v, dict) else {}
+
+        pending = _read_json(_pending_path(dst_lower, feature))
+        raw_hints = pending.get("hints") if isinstance(pending, dict) else None
+        hints = raw_hints if isinstance(raw_hints, dict) else {}
+        raw_keys = pending.get("keys") if isinstance(pending, dict) else None
+        keys = raw_keys if isinstance(raw_keys, list) else []
+        for k in keys:
+            if not k:
+                continue
+            v = hints.get(k) or {}
+            out[str(k)] = v if isinstance(v, dict) else {}
         return out
 
     if not STATE_DIR.exists():
@@ -192,6 +206,52 @@ def load_unresolved_map(
                 for k, v in (data or {}).items():
                     out[str(k)] = v if isinstance(v, dict) else {}
     return out
+
+
+def load_unresolved_items(dst: str | None = None) -> list[dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    if not STATE_DIR.exists():
+        return []
+    dst_lower = str(dst or "").strip().lower()
+    for p in sorted(STATE_DIR.iterdir()):
+        if not p.is_file():
+            continue
+        name = p.name
+        if ".unresolved" not in name or not name.endswith(".json"):
+            continue
+        if dst_lower and not name.startswith(f"{dst_lower}_"):
+            continue
+
+        data = _read_json(p)
+        if not isinstance(data, dict):
+            continue
+        raw_items = data.get("items")
+        items: dict[str, Any] = raw_items if isinstance(raw_items, dict) else {}
+        raw_hints = data.get("hints")
+        hints: dict[str, Any] = raw_hints if isinstance(raw_hints, dict) else {}
+        keys = data.get("keys")
+        key_iter = keys if isinstance(keys, list) else list(items.keys())
+
+        feature = ""
+        try:
+            base = name.split(".unresolved", 1)[0]
+            if "_" in base:
+                feature = base.split("_", 1)[1]
+        except Exception:
+            feature = ""
+
+        for raw_ck in key_iter:
+            ck = str(raw_ck or "").strip()
+            if not ck or ck in out:
+                continue
+            hint = hints.get(ck) if isinstance(hints, dict) else None
+            reason = str(hint.get("reason") or "").strip() if isinstance(hint, Mapping) else ""
+            rec: dict[str, Any] = {"key": ck, "reason": reason, "feature": feature}
+            item = items.get(ck) if isinstance(items, dict) else None
+            if isinstance(item, Mapping):
+                rec["item"] = dict(item)
+            out[ck] = rec
+    return list(out.values())
 
 
 # Write helpers
@@ -275,7 +335,18 @@ def record_unresolved(
         effective_hint = item_hint or hint
         if effective_hint:
             hints = data.setdefault("hints", {})
-            hints[ck] = {"reason": str(effective_hint), "ts": now}
+            existing_hint = hints.get(ck) if isinstance(hints, dict) else None
+            existing_reason = ""
+            if isinstance(existing_hint, Mapping):
+                existing_reason = str(existing_hint.get("reason") or "").strip()
+            new_reason = str(effective_hint).strip()
+            if (
+                existing_reason
+                and existing_reason not in _GENERIC_FAILURE_HINTS
+                and new_reason in _GENERIC_FAILURE_HINTS
+            ):
+                continue
+            hints[ck] = {"reason": new_reason, "ts": now}
 
     ok, error = _atomic_write(path, data)
     return {"ok": ok, "count": added if ok else 0, "path": str(path), **({"error": error} if error else {})}

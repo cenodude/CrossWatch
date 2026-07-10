@@ -50,8 +50,8 @@ def _vis_clause(visibility: str | None) -> str | None:
     if v == "all":
         return None
     if v == "acknowledged":
-        return "acknowledged_at IS NOT NULL"
-    return "acknowledged_at IS NULL"
+        return "(acknowledged_at IS NOT NULL OR EXISTS (SELECT 1 FROM event_groups g WHERE g.id=events.group_id AND g.acknowledged_at IS NOT NULL))"
+    return "acknowledged_at IS NULL AND NOT EXISTS (SELECT 1 FROM event_groups g WHERE g.id=events.group_id AND g.acknowledged_at IS NOT NULL)"
 
 
 def _order_dir(order: str | None) -> str:

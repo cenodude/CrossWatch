@@ -11,38 +11,73 @@ dist/
 build/
 *.log
 
-# Virtualenv
+# Virtual environments
 .venv/
 env/
 venv/
 ENV/
 pip-wheel-metadata/
+
+# Databases
+*.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
 
-# VS Code
-.vscode/*
+# IDE and local tools
+.vscode/
+.idea/
+*.swp
+*.swo
+.agents/
+.codex/
 
-# Docker and Container data
+# Docker and container data
 docker-compose.override.yml
 
-# volumes/configs
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# CrossWatch configuration and secrets
 /config/
-state.json
-config.json
+/config.json
+/state.json
+/profiles.json
+/last_sync.json
+/statistics.json
+/watchlist_hide.json
+/.cw_master_key
+
+# CrossWatch runtime data
+/.cw_state/
+/.cw_cache/
+/.cw_databases/
+/.cw_provider/
+/backups/
+/snapshots/
+/sync_reports/
+/tls/
+/logs/
 
 # OS generated files
 .DS_Store
 Thumbs.db
+**/@eaDir/
 
-# Test config / local test artifacts
-**/pytest.ini
-pytest.ini
+# Test and coverage artifacts
 .pytest_cache/
 .coverage
 .coverage.*
 htmlcov/
 coverage.xml
 pytestdebug.log
+.pytest_tmp*/
+pytest-cache-files-*/
 
 # Tooling caches
 .mypy_cache/
@@ -51,7 +86,13 @@ pytestdebug.log
 .nox/
 *.sarif
 .hypothesis/
+
+# Node and Playwright
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
 playwright-report/
 test-results/
 .playwright/
@@ -59,9 +100,6 @@ playwright/.auth/
 .env.playwright
 .env.playwright.local
 
-# CrossWatch runtime state
-.cw_state/
-
-# Local test/temp workspaces
-.pytest_tmp*/
-pytest-cache-files-*/
+# Temporary files
+*.tmp
+*.bak

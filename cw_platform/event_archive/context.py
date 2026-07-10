@@ -164,7 +164,13 @@ def build_context(
     return out
 
 
-def build_group_context(group_id: Any = None, *, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+def build_group_context(
+    group_id: Any = None,
+    *,
+    run_items_limit: int | None = 100,
+    run_items_offset: int = 0,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
     from . import groups as _groups
     c = conn or get_conn()
     out: dict[str, Any] = {"ok": True, "group": None, "events": [], "context": {}, "related_groups": []}
@@ -187,8 +193,14 @@ def build_group_context(group_id: Any = None, *, conn: sqlite3.Connection | None
         out["related_groups"] = [r for r in rel if str(r.get("id")) != str(g.get("id"))]
     elif str(g.get("operation") or "") == "run":
         run_id = next((e.get("run_id") for e in out["events"] if e.get("run_id")), None)
-        out["run_items"] = _safe(lambda: _groups.run_problem_items(
-            run_id, g.get("first_event_at"), g.get("last_event_at"), conn=c).get("items")) or []
+        res = _safe(lambda: _groups.run_problem_items(
+            run_id, g.get("first_event_at"), g.get("last_event_at"),
+            limit=run_items_limit, offset=run_items_offset, conn=c,
+        )) or {}
+        out["run_items"] = res.get("items") or []
+        out["run_items_total"] = int(res.get("total") or 0)
+        out["run_items_limit"] = int(res.get("limit") or run_items_limit or out["run_items_total"] or 0)
+        out["run_items_offset"] = int(res.get("offset") or run_items_offset or 0)
     return out
 
 
@@ -613,7 +625,7 @@ def best_title(item_key: Any, *, title: Any = None, media_type: Any = None,
         or (season is not None and episode is not None)
     weak = (not cur) or bool(tag and cur.upper() == tag)
     new_title = cur or None
-    if weak:
+    if weak or is_episode:
         series = info.get("series_title")
         ititle = info.get("title")
         pick = (series or ititle) if is_episode else (ititle or series)
