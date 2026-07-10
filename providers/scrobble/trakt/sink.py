@@ -69,11 +69,11 @@ def _log(msg: str, level: str = "INFO") -> None:
         return
     if BASE_LOG is not None:
         try:
-            BASE_LOG(str(msg), level=lvl, module="TRAKT")
+            BASE_LOG(str(msg), level=lvl, module="TRAKT-SCROBBLE")
             return
         except Exception:
             pass
-    print(f"[TRAKT:{lvl}] {msg}")
+    print(f"[TRAKT-SCROBBLE:{lvl}] {msg}")
 
 
 def _dbg(msg: str) -> None:

@@ -581,12 +581,12 @@ class JellyfinWatchService:
             return
         if BASE_LOG is not None:
             try:
-                BASE_LOG(msg, level=lvl, module="JFIN ")
+                BASE_LOG(msg, level=lvl, module="JELLYFIN-WATCH")
                 return
             except Exception:
                 pass
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        print(f"[{ts}] [JFIN ] {lvl} {msg}")
+        print(f"[{ts}] [JELLYFIN-WATCH] {lvl} {msg}")
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
