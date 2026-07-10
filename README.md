@@ -58,6 +58,7 @@
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
   * Playback Progress Manager: View and edit unfinished playback sessions across providers.
   * Editor: Inspect and adjust your items and add or block items.
+  * Events Viewer: Search and inspect sync runs.
   * Captures: Rollback tool for provider watchlist, ratings, and history.
   * Backup & Restore: Create, validate, import and restore configuration.
 
