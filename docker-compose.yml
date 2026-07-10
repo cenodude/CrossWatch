@@ -1,16 +1,13 @@
-# docker-compose.yml
 services:
   crosswatch:
     image: ghcr.io/cenodude/crosswatch:latest
     container_name: crosswatch
     ports:
-      - "8787:8787"
+      - "${CROSSWATCH_PORT:-8787}:8787"
     environment:
-      TZ: Europe/Amsterdam
+      TZ: "${TZ:-Europe/Amsterdam}"
     volumes:
-      - type: volume
-        source: crosswatch_config
-        target: /config
+      - crosswatch_config:/config
     restart: unless-stopped
 
 volumes:
