@@ -390,12 +390,12 @@ class WatchService:
             return
         if BASE_LOG is not None:
             try:
-                BASE_LOG(msg, level=lvl, module="PLEX ")
+                BASE_LOG(msg, level=lvl, module="PLEX-WATCH")
                 return
             except Exception:
                 pass
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        print(f"[{ts}] [PLEX ] {lvl} {msg}")
+        print(f"[{ts}] [PLEX-WATCH] {lvl} {msg}")
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")

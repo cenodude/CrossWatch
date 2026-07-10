@@ -583,12 +583,12 @@ class EmbyWatchService:
             return
         if BASE_LOG is not None:
             try:
-                BASE_LOG(msg, level=lvl, module="EMBY ")
+                BASE_LOG(msg, level=lvl, module="EMBY-WATCH")
                 return
             except Exception:
                 pass
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        print(f"[{ts}] [EMBY ] {lvl} {msg}")
+        print(f"[{ts}] [EMBY-WATCH] {lvl} {msg}")
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
