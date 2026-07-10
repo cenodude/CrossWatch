@@ -1,51 +1,145 @@
-CrossWatch License (MIT-based with Commercial Restriction)
+# CrossWatch Source Available License
 
-Copyright (c) 2025-2026 Cenodude
-https://github.com/cenodude/CrossWatch
+Version 1.0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, and sublicense, and to permit
-persons to whom the Software is furnished to do so, subject to the conditions
-below.
+Copyright (c) enodude
 
-The above copyright notice and this permission notice (including the additional
-terms below) shall be included in all copies or substantial portions of the
-Software.
+Repository: https://github.com/cenodude/CrossWatch
 
-ADDITIONAL TERMS - COMMERCIAL USE RESTRICTION (INCLUDING HOSTED CONTAINERS)
+This is a custom source available license. It is not the MIT License and it is not an open source license as defined by the Open Source Initiative.
 
-1) Commercial use requires permission
-Notwithstanding the permission grant above, you may not use, distribute,
-sublicense, or make the Software available as part of any commercial product
-or service where end users are required to pay (including subscriptions,
-licenses, paywalls, or paid features) in order to access or use the Software,
-unless you have explicit permission from the copyright holder.
+## 1. Definitions
 
-Permission requests: contact on Discord: cenodude#2185
+For purposes of this License:
 
-2) Hosted containers / container images (cost-only allowance)
-If you provide the Software via a container image (such as Docker/OCI) and/or as a
-hosted container deployment running the Software, you may charge ONLY the direct,
-pass-through costs for hosting/infrastructure (such as compute, storage, bandwidth).
+1. "Software" means CrossWatch, including its source code, object code, documentation, configuration examples, container images, and any modifications or derivative works based on them.
 
-You may NOT charge for CrossWatch itself, bundle it into a paid plan, include it
-as part of a subscription value proposition, add markup for the Software, or
-otherwise price the service in a way that implies CrossWatch is included in the
-price beyond hosting cost recovery.
+2. "Commercial Offering" means any product, service, subscription, hosted service, managed service, paid feature, paid plan, license, bundle, consulting engagement, or other offering in which payment or other monetary consideration is required, directly or indirectly, to obtain access to, receive, operate, or use all or part of the Software.
 
-This allowance does not remove the requirement to include the copyright notice
-and this license text in all copies or substantial portions of the Software.
+3. "Direct Infrastructure Costs" means actual and reasonable third party charges that are directly attributable to hosting or delivering the Software. These costs are limited to compute, storage, bandwidth, container registry charges, payment processing fees, and mandatory taxes. Direct Infrastructure Costs do not include labor, installation, support, administration, monitoring, management, development, maintenance, depreciation, general overhead, profit, or markup.
 
-Rationale (informational; non-binding)
-Life is expensive enough, and I built this application with love for the community.
-CrossWatch will be free-for-ever.
+4. "Copyright Holder" means Cenodude, or any legal successor that owns the relevant copyright in the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## 2. License Grant
+
+Subject to compliance with this License, the Copyright Holder grants you permission, free of charge, to use, copy, modify, merge, publish, and distribute the Software.
+
+You may distribute the Software, including modifications, only under this License, unless the Copyright Holder gives you explicit written permission to use different terms.
+
+This License does not grant permission to use the Software as part of a Commercial Offering, except as expressly allowed by Section 5 or by explicit written permission from the Copyright Holder.
+
+## 3. Permitted Uses
+
+The following uses are permitted without additional permission:
+
+1. Personal, educational, research, charitable, community, and other noncommercial use.
+
+2. Internal use by an individual, business, nonprofit organization, educational institution, or government organization, including use in commercial operations, provided that the Software is not made available to customers or other third parties as part of a Commercial Offering.
+
+3. Distribution of the Software without charging any fee or requiring any payment or other monetary consideration for access to or use of the Software.
+
+4. Hosting the Software without charging users for access to or use of the Software.
+
+All permitted uses remain subject to the notice, distribution, and other requirements of this License.
+
+## 4. Commercial Restrictions
+
+Without explicit written permission from the Copyright Holder, you may not:
+
+1. Sell, rent, license, sublicense, or otherwise charge for the Software or any modified version of the Software.
+
+2. Offer the Software as a paid hosted service, software as a service offering, managed service, container service, application service, or similar service, except as allowed by Section 5.
+
+3. Bundle the Software with a paid product, service, subscription, plan, feature, license, appliance, platform, or other Commercial Offering, even when the Software is not shown as a separate charge.
+
+4. Require payment, a paid subscription, a paid account, the purchase of another product or service, or any other monetary consideration as a condition for accessing or using the Software.
+
+5. Charge for installation, operation, administration, support, consulting, or management services when access to or operation of the Software is a material part of the paid service.
+
+6. Represent that the Software is included as part of the value of a paid product or service.
+
+A commercial organization does not violate this Section merely by using the Software internally in accordance with Section 3.
+
+## 5. Hosted Containers and Cost Recovery
+
+You may distribute the Software through a container image, or provide a hosted container deployment running the Software, while charging only for Direct Infrastructure Costs.
+
+Any charge under this Section must:
+
+1. Be limited to the actual Direct Infrastructure Costs attributable to the relevant user or deployment.
+
+2. Contain no profit, markup, labor charge, support charge, management charge, administrative charge, or general overhead allocation.
+
+3. Be reasonably itemized and capable of being substantiated by records of the underlying costs.
+
+4. Not be bundled with paid features, paid support, paid management, or any other Commercial Offering.
+
+5. Not imply that any amount is being charged for the Software itself.
+
+This cost recovery exception does not remove any notice or distribution requirement under this License.
+
+## 6. Notices and Distribution
+
+Every copy or substantial portion of the Software must include:
+
+1. The copyright notice stated above.
+
+2. The complete text of this License.
+
+3. A clear notice identifying material modifications, when you distribute a modified version.
+
+You may not remove, obscure, or misrepresent copyright notices, license notices, attribution notices, or notices of modification contained in the Software.
+
+You may not impose terms that conflict with this License or that purport to remove the commercial restrictions in this License.
+
+## 7. Commercial Permission
+
+The Copyright Holder may grant commercial permission under a separate written agreement. That agreement may include additional conditions, fees, limitations, or obligations.
+
+Permission requests may be submitted through the repository at https://github.com/cenodude/CrossWatch or through Discord at cenodude#2185.
+
+No permission is valid unless it is provided in writing by the Copyright Holder or an authorized representative.
+
+## 8. Independent Software and Integrations
+
+This License does not apply to independent software that merely communicates with the Software through published interfaces, protocols, command line interfaces, application programming interfaces, or network connections, provided that the independent software does not contain, copy, modify, or derive from the Software.
+
+This Section does not permit the Software itself to be bundled with or made available through a Commercial Offering.
+
+## 9. Third Party Components
+
+Third party components included with or used by the Software remain subject to their own license terms. This License does not replace or modify the license terms of those components.
+
+## 10. Termination
+
+Your rights under this License terminate automatically when you violate any term of this License.
+
+For a first violation, your rights are automatically reinstated if you fully correct the violation within 30 days after discovering it or receiving written notice of it, whichever occurs first.
+
+For any later violation, or when a violation is not corrected within that period, reinstatement requires explicit written permission from the Copyright Holder.
+
+Termination does not affect obligations or liabilities that arose before termination. Sections concerning notices, commercial restrictions, trademarks, warranty, liability, and general terms survive termination.
+
+## 11. Trademarks and Endorsement
+
+This License does not grant permission to use the names CrossWatch or Cenodude, or any related logo, trademark, service mark, or branding, except as reasonably necessary to describe the origin of an unmodified copy of the Software or to provide legally required attribution.
+
+You may not state or imply that a modified version, distribution, product, service, or organization is approved, sponsored, maintained, or endorsed by the Copyright Holder without explicit written permission.
+
+## 12. Disclaimer of Warranty and Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NONINFRINGEMENT.
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE COPYRIGHT HOLDER, AUTHORS, OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE SOFTWARE.
+
+## 13. General Terms
+
+If any provision of this License is held to be invalid or unenforceable, the remaining provisions remain in effect, and the affected provision will be interpreted as closely as legally possible to its original purpose.
+
+A failure to enforce any provision of this License is not a waiver of the right to enforce that provision or any other provision later.
+
+This License contains the complete terms granted by the Copyright Holder for use of the Software, except where the Copyright Holder has entered into a separate written agreement.
+
+## 14. Project Statement, Nonbinding
+
+CrossWatch is intended to remain available without charge for community use. This statement explains the project purpose, but it does not modify this License and does not guarantee that future versions will be released under identical terms.
