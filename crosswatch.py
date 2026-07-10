@@ -487,6 +487,30 @@ DIAG_LOG_TAG = "DEBUG"
 LOG_BUFFERS: Dict[str, List[str]] = {"SYNC": [], DIAG_LOG_TAG: []}
 LOG_BASE_SEQ: Dict[str, int] = {"SYNC": 1, DIAG_LOG_TAG: 1}
 LOG_NEXT_SEQ: Dict[str, int] = {"SYNC": 1, DIAG_LOG_TAG: 1}
+WATCH_LOG_TAGS = {
+    "WATCH",
+    "WATCHM",
+    "SCROBBLE",
+    "WEBHOOK",
+    "PLEX-WATCH",
+    "JELLYFIN-WATCH",
+    "EMBY-WATCH",
+    "TRAKT-SCROBBLE",
+    "SIMKL-SCROBBLE",
+    "MDBLIST-SCROBBLE",
+}
+WATCH_LOG_DEFAULT_TAGS = [
+    "WATCH",
+    "WATCHM",
+    "SCROBBLE",
+    "WEBHOOK",
+    "PLEX-WATCH",
+    "JELLYFIN-WATCH",
+    "EMBY-WATCH",
+    "TRAKT-SCROBBLE",
+    "SIMKL-SCROBBLE",
+    "MDBLIST-SCROBBLE",
+]
 
 ANSI_RE    = re.compile(r"\x1b\[([0-9;]*)m")
 ANSI_STRIP = re.compile(r"\x1b\[[0-9;]*m")
@@ -523,6 +547,22 @@ def _log_lines(tag: str | None, tail: int | None = None) -> List[str]:
     if not tail:
         return list(buf)
     return buf[-int(tail):]
+
+def _watch_log_selection(tags: str | None = "") -> List[str]:
+    if tags and tags.strip():
+        sel = [
+            t
+            for t in (_norm_log_tag(raw) for raw in tags.split(",") if raw and raw.strip())
+            if t in WATCH_LOG_TAGS
+        ]
+    else:
+        sel = list(WATCH_LOG_DEFAULT_TAGS)
+
+    out: List[str] = []
+    for t in sel:
+        if t and t not in out:
+            out.append(t)
+    return out or list(WATCH_LOG_DEFAULT_TAGS)
 
 class _LogTextExtractor(HTMLParser):
     def __init__(self) -> None:
@@ -836,17 +876,26 @@ async def api_logs_stream_initial(
     request: Request,
     tag: str = Query("SYNC"),
     tail: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
+    since: int | None = Query(None, ge=1),
     plain: bool = Query(False),
 ):
     tag = _norm_log_tag(tag)
 
     async def agen():
-        buf = _get_log_buf(tag)
-        initial = buf[-int(tail):] if tail else buf
-        for line in initial:
-            yield f"data: {_log_stream_text(line, plain)}\n\n"
+        buf = list(_get_log_buf(tag))
         base = int(LOG_BASE_SEQ.get(tag, int(LOG_NEXT_SEQ.get(tag, 1))))
-        last_seq = base + len(buf) - 1
+        if since is not None:
+            last_seq = max(int(since), base - 1)
+        else:
+            buf_len = len(buf)
+            start = max(0, buf_len - int(tail)) if tail else 0
+            last_seq = base - 1
+            for i in range(start, buf_len):
+                line = buf[i]
+                seq = base + i
+                yield f"id: {seq}\ndata: {_log_stream_text(line, plain)}\n\n"
+                last_seq = seq
+            last_seq = max(last_seq, base + buf_len - 1)
         last = time.time()
         while True:
             if await request.is_disconnected():
@@ -861,9 +910,10 @@ async def api_logs_stream_initial(
                 start_idx = 0
             for i in range(start_idx, len(new_buf)):
                 line = new_buf[i]
-                yield f"data: {_log_stream_text(line, plain)}\n\n"
+                seq = base + i
+                yield f"id: {seq}\ndata: {_log_stream_text(line, plain)}\n\n"
                 last = time.time()
-                last_seq = base + i
+                last_seq = seq
             if time.time() - last > 15:
                 yield "event: ping\ndata: 1\n\n"
                 last = time.time()
@@ -888,35 +938,7 @@ async def api_logs_watcher(
     tags: str = Query("", description="Optional CSV override"),
     plain: bool = Query(False),
 ):
-    cfg = load_config() or {}
-    if tags and tags.strip():
-        sel = [_norm_log_tag(t) for t in tags.split(",") if t and t.strip()]
-    else:
-        watch_cfg: dict[str, Any] = {}
-        sc = cfg.get("scrobble") or {}
-        if isinstance(sc, dict) and isinstance(sc.get("watch"), dict):
-            watch_cfg = sc.get("watch") or {}
-        routes = watch_cfg.get("routes") if isinstance(watch_cfg, dict) else None
-        if isinstance(routes, list) and routes:
-            providers = [
-                _norm_log_tag(str((r or {}).get("provider") or ""))
-                for r in routes
-                if isinstance(r, dict) and bool((r or {}).get("enabled", True))
-            ]
-            sinks = [
-                _norm_log_tag(str((r or {}).get("sink") or ""))
-                for r in routes
-                if isinstance(r, dict) and bool((r or {}).get("enabled", True))
-            ]
-            sel = [*providers, *sinks]
-        else:
-            sel = ["WATCH"]
-
-    out: List[str] = []
-    for t in sel:
-        if t and t not in out:
-            out.append(t)
-    tags_sel = out or ["SYNC"]
+    tags_sel = _watch_log_selection(tags)
 
     async def agen():
         last_seq: Dict[str, int] = {}

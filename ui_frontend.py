@@ -527,8 +527,8 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <div class="cw-menu cw-sync-menu hidden" id="cw-sync-menu" role="menu" aria-labelledby="run-menu"></div>
       </div>
         <button id="btn-details" class="btn cw-hub-action" onclick="toggleDetails()" title="Show the sync results and stats" aria-label="Show the latest sync results and stats"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">description</span><span>View details</span></button>
-        <button class="btn cw-hub-action" onclick="openAnalyzer()" title="Finds missing, unresolved or inconsistent sync items between providers" aria-label="Finds missing, unresolved or inconsistent sync items between providers"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>Analyzer</span></button>
-        <button class="btn cw-hub-action" onclick="openEvents()" title="Searchable history of what synced, what failed, and why" aria-label="Searchable history of what synced, what failed, and why"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
+        <button class="btn cw-hub-action" onclick="openAnalyzer()" title="Finds missing, unresolved or inconsistent sync items" aria-label="Finds missing, unresolved or inconsistent sync items between providers"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">monitoring</span><span>Analyzer</span></button>
+        <button class="btn cw-hub-action" onclick="openEvents()" title="View sync events" aria-label="View sync events"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
         <button class="btn cw-hub-action" onclick="openExporter()" title="Export your watchlist, history and ratings to a file" aria-label="Export your watchlist, history and ratings to a file"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">ios_share</span><span>Exporter</span></button>
       </div>
     </div>

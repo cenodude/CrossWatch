@@ -613,7 +613,7 @@
     if (running && !sync.state().timeline.pre && !sync.state().timeline.post && now - sync._lastPhaseAt > 900) {
       sync.updatePct(Math.min((sync._pctMemo || 0) + 2, 24));
     }
-    if (now - sync.lastEvent() > 20000) {
+    if (running && now - sync.lastEvent() > 20000) {
       openSummaryStream();
       openLogStream();
     }

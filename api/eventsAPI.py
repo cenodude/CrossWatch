@@ -26,11 +26,13 @@ from cw_platform.event_archive import (
     correlate as _correlate,
     list_groups as _list_groups,
     list_tree as _list_tree,
+    get_group as _get_group,
     group_events as _group_events,
     acknowledge_group as _acknowledge_group,
     unacknowledge_group as _unacknowledge_group,
     events_db_path,
 )
+from cw_platform.event_archive.groups import run_problem_items as _run_problem_items
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
@@ -157,9 +159,36 @@ def events_tree(
 
 
 @router.get("/groups/{group_id}")
-def events_group_detail(group_id: int) -> JSONResponse:
-    res = _build_group_context(group_id)
+def events_group_detail(
+    group_id: int,
+    run_items_limit: int = Query(100, ge=1, le=500),
+    run_items_offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    res = _build_group_context(group_id, run_items_limit=run_items_limit, run_items_offset=run_items_offset)
     return _ok(res, status_code=200 if res.get("ok") else 404)
+
+
+@router.get("/groups/{group_id}/run-items")
+def events_group_run_items(
+    group_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> JSONResponse:
+    group = _get_group(group_id)
+    if not group:
+        return _ok({"ok": False}, status_code=404)
+    if str(group.get("operation") or "") != "run":
+        return _ok({"ok": True, "items": [], "total": 0, "limit": limit, "offset": offset})
+    events = _group_events(group_id, order="asc", limit=500, offset=0).get("items") or []
+    run_id = next((e.get("run_id") for e in events if e.get("run_id")), None)
+    res = _run_problem_items(run_id, group.get("first_event_at"), group.get("last_event_at"), limit=limit, offset=offset)
+    return _ok({
+        "ok": True,
+        "items": res.get("items") or [],
+        "total": res.get("total") or 0,
+        "limit": res.get("limit") or limit,
+        "offset": res.get("offset") or offset,
+    })
 
 
 @router.get("/groups/{group_id}/events")

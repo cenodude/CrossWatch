@@ -1472,3 +1472,11 @@ header .tabs .tab:focus-visible{outline:2px solid color-mix(in srgb,var(--accent
 html[data-cw-theme] header .tabs .tab{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--muted)!important;-webkit-text-fill-color:var(--muted)!important;text-shadow:none!important}
 html[data-cw-theme] header .tabs .tab:hover,html[data-cw-theme] header .tabs .tab.active{background:transparent!important;border:0!important;box-shadow:none!important;color:var(--fg)!important;-webkit-text-fill-color:var(--fg)!important}
 html[data-cw-theme] header .tabs .tab :is(span,b,strong){color:inherit!important;-webkit-text-fill-color:inherit!important}
+
+/* rating widget - correction */
+#latest-ratings-grid .cw-rating-widget-card{position:relative}
+#latest-ratings-grid .cw-rating-age-badge{position:absolute;left:6px;top:6px;z-index:6;max-width:78px;padding:5px 9px;border-radius:999px;background:rgba(8,10,16,.34);border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 6px 14px rgba(0,0,0,.16);backdrop-filter:blur(10px) saturate(120%);-webkit-backdrop-filter:blur(10px) saturate(120%);color:#fff;font-size:12px;font-weight:800;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#latest-ratings-grid .cw-rating-provider-icons{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;justify-content:center;gap:5px;min-width:36px;max-width:calc(100% - 20px);padding:5px 9px;border-radius:999px;background:rgba(10,12,20,.34);border:1px solid rgba(255,255,255,.14);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 20px rgba(0,0,0,.22);backdrop-filter:blur(12px) saturate(125%);-webkit-backdrop-filter:blur(12px) saturate(125%);white-space:nowrap}
+#latest-ratings-grid .cw-rating-provider-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px}
+#latest-ratings-grid .cw-rating-provider-icon img{display:block;width:16px;height:16px;object-fit:contain;filter:drop-shadow(0 1px 3px rgba(0,0,0,.45))}
+#latest-ratings-grid .cw-rating-provider-icon--text{color:#fff;font-size:9px;font-weight:900;line-height:16px;text-shadow:0 1px 4px rgba(0,0,0,.75)}
