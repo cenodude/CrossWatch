@@ -1797,10 +1797,12 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any], *, strict: bool |
     if not srv:
         return None
 
+    allow = plex_feature_library_ids(adapter, "history")
     rk = ids.get("plex") or None
     if rk:
         try:
-            if srv.fetchItem(int(rk)):
+            obj_rk = srv.fetchItem(int(rk))
+            if obj_rk and section_allowed(obj_rk, allow):
                 return str(rk)
         except Exception:
             pass
@@ -1811,7 +1813,6 @@ def _resolve_rating_key(adapter: Any, item: Mapping[str, Any], *, strict: bool |
     is_episode = kind == "episode"
 
     strict = bool(plex_cfg_get(adapter, "strict_id_matching", False)) if strict is None else bool(strict)
-    allow = plex_feature_library_ids(adapter, "history")
 
     season = item.get("season") or item.get("season_number")
     episode = item.get("episode") or item.get("episode_number")
