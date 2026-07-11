@@ -333,11 +333,12 @@ export default {
     const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
     const lset = (k, v) => { try { localStorage.setItem(k, v); } catch {} };
     let visibility = ls("cw.events.visibility", "open");
-    let order = ls("cw.events.order", "newest");
+    let order = "newest";
     let mode = ls("cw.events.mode", "grouped");
     let detailTab = ls("cw.events.detailtab", "timeline");
+    lset("cw.events.order", order);
 
-    const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false, collapsed: new Set() };
+    const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false, collapsed: new Set(), childLoading: new Set(), didInitialSelect: false };
     const dropdowns = [];
 
     root.innerHTML = `
@@ -581,6 +582,7 @@ export default {
       if (until) p.set("until", until);
       p.set("visibility", visibility);
       p.set("order", order);
+      if (grouped() && !filtersActive()) p.set("children", "false");
       p.set("limit", String(PAGE_SIZE));
       p.set("offset", String((page || 0) * PAGE_SIZE));
       return p.toString();
@@ -664,9 +666,10 @@ export default {
       const out = [];
       for (const g of state.items) {
         const kids = g.children || [];
-        const expandable = kids.length > 0;
+        const expandable = kids.length > 0 || Number(g.children_total || 0) > 0;
         const expanded = expandable && !state.collapsed.has(String(g.id));
         out.push(groupRowHTML(g, { expandable, expanded }));
+        if (expanded && state.childLoading.has(String(g.id))) out.push(`<div class="ev-row ev-row-child ev-row-loading"><span class="ev-twist-sp" aria-hidden="true"></span><span class="ev-ico neutral"><span class="material-symbols-rounded ev-spin" aria-hidden="true">progress_activity</span></span><span class="ev-main"><span class="ev-summary">Loading child threads…</span></span><span></span><span></span></div>`);
         if (expanded) for (const k of kids) out.push(groupRowHTML(k, { child: true }));
       }
       return out.join("");
@@ -674,11 +677,9 @@ export default {
 
     const applyDefaultCollapse = () => {
       state.collapsed.clear();
-      const runs = state.items.filter((g) => (g.children || []).length > 0);
-      if (runs.length < 2) return;
-      let latest = runs[0];
-      for (const g of runs) if (Number(g.last_event_at || 0) > Number(latest.last_event_at || 0)) latest = g;
-      for (const g of runs) if (String(g.id) !== String(latest.id)) state.collapsed.add(String(g.id));
+      for (const g of state.items) {
+        if ((g.children || []).length > 0 || Number(g.children_total || 0) > 0) state.collapsed.add(String(g.id));
+      }
     };
 
     const bindRow = (el) => {
@@ -771,6 +772,27 @@ export default {
       Q("#ev-next-top", root).disabled = state.page >= pc - 1;
     };
 
+    const loadRunChildren = async (id) => {
+      const gid = String(id);
+      const g = state.items.find((x) => String(x.id) === gid);
+      if (!g || g.children_loaded || state.childLoading.has(gid)) return;
+      state.childLoading.add(gid);
+      renderList();
+      try {
+        const page = await fjson(`/api/events/groups/${encodeURIComponent(gid)}/run-items?limit=500&offset=0`);
+        if (!alive) return;
+        g.children = Array.isArray(page?.items) ? page.items : [];
+        g.children_total = Number(page?.total || g.children.length || 0);
+        g.children_loaded = true;
+      } catch {
+        g.children = [];
+        g.children_total = 0;
+      } finally {
+        state.childLoading.delete(gid);
+        if (alive) renderList();
+      }
+    };
+
     const renderList = () => {
       const label = grouped() ? "thread" : "event";
       countEl.textContent = `${(state.total || 0).toLocaleString()} ${label}${state.total === 1 ? "" : "s"}`;
@@ -784,12 +806,14 @@ export default {
         return;
       }
       listEl.innerHTML = buildRows();
-      listEl.querySelectorAll(".ev-row").forEach(bindRow);
-      listEl.querySelectorAll(".ev-twist").forEach((b) => b.addEventListener("click", (ev) => {
+      listEl.querySelectorAll(".ev-row[data-id]").forEach(bindRow);
+      listEl.querySelectorAll(".ev-twist").forEach((b) => b.addEventListener("click", async (ev) => {
         ev.stopPropagation();
         const id = String(b.dataset.twist);
-        if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+        const opening = state.collapsed.has(id);
+        if (opening) state.collapsed.delete(id); else state.collapsed.add(id);
         renderList();
+        if (opening) await loadRunChildren(id);
       }));
       if (state.selected) listEl.querySelector(`.ev-row[data-id="${state.selected}"]`)?.classList.add("sel");
       renderPager();
@@ -808,6 +832,12 @@ export default {
         const pc = pageCount();
         if (state.page > 0 && state.page >= pc) { return load(pc - 1); }
         renderList();
+        if (!state.didInitialSelect && state.page === 0 && state.items.length) {
+          state.didInitialSelect = true;
+          const latestRun = grouped() ? state.items.find((x) => String(x.operation || "") === "run") : null;
+          const picked = latestRun || state.items[0];
+          if (picked?.id != null) select(picked.id);
+        }
         if (page === 0) listEl.scrollTop = 0;
       } catch (err) {
         listEl.innerHTML = `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">error</span><div class="ev-empty-head">Failed to load</div><div class="ev-empty-hint">${esc(err.message)}</div></div>`;
