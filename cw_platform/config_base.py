@@ -398,6 +398,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "device_id": "crosswatch",                      # Client device id
         "username": "",                                 # Optional (login username)
         "user": "",                                     # Optional (display name; hydrated after auth)
+        "auth_method": "",                              # "quick_connect" | "password" (metadata; runtime uses access_token)
         "server_version": "",                           # Detected during authentication; Jellyfin 10.9+ required
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 15.0,                                # HTTP timeout (seconds)
@@ -620,11 +621,11 @@ DEFAULT_CFG: dict[str, Any] = {
             }
         },
 
-        # Trakt sink rules (progress decisions) used by Trakt|SIMKL|MDblist
+        # Scrobble progress policy shared by Trakt, SIMKL, and MDBList
         "trakt": {
-            "progress_step": 25,                        # Send scrobble progress in % steps
-            "stop_pause_threshold": 80,                 # <80% STOP-send as PAUSE (your “watched” bar)
-            "force_stop_at": 95,                        # ≥95% always STOP
+            "progress_step": 25,                        # Coalesce start/progress updates in % steps
+            "watched_at": 90,                           # Watched threshold for local completion/statistics/watchlist removal
+            "force_stop_at": 95,                        # Defensive final-stop trust threshold
             "regress_tolerance_percent": 5,             # Small progress regress is tolerated
         }
     },

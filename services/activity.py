@@ -204,12 +204,15 @@ def _target_key(target: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def _group_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    kind = str(item.get("kind") or "").strip().lower()
+    event = str(item.get("event") or "").strip().lower()
+    is_scrobble_stop = kind == "scrobble" and event == "scrobble_stop"
     ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
-    ids_key = json.dumps(ids, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    ids_key = "" if is_scrobble_stop else json.dumps(ids, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return (
-        str(item.get("kind") or "").strip().lower(),
+        kind,
         str(item.get("method") or "").strip().lower(),
-        str(item.get("event") or "").strip().lower(),
+        event,
         str(item.get("status") or "").strip().lower(),
         str(item.get("source") or "").strip().lower(),
         str(item.get("source_instance") or "default").strip() or "default",
@@ -218,7 +221,7 @@ def _group_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
         _as_int(item.get("year")),
         _as_int(item.get("season")),
         _as_int(item.get("episode")),
-        _as_int(item.get("progress")),
+        None if is_scrobble_stop else _as_int(item.get("progress")),
         str(item.get("account") or "").strip().lower(),
         ids_key,
     )
@@ -313,6 +316,7 @@ def record_scrobble_event(
     source_instance: str = "default",
     progress: Any = None,
     captured_at: int | None = None,
+    method: str | None = None,
 ) -> dict[str, Any] | None:
     action = str(getattr(ev, "action", "") or "").strip().lower()
     if action != "stop":
@@ -320,10 +324,14 @@ def record_scrobble_event(
     media_type = str(getattr(ev, "media_type", "") or "").strip().lower()
     if media_type not in {"movie", "episode"}:
         return None
-    return add_event(
+    raw = getattr(ev, "raw", None)
+    if not method and isinstance(raw, Mapping):
+        method = str(raw.get("_cw_activity_method") or "").strip().lower() or None
+    method = str(method or "watcher").strip().lower() or "watcher"
+    result = add_event(
         {
             "kind": "scrobble",
-            "method": "watcher",
+            "method": method,
             "event": "scrobble_stop",
             "status": status,
             "source": source,
@@ -342,6 +350,42 @@ def record_scrobble_event(
             "ids": getattr(ev, "ids", None) or {},
         }
     )
+    try:
+        if method == "webhook":
+            from cw_platform.event_archive import record_webhook
+
+            record_webhook(
+                event_type="scrobble_completed" if status == "ok" else "scrobble_failed",
+                source_provider=source,
+                destination_provider=target,
+                destination_instance=target_instance,
+                media_type=media_type,
+                ids=getattr(ev, "ids", None) or {},
+                account=getattr(ev, "account", None),
+                progress=progress if progress is not None else getattr(ev, "progress", None),
+                session_key=getattr(ev, "session_key", None),
+                title=getattr(ev, "title", None),
+                year=getattr(ev, "year", None),
+                season=getattr(ev, "season", None),
+                episode=getattr(ev, "number", None),
+                reason=None if status == "ok" else status,
+            )
+        else:
+            from cw_platform.event_archive import record_watch
+
+            record_watch(
+                ev,
+                action="stop",
+                source_provider=source,
+                source_instance=source_instance,
+                destination_provider=target,
+                destination_instance=target_instance,
+                status="ok" if status == "ok" else "fail",
+                progress=progress if progress is not None else getattr(ev, "progress", None),
+            )
+    except Exception:
+        pass
+    return result
 
 
 def list_events(

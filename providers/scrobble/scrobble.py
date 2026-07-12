@@ -123,7 +123,7 @@ def _normalize_units(offset: int, duration: int) -> tuple[int, int]:
     return o, d
 
 
-def _progress(state: str, view_offset: int, duration: int) -> tuple[int, ScrobbleAction]:
+def _progress(state: str, view_offset: int, duration: int) -> tuple[float, ScrobbleAction]:
     s = (state or "").lower()
     if s == "playing":
         act: ScrobbleAction = "start"
@@ -139,7 +139,7 @@ def _progress(state: str, view_offset: int, duration: int) -> tuple[int, Scrobbl
         return 0, act
     o, d = _normalize_units(o0, d0)
     vo = max(0, min(o, d))
-    pct = max(0, min(100, int(round((vo / float(d)) * 100))))
+    pct = max(0.0, min(100.0, (vo / float(d)) * 100.0))
     return pct, act
 
 
@@ -179,7 +179,7 @@ class ScrobbleEvent:
     year: int | None
     season: int | None
     number: int | None
-    progress: int
+    progress: float
     account: str | None
     server_uuid: str | None
     session_key: str | None
@@ -353,7 +353,7 @@ class Dispatcher:
         self._session_ok: set[str] = set()
         self._debounce: dict[str, float] = {}
         self._last_action: dict[str, str] = {}
-        self._last_progress: dict[str, int] = {}
+        self._last_progress: dict[str, float] = {}
         self._sink_accepts_cfg: dict[int, bool] = {}
 
     def _send_sink(self, sink: Any, ev: ScrobbleEvent, cfg: dict[str, Any]) -> None:

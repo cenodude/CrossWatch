@@ -205,17 +205,17 @@ def auto_remove_if_config_allows(
         return None
 
     try:
-        force_at = int((((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at")) or 95)
+        watched_at = float((((cfg.get("scrobble") or {}).get("trakt") or {}).get("watched_at")) or 90.0)
     except Exception:
-        force_at = 95
+        watched_at = 90.0
 
     try:
-        prog = int(e.get("progress") or 0)
+        prog = float(e.get("progress") or 0.0)
     except Exception:
-        prog = 0
+        prog = 0.0
 
-    if prog < force_at:
-        _log(f"auto-remove skipped due to progress {prog}% < {force_at}%", "DEBUG")
+    if prog < watched_at:
+        _log(f"auto-remove skipped due to progress {prog:.1f}% < {watched_at:.1f}%", "DEBUG")
         return None
 
     ids = e.get("ids") or {}

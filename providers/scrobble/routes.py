@@ -12,6 +12,7 @@ ROUTE_PROVIDERS = {"plex", "emby", "jellyfin"}
 ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"inherit", "off", "custom"}
+ROUTE_SCROBBLE_POLICY_KEYS = {"watched_at", "force_stop_at"}
 
 
 def _deep_clone(v: Any) -> Any:
@@ -70,6 +71,21 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
 
     webhook_id = str(ratings_src.get("webhook_id") or "").strip()
     webhook_token = str(ratings_src.get("webhook_token") or "").strip()
+    scrobble_raw = raw.get("scrobble")
+    scrobble_src: dict[str, Any] = scrobble_raw if isinstance(scrobble_raw, dict) else {}
+    scrobble: dict[str, float] = {}
+    for key in ROUTE_SCROBBLE_POLICY_KEYS:
+        if key not in scrobble_src:
+            continue
+        src_val = scrobble_src.get(key)
+        if src_val is None:
+            continue
+        try:
+            val = float(src_val)
+        except Exception:
+            continue
+        if 0.0 <= val <= 100.0:
+            scrobble[key] = val
 
     return {
         "auto_remove_watchlist": auto_remove,
@@ -79,6 +95,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
             "webhook_id": webhook_id,
             "webhook_token": webhook_token,
         },
+        "scrobble": scrobble,
     }
 
 
@@ -169,6 +186,14 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
     w["route_sink"] = r["sink"]
     w["route_sink_instance"] = r["sink_instance"]
     w["route_options"] = _deep_clone(r.get("options") or {})
+    if r["sink"] in ROUTE_SINKS:
+        policy = (w.get("route_options") or {}).get("scrobble")
+        if isinstance(policy, dict):
+            target = out.setdefault("scrobble", {}).setdefault("trakt", {})
+            if isinstance(target, dict):
+                for key in ROUTE_SCROBBLE_POLICY_KEYS:
+                    if key in policy:
+                        target[key] = policy[key]
     return out
 
 
