@@ -94,7 +94,7 @@ def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None
             emit("Watcher source enabled", module="WATCH")
         if webhook and watcher:
             emit(
-                "WARNING: both Webhook and Watcher are enabled; duplicate events are possible if the same server sends both",
+                "Webhook and Watcher are both enabled, do not use both for the same tracker.",
                 level="WARN",
                 module="SCROBBLE",
             )
@@ -420,6 +420,9 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
         k = str(key or "").strip().lower()
         if not k:
             return False
+
+        if k.startswith("profile:"):
+            return True
 
         exact = {
             "api_key", "apikey",

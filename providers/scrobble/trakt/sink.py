@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 import json, time
+import queue
+import threading
 from pathlib import Path
 from typing import Any
 
 import requests
 
-from cw_platform.config_base import load_config, save_config
+from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id
 
 try:
@@ -25,6 +28,7 @@ except Exception:
 
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
 from services.activity import record_scrobble_event
+from cw_platform.event_archive import record_watch
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -49,13 +53,6 @@ def _cfg() -> dict[str, Any]:
         return {}
 
 
-def _save_cfg(cfg: dict[str, Any]) -> None:
-    try:
-        save_config(cfg)
-    except Exception:
-        pass
-
-
 def _is_debug() -> bool:
     try:
         return bool((_cfg().get("runtime") or {}).get("debug"))
@@ -74,10 +71,6 @@ def _log(msg: str, level: str = "INFO") -> None:
         except Exception:
             pass
     print(f"[TRAKT-SCROBBLE:{lvl}] {msg}")
-
-
-def _dbg(msg: str) -> None:
-    _log(msg, "DEBUG")
 
 
 def _mask_account(value: Any) -> str:
@@ -165,10 +158,6 @@ def _post(path: str, body: dict[str, Any], cfg: dict[str, Any], instance_id: Any
     return requests.post(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), json=body, timeout=10)
 
 
-def _del(path: str, cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
-    return requests.delete(f"{TRAKT_API}{path}", headers=_hdr(cfg, instance_id), timeout=10)
-
-
 def _tok_refresh(instance_id: Any = None) -> bool:
     inst = normalize_instance_id(instance_id)
 
@@ -222,40 +211,40 @@ def _show_ids(ev: ScrobbleEvent) -> dict[str, Any]:
     return out
 
 
-def _clamp(p: Any) -> int:
+def _clamp(p: Any) -> float:
     try:
-        v = int(p)
+        v = float(p)
     except Exception:
-        v = 0
-    return max(0, min(100, v))
+        v = 0.0
+    return max(0.0, min(100.0, v))
 
 
-def _stop_pause_threshold(cfg: dict[str, Any]) -> int:
+def _stop_pause_threshold(cfg: dict[str, Any]) -> float:
     try:
-        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 85))
+        return float(((cfg.get("scrobble") or {}).get("trakt") or {}).get("stop_pause_threshold", 80.0))
     except Exception:
-        return 85
+        return 80.0
 
 
-def _force_stop_at(cfg: dict[str, Any]) -> int:
+def _watched_at(cfg: dict[str, Any]) -> float:
     try:
-        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95))
+        return float(((cfg.get("scrobble") or {}).get("trakt") or {}).get("watched_at", 90.0))
     except Exception:
-        return 95
+        return 90.0
 
 
-def _complete_at(cfg: dict[str, Any]) -> int:
+def _force_stop_at(cfg: dict[str, Any]) -> float:
     try:
-        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("complete_at", 0))
+        return float(((cfg.get("scrobble") or {}).get("trakt") or {}).get("force_stop_at", 95.0))
     except Exception:
-        return 0
+        return 95.0
 
 
-def _regress_tol(cfg: dict[str, Any]) -> int:
+def _complete_at(cfg: dict[str, Any]) -> float:
     try:
-        return int(((cfg.get("scrobble") or {}).get("trakt") or {}).get("regress_tolerance_percent", 5))
+        return float(((cfg.get("scrobble") or {}).get("trakt") or {}).get("complete_at", 0))
     except Exception:
-        return 5
+        return 0.0
 
 
 def _watch_pause_debounce(cfg: dict[str, Any]) -> int:
@@ -270,6 +259,39 @@ def _watch_suppress_start_at(cfg: dict[str, Any]) -> float:
         return float(((cfg.get("scrobble") or {}).get("watch") or {}).get("suppress_start_at", 99))
     except Exception:
         return 99.0
+
+
+@dataclass(frozen=True)
+class _TraktDecision:
+    path: str | None
+    progress: float
+    record_watched: bool
+    bypass_debounce: bool
+    held: bool = False
+
+
+def _trakt_decision(action: str, progress: Any, cfg: dict[str, Any]) -> _TraktDecision:
+    p = _clamp(progress)
+    history_cutoff = 80.0
+    watched_at = _watched_at(cfg)
+    force_stop_at = _force_stop_at(cfg)
+    if action == "start":
+        return _TraktDecision("/scrobble/start", p, False, False)
+    if action == "pause":
+        if p < 1.0:
+            return _TraktDecision(None, p, False, False)
+        if p < history_cutoff:
+            return _TraktDecision("/scrobble/stop", p, False, False)
+        return _TraktDecision(None, p, False, False, held=True)
+    if action == "stop":
+        if p < 1.0:
+            return _TraktDecision(None, p, False, False)
+        if p < history_cutoff:
+            return _TraktDecision("/scrobble/stop", p, False, False)
+        if p < watched_at:
+            return _TraktDecision(None, p, False, False, held=True)
+        return _TraktDecision("/scrobble/stop", p, True, p >= force_stop_at)
+    return _TraktDecision(None, p, False, False)
 
 def _trakt_progress_step(cfg: dict[str, Any]) -> int:
     try:
@@ -436,14 +458,6 @@ def _auto_remove_across(ev: ScrobbleEvent, cfg: dict[str, Any], scope: str = "")
     _log("Auto-remove skipped: no available remove-across implementation", "DEBUG")
 
 
-def _clear_active_checkin(cfg: dict[str, Any], instance_id: Any = None) -> bool:
-    try:
-        r = _del("/checkin", cfg, instance_id)
-        return r.status_code in (204, 200)
-    except Exception:
-        return False
-
-
 def _ids_desc_map(ids: dict[str, Any]) -> str:
     for k in ("trakt", "tmdb", "imdb", "tvdb"):
         v = ids.get(k)
@@ -494,13 +508,18 @@ class TraktSink(ScrobbleSink):
         self._cfg_provider = cfg_provider
         self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
-        self._p_sess: dict[tuple[str, str], int] = {}
-        self._p_step: dict[tuple[str, str], int] = {}
+        self._p_sess: dict[tuple[str, str], float] = {}
+        self._p_step: dict[tuple[str, str], float] = {}
         self._a_sess: dict[tuple[str, str], str] = {}
-        self._p_glob: dict[str, int] = {}
+        self._p_glob: dict[str, float] = {}
         self._best: dict[str, dict[str, Any]] = {}
         self._last_intent_path: dict[str, str] = {}
-        self._last_intent_prog: dict[str, int] = {}
+        self._last_intent_prog: dict[str, float] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
+        self._queue: queue.Queue[Any] = queue.Queue()
+        self._queue_lock = threading.RLock()
+        self._worker: threading.Thread | None = None
+        self._pending_starts: dict[str, dict[str, Any]] = {}
         self._warn_no_token = False
         self._warn_no_client = False
 
@@ -540,7 +559,7 @@ class TraktSink(ScrobbleSink):
         self._last_sent[k] = now
         return False
 
-    def _bodies(self, ev: ScrobbleEvent, p: int) -> list[dict[str, Any]]:
+    def _bodies(self, ev: ScrobbleEvent, p: float) -> list[dict[str, Any]]:
         ids = _ids(ev)
         show = _show_ids(ev)
         if ev.media_type == "movie":
@@ -597,12 +616,10 @@ class TraktSink(ScrobbleSink):
                 return {"ok": False, "status": 401, "resp": "Unauthorized and token refresh failed"}
 
             if s == 409:
-                # For scrobble endpoints, 409 usually means "duplicate scrobble" (watched_at / expires_at).
-                # Don't clear /checkin here; that is unrelated and can create extra traffic.
                 try:
-                    return {"ok": False, "status": 409, "resp": r.json()}
+                    return {"ok": True, "status": 409, "resp": r.json(), "duplicate": True}
                 except Exception:
-                    return {"ok": False, "status": 409, "resp": (r.text or "")[:400]}
+                    return {"ok": True, "status": 409, "resp": (r.text or "")[:400], "duplicate": True}
 
             if s == 429:
                 try:
@@ -635,7 +652,7 @@ class TraktSink(ScrobbleSink):
 
         return {"ok": False, "status": 429, "resp": "rate_limited"}
 
-    def _should_log_intent(self, key: str, path: str, prog: int) -> bool:
+    def _should_log_intent(self, key: str, path: str, prog: float) -> bool:
         last_p = self._last_intent_prog.get(key)
         last_path = self._last_intent_path.get(key)
         if last_path != path:
@@ -643,11 +660,266 @@ class TraktSink(ScrobbleSink):
         elif last_p is None:
             ok = True
         else:
-            ok = (prog - int(last_p)) >= 5
+            ok = (float(prog) - float(last_p)) >= 5.0
         if ok:
             self._last_intent_path[key] = path
-            self._last_intent_prog[key] = int(prog)
+            self._last_intent_prog[key] = float(prog)
         return ok
+
+    def _note_watch(self, ev: ScrobbleEvent, action: str, cfg: dict[str, Any], prog: Any, status: str = "ok", reason: str | None = None) -> None:
+        try:
+            src, src_inst = _route_source(cfg)
+            record_watch(
+                ev, action=action, source_provider=src, source_instance=src_inst,
+                destination_provider="trakt", destination_instance=self._instance_id,
+                status=status, progress=prog, reason=reason,
+            )
+        except Exception:
+            pass
+
+    def _session_state_key(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> str:
+        src, src_inst = _route_source(cfg)
+        sk = str(ev.session_key or "").strip() or self._mkey(ev)
+        account = str(ev.account or "").strip().lower()
+        return f"{src}:{src_inst}:{self._instance_id}:{account}:{sk}"
+
+    def _bind_event(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> ScrobbleEvent:
+        state_key = self._session_state_key(ev, cfg)
+        now = time.time()
+        existing = self._sessions.get(state_key)
+        if ev.action == "start" and (ev.ids or ev.title):
+            src, src_inst = _route_source(cfg)
+            self._sessions[state_key] = {
+                "session_key": ev.session_key,
+                "media_key": self._mkey(ev),
+                "event": ev,
+                "ids": dict(ev.ids or {}),
+                "account": ev.account,
+                "source_instance": src_inst,
+                "source_provider": src,
+                "progress": _clamp(ev.progress),
+                "max_progress": _clamp(ev.progress),
+                "initial_filter_decision": True,
+                "last_action": "start",
+                "completed": False,
+                "ts": now,
+            }
+            return ev
+        if ev.action in ("pause", "stop") and isinstance(existing, dict) and isinstance(existing.get("event"), ScrobbleEvent):
+            bound = existing["event"]
+            raw = dict(bound.raw or {})
+            raw.update(dict(ev.raw or {}))
+            return replace(
+                bound,
+                action=ev.action,
+                progress=ev.progress,
+                account=ev.account or bound.account,
+                server_uuid=ev.server_uuid or bound.server_uuid,
+                session_key=ev.session_key or bound.session_key,
+                raw=raw,
+            )
+        return ev
+
+    def _update_session_state(self, ev: ScrobbleEvent, cfg: dict[str, Any], decision: _TraktDecision) -> None:
+        state_key = self._session_state_key(ev, cfg)
+        src, src_inst = _route_source(cfg)
+        state = dict(self._sessions.get(state_key) or {})
+        if not state.get("event") and (ev.ids or ev.title):
+            state["event"] = ev
+        prev_max = _clamp(state.get("max_progress", 0.0))
+        state.update(
+            {
+                "session_key": ev.session_key,
+                "media_key": self._mkey(ev),
+                "ids": dict(ev.ids or {}),
+                "account": ev.account,
+                "source_instance": src_inst,
+                "source_provider": src,
+                "progress": decision.progress,
+                "max_progress": max(prev_max, decision.progress),
+                "initial_filter_decision": state.get("initial_filter_decision", True),
+                "last_action": ev.action,
+                "completed": bool(state.get("completed")) or decision.record_watched,
+                "held": decision.held,
+                "ts": time.time(),
+            }
+        )
+        self._sessions[state_key] = state
+
+    def _ensure_worker(self) -> None:
+        with self._queue_lock:
+            if self._worker and self._worker.is_alive():
+                return
+            self._worker = threading.Thread(target=self._worker_loop, name=f"TraktScrobble-{self._instance_id}", daemon=True)
+            self._worker.start()
+
+    def _enqueue(self, job: dict[str, Any]) -> None:
+        self._ensure_worker()
+        if job.get("action") == "start":
+            key = str(job.get("coalesce_key") or "")
+            with self._queue_lock:
+                self._pending_starts[key] = job
+            self._queue.put(("start", key))
+            return
+        self._queue.put(job)
+
+    def _worker_loop(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "start":
+                    with self._queue_lock:
+                        job = self._pending_starts.pop(str(item[1]), None)
+                    if isinstance(job, dict):
+                        self._deliver(job)
+                elif isinstance(item, dict):
+                    self._deliver(item)
+            except Exception as e:
+                _log(f"Trakt scrobble worker error: {e}", "ERROR")
+            finally:
+                try:
+                    self._queue.task_done()
+                except Exception:
+                    pass
+
+    def _deliver(self, job: dict[str, Any]) -> None:
+        ev = job["event"]
+        cfg = job["cfg"]
+        path = str(job["path"])
+        p_send = float(job["progress"])
+        action = str(job["action"])
+        watched = bool(job.get("record_watched"))
+        sk = str(ev.session_key or "?")
+        mk = self._mkey(ev)
+        key = self._ckey(ev)
+        name = _media_name(ev)
+        last_err: dict[str, Any] | None = None
+        best = self._best.get(key)
+
+        if not best and ev.media_type == "episode":
+            found = _guid_search(ev, cfg, self._instance_id)
+            if found:
+                epi_ids = {"trakt": found["trakt"]} if "trakt" in found else found
+                skeleton = {"episode": {"ids": epi_ids}}
+                self._best[key] = {
+                    "skeleton": skeleton,
+                    "ids_desc": _ids_desc_map(epi_ids),
+                    "ts": time.time(),
+                }
+                best = self._best.get(key)
+
+        if best and isinstance(best.get("skeleton"), dict):
+            bodies = [{"progress": p_send, **best["skeleton"], **_app_meta(cfg)}]
+        else:
+            bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_send)]
+
+        for i, body in enumerate(bodies):
+            prog_i = float(body.get("progress") or p_send)
+            if best and i == 0:
+                if self._should_log_intent(key, path, prog_i):
+                    _log(f"intent path={path} ids={best.get('ids_desc','title/year')} p={body.get('progress')}", "DEBUG")
+            elif self._should_log_intent(key, path, prog_i):
+                _log(f"intent path={path} ids={_body_ids_desc(body)} p={body.get('progress')}", "DEBUG")
+            res = self._send_http(path, body, cfg)
+            if res.get("ok"):
+                if res.get("duplicate"):
+                    _log(f"send path={path} status=409 duplicate", "DEBUG")
+                    self._a_sess[(sk, mk)] = action
+                    return
+                try:
+                    act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
+                except Exception:
+                    act = path.rsplit("/", 1)[-1]
+                _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
+                skeleton = _extract_skeleton_from_body(body)
+                self._best[key] = {
+                    "skeleton": skeleton,
+                    "ids_desc": _body_ids_desc(body),
+                    "ts": time.time(),
+                }
+                if watched:
+                    src, src_inst = _route_source(cfg)
+                    try:
+                        record_scrobble_event(
+                            ev,
+                            source=src,
+                            source_instance=src_inst,
+                            target="trakt",
+                            target_instance=self._instance_id,
+                            progress=p_send,
+                        )
+                    except Exception:
+                        pass
+                    _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
+                self._a_sess[(sk, mk)] = action
+                try:
+                    account = _mask_account(ev.account)
+                    prog = float(body.get("progress") or p_send)
+                    _log(f"scrobble {act} user='{account}' p={prog:.1f}% media='{name}'", "INFO")
+                except Exception:
+                    pass
+                return
+            last_err = res
+            if res.get("status") == 404:
+                _log("404 with current representation; trying alternate", "WARN")
+                continue
+            break
+
+        if last_err and last_err.get("status") == 404 and ev.media_type == "episode":
+            epi_ids = _guid_search(ev, cfg, self._instance_id)
+            if epi_ids:
+                body = {
+                    "progress": p_send,
+                    "episode": {"ids": epi_ids},
+                    **_app_meta(cfg),
+                }
+                if self._should_log_intent(key, path, float(body.get("progress") or p_send)):
+                    _log(f"intent path={path} ids={_ids_desc_map(epi_ids)} p={body.get('progress')}", "DEBUG")
+                res = self._send_http(path, body, cfg)
+                if res.get("ok"):
+                    if res.get("duplicate"):
+                        _log(f"send path={path} status=409 duplicate", "DEBUG")
+                        self._a_sess[(sk, mk)] = action
+                        return
+                    try:
+                        act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
+                    except Exception:
+                        act = path.rsplit("/", 1)[-1]
+                    _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
+                    skeleton = _extract_skeleton_from_body(body)
+                    self._best[key] = {
+                        "skeleton": skeleton,
+                        "ids_desc": _ids_desc_map(epi_ids),
+                        "ts": time.time(),
+                    }
+                    if watched:
+                        src, src_inst = _route_source(cfg)
+                        try:
+                            record_scrobble_event(
+                                ev,
+                                source=src,
+                                source_instance=src_inst,
+                                target="trakt",
+                                target_instance=self._instance_id,
+                                progress=p_send,
+                            )
+                        except Exception:
+                            pass
+                        _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
+                    self._a_sess[(sk, mk)] = action
+                    try:
+                        account = _mask_account(ev.account)
+                        prog = float(body.get("progress") or p_send)
+                        _log(f"scrobble {act} user='{account}' p={prog:.1f}% media='{name}'", "INFO")
+                    except Exception:
+                        pass
+                    return
+                last_err = res
+
+        if last_err:
+            _log(f"{path} {last_err.get('status')} err={_safe_log_repr(last_err.get('resp'))}", "ERROR")
+            if action in ("start", "stop"):
+                self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))
 
     def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
@@ -679,286 +951,43 @@ class TraktSink(ScrobbleSink):
                 self._warn_no_token = True
             return
 
+        ev = self._bind_event(ev, cfg)
         sk = str(ev.session_key or "?")
         mk = self._mkey(ev)
         p_now = _clamp(ev.progress)
-        force_seek = bool((getattr(ev, 'raw', None) or {}).get('_cw_seek'))
-        preserve_stop = bool((getattr(ev, 'raw', None) or {}).get('_cw_preserve_stop'))
-        tol = _regress_tol(cfg)
-        p_sess = self._p_sess.get((sk, mk), -1)
-        p_glob = self._p_glob.get(mk, -1)
+        decision = _trakt_decision(ev.action, p_now, cfg)
+        self._update_session_state(ev, cfg, decision)
 
-        last_act = self._a_sess.get((sk, mk))
-        last_bucket = self._p_step.get((sk, mk), -1)
+        p_glob = float(self._p_glob.get(mk, -1))
+        p_sess = float(self._p_sess.get((sk, mk), -1))
+        self._p_sess[(sk, mk)] = decision.progress
+        if decision.progress > p_glob:
+            self._p_glob[mk] = decision.progress
 
-        name = _media_name(ev)
-        key = self._ckey(ev)
-        if force_seek:
-            if ev.action == "start":
-                p_send = max(2, p_now)
-            else:
-                p_send = p_now
-        elif ev.action == "start":
-            if p_now <= 2 and (p_sess >= 10 or p_glob >= 10):
-                _log("Restart detected: align start floor to 2% (no 0%)", "DEBUG")
-                p_send = 2
-                self._p_glob[mk] = max(2, p_glob if p_glob >= 0 else 2)
-                self._p_sess[(sk, mk)] = 2
-            else:
-                if p_now == 0 and p_glob > 0:
-                    p_send = max(2, p_glob)
-                elif p_glob >= 0 and (p_glob - p_now) > 0 and (p_glob - p_now) <= tol and p_now > 2:
-                    p_send = p_glob
-                else:
-                    p_send = max(2, p_now)
-        else:
-            p_base = p_now
-            if ev.action == "pause" and p_base >= 98 and p_sess >= 0 and p_sess < 95:
-                _dbg(f"Clamp suspicious pause 100% → {p_sess}%")
-                p_base = p_sess
-            if p_sess < 0 or p_base >= p_sess or (p_sess - p_base) >= tol:
-                p_send = p_base
-            else:
-                p_send = p_sess
+        if ev.action == "start":
+            self._note_watch(ev, "start", cfg, decision.progress)
 
-        thr = _stop_pause_threshold(cfg)
-        last_sess = p_sess
-        action = ev.action
-
-        trakt_scrobble_cutoff = 80.0
-        stop_thr = float(thr)
-
-        # Match PlexTraktSync behavior: STOP below the configured threshold is treated as pause
-        if action == "stop" and float(p_send) < stop_thr and not preserve_stop:
-            if float(p_send) >= trakt_scrobble_cutoff and stop_thr > trakt_scrobble_cutoff:
-                _log(
-                    f"STOP at {p_send}% (< {thr}%) is below configured completion threshold but >= Trakt cutoff; "
-                    "skipping to avoid premature history scrobble.",
-                    "WARN",
-                )
-                # Keep local progress state so resume logic stays sane.
-                self._p_sess[(sk, mk)] = int(p_send)
-                if int(p_send) > (p_glob if p_glob >= 0 else -1):
-                    self._p_glob[mk] = int(p_send)
-                self._a_sess[(sk, mk)] = "pause"
-                return
-
-            _dbg(f"Demote STOP→PAUSE (p={p_send}% < thr={thr}%)")
-            action = "pause"
-            if p_send < 1:
-                p_send = 1
-
-        pause_cutoff = min(stop_thr, trakt_scrobble_cutoff)
-        if stop_thr > trakt_scrobble_cutoff:
-            _dbg(
-                f"stop_pause_threshold={thr}% > Trakt cutoff {trakt_scrobble_cutoff}%; "
-                f"pause will be suppressed at {trakt_scrobble_cutoff}%"
-            )
-
-        # Trakt rejects /scrobble/pause above ~80% with 422
-        if action == "pause" and p_send >= pause_cutoff:
-            _log(
-                f"Trakt rejects /scrobble/pause at {p_send}% (>= {pause_cutoff}%). Skipping pause.",
-                "WARN",
-            )
-            self._a_sess[(sk, mk)] = "pause"
+        if decision.path is None:
+            self._a_sess[(sk, mk)] = ev.action
             return
 
-        comp = _complete_at(cfg)
-        suppress_at = _watch_suppress_start_at(cfg)
-
-        if action == "start" and p_send >= suppress_at:
-            _log(f"suppress start at {p_send}% (>= {suppress_at}%)", "DEBUG")
-            if p_send > (p_glob if p_glob >= 0 else -1):
-                self._p_glob[mk] = p_send
-            self._p_sess[(sk, mk)] = p_send
+        if ev.action == "start":
+            step = float(_trakt_progress_step(cfg))
+            last_act = self._a_sess.get((sk, mk))
+            force_seek = bool((getattr(ev, "raw", None) or {}).get("_cw_seek"))
+            if last_act == "start" and not force_seek and p_sess >= 0 and abs(decision.progress - p_sess) < step:
+                return
+        elif not decision.bypass_debounce and self._debounced(ev.session_key, ev.action, _watch_pause_debounce(cfg)):
             return
 
-        if comp and p_send >= comp and action not in ("stop", "start"):
-            action = "stop"
-
-        if ev.action == "stop":
-            if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
-                action = "stop"
-            elif (not preserve_stop) and p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
-                _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
-                action = "pause"
-                p_send = last_sess
-
-        step = _trakt_progress_step(cfg)
-        p_payload = int(float(p_send))
-        bucket: int | None = None
-        if action == "start" and step > 1 and not force_seek:
-            bucket = (int(float(p_send)) // step) * step
-            if bucket < 1:
-                bucket = 1
-            if last_act == "start":
-                self._p_sess[(sk, mk)] = int(p_send)
-                if int(p_send) > (p_glob if p_glob >= 0 else -1):
-                    self._p_glob[mk] = int(p_send)
-                return
-
-        if action == "start" and step <= 1 and last_act == "start" and not force_seek:
-            self._p_sess[(sk, mk)] = int(p_send)
-            if int(p_send) > (p_glob if p_glob >= 0 else -1):
-                self._p_glob[mk] = int(p_send)
-            return
-
-        self._p_sess[(sk, mk)] = int(p_send)
-        if int(p_send) > (p_glob if p_glob >= 0 else -1):
-            self._p_glob[mk] = int(p_send)
-
-        comp_thr = max(_force_stop_at(cfg), comp or 0)
-        if not (action == "stop" and p_send >= comp_thr):
-            if self._debounced(ev.session_key, action, _watch_pause_debounce(cfg)):
-                return
-
-        path = {
-            "start": "/scrobble/start",
-            "pause": "/scrobble/pause",
-            "stop": "/scrobble/stop",
-        }[action]
-
-        last_err: dict[str, Any] | None = None
-        best = self._best.get(key)
-
-        if not best and ev.media_type == "episode":
-            found = _guid_search(ev, cfg)
-            if found:
-                epi_ids = {"trakt": found["trakt"]} if "trakt" in found else found
-                skeleton = {"episode": {"ids": epi_ids}}
-                self._best[key] = {
-                    "skeleton": skeleton,
-                    "ids_desc": _ids_desc_map(epi_ids),
-                    "ts": time.time(),
-                }
-                best = self._best.get(key)
-
-        bodies: list[dict[str, Any]] = []
-        if best and isinstance(best.get("skeleton"), dict):
-            b0 = {"progress": p_payload, **best["skeleton"], **_app_meta(cfg)}
-            if self._should_log_intent(key, path, int(b0.get("progress") or p_send)):
-                _log(f"intent path={path} ids={best.get('ids_desc','title/year')} p={b0.get('progress')}", "DEBUG")
-            bodies.append(b0)
-        else:
-            bodies = [{**b, **_app_meta(cfg)} for b in self._bodies(ev, p_payload)]
-
-        for i, body in enumerate(bodies):
-            if not (best and i == 0):
-                prog_i = int(float(body.get("progress") or p_payload))
-                if self._should_log_intent(key, path, prog_i):
-                    _log(f"intent path={path} ids={_body_ids_desc(body)} p={body.get('progress')}", "DEBUG")
-            res = self._send_http(path, body, cfg)
-            if res.get("ok"):
-                try:
-                    act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
-                except Exception:
-                    act = path.rsplit("/", 1)[-1]
-                _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
-                skeleton = _extract_skeleton_from_body(body)
-                self._best[key] = {
-                    "skeleton": skeleton,
-                    "ids_desc": _body_ids_desc(body),
-                    "ts": time.time(),
-                }
-                if action == "stop" and p_send >= comp_thr:
-                    src, src_inst = _route_source(cfg)
-                    try:
-                        record_scrobble_event(
-                            ev,
-                            source=src,
-                            source_instance=src_inst,
-                            target="trakt",
-                            target_instance=self._instance_id,
-                            progress=p_send,
-                        )
-                    except Exception:
-                        pass
-                    _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
-                self._a_sess[(sk, mk)] = action
-                if action == "start" and step > 1 and bucket is not None:
-                    self._p_step[(sk, mk)] = int(bucket)
-                try:
-                    account = _mask_account(ev.account)
-                    prog = float(body.get("progress") or p_send)
-                    _log(f"scrobble {act} user='{account}' p={prog:.1f}% media='{name}'", "INFO")
-                except Exception:
-                    pass
-                return
-            last_err = res
-            if res.get("status") == 404:
-                _log("404 with current representation → trying alternate", "WARN")
-                continue
-            break
-
-        if last_err and last_err.get("status") == 404 and ev.media_type == "episode":
-            epi_ids = _guid_search(ev, cfg)
-            if epi_ids:
-                body = {
-                    "progress": p_payload,
-                    "episode": {"ids": epi_ids},
-                    **_app_meta(cfg),
-                }
-                if self._should_log_intent(key, path, int(body.get("progress") or p_send)):
-                    _log(f"intent path={path} ids={_ids_desc_map(epi_ids)} p={body.get('progress')}", "DEBUG")
-                res = self._send_http(path, body, cfg)
-                if res.get("ok"):
-                    try:
-                        act = (res.get("resp") or {}).get("action") or path.rsplit("/", 1)[-1]
-                    except Exception:
-                        act = path.rsplit("/", 1)[-1]
-                    _log(f"send path={path} status={res['status']} action={act}", "DEBUG")
-                    skeleton = _extract_skeleton_from_body(body)
-                    self._best[key] = {
-                        "skeleton": skeleton,
-                        "ids_desc": _ids_desc_map(epi_ids),
-                        "ts": time.time(),
-                    }
-                    if action == "stop" and p_send >= comp_thr:
-                        src, src_inst = _route_source(cfg)
-                        try:
-                            record_scrobble_event(
-                                ev,
-                                source=src,
-                                source_instance=src_inst,
-                                target="trakt",
-                                target_instance=self._instance_id,
-                                progress=p_send,
-                            )
-                        except Exception:
-                            pass
-                        _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
-                    self._a_sess[(sk, mk)] = action
-                    if action == "start" and step > 1 and bucket is not None:
-                        self._p_step[(sk, mk)] = int(bucket)
-                    try:
-                        account = _mask_account(ev.account)
-                        prog = float(body.get("progress") or p_send)
-                        _log(f"scrobble {act} user='{account}' p={prog:.1f}% media='{name}'", "INFO")
-                    except Exception:
-                        pass
-                    return
-                last_err = res
-
-        if last_err and last_err.get("status") == 409 and action == "stop" and (
-            "watched_at" in str(last_err.get("resp"))
-        ):
-            _log("Treating 409 with watched_at as watched; proceeding to auto-remove", "WARN")
-            if p_send >= comp_thr:
-                src, src_inst = _route_source(cfg)
-                try:
-                    record_scrobble_event(
-                        ev,
-                        source=src,
-                        source_instance=src_inst,
-                        target="trakt",
-                        target_instance=self._instance_id,
-                        progress=p_send,
-                    )
-                except Exception:
-                    pass
-                _auto_remove_across(ev, cfg, scope=f"trakt:{self._instance_id}")
-            return
-
-        if last_err:
-            _log(f"{path} {last_err.get('status')} err={_safe_log_repr(last_err.get('resp'))}", "ERROR")
+        self._enqueue(
+            {
+                "event": ev,
+                "cfg": dict(cfg),
+                "path": decision.path,
+                "progress": decision.progress,
+                "record_watched": decision.record_watched,
+                "action": ev.action,
+                "coalesce_key": f"{self._instance_id}:{sk}:{mk}",
+            }
+        )

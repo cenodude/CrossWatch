@@ -13,6 +13,7 @@ import requests
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id
 from services.activity import record_scrobble_event
+from cw_platform.event_archive import record_watch
 
 try:
     from _logging import log as BASE_LOG
@@ -20,6 +21,7 @@ except Exception:
     BASE_LOG = None
 
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+from providers.scrobble._watched_gate import resolve_stop_action
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except ImportError:
@@ -160,6 +162,17 @@ def _complete_at(cfg: dict[str, Any]) -> int:
         return 0
 
 
+def _watched_at(cfg: dict[str, Any]) -> float:
+    try:
+        s = cfg.get("scrobble") or {}
+        src = (s.get("simkl") or {}).get("watched_at")
+        if src is None:
+            src = (s.get("trakt") or {}).get("watched_at", 90.0)
+        return float(src)
+    except Exception:
+        return 90.0
+
+
 def _regress_tolerance_percent(cfg: dict[str, Any]) -> int:
     try:
         s = cfg.get("scrobble") or {}
@@ -197,7 +210,7 @@ def _progress_step(cfg: dict[str, Any]) -> int:
 
 
 def _quantize_progress(p: int, step: int, action: str) -> int:
-    v = _clamp(p)
+    v = int(_clamp(p))
     if step <= 1 or action == "stop":
         return v
     if v < step:
@@ -205,11 +218,11 @@ def _quantize_progress(p: int, step: int, action: str) -> int:
     q = (v // step) * step
     return max(1, min(100, q))
 
-def _clamp(p: Any) -> int:
+def _clamp(p: Any) -> float:
     try:
-        v = int(float(p))
+        v = float(p)
     except Exception:
-        v = 0
+        v = 0.0
     return max(0, min(100, v))
 
 
@@ -453,11 +466,12 @@ class SimklSink(ScrobbleSink):
         self._cfg_provider = cfg_provider
         self._instance_id = normalize_instance_id(instance_id)
         self._last_sent: dict[str, float] = {}
-        self._p_sess: dict[tuple[str, str], int] = {}
+        self._p_sess: dict[tuple[str, str], float] = {}
         self._p_step: dict[tuple[str, str], int] = {}
         self._a_sess: dict[tuple[str, str], str] = {}
-        self._p_glob: dict[str, int] = {}
+        self._p_glob: dict[str, float] = {}
         self._best: dict[str, dict[str, Any]] = {}
+        self._completed: dict[str, float] = {}
         self._ids_logged: set[str] = set()
         self._last_intent_path: dict[str, str] = {}
         self._last_intent_prog: dict[str, int] = {}
@@ -516,6 +530,17 @@ class SimklSink(ScrobbleSink):
             self._last_intent_prog[key] = int(prog)
         return changed
 
+    def _note_watch(self, ev: Any, action: str, cfg: dict[str, Any], prog: Any, status: str = "ok", reason: str | None = None) -> None:
+        try:
+            src, src_inst = self._route_source(cfg)
+            record_watch(
+                ev, action=action, source_provider=src, source_instance=src_inst,
+                destination_provider="simkl", destination_instance=self._instance_id,
+                status=status, progress=prog, reason=reason,
+            )
+        except Exception:
+            pass
+
     def send(self, ev: Any, cfg: dict[str, Any] | None = None) -> None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
         if not isinstance(cfg, dict):
@@ -554,6 +579,9 @@ class SimklSink(ScrobbleSink):
         last_act = self._a_sess.get((sk, mk))
         last_bucket = self._p_step.get((sk, mk), -1)
 
+        if action == "start":
+            self._note_watch(ev, "start", cfg, p_now)
+
         name = _media_name(ev)
         key = self._ckey(ev)
 
@@ -586,7 +614,7 @@ class SimklSink(ScrobbleSink):
 
         thr = _stop_pause_threshold(cfg)
         last_sess = p_sess
-        comp = _complete_at(cfg)
+        watched_at = _watched_at(cfg)
         suppress_at = _watch_suppress_start_at(cfg)
 
         if action == "start" and p_send >= suppress_at:
@@ -596,16 +624,15 @@ class SimklSink(ScrobbleSink):
             self._p_sess[(sk, mk)] = p_send
             return
 
-        if comp and p_send >= comp and action not in ("stop", "start"):
-            action = "stop"
-
         if action_in == "stop":
-            if p_send >= _force_stop_at(cfg) or (comp and p_send >= comp):
-                action = "stop"
-            elif (not preserve_stop) and p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
+            if (not preserve_stop) and p_send >= 98 and last_sess >= 0 and last_sess < thr and (p_send - last_sess) >= 30:
                 _log(f"Demote STOP→PAUSE (jump {last_sess}%→{p_send}%, thr={thr})", "DEBUG")
                 action = "pause"
                 p_send = last_sess
+            else:
+                action = resolve_stop_action(p_send, watched_at)
+                if action == "pause":
+                    _log(f"Hold STOP→PAUSE below watched_at ({p_send:.0f}% < {watched_at:.0f}%)", "DEBUG")
 
         step = _progress_step(cfg)
         p_payload = int(float(p_send))
@@ -622,12 +649,15 @@ class SimklSink(ScrobbleSink):
             if last_act == "start":
                 p_payload = bucket
 
-        self._p_sess[(sk, mk)] = int(p_send)
-        if int(p_send) > (p_glob if p_glob >= 0 else -1):
-            self._p_glob[mk] = int(p_send)
+        self._p_sess[(sk, mk)] = p_send
+        if p_send > (p_glob if p_glob >= 0 else -1):
+            self._p_glob[mk] = p_send
 
-        comp_thr = max(_force_stop_at(cfg), comp or 0)
-        if not (action == "stop" and p_send >= comp_thr):
+        done_key = f"{sk}:{mk}"
+        record_complete = action == "stop" and p_send >= watched_at
+        if record_complete and self._completed.get(done_key, -1.0) >= watched_at:
+            return
+        if action_in != "stop":
             if self._debounced(sk, action, _watch_pause_debounce(cfg)):
                 return
         path = {"start": "/scrobble/start", "pause": "/scrobble/pause", "stop": "/scrobble/stop"}[action]
@@ -674,7 +704,7 @@ class SimklSink(ScrobbleSink):
                     _log(f"scrobble {act} user='{_mask_account(acc)}' p={prog_val:.1f}% media='{name}'", "INFO")
                 except Exception:
                     pass
-                if action == "stop" and p_send >= comp_thr:
+                if record_complete:
                     src, src_inst = self._route_source(cfg)
                     try:
                         record_scrobble_event(
@@ -688,6 +718,7 @@ class SimklSink(ScrobbleSink):
                     except Exception:
                         pass
                     _auto_remove_across(ev, cfg, scope=f"simkl:{self._instance_id}")
+                    self._completed[done_key] = p_send
                 self._a_sess[(sk, mk)] = action
                 if action == "start" and step > 1 and bucket is not None:
                     self._p_step[(sk, mk)] = int(bucket)
@@ -700,7 +731,7 @@ class SimklSink(ScrobbleSink):
 
         if last_err and last_err.get("status") == 409 and action == "stop":
             _log("Treating 409 (duplicate stop) as watched; proceeding to auto-remove", "WARN")
-            if p_send >= comp_thr:
+            if record_complete:
                 src, src_inst = self._route_source(cfg)
                 try:
                     record_scrobble_event(
@@ -714,10 +745,13 @@ class SimklSink(ScrobbleSink):
                 except Exception:
                     pass
                 _auto_remove_across(ev, cfg, scope=f"simkl:{self._instance_id}")
+                self._completed[done_key] = p_send
             return
 
         if last_err:
             _log(f"{path} {last_err.get('status')} err={last_err.get('resp')}", "ERROR")
+            if action in ("start", "stop"):
+                self._note_watch(ev, action, cfg, p_send, status="fail", reason=str(last_err.get("status") or ""))
 
     def _send_http(self, path: str, body: dict[str, Any], cfg: dict[str, Any]) -> dict[str, Any]:
         backoff = 1.0

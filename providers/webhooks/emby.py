@@ -1,0 +1,1168 @@
+# providers/webhooks/emby.py
+# CrossWatch - Emby Scrobbler Webhook Module
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+from __future__ import annotations
+
+import json, time
+from pathlib import Path
+from typing import Any, Callable, Mapping
+
+import requests
+
+from cw_platform.config_base import load_config, save_config
+
+try:
+    from _logging import log as BASE_LOG
+except Exception:
+    BASE_LOG = None
+
+from providers.scrobble.currently_watching import update_from_payload as _cw_update
+from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+from providers.scrobble.scrobble import mask_account as _mask_account
+from providers.scrobble.sources import source_enabled
+from providers.webhooks.config import webhook_sinks
+from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
+try:
+    from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
+except Exception:
+    _rm_across_api = None
+
+
+TRAKT_API = "https://api.trakt.tv"
+
+_SCROBBLE_STATE: dict[str, dict[str, Any]] = {}
+_TRAKT_ID_CACHE: dict[tuple[Any, ...], Any] = {}
+
+_DEF_WEBHOOK: dict[str, Any] = {
+    "pause_debounce_seconds": 5,
+    "suppress_start_at": 99,
+    "filters_emby": {"username_whitelist": []},
+    "suppress_autoplay_seconds": 0,
+    "post_stop_play_guard_seconds": 0,
+    "start_guard_min_progress": 0,
+    "guard_autoplay_seconds": 0,
+    "cancel_checkin_on_stop": True,
+    "anti_autoplay_seconds": 0,
+}
+_DEF_TRAKT: dict[str, Any] = {
+    "stop_pause_threshold": 80,
+    "force_stop_at": 95,
+    "regress_tolerance_percent": 5,
+    "complete_at": 95,
+}
+
+
+_VIEW_CACHE_TTL_SECS = 60.0
+_VIEW_ROOTS_CACHE: dict[str, tuple[float, set[str]]] = {}
+_ITEM_VIEW_CACHE: dict[str, str | None] = {}
+
+
+def _sinks_from_webhook_cfg(cfg: dict[str, Any], provider_instance: Any = None) -> set[str]:
+    return set(webhook_sinks(cfg, "emby", provider_instance))
+
+
+def _as_set_str(v: Any) -> set[str]:
+    it = v if isinstance(v, (list, tuple, set)) else ([v] if v is not None else [])
+    out: set[str] = set()
+    for x in it:
+        s = str(x).strip()
+        if s:
+            out.add(s)
+    return out
+
+
+def _emby_conn(cfg: dict[str, Any]) -> tuple[str, str, str, float, bool, str]:
+    e = cfg.get('emby') or {}
+    base = str(e.get('server') or '').strip().rstrip('/')
+    tok = str(e.get('access_token') or '').strip()
+    uid = str(e.get('user_id') or '').strip()
+    did = str(e.get('device_id') or 'crosswatch').strip() or 'crosswatch'
+    try:
+        timeout = float(e.get('timeout') or 6.0)
+    except Exception:
+        timeout = 6.0
+    verify = bool(e.get('verify_ssl', True))
+    if base and '://' not in base:
+        base = 'http://' + base
+    return base, tok, uid, timeout, verify, did
+
+
+def _emby_headers(tok: str, did: str) -> dict[str, str]:
+    return {
+        'Accept': 'application/json',
+        'X-Emby-Token': tok,
+        'X-MediaBrowser-Token': tok,
+        'Authorization': f'Emby Client="CrossWatch", Device="CrossWatch", DeviceId="{did}", Version="1.0.0"',
+    }
+
+
+def _emby_get_json(base: str, tok: str, did: str, *, timeout: float, verify: bool, path: str) -> Any:
+    url = f'{base}{path}'
+    r = requests.get(url, headers=_emby_headers(tok, did), timeout=timeout, verify=verify)
+    if getattr(r, 'status_code', 0) != 200:
+        return None
+    try:
+        return r.json()
+    except Exception:
+        return None
+
+
+def _emby_view_roots(cfg: dict[str, Any], logger: Callable[..., None] | None) -> set[str]:
+    base, tok, uid, timeout, verify, did = _emby_conn(cfg)
+    if not (base and tok and uid):
+        return set()
+    now = time.time()
+    cached = _VIEW_ROOTS_CACHE.get(uid)
+    if cached and (now - float(cached[0] or 0.0)) < _VIEW_CACHE_TTL_SECS:
+        return cached[1]
+    roots: set[str] = set()
+    try:
+        j = _emby_get_json(base, tok, did, timeout=timeout, verify=verify, path=f'/Users/{uid}/Views') or {}
+        items = (j.get('Items') if isinstance(j, dict) else None) or []
+        for it in items:
+            rid = (it or {}).get('Id') or (it or {}).get('Key')
+            if rid is None:
+                continue
+            s = str(rid).strip()
+            if s:
+                roots.add(s)
+    except Exception:
+        roots = set()
+    _VIEW_ROOTS_CACHE[uid] = (now, roots)
+    return roots
+
+
+def _emby_view_id_via_ancestors(cfg: dict[str, Any], iid: str, logger: Callable[..., None] | None) -> str | None:
+    base, tok, uid, timeout, verify, did = _emby_conn(cfg)
+    iid = str(iid or '').strip()
+    if not (base and tok and uid and iid):
+        return None
+    if iid in _ITEM_VIEW_CACHE:
+        return _ITEM_VIEW_CACHE[iid]
+    roots = _emby_view_roots(cfg, logger)
+    if not roots:
+        _ITEM_VIEW_CACHE[iid] = None
+        return None
+    found: str | None = None
+    try:
+        arr = _emby_get_json(base, tok, did, timeout=timeout, verify=verify, path=f'/Items/{iid}/Ancestors?Fields=Id&UserId={uid}') or []
+        if isinstance(arr, list):
+            for a in arr:
+                aid = str((a or {}).get('Id') or '').strip()
+                if aid and aid in roots:
+                    found = aid
+                    break
+    except Exception:
+        found = None
+    if len(_ITEM_VIEW_CACHE) > 4096:
+        _ITEM_VIEW_CACHE.clear()
+    _ITEM_VIEW_CACHE[iid] = found
+    return found
+
+
+def _emby_passes_scrobble_library(
+    cfg: dict[str, Any],
+    md: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    logger: Callable[..., None] | None,
+) -> bool:
+    libs = _as_set_str((((cfg.get('emby') or {}).get('scrobble') or {}).get('libraries')) or [])
+    if not libs:
+        return True
+
+    name = str(md.get('Name') or md.get('SeriesName') or '').strip() or '?'
+    candidates = [
+        md.get('Id'),
+        payload.get('ItemId'),
+        md.get('ItemId'),
+        (payload.get('Item') or {}).get('Id') if isinstance(payload.get('Item'), Mapping) else None,
+        md.get('SeriesId'),
+        md.get('ParentId'),
+    ]
+    for c in candidates:
+        if not c:
+            continue
+        view_id = _emby_view_id_via_ancestors(cfg, str(c), logger)
+        if view_id:
+            if view_id in libs:
+                return True
+            _emit(logger, f"event filtered by scrobble whitelist: view={view_id} allowed={sorted(libs)} item={name}", 'DEBUG')
+            return False
+
+    _emit(logger, f"event filtered by scrobble whitelist: view=none allowed={sorted(libs)} item={name}", 'DEBUG')
+    return False
+
+def _load_config() -> dict[str, Any]:
+    try:
+        return load_config()
+    except Exception:
+        return {}
+
+
+def _save_config(cfg: dict[str, Any]) -> None:
+    try:
+        save_config(cfg)
+    except Exception:
+        pass
+
+
+def _is_debug() -> bool:
+    try:
+        rt = _load_config().get("runtime") or {}
+        return bool(rt.get("debug") or rt.get("debug_mods"))
+    except Exception:
+        return False
+
+
+def _emit(logger: Any | None, msg: str, level: str = "INFO") -> None:
+    lvl_raw = str(level or "INFO")
+    lvl_up = lvl_raw.upper()
+    try:
+        if lvl_up == "DEBUG" and not _is_debug():
+            return
+    except Exception:
+        pass
+    try:
+        if logger is not None:
+            if callable(logger):
+                logger(msg, level=lvl_raw, module="SCROBBLE")
+                return
+            logmeth = getattr(logger, "log", None)
+            if callable(logmeth):
+                lvlno = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}.get(lvl_up, 20)
+                logmeth(lvlno, msg)
+                return
+            levmeth = getattr(logger, lvl_raw.lower(), None)
+            if callable(levmeth):
+                levmeth(msg)
+                return
+    except Exception:
+        pass
+    try:
+        if BASE_LOG is not None:
+            logr = BASE_LOG.child("SCROBBLE")
+            if lvl_up == "DEBUG":
+                logr.debug(msg)
+            elif lvl_up == "INFO":
+                logr.info(msg)
+            elif lvl_up == "WARN":
+                logr.warn(msg)
+            elif lvl_up == "ERROR":
+                logr.error(msg)
+            else:
+                logr(msg, level=lvl_up)
+            return
+    except Exception:
+        pass
+    print(f"[SCROBBLE] {lvl_up} {msg}")
+
+
+def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
+    changed = False
+    sc = cfg.setdefault("scrobble", {})
+    wh = sc.setdefault("webhook", {})
+    trk = sc.setdefault("trakt", {})
+
+    if "pause_debounce_seconds" not in wh:
+        wh["pause_debounce_seconds"] = _DEF_WEBHOOK["pause_debounce_seconds"]
+        changed = True
+    if "suppress_start_at" not in wh:
+        wh["suppress_start_at"] = _DEF_WEBHOOK["suppress_start_at"]
+        changed = True
+    if "filters_emby" not in wh:
+        wh["filters_emby"] = {"username_whitelist": []}
+        changed = True
+    if "filters" in wh:
+        del wh["filters"]
+        changed = True
+
+    for k, dv in _DEF_WEBHOOK.items():
+        if k not in wh:
+            wh[k] = dv
+            changed = True
+    for k, dv in _DEF_TRAKT.items():
+        if k not in trk:
+            trk[k] = dv
+            changed = True
+
+    if changed:
+        _save_config(cfg)
+    return cfg
+
+
+def _tokens(cfg: dict[str, Any]) -> dict[str, str]:
+    tr = cfg.get("trakt") or {}
+    au = (cfg.get("auth") or {}).get("trakt") or {}
+    return {
+        "client_id": (tr.get("client_id") or "").strip(),
+        "client_secret": (tr.get("client_secret") or "").strip(),
+        "access_token": (au.get("access_token") or tr.get("access_token") or "").strip(),
+        "refresh_token": (au.get("refresh_token") or tr.get("refresh_token") or "").strip(),
+    }
+
+
+def _app_meta(cfg: dict[str, Any]) -> dict[str, str]:
+    rt = cfg.get("runtime") or {}
+    av = str(rt.get("version") or "CrossWatch/Scrobble")
+    ad = (rt.get("build_date") or "").strip()
+    out: dict[str, str] = {"app_version": av}
+    if ad:
+        out["app_date"] = ad
+    return out
+
+
+def _headers(cfg: dict[str, Any]) -> dict[str, str]:
+    t = _tokens(cfg)
+    h = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "trakt-api-version": "2",
+        "trakt-api-key": t["client_id"],
+        "User-Agent": "CrossWatch/Scrobble",
+    }
+    if t["access_token"]:
+        h["Authorization"] = f"Bearer {t['access_token']}"
+    return h
+
+
+def _del_trakt(path: str, cfg: dict[str, Any]) -> requests.Response:
+    url = f"{TRAKT_API}{path}"
+    r = requests.delete(url, headers=_headers(cfg), timeout=12)
+    if r.status_code == 401:
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
+
+            TRAKT_AUTH.refresh(cfg)
+            _save_config(cfg)
+        except Exception:
+            return r
+        try:
+            r = requests.delete(url, headers=_headers(cfg), timeout=12)
+        except Exception:
+            pass
+    return r
+
+
+def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> requests.Response:
+    url = f"{TRAKT_API}{path}"
+    body = {**body, **_app_meta(cfg)}
+    r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+    if r.status_code == 401:
+        try:
+            from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
+
+            TRAKT_AUTH.refresh(cfg)
+            _save_config(cfg)
+        except Exception:
+            pass
+        r = requests.post(url, json=body, headers=_headers(cfg), timeout=15)
+    return r
+
+
+def _cache_get(key: tuple[Any, ...]) -> Any | None:
+    try:
+        return _TRAKT_ID_CACHE.get(key)
+    except Exception:
+        return None
+
+
+def _cache_put(key: tuple[Any, ...], value: Any) -> None:
+    try:
+        if len(_TRAKT_ID_CACHE) > 2048:
+            _TRAKT_ID_CACHE.clear()
+        _TRAKT_ID_CACHE[key] = value
+    except Exception:
+        pass
+
+
+def _as_bool(v: Any) -> bool | None:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "y", "on"):
+            return True
+        if s in ("false", "0", "no", "n", "off"):
+            return False
+    return None
+
+
+def _grab(m: Mapping[str, Any], keys: list[str]) -> Any:
+    for k in keys:
+        if k in m and m[k] is not None:
+            return m[k]
+    return None
+
+
+def _extract_paused(payload: Mapping[str, Any]) -> bool | None:
+    ps = payload.get("PlayState") or {}
+    pb = payload.get("Playback") or {}
+    for k in ("IsPaused", "Paused"):
+        b = _as_bool(payload.get(k))
+        if b is not None:
+            return b
+        b = _as_bool(ps.get(k))
+        if b is not None:
+            return b
+        b = _as_bool(pb.get(k))
+        if b is not None:
+            return b
+    return None
+
+
+def _progress(payload: Mapping[str, Any], md: Mapping[str, Any]) -> float:
+    pbinfo = payload.get("PlaybackInfo") or {}
+    if pbinfo.get("PlayedToCompletion") is True:
+        return 100.0
+
+    if isinstance(payload.get("Progress"), (int, float)):
+        return round(max(0.0, min(100.0, float(payload["Progress"]))), 2)
+
+    ps = payload.get("PlayState") or {}
+    pb = payload.get("Playback") or {}
+
+    pos = (
+        payload.get("SessionPlaybackPositionTicks")
+        or pbinfo.get("PositionTicks")
+        or payload.get("PlaybackPositionTicks")
+        or payload.get("PositionTicks")
+        or payload.get("PositionMs")
+        or ps.get("PositionTicks")
+        or ps.get("PositionMs")
+        or pb.get("PositionTicks")
+        or pb.get("PositionMs")
+        or 0
+    )
+    dur = (
+        (md.get("RunTimeTicks") or 0)
+        or payload.get("RunTimeTicks")
+        or ps.get("RunTimeTicks")
+        or pb.get("RunTimeTicks")
+        or payload.get("DurationMs")
+        or 0
+    )
+
+    def to_ms(v: Any) -> float:
+        try:
+            val = float(v)
+        except Exception:
+            return 0.0
+        return val / 10_000 if val > 10_000_000 else val
+
+    pos_ms = to_ms(pos)
+    dur_ms = to_ms(dur)
+    if dur_ms <= 0:
+        return 0.0
+    return round(max(0.0, min(100.0, (pos_ms * 100.0) / dur_ms)), 2)
+
+
+def _episode_numbers(md: Mapping[str, Any], root: Mapping[str, Any]) -> tuple[int | None, int | None]:
+    s = (
+        md.get("ParentIndexNumber")
+        or md.get("SeasonIndexNumber")
+        or md.get("ItemParentIndex")
+        or _grab(root, ["SeasonNumber", "season", "ItemParentIndex"])
+    )
+    e = md.get("IndexNumber") or md.get("ItemIndex") or _grab(root, ["EpisodeNumber", "episode", "ItemIndex"])
+    try:
+        s_int = int(s)
+    except Exception:
+        s_int = None
+    try:
+        e_int = int(e)
+    except Exception:
+        e_int = None
+    return s_int, e_int
+
+
+def _ids_from_providerids(md: Mapping[str, Any], root: Mapping[str, Any]) -> dict[str, Any]:
+    pids = md.get("ProviderIds") or root.get("ProviderIds") or {}
+    out: dict[str, Any] = {}
+
+    def put(k: str, v: Any) -> None:
+        if v is None:
+            return
+        sv = str(v).strip()
+        if not sv:
+            return
+        if k == "tmdb" and sv.isdigit():
+            out[k] = int(sv)
+        else:
+            out[k] = sv
+
+    put("imdb", pids.get("Imdb") or pids.get("IMDb"))
+    put("tmdb", pids.get("Tmdb") or pids.get("TMDB") or pids.get("TheMovieDb"))
+    put("tvdb", pids.get("Tvdb") or pids.get("TVDB") or pids.get("TheTVDB"))
+    return out
+
+
+def _session_media_key(md: Mapping[str, Any], ids_all: Mapping[str, Any], root: Mapping[str, Any] | None = None) -> str:
+    v = md.get("Id")
+    if v:
+        return str(v)
+    for k in ("tmdb", "imdb", "tvdb", "trakt"):
+        vv = ids_all.get(k)
+        if vv:
+            return f"{k}:{vv}"
+    name = md.get("SeriesName") or md.get("Name") or ""
+    s, n = _episode_numbers(md, root or md)
+    if name and isinstance(s, int) and isinstance(n, int):
+        return f"{name}|S{s}E{n}"
+    y = md.get("ProductionYear") or ""
+    return f"{name}|{y}"
+
+
+def _make_session_id(payload: Mapping[str, Any], md: Mapping[str, Any], ids_all: Mapping[str, Any]) -> str:
+    base = str(
+        payload.get("PlaySessionId")
+        or payload.get("SessionId")
+        or payload.get("SessionID")
+        or payload.get("DeviceId")
+        or payload.get("DeviceID")
+        or "n/a"
+    )
+    return base + "|" + _session_media_key(md, ids_all, root=payload)
+
+
+def _guid_search_episode(epi_hint: dict[str, Any], cfg: dict[str, Any], logger: Any | None = None) -> dict[str, Any]:
+    try:
+        q = {k: epi_hint.get(k) for k in ("tmdb", "imdb", "tvdb") if epi_hint.get(k)}
+        if not q:
+            return {}
+        r = requests.get(f"{TRAKT_API}/search/episode", params=q, headers=_headers(cfg), timeout=10)
+        if r.status_code != 200:
+            return {}
+        arr = r.json() or []
+        for it in arr:
+            ep = (it or {}).get("episode") or {}
+            ids = ep.get("ids") or {}
+            if ids.get("trakt"):
+                return {k: ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if ids.get(k)}
+    except Exception:
+        pass
+    return {}
+
+
+def _show_ids_from_episode_hint(
+    ids_hint: dict[str, Any],
+    cfg: dict[str, Any],
+    logger: Any | None = None,
+) -> dict[str, Any]:
+    cache_key = (
+        "show_ids_from_episode_hint",
+        ids_hint.get("imdb"),
+        ids_hint.get("tmdb"),
+        ids_hint.get("tvdb"),
+    )
+
+    c = _cache_get(cache_key)
+    if isinstance(c, dict):
+        return c
+    if c is not None:
+        return {}
+
+    try:
+        out = _guid_search_episode(ids_hint, cfg, logger=logger)
+        if out:
+            _cache_put(cache_key, out)
+            return out
+    except Exception:
+        pass
+
+    for key in ("tmdb", "imdb", "tvdb"):
+        val = ids_hint.get(key)
+        if not val:
+            continue
+        try:
+            r = requests.get(
+                f"{TRAKT_API}/search/{key}/{val}",
+                params={"type": "episode", "limit": 1},
+                headers=_headers(cfg),
+                timeout=10,
+            )
+            if r.status_code != 200:
+                continue
+            arr = r.json() or []
+        except Exception:
+            continue
+
+        for hit in arr:
+            show_ids = (hit.get("show") or {}).get("ids") or {}
+            out = {k: show_ids[k] for k in ("trakt", "tmdb", "imdb", "tvdb") if show_ids.get(k)}
+            if out:
+                _emit(logger, f"resolved SHOW ids from episode hint: {out}", "DEBUG")
+                _cache_put(cache_key, out)
+                return out
+
+    _cache_put(cache_key, None)
+    return {}
+
+
+def _resolve_episode_by_showids(
+    show_ids: dict[str, Any],
+    s: int,
+    n: int,
+    cfg: dict[str, Any],
+    logger: Any | None = None,
+) -> int | None:
+    try:
+        tid = show_ids.get("trakt")
+        if not tid:
+            return None
+        r = requests.get(f"{TRAKT_API}/shows/{tid}/seasons/{s}", headers=_headers(cfg), timeout=10)
+        if r.status_code != 200:
+            return None
+        eps = r.json() or []
+        for ep in eps:
+            if int(ep.get("number") or -1) == int(n):
+                ids = ep.get("ids") or {}
+                if ids.get("trakt"):
+                    return int(ids["trakt"])
+    except Exception:
+        pass
+    return None
+
+
+def _series_ids_from_payload(md: Mapping[str, Any], root: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    t_md = str(md.get("Type") or "").strip().lower()
+    t_root = str(root.get("Type") or "").strip().lower()
+    type_val = t_md or t_root
+    sp = (md.get("SeriesProviderIds") or root.get("SeriesProviderIds") or {}) or {}
+
+    def maybe_int(v: Any) -> Any:
+        s = str(v).strip()
+        return int(s) if s.isdigit() else (s if s else None)
+
+    def norm_imdb(v: Any) -> str | None:
+        s = str(v).strip()
+        if not s:
+            return None
+        return s if s.startswith("tt") else f"tt{s}"
+
+    tvdb = (
+        sp.get("Tvdb")
+        or sp.get("tvdb")
+        or sp.get("TVDB")
+        or sp.get("TheTVDB")
+        or root.get("SeriesTvdbId")
+        or root.get("SeriesTvdb")
+    )
+    tmdb = (
+        sp.get("Tmdb")
+        or sp.get("tmdb")
+        or sp.get("TMDB")
+        or sp.get("TheMovieDb")
+        or root.get("SeriesTmdbId")
+        or root.get("SeriesTmdb")
+    )
+    imdb = sp.get("Imdb") or sp.get("imdb") or sp.get("IMDb") or root.get("SeriesImdbId") or root.get("SeriesImdb")
+
+    if not (tvdb or tmdb or imdb) and type_val in ("series", "tvshow"):
+        pids = (md.get("ProviderIds") or root.get("ProviderIds") or {}) or {}
+        tvdb = tvdb or (pids.get("Tvdb") or pids.get("tvdb") or pids.get("TVDB") or pids.get("TheTVDB"))
+        tmdb = tmdb or (pids.get("Tmdb") or pids.get("tmdb") or pids.get("TMDB") or pids.get("TheMovieDb"))
+        imdb = imdb or (pids.get("Imdb") or pids.get("imdb") or pids.get("IMDb"))
+
+    v_tvdb = maybe_int(tvdb) if tvdb is not None else None
+    v_tmdb = maybe_int(tmdb) if tmdb is not None else None
+    v_imdb = norm_imdb(imdb) if imdb is not None else None
+
+    if v_tvdb is not None:
+        out["tvdb"] = v_tvdb
+    if v_tmdb is not None:
+        out["tmdb"] = v_tmdb
+    if v_imdb:
+        out["imdb"] = v_imdb
+    return out
+
+
+def _cw_ids_for_payload(
+    media_type: str,
+    md: Mapping[str, Any],
+    ids_all: dict[str, Any],
+    cfg: dict[str, Any],
+    root: Mapping[str, Any] | None = None,
+    logger: Any | None = None,
+) -> dict[str, Any]:
+    cw_ids: dict[str, Any] = dict(ids_all or {})
+    mt = (media_type or "").strip().lower()
+    if mt != "episode":
+        return cw_ids
+
+    root = root or md
+
+    try:
+        show_ids = _series_ids_from_payload(md, root) or {}
+    except Exception:
+        show_ids = {}
+
+    if not show_ids:
+        try:
+            e = cfg.get("emby") or {}
+            base = str(e.get("server", "")).strip().rstrip("/")
+            tok = str(e.get("access_token") or "").strip()
+            uid = (
+                str(root.get("UserId") or "")
+                or str((root.get("User") or {}).get("Id") or "")
+                or str(e.get("user_id") or "")
+            ).strip()
+            grand_id = md.get("SeriesId") or md.get("ParentId") or md.get("SeriesItemId")
+
+            if base and "://" not in base:
+                base = "http://" + base
+
+            if base and tok and uid and grand_id:
+                url = f"{base}/Users/{uid}/Items/{grand_id}?format=json"
+                headers = {
+                    "Accept": "application/json",
+                    "X-Emby-Token": tok,
+                    "X-MediaBrowser-Token": tok,
+                }
+                timeout = float(e.get("timeout", 6))
+                verify = bool(e.get("verify_ssl", True))
+
+                r = requests.get(url, headers=headers, timeout=timeout, verify=verify)
+                if r.status_code == 200:
+                    info = r.json() or {}
+                    show_ids = _series_ids_from_payload(info, info) or {}
+                    if logger:
+                        logger(
+                            f"resolved show ids via Emby {url.replace(base, '')}: {show_ids}",
+                            level="DEBUG",
+                            module="SCROBBLE",
+                        )
+        except Exception as ex:
+            if logger:
+                logger(f"Emby show metadata fetch failed: {ex}", level="DEBUG", module="SCROBBLE")
+
+    for key in ("tmdb", "imdb", "tvdb"):
+        val = show_ids.get(key)
+        if val is not None:
+            cw_ids.setdefault(f"{key}_show", val)
+
+    if "tmdb_show" not in cw_ids:
+        try:
+            try:
+                hint = {**(_ids_from_providerids(md, root) or {}), **(ids_all or {})}
+            except Exception:
+                hint = dict(ids_all or {})
+            extra = _show_ids_from_episode_hint(hint, cfg, logger=logger) or {}
+            for key in ("tmdb", "imdb", "tvdb"):
+                val = extra.get(key)
+                if val is not None:
+                    cw_ids.setdefault(f"{key}_show", val)
+        except Exception:
+            pass
+
+    return cw_ids
+
+
+def _build_primary_body(
+    media_type: str,
+    md: dict[str, Any],
+    ids_all: dict[str, Any],
+    prog: float,
+    cfg: dict[str, Any],
+    logger: Any | None = None,
+    root: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    _ = cfg, logger
+    p = float(round(prog, 2))
+
+    if media_type == "movie":
+        ids = {k: ids_all[k] for k in ("trakt", "tmdb", "imdb") if ids_all.get(k)}
+        return {"progress": p, "movie": {"ids": ids}} if ids else {}
+
+    if media_type == "episode":
+        s, n = _episode_numbers(md, root or md)
+        show_ids: dict[str, Any] = {}
+        try:
+            show_ids = _series_ids_from_payload(md, root or md) or {}
+        except Exception:
+            pass
+
+        if not show_ids:
+            mapped: dict[str, Any] = {}
+            for src, dest in (("imdb_show", "imdb"), ("tmdb_show", "tmdb"), ("tvdb_show", "tvdb")):
+                val = ids_all.get(src)
+                if val is not None:
+                    mapped[dest] = val
+            show_ids = mapped
+
+        if show_ids and isinstance(s, int) and isinstance(n, int):
+            etid = _resolve_episode_by_showids(show_ids, s, n, _ensure_scrobble(_load_config()), logger=logger)
+            if isinstance(etid, int):
+                return {"progress": p, "episode": {"ids": {"trakt": etid}}}
+            return {"progress": p, "show": {"ids": show_ids}, "episode": {"season": s, "number": n}}
+
+    return {}
+
+
+def _body_ids_desc(b: dict[str, Any]) -> str:
+    ids = (
+        (b.get("movie") or {}).get("ids")
+        or (b.get("show") or {}).get("ids")
+        or (b.get("episode") or {}).get("ids")
+    )
+    return str(ids or "none")
+
+
+def _call_remove_across(ids: dict[str, Any], media_type: str) -> None:
+    if not isinstance(ids, dict) or not ids:
+        return
+    try:
+        cfg = _load_config()
+        s = cfg.get("scrobble") or {}
+        if not s.get("delete_plex"):
+            return
+        tps = s.get("delete_plex_types") or []
+        mt = (media_type or "").strip().lower()
+        allow = False
+        if isinstance(tps, list):
+            allow = (mt in tps) or ((mt.rstrip("s") + "s") in tps)
+        elif isinstance(tps, str):
+            allow = mt in tps
+        if not allow:
+            return
+    except Exception:
+        pass
+    try:
+        if callable(_rm_across):
+            _rm_across(ids, media_type)
+            return
+    except Exception:
+        pass
+    try:
+        if callable(_rm_across_api):
+            _rm_across_api(ids, media_type)  # type: ignore[misc]
+            return
+    except Exception:
+        pass
+
+
+def _archive(event_type: str, media_type: str, md: dict[str, Any], payload: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, reason: str | None = None) -> None:
+    try:
+        from cw_platform.event_archive import record_webhook
+
+        if media_type == "episode":
+            title = md.get("SeriesName") or md.get("Name")
+            season, episode = _episode_numbers(md, payload)
+        else:
+            title, season, episode = md.get("Name"), None, None
+        record_webhook(
+            event_type=event_type, source_provider="emby", destination_provider="trakt",
+            media_type=media_type, ids=ids, account=account, progress=prog, reason=reason,
+            title=title, year=md.get("ProductionYear") or md.get("Year"), season=season, episode=episode,
+        )
+    except Exception:
+        pass
+
+
+def process_webhook(
+    payload: dict[str, Any],
+    headers: Mapping[str, str],
+    raw: bytes | None = None,
+    logger: Callable[..., None] | None = None,
+    cfg: dict[str, Any] | None = None,
+    provider_instance: str | None = None,
+) -> dict[str, Any]:
+    _ = headers, raw
+    try:
+        cfg = _ensure_scrobble(cfg if isinstance(cfg, dict) else _load_config())
+        provider_instance = str(provider_instance or "default").strip() or "default"
+        sc = cfg.get("scrobble") or {}
+        if not source_enabled(cfg, "webhook"):
+            _emit(logger, "scrobble webhook disabled", "DEBUG")
+            return {"ok": True, "ignored": True}
+        if not payload:
+            _emit(logger, "empty payload", "WARN")
+            return {"ok": True, "ignored": True}
+        wh = sc.get("webhook") or {}
+        pause_debounce = int(wh.get("pause_debounce_seconds", _DEF_WEBHOOK["pause_debounce_seconds"]) or 0)
+        suppress_start_at = float(wh.get("suppress_start_at", _DEF_WEBHOOK["suppress_start_at"]) or 99)
+        allow_users = set((wh.get("filters_emby") or {}).get("username_whitelist") or [])
+
+        ga_raw = wh.get("guard_autoplay_seconds")
+        if ga_raw is None:
+            ga_raw = wh.get("suppress_autoplay_seconds", 0)
+        try:
+            guard_autoplay = float(ga_raw)
+        except Exception:
+            guard_autoplay = 0.0
+
+        post_stop_guard = float(wh.get("post_stop_play_guard_seconds") or 0)
+        start_guard_min = float(wh.get("start_guard_min_progress") or 0)
+        anti_autoplay = float(wh.get("anti_autoplay_seconds") or 0)
+        cancel_checkin_on_stop = bool(wh.get("cancel_checkin_on_stop", True))
+
+        tset = sc.get("trakt") or {}
+        stop_pause_threshold = float(tset.get("stop_pause_threshold", _DEF_TRAKT["stop_pause_threshold"]))
+        force_stop_at = float(tset.get("force_stop_at", _DEF_TRAKT["force_stop_at"]))
+        complete_at = float(tset.get("complete_at", _DEF_TRAKT["complete_at"]))
+        watched_at = float(tset.get("watched_at", 90.0))
+        regress_tol = float(tset.get("regress_tolerance_percent", _DEF_TRAKT["regress_tolerance_percent"]))
+
+        md = payload.get("Item") or payload.get("item") or {}
+        md.setdefault("Type", _grab(payload, ["ItemType", "type"]) or md.get("Type"))
+        md.setdefault("Name", _grab(payload, ["Name", "ItemName", "title"]) or md.get("Name"))
+        md.setdefault("SeriesName", _grab(payload, ["SeriesName", "SeriesTitle", "grandparentTitle"]) or md.get("SeriesName"))
+        md.setdefault("RunTimeTicks", payload.get("RunTimeTicks") or md.get("RunTimeTicks"))
+
+        pids = dict(md.get("ProviderIds") or {})
+        for k_src, k_norm in [
+            ("Provider_tmdb", "Tmdb"),
+            ("Provider_imdb", "Imdb"),
+            ("Provider_tvdb", "Tvdb"),
+            ("TheMovieDb", "TheMovieDb"),
+            ("TheTVDB", "TheTVDB"),
+        ]:
+            if payload.get(k_src) and not pids.get(k_norm):
+                pids[k_norm] = payload[k_src]
+        if pids:
+            md["ProviderIds"] = pids
+
+        event = (payload.get("NotificationType") or payload.get("Event") or "").strip().lower()
+        if "." in event:
+            event = event.replace(".", "")
+        event = event.replace("_", "")
+
+        ids_all = _ids_from_providerids(md, payload) or {}
+        ses = _make_session_id(payload, md, ids_all)
+
+        acc_title = (
+            (payload.get("User") or {}).get("Name")
+            or payload.get("UserName")
+            or (payload.get("Server") or {}).get("UserName")
+            or "unknown"
+        ).strip()
+
+        if allow_users and acc_title and acc_title not in allow_users:
+            _emit(logger, f"user '{_mask_account(acc_title)}' blocked by filters_emby", "DEBUG")
+            return {"ok": True, "ignored": True}
+
+        media_type = (md.get("Type") or md.get("type") or "").strip().lower()
+        if media_type in ("movie", "movies"):
+            media_type = "movie"
+        elif media_type in ("episode", "episodes"):
+            media_type = "episode"
+        else:
+            _emit(logger, f"unsupported media type '{media_type}'", "DEBUG")
+            return {"ok": True, "ignored": True}
+
+        if not _emby_passes_scrobble_library(cfg, md, payload, logger):
+            return {"ok": True, "ignored": True}
+
+        prog = _progress(payload, md)
+        paused_flag = _extract_paused(payload)
+        now = time.time()
+        st = _SCROBBLE_STATE.get(ses) or {}
+        ev_lc = event
+
+        intended: str | None
+        if ev_lc in ("playbackstart", "playbackunpause", "play", "playing", "resume", "unpause"):
+            intended = "/scrobble/start"
+        elif ev_lc in ("playbackpause", "pause", "paused"):
+            intended = "pause"
+        elif ev_lc in ("playbackstop", "playbackstopped", "playbackscrobble", "stop", "stopped", "scrobble"):
+            intended = "/scrobble/stop"
+        else:
+            _emit(logger, f"ignore event '{event}'", "DEBUG")
+            return {"ok": True, "ignored": True}
+
+
+
+        if intended == "pause":
+            last_pause_ts = st.get("last_pause_ts", 0.0)
+            if pause_debounce and (now - last_pause_ts) < pause_debounce:
+                _emit(logger, "debounce pause", "DEBUG")
+                _SCROBBLE_STATE[ses] = {
+                    **st,
+                    "ts": now,
+                    "last_event": ev_lc,
+                    "prog": prog,
+                    "paused": True,
+                    "last_pause_ts": last_pause_ts,
+                }
+                return {"ok": True, "debounced": True}
+
+        if intended == "/scrobble/start" and prog >= suppress_start_at:
+            _emit(logger, "suppress late start", "DEBUG")
+            _SCROBBLE_STATE[ses] = {"ts": now, "last_event": ev_lc, "prog": prog}
+            return {"ok": True, "suppressed": True}
+
+        if guard_autoplay and intended == "/scrobble/start" and prog < guard_autoplay:
+            _emit(logger, "guard autoplay start", "DEBUG")
+            _SCROBBLE_STATE[ses] = {"ts": now, "last_event": ev_lc, "prog": prog}
+            return {"ok": True, "ignored": True}
+
+        if start_guard_min and intended == "/scrobble/start" and prog < start_guard_min:
+            _emit(logger, "start guard min progress", "DEBUG")
+            _SCROBBLE_STATE[ses] = {"ts": now, "last_event": ev_lc, "prog": prog}
+            return {"ok": True, "ignored": True}
+
+        if anti_autoplay and intended == "/scrobble/start":
+            last_stop_ts = st.get("last_stop_ts", 0.0)
+            if last_stop_ts and (now - last_stop_ts) < anti_autoplay:
+                _emit(logger, "anti autoplay start", "DEBUG")
+                _SCROBBLE_STATE[ses] = {"ts": now, "last_event": ev_lc, "prog": prog}
+                return {"ok": True, "ignored": True}
+
+        if intended == "/scrobble/stop" and post_stop_guard:
+            last_play_ts = st.get("last_play_ts", 0.0)
+            if last_play_ts and (now - last_play_ts) < post_stop_guard:
+                _emit(logger, "post stop guard", "DEBUG")
+                _SCROBBLE_STATE[ses] = {**st, "ts": now, "last_event": ev_lc, "prog": prog}
+                return {"ok": True, "ignored": True}
+
+        st_prog = float(st.get("prog", 0.0) or 0.0)
+        if intended != "/scrobble/start" and st_prog and (st_prog - prog) > regress_tol:
+            _emit(logger, f"regress {st_prog}->{prog} within tol {regress_tol}", "DEBUG")
+            prog = st_prog
+
+        cw_ids = dict(ids_all)
+        title = (md.get("SeriesName") or md.get("Name") or "").strip()
+        year = md.get("ProductionYear") or md.get("Year")
+        season_val: int | None = None
+        episode_val: int | None = None
+        try:
+            stop_flag = intended == "/scrobble/stop"
+            if media_type == "episode":
+                title = (md.get("SeriesName") or md.get("Name") or "").strip()
+            else:
+                title = (md.get("Name") or md.get("SeriesName") or "").strip()
+            if media_type == "episode":
+                season_val, episode_val = _episode_numbers(md, payload)
+            duration_ms: float | None
+            try:
+                rticks = md.get("RunTimeTicks") or payload.get("RunTimeTicks")
+                duration_ms = (rticks / 10_000) if rticks else None
+            except Exception:
+                duration_ms = None
+            cw_state = (
+                "playing"
+                if intended == "/scrobble/start"
+                else "paused"
+                if intended == "pause"
+                else "stopped"
+                if intended == "/scrobble/stop"
+                else None
+            )
+            cw_ids = _cw_ids_for_payload(media_type, md, cw_ids, cfg, root=payload, logger=logger)
+            _cw_update(
+                source="embytrakt",
+                media_type=media_type,
+                title=title,
+                year=year,
+                season=season_val,
+                episode=episode_val,
+                progress=prog,
+                stop=stop_flag,
+                duration_ms=duration_ms,
+                cover=None,
+                state=cw_state,
+                ids=cw_ids,
+                provider_instance=provider_instance,
+            )
+        except Exception:
+            pass
+
+        body = _build_primary_body(media_type, dict(md), cw_ids, prog, cfg, logger=logger, root=payload)
+        if not body and not cw_ids:
+            _emit(logger, "no usable IDs; skip scrobble", "DEBUG")
+            _SCROBBLE_STATE[ses] = {
+                "ts": now,
+                "last_event": ev_lc,
+                "last_pause_ts": st.get("last_pause_ts", 0.0),
+                "prog": prog,
+                "finished": prog >= complete_at,
+                "wl_removed": st.get("wl_removed"),
+                "paused": st.get("paused"),
+            }
+            return {"ok": True, "ignored": True}
+
+        sinks_cfg = _sinks_from_webhook_cfg(cfg, provider_instance)
+
+        _emit(logger, f"webhook intent {intended} using {_body_ids_desc(body) if body else str(cw_ids)}, prog={prog}", "DEBUG")
+        r = _dispatch_scrobble(
+            "emby",
+            intended,
+            media_type=media_type,
+            ids=cw_ids or ids_all,
+            title=title,
+            year=year,
+            season=season_val,
+            episode=episode_val,
+            progress=prog,
+            account=acc_title,
+            session_key=ses,
+            raw=payload,
+            cfg=cfg,
+            provider_instance=provider_instance,
+            logger=logger,
+        )
+        try:
+            rj = r.json()
+        except Exception:
+            rj = {"raw": (r.text or "")[:200]}
+        _emit(
+            logger,
+            f"webhook {intended} -> {r.status_code}",
+            "DEBUG",
+        )
+
+        if r.status_code < 400:
+            if intended == "/scrobble/stop" and prog >= watched_at and not st.get("wl_removed") is True:
+                try:
+                    _call_remove_across(ids_all or {}, media_type)
+                    st = {**st, "wl_removed": True}
+                except Exception:
+                    pass
+
+            _SCROBBLE_STATE[ses] = {
+                "ts": now,
+                "last_event": ev_lc,
+                "last_pause_ts": now if intended == "pause" else st.get("last_pause_ts", 0.0),
+                "prog": prog,
+                "finished": intended == "/scrobble/stop" and prog >= watched_at,
+                **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+                "paused": intended == "pause",
+                **({"last_stop_ts": now} if intended == "/scrobble/stop" else {}),
+                **({"last_play_ts": now} if intended == "/scrobble/start" else {}),
+            }
+
+            try:
+                action_name = intended.rsplit("/", 1)[-1]
+                name_dbg = (md.get("SeriesName") or md.get("Name") or "").strip() or "?"
+                if media_type == "episode":
+                    s_num, e_num = _episode_numbers(md, payload)
+                    if isinstance(s_num, int) and isinstance(e_num, int):
+                        name_dbg = f"{name_dbg} S{s_num:02d}E{e_num:02d}"
+                _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {name_dbg}", "INFO")
+            except Exception:
+                pass
+
+            if "trakt" in sinks_cfg and intended == "/scrobble/start":
+                _archive("scrobble_started", media_type, md, payload, ids_all, acc_title, prog)
+            elif "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
+                _archive("scrobble_completed", media_type, md, payload, ids_all, acc_title, prog)
+            return {"ok": True, "status": 200, "action": intended, "trakt": rj}
+
+        _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
+        if "trakt" in sinks_cfg and intended in ("/scrobble/start", "/scrobble/stop"):
+            _archive("scrobble_failed", media_type, md, payload, ids_all, acc_title, prog, reason=str(r.status_code))
+        _SCROBBLE_STATE[ses] = {
+            "ts": now,
+            "last_event": ev_lc,
+            "last_pause_ts": st.get("last_pause_ts", 0.0),
+            "prog": prog,
+            "finished": prog >= complete_at,
+            **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
+            "paused": st.get("paused") if paused_flag is None else paused_flag,
+        }
+        return {"ok": False, "status": r.status_code, "trakt": rj}
+    except Exception as e:
+        _emit(logger, f"process_webhook error: {e}", "ERROR")
+        return {"ok": False, "error": str(e)}

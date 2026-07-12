@@ -12,12 +12,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query, Request, HTTPException
+from fastapi import APIRouter, Query, Request, HTTPException, Body
 from fastapi.responses import JSONResponse
 from urllib.parse import parse_qs
 
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
+from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
+from providers.webhooks.config import apply_webhook_settings
 from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.sources import scrobble_sources
@@ -139,6 +140,41 @@ def _ensure_route_ratings_webhook_ids(cfg: dict[str, Any], regenerate: bool = Fa
     return out
 
 
+def _profile_webhook_key(provider: str, instance: str) -> str:
+    return f"profile:{str(provider or '').strip().lower()}:{normalize_instance_id(instance)}"
+
+
+def _ensure_media_profile_webhook_ids(cfg: dict[str, Any], regenerate: bool = False) -> list[dict[str, Any]]:
+    sec = cfg.setdefault("security", {})
+    ids = sec.setdefault("webhook_ids", {})
+    changed = False
+    out: list[dict[str, Any]] = []
+    for provider in ("plex", "jellyfin", "emby"):
+        try:
+            instances = list_instance_ids(cfg, provider)
+        except Exception:
+            instances = ["default"]
+        for raw_inst in instances:
+            inst = normalize_instance_id(raw_inst)
+            key = _profile_webhook_key(provider, inst)
+            if regenerate or not str(ids.get(key) or "").strip():
+                ids[key] = _gen_webhook_id()
+                changed = True
+            out.append(
+                {
+                    "provider": provider,
+                    "instance": inst,
+                    "webhook_token": str(ids.get(key) or "").strip(),
+                }
+            )
+    if changed:
+        try:
+            save_config(cfg)
+        except Exception:
+            pass
+    return out
+
+
 def _extract_url_token(request: Request) -> str:
     q = str(getattr(request.url, "query", "") or "").strip()
     if not q:
@@ -182,14 +218,30 @@ def _extract_url_params(request: Request) -> dict[str, str]:
     return out
 
 
-def _require_webhook_token(request: Request, which: str) -> None:
+def _resolve_media_webhook_request(request: Request, provider: str, legacy_key: str) -> tuple[dict[str, Any] | None, str, dict[str, Any] | None]:
     cfg = load_config() or {}
+    params = _extract_url_params(request)
+    provider_lc = str(provider or "").strip().lower()
+    if "profile" in params:
+        secret = str(params.get("profile") or "").strip()
+        if not secret:
+            return None, "default", {"ok": True, "ignored": True, "error": "invalid_profile"}
+        for hook in _ensure_media_profile_webhook_ids(cfg):
+            if str(hook.get("provider") or "").strip().lower() != provider_lc:
+                continue
+            expected = str(hook.get("webhook_token") or "").strip()
+            if not expected or not hmac.compare_digest(expected, secret):
+                continue
+            inst = normalize_instance_id(hook.get("instance"))
+            return apply_webhook_settings(build_provider_config_view(cfg, provider_lc, inst), provider_lc, inst), inst, None
+        return None, "default", {"ok": True, "ignored": True, "error": "invalid_profile"}
+
     ids = _ensure_webhook_ids(cfg)
-    expected = str(ids.get(which) or "").strip()
+    expected = str(ids.get(legacy_key) or "").strip()
     got = _extract_url_token(request)
-    # Fail closed
     if not expected or not got or not hmac.compare_digest(expected, got):
         raise HTTPException(status_code=401, detail="invalid_webhook_token")
+    return apply_webhook_settings(cfg, provider_lc, "default"), "default", None
 
 
 def _resolve_plexwatcher_target(request: Request) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
@@ -300,17 +352,37 @@ async def api_webhook_urls() -> JSONResponse:
     cfg = load_config() or {}
     ids = _ensure_webhook_ids(cfg)
     route_hooks = _ensure_route_ratings_webhook_ids(cfg)
-    return JSONResponse({"ok": True, "ids": ids, "route_hooks": route_hooks}, status_code=200)
+    profile_hooks = _ensure_media_profile_webhook_ids(cfg)
+    return JSONResponse({"ok": True, "ids": ids, "route_hooks": route_hooks, "profile_hooks": profile_hooks}, status_code=200)
 
 
 @router.post("/api/webhooks/regenerate")
-async def api_webhook_regenerate() -> JSONResponse:
+async def api_webhook_regenerate(payload: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     cfg = load_config() or {}
     sec = cfg.setdefault("security", {})
     ids = sec.setdefault("webhook_ids", {})
-    for k in _WEBHOOK_KEYS:
-        ids[k] = _gen_webhook_id()
-    route_hooks = _ensure_route_ratings_webhook_ids(cfg, regenerate=True)
+    body = payload if isinstance(payload, dict) else {}
+    key = str(body.get("key") or "").strip()
+    provider = str(body.get("provider") or "").strip().lower()
+    instance = str(body.get("instance") or "").strip()
+
+    if key:
+        if key not in _WEBHOOK_KEYS:
+            return JSONResponse({"ok": False, "error": "invalid_key"}, status_code=400)
+        ids[key] = _gen_webhook_id()
+        route_hooks = _ensure_route_ratings_webhook_ids(cfg)
+        profile_hooks = _ensure_media_profile_webhook_ids(cfg)
+    elif provider:
+        if provider not in {"plex", "jellyfin", "emby"}:
+            return JSONResponse({"ok": False, "error": "invalid_provider"}, status_code=400)
+        ids[_profile_webhook_key(provider, instance or "default")] = _gen_webhook_id()
+        route_hooks = _ensure_route_ratings_webhook_ids(cfg)
+        profile_hooks = _ensure_media_profile_webhook_ids(cfg)
+    else:
+        for k in _WEBHOOK_KEYS:
+            ids[k] = _gen_webhook_id()
+        route_hooks = _ensure_route_ratings_webhook_ids(cfg, regenerate=True)
+        profile_hooks = _ensure_media_profile_webhook_ids(cfg, regenerate=True)
     try:
         save_config(cfg)
     except Exception:
@@ -320,6 +392,7 @@ async def api_webhook_regenerate() -> JSONResponse:
             "ok": True,
             "ids": {k: str(ids.get(k) or '').strip() for k in _WEBHOOK_KEYS},
             "route_hooks": route_hooks,
+            "profile_hooks": profile_hooks,
         },
         status_code=200,
     )
@@ -506,6 +579,11 @@ def _emit_activity_webhook_event(provider: str, payload: dict[str, Any], result:
         return
     if result.get("error") or result.get("ignored") or result.get("debounced") or result.get("suppressed") or result.get("dedup"):
         return
+    if result.get("route_dispatch") or result.get("activity_recorded"):
+        return
+    for value in result.values():
+        if isinstance(value, dict) and (value.get("route_dispatch") or value.get("activity_recorded")):
+            return
     action = str(result.get("action") or "").strip().lower()
     if action not in {"/scrobble/stop", "stop"}:
         return
@@ -549,10 +627,6 @@ def _emit_activity_webhook_event(provider: str, payload: dict[str, Any], result:
 
 def _plex_token(cfg: dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
-
-
-def _plex_client_id(cfg: dict[str, Any]) -> str:
-    return (cfg.get("plex") or {}).get("client_id") or "crosswatch"
 
 
 def _account(cfg: dict[str, Any]) -> Any:
@@ -1124,21 +1198,20 @@ def debug_watch_refresh(request: Request) -> dict[str, Any]:
     out["reloaded"] = True
     return out
 
+@router.post("/webhook/jellyfin")
 @router.post("/webhook/jellyfintrakt")
 async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
-    _require_webhook_token(request, "jellyfintrakt")
-
     from crosswatch import _UIHostLogger
 
     try:
-        from providers.webhooks.jellyfintrakt import process_webhook as jf_process_webhook
+        from providers.webhooks.jellyfin import process_webhook as jf_process_webhook
     except Exception:
         try:
             from crosswatch import process_webhook_jellyfin as jf_process_webhook
         except Exception:
             from jellyfintrakt import process_webhook as jf_process_webhook  # type: ignore[import]
 
-    logger = _UIHostLogger("TRAKT", "SCROBBLE")
+    logger = _UIHostLogger("WEBHOOK", "SCROBBLE")
 
     def log(msg: str, level: str = "INFO") -> None:
         lvl_raw = str(level or "INFO")
@@ -1169,6 +1242,11 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
             print(f"[SCROBBLE] {lvl_up} {msg}")
         except Exception:
             pass
+
+    target_cfg, provider_instance, target_error = _resolve_media_webhook_request(request, "jellyfin", "jellyfintrakt")
+    if target_error:
+        log(f"jf-webhook: ignored invalid profile route", "WARN")
+        return JSONResponse(target_error, status_code=200)
 
     raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
@@ -1249,6 +1327,8 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
             headers=dict(request.headers),
             raw=raw,
             logger=log,
+            cfg=target_cfg,
+            provider_instance=provider_instance,
         )
     except Exception as e:
         log(f"jf-webhook: process_webhook raised: {e}", "ERROR")
@@ -1277,21 +1357,20 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
     )
 
 
+@router.post("/webhook/emby")
 @router.post("/webhook/embytrakt")
 async def webhook_embytrakt(request: Request) -> JSONResponse:
-    _require_webhook_token(request, "embytrakt")
-
     from crosswatch import _UIHostLogger
 
     try:
-        from providers.webhooks.embytrakt import process_webhook as emby_process_webhook
+        from providers.webhooks.emby import process_webhook as emby_process_webhook
     except Exception:
         try:
             from crosswatch import process_webhook_emby as emby_process_webhook  # type: ignore[attr-defined]
         except Exception:
             from embytrakt import process_webhook as emby_process_webhook  # type: ignore[import]
 
-    logger = _UIHostLogger("TRAKT", "SCROBBLE")
+    logger = _UIHostLogger("WEBHOOK", "SCROBBLE")
 
     def log(msg: str, level: str = "INFO") -> None:
         lvl_raw = str(level or "INFO")
@@ -1322,6 +1401,11 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
             print(f"[SCROBBLE] {lvl_up} {msg}")
         except Exception:
             pass
+
+    target_cfg, provider_instance, target_error = _resolve_media_webhook_request(request, "emby", "embytrakt")
+    if target_error:
+        log("emby-webhook: ignored invalid profile route", "WARN")
+        return JSONResponse(target_error, status_code=200)
 
     raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
@@ -1402,6 +1486,8 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
             headers=dict(request.headers),
             raw=raw,
             logger=log,
+            cfg=target_cfg,
+            provider_instance=provider_instance,
         )
     except Exception as e:
         log(f"emby-webhook: process_webhook raised: {e}", "ERROR")
@@ -1430,18 +1516,17 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
     )
 
 
+@router.post("/webhook/plex")
 @router.post("/webhook/plextrakt")
 async def webhook_trakt(request: Request) -> JSONResponse:
-    _require_webhook_token(request, "plextrakt")
-
     from crosswatch import _UIHostLogger
 
     try:
-        from providers.scrobble.trakt.webhook import process_webhook  # type: ignore[import]
+        from providers.webhooks.plex import process_webhook
     except Exception:
         from crosswatch import process_webhook
 
-    logger = _UIHostLogger("TRAKT", "SCROBBLE")
+    logger = _UIHostLogger("WEBHOOK", "SCROBBLE")
 
     def log(msg: str, level: str = "INFO") -> None:
         lvl_raw = str(level or "INFO")
@@ -1472,6 +1557,11 @@ async def webhook_trakt(request: Request) -> JSONResponse:
             print(f"[SCROBBLE] {lvl_up} {msg}")
         except Exception:
             pass
+
+    target_cfg, provider_instance, target_error = _resolve_media_webhook_request(request, "plex", "plextrakt")
+    if target_error:
+        log("plex-webhook: ignored invalid profile route", "WARN")
+        return JSONResponse(target_error, status_code=200)
 
     raw = await request.body()
     ct = (request.headers.get("content-type") or "").lower()
@@ -1527,6 +1617,8 @@ async def webhook_trakt(request: Request) -> JSONResponse:
             headers=dict(request.headers),
             raw=raw,
             logger=log,
+            cfg=target_cfg,
+            provider_instance=provider_instance,
         )
     except Exception as e:
         log(f"webhook: process_webhook raised: {e}", "ERROR")
