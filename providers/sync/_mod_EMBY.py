@@ -29,7 +29,35 @@ from ._mod_common import (
     parse_rate_limit,  # parity
     label_emby,
     make_snapshot_progress,
+    unresolved_keys as _unresolved_keys,
+    build_op_result,
 )
+
+_HISTORY_META_FIELDS = ("confirmed_keys", "unresolved_keys", "results", "reason_counts")
+
+
+def _finalize_result(adapter: Any, key_of, feature: str, items, cnt: int, unresolved: Any) -> dict[str, Any]:
+    meta = getattr(adapter, "_history_write_meta", None) if feature == "history" else None
+    if isinstance(meta, Mapping):
+        rc = meta.get("reason_counts")
+        return build_op_result(
+            ok=True,
+            count=int(cnt),
+            confirmed_keys=meta.get("confirmed_keys") or [],
+            unresolved_keys=meta.get("unresolved_keys") or _unresolved_keys(unresolved, key_of),
+            unresolved=unresolved,
+            results=meta.get("results") or [],
+            reason_counts=(dict(rc) if isinstance(rc, Mapping) else None),
+        )
+    results = list(getattr(adapter, "_progress_write_results", [])) if feature == "progress" else []
+    return build_op_result(
+        ok=True,
+        count=int(cnt),
+        confirmed_keys=_confirmed_keys(key_of, items, unresolved),
+        unresolved_keys=_unresolved_keys(unresolved, key_of),
+        unresolved=unresolved,
+        results=results,
+    )
 
 
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
@@ -77,7 +105,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.2"
+__VERSION__ = "2.0"
 os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
 os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
@@ -590,9 +618,12 @@ class EMBYModule:
                 "unresolved": [],
                 "error": f"unknown_feature:{feature}",
             }
+        try:
+            setattr(self, "_history_write_meta", None)
+        except Exception:
+            pass
         cnt, unresolved = mod.add(self, lst)
-        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
+        return _finalize_result(self, self.key_of, f, lst, cnt, unresolved)
     def remove(
         self,
         feature: str,
@@ -617,9 +648,12 @@ class EMBYModule:
                 "unresolved": [],
                 "error": f"unknown_feature:{feature}",
             }
+        try:
+            setattr(self, "_history_write_meta", None)
+        except Exception:
+            pass
         cnt, unresolved = mod.remove(self, lst)
-        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
+        return _finalize_result(self, self.key_of, f, lst, cnt, unresolved)
 class _EmbyOPS:
     def name(self) -> str:
         return "EMBY"

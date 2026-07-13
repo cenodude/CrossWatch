@@ -30,7 +30,75 @@ __all__ = [
     "label_jellyfin",
     "label_emby",
     "SimpleRateLimiter",
+    "unresolved_key",
+    "unresolved_keys",
+    "dedup_keys",
+    "build_op_result",
 ]
+
+
+def unresolved_key(entry: Any, key_of: Callable[[Any], Any] | None = None) -> str:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, Mapping):
+        for field in ("key", "_cw_key"):
+            v = entry.get(field)
+            if isinstance(v, str) and v:
+                return v
+        inner = entry.get("item")
+        obj = inner if isinstance(inner, Mapping) else entry
+        if key_of is not None:
+            try:
+                return str(key_of(obj) or "")
+            except Exception:
+                return ""
+    return ""
+
+
+def unresolved_keys(unresolved: Any, key_of: Callable[[Any], Any] | None = None) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for u in unresolved or []:
+        k = unresolved_key(u, key_of)
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def dedup_keys(keys: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for x in keys or []:
+        s = str(x or "").strip()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def build_op_result(
+    *,
+    ok: bool = True,
+    count: int = 0,
+    confirmed_keys: Any = None,
+    unresolved_keys: Any = None,
+    unresolved: Any = None,
+    results: Any = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    res: dict[str, Any] = {
+        "ok": bool(ok),
+        "count": int(count or 0),
+        "confirmed_keys": dedup_keys(confirmed_keys),
+        "unresolved_keys": dedup_keys(unresolved_keys),
+        "unresolved": list(unresolved or []),
+        "results": list(results or []),
+    }
+    for key, value in (extra or {}).items():
+        if value is not None:
+            res[key] = value
+    return res
 
 EmitFn = Callable[[str, Mapping[str, Any]], None]
 FeatureLabelFn = Callable[[str, str, Mapping[str, Any]], str]
