@@ -18,6 +18,9 @@
   let connected = false;
 
   const JFY_SUBTAB_KEY = "cw.ui.jellyfin.auth.subtab.v1";
+  let jfyAutoTabInst = "";
+  let jfyNewProfileInst = "";
+  let jfyQuickSave = null;
 
   const _notify = Shared.notify;
   const jfyProfile = Shared.createProfileAdapter({
@@ -52,6 +55,7 @@
 
   function ensureJfyInstanceUI() {
     jfyProfile?.ensureUI(() => {
+      try { jfyQcStop({ cancel: true }); } catch {}
       hydrated = false;
       hydrateFromConfig(true);
       jfyLoadLibraries?.();
@@ -64,7 +68,11 @@
     if (!root) return;
 
     const want = String(tab || "auth").toLowerCase();
-    const sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+    let sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+    const state = getJfySetupState();
+    if (sub === "settings" && !state.settingsEnabled) sub = "auth";
+    if (sub === "whitelist" && !state.whitelistEnabled) sub = state.settingsEnabled ? "settings" : "auth";
+    try { Shared.applyMediaTabState(root, state); } catch {}
 
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
       btn.classList.toggle("active", String(btn.dataset.sub || "").toLowerCase() === sub);
@@ -80,11 +88,22 @@
     if (sub === "whitelist") {
       try { jfyLoadLibraries(); } catch {}
     }
+    if (sub !== "auth") { try { jfyQcStop({ cancel: true }); } catch {} }
+    try { Shared.setMediaAuthStep(root, sub); } catch {}
   }
 
   function mountJfyAuthTabs() {
     const root = Q('#sec-jellyfin .cw-meta-provider-panel[data-provider="jellyfin"]');
     if (!root) return;
+    try {
+      Shared.mediaAuthGuide(root, {
+        kind: "jellyfin",
+        label: "Jellyfin",
+        title: "Connect to Jellyfin",
+        copy: "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries."
+      });
+      syncJfySetupTabs();
+    } catch {}
 
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
       if (btn.__jfyTabWired) return;
@@ -100,6 +119,52 @@
     jfyAuthSubSelect(last, { persist: false });
   }
 
+  function getJfySetupState() {
+    const server = (Q("#jfy_server_url")?.value || Q("#jfy_server")?.value || "").trim();
+    const user = (Q("#jfy_username")?.value || Q("#jfy_user")?.value || "").trim();
+    const userId = (Q("#jfy_user_id")?.value || "").trim();
+    const configured = connected || !!(server || user || userId);
+    return {
+      configured,
+      connected,
+      settingsEnabled: connected,
+      whitelistEnabled: connected,
+    };
+  }
+
+  function syncJfySetupTabs(opts = {}) {
+    const root = Q('#sec-jellyfin .cw-meta-provider-panel[data-provider="jellyfin"]') || Q("#sec-jellyfin .cw-panel");
+    if (!root) return;
+    const state = getJfySetupState();
+    try { Shared.applyMediaTabState(root, state); } catch {}
+    if (opts.auto) {
+      const inst = getJfyInstance();
+      if (jfyAutoTabInst !== inst) {
+        jfyAutoTabInst = inst;
+        const cur = root.querySelector(".cw-subtile.active[data-sub]")?.dataset?.sub || "auth";
+        if (cur === "auth") jfyAuthSubSelect("auth", { persist: false });
+        return;
+      }
+    }
+    if (opts.preferSettings && state.settingsEnabled) {
+      const cur = root.querySelector(".cw-subtile.active[data-sub]")?.dataset?.sub || "auth";
+      if (cur === "auth") {
+        jfyAuthSubSelect("settings", { persist: opts.persist !== false });
+        return;
+      }
+    }
+    const active = root.querySelector(".cw-subtile.active[data-sub]");
+    jfyAuthSubSelect(active?.dataset?.sub || "auth", { persist: false });
+  }
+
+  async function persistJfyRuntimeSettings() {
+    if (!getJfySetupState().configured) return null;
+    jfyQuickSave ||= Shared.saveMergedConfig((cfg) => {
+      mergeJellyfinIntoCfg(cfg);
+    }).finally(() => { jfyQuickSave = null; });
+    return jfyQuickSave;
+  }
+
 
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
@@ -108,19 +173,25 @@
     return Shared.setStatusPill(msg, kind, text);
   }
 
-  function setConnected(has) {
-    connected = !!has;
-    const msg = Q("#jfy_msg");
-    if (connected) setMsgBanner(msg, "ok", "Connected");
-    else setMsgBanner(msg, null, "");
+  function connectedLabel(method) {
+    const m = String(method || "").toLowerCase();
+    if (m === "quick_connect") return "Connected using Quick Connect";
+    if (m === "password") return "Connected using password";
+    return "Connected";
   }
 
-  function applyFilter() {
-    const qv = (Q("#jfy_lib_filter")?.value || "").toLowerCase().trim();
-    Qa("#jfy_lib_matrix .lm-row").forEach((r) => {
-      const name = (r.querySelector(".lm-name")?.textContent || "").toLowerCase();
-      r.classList.toggle("hide", !!qv && !name.includes(qv));
-    });
+  function setConnected(has, method) {
+    connected = !!has;
+    const msg = Q("#jfy_msg");
+    if (connected) {
+      const m = method != null ? method : (getJfyCfgBlock(window.__cfg || {})?.auth_method);
+      setMsgBanner(msg, "ok", connectedLabel(m));
+      jfyQcStop({ cancel: true });
+    } else {
+      setMsgBanner(msg, null, "");
+    }
+    try { Shared.setConnectLocked(["btn-jfy-qc-start", "btn-jfy-qc-restart", "btn-jfy-login"], connected); } catch {}
+    try { syncJfySetupTabs(); } catch {}
   }
 
   function syncHidden() {
@@ -165,7 +236,6 @@
       f.appendChild(row);
     });
     box.appendChild(f);
-    applyFilter();
     syncHidden();
     syncSelectAll();
   }
@@ -184,6 +254,7 @@
       return;
     }
     try {
+      await persistJfyRuntimeSettings();
       const r = await fetch(jfyApi(LIB_URL), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
       const libs = Array.isArray(d?.libraries) ? d.libraries : (Array.isArray(d) ? d : []);
@@ -216,7 +287,8 @@
       const v1 = Q("#jfy_verify_ssl"), v2 = Q("#jfy_verify_ssl_dup");
       if (v1) v1.checked = !!jf.verify_ssl;
       if (v2) v2.checked = !!jf.verify_ssl;
-      setConnected(!!(jf.access_token || "").trim());
+      setConnected(!!(jf.access_token || "").trim(), jf.auth_method);
+      try { initMethod(); } catch {}
 
       H = new Set((jf.history?.libraries || []).map(String));
       R = new Set((jf.ratings?.libraries || []).map(String));
@@ -226,6 +298,7 @@
       hydrated = true;
       if (lastLibraries.length) renderLibraries(lastLibraries);
       else await jfyLoadLibraries();
+      syncJfySetupTabs({ auto: true });
     } catch { }
   }
 
@@ -273,7 +346,7 @@
     const username = (Q("#jfy_user")?.value || "").trim();
     const password = Q("#jfy_pass")?.value || "";
     const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
-    const btn = Q("button.btn.jellyfin"), msg = Q("#jfy_msg");
+    const btn = Q("#btn-jfy-login"), msg = Q("#jfy_msg");
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
     setMsgBanner(msg, null, '');
     try {
@@ -285,14 +358,19 @@
       if (!r.ok || j?.ok === false) { setMsgBanner(msg, 'warn', 'Login failed'); return; }
       put("#jfy_server_url", server); put("#jfy_username", username);
       if (j?.user_id) put("#jfy_user_id", j.user_id);
-      setConnected(true); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
-      setMsgBanner(msg, 'ok', 'Connected');
+      setConnected(true, "password"); if (Q("#jfy_pass")) Q("#jfy_pass").value = "";
       await jfyLoadLibraries();
-    } finally { if (btn) { btn.disabled = false; btn.classList.remove("busy"); } }
+    } finally {
+      if (btn) {
+        btn.classList.remove("busy");
+        if (connected) Shared.setConnectLocked(["btn-jfy-qc-start", "btn-jfy-qc-restart", "btn-jfy-login"], true);
+        else btn.disabled = false;
+      }
+    }
   }
 
-  async function jfyDeleteToken() {
-    const delBtn = document.querySelector('#sec-jellyfin .btn.danger');
+  async function jfyDeleteToken(delBtn) {
+    delBtn = delBtn || document.querySelector('#sec-jellyfin .cw-jfy-delete');
     const msg = document.querySelector('#jfy_msg');
     if (delBtn) { delBtn.disabled = true; delBtn.classList.add('busy'); }
     if (msg) { msg.className = 'msg hidden'; msg.textContent = ''; }
@@ -308,6 +386,7 @@
         const pass = document.querySelector('#jfy_pass'); if (pass) pass.value = '';
         setConnected(false);
         if (msg) { msg.className = 'msg'; msg.textContent = 'Disconnected'; }
+        try { syncJfySetupTabs(); } catch {}
       } else {
         if (msg) { msg.className = 'msg warn'; msg.textContent = 'Could not remove token.'; }
       }
@@ -415,10 +494,9 @@
     }
   }, true);
 
-  document.addEventListener("input", (ev) => { if (ev.target?.id === "jfy_lib_filter") applyFilter(); }, true);
-
   async function jfyPickUser(ev) {
     try { ev?.preventDefault?.(); } catch {}
+    try { await persistJfyRuntimeSettings(); } catch {}
     if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
       window.notify?.("User picker not available", "warn");
       return;
@@ -447,7 +525,8 @@
     const t = ev?.target;
     if (t && t.id === "jfy_pick_user") jfyPickUser(ev);
     if (t && t.id === "btn-jfy-login") jfyLogin();
-    if (t && t.id === "btn-jfy-delete") jfyDeleteToken();
+    const delBtn = t instanceof Element ? t.closest(".cw-jfy-delete") : null;
+    if (delBtn && Q("#sec-jellyfin")?.contains(delBtn)) jfyDeleteToken(delBtn);
     if (t && t.id === "btn-jfy-auto") jfyAuto();
     if (t && t.id === "btn-jfy-load-libraries") jfyLoadLibraries(true);
   }, true);
@@ -460,11 +539,261 @@
     }
   }, true);
 
+  document.addEventListener("input", (ev) => {
+    const id = ev?.target?.id || "";
+    if (["jfy_server", "jfy_server_url", "jfy_user", "jfy_username", "jfy_user_id"].includes(id)) syncJfySetupTabs();
+  }, true);
+
+  document.addEventListener("cw-auth-profile-created", (ev) => {
+    const provider = String(ev?.detail?.provider || "").toLowerCase();
+    if (provider !== "jellyfin") return;
+    jfyNewProfileInst = getJfyInstance();
+    jfyAutoTabInst = jfyNewProfileInst;
+    try { syncJfySetupTabs(); } catch {}
+    try { jfyAuthSubSelect("auth", { persist: false }); } catch {}
+  }, true);
+
+  const JFY_METHOD_KEY = "cw.ui.jellyfin.auth.method.v1";
+  const QC_POLL_MS = 1500;
+  const QC_MAX_MS = 300000;
+  let qcMethod = "quick";
+  let qcTimer = null;
+  let qcDeadline = 0;
+  let qcDetectToken = 0;
+  let jfyQcPoller = null;
+
+  function paneFor(method) {
+    return Q(`#sec-jellyfin .jfy-pane[data-method="${method}"]`);
+  }
+
+  let qcLastNote = { text: "", kind: null };
+
+  function renderMethodNote() {
+    const el = Q("#jfy_method_note"); if (!el) return;
+    const show = qcMethod === "quick";
+    el.textContent = show ? (qcLastNote.text || "") : "";
+    el.classList.toggle("warn", show && qcLastNote.kind === "warn");
+  }
+
+  function selectMethod(method, opts = {}) {
+    const want = method === "password" ? "password" : "quick";
+    if (want !== "quick") jfyQcStop({ cancel: true });
+    qcMethod = want;
+    Qa("#sec-jellyfin .jfy-method").forEach((b) => {
+      const on = String(b.dataset.method || "") === want;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    Qa("#sec-jellyfin [data-method-actions]").forEach((node) => {
+      node.classList.toggle("hidden", String(node.dataset.methodActions || "") !== want);
+    });
+    const quick = paneFor("quick"), pass = paneFor("password");
+    if (quick) quick.classList.toggle("hidden", want !== "quick");
+    if (pass) pass.classList.toggle("hidden", want !== "password");
+    if (opts.persist !== false) { try { localStorage.setItem(JFY_METHOD_KEY, want); } catch {} }
+    renderMethodNote();
+  }
+
+  function setMethodNote(text, kind) {
+    qcLastNote = { text: text || "", kind: kind || null };
+    renderMethodNote();
+  }
+
+  function initMethod() {
+    let stored = "quick"; try { stored = localStorage.getItem(JFY_METHOD_KEY) || "quick"; } catch {}
+    selectMethod(stored, { persist: false });
+    detectMethod();
+  }
+
+  async function detectMethod() {
+    if (connected) { setMethodNote(""); return; }
+    const server = (Q("#jfy_server")?.value || Q("#jfy_server_url")?.value || "").trim();
+    if (!server) { setMethodNote(""); return; }
+    const token = ++qcDetectToken;
+    try {
+      const r = await fetch(jfyApi("/api/jellyfin/quickconnect/available"), { cache: "no-store" });
+      if (token !== qcDetectToken) return;
+      const d = r.ok ? await r.json().catch(() => ({})) : {};
+      if (connected || qcTimer) return;
+      let stored = null; try { stored = localStorage.getItem(JFY_METHOD_KEY); } catch {}
+      if (d.supported && d.enabled) {
+        setMethodNote("");
+        if (stored !== "password") selectMethod("quick", { persist: false });
+      } else if (d.supported && !d.enabled) {
+        setMethodNote("Quick Connect is disabled on this server. Use username & password.", "warn");
+        selectMethod("password", { persist: false });
+      } else if (d.reason && d.reason !== "missing_server") {
+        setMethodNote("Could not verify Quick Connect support: " + (d.error || d.reason), "warn");
+      } else {
+        setMethodNote("");
+      }
+    } catch {
+      if (token === qcDetectToken) setMethodNote("");
+    }
+  }
+
+  function qcSetState(show) {
+    const box = Q("#jfy_qc_state"); if (box) box.classList.toggle("hidden", !show);
+    const start = Q("#btn-jfy-qc-start"), cancel = Q("#btn-jfy-qc-cancel"), restart = Q("#btn-jfy-qc-restart");
+    if (start) start.classList.toggle("hidden", show);
+    if (cancel) cancel.classList.toggle("hidden", !show);
+    if (restart) restart.classList.add("hidden");
+  }
+
+  function qcShowRestart() {
+    const restart = Q("#btn-jfy-qc-restart"), start = Q("#btn-jfy-qc-start"), cancel = Q("#btn-jfy-qc-cancel");
+    if (restart) restart.classList.remove("hidden");
+    if (start) start.classList.add("hidden");
+    if (cancel) cancel.classList.add("hidden");
+  }
+
+  function qcUpdateTimer() {
+    const el = Q("#jfy_qc_timer"); if (!el) return;
+    const left = Math.max(0, Math.round((qcDeadline - Date.now()) / 1000));
+    const mm = Math.floor(left / 60);
+    const ss = String(left % 60).padStart(2, "0");
+    el.textContent = left > 0 ? `Expires in ${mm}:${ss}` : "";
+  }
+
+  function jfyQcStop(opts = {}) {
+    if (qcTimer) { clearInterval(qcTimer); qcTimer = null; }
+    if (jfyQcPoller) jfyQcPoller.stop();
+    qcDeadline = 0;
+    qcSetState(false);
+    if (opts.cancel) {
+      try {
+        fetch(jfyApi("/api/jellyfin/quickconnect/cancel"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: "{}", cache: "no-store", keepalive: true,
+        });
+      } catch {}
+    }
+  }
+
+  function ensureJfyQcPoller() {
+    if (jfyQcPoller) return jfyQcPoller;
+    jfyQcPoller = Shared.createDevicePoll({
+      url: () => jfyApi("/api/jellyfin/quickconnect/poll"),
+      method: "GET",
+      minIntervalMs: QC_POLL_MS,
+      maxTotalMs: QC_MAX_MS,
+      classify: (status, data) => {
+        const state = data && data.state;
+        if (state === "authorized") return { state: "authorized" };
+        if (state === "waiting") return { state: "pending" };
+        return { state: "terminal", message: (data && data.error) || "Quick Connect request expired. Restart to try again." };
+      },
+      onPending: () => { const s = Q("#jfy_qc_status"); if (s) s.textContent = "Waiting for authorization…"; },
+      onAuthorized: async (data) => {
+        jfyQcStop();
+        if (data.server) put("#jfy_server_url", data.server);
+        if (data.username) { put("#jfy_username", data.username); put("#jfy_user", data.username); }
+        if (data.user_id) put("#jfy_user_id", data.user_id);
+        window.__cfg = null;
+        setConnected(true, "quick_connect");
+        await jfyLoadLibraries(true);
+      },
+      onTerminal: (verdict) => {
+        jfyQcStop();
+        setMethodNote((verdict && verdict.message) || "Quick Connect request expired. Restart to try again.", "warn");
+        qcShowRestart();
+      },
+      onTimeout: () => {
+        jfyQcStop({ cancel: true });
+        setMethodNote("Quick Connect timed out. Restart to try again.", "warn");
+        qcShowRestart();
+      },
+    });
+    return jfyQcPoller;
+  }
+
+  async function jfyQcStart() {
+    const server = (Q("#jfy_server")?.value || "").trim();
+    if (!server) { setMethodNote("Enter a server URL first.", "warn"); return; }
+    const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
+    jfyQcStop({ cancel: true });
+    setMethodNote("");
+    const start = Q("#btn-jfy-qc-start"); if (start) { start.disabled = true; start.classList.add("busy"); }
+    try {
+      const r = await fetch(jfyApi("/api/jellyfin/quickconnect/start"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ server, verify_ssl }), cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d?.ok === false) {
+        setMethodNote(d?.error || "Could not start Quick Connect.", "warn");
+        if (d?.reason === "disabled") selectMethod("password");
+        return;
+      }
+      const code = Q("#jfy_qc_code"); if (code) code.textContent = d.code || "------";
+      const st = Q("#jfy_qc_status"); if (st) st.textContent = "Waiting for authorization…";
+      qcDeadline = Date.now() + Math.min(QC_MAX_MS, (Number(d.expires_in) || 600) * 1000);
+      qcSetState(true);
+      qcUpdateTimer();
+      qcTimer = setInterval(qcUpdateTimer, 1000);
+      ensureJfyQcPoller().start({ intervalMs: QC_POLL_MS, deadlineMs: qcDeadline });
+    } finally {
+      if (start) { start.disabled = false; start.classList.remove("busy"); }
+    }
+  }
+
+  const QC_ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  const QC_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+  let qcCopyRevert = null;
+
+  async function jfyQcCopy(btn) {
+    const code = (Q("#jfy_qc_code")?.textContent || "").replace(/\s+/g, "").trim();
+    if (!code || code === "------") return;
+    let ok = false;
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch {}
+    if (!ok) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {}
+    }
+    if (!ok) { window.notify?.("Copy failed", "warn"); return; }
+    btn.classList.add("copied");
+    btn.innerHTML = QC_ICON_CHECK;
+    btn.title = "Copied!";
+    if (qcCopyRevert) clearTimeout(qcCopyRevert);
+    qcCopyRevert = setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.innerHTML = QC_ICON_COPY;
+      btn.title = "Copy code";
+    }, 1400);
+  }
+
+  document.addEventListener("click", (ev) => {
+    const t = ev?.target;
+    if (!(t instanceof Element)) return;
+    const copyBtn = t.closest("#jfy_qc_copy");
+    if (copyBtn) { ev.preventDefault(); jfyQcCopy(copyBtn); return; }
+    const methodBtn = t.closest(".jfy-method");
+    if (methodBtn && Q("#sec-jellyfin")?.contains(methodBtn)) { ev.preventDefault(); selectMethod(methodBtn.dataset.method); return; }
+    if (t.id === "btn-jfy-qc-start" || t.id === "btn-jfy-qc-restart") { jfyQcStart(); return; }
+    if (t.id === "btn-jfy-qc-cancel") { jfyQcStop({ cancel: true }); setMethodNote(""); return; }
+  }, true);
+
+  document.addEventListener("change", (ev) => {
+    const id = ev?.target?.id || "";
+    if (id === "jfy_server" || id === "jfy_server_url") detectMethod();
+  }, true);
+
+  window.addEventListener("beforeunload", () => {
+    if (qcTimer) { clearInterval(qcTimer); qcTimer = null; }
+    if (jfyQcPoller) jfyQcPoller.stop();
+  });
+
   window.jfyAuto = jfyAuto;
   window.jfyLoadLibraries = jfyLoadLibraries;
   window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;
   window.jfyLogin = jfyLogin;
   window.jfyDeleteToken = jfyDeleteToken;
+  window.persistJfyRuntimeSettings = persistJfyRuntimeSettings;
 
   window.registerSettingsCollector?.(mergeJellyfinIntoCfg);
   document.addEventListener("settings-collect", (e) => { try { mergeJellyfinIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);

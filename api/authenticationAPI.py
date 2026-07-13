@@ -31,6 +31,7 @@ from providers.sync.jellyfin._utils import (
     fetch_libraries_from_cfg as jf_fetch_libraries_from_cfg,
     inspect_and_persist as jf_inspect_and_persist,
 )
+from providers.sync.jellyfin._auth_http import JellyfinAuthError
 from providers.sync.plex._utils import (
     ensure_whitelist_defaults,
     fetch_libraries_from_cfg,
@@ -62,6 +63,26 @@ def _public_jellyfin_runtime_error(exc: RuntimeError) -> str:
     if "unable to determine jellyfin server version" in error_text:
         return "Unable to determine Jellyfin server version; CrossWatch requires Jellyfin 10.9 or newer."
     return "Login failed"
+
+
+_JF_QC_REASON_STATUS: dict[str, int] = {
+    "missing_server": 400,
+    "version_too_old": 400,
+    "version_unknown": 400,
+    "disabled": 409,
+    "not_authorized": 401,
+    "unauthorized": 401,
+    "expired": 410,
+    "unreachable": 502,
+    "initiate_failed": 502,
+    "connect_failed": 502,
+}
+
+
+def _jf_qc_error(exc: JellyfinAuthError) -> JSONResponse:
+    reason = getattr(exc, "reason", "error")
+    status = _JF_QC_REASON_STATUS.get(reason, 502)
+    return JSONResponse({"ok": False, "reason": reason, "error": str(exc)}, status)
 
 def _import_provider(modname: str, symbol: str = "PROVIDER"):
     try:
@@ -808,6 +829,73 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             "server_version": jf.get("server_version") or None,
             "instance": inst,
         }
+
+    @app.get("/api/jellyfin/quickconnect/available", tags=["auth"])
+    def api_jellyfin_qc_available(instance: str | None = Query(None)) -> JSONResponse:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        jf = ensure_instance_block(cfg, "jellyfin", inst)
+        server = str(jf.get("server") or "").strip()
+        if not server:
+            return JSONResponse({"ok": False, "supported": False, "enabled": False, "reason": "missing_server"}, 200)
+        prov = _import_provider("providers.auth._auth_JELLYFIN")
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+        result = prov.quick_connect_available(server, verify_ssl=coerce_bool(jf.get("verify_ssl", False)))
+        return JSONResponse({**result, "instance": inst}, 200)
+
+    @app.post("/api/jellyfin/quickconnect/start", tags=["auth"])
+    def api_jellyfin_qc_start(payload: dict[str, Any] = Body(default={}), instance: str | None = Query(None)) -> JSONResponse:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        ensure_provider_block(cfg, "jellyfin")
+        jf = ensure_instance_block(cfg, "jellyfin", inst)
+        if isinstance(payload, dict):
+            server = (payload.get("server") or "").strip()
+            if server:
+                jf["server"] = server
+            if "verify_ssl" in payload:
+                jf["verify_ssl"] = coerce_bool(payload.get("verify_ssl"))
+        prov = _import_provider("providers.auth._auth_JELLYFIN")
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+        try:
+            result = prov.quick_connect_start(cfg, instance_id=inst)
+            save_config(cfg)
+            return JSONResponse({**result, "instance": inst}, 200)
+        except JellyfinAuthError as exc:
+            _safe_log(log_fn, "JELLYFIN", f"[JELLYFIN:{inst}] Quick Connect start failed reason={getattr(exc, 'reason', 'error')}")
+            return _jf_qc_error(exc)
+        except Exception as exc:
+            _safe_log(log_fn, "JELLYFIN", f"[JELLYFIN:{inst}] Quick Connect start error type={type(exc).__name__}")
+            return JSONResponse({"ok": False, "error": "Quick Connect failed"}, 500)
+
+    @app.get("/api/jellyfin/quickconnect/poll", tags=["auth"])
+    def api_jellyfin_qc_poll(instance: str | None = Query(None)) -> JSONResponse:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        prov = _import_provider("providers.auth._auth_JELLYFIN")
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+        try:
+            result = prov.quick_connect_poll(cfg, instance_id=inst)
+            if result.get("state") == "authorized":
+                save_config(cfg)
+            return JSONResponse({**result, "instance": inst}, 200)
+        except JellyfinAuthError as exc:
+            _safe_log(log_fn, "JELLYFIN", f"[JELLYFIN:{inst}] Quick Connect poll failed reason={getattr(exc, 'reason', 'error')}")
+            return _jf_qc_error(exc)
+        except Exception as exc:
+            _safe_log(log_fn, "JELLYFIN", f"[JELLYFIN:{inst}] Quick Connect poll error type={type(exc).__name__}")
+            return JSONResponse({"ok": False, "error": "Quick Connect failed"}, 500)
+
+    @app.post("/api/jellyfin/quickconnect/cancel", tags=["auth"])
+    def api_jellyfin_qc_cancel(instance: str | None = Query(None)) -> JSONResponse:
+        inst = normalize_instance_id(instance)
+        prov = _import_provider("providers.auth._auth_JELLYFIN")
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+        return JSONResponse({**prov.quick_connect_cancel(instance_id=inst), "instance": inst}, 200)
 
     @app.get("/api/jellyfin/inspect", tags=["media providers"])
     def jf_inspect(instance: str | None = Query(None)):
@@ -1719,8 +1807,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         device_code: str,
         *,
         instance_id: Any,
-        timeout_sec: int = 600,
-        interval: float = 2.0,
+        timeout_sec: int = 300,
+        interval: Optional[float] = None,
     ) -> Optional[str]:
         prov = _import_provider("providers.auth._auth_TRAKT")
         if not prov:
@@ -1728,23 +1816,66 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         inst = normalize_instance_id(instance_id)
 
-        deadline = time.time() + max(0, int(timeout_sec))
-        sleep_s = max(0.5, float(interval))
+        base_interval = 5.0
+        pend_expires = 0
+        try:
+            pend0 = ensure_instance_block(load_config(), "trakt", inst).get("_pending_device") or {}
+            pv = float(pend0.get("interval") or 0)
+            if pv > 0:
+                base_interval = pv
+            pend_expires = int(pend0.get("expires_at") or 0)
+        except Exception:
+            pass
+        if interval:
+            base_interval = float(interval)
+        base_interval = max(5.0, base_interval)
+
+        now = time.time()
+        deadline = now + max(0, int(timeout_sec))
+        if pend_expires:
+            deadline = min(deadline, float(pend_expires))
+
+        sleep_s = base_interval
+        backoff = 0
 
         while time.time() < deadline:
+            time.sleep(min(sleep_s, max(0.0, deadline - time.time())))
+            if time.time() >= deadline:
+                break
+
             cfg = load_config()
             try:
                 res = prov.finish(cfg, device_code=device_code, instance_id=inst)  # type: ignore[attr-defined]
-                if isinstance(res, dict):
-                    status = (res.get("status") or "").lower()
-                    if res.get("ok"):
-                        save_config(cfg)
-                        return "ok"
-                    if status in ("expired_token", "no_device_code", "missing_client"):
-                        return None
             except Exception:
-                pass
-            time.sleep(sleep_s)
+                backoff += 1
+                sleep_s = min(60.0, base_interval * (2 ** backoff))
+                continue
+
+            if not isinstance(res, dict):
+                sleep_s = base_interval
+                continue
+
+            status = (res.get("status") or "").lower()
+            if res.get("ok"):
+                save_config(cfg)
+                return "ok"
+            if status in ("expired_token", "no_device_code", "missing_client", "not_found", "already_used", "access_denied"):
+                return None
+            if status == "slow_down":
+                base_interval = base_interval + 5.0
+                try:
+                    retry_after = float(res.get("retry_after") or 0)
+                except Exception:
+                    retry_after = 0.0
+                sleep_s = max(base_interval, retry_after)
+                continue
+            if status == "server_error":
+                backoff += 1
+                sleep_s = min(60.0, base_interval * (2 ** backoff))
+                continue
+
+            backoff = 0
+            sleep_s = base_interval
 
         return None
 
@@ -1783,7 +1914,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             device_code = str(info["device_code"])
 
             def waiter(_device_code: str, _inst: str) -> None:
-                token = trakt_wait_for_token(_device_code, instance_id=_inst, timeout_sec=600, interval=2.0)
+                token = trakt_wait_for_token(_device_code, instance_id=_inst, timeout_sec=300)
                 if token:
                     _safe_log(
                         log_fn,
@@ -2032,11 +2163,63 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         cfg = load_config()
         inst = normalize_instance_id(instance)
         s = ensure_instance_block(cfg, "simkl", inst)
-        for k in ("access_token", "refresh_token", "token_expires_at", "scopes", "account"):
+        try:
+            from providers.auth._auth_SIMKL import app_pin_client_id as _simkl_pin_cid
+            if str(s.get("client_id") or "").strip() == _simkl_pin_cid():
+                s.pop("client_id", None)
+                s.pop("api_key", None)
+        except Exception:
+            pass
+        for k in ("access_token", "refresh_token", "token_expires_at", "scopes", "account", "_pending_pin", "auth_method"):
             s.pop(k, None)
         save_config(cfg)
         _probe_bust("simkl")
         return {"ok": True, "instance": inst}
+
+    @app.post("/api/simkl/pin/start", tags=["auth"])
+    def api_simkl_pin_start(instance: str = Query("default")) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        prov = _import_provider("providers.auth._auth_SIMKL")
+        if not prov:
+            return {"ok": False, "error": "provider_missing", "instance": inst}
+        try:
+            res = prov.pin_start(cfg, instance_id=inst)
+        except Exception as e:
+            _safe_log(log_fn, "SIMKL", f"[SIMKL:{inst}] PIN start error type={type(e).__name__}")
+            return {"ok": False, "error": "internal", "instance": inst}
+        if res.get("ok"):
+            _probe_bust("simkl")
+        return {**res, "instance": inst}
+
+    @app.post("/api/simkl/pin/poll", tags=["auth"])
+    def api_simkl_pin_poll(instance: str = Query("default")) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        prov = _import_provider("providers.auth._auth_SIMKL")
+        if not prov:
+            return {"ok": False, "status": "provider_missing", "instance": inst}
+        try:
+            res = prov.pin_poll(cfg, instance_id=inst)
+        except Exception as e:
+            _safe_log(log_fn, "SIMKL", f"[SIMKL:{inst}] PIN poll error type={type(e).__name__}")
+            return {"ok": False, "status": "internal", "instance": inst}
+        if res.get("status") == "authorized":
+            _probe_bust("simkl")
+        return {**res, "instance": inst}
+
+    @app.post("/api/simkl/pin/cancel", tags=["auth"])
+    def api_simkl_pin_cancel(instance: str = Query("default")) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        prov = _import_provider("providers.auth._auth_SIMKL")
+        if not prov:
+            return {"ok": False, "instance": inst}
+        try:
+            res = prov.pin_cancel(cfg, instance_id=inst)
+        except Exception:
+            res = {"ok": True, "cancelled": False}
+        return {**res, "instance": inst}
 
 
 # ANILIST

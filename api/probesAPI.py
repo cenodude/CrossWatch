@@ -925,6 +925,7 @@ def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
     jf = (cfg.get("jellyfin") or cfg.get("JELLYFIN") or {}) or {}
     server = (jf.get("server") or "").strip()
     token = (jf.get("access_token") or jf.get("token") or "").strip()
+    device_id = (jf.get("device_id") or "crosswatch").strip() or "crosswatch"
 
     if not server:
         rsn = "Jellyfin: missing server URL"
@@ -937,11 +938,10 @@ def _probe_jellyfin_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) ->
             PROBE_DETAIL_CACHE[key] = (now, False, rsn)
         return False, rsn
 
-    url = f"{server.rstrip('/')}/System/Info/Public"
-    code, _ = _http_get(url, headers={**UA}, timeout=HTTP_TIMEOUT)
-    if code == 404:
-        url2 = f"{server.rstrip('/')}/System/Info"
-        code, _ = _http_get(url2, headers={**UA, "X-Emby-Token": token}, timeout=HTTP_TIMEOUT)
+    from providers.sync.jellyfin._auth_http import auth_headers
+
+    url = f"{server.rstrip('/')}/Users/Me"
+    code, _ = _http_get(url, headers={**UA, **auth_headers(token, device_id)}, timeout=HTTP_TIMEOUT)
 
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "Jellyfin")
