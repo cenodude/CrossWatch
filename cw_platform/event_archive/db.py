@@ -61,9 +61,16 @@ def connect(path: str | os.PathLike[str] | None = None) -> sqlite3.Connection:
             raise EventArchiveError(f"cannot create db dir {p.parent}: {exc}") from exc
     conn = sqlite3.connect(str(p), timeout=5.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    _apply_pragmas(conn)
-    from .schema import apply_schema
-    apply_schema(conn)
+    try:
+        _apply_pragmas(conn)
+        from .schema import apply_schema
+        apply_schema(conn)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise
     return conn
 
 

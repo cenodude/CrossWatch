@@ -17,7 +17,7 @@ from .db import get_conn
 _LOG = logging.getLogger("crosswatch.event_archive")
 
 FIELDS = (
-    "event_hash", "created_at", "run_id", "event_type", "severity",
+    "event_hash", "domain", "created_at", "run_id", "event_type", "severity",
     "feature", "operation", "pair_key", "direction",
     "source_provider", "source_instance",
     "destination_provider", "destination_instance",
@@ -25,7 +25,7 @@ FIELDS = (
     "item_key", "title", "year", "media_type", "season", "episode",
     "old_value", "new_value", "value_type",
     "reason_code", "reason", "match_basis",
-    "source_kind", "source_file", "source_mtime", "detail",
+    "source_kind", "session_key", "source_file", "source_mtime", "detail",
 )
 
 _HASH_FIELDS = (
@@ -64,6 +64,8 @@ def make_event(*, hash_extra: Any = None, **kwargs: Any) -> dict[str, Any]:
             row[k] = v
     if not row.get("created_at"):
         row["created_at"] = int(time.time())
+    if not row.get("domain"):
+        row["domain"] = "sync"
     if not row.get("severity"):
         row["severity"] = "info"
     detail = row.get("detail")

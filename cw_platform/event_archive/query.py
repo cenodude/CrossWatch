@@ -16,13 +16,13 @@ _MAX_LIMIT = 500
 _DEFAULT_LIMIT = 50
 
 _COLUMNS = (
-    "id", "event_hash", "created_at", "run_id", "event_type", "severity",
+    "id", "event_hash", "domain", "created_at", "run_id", "event_type", "severity",
     "feature", "operation", "pair_key", "direction",
     "source_provider", "source_instance", "destination_provider", "destination_instance",
     "origin_provider", "origin_instance", "origin_confidence",
     "item_key", "title", "year", "media_type", "season", "episode",
     "old_value", "new_value", "value_type", "reason_code", "reason",
-    "match_basis", "source_kind", "source_file", "source_mtime", "detail",
+    "match_basis", "source_kind", "session_key", "source_file", "source_mtime", "detail",
     "acknowledged_at", "acknowledged_by",
 )
 
@@ -66,11 +66,15 @@ def _run(
     offset: int,
     visibility: str | None,
     order: str | None = "newest",
+    domain: str | None = None,
 ) -> dict[str, Any]:
     c = conn or get_conn()
     if c is None:
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
     all_clauses = list(clauses)
+    if domain not in (None, ""):
+        all_clauses.append("domain=?")
+        params = [*params, domain]
     vc = _vis_clause(visibility)
     if vc:
         all_clauses.append(vc)
@@ -89,8 +93,8 @@ def _run(
     return {"items": [dict(r) for r in rows], "total": total, "limit": lim, "offset": off}
 
 
-def recent(*, limit: int = _DEFAULT_LIMIT, offset: int = 0, visibility: str | None = "open", order: str | None = "newest", conn: sqlite3.Connection | None = None) -> dict[str, Any]:
-    return _run(conn, [], [], limit, offset, visibility, order)
+def recent(*, limit: int = _DEFAULT_LIMIT, offset: int = 0, visibility: str | None = "open", order: str | None = "newest", domain: str | None = None, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+    return _run(conn, [], [], limit, offset, visibility, order, domain)
 
 
 def search(
@@ -109,6 +113,7 @@ def search(
     until: int | None = None,
     visibility: str | None = "open",
     order: str | None = "newest",
+    domain: str | None = None,
     limit: int = _DEFAULT_LIMIT,
     offset: int = 0,
     conn: sqlite3.Connection | None = None,
@@ -153,7 +158,7 @@ def search(
         except Exception:
             pass
 
-    return _run(conn, clauses, params, limit, offset, visibility, order)
+    return _run(conn, clauses, params, limit, offset, visibility, order, domain)
 
 
 def by_item(item_key: str, *, limit: int = _MAX_LIMIT, offset: int = 0, visibility: str | None = "all", conn: sqlite3.Connection | None = None) -> dict[str, Any]:
