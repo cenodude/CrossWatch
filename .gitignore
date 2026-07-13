@@ -10,6 +10,8 @@ __pycache__/
 dist/
 build/
 *.log
+settings.*
+.claude/
 
 # Virtual environments
 .venv/
