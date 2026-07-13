@@ -79,10 +79,33 @@ _JF_QC_REASON_STATUS: dict[str, int] = {
 }
 
 
+_JF_QC_PUBLIC_MESSAGES: dict[str, str] = {
+    "missing_server": "Enter a Jellyfin server URL.",
+    "version_too_old": "Jellyfin version too old. CrossWatch requires Jellyfin 10.9 or newer.",
+    "version_unknown": "Unable to determine the Jellyfin server version.",
+    "disabled": "Quick Connect is disabled on this Jellyfin server.",
+    "not_authorized": "Quick Connect has not been authorized.",
+    "unauthorized": "Jellyfin rejected the authentication request.",
+    "expired": "Quick Connect request expired.",
+    "unreachable": "The Jellyfin server could not be reached.",
+    "initiate_failed": "Could not start Quick Connect.",
+    "connect_failed": "Could not complete Quick Connect.",
+}
+
+
 def _jf_qc_error(exc: JellyfinAuthError) -> JSONResponse:
-    reason = getattr(exc, "reason", "error")
+    reason = str(getattr(exc, "reason", "error"))
+
+    if reason not in _JF_QC_PUBLIC_MESSAGES:
+        reason = "error"
+
     status = _JF_QC_REASON_STATUS.get(reason, 502)
-    return JSONResponse({"ok": False, "reason": reason, "error": str(exc)}, status)
+    error = _JF_QC_PUBLIC_MESSAGES.get(reason, "Quick Connect failed")
+
+    return JSONResponse(
+        {"ok": False, "reason": reason, "error": error},
+        status_code=status,
+    )
 
 def _import_provider(modname: str, symbol: str = "PROVIDER"):
     try:
