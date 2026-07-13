@@ -232,8 +232,9 @@ DEFAULT_CFG: dict[str, Any] = {
     },
 
     "simkl": {
-        "access_token": "",                             # OAuth2 access token
-        "client_id": "",                                # From your Simkl app
+        "access_token": "",                             # OAuth2 / PIN access token
+        "auth_method": "",                              # "pin" | "oauth" (metadata; runtime uses access_token + client_id)
+        "client_id": "",                                # From your Simkl app (OAuth); baked app id when connected via PIN
         "client_secret": "",                            # From your Simkl app
         "date_from": "",                                # YYYY-MM-DD (optional start date for full sync)
         "watchlist_batch_size": 500,                    # Batch size for watchlist add/remove writes
@@ -656,7 +657,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "recent_activity_limit": 3,                     # Recent Scrobble rows on Main tab
         "recent_syncs_display": "count:3",              # "count:3|4|5" | "hours:24|48|72"
         "recent_syncs_limit": 3,                        # Recent Sync rows on Main tab
-        "show_AI": True,                                # Show ASK AI from GitBook
         "show_quick_add_desktop": True,                 # Show the Main-tab quick add drawer on desktop
         "show_quick_add_mobile": True,                  # Show the Main-tab quick add floating button on mobile
         "protocol": "http",                             # "http" | "https" (HTTPS uses a self-signed cert by default)
@@ -702,7 +702,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
     # Provider-specific secret fields
     provider_secret_keys: dict[str, set[str]] = {
         "plex": {"account_token", "pms_token", "home_pin", "webhook_secret"},
-        "simkl": {"access_token", "client_secret"},
+        "simkl": {"access_token", "client_secret", "_pending_pin"},
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
@@ -1397,7 +1397,6 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui["show_recent_history_widget"] = bool(ui.get("show_recent_history_widget", True))
     ui["show_latest_ratings_widget"] = bool(ui.get("show_latest_ratings_widget", True))
     ui["show_recent_scrobble_widget"] = bool(ui.get("show_recent_scrobble_widget", True))
-    ui["show_AI"] = bool(ui.get("show_AI", True))
     ui["show_quick_add_desktop"] = bool(ui.get("show_quick_add_desktop", True))
     ui["show_quick_add_mobile"] = bool(ui.get("show_quick_add_mobile", True))
 

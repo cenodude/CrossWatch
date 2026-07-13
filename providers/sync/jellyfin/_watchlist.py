@@ -456,16 +456,18 @@ def _add_playlist(
             _freeze(it, reason="resolve_failed")
 
     ok = 0
+    added_ids: list[str] = []
     for chunk in chunked(mids, qlim):
         if playlist_add_items(http, pid, uid, chunk):
             ok += len(chunk)
+            added_ids.extend(chunk)
         else:
             for _ in chunk:
                 unresolved.append({"item": {}, "hint": "playlist_add_failed"})
         sleep_ms(delay)
 
-    if ok:
-        _thaw_if_present([canonical_key({"ids": {"jellyfin": x}}) for x in mids])
+    if added_ids:
+        _thaw_if_present([canonical_key({"ids": {"jellyfin": x}}) for x in added_ids])
     return ok, unresolved
 
 
@@ -552,16 +554,18 @@ def _add_collection(
             _freeze(it, reason="resolve_failed")
 
     ok = 0
+    added_ids: list[str] = []
     for chunk in chunked(mids, qlim):
         if collection_add_items(http, cid, chunk):
             ok += len(chunk)
+            added_ids.extend(chunk)
         else:
             for _ in chunk:
                 unresolved.append({"item": {}, "hint": "collection_add_failed"})
         sleep_ms(delay)
 
-    if ok:
-        _thaw_if_present([canonical_key({"ids": {"jellyfin": x}}) for x in mids])
+    if added_ids:
+        _thaw_if_present([canonical_key({"ids": {"jellyfin": x}}) for x in added_ids])
     return ok, unresolved
 
 

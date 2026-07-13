@@ -27,7 +27,33 @@ from ._mod_common import (
     parse_rate_limit,  # parity
     label_jellyfin,
     make_snapshot_progress,
+    unresolved_keys as _unresolved_keys,
+    build_op_result,
 )
+
+
+def _finalize_result(adapter: Any, key_of, feature: str, items, cnt: int, unresolved: Any) -> dict[str, Any]:
+    meta = getattr(adapter, "_history_write_meta", None) if feature == "history" else None
+    if isinstance(meta, Mapping):
+        rc = meta.get("reason_counts")
+        return build_op_result(
+            ok=True,
+            count=int(cnt),
+            confirmed_keys=meta.get("confirmed_keys") or [],
+            unresolved_keys=meta.get("unresolved_keys") or _unresolved_keys(unresolved, key_of),
+            unresolved=unresolved,
+            results=meta.get("results") or [],
+            reason_counts=(dict(rc) if isinstance(rc, Mapping) else None),
+        )
+    results = list(getattr(adapter, "_progress_write_results", [])) if feature == "progress" else []
+    return build_op_result(
+        ok=True,
+        count=int(cnt),
+        confirmed_keys=_confirmed_keys(key_of, items, unresolved),
+        unresolved_keys=_unresolved_keys(unresolved, key_of),
+        unresolved=unresolved,
+        results=results,
+    )
 
 
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
@@ -75,7 +101,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.2"
+__VERSION__ = "2.0"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -480,6 +506,12 @@ class JELLYFINModule:
         auth_ok = bool(user_ok and user_code == 200)
         product = "Jellyfin Server"
         version = None
+        progress_supported = False
+        if auth_ok:
+            try:
+                progress_supported, version = self.client.progress_write_supported()
+            except Exception:
+                progress_supported, version = False, None
 
         base_ready = bool(server_ok and auth_ok)
         features = {
@@ -487,7 +519,7 @@ class JELLYFINModule:
             "history": base_ready if enabled.get("history") else False,
             "ratings": base_ready if enabled.get("ratings") else False,
             "playlists": base_ready if enabled.get("playlists") else False,
-            "progress": base_ready if enabled.get("progress") else False,
+            "progress": bool(base_ready and progress_supported) if enabled.get("progress") else False,
         }
 
         checks: list[bool] = [features[k] for k, on in enabled.items() if on]
@@ -513,6 +545,8 @@ class JELLYFINModule:
                 reasons.append(f"user:http:{user_code}")
             else:
                 reasons.append("user:unreachable")
+        if enabled.get("progress") and auth_ok and not progress_supported:
+            reasons.append(f"progress:unsupported_server_version:{version or 'unknown'}")
 
         details: dict[str, Any] = {
             "server_ok": server_ok,
@@ -588,7 +622,7 @@ class JELLYFINModule:
             supported, version = self.client.progress_write_supported()
             if not supported:
                 _info(f, "write_skipped", op="add", reason="unsupported_server_version", server_version=version)
-                return {"ok": False, "count": 0, "unresolved": [], "error": "unsupported_server_version", "server_version": version}
+                return {"ok": False, "count": 0, "unresolved": [], "confirmed_keys": [], "unresolved_keys": [], "results": [], "error": "unsupported_server_version", "server_version": version}
         if not self._is_enabled(f):
             _info(f, "write_skipped", op="add", reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
@@ -605,9 +639,12 @@ class JELLYFINModule:
                 "unresolved": [],
                 "error": f"unknown_feature:{feature}",
             }
+        try:
+            setattr(self, "_history_write_meta", None)
+        except Exception:
+            pass
         cnt, unres = mod.add(self, lst)
-        confirmed_keys = _confirmed_keys(self.key_of, lst, unres)
-        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
+        return _finalize_result(self, self.key_of, f, lst, cnt, unres)
     def remove(
         self,
         feature: str,
@@ -616,6 +653,11 @@ class JELLYFINModule:
         dry_run: bool = False,
     ) -> Mapping[str, Any]:
         f = (feature or "watchlist").lower()
+        if f == "progress":
+            supported, version = self.client.progress_write_supported()
+            if not supported:
+                _info(f, "write_skipped", op="remove", reason="unsupported_server_version", server_version=version)
+                return {"ok": False, "count": 0, "unresolved": [], "confirmed_keys": [], "unresolved_keys": [], "results": [], "error": "unsupported_server_version", "server_version": version}
         if not self._is_enabled(f):
             _info(f, "write_skipped", op="remove", reason="feature_disabled")
             return {"ok": True, "count": 0, "unresolved": []}
@@ -632,9 +674,12 @@ class JELLYFINModule:
                 "unresolved": [],
                 "error": f"unknown_feature:{feature}",
             }
+        try:
+            setattr(self, "_history_write_meta", None)
+        except Exception:
+            pass
         cnt, unres = mod.remove(self, lst)
-        confirmed_keys = _confirmed_keys(self.key_of, lst, unres)
-        return {"ok": True, "count": int(cnt), "unresolved": unres, "confirmed_keys": confirmed_keys, "results": list(getattr(self, "_progress_write_results", [])) if f == "progress" else []}
+        return _finalize_result(self, self.key_of, f, lst, cnt, unres)
 class _JellyfinOPS:
     def name(self) -> str:
         return "JELLYFIN"

@@ -698,9 +698,11 @@ def _add_collections(
         mids = mids[1:]
 
     ok = 0
+    added_ids: list[str] = []
     for chunk in chunked(mids, qlim):
         if collection_add_items(http, cid, chunk):
             ok += len(chunk)
+            added_ids.extend(chunk)
         else:
             for _ in chunk:
                 unresolved.append(
@@ -708,9 +710,9 @@ def _add_collections(
                 )
         sleep_ms(delay)
 
-    if ok:
+    if added_ids:
         _thaw_if_present(
-            [canonical_key({"ids": {"emby": x}}) for x in (mids or [])],
+            [canonical_key({"ids": {"emby": x}}) for x in added_ids],
         )
     return ok, unresolved
 

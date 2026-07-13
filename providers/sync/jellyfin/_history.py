@@ -23,7 +23,7 @@ from ._common import (
     _pair_scope,
     _is_capture_mode,
 )
-from ._routes import items as items_route, played as played_route, user_params
+from ._routes import items as items_route, played as played_route, user_data as user_data_route, user_params
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 def _unresolved_path() -> str:
@@ -33,6 +33,9 @@ def _shadow_path() -> str:
     return str(state_file("jellyfin_history.shadow.json"))
 
 def _blackbox_path() -> str:
+    return str(state_file("jellyfin_history.jellyfin.blackbox.json"))
+
+def _legacy_blackbox_path() -> str:
     return str(state_file("jellyfin_history.jellyfin-plex.blackbox.json"))
 
 _dbg, _info, _warn = make_logger("history")
@@ -127,9 +130,46 @@ def _shadow_save(d: Mapping[str, Mapping[str, Any]]) -> None:
 
 
 # blackbox
+def _bb_write(path: str, d: Mapping[str, Any]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(dict(d or {}), f, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def _migrate_blackbox() -> None:
+    legacy = _legacy_blackbox_path()
+    if not os.path.exists(legacy):
+        return
+    new = _blackbox_path()
+    try:
+        try:
+            with open(legacy, "r", encoding="utf-8") as f:
+                old_data = json.load(f) or {}
+        except Exception:
+            old_data = {}
+        new_data: dict[str, Any] = {}
+        if os.path.exists(new):
+            try:
+                with open(new, "r", encoding="utf-8") as f:
+                    new_data = json.load(f) or {}
+            except Exception:
+                new_data = {}
+        merged = {**(old_data if isinstance(old_data, dict) else {}), **(new_data if isinstance(new_data, dict) else {})}
+        _bb_write(new, merged)
+        try:
+            os.remove(legacy)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def _bb_load() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
+    _migrate_blackbox()
     try:
         with open(_blackbox_path(), "r", encoding="utf-8") as f:
             return json.load(f) or {}
@@ -141,12 +181,7 @@ def _bb_save(d: Mapping[str, Any]) -> None:
     if _is_capture_mode() or _pair_scope() is None:
         return
     try:
-        path = _blackbox_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, path)
+        _bb_write(_blackbox_path(), d)
     except Exception:
         pass
 
@@ -325,6 +360,44 @@ def _unmark_played(http: Any, uid: str, item_id: str) -> bool:
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:
         return False
+
+
+def _normalize_watched(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
+    payload: dict[str, Any] = {"Played": True, "PlaybackPositionTicks": 0}
+    if date_played_iso:
+        payload["LastPlayedDate"] = date_played_iso
+    try:
+        r = http.post(user_data_route(str(item_id)), params=user_params(uid), json=payload)
+        return getattr(r, "status_code", 0) in (200, 204)
+    except Exception:
+        return False
+
+
+_ST_WRITTEN = "written"
+_ST_ALREADY = "already_correct"
+_ST_NEWER = "destination_newer"
+_ST_WRITE_FAILED = "write_failed"
+_ST_MISSING_DATE = "missing_watched_at"
+_ST_RESOLVE_FAILED = "resolve_failed"
+_ST_READBACK = "readback_mismatch"
+
+
+def _set_write_meta(adapter: Any, meta: Mapping[str, Any]) -> None:
+    try:
+        setattr(adapter, "_history_write_meta", dict(meta))
+    except Exception:
+        pass
+
+
+def _result_row(key: str, status: str, *, action: str, reason: str, iid: str | None = None, req_ts: int = 0, dst_ts: int = 0) -> dict[str, Any]:
+    row: dict[str, Any] = {"key": key, "status": status, "action": action, "reason": reason}
+    if iid:
+        row["provider_item_id"] = str(iid)
+    if req_ts:
+        row["requested_at"] = _epoch_to_iso_z(req_ts)
+    if dst_ts:
+        row["destination_at"] = _epoch_to_iso_z(dst_ts)
+    return row
 
 
 def _dst_user_state(http: Any, uid: str, iid: str) -> tuple[bool, int]:
@@ -737,11 +810,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
 
+    tol = int(getattr(adapter.cfg, "history_backdate_tolerance_s", 300) or 300)
     pre_unresolved: list[dict[str, Any]] = []
     wants: dict[str, dict[str, Any]] = {}
 
     for it in (items or []):
-        key, m, err = _prepare_want(it or {})
+        base = dict(it or {})
+        raw_key = str(base.get("_cw_key") or base.get("key") or "").strip() or None
+        raw_iid = str(base.get("jellyfin_item_id") or base.get("_jellyfin_item_id") or "").strip() or None
+        key, m, err = _prepare_want(base, raw_key=raw_key, raw_iid=raw_iid)
         if err:
             pre_unresolved.append(err)
             continue
@@ -749,30 +826,43 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         wants[key] = m
 
     mids: list[tuple[str, str]] = []
-    unresolved: list[dict[str, Any]] = []
-    if pre_unresolved:
-        unresolved.extend(pre_unresolved)
+    unresolved: list[dict[str, Any]] = list(pre_unresolved)
+    results: list[dict[str, Any]] = []
+    confirmed_keys: list[str] = []
+    reason_counts: dict[str, int] = {}
+
+    for u in pre_unresolved:
+        reason = str(u.get("reason") or u.get("hint") or "unresolved")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        results.append(_result_row(str(u.get("key") or ""), _ST_RESOLVE_FAILED, action="resolve", reason=reason))
 
     for k, m in wants.items():
-        iid = _try_resolve_iid(adapter, m)
+        iid = m.get("jellyfin_item_id") or _try_resolve_iid(adapter, m)
         if iid:
-            mids.append((k, iid))
+            mids.append((k, str(iid)))
         else:
-            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
+            unresolved.append({"item": id_minimal(m), "key": k, "hint": "resolve_failed", "reason": "resolve_failed"})
             _freeze(m, reason="resolve_failed")
+            results.append(_result_row(k, _ST_RESOLVE_FAILED, action="resolve", reason="resolve_failed"))
+            reason_counts["resolve_failed"] = reason_counts.get("resolve_failed", 0) + 1
 
     shadow = _shadow_load()
     bb = _bb_load()
     ok = 0
     stats = {
-        "wrote": 0,
-        "forced": 0,
-        "backdated": 0,
-        "skip_newer": 0,
-        "skip_played_untimed": 0,
-        "skip_missing_date": 0,
-        "fail_mark": 0,
+        "wrote": 0, "forced": 0, "backdated": 0, "skip_newer": 0,
+        "skip_played_untimed": 0, "skip_missing_date": 0, "fail_mark": 0,
     }
+
+    def _confirm(k: str, status: str, *, action: str, reason: str, iid: str, req_ts: int, dst_ts: int = 0) -> None:
+        confirmed_keys.append(k)
+        results.append(_result_row(k, status, action=action, reason=reason, iid=iid, req_ts=req_ts, dst_ts=dst_ts))
+
+    def _fail(k: str, *, hint: str, iid: str | None = None) -> None:
+        unresolved.append({"item": id_minimal(wants[k]), "key": k, "hint": hint, "reason": "write_failed"})
+        _freeze(wants[k], reason="write_failed")
+        results.append(_result_row(k, _ST_WRITE_FAILED, action="write", reason=hint, iid=iid))
+        reason_counts["write_failed"] = reason_counts.get("write_failed", 0) + 1
 
     total = len(mids)
     if total:
@@ -781,11 +871,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     processed = 0
     for chunk in chunked(mids, qlim):
         states = _dst_user_states(http, uid, [iid for _, iid in chunk])
+        pending_verify: list[tuple[str, str, int]] = []
         for k, iid in chunk:
             src_ts = _parse_iso_to_epoch(wants[k].get("watched_at")) or 0
             if not src_ts:
-                unresolved.append({"item": id_minimal(wants[k]), "hint": "missing_watched_at"})
+                unresolved.append({"item": id_minimal(wants[k]), "key": k, "hint": "missing_watched_at", "reason": "missing_watched_at"})
                 _freeze(wants[k], reason="missing_watched_at")
+                results.append(_result_row(k, _ST_MISSING_DATE, action="skip", reason="missing_watched_at", iid=iid))
+                reason_counts["missing_watched_at"] = reason_counts.get("missing_watched_at", 0) + 1
                 stats["skip_missing_date"] += 1
                 processed += 1
                 continue
@@ -793,21 +886,20 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             src_iso = _epoch_to_iso_z(src_ts)
             played, dst_ts = states.get(iid, (False, 0))
 
-            if played and dst_ts and src_ts and dst_ts >= src_ts:
+            if played and dst_ts and dst_ts >= (src_ts - tol):
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z(), "iid": iid}
                 stats["skip_newer"] += 1
+                status = _ST_ALREADY if abs(dst_ts - src_ts) <= tol else _ST_NEWER
+                _confirm(k, status, action="skip", reason="existing_newer", iid=iid, req_ts=src_ts, dst_ts=dst_ts)
                 processed += 1
-                if (processed % 25) == 0:
-                    _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
             if played and not dst_ts:
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z(), "iid": iid}
                 stats["skip_played_untimed"] += 1
+                _confirm(k, _ST_ALREADY, action="skip", reason="existing_untimed", iid=iid, req_ts=src_ts)
                 processed += 1
-                if (processed % 25) == 0:
-                    _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
                 sleep_ms(delay)
                 continue
 
@@ -823,9 +915,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 }
                 bb[k] = {"reason": "presence:shadow", "since": _now_iso_z(), "iid": iid}
                 stats["wrote"] += 1
+                normalized = _normalize_watched(http, uid, iid, date_played_iso=src_iso)
+                _confirm(k, _ST_WRITTEN, action="write", reason="wrote", iid=iid, req_ts=src_ts)
+                if not normalized:
+                    pending_verify.append((k, iid, src_ts))
             else:
-                unresolved.append({"item": wants[k], "hint": "mark_played_failed"})
-                _freeze(wants[k], reason="write_failed")
+                _fail(k, hint="mark_played_failed", iid=iid)
                 stats["fail_mark"] += 1
 
             processed += 1
@@ -833,10 +928,33 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _dbg("write_progress", op="add", done=processed, total=total, ok=ok, unresolved=len(unresolved))
             sleep_ms(delay)
 
+        if pending_verify:
+            final = _dst_user_states(http, uid, [iid for _, iid, _ in pending_verify])
+            for k, iid, req_ts in pending_verify:
+                played, _dst = final.get(iid, (False, 0))
+                if played:
+                    continue
+                confirmed_keys[:] = [c for c in confirmed_keys if c != k]
+                results[:] = [r for r in results if not (r.get("key") == k and r.get("provider_item_id") == str(iid))]
+                unresolved.append({"item": id_minimal(wants[k]), "key": k, "hint": "readback_not_played", "reason": "readback_mismatch"})
+                _freeze(wants[k], reason="readback_mismatch")
+                results.append(_result_row(k, _ST_READBACK, action="verify", reason="not_played", iid=iid, req_ts=req_ts))
+                reason_counts["readback_mismatch"] = reason_counts.get("readback_mismatch", 0) + 1
+                shadow.pop(k, None)
+                if ok > 0:
+                    ok -= 1
+
     _shadow_save(shadow)
     _bb_save(bb)
-    if ok:
-        _thaw_if_present([k for k, _ in mids])
+    if confirmed_keys:
+        _thaw_if_present(confirmed_keys)
+
+    _set_write_meta(adapter, {
+        "confirmed_keys": confirmed_keys,
+        "unresolved_keys": [str(u.get("key") or "") for u in unresolved if u.get("key")],
+        "results": results,
+        "reason_counts": reason_counts,
+    })
     _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved), **stats)
     return ok, unresolved
 
@@ -865,9 +983,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         wants[key] = m
 
     mids: list[tuple[str, str]] = []
-    unresolved: list[dict[str, Any]] = []
-    if pre_unresolved:
-        unresolved.extend(pre_unresolved)
+    unresolved: list[dict[str, Any]] = list(pre_unresolved)
+    results: list[dict[str, Any]] = []
+    confirmed_keys: list[str] = []
+    reason_counts: dict[str, int] = {}
+    for u in pre_unresolved:
+        reason = str(u.get("reason") or u.get("hint") or "unresolved")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        results.append(_result_row(str(u.get("key") or ""), _ST_RESOLVE_FAILED, action="resolve", reason=reason))
 
     for k, m in wants.items():
         ent = shadow.get(k) or {}
@@ -879,8 +1002,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         if iid:
             mids.append((k, str(iid)))
         else:
-            unresolved.append({"item": id_minimal(m), "hint": "resolve_failed"})
+            unresolved.append({"item": id_minimal(m), "key": k, "hint": "resolve_failed", "reason": "resolve_failed"})
             _freeze(m, reason="resolve_failed")
+            results.append(_result_row(k, _ST_RESOLVE_FAILED, action="resolve", reason="resolve_failed"))
+            reason_counts["resolve_failed"] = reason_counts.get("resolve_failed", 0) + 1
     ok = 0
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
@@ -895,14 +1020,17 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                     "iid": str(ent.get("iid") or iid),
                     "updated": _now_iso_z(),
                 }
+                confirmed_keys.append(k)
+                results.append(_result_row(k, _ST_ALREADY, action="skip", reason="ref_retained", iid=iid))
                 sleep_ms(delay)
                 continue
 
             # Force mode (tools/clear) always attempts to unmark.
             if _unmark_played(http, uid, iid):
                 ok += 1
+                confirmed_keys.append(k)
+                results.append(_result_row(k, _ST_WRITTEN, action="write", reason="unmarked", iid=iid))
                 if tracked:
-                    
                     if force_clear or cur_cnt <= 1:
                         shadow.pop(k, {})
                     else:
@@ -913,8 +1041,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                             "updated": _now_iso_z(),
                         }
             else:
-                unresolved.append({"item": id_minimal(wants[k]), "hint": "unmark_played_failed"})
+                unresolved.append({"item": id_minimal(wants[k]), "key": k, "hint": "unmark_played_failed", "reason": "write_failed"})
                 _freeze(wants[k], reason="write_failed")
+                results.append(_result_row(k, _ST_WRITE_FAILED, action="write", reason="unmark_played_failed", iid=iid))
+                reason_counts["write_failed"] = reason_counts.get("write_failed", 0) + 1
 
                 if tracked:
                     shadow[k] = {
@@ -927,7 +1057,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
 
     shadow = {k: v for k, v in shadow.items() if int((v or {}).get("count") or 0) > 0}
     _shadow_save(shadow)
-    if ok:
-        _thaw_if_present([k for k, _ in mids])
+    if confirmed_keys:
+        _thaw_if_present(confirmed_keys)
+
+    _set_write_meta(adapter, {
+        "confirmed_keys": confirmed_keys,
+        "unresolved_keys": [str(u.get("key") or "") for u in unresolved if u.get("key")],
+        "results": results,
+        "reason_counts": reason_counts,
+    })
     _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved

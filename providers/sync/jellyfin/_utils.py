@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import os
 from typing import Any
 from urllib.parse import urljoin
 
@@ -11,40 +10,9 @@ import requests
 
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 
-UA = os.environ.get("CW_JELLYFIN_UA") or os.environ.get("CW_UA") or "CrossWatch"
-
-
-def _clean(url: str) -> str:
-    u = (url or "").strip()
-    if not u:
-        return ""
-    if not (u.startswith("http://") or u.startswith("https://")):
-        u = "http://" + u
-    if not u.endswith("/"):
-        u += "/"
-    return u
-
-
-def _mb_auth(token: str | None, device_id: str) -> str:
-    version = os.environ.get("CW_JELLYFIN_VERSION") or os.environ.get("CW_VERSION") or "unknown"
-    base = f'MediaBrowser Client="CrossWatch", Device="Web", DeviceId="{device_id}", Version="{version}"'
-    return f'{base}, Token="{token}"' if token else base
-
-
-def _headers(token: str | None, device_id: str) -> dict[str, str]:
-    auth = _mb_auth(token, device_id)
-    h: dict[str, str] = {
-        "Accept": "application/json",
-        "User-Agent": UA,
-        "Authorization": auth,
-        "X-Emby-Authorization": auth,
-    }
-    if token:
-        h["X-MediaBrowser-Token"] = token
-    return h
-
-
+from ._auth_http import auth_headers as _headers, clean_base as _clean
 
 
 def _jellyfin(cfg: dict[str, Any], instance_id: Any) -> dict[str, Any]:
@@ -69,19 +37,20 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
         save_config(cfg2)
 
 
-def _cfg_triplet(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> tuple[str, str | None, str]:
+def _cfg_triplet(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> tuple[str, str | None, str, bool]:
     cfg2 = cfg or load_config()
     jf = _jellyfin(cfg2, instance_id)
     server = _clean(jf.get("server", ""))
     token = (jf.get("access_token") or "").strip() or None
     devid = (jf.get("device_id") or "crosswatch").strip() or "crosswatch"
-    return server, token, devid
+    verify = coerce_bool(jf.get("verify_ssl", False))
+    return server, token, devid, verify
 
 
 def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> dict[str, Any]:
     cfg2 = cfg or load_config()
     jf = _jellyfin(cfg2, instance_id)
-    server, token, devid = _cfg_triplet(cfg2, instance_id)
+    server, token, devid, verify = _cfg_triplet(cfg2, instance_id)
 
     out: dict[str, Any] = {
         "server_url": server or jf.get("server", "") or "",
@@ -92,7 +61,7 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
     changed = False
     if server and token:
         try:
-            r = requests.get(urljoin(server, "Users/Me"), headers=_headers(token, devid), timeout=8)
+            r = requests.get(urljoin(server, "Users/Me"), headers=_headers(token, devid), timeout=8, verify=verify)
             if r.ok:
                 me = r.json() or {}
                 name = (me.get("Name") or out["username"] or "").strip()
@@ -124,7 +93,7 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
 
 def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
     cfg2 = cfg or load_config()
-    server, token, devid = _cfg_triplet(cfg2, instance_id)
+    server, token, devid, verify = _cfg_triplet(cfg2, instance_id)
     if not (server and token):
         return []
 
@@ -133,7 +102,7 @@ def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any
     url = urljoin(server, f"Users/{uid}/Views") if uid else urljoin(server, "Library/MediaFolders")
 
     try:
-        r = requests.get(url, headers=_headers(token, devid), timeout=10)
+        r = requests.get(url, headers=_headers(token, devid), timeout=10, verify=verify)
         if not r.ok:
             return []
 
