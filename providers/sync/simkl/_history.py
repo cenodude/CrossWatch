@@ -974,10 +974,7 @@ def _show_add_entry(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | N
         return None
     if _is_anime_like(item, ids):
         ids = _maybe_map_tvdb(adapter, ids)
-    entry: dict[str, Any] = {"ids": ids}
-    if _is_anime_like(item, ids):
-        entry["use_tvdb_anime_seasons"] = True
-    return entry
+    return {"ids": ids, "use_tvdb_anime_seasons": True}
 
 
 def _show_scope_entry(
@@ -993,9 +990,7 @@ def _show_scope_entry(
     if not show_ids:
         return None
 
-    show: dict[str, Any] = {"ids": show_ids}
-    if force_anime or _is_anime_like(item, show_ids):
-        show["use_tvdb_anime_seasons"] = True
+    show: dict[str, Any] = {"ids": show_ids, "use_tvdb_anime_seasons": True}
 
     show_title = item.get("series_title") or item.get("title")
     if isinstance(show_title, str) and show_title.strip():
@@ -1010,32 +1005,36 @@ def _show_scope_entry(
     return show
 
 
-def _episode_add_entry(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any], int, int, str, dict[str, str]] | None:
+def _episode_add_entry(
+    adapter: Any, item: Mapping[str, Any]
+) -> tuple[tuple[dict[str, Any], int, int, str, dict[str, str]] | None, str | None]:
     show_ids_raw = _show_ids_of_episode(item)
     if not show_ids_raw:
-        return None
+        return None, "missing_show_ids"
     raw_season = item.get("season") if item.get("season") is not None else item.get("season_number")
     s_num = _safe_int(raw_season)
     e_num = _safe_int(item.get("episode") or item.get("episode_number"))
     watched_at = item.get("watched_at") or item.get("watchedAt")
     episode_ids = _episode_lookup_ids(item)
-    if not e_num or not isinstance(watched_at, str) or not watched_at:
-        return None
+    if not e_num:
+        return None, "missing_episode_number"
+    if not isinstance(watched_at, str) or not watched_at:
+        return None, "missing_watched_at"
     if not s_num:
-        if _int_or_none(raw_season) == 0 and episode_ids:
+        if _int_or_none(raw_season) == 0:
             s_num = 0
         else:
-            return None
+            return None, "missing_season"
 
     if s_num == 0 and not episode_ids:
-        return None
+        return None, "season_zero_missing_episode_lookup_id"
 
     anime_force = s_num > 0 and _is_anime_like(item, show_ids_raw)
     show = _show_scope_entry(adapter, item, show_ids_raw, force_anime=anime_force)
     if not show:
-        return None
+        return None, "missing_show_ids"
 
-    return show, s_num, e_num, watched_at, episode_ids
+    return (show, s_num, e_num, watched_at, episode_ids), None
 
 
 def _merge_show_group(groups: dict[str, dict[str, Any]], show_entry: Mapping[str, Any]) -> dict[str, Any]:
@@ -1131,11 +1130,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             continue
 
         if typ == "episode":
-            packed = _episode_add_entry(adapter, item)
-            if not packed:
+            packed, reason = _episode_add_entry(adapter, item)
+            if packed is None:
                 unresolved_eps_missing += 1
                 unresolved.append(
-                    {"item": id_minimal(item), "hint": "missing_show_ids_or_s/e_or_watched_at"},
+                    {"item": id_minimal(item), "hint": reason or "missing_show_ids_or_s/e_or_watched_at"},
                 )
                 continue
 
