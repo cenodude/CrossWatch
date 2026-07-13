@@ -180,16 +180,18 @@ def build_group_context(
         return out
     out["group"] = g
     out["events"] = _safe(lambda: _groups.group_events(group_id, order="asc", conn=c).get("items")) or []
-    ctx = _safe(lambda: build_context(
-        item_key=g.get("item_key"), feature=g.get("feature"), pair_key=g.get("pair_key"),
-        source_provider=g.get("source_provider"), destination_provider=g.get("destination_provider"),
-        origin_provider=g.get("origin_provider"), source_instance=g.get("source_instance"),
-        destination_instance=g.get("destination_instance"), origin_instance=g.get("origin_instance"),
-        conn=c,
-    ))
-    out["context"] = (ctx or {}).get("context") or {}
+    domain = str(g.get("domain") or "sync")
+    if domain != "scrobble":
+        ctx = _safe(lambda: build_context(
+            item_key=g.get("item_key"), feature=g.get("feature"), pair_key=g.get("pair_key"),
+            source_provider=g.get("source_provider"), destination_provider=g.get("destination_provider"),
+            origin_provider=g.get("origin_provider"), source_instance=g.get("source_instance"),
+            destination_instance=g.get("destination_instance"), origin_instance=g.get("origin_instance"),
+            conn=c,
+        ))
+        out["context"] = (ctx or {}).get("context") or {}
     if g.get("item_key"):
-        rel = _safe(lambda: _groups.list_groups(item_key=g.get("item_key"), visibility="all", limit=20, conn=c).get("items")) or []
+        rel = _safe(lambda: _groups.list_groups(item_key=g.get("item_key"), domain=domain, visibility="all", limit=20, conn=c).get("items")) or []
         out["related_groups"] = [r for r in rel if str(r.get("id")) != str(g.get("id"))]
     elif str(g.get("operation") or "") == "run":
         run_id = next((e.get("run_id") for e in out["events"] if e.get("run_id")), None)

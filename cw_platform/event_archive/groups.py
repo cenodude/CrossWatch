@@ -13,11 +13,12 @@ from typing import Any
 
 from .db import get_conn
 from . import query as _query
+from .scrobble_recorder import session_token
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 
 _GROUP_COLUMNS = (
-    "id", "group_hash", "created_at", "updated_at", "first_event_at", "last_event_at",
+    "id", "group_hash", "domain", "created_at", "updated_at", "first_event_at", "last_event_at",
     "event_count", "status", "severity", "feature", "operation",
     "source_provider", "source_instance", "destination_provider", "destination_instance",
     "origin_provider", "origin_instance", "pair_key", "direction",
@@ -28,14 +29,24 @@ _GROUP_COLUMNS = (
 _FAIL_TYPES = ("write_failed", "unresolved_recorded", "blackbox_promoted", "blackbox_blocked")
 _RESOLVE_TYPES = ("write_succeeded", "unresolved_cleared")
 _RUN_TYPES = ("sync_run_started", "sync_run_finished")
+_SCROBBLE_STATUS = {
+    "scrobble_completed": "completed",
+    "scrobble_failed": "failed",
+    "scrobble_started": "running",
+    "rating_applied": "rated",
+    "rating_failed": "failed",
+}
 _PAST = {"add": "added", "remove": "removed", "update": "updated"}
 _SEVERITY = {
-    "completed": "success", "resolved": "success", "blackboxed": "warning", "unresolved": "warning",
+    "completed": "success", "resolved": "success", "rated": "success",
+    "warning": "warning", "blackboxed": "warning", "unresolved": "warning",
     "failed": "error", "running": "info", "pending": "info", "informational": "info",
 }
+_PROBLEM_TYPES_SQL = "('write_failed','unresolved_recorded','blackbox_promoted','blackbox_blocked')"
+_UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
-CORRELATION_VERSION = 7
+CORRELATION_VERSION = 13
 
 
 def _P(v: Any) -> str:
@@ -82,6 +93,22 @@ def _g(r: Any, key: str) -> Any:
 
 
 def group_hash(r: Any) -> str:
+    if str(_g(r, "domain") or "sync") == "scrobble":
+        token = session_token(_g(r, "session_key"), _g(r, "created_at"))
+        ident = str(_g(r, "item_key") or "").strip() or str(_g(r, "title") or "").strip().lower()
+        parts = [
+            "\x00scrobble",
+            str(_g(r, "feature") or "").strip().lower(),
+            str(_g(r, "source_kind") or "").strip().lower(),
+            _P(_g(r, "source_provider")),
+            _I(_g(r, "source_instance")),
+            ident,
+            str(_g(r, "season") or ""),
+            str(_g(r, "episode") or ""),
+            _route_anchor(r),
+            token,
+        ]
+        return hashlib.sha256("\x1f".join(parts).encode("utf-8", "replace")).hexdigest()
     item_key = str(_g(r, "item_key") or "").strip()
     if item_key:
         parts = [
@@ -105,13 +132,29 @@ def group_hash(r: Any) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8", "replace")).hexdigest()
 
 
-def _derive_status(events: list[dict[str, Any]]) -> str:
+def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str:
     types = {e.get("event_type") for e in events}
+
+    if types & set(_SCROBBLE_STATUS):
+        best, best_ts = None, -1
+        for e in events:
+            st = _SCROBBLE_STATUS.get(str(e.get("event_type") or ""))
+            if st is None:
+                continue
+            ts = int(e.get("created_at") or 0)
+            if ts >= best_ts:
+                best_ts, best = ts, st
+        return best or "informational"
 
     # status reflects the run's completion
     if "sync_run_finished" in types:
         fin = next((e for e in reversed(events) if e.get("event_type") == "sync_run_finished"), {})
-        return "failed" if int(_detail(fin).get("errors") or 0) > 0 else "completed"
+        d = _detail(fin)
+        if int(d.get("errors") or 0) > 0:
+            return "failed"
+        if int(d.get("unresolved") or 0) > 0 or extra_problems > 0:
+            return "warning"
+        return "completed"
     if "sync_run_started" in types:
         return "running"
 
@@ -151,13 +194,16 @@ def _detail(e: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str, norm_op: str, reason_code: str) -> str:
+def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str, norm_op: str, reason_code: str, feat_issues: dict[str, int] | None = None) -> str:
     verb = norm_op or "update"
     past = _PAST.get(norm_op, "updated")
 
     types = {e.get("event_type") for e in events}
     last = events[-1] if events else {}
     feat_disp = str(feature or "").title()
+
+    if types & set(_SCROBBLE_STATUS):
+        return _summarize_scrobble(status, events, dst)
 
     # one sync run with its pair/feature jobs and health checks
     if types & {"sync_run_started", "sync_run_finished"}:
@@ -178,11 +224,25 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
             fin = next((e for e in reversed(events) if e.get("event_type") == "sync_run_finished"), last)
             d = _detail(fin)
             errs = int(d.get("errors") or 0)
-            unres = int(d.get("unresolved") or 0)
+            issues = {f: n for f, n in (feat_issues or {}).items() if n}
+            unres = sum(issues.values()) or int(d.get("unresolved") or 0)
             blocked = sum(int(_detail(e).get("blocked") or 0) for e in events if e.get("event_type") == "blackbox_blocked")
-            head = "Sync run completed successfully" if errs == 0 else "Sync run completed with errors"
+            if errs > 0:
+                head = "Sync run completed with errors"
+            elif unres > 0:
+                head = "Sync run completed with issues"
+            else:
+                head = "Sync run completed successfully"
+            if issues:
+                by_feat = ", ".join(f"{f.title()} {n}" for f, n in sorted(issues.items(), key=lambda x: -x[1]))
+                unres_txt = f", {unres} unresolved ({by_feat})"
+            else:
+                unres_txt = f", {unres} unresolved" if unres else ""
+            err_txt = f", {errs} errors" if errs else ""
             bb = f", {blocked} blackboxed" if blocked else ""
-            return f"{head}, {errs} errors, {unres} unresolved{bb}{tail}"
+            clean = errs == 0 and unres == 0
+            tail_final = tail if clean else (f", {pairs} {'pair' if pairs == 1 else 'pairs'}" if pairs else "")
+            return f"{head}{err_txt}{unres_txt}{bb}{tail_final}"
         return f"Sync run in progress{tail}"
 
     # provider health thread
@@ -258,12 +318,59 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
     return s[:1].upper() + s[1:]
 
 
+def _title_of(e: dict[str, Any]) -> str:
+    t = str(e.get("title") or e.get("item_key") or "").strip()
+    s, ep = e.get("season"), e.get("episode")
+    if s is not None and ep is not None:
+        try:
+            t = f"{t} S{int(s):02d}E{int(ep):02d}"
+        except Exception:
+            pass
+    return t
+
+
+def _summarize_scrobble(status: str, events: list[dict[str, Any]], dst: str) -> str:
+    last = events[-1] if events else {}
+    name = _title_of(last) or "item"
+    target = dst or _P(_pick(events, "destination_provider"))
+    to = f" → {target}" if target else ""
+    if status == "rated":
+        d = _detail(last)
+        rating = d.get("rating")
+        return f"Rated {name} {rating}/10{to}" if rating not in (None, "") else f"Rated {name}{to}"
+    if status == "failed":
+        rating_thread = any(str(e.get("feature") or "") == "ratings" for e in events)
+        reason = str(_pick(events, "reason_code") or _pick(events, "reason") or "")
+        head = "Rating forward failed" if rating_thread else "Scrobble failed"
+        return f"{head}{to}, {reason}" if reason else f"{head}{to}"
+    prog = _detail(last).get("progress")
+    tail = f", {prog}%" if prog not in (None, "") else ""
+    if status == "completed":
+        return f"Watched {name}{to}{tail}"
+    return f"Watching {name}{to}{tail}"
+
+
 def _pick(events: list[dict[str, Any]], key: str) -> Any:
     for e in reversed(events):
         v = e.get(key)
         if v not in (None, ""):
             return v
     return None
+
+
+def _run_feature_issues(conn: sqlite3.Connection, run_id: Any) -> dict[str, int]:
+    rid = str(run_id or "").strip()
+    if not rid:
+        return {}
+    try:
+        rows = conn.execute(
+            f"SELECT feature, COUNT(DISTINCT item_key) c FROM events WHERE run_id=? "
+            f"AND event_type IN {_UNRESOLVED_TYPES_SQL} AND item_key IS NOT NULL AND item_key<>'' GROUP BY feature",
+            (rid,),
+        ).fetchall()
+    except Exception:
+        return {}
+    return {str(r["feature"] or "").strip().lower(): int(r["c"]) for r in rows if int(r["c"] or 0)}
 
 
 def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
@@ -280,7 +387,8 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
     feature = str(_pick(events, "feature") or "")
     norm_op = _norm_op(_pick(events, "operation"))
     dst = _P(_pick(events, "destination_provider"))
-    status = _derive_status(events)
+    feat_issues = _run_feature_issues(conn, _pick(events, "run_id")) if is_run else {}
+    status = _derive_status(events, sum(feat_issues.values()))
     severity = _SEVERITY.get(status, "info")
     fail_evt = None
     for e in events:
@@ -288,17 +396,18 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
             fail_evt = e
     reason_code = str((fail_evt or {}).get("reason_code") or _pick(events, "reason_code") or "")
     reason = str((fail_evt or {}).get("reason") or _pick(events, "reason") or "")
-    summary = _summarize(status, events, feature, dst, norm_op, reason_code)
+    summary = _summarize(status, events, feature, dst, norm_op, reason_code, feat_issues)
+    domain = str(_pick(events, "domain") or "sync")
 
     if is_run:
         vals = (
-            now, min(ts), max(ts), len(events), status, severity,
+            domain, now, min(ts), max(ts), len(events), status, severity,
             None, "run", None, None, None, None, None, None, None, None,
             None, None, None, None, None, None, None, None, summary, group_id,
         )
     else:
         vals = (
-            now, min(ts), max(ts), len(events), status, severity,
+            domain, now, min(ts), max(ts), len(events), status, severity,
             feature or None, norm_op or None,
             _pick(events, "source_provider"), _pick(events, "source_instance"),
             _pick(events, "destination_provider"), _pick(events, "destination_instance"),
@@ -309,7 +418,7 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
             reason_code or None, reason or None, summary, group_id,
         )
     conn.execute(
-        "UPDATE event_groups SET updated_at=?, first_event_at=?, last_event_at=?, event_count=?, "
+        "UPDATE event_groups SET domain=?, updated_at=?, first_event_at=?, last_event_at=?, event_count=?, "
         "status=?, severity=?, feature=?, operation=?, source_provider=?, source_instance=?, "
         "destination_provider=?, destination_instance=?, origin_provider=?, origin_instance=?, "
         "pair_key=?, direction=?, item_key=?, title=?, year=?, media_type=?, season=?, episode=?, "
@@ -374,8 +483,9 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
             _LOG.warning("event correlation reset failed: %s", exc)
     try:
         rows = c.execute(
-            "SELECT id, feature, operation, item_key, source_provider, source_instance, "
-            "destination_provider, destination_instance, pair_key, run_id FROM events WHERE group_id IS NULL"
+            "SELECT id, domain, feature, operation, item_key, title, season, episode, created_at, "
+            "source_kind, session_key, source_provider, source_instance, destination_provider, destination_instance, "
+            "pair_key, run_id FROM events WHERE group_id IS NULL"
         ).fetchall()
     except Exception as exc:
         _LOG.warning("event correlation query failed: %s", exc)
@@ -449,8 +559,8 @@ def _event_vis_clause(visibility: str | None) -> str | None:
 
 
 _CATEGORY_STATUS = {
-    "successful": ("resolved", "completed"),
-    "problems": ("failed", "blackboxed", "unresolved"),
+    "successful": ("resolved", "completed", "rated"),
+    "problems": ("failed", "warning", "blackboxed", "unresolved"),
     "informational": ("informational", "pending", "running"),
 }
 
@@ -459,6 +569,7 @@ def list_groups(
     *,
     q: str | None = None,
     visibility: str | None = "open",
+    domain: str | None = None,
     status: str | None = None,
     category: str | None = None,
     event_type: str | None = None,
@@ -493,6 +604,7 @@ def list_groups(
             clauses.append(f"g.{col}=?")
             params.append(str(val).upper() if up else val)
 
+    eq("domain", domain)
     eq("feature", feature)
     eq("status", status)
     eq("item_key", item_key)
@@ -568,7 +680,7 @@ def list_groups(
         q, status, category, event_type, provider, origin_provider,
         destination_provider, source_provider, feature, pair_key, item_key, run_id, reason_code, operation,
     ))
-    if not explicit:
+    if not explicit and str(domain or "sync") != "scrobble":
         clauses.append(
             "g.id NOT IN (SELECT group_id FROM events WHERE group_id IS NOT NULL "
             "GROUP BY group_id HAVING SUM(event_type='provider_health')=COUNT(*) AND COUNT(*)>0)"
@@ -863,7 +975,8 @@ def _run_problem_status_counts_bulk(
 
 
 def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
-              include_children: bool = True, conn: sqlite3.Connection | None = None, **filters: Any) -> dict[str, Any]:
+              include_children: bool = True, domain: str | None = None,
+              conn: sqlite3.Connection | None = None, **filters: Any) -> dict[str, Any]:
     """Grouped list as a tree: run threads are parents, the item threads that had
     a problem during each run are nested as `children`; items owned by a run are
     lifted out of the top level. Standalone item threads stay at the top level."""
@@ -883,6 +996,7 @@ def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
             offset=offset,
             conn=c,
             visibility=visibility,
+            domain=domain,
             top_level_only=True,
         )
         top = parent_page.get("items") or []
@@ -906,7 +1020,7 @@ def list_tree(*, order: str | None = "newest", limit: int = 50, offset: int = 0,
             "limit": int(parent_page.get("limit") or limit),
             "offset": int(parent_page.get("offset") or offset),
         }
-    flat = list_groups(order=order, limit=2000, offset=0, conn=c, **filters).get("items") or []
+    flat = list_groups(order=order, limit=2000, offset=0, conn=c, domain=domain, **filters).get("items") or []
     runs: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
     others: list[dict[str, Any]] = []

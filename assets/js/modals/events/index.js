@@ -2,6 +2,8 @@
 /* CrossWatch - Events modal */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
+import createStatsView from "./stats.js";
+
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
 ));
@@ -89,6 +91,11 @@ const BADGE = {
   api_rate_limit: "Rate limit",
   watcher_event: "Watcher",
   webhook_event: "Webhook",
+  scrobble_started: "Started",
+  scrobble_completed: "Watched",
+  scrobble_failed: "Scrobble failed",
+  rating_applied: "Rated",
+  rating_failed: "Rating failed",
 };
 
 const badgeOf = (e) => {
@@ -113,6 +120,11 @@ const ICON = {
   api_rate_limit: "speed",
   watcher_event: "visibility",
   webhook_event: "webhook",
+  scrobble_started: "play_arrow",
+  scrobble_completed: "check_circle",
+  scrobble_failed: "error",
+  rating_applied: "star",
+  rating_failed: "error",
 };
 
 const iconOf = (e) => {
@@ -126,6 +138,9 @@ const sevOf = (e) => {
   if (["blackbox_promoted", "blackbox_blocked"].includes(e.event_type)) return "error";
   if (["unresolved_recorded", "plan_created", "api_rate_limit"].includes(e.event_type)) return "warn";
   if (["tombstone_created", "tombstone_pruned"].includes(e.event_type)) return "warn";
+  if (["scrobble_completed", "rating_applied"].includes(e.event_type)) return "ok";
+  if (["scrobble_failed", "rating_failed"].includes(e.event_type)) return "error";
+  if (e.event_type === "scrobble_started") return "info";
   if (e.event_type === "unresolved_cleared") return "ok";
   const s = String(e.severity || "").toLowerCase();
   if (s === "error" || s === "warn" || s === "ok") return s;
@@ -151,6 +166,11 @@ const titleLine = (e) => {
     case "provider_health": return `Provider health · ${(e.source_provider || "").toUpperCase()}`;
     case "sync_run_started": return "Sync run started";
     case "sync_run_finished": return "Sync run finished";
+    case "scrobble_started": return "Started watching";
+    case "scrobble_completed": return "Watched";
+    case "scrobble_failed": return `Scrobble failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
+    case "rating_applied": return "Rating forwarded";
+    case "rating_failed": return `Rating failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     default: return String(e.event_type || "").replace(/_/g, " ");
   }
 };
@@ -160,8 +180,14 @@ const EVENT_TYPES = [
   "blackbox_promoted", "blackbox_blocked", "tombstone_created", "plan_created",
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
+const SCROBBLE_TYPES = ["", "scrobble_started", "scrobble_completed", "scrobble_failed", "rating_applied", "rating_failed"];
+const OUTCOME_ITEMS = {
+  sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
+  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }],
+};
+const typeItems = (dom) => (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
 
-// ---- group helpers ---------------------------------------------------------
+// group helpers
 const GROUP_SEV = { success: "ok", warning: "warn", error: "error", info: "info" };
 const groupSev = (g) => {
   if (String(g.status || "").toLowerCase() === "blackboxed") return "error";
@@ -169,10 +195,12 @@ const groupSev = (g) => {
 };
 const STATUS_ICON = {
   completed: "task_alt", resolved: "check_circle", blackboxed: "inventory_2", unresolved: "shield",
-  failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt",
+  failed: "cancel", running: "sync", pending: "hourglass_top", informational: "bolt", rated: "star",
+  warning: "warning",
 };
 const groupIcon = (g) => STATUS_ICON[String(g.status || "").toLowerCase()] || "bolt";
-const statusLabel = (s) => { const t = String(s || "informational"); return t.charAt(0).toUpperCase() + t.slice(1); };
+const STATUS_LABEL = { running: "In progress", warning: "Completed · issues" };
+const statusLabel = (s) => { const k = String(s || "informational").toLowerCase(); return STATUS_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1)); };
 const modeLabel = (m) => {
   const s = String(m || "").toLowerCase();
   if (s.includes("two")) return "Two-way";
@@ -335,6 +363,7 @@ export default {
     let visibility = ls("cw.events.visibility", "open");
     let order = "newest";
     let mode = ls("cw.events.mode", "grouped");
+    let domain = ls("cw.events.domain", "sync");
     let detailTab = ls("cw.events.detailtab", "timeline");
     lset("cw.events.order", order);
 
@@ -377,6 +406,11 @@ export default {
           </div>
         </div>
 
+        <div class="ev-tabsbar">
+          <div class="ev-viewtabs" id="ev-viewtabs" role="tablist"></div>
+          <div class="ev-statsrange" id="ev-statsrange" hidden></div>
+        </div>
+
         <div class="ev-layout">
           <div class="ev-col-list">
             <div class="ev-list-head">
@@ -396,6 +430,8 @@ export default {
           <div class="ev-split" id="ev-split" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
           <div class="ev-detail cw-scrollbars" id="ev-detail"><div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select an event thread to see details and current context.</div></div></div>
         </div>
+
+        <div class="ev-stats cw-scrollbars" id="ev-stats" hidden></div>
 
         <div class="ev-toast" id="ev-toast" hidden></div>
       </div>`;
@@ -421,7 +457,7 @@ export default {
 
     let alive = true;
 
-    // ---- resizable list/detail split -------------------------------------
+    // resizable list/detail split
     const savedSplit = ls("cw.events.split", "");
     if (savedSplit) layoutEl.style.setProperty("--ev-list-w", savedSplit);
     let splitDrag = false;
@@ -463,14 +499,14 @@ export default {
       ],
       onChange: (v) => { dateRange = v; lset("cw.events.range", v); syncRangeUI(); load(0); },
     });
-    const ddType = createDropdown({ label: "All types", items: EVENT_TYPES.map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" })), onChange: () => load(0) });
+    const ddType = createDropdown({ label: "All types", items: typeItems(domain), onChange: () => load(0) });
     const ddProvider = createDropdown({ label: "Any provider", items: [{ value: "", label: "Any provider" }], onChange: () => load(0) });
     const ddOrigin = createDropdown({ label: "Any origin", items: [{ value: "", label: "Any origin" }], onChange: () => load(0) });
     const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
     const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0) });
     const ddCategory = createDropdown({
       label: "Any outcome", align: "right",
-      items: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
+      items: OUTCOME_ITEMS[domain] || OUTCOME_ITEMS.sync,
       onChange: () => load(0),
     });
     Q("#ev-cat", root).appendChild(ddCategory.el);
@@ -502,6 +538,81 @@ export default {
     });
     Q("#ev-mode", root).appendChild(modeSeg.el);
     ddCategory.el.style.display = (mode === "grouped") ? "" : "none";
+
+    let view = ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
+    if (view === "sync" || view === "scrobble") domain = view;
+    let statsRange = ls("cw.events.stats.range", "30d");
+
+    const toolbarEl = Q(".ev-toolbar", root);
+    const tabsRightEl = Q("#ev-statsrange", root);
+    const statsEl = Q("#ev-stats", root);
+    const statsView = createStatsView(statsEl, { fetchJson: fjson });
+
+    const applyDomainUI = () => {
+      const scrobble = domain === "scrobble";
+      ddCategory.setItems(OUTCOME_ITEMS[domain] || OUTCOME_ITEMS.sync);
+      ddType.setItems(typeItems(domain));
+      if (scrobble) { ddFeature.reset(); ddPair.reset(); }
+      ddFeature.el.style.display = scrobble ? "none" : "";
+      ddPair.el.style.display = scrobble ? "none" : "";
+    };
+
+    const VIEW_TABS = [
+      { value: "sync", label: "Sync", icon: "sync" },
+      { value: "scrobble", label: "Scrobble", icon: "play_circle" },
+      { value: "statistics", label: "Statistics", icon: "bar_chart" },
+    ];
+    const RANGE_TABS = [["24h", "24H"], ["7d", "7D"], ["30d", "30D"], ["90d", "90D"]];
+
+    const renderViewTabs = () => {
+      const el = Q("#ev-viewtabs", root);
+      el.innerHTML = VIEW_TABS.map((t) => `<button type="button" role="tab" class="ev-vtab${t.value === view ? " on" : ""}" data-v="${t.value}"><span class="material-symbols-rounded" aria-hidden="true">${t.icon}</span>${t.label}</button>`).join("");
+      el.querySelectorAll(".ev-vtab").forEach((b) => b.addEventListener("click", () => setView(b.dataset.v)));
+    };
+
+    const renderStatsRange = () => {
+      tabsRightEl.innerHTML = `<span class="ev-statsrange-label" id="ev-statsrange-label"></span><div class="ev-seg ev-seg-range">${RANGE_TABS.map(([v, l]) => `<button type="button" class="ev-seg-btn${v === statsRange ? " on" : ""}" data-r="${v}">${l}</button>`).join("")}</div><button class="ev-tbtn" id="ev-stats-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>`;
+      tabsRightEl.querySelectorAll(".ev-seg-btn").forEach((b) => b.addEventListener("click", () => {
+        if (b.dataset.r === statsRange) return;
+        statsRange = b.dataset.r; lset("cw.events.stats.range", statsRange); renderStatsRange(); loadStats();
+      }));
+      Q("#ev-stats-refresh", root)?.addEventListener("click", () => loadStats());
+    };
+
+    const setStatsLabel = (d) => {
+      const el = Q("#ev-statsrange-label", root);
+      if (!el || !d || !d.range) return;
+      const s = new Date(d.range.since * 1000), u = new Date(d.range.until * 1000);
+      el.textContent = `${s.toLocaleDateString([], { month: "short", day: "numeric" })} – ${u.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+    };
+
+    const loadStats = async () => { const d = await statsView.load({ range: statsRange, force: true }); if (d) setStatsLabel(d); };
+
+    const applyView = () => {
+      const stats = view === "statistics";
+      toolbarEl.style.display = stats ? "none" : "";
+      layoutEl.hidden = stats;
+      statsEl.hidden = !stats;
+      tabsRightEl.hidden = !stats;
+      renderViewTabs();
+      if (stats) { renderStatsRange(); loadStats(); }
+    };
+
+    const setView = (v) => {
+      if (v === view) return;
+      view = v; lset("cw.events.view", v);
+      if (v === "sync" || v === "scrobble") {
+        domain = v; lset("cw.events.domain", v);
+        state.selected = null; state.didInitialSelect = false; clearDetail();
+        applyDomainUI();
+        applyView();
+        load(0);
+      } else {
+        applyView();
+      }
+    };
+
+    applyDomainUI();
 
     const dateToEpoch = (v, end = false) => {
       if (!v) return "";
@@ -576,7 +687,8 @@ export default {
       if (ddOrigin.value) p.set("origin_provider", ddOrigin.value);
       if (ddFeature.value) p.set("feature", ddFeature.value);
       if (ddPair.value) p.set("pair_key", ddPair.value);
-      if (grouped() && ddCategory.value) p.set("category", ddCategory.value);
+      if (grouped() && ddCategory.value) p.set(domain === "scrobble" ? "status" : "category", ddCategory.value);
+      p.set("domain", domain);
       const { since, until } = rangeEpoch();
       if (since) p.set("since", since);
       if (until) p.set("until", until);
@@ -590,7 +702,7 @@ export default {
 
     const pageCount = () => Math.max(1, Math.ceil((state.total || 0) / PAGE_SIZE));
 
-    // ---- rows --------------------------------------------------------------
+    // rows 
     const groupRowHTML = (g, opts = {}) => {
       const sv = groupSev(g);
       const feat = FEATURE_LABEL[g.feature] || g.feature || "";
@@ -719,7 +831,7 @@ export default {
         actions = `<button class="ev-linkbtn" id="ev-empty-open">Back to Open</button>`;
       } else {
         icon = "inbox"; head = "No events in the archive.";
-        hint = "Run a sync to start recording events here.";
+        hint = domain === "scrobble" ? "Start watching something to record scrobble threads here." : "Run a sync to start recording events here.";
         actions = "";
       }
       return `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><div class="ev-empty-head">${esc(head)}</div><div class="ev-empty-hint">${esc(hint)}</div><div class="ev-empty-actions">${actions}</div></div>`;
@@ -822,7 +934,9 @@ export default {
     const load = async (page) => {
       if (page != null) state.page = page;
       updateHidden();
-      const url = grouped() ? `/api/events/tree?${buildQuery(state.page)}` : `/api/events/search?view=events&${buildQuery(state.page)}`;
+      const url = grouped()
+        ? (domain === "scrobble" ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/tree?${buildQuery(state.page)}`)
+        : `/api/events/search?view=events&${buildQuery(state.page)}`;
       try {
         const data = await fjson(url);
         if (!alive) return;
@@ -930,7 +1044,7 @@ export default {
       showToast("Restored.");
     };
 
-    // ---- context cards (shared) -------------------------------------------
+    // context cards (shared)
     const pill = (text, cls) => `<span class="ev-pill ${cls}">${esc(text)}</span>`;
     const card = (title, pillHTML, lines, extra = "") => `
       <div class="ev-card">
@@ -1003,6 +1117,11 @@ export default {
       sync_run_finished: "Sync run completed.",
       tombstone_created: "Tombstone created.",
       tombstone_pruned: "Tombstone pruned.",
+      scrobble_started: "Playback started.",
+      scrobble_completed: "Playback finished and scrobbled.",
+      scrobble_failed: "The provider rejected the scrobble.",
+      rating_applied: "Rating forwarded to the target.",
+      rating_failed: "The provider rejected the rating.",
     };
     const eventDesc = (e) => EVENT_DESC[e.event_type] || "";
 
@@ -1038,7 +1157,111 @@ export default {
       if (ic) { const t = ic.textContent; ic.textContent = "check"; setTimeout(() => { ic.textContent = t; }, 1200); }
     };
 
-    // ---- group detail ------------------------------------------------------
+    // scrobble detail
+    const parseDetail = (e) => {
+      try { return typeof e.detail === "string" ? (e.detail ? JSON.parse(e.detail) : {}) : (e.detail || {}); }
+      catch { return {}; }
+    };
+
+    const renderScrobbleDetail = (detail) => {
+      const g = detail.group || {};
+      const events = detail.events || [];
+      const related = detail.related_groups || [];
+      const sv = groupSev(g);
+      const st = String(g.status || "").toLowerCase();
+      const item = titleOf(g);
+      const target = instLabel(g.destination_provider, g.destination_instance) || "–";
+      const player = instLabel(g.source_provider, g.source_instance) || "–";
+      const route = (player !== "–" && target !== "–") ? `${player} → ${target}` : (target !== "–" ? target : player);
+      const isRating = String(g.feature || "") === "ratings";
+      const isProblem = st === "failed";
+      let account = "", progress = null, rating = null;
+      for (const e of events) {
+        const d = parseDetail(e);
+        if (d.account) account = String(d.account);
+        if (d.progress != null) progress = d.progress;
+        if (d.rating != null) rating = d.rating;
+      }
+
+      const scard = (icon, cls, title, mainHTML, subs) => `
+        <div class="ev-scard">
+          <div class="ev-scard-head"><span class="ev-scard-ic ${cls}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></span><span class="ev-scard-title ${cls}">${esc(title)}</span></div>
+          <div class="ev-scard-main">${mainHTML}</div>
+          ${(subs || []).filter(Boolean).map((s) => `<div class="ev-scard-sub">${s}</div>`).join("")}
+        </div>`;
+      const kvGrid = (rows) => `<div class="ev-kv">${rows.filter(Boolean).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("")}</div>`;
+
+      const valueCard = isRating
+        ? scard("star", isProblem ? "error" : "ok", "Rating", rating != null ? `${esc(rating)}/10` : "–", [])
+        : scard("bar_chart", sv, "Progress", progress != null ? `${esc(progress)}%` : "–", []);
+      const summaryCards =
+        scard(isProblem ? "error" : (isRating ? "star" : "check_circle"), isProblem ? "error" : "ok", "Outcome", `<span>${esc(statusLabel(g.status))}</span>`, [esc(g.reason || g.summary || "")]) +
+        scard("swap_horiz", "info", "Route", esc(route), [account ? `by ${esc(account)}` : ""]) +
+        scard("movie", "info", "Item", item ? esc(item) : "–", [g.year ? esc(String(g.year)) : ""]) +
+        valueCard;
+
+      const timeline = events.slice().reverse().map((e) => {
+        const es = sevOf(e); const desc = eventDesc(e);
+        return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><span class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}</span></div>`;
+      }).join("");
+
+      const detailsPane = kvGrid([
+        ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status))}</span>`],
+        ["Title", item ? esc(item) : "–"],
+        ["Player", esc(player)],
+        ["Target", esc(target)],
+        account ? ["Account", esc(account)] : null,
+        isRating ? (rating != null ? ["Rating", `${esc(rating)}/10`] : null) : (progress != null ? ["Progress", `${esc(progress)}%`] : null),
+        ["First seen", esc(TS(g.first_event_at))],
+        ["Last seen", esc(TS(g.last_event_at))],
+        g.reason ? ["Reason", esc(g.reason)] : null,
+      ]);
+      const rawPane = `<div class="ev-dsec"><h5>Raw data</h5><details class="ev-tech"><summary>Full payload</summary><div class="ev-tech-body"><pre class="cw-scrollbars">${esc(JSON.stringify({ group: g, events }, null, 2))}</pre></div></details></div>`;
+
+      const relRow = (r) => `<button class="ev-rel" type="button" data-gid="${r.id}"><span class="ev-rel-ic ${groupSev(r)}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(r)}</span></span><span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status))}</span><span class="ev-rel-title">${esc(r.summary || titleOf(r) || "")}</span><span class="ev-rel-time">${esc(TS(r.last_event_at))}</span></button>`;
+      const relHTML = related.length ? related.slice(0, 12).map(relRow).join("") : "";
+
+      const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
+      const ackIcon = g.acknowledged_at ? "check_circle" : "check";
+      const tabAttr = (t) => detailTab === t ? "" : " hidden";
+
+      detailEl.innerHTML = `
+        <div class="ev-dhead">
+          <div class="ev-dhead-row">
+            <span class="ev-badge ${sv}">${esc(statusLabel(g.status))}</span>
+            <span class="ev-dhead-spacer"></span>
+            <span class="ev-dtime">${esc(TS(g.last_event_at))}</span>
+            <button class="ev-hbtn ev-hbtn-accent${g.acknowledged_at ? " on" : ""}" id="ev-ack-detail" type="button"><span class="material-symbols-rounded" aria-hidden="true">${ackIcon}</span><span>${ackLabel}</span></button>
+          </div>
+          <div class="ev-dtitle">${esc(g.summary || item || "")}</div>
+          ${item ? `<div class="ev-ditem">${esc(item)}</div>` : ""}
+        </div>
+        <div class="ev-scards">${summaryCards}</div>
+        <div class="ev-tabs" role="tablist">
+          <button class="ev-tab${detailTab === "timeline" ? " on" : ""}" data-tab="timeline" type="button"><span class="material-symbols-rounded" aria-hidden="true">timeline</span>Timeline</button>
+          <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Details</button>
+          <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Raw data</button>
+        </div>
+        <div class="ev-tabpanes">
+          <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}><div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div></div>
+          <div class="ev-tabpane" data-pane="details"${tabAttr("details")}>${detailsPane}</div>
+          <div class="ev-tabpane" data-pane="raw"${tabAttr("raw")}>${rawPane}</div>
+        </div>
+        ${relHTML ? `<h4>Related</h4><div class="ev-related">${relHTML}</div>` : ""}`;
+      detailEl.scrollTop = 0;
+
+      const panes = detailEl.querySelectorAll(".ev-tabpane");
+      const switchTab = (name) => {
+        detailTab = name; lset("cw.events.detailtab", name);
+        detailEl.querySelectorAll(".ev-tab").forEach((x) => x.classList.toggle("on", x.dataset.tab === name));
+        panes.forEach((p) => { p.hidden = p.dataset.pane !== name; });
+      };
+      detailEl.querySelectorAll(".ev-tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+      Q("#ev-ack-detail", detailEl)?.addEventListener("click", () => { if (g.acknowledged_at) unacknowledgeRow(g.id); else acknowledgeRow(g.id); });
+      detailEl.querySelectorAll(".ev-rel").forEach((a) => a.addEventListener("click", () => a.dataset.gid && select(a.dataset.gid)));
+    };
+
+    // group detail 
     const renderGroupDetail = (detail) => {
       const g = detail.group || {};
       const c = detail.context || {};
@@ -1057,7 +1280,7 @@ export default {
       const cx = ctxSummary(c);
       const modeTxt = modeLabel(cx.pairMode) || "–";
       const st = String(g.status || "").toLowerCase();
-      const isProblem = ["failed", "unresolved", "blackboxed"].includes(st);
+      const isProblem = ["failed", "unresolved", "blackboxed", "warning"].includes(st);
 
       const pill = (text, cls) => `<span class="ev-pill ${cls}">${esc(text)}</span>`;
       const card = (title, pillHTML, lines, extra = "") => `
@@ -1068,6 +1291,7 @@ export default {
         </div>`;
 
       const problemSub = st === "failed" ? `${g.operation || "sync"} operation failed on destination provider`
+        : st === "warning" ? "Completed with unresolved items — recorded for retry"
         : st === "unresolved" ? `${g.operation || "sync"} failed, recorded unresolved for retry`
         : st === "blackboxed" ? "Promoted to blackbox after repeated failures"
         : "Completed";
@@ -1081,7 +1305,7 @@ export default {
       const STATUS_EVENT_TYPES = {
         resolved: ["write_succeeded", "unresolved_cleared"], blackboxed: ["blackbox_promoted", "blackbox_blocked"],
         unresolved: ["unresolved_recorded"], failed: ["write_failed"], pending: ["write_attempted"],
-        completed: ["sync_run_finished"], running: ["sync_run_started"],
+        completed: ["sync_run_finished"], warning: ["sync_run_finished"], running: ["sync_run_started"],
       };
       const statusAt = (() => {
         const wanted = STATUS_EVENT_TYPES[st] || [];
@@ -1310,7 +1534,7 @@ export default {
       bindRunItemsPager();
     };
 
-    // ---- event detail (raw mode) ------------------------------------------
+    // event detail (raw mode)
     const renderEventDetail = (ctx, e) => {
       const c = ctx.context || {};
       const rel = ctx.related || {};
@@ -1376,7 +1600,7 @@ export default {
           const detail = await fjson(`/api/events/groups/${encodeURIComponent(id)}?run_items_limit=${RUN_ITEMS_PAGE_SIZE}&run_items_offset=0`);
           if (!alive) return;
           if (!detail || detail.ok === false) throw new Error("not found");
-          renderGroupDetail(detail);
+          if (domain === "scrobble") renderScrobbleDetail(detail); else renderGroupDetail(detail);
         } else {
           const ctx = await fjson(`/api/events/context?event_id=${encodeURIComponent(id)}`);
           if (!alive) return;
@@ -1459,11 +1683,12 @@ export default {
     });
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
     Q("#ev-clear", root).addEventListener("click", async () => {
-      if (!window.confirm("Delete all events from the archive?\n\nThis clears the SQLite event archive. New syncs will record events again.\nThis cannot be undone.")) return;
+      const label = domain === "scrobble" ? "scrobble" : "sync";
+      if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} history from the SQLite event archive.\nThis cannot be undone.`)) return;
       const btn = Q("#ev-clear", root);
       btn?.classList.add("busy");
       try {
-        const res = await fjson("/api/events/clear", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+        const res = await fjson("/api/events/clear", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true, domain }) });
         if (!alive) return;
         state.selected = null; state.collapsed.clear(); clearDetail();
         await load(0);
@@ -1482,12 +1707,14 @@ export default {
       window.removeEventListener("pointerup", endSplit, true);
       document.body.style.userSelect = "";
       for (const dd of [...dropdowns, ddSort]) dd.close();
+      statsView.destroy();
       cleanup = null;
     };
 
     syncRangeUI();
     await populateFilters();
-    await load(0);
+    applyView();
+    if (view !== "statistics") await load(0);
   },
   unmount() { cleanup?.(); },
 };

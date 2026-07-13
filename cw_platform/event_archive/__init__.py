@@ -14,6 +14,7 @@ from .recorder import (
     RunRecorder,
 )
 from .importer import import_all
+from .scrobble_recorder import record_watch, record_webhook
 from .query import recent, search, by_item, by_run, status, acknowledge, unacknowledge
 from .groups import (
     correlate,
@@ -26,7 +27,8 @@ from .groups import (
     unacknowledge_group,
 )
 from .context import build_context, build_group_context
-from .maintenance import health, optimize, rebuild
+from .maintenance import health, optimize, rebuild, boot_check
+from .stats import statistics
 
 __all__ = [
     "events_db_path",
@@ -43,6 +45,8 @@ __all__ = [
     "record_run_finished",
     "RunRecorder",
     "import_all",
+    "record_watch",
+    "record_webhook",
     "recent",
     "search",
     "by_item",
@@ -63,4 +67,6 @@ __all__ = [
     "health",
     "optimize",
     "rebuild",
+    "boot_check",
+    "statistics",
 ]

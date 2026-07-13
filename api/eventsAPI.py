@@ -11,8 +11,11 @@ from fastapi.responses import JSONResponse
 
 _LOG = logging.getLogger("crosswatch.api.events")
 
+import time as _time
+
 from cw_platform.event_archive import (
     get_conn,
+    statistics as _statistics,
     recent as _recent,
     search as _search,
     by_item as _by_item,
@@ -46,6 +49,27 @@ def events_status() -> JSONResponse:
     return _ok(_status())
 
 
+_RANGE_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400}
+_BUCKETS = {"hour": 3600, "day": 86400, "week": 7 * 86400}
+
+
+@router.get("/statistics")
+def events_statistics(
+    range: str = Query("30d"),
+    since: int | None = Query(None, ge=0),
+    until: int | None = Query(None, ge=0),
+    bucket: str | None = Query(None),
+) -> JSONResponse:
+    now = int(_time.time())
+    if since is not None:
+        s, u = int(since), int(until or now)
+    else:
+        span = _RANGE_SECONDS.get(str(range).lower(), _RANGE_SECONDS["30d"])
+        s, u = now - span, now
+    bs = _BUCKETS.get(str(bucket or "").lower()) if bucket else None
+    return _ok(_statistics(since=s, until=u, bucket=bs))
+
+
 @router.get("/recent")
 def events_recent(
     limit: int = Query(50, ge=1, le=500),
@@ -53,10 +77,11 @@ def events_recent(
     visibility: str = Query("open"),
     order: str = Query("newest"),
     view: str = Query("groups"),
+    domain: str = Query("sync"),
 ) -> JSONResponse:
     if str(view).lower() == "events":
-        return _ok(_recent(limit=limit, offset=offset, visibility=visibility, order=order))
-    return _ok(_list_groups(visibility=visibility, order=order, limit=limit, offset=offset))
+        return _ok(_recent(limit=limit, offset=offset, visibility=visibility, order=order, domain=domain))
+    return _ok(_list_groups(visibility=visibility, order=order, limit=limit, offset=offset, domain=domain))
 
 
 @router.get("/search")
@@ -79,6 +104,7 @@ def events_search(
     visibility: str = Query("open"),
     order: str = Query("newest"),
     view: str = Query("groups"),
+    domain: str = Query("sync"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
@@ -87,13 +113,13 @@ def events_search(
             q=q, event_type=event_type, provider=provider, origin_provider=origin_provider,
             destination_provider=destination_provider, source_provider=source_provider,
             feature=feature, pair_key=pair_key, run_id=run_id, reason_code=reason_code,
-            since=since, until=until, visibility=visibility, order=order, limit=limit, offset=offset,
+            since=since, until=until, visibility=visibility, order=order, domain=domain, limit=limit, offset=offset,
         ))
     return _ok(_list_groups(
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
         destination_provider=destination_provider, source_provider=source_provider,
         feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,
-        since=since, until=until, visibility=visibility, order=order, limit=limit, offset=offset,
+        since=since, until=until, visibility=visibility, order=order, domain=domain, limit=limit, offset=offset,
     ))
 
 
@@ -116,6 +142,7 @@ def events_groups(
     until: int | None = None,
     visibility: str = Query("open"),
     order: str = Query("newest"),
+    domain: str = Query("sync"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
@@ -123,7 +150,7 @@ def events_groups(
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
         destination_provider=destination_provider, source_provider=source_provider,
         feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,
-        since=since, until=until, visibility=visibility, order=order, limit=limit, offset=offset,
+        since=since, until=until, visibility=visibility, order=order, domain=domain, limit=limit, offset=offset,
     ))
 
 
@@ -146,12 +173,13 @@ def events_tree(
     until: int | None = None,
     visibility: str = Query("open"),
     order: str = Query("newest"),
+    domain: str = Query("sync"),
     children: bool = Query(True),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> JSONResponse:
     return _ok(_list_tree(
-        order=order, limit=limit, offset=offset, include_children=children,
+        order=order, limit=limit, offset=offset, include_children=children, domain=domain,
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
         destination_provider=destination_provider, source_provider=source_provider,
         feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,
@@ -280,13 +308,21 @@ def events_clear(payload: dict[str, Any] | None = Body(None)) -> JSONResponse:
     conn = get_conn()
     if conn is None:
         return _ok({"ok": False, "available": False, "path": str(events_db_path())})
+    domain = str((payload or {}).get("domain") or "").strip().lower()
     try:
         with conn:
-            conn.execute("DELETE FROM events")
-            conn.execute("DELETE FROM event_groups")
-            conn.execute("DELETE FROM sync_runs")
-            conn.execute("DELETE FROM event_imports")
-        return _ok({"ok": True, "cleared": True})
+            if domain in ("", "all"):
+                conn.execute("DELETE FROM events")
+                conn.execute("DELETE FROM event_groups")
+                conn.execute("DELETE FROM sync_runs")
+                conn.execute("DELETE FROM event_imports")
+            else:
+                conn.execute("DELETE FROM events WHERE domain=?", (domain,))
+                conn.execute("DELETE FROM event_groups WHERE domain=?", (domain,))
+                if domain == "sync":
+                    conn.execute("DELETE FROM sync_runs")
+                    conn.execute("DELETE FROM event_imports")
+        return _ok({"ok": True, "cleared": True, "domain": domain or "all"})
     except Exception:
         _LOG.exception("events clear failed")
         return _ok({"ok": False, "error": "internal_error"}, status_code=500)

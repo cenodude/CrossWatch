@@ -68,6 +68,79 @@ def health(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     return out
 
 
+def _fmt_size(n: Any) -> str:
+    size = float(n or 0)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return "0 B"
+
+
+def _health_issue(h: dict[str, Any]) -> str:
+    if not h.get("available"):
+        return "database unavailable"
+    if not h.get("exists"):
+        return "database file missing"
+    if h.get("integrity") not in (None, "ok"):
+        return f"integrity: {h.get('integrity')}"
+    if h.get("quick_check") not in (None, "ok"):
+        return f"quick check: {h.get('quick_check')}"
+    if h.get("foreign_key_errors"):
+        return f"{h.get('foreign_key_errors')} foreign key errors"
+    if h.get("schema_version") != h.get("expected_schema_version"):
+        return f"schema v{h.get('schema_version')} != v{h.get('expected_schema_version')}"
+    return h.get("error") or "unknown issue"
+
+
+def _boot_result(status: str, ok: bool, path: Any, h: dict[str, Any], message: str) -> dict[str, Any]:
+    return {
+        "ok": ok, "status": status, "message": message, "path": str(path),
+        "schema_version": h.get("schema_version"), "events": int(h.get("events") or 0),
+        "size_bytes": int(h.get("size_bytes") or 0),
+    }
+
+
+def boot_check(*, auto_repair: bool = True, state_dir: str | Path | None = None, reports_dir: str | Path | None = None) -> dict[str, Any]:
+    path = events_db_path()
+    existed = Path(str(path)).exists()
+    c = get_conn()
+    rebuilt = False
+    if c is None and auto_repair:
+        rebuild(state_dir=state_dir, reports_dir=reports_dir, reimport=True)
+        c = get_conn()
+        rebuilt = True
+    if c is None:
+        return {"ok": False, "status": "error", "message": "Unavailable — cannot open database", "path": str(path)}
+
+    h = health(conn=c)
+    if h.get("healthy"):
+        ver, events, size = h.get("schema_version"), int(h.get("events") or 0), _fmt_size(h.get("size_bytes"))
+        if rebuilt:
+            return _boot_result("rebuilt", True, path, h, f"Rebuilt · corruption detected, archive recreated · schema v{ver} · {events:,} events")
+        if existed:
+            return _boot_result("ready", True, path, h, f"Ready · schema v{ver} · {events:,} events · {size}")
+        return _boot_result("created", True, path, h, f"Created · schema v{ver}")
+
+    if not auto_repair:
+        return _boot_result("unhealthy", False, path, h, f"Unhealthy — {_health_issue(h)}")
+
+    corrupt = (h.get("integrity") not in (None, "ok")) or (h.get("quick_check") not in (None, "ok")) or bool(h.get("foreign_key_errors"))
+    if corrupt:
+        rebuild(state_dir=state_dir, reports_dir=reports_dir, reimport=True)
+        label, note = "rebuilt", "corruption detected, archive recreated"
+    else:
+        close_conn()
+        label, note = "repaired", "schema updated"
+
+    c2 = get_conn()
+    h2 = health(conn=c2) if c2 is not None else {"healthy": False}
+    if h2.get("healthy"):
+        ver, events = h2.get("schema_version"), int(h2.get("events") or 0)
+        return _boot_result(label, True, path, h2, f"{label.capitalize()} · {note} · schema v{ver} · {events:,} events")
+    return _boot_result("error", False, path, h2, f"Repair failed — {_health_issue(h2)}")
+
+
 def optimize(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     path = events_db_path()
     p = Path(str(path))

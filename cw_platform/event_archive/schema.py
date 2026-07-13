@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 
 _CREATE_SYNC_RUNS = """
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -30,6 +30,7 @@ _CREATE_EVENTS = """
 CREATE TABLE IF NOT EXISTS events (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     event_hash             TEXT UNIQUE,
+    domain                 TEXT DEFAULT 'sync',
     created_at             INTEGER,
     run_id                 TEXT,
     event_type             TEXT,
@@ -58,6 +59,7 @@ CREATE TABLE IF NOT EXISTS events (
     reason                 TEXT,
     match_basis            TEXT,
     source_kind            TEXT,
+    session_key            TEXT,
     source_file            TEXT,
     source_mtime           INTEGER,
     detail                 TEXT,
@@ -71,6 +73,7 @@ _CREATE_EVENT_GROUPS = """
 CREATE TABLE IF NOT EXISTS event_groups (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     group_hash             TEXT UNIQUE,
+    domain                 TEXT DEFAULT 'sync',
     created_at             INTEGER,
     updated_at             INTEGER,
     first_event_at         INTEGER,
@@ -124,6 +127,10 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_events_reason_code ON events(reason_code)",
     "CREATE INDEX IF NOT EXISTS idx_events_run_type_group ON events(run_id, event_type, group_id)",
     "CREATE INDEX IF NOT EXISTS idx_events_group_created_id ON events(group_id, created_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_events_domain_created ON events(domain, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_events_source_kind_created ON events(source_kind, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_events_severity_created ON events(severity, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(event_type, created_at)",
 )
 
 _GROUP_INDEXES = (
@@ -136,36 +143,43 @@ _GROUP_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_groups_status ON event_groups(status)",
     "CREATE INDEX IF NOT EXISTS idx_groups_acknowledged ON event_groups(acknowledged_at)",
     "CREATE INDEX IF NOT EXISTS idx_groups_ack_last_id ON event_groups(acknowledged_at, last_event_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_groups_domain_last ON event_groups(domain, last_event_at, id)",
 )
 
 
-def _create_all(conn: sqlite3.Connection) -> None:
-    cur = conn.cursor()
-    cur.execute(_CREATE_SYNC_RUNS)
-    cur.execute(_CREATE_EVENTS)
-    cur.execute(_CREATE_EVENT_GROUPS)
-    cur.execute(_CREATE_EVENT_IMPORTS)
-    for stmt in _INDEXES:
-        cur.execute(stmt)
-    for stmt in _GROUP_INDEXES:
-        cur.execute(stmt)
-    cur.close()
+_ADD_COLUMNS = (
+    ("events", "acknowledged_at", "INTEGER"),
+    ("events", "acknowledged_by", "TEXT"),
+    ("events", "group_id", "INTEGER"),
+    ("events", "domain", "TEXT DEFAULT 'sync'"),
+    ("events", "session_key", "TEXT"),
+    ("event_groups", "domain", "TEXT DEFAULT 'sync'"),
+)
+
+_EXTRA_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_events_acknowledged ON events(acknowledged_at)",
+    "CREATE INDEX IF NOT EXISTS idx_events_group_id ON events(group_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sync_runs_started ON sync_runs(started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_sync_runs_finished ON sync_runs(finished_at)",
+)
 
 
-def _migrate(conn: sqlite3.Connection, from_ver: int) -> None:
-    if from_ver < 2:
-        for col, typ in (("acknowledged_at", "INTEGER"), ("acknowledged_by", "TEXT")):
-            try:
-                conn.execute(f"ALTER TABLE events ADD COLUMN {col} {typ}")
-            except Exception:
-                pass
-    if from_ver < 3:
+def _create_tables(conn: sqlite3.Connection) -> None:
+    for stmt in (_CREATE_SYNC_RUNS, _CREATE_EVENTS, _CREATE_EVENT_GROUPS, _CREATE_EVENT_IMPORTS):
+        conn.execute(stmt)
+
+
+def _ensure_columns(conn: sqlite3.Connection) -> None:
+    for table, col, typ in _ADD_COLUMNS:
         try:
-            conn.execute("ALTER TABLE events ADD COLUMN group_id INTEGER")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         except Exception:
             pass
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_acknowledged ON events(acknowledged_at)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_group_id ON events(group_id)")
+
+
+def _create_indexes(conn: sqlite3.Connection) -> None:
+    for stmt in (*_INDEXES, *_GROUP_INDEXES, *_EXTRA_INDEXES):
+        conn.execute(stmt)
 
 
 def apply_schema(conn: sqlite3.Connection) -> int:
@@ -173,14 +187,10 @@ def apply_schema(conn: sqlite3.Connection) -> int:
     ver = int(cur.execute("PRAGMA user_version").fetchone()[0] or 0)
     cur.close()
 
-    if ver >= SCHEMA_VERSION:
-        _create_all(conn)
-        with conn:
-            _migrate(conn, SCHEMA_VERSION)
-        return ver
-
     with conn:
-        _create_all(conn)
-        _migrate(conn, ver)
-        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-    return SCHEMA_VERSION
+        _create_tables(conn)
+        _ensure_columns(conn)
+        _create_indexes(conn)
+        if ver < SCHEMA_VERSION:
+            conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+    return max(ver, SCHEMA_VERSION)
