@@ -20,6 +20,7 @@ docker-compose.yml
 # local agent
 .agents/
 .codex/
+.claude/
 
 # Python cache
 __pycache__/
