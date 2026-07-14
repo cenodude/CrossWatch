@@ -1990,6 +1990,9 @@ async function cwVerifyTmdbKey() {
     if (input) input.dataset.verified = ok ? "1" : "0";
     cwSetTmdbCheckMessage(ok, ok ? "Connected" : (data?.error || "TMDb key check failed."));
     try { cwMetaSettingsHubUpdate(); } catch {}
+    if (ok) {
+      try { document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "tmdb", key: "TMDB_METADATA" } })); } catch {}
+    }
     return ok;
   } catch {
     if (input) input.dataset.verified = "0";
@@ -2033,7 +2036,7 @@ async function cwDeleteTmdbKey() {
     try { window.manualRefreshStatus?.(); } catch {}
     try { updateTmdbHint(); } catch {}
     try { cwMetaSettingsHubUpdate(); } catch {}
-    cwSetTmdbCheckMessage(true, "Deleted");
+    cwSetTmdbCheckMessage(false, "Deleted");
     return true;
   } catch {
     cwSetTmdbCheckMessage(false, "TMDb key delete failed.");
