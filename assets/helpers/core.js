@@ -1018,6 +1018,34 @@
     });
   }, { once: true });
 
+  function showScrobblerGateBanner(mount, sourceOk, sinkOk) {
+    if (!mount) return;
+    const needServer = "a compatible media server (Plex, Emby or Jellyfin)";
+    const needTracker = "a compatible tracker (Trakt, SIMKL or MDBList)";
+    const both = !sourceOk && !sinkOk;
+    const need = both ? `${needServer} and ${needTracker}` : (!sourceOk ? needServer : needTracker);
+    const copy = `The Scrobbler needs ${need}. Configure ${both ? "them" : "it"} in Connections to enable webhook and watcher routing.`;
+    let banner = mount.querySelector(":scope > .cw-scrobbler-gate");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.className = "cw-scrobbler-gate";
+      banner.setAttribute("role", "alert");
+      banner.innerHTML = `<span class="material-symbols-rounded cw-scrobbler-gate-icon" aria-hidden="true">warning</span><div class="cw-scrobbler-gate-copy"><strong>Connect a provider first</strong><span class="cw-scrobbler-gate-text"></span></div><button type="button" class="btn cw-scrobbler-gate-btn">Open Connections</button>`;
+      banner.querySelector(".cw-scrobbler-gate-btn")?.addEventListener("click", () => { try { window.cwSettingsSelect?.("providers"); } catch {} });
+      mount.prepend(banner);
+    }
+    const textEl = banner.querySelector(".cw-scrobbler-gate-text");
+    if (textEl) textEl.textContent = copy;
+    byId("sc-sec-webhook")?.classList.add("hidden");
+    byId("sc-sec-watch")?.classList.add("hidden");
+  }
+
+  function clearScrobblerGateBanner(mount) {
+    mount?.querySelector(":scope > .cw-scrobbler-gate")?.remove();
+    byId("sc-sec-webhook")?.classList.remove("hidden");
+    byId("sc-sec-watch")?.classList.remove("hidden");
+  }
+
   let scrobblerInit = false;
   function ensureScrobbler() {
     if (scrobblerInit) return;
@@ -1027,7 +1055,8 @@
     const configured = getConfiguredProviders();
     const sourceOk = configured.has("PLEX") || configured.has("EMBY") || configured.has("JELLYFIN");
     const sinkOk = configured.has("TRAKT") || configured.has("SIMKL") || configured.has("MDBLIST");
-    if (!(sourceOk && sinkOk)) return;
+    if (!(sourceOk && sinkOk)) { showScrobblerGateBanner(mount, sourceOk, sinkOk); return; }
+    clearScrobblerGateBanner(mount);
 
     const start = () => {
       if (scrobblerInit) return;
@@ -1056,6 +1085,13 @@
       script.onload = start;
     }
   }
+
+  document.addEventListener("cw-settings-pane-changed", async (e) => {
+    if (scrobblerInit) return;
+    if (String(e?.detail?.pane || "").toLowerCase() !== "scrobbler") return;
+    try { await window.loadConfig?.(); } catch {}
+    try { ensureScrobbler(); setTimeout(ensureScrobbler, 200); } catch {}
+  });
 
   function toggleSection(id) {
     byId(id)?.classList.toggle("open");

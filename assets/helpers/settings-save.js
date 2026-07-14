@@ -581,7 +581,6 @@ async function saveSettings() {
       show_recent_scrobble_widget: typeof serverCfg?.ui?.show_recent_scrobble_widget === "boolean" ? !!serverCfg.ui.show_recent_scrobble_widget : true,
       recent_activity_display: normalizeUiDisplay(serverCfg?.ui?.recent_activity_display, Number(serverCfg?.ui?.recent_activity_limit)),
       recent_syncs_display: normalizeUiDisplay(serverCfg?.ui?.recent_syncs_display, Number(serverCfg?.ui?.recent_syncs_limit)),
-      show_AI: typeof serverCfg?.ui?.show_AI === "boolean" ? !!serverCfg.ui.show_AI : true,
       show_quick_add_desktop: typeof serverCfg?.ui?.show_quick_add_desktop === "boolean" ? !!serverCfg.ui.show_quick_add_desktop : true,
       show_quick_add_mobile: typeof serverCfg?.ui?.show_quick_add_mobile === "boolean" ? !!serverCfg.ui.show_quick_add_mobile : true,
       theme: (() => {
@@ -591,13 +590,12 @@ async function saveSettings() {
       protocol: _cwNorm(serverCfg?.ui?.protocol).toLowerCase() === "https" ? "https" : "http"
     };
 
-    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_recent_history_widget", "show_recent_history_widget"], ["ui_show_latest_ratings_widget", "show_latest_ratings_widget"], ["ui_show_recent_scrobble_widget", "show_recent_scrobble_widget"], ["ui_show_AI", "show_AI"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
+    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_recent_history_widget", "show_recent_history_widget"], ["ui_show_latest_ratings_widget", "show_latest_ratings_widget"], ["ui_show_recent_scrobble_widget", "show_recent_scrobble_widget"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
       const el = _cwEl(id);
       if (!el) return;
       const next = el.value !== "false";
       if (next === prevUi[key]) return;
       ensureObj(cfg, "ui")[key] = next;
-      if (key === "show_AI") try { window.__cwAskAiChanged = { from: prevUi.show_AI, to: next }; } catch {}
       mark();
     });
 
@@ -900,12 +898,6 @@ async function saveSettings() {
         reasons.push("Protocol changed");
         kind = "protocol";
         applyText = "Apply NOW";
-      }
-      if (window.__cwAskAiChanged) {
-        const info = window.__cwAskAiChanged;
-        try { delete window.__cwAskAiChanged; } catch {}
-        reasons.push(`ASK AI ${info?.to ? "shown" : "hidden"}`);
-        if (!kind) kind = "restart";
       }
       if (reasons.length) {
         const msg = `${reasons.join(" + ")}: restart required`;

@@ -127,7 +127,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       if (target==="scheduling") return window.cwSettingsSelect?.("scheduling");
       if (target==="watcher") return window.cwScrobblerJump?.("sc-sec-watch");
       if (target==="webhook") return window.cwScrobblerJump?.("sc-sec-webhook");
-      if (target==="pairs") return window.cwProvidersJump?.("sec-sync");
+      if (target==="pairs") return window.cwSyncJump?.();
     },0);
   }
 

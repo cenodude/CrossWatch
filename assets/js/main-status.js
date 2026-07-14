@@ -72,10 +72,6 @@
       try { window.CW?.Cache?.setCfg?.(cfg); } catch {}
       try { window._cfgCache = cfg; } catch {}
     }
-    const host = $("auth-providers-icons");
-    host?.querySelectorAll("img[data-prov]").forEach((img) => {
-      img.style.display = isProviderConfigured(img.dataset.prov, cfg) ? "inline-block" : "none";
-    });
     return AUTH_MAP.reduce((any, [id, key]) => setDot(id, isProviderConfigured(key, cfg)) || any, false);
   }
 
