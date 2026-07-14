@@ -504,10 +504,27 @@
     }
   }
 
+  async function refreshFromButton(btn) {
+    widgetsDirty = true;
+    dirtyVersion += 1;
+    if (!isOnMain()) return;
+    btn?.classList.add("spinning");
+    if (btn) void btn.offsetWidth;
+    const minSpin = new Promise((resolve) => window.setTimeout(resolve, 600));
+    try {
+      await Promise.all([
+        refreshDashboardWidgets({ force: true, forceConfig: true, preserve: hasLoaded }),
+        minSpin,
+      ]);
+    } finally {
+      btn?.classList.remove("spinning");
+    }
+  }
+
   function initDashboardWidgets() {
-    $("#recent-history-refresh")?.addEventListener("click", () => markWidgetsDirty(0, { forceConfig: true }));
-    $("#latest-ratings-refresh")?.addEventListener("click", () => markWidgetsDirty(0, { forceConfig: true }));
-    $("#recent-scrobble-refresh")?.addEventListener("click", () => markWidgetsDirty(0, { forceConfig: true }));
+    $("#recent-history-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
+    $("#latest-ratings-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
+    $("#recent-scrobble-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
     $("#dashboard-widgets-card")?.addEventListener("click", (event) => {
       const btn = event.target?.closest?.("[data-cw-widget-more]");
       if (!btn) return;
