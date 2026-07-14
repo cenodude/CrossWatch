@@ -41,7 +41,7 @@ from api.appAuthAPI import (
     register_app_auth,
 )
 
-from _logging import log as LOG, BLUE, GREEN, DIM, RESET  # type: ignore
+from _logging import log as LOG, BLUE, GREEN, DIM, RED, YELLOW, RESET  # type: ignore
 BACKUP_LOG = LOG.child("BACKUP")
 
 def _c(text: str, color: str) -> str:
@@ -60,8 +60,8 @@ from fastapi.responses import (
 from starlette.middleware.gzip import GZipMiddleware
 
 from api.wallAPI import _load_wall_snapshot
-from providers.webhooks.plextrakt import process_webhook as process_webhook
-from providers.webhooks.jellyfintrakt import process_webhook as process_webhook_jellyfin
+from providers.webhooks.plex import process_webhook as process_webhook
+from providers.webhooks.jellyfin import process_webhook as process_webhook_jellyfin
 
 __all__ = ["process_webhook", "process_webhook_jellyfin"]
 
@@ -746,7 +746,7 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             )
         if want_webhooks and source_enabled(cfg, "watcher"):
             LOG(
-                "WARNING: both Webhook and Watcher are enabled; avoid sending the same server through both",
+                "Webhook and Watcher are both enabled, do not use both for the same tracker.",
                 level="WARN",
                 module="SCROBBLE",
             )
@@ -1214,6 +1214,15 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     boot.info(f"  {_c('Tombstones:', DIM)} {TOMBSTONES_PATH} (JSON)")
     boot.info(f"  {_c('State:', DIM)}      {STATE_PATH} (JSON)")
     boot.info(f"  {_c('Config:', DIM)}     {CONFIG_DIR / 'config.json'} (JSON)")
+
+    try:
+        from cw_platform.event_archive import boot_check as _events_boot_check, events_db_path
+        ev = _events_boot_check(state_dir=CW_STATE_DIR, reports_dir=REPORT_DIR)
+        ev_color = GREEN if ev.get("status") in ("ready", "created") else (RED if not ev.get("ok") else YELLOW)
+        boot.info(f"  {_c('Events DB:', DIM)}  {ev.get('path') or events_db_path()} (SQLite)")
+        boot.info(f"              {_c(ev.get('message') or 'unknown', ev_color)}")
+    except Exception as exc:
+        boot.info(f"  {_c('Events DB:', DIM)}  {_c(f'error — {exc}', RED)}")
     boot.info("")
 
     debug = bool((cfg.get("runtime") or {}).get("debug"))
