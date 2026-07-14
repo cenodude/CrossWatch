@@ -214,6 +214,13 @@ def html() -> str:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
+            <div class="cw-auth-journey" style="--cw-auth-c1:229,160,13;--cw-auth-c2:229,160,13;--cw-auth-logo:url('/assets/img/TAUTULLI.svg')">
+              <div class="cw-auth-journey-text">
+                <div class="cw-auth-journey-title">Connect to Tautulli</div>
+                <div class="cw-auth-journey-copy">Enter your Tautulli server URL and API key (Tautulli &rsaquo; Settings &rsaquo; Web Interface &rsaquo; API). CrossWatch reads your Tautulli watch history to enrich playback and scrobbles.</div>
+              </div>
+            </div>
+
             <div class="grid2">
               <div>
                 <label for="tautulli_server">Server URL</label>
@@ -235,8 +242,8 @@ def html() -> str:
             </div>
 
             <div id="tautulli_actions_row" class="inline" style="margin-top:12px">
-              <button id="tautulli_save" class="btn">Connect</button>
-              <button id="tautulli_disconnect" class="btn danger">Disconnect</button>
+              <button id="tautulli_save" class="btn">Connect Tautulli</button>
+              <button id="tautulli_disconnect" class="btn danger">Delete</button>
               <div id="tautulli_msg" class="msg ok hidden" aria-live="polite"></div>
             </div>
           </div>

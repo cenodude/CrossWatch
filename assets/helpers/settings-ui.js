@@ -195,7 +195,6 @@ function cwUiSettingsHubInit() {
     "ui_show_recent_scrobble_widget",
     "ui_recent_activity_display",
     "ui_recent_syncs_display",
-    "ui_show_AI",
     "ui_show_quick_add_desktop",
     "ui_show_quick_add_mobile",
     "ui_theme",
@@ -751,12 +750,25 @@ function cwAnimeMappingRenderStatus(st = {}) {
   _cwSetText("anime_mapping_generated", _cwFormatUtc(st.dataset_generated_on));
   _cwSetText("anime_mapping_index", index);
   _cwSetText("anime_mapping_counts", installed ? `${Number(st.source_count || 0).toLocaleString()} sources | ${Number(st.edge_count || 0).toLocaleString()} edges` : "-");
+  _cwSetText("anime_mapping_last_update", _cwFormatUtc(st.dataset_generated_on));
+  _cwSetText("anime_mapping_meta_status", err ? "Error" : (installed && ready ? "Up to date" : (installed ? "Needs index" : "Missing")));
+  const statusPill = document.getElementById("anime_mapping_meta_status");
+  if (statusPill) {
+    statusPill.classList.toggle("is-ok", !!(installed && ready && !err));
+    statusPill.classList.toggle("is-err", !!err);
+  }
   _cwSetText("anime_mapping_error", err);
 
   const dot = document.getElementById("anime-mapping-dot");
   if (dot) {
     dot.classList.toggle("on", !!(enabled && installed && ready && !err));
     dot.classList.toggle("off", !!(!enabled || !installed || !ready || err));
+  }
+
+  const heroBadge = document.getElementById("anime_mapping_hero_status");
+  if (heroBadge) {
+    heroBadge.classList.toggle("is-on", !!enabled);
+    _cwSetText("anime_mapping_hero_status_text", enabled ? "Enabled" : "Disabled");
   }
 }
 
@@ -861,59 +873,89 @@ function cwBuildAnimeMappingPanel() {
       <span class="auth-dot" id="anime-mapping-dot" aria-hidden="true"></span>
     </div>
     <div class="body">
-    <div class="cw-panel-head anime-mapping-head">
-      <div class="cw-panel-head-main">
-        <div class="cw-panel-title">Anime ID Mapping</div>
-        <div class="muted">Local anime ID index for AniList watchlist and ratings pairs.</div>
+    <div class="auth-card anime-mapping-card am-body">
+      <section class="am-hero">
+        <span class="material-symbols-rounded am-hero-icon" aria-hidden="true">shield</span>
+        <div class="am-hero-copy">
+          <h4>Anime ID Mapping</h4>
+          <p>Enable and manage the local Anime ID Mapping index used for AniList watchlist and ratings pairs.</p>
+        </div>
+        <span class="am-hero-badge" id="anime_mapping_hero_status">
+          <span class="material-symbols-rounded" aria-hidden="true">check_circle</span>
+          <span id="anime_mapping_hero_status_text">Disabled</span>
+        </span>
+      </section>
+
+      <section class="am-stats">
+        <div class="am-stat">
+          <span class="material-symbols-rounded am-stat-icon" aria-hidden="true">database</span>
+          <div><span>Dataset</span><strong id="anime_mapping_dataset">-</strong></div>
+        </div>
+        <div class="am-stat">
+          <span class="material-symbols-rounded am-stat-icon is-ok" aria-hidden="true">check_circle</span>
+          <div><span>Index</span><strong id="anime_mapping_index">-</strong></div>
+        </div>
+        <div class="am-stat">
+          <span class="material-symbols-rounded am-stat-icon" aria-hidden="true">schedule</span>
+          <div><span>Generated</span><strong class="mono" id="anime_mapping_generated">-</strong></div>
+        </div>
+        <div class="am-stat">
+          <span class="material-symbols-rounded am-stat-icon" aria-hidden="true">inventory_2</span>
+          <div><span>Size</span><strong id="anime_mapping_counts">-</strong></div>
+        </div>
+        <div class="am-stat">
+          <span class="material-symbols-rounded am-stat-icon" aria-hidden="true">group</span>
+          <div><span>Used for</span><strong id="anime_mapping_used_for">AniList pairs</strong></div>
+        </div>
+      </section>
+
+      <div class="am-card">
+        <h4 class="anime-mapping-section-title"><span class="material-symbols-rounded" aria-hidden="true">settings</span>Settings</h4>
+        <div class="am-settings">
+          <div class="am-setting">
+            <div>
+              <strong>Auto update</strong>
+              <span>Keep the dataset up to date automatically</span>
+            </div>
+            <label class="cx-toggle am-toggle">
+              <input type="checkbox" id="anime_mapping_auto_update">
+              <span class="cx-toggle-ui" aria-hidden="true"></span>
+            </label>
+            <span class="anime-mapping-mode" hidden>Mode <strong id="anime_mapping_auto_update_state">Daily</strong></span>
+          </div>
+          <div class="am-setting">
+            <div>
+              <strong>Mapping index</strong>
+              <span>Enable the Anime ID Mapping index</span>
+            </div>
+            <label class="cx-toggle am-toggle">
+              <input type="checkbox" id="anime_mapping_enabled">
+              <span class="cx-toggle-ui" aria-hidden="true"></span>
+            </label>
+          </div>
+        </div>
       </div>
-      <label class="cx-toggle anime-mapping-toggle">
-        <input type="checkbox" id="anime_mapping_enabled">
-        <span class="cx-toggle-ui" aria-hidden="true"></span>
-        <span class="cx-toggle-text">Enable</span>
-        <span class="cx-toggle-state" aria-hidden="true"></span>
-      </label>
-    </div>
-    <div class="auth-card anime-mapping-card">
-      <div class="anime-mapping-summary">
-        <div>
-          <div class="muted">Used for</div>
-          <strong id="anime_mapping_used_for">AniList pairs</strong>
+
+      <div class="am-card">
+        <h4 class="anime-mapping-section-title"><span class="material-symbols-rounded" aria-hidden="true">description</span>Dataset details</h4>
+        <div class="am-details">
+          <dl class="am-detail-list">
+            <div><dt>Source</dt><dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
+            <div><dt>Status</dt><dd><span class="am-status-pill" id="anime_mapping_meta_status">-</span></dd></div>
+            <div><dt>Last update</dt><dd><strong id="anime_mapping_last_update">-</strong></dd></div>
+          </dl>
+          <p class="am-details-copy">CrossWatch downloads the AniBridge mappings dataset to translate media identifiers between AniList and TMDB, TVDB, IMDb, MyAnimeList, and AniDB.</p>
         </div>
-        <div>
-          <div class="muted">Auto-update</div>
-          <label class="cx-toggle anime-mapping-inline-toggle">
-            <input type="checkbox" id="anime_mapping_auto_update">
-            <span class="cx-toggle-ui" aria-hidden="true"></span>
-            <span class="cx-toggle-text" id="anime_mapping_auto_update_state">Daily</span>
-            <span class="cx-toggle-state" aria-hidden="true"></span>
-          </label>
-        </div>
+        <div class="auth-card-notes" id="anime_mapping_error"></div>
       </div>
-      <div class="anime-mapping-status-grid">
-        <div class="anime-mapping-status">
-          <span>Dataset</span>
-          <strong id="anime_mapping_dataset">-</strong>
+
+      <div class="am-card">
+        <h4 class="anime-mapping-section-title"><span class="material-symbols-rounded" aria-hidden="true">bolt</span>Actions</h4>
+        <div class="am-actions">
+          <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
+          <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
+          <span>Update downloads the latest dataset.<br>Rebuild recreates the local index from the dataset.</span>
         </div>
-        <div class="anime-mapping-status">
-          <span>Index</span>
-          <strong id="anime_mapping_index">-</strong>
-        </div>
-        <div class="anime-mapping-status">
-          <span>Generated</span>
-          <strong class="mono" id="anime_mapping_generated">-</strong>
-        </div>
-        <div class="anime-mapping-status">
-          <span>Size</span>
-          <strong id="anime_mapping_counts">-</strong>
-        </div>
-      </div>
-      <div class="anime-mapping-source">
-        Dataset source: <a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">anibridge/anibridge-mappings</a>. CrossWatch downloads the AniBridge mappings dataset to translate media identifiers between AniList and TMDB, TVDB, IMDb, MyAnimeList, and AniDB.
-      </div>
-      <div class="auth-card-notes" id="anime_mapping_error"></div>
-      <div class="cw-settings-inline-action anime-mapping-actions">
-        <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
-        <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
       </div>
     </div>
     </div>
@@ -1044,7 +1086,7 @@ function cwBuildTmdbPanel() {
   checkRow.style.alignItems = "center";
   checkRow.style.justifyContent = "flex-start";
   checkRow.innerHTML = `
-    <button type="button" class="btn secondary" id="tmdb_check">Check</button>
+    <button type="button" class="btn good" id="tmdb_check">Check</button>
     <button type="button" class="btn danger" id="tmdb_delete">Delete</button>
     <div id="tmdb_check_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto;width:auto;max-width:min(520px,60%);flex:0 1 auto;white-space:normal"></div>
   `;
@@ -1196,6 +1238,13 @@ function cwMetaSettingsHubUpdate() {
     dot.title = verified ? "Verified" : failed ? "TMDb key check failed" : hasKeyNow ? "Configured; click Check to validate" : "Not configured";
     dot.setAttribute("aria-label", dot.title);
     dot.closest?.('.cw-meta-provider-panel[data-provider="tmdb"]')?.classList?.toggle("is-configured", hasKeyNow && !failed);
+  }
+
+  const tmdbCheckBtn = document.getElementById("tmdb_check");
+  if (tmdbCheckBtn) {
+    const connected = verified || (cfgHasKey && !uiTouched);
+    try { window.CW?.AuthShared?.setConnectLocked?.(["tmdb_check"], connected, "Connected — delete the key to reconnect."); }
+    catch { tmdbCheckBtn.disabled = connected; }
   }
 
   try { window.syncMetadataProviderDot?.(); } catch {}
@@ -1400,13 +1449,6 @@ async function loadConfig() {
       const normalizedTheme = storedTheme || ((theme === "flat-light" || theme === "original") ? theme : "flat-dark");
       _setSelectValue("ui_theme", normalizedTheme);
       try { window.CWTheme?.apply?.(normalizedTheme, { persist: true }); } catch {}
-    }
-
-    {
-      const on = (typeof ui.show_AI === "boolean")
-        ? !!ui.show_AI
-        : true;
-      _setSelectValue("ui_show_AI", on ? "true" : "false");
     }
 
     {
@@ -1955,7 +1997,7 @@ async function cwVerifyTmdbKey() {
     try { cwMetaSettingsHubUpdate(); } catch {}
     return false;
   } finally {
-    if (btn) btn.disabled = false;
+    try { cwMetaSettingsHubUpdate(); } catch { if (btn) btn.disabled = false; }
   }
 }
 

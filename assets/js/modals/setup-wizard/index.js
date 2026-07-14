@@ -27,7 +27,7 @@ function _norm(v) {
 }
 
 function _collapseByDefault() {
-  const ids = ["sec-auth", "sec-meta", "sec-sync", "sec-scrobbler", "sc-sec-webhook", "sc-sec-watch"];
+  const ids = ["sec-auth", "sec-meta", "sec-scrobbler", "sc-sec-webhook", "sc-sec-watch"];
   for (const id of ids) {
     try { document.getElementById(id)?.classList.remove("open"); } catch {}
   }

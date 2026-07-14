@@ -608,7 +608,7 @@ def html() -> str:
         <label for="tmdb_api_key">TMDb API key</label>
         <input id="tmdb_api_key" name="tmdb_api_key" placeholder="Your TMDb API key" oninput="this.dataset.dirty='1'; updateTmdbHint()">
         <div id="tmdb_hint" class="msg warn hidden">
-          TMDb is optional but recommended to enrich posters &amp; metadata in the preview.
+          TMDb is optional but highly recommended.
           Get an API key at
           <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb API settings</a>.
         </div>

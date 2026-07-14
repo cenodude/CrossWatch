@@ -10,7 +10,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
-from cw_platform.config_base import load_config
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
@@ -41,9 +40,6 @@ self.addEventListener("fetch", (event) => {
 });
 """
 
-GITBOOK_EMBED_BLOCK: str = r"""<script id="cw-gitbook-embed" src="https://wiki.crosswatch.app/~gitbook/embed/script.js"></script><script>window.__cwGitBookConfig={siteUrl:"https://wiki.crosswatch.app",reportUrl:"https://github.com/cenodude/CrossWatch/issues/new"};</script><script src="/assets/js/gitbook.js?v=__CW_VERSION__" defer></script>"""
-
-
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     assets_dir = root / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -72,24 +68,10 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     def service_worker() -> Response:
         return asset_response("sw.js", DEFAULT_SW, "text/javascript", **{"Cache-Control": "no-store", "Service-Worker-Allowed": "/"})
 
-def _ui_show_ai_enabled() -> bool:
-    try:
-        cfg = load_config()
-        ui = (cfg if isinstance(cfg, dict) else {}).get("ui", {})
-        return bool(ui.get("show_AI", True)) if isinstance(ui, dict) else True
-    except Exception:
-        return True
-
-
 def register_ui_root(app: FastAPI) -> None:
     @app.get("/", include_in_schema=False, tags=["ui"])
     def ui_root(request: Request) -> HTMLResponse:
-        show_ai = _ui_show_ai_enabled()
-        return HTMLResponse(get_index_html(include_gitbook_embed=_is_https_request(request) and show_ai, ui_show_ai=show_ai), headers={"Cache-Control": "no-store"})
-
-
-def _is_https_request(request: Request) -> bool:
-    return request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip().lower() == "https"
+        return HTMLResponse(get_index_html(), headers={"Cache-Control": "no-store"})
 
 
 _HELPER_SCRIPTS = (
@@ -101,20 +83,6 @@ _APP_SCRIPTS = (
     "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "main-status.js",
 )
-_AUTH_HEADER_ICONS = (
-    {"prov": "PLEX", "label": "Plex"},
-    {"prov": "JELLYFIN", "label": "Jellyfin"},
-    {"prov": "SIMKL", "label": "SIMKL"},
-    {"prov": "TRAKT", "label": "Trakt"},
-    {"prov": "MDBLIST", "label": "MDBList"},
-    {"prov": "PUBLICMETADB", "label": "PublicMetaDB"},
-    {"prov": "TMDB", "label": "TMDb", "extra_class": "cw-provider-head-icon--tmdb"},
-    {"prov": "TAUTULLI", "label": "TAUTULLI"},
-    {"prov": "ANILIST", "label": "AniList"},
-    {"prov": "EMBY", "label": "Emby", "extra_class": "cw-provider-head-icon--emby"},
-)
-
-
 def _asset_block() -> str:
     helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in _HELPER_SCRIPTS)
     app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in _APP_SCRIPTS)
@@ -129,21 +97,6 @@ def _asset_block() -> str:
         '<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',
         '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
     ))
-
-
-def _auth_header_icons_html() -> str:
-    lines: list[str] = []
-    for item in _AUTH_HEADER_ICONS:
-        prov = str(item["prov"])
-        label = str(item["label"])
-        extra = str(item.get("extra_class", "")).strip()
-        cls = "cw-provider-head-icon"
-        if extra:
-            cls = f"{cls} {extra}"
-        lines.append(
-            f'<img data-prov="{prov}" src="/assets/img/{prov}-log.svg" alt="{label}" class="{cls}">'
-        )
-    return "\n".join(lines)
 
 
 def _asset_version_token() -> str:
@@ -260,6 +213,18 @@ header .tab.active,header .cw-ui-btn.active{background:linear-gradient(180deg,rg
 #page-settings .cw-settings-nav-card{background:radial-gradient(120% 150% at 0% 0%,rgba(68,76,120,.07),transparent 34%),var(--cw-ov-shell-soft)!important;opacity:.94}
 #page-settings .cw-settings-nav-btn{background:linear-gradient(180deg,rgba(255,255,255,.024),rgba(255,255,255,.012))!important;border-color:rgba(255,255,255,.07)!important}
 #page-settings .cw-settings-nav-btn.active{background:radial-gradient(860px 240px at 4% 0%,rgba(124,92,255,.18),transparent 52%),linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,13,.99))!important;border-color:rgba(156,140,255,.22)!important;box-shadow:0 0 0 1px rgba(124,92,255,.12),0 12px 22px rgba(0,0,0,.22)!important}
+#page-settings #cw-settings-nav .cw-settings-nav-card{background:transparent!important;border:0!important;box-shadow:none!important;opacity:1!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn{min-height:68px!important;border-radius:7px!important;padding:11px 14px!important;background:#121820!important;background-image:none!important;border-color:rgba(138,151,176,.16)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.025)!important;transform:none!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn:hover{background:#151d28!important;background-image:none!important;border-color:rgba(129,151,195,.34)!important;transform:none!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn.active{background:linear-gradient(100deg,rgba(48,83,168,.22),rgba(22,27,39,.86) 56%,rgba(18,23,31,.76))!important;border-color:rgba(95,141,255,.48)!important;box-shadow:inset 0 0 0 1px rgba(95,141,255,.12)!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn::before{content:""!important;display:block!important;position:absolute!important;left:0!important;top:0!important;bottom:0!important;width:3px!important;background:#5f8dff!important;opacity:0!important;box-shadow:0 0 18px rgba(95,141,255,.55)!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn.active::before{opacity:1!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn>.material-symbols-rounded{background:transparent!important;border:0!important;box-shadow:none!important;color:#aeb9cf!important;-webkit-text-fill-color:#aeb9cf!important;font-variation-settings:"FILL"0,"wght"500,"GRAD"0,"opsz"32!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn.active>.material-symbols-rounded{background:transparent!important;color:#6d96ff!important;-webkit-text-fill-color:#6d96ff!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn strong{font-size:14px!important;line-height:1.18!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn small{font-size:12px!important;line-height:1.25!important;margin-top:4px!important}
+#page-settings #cw-settings-nav .cw-settings-nav-btn>.material-symbols-rounded{font-size:26px!important;width:30px!important;height:30px!important}
+#page-settings #cw-settings-nav .cw-settings-nav-chev{font-size:22px!important}
 #page-settings .cw-settings-setup-step.is-done{background:radial-gradient(900px 220px at 0% 0%,rgba(44,144,110,.18),transparent 58%),var(--cw-ov-shell)!important;border-color:rgba(76,176,136,.26)!important}
 #page-settings .cw-settings-setup-step.is-active{background:radial-gradient(900px 220px at 0% 0%,rgba(124,92,255,.18),transparent 58%),var(--cw-ov-shell)!important;border-color:rgba(150,132,255,.24)!important}
 #page-settings input,#page-settings select,#page-settings textarea{background:rgba(4,6,10,.94)!important;border:1px solid rgba(255,255,255,.08)!important;color:var(--cw-ov-fg)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.02)!important}
@@ -434,13 +399,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 
 <header>
   <div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
-    <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="CrossWatch">
-      <defs><linearGradient id="cw-g" x1="0" y1="0" x2="24" y2="24"><stop offset="0" stop-color="#2de2ff"/><stop offset=".5" stop-color="#5f69d6"/><stop offset="1" stop-color="#7a6aa8"/></linearGradient></defs>
-      <rect x="3" y="4" width="18" height="12" rx="2" ry="2" stroke="url(#cw-g)" stroke-width="1.7"/>
-      <rect x="8" y="18" width="8" height="1.6" rx=".8" fill="url(#cw-g)"/>
-      <circle cx="8" cy="9" r="1" fill="url(#cw-g)"/><circle cx="12" cy="11" r="1" fill="url(#cw-g)"/><circle cx="16" cy="8" r="1" fill="url(#cw-g)"/>
-      <path d="M8 9 L12 11 L16 8" stroke="url(#cw-g)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
+    <img class="logo" src="/assets/pwa/favicon-64.png?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
       <span class="name">CrossWatch</span>
       <span class="version">__CW_CURRENT_VERSION__</span>
@@ -464,7 +423,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect('overview')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">settings</span><span>Settings overview</span></button>
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
         <button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">link</span><span>Connections</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>
+        <button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>
         <button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">music_note</span><span>Scrobbler</span></button>
         <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">calendar_month</span><span>Scheduling</span></button>
         <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">shield</span><span>UI and Security</span></button>
@@ -646,7 +605,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-history-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-history-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh recent history" aria-label="Refresh recent history">refresh</button>
+          <button id="recent-history-refresh" class="cw-dash-ghost" type="button" title="Refresh recent history" aria-label="Refresh recent history"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-history-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -660,7 +619,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         </div>
         <div class="cw-dash-head-actions">
           <span id="latest-ratings-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="latest-ratings-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh latest ratings" aria-label="Refresh latest ratings">refresh</button>
+          <button id="latest-ratings-refresh" class="cw-dash-ghost" type="button" title="Refresh latest ratings" aria-label="Refresh latest ratings"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="latest-ratings-grid" class="cw-ratings-widget-grid" aria-live="polite"></div>
@@ -674,7 +633,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         </div>
         <div class="cw-dash-head-actions">
           <span id="recent-scrobble-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-          <button id="recent-scrobble-refresh" class="cw-dash-ghost material-symbols-rounded" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble">refresh</button>
+          <button id="recent-scrobble-refresh" class="cw-dash-ghost" type="button" title="Refresh recent scrobble" aria-label="Refresh recent scrobble"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
         </div>
       </div>
       <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
@@ -700,32 +659,51 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
       <aside id="cw-settings-nav" aria-label="Settings navigation">
         <div class="cw-settings-nav-card">
           <div class="cw-settings-nav-title">Settings</div>
+          <div class="cw-settings-nav-gear" aria-hidden="true"><span class="material-symbols-rounded">settings</span></div>
         </div>
 
         <div class="cw-settings-nav-list" role="tablist" aria-label="Settings sections">
           <button type="button" class="cw-settings-nav-btn active" data-pane="overview" onclick="cwSettingsSelect?.('overview')">
-            <span class="material-symbols-rounded">dashboard</span>
+            <span class="material-symbols-rounded">grid_view</span>
             <span><strong>Setup</strong><small>Progress, status and next steps</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="providers" onclick="cwSettingsSelect?.('providers')">
-            <span class="material-symbols-rounded">hub</span>
-            <span><strong>Connections</strong><small>Providers, pairs and metadata</small></span>
+            <span class="material-symbols-rounded">device_hub</span>
+            <span><strong>Connections</strong><small>Providers and metadata</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
+          </button>
+          <button type="button" class="cw-settings-nav-btn" data-pane="sync" onclick="cwSettingsSelect?.('sync')">
+            <span class="material-symbols-rounded">sync_alt</span>
+            <span><strong>Synchronization</strong><small>Sync pairs and routes</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="scrobbler" onclick="cwSettingsSelect?.('scrobbler')">
             <span class="material-symbols-rounded">sensors</span>
             <span><strong>Scrobbler</strong><small>Webhook and watcher routes</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="scheduling" onclick="cwSettingsSelect?.('scheduling')">
             <span class="material-symbols-rounded">schedule</span>
-            <span><strong>Scheduling</strong><small>Standard and advanced jobs</small></span>
+            <span><strong>Scheduling</strong><small>Jobs and automation</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="app" onclick="cwSettingsSelect?.('app')">
-            <span class="material-symbols-rounded">tune</span>
+            <span class="material-symbols-rounded">security</span>
             <span><strong>UI and Security</strong><small>Interface, auth and tracker</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="maintenance" onclick="cwSettingsSelect?.('maintenance')">
             <span class="material-symbols-rounded">build</span>
-            <span><strong>Maintenance</strong><small>Debug and recovery tools</small></span>
+            <span><strong>Maintenance</strong><small>Tools and diagnostics</small></span>
+            <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
+          </button>
+        </div>
+
+        <div class="cw-settings-nav-footer">
+          <button type="button" class="cw-settings-help-card" onclick="openHelp?.()">
+            <span><strong>Need help?</strong><small>View documentation</small></span>
+            <span class="material-symbols-rounded" aria-hidden="true">open_in_new</span>
           </button>
         </div>
 
@@ -735,104 +713,94 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <section id="cw-settings-overview" class="cw-settings-pane active" data-pane="overview">
           <div id="cw-settings-overview-grid">
             <div class="cw-settings-overview-main">
-              <section class="cw-settings-overview-card cw-settings-hero">
-                <div class="cw-settings-hero-main">
-                  <div class="cw-settings-overview-kicker">Getting started</div>
-                  <h4 id="cw-settings-hero-title">Set up CrossWatch</h4>
-                  <p id="cw-settings-hero-copy">Connect services, add metadata, then choose sync pairs, scrobbler, or both.</p>
-                  <div class="cw-settings-hero-progress">
-                    <div class="cw-settings-hero-progress-top">
-                      <span class="cw-settings-hero-progress-label">Completion</span>
-                      <span class="cw-settings-hero-progress-value" id="cw-settings-progress-text">0 of 4 steps ready</span>
-                    </div>
-                    <div class="cw-settings-progress-track" aria-hidden="true">
-                      <span id="cw-settings-progress-bar"></span>
-                    </div>
+              <div class="cw-settings-overview-title">
+                <h3>Setup</h3>
+                <p>Track your setup progress and configure core areas.</p>
+              </div>
+
+              <section class="cw-settings-overview-card cw-settings-progress-card">
+                <div class="cw-settings-progress-summary">
+                  <div class="cw-settings-progress-ring" id="cw-settings-progress-ring">
+                    <span id="cw-settings-progress-count">0/4</span>
                   </div>
-                  <div class="cw-settings-hero-actions">
-                    <button type="button" class="btn primary cw-settings-hero-btn" id="cw-settings-primary-cta" onclick="cwSettingsOverviewGo?.('primary')">Continue setup</button>
-                    <button type="button" class="btn cw-settings-hero-btn" id="cw-settings-scrobbler-cta" onclick="cwSettingsOverviewGo?.('scrobbler')">Open scrobbler</button>
+                  <div class="cw-settings-progress-copy">
+                    <strong id="cw-settings-hero-title">Setup progress</strong>
+                    <span id="cw-settings-hero-copy">Checking your CrossWatch setup.</span>
+                    <span class="cw-settings-hero-progress-value" id="cw-settings-progress-text">0 of 4 steps ready</span>
+                    <span class="cw-settings-progress-track" aria-hidden="true"><span id="cw-settings-progress-bar"></span></span>
                   </div>
                 </div>
-                <div class="cw-settings-hero-panel">
-                  <div class="cw-settings-hero-panel-kicker">Live snapshot</div>
-                  <div class="cw-settings-hero-panel-title">What is already configured</div>
-                  <div class="cw-settings-metric-grid">
-                    <div class="cw-settings-metric">
-                      <span class="cw-settings-metric-label">Connected services</span>
-                      <strong id="cw-settings-stat-auth">0</strong>
-                      <small id="cw-settings-stat-auth-copy">No providers connected yet</small>
-                    </div>
-                    <div class="cw-settings-metric">
-                      <span class="cw-settings-metric-label">Sync pairs</span>
-                      <strong id="cw-settings-stat-pairs">0</strong>
-                      <small id="cw-settings-stat-pairs-copy">No synchronization pairs yet</small>
-                    </div>
-                    <div class="cw-settings-metric">
-                      <span class="cw-settings-metric-label">Automation</span>
-                      <strong id="cw-settings-stat-automation">Off</strong>
-                      <small id="cw-settings-stat-automation-copy">Scheduling and scrobbler are idle</small>
-                    </div>
-                  </div>
+                <div class="cw-settings-progress-steps" aria-label="Setup progress areas">
+                  <span class="cw-settings-progress-node" data-step-node="auth"><span class="material-symbols-rounded">check</span><small>Connections</small></span>
+                  <span class="cw-settings-progress-node" data-step-node="meta"><span class="material-symbols-rounded">check</span><small>Metadata</small></span>
+                  <span class="cw-settings-progress-node" data-step-node="sync"><span class="material-symbols-rounded">check</span><small>Synchronization</small></span>
+                  <span class="cw-settings-progress-node" data-step-node="scheduling"><span class="material-symbols-rounded">check</span><small>Automation</small></span>
                 </div>
               </section>
 
-              <section class="cw-settings-overview-card cw-settings-progress-card">
-                <div class="cw-settings-overview-head cw-settings-overview-head--stack">
-                  <div>
-                    <div class="cw-settings-overview-kicker">Setup</div>
-                    <h4>What to set up</h4>
-                    <p>These are the main things most people use.</p>
-                  </div>
-                </div>
-                <div class="cw-settings-setup-grid">
-                  <article class="cw-settings-setup-step" data-step="auth" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('auth')" onkeydown="cwSettingsStepKey?.(event,'auth')">
-                    <span class="cw-settings-setup-step-top">
-                      <span class="cw-settings-step-index">01</span>
-                      <span class="cw-settings-step-state" id="cw-settings-step-auth-state">Needs setup</span>
+              <section class="cw-settings-setup-card-list" aria-label="Setup areas">
+                <div class="cw-settings-setup-table">
+                  <article class="cw-settings-setup-step cw-settings-setup-row" data-step="auth" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('auth')" onkeydown="cwSettingsStepKey?.(event,'auth')">
+                    <span class="cw-settings-setup-area">
+                      <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">device_hub</span>
+                      <span>
+                        <strong>Connections</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-auth-copy">Connect your media services and metadata providers.</span>
+                      </span>
                     </span>
-                    <strong>Connect services</strong>
-                    <span class="cw-settings-step-copy" id="cw-settings-step-auth-copy">Link Plex, Jellyfin, Emby, or your trackers.</span>
-                    <span class="cw-settings-step-links">
-                      <button type="button" class="cw-settings-step-link" id="cw-settings-step-auth-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('auth')">Open connections</button>
-                    </span>
+                    <span class="cw-settings-step-state" id="cw-settings-step-auth-state">Needs setup</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-auth-detail">No providers</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-auth-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('auth')">Manage</button>
                   </article>
-                  <article class="cw-settings-setup-step" data-step="meta" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('meta')" onkeydown="cwSettingsStepKey?.(event,'meta')">
-                    <span class="cw-settings-setup-step-top">
-                      <span class="cw-settings-step-index">02</span>
-                      <span class="cw-settings-step-state" id="cw-settings-step-meta-state">Missing</span>
+                  <article class="cw-settings-setup-step cw-settings-setup-row" data-step="meta" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('meta')" onkeydown="cwSettingsStepKey?.(event,'meta')">
+                    <span class="cw-settings-setup-area">
+                      <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">database</span>
+                      <span>
+                        <strong>Metadata</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-meta-copy">Configure metadata sources and refresh settings.</span>
+                      </span>
                     </span>
-                    <strong>Add metadata</strong>
-                    <span class="cw-settings-step-copy" id="cw-settings-step-meta-copy">Bring in TMDb so matching and enrichment feel complete.</span>
-                    <span class="cw-settings-step-links">
-                      <button type="button" class="cw-settings-step-link" id="cw-settings-step-meta-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('meta')">Open metadata</button>
-                    </span>
+                    <span class="cw-settings-step-state" id="cw-settings-step-meta-state">Missing</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-meta-detail">Configure metadata sources</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-meta-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('meta')">Manage</button>
                   </article>
-                  <article class="cw-settings-setup-step" data-step="sync" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('sync')" onkeydown="cwSettingsStepKey?.(event,'sync')">
-                    <span class="cw-settings-setup-step-top">
-                      <span class="cw-settings-step-index">03</span>
-                      <span class="cw-settings-step-state" id="cw-settings-step-sync-state">Needs setup</span>
+                  <article class="cw-settings-setup-step cw-settings-setup-row" data-step="sync" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('sync')" onkeydown="cwSettingsStepKey?.(event,'sync')">
+                    <span class="cw-settings-setup-area">
+                      <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">sync_alt</span>
+                      <span>
+                        <strong>Synchronization</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-sync-copy">Manage sync pairs, routes and history.</span>
+                      </span>
                     </span>
-                    <strong>Sync pairs or scrobbler</strong>
-                    <span class="cw-settings-step-copy" id="cw-settings-step-sync-copy">You can use sync pairs, scrobbler, or both. Most people set up at least one.</span>
-                    <span class="cw-settings-step-links">
-                      <button type="button" class="cw-settings-step-link" id="cw-settings-step-sync-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('sync')">Sync pairs</button>
-                      <button type="button" class="cw-settings-step-link" id="cw-settings-step-sync-alt-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('scrobbler')">Scrobbler</button>
-                    </span>
+                    <span class="cw-settings-step-state" id="cw-settings-step-sync-state">Optional</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-sync-detail">No pairs configured</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-sync-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('sync')">Manage</button>
                   </article>
-                  <article class="cw-settings-setup-step" data-step="scheduling" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('scheduling')" onkeydown="cwSettingsStepKey?.(event,'scheduling')">
-                    <span class="cw-settings-setup-step-top">
-                      <span class="cw-settings-step-index">04</span>
-                      <span class="cw-settings-step-state" id="cw-settings-step-scheduling-state">Optional</span>
+                  <article class="cw-settings-setup-step cw-settings-setup-row" data-step="scheduling" role="button" tabindex="0" onclick="cwSettingsOverviewGo?.('scheduling')" onkeydown="cwSettingsStepKey?.(event,'scheduling')">
+                    <span class="cw-settings-setup-area">
+                      <span class="cw-settings-management-icon material-symbols-rounded" aria-hidden="true">schedule</span>
+                      <span>
+                        <strong>Automation</strong>
+                        <span class="cw-settings-step-copy" id="cw-settings-step-scheduling-copy">Schedule jobs and manage automation tasks.</span>
+                      </span>
                     </span>
-                    <strong>Scheduling and/or scrobbler</strong>
-                    <span class="cw-settings-step-copy" id="cw-settings-step-scheduling-copy">Optional. Turn on scheduling, scrobbler, or both.</span>
-                    <span class="cw-settings-step-links">
-                      <button type="button" class="cw-settings-step-link" id="cw-settings-step-scheduling-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('scheduling')">Open scheduling</button>
-                    </span>
+                    <span class="cw-settings-step-state" id="cw-settings-step-scheduling-state">Optional</span>
+                    <span class="cw-settings-step-detail" id="cw-settings-step-scheduling-detail">No automation enabled</span>
+                    <button type="button" class="cw-settings-step-link" id="cw-settings-step-scheduling-link" onclick="event.stopPropagation(); cwSettingsOverviewGo?.('scheduling')">Manage</button>
                   </article>
                 </div>
               </section>
+
+              <div class="hidden" aria-hidden="true">
+                <span id="cw-settings-primary-cta"></span>
+                <span id="cw-settings-scrobbler-cta"></span>
+                <span id="cw-settings-stat-auth"></span>
+                <span id="cw-settings-stat-auth-copy"></span>
+                <span id="cw-settings-stat-pairs"></span>
+                <span id="cw-settings-stat-pairs-copy"></span>
+                <span id="cw-settings-stat-automation"></span>
+                <span id="cw-settings-stat-automation-copy"></span>
+              </div>
 
             </div>
             <aside id="cw-settings-insight" aria-label="Settings Insight"></aside>
@@ -843,42 +811,50 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
           <div class="cw-settings-pane-head">
             <div>
               <div class="cw-settings-pane-kicker">Connections</div>
-              <h3>Providers, sync pairs and metadata</h3>
-              <p>Connect services first, then shape how data moves between them.</p>
+              <h3>Providers and metadata</h3>
+              <p>Connect media servers and/or Trackers first (Providers) then configure Metadata (TMDb)</p>
             </div>
-            <div class="cw-settings-jumpbar" aria-label="Provider sections">
-              <button type="button" class="cw-settings-jump" data-target="sec-auth" onclick="cwProvidersJump?.('sec-auth')">Authentication</button>
-              <button type="button" class="cw-settings-jump" data-target="sec-sync" onclick="cwProvidersJump?.('sec-sync')">Synchronization</button>
-              <button type="button" class="cw-settings-jump" data-target="sec-meta" onclick="cwProvidersJump?.('sec-meta')">Metadata / ID Mapping</button>
+            <div class="cw-settings-pane-head-actions">
+              <div class="cw-settings-jumpbar cw-connections-actions" aria-label="Connection actions">
+                <button type="button" class="cw-settings-jump" onclick="window.openAddMetadata?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add metadata</button>
+                <button type="button" class="cw-settings-jump" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add provider</button>
+              </div>
             </div>
           </div>
           <div class="cw-settings-pane-stack cw-settings-providers-stack">
-            <div class="section cw-settings-section cw-settings-provider-section" id="sec-auth">
-              <div class="head" data-toggle-section="sec-auth">
-                <span class="chev"></span><strong>Authentication</strong>
-                <span id="auth-providers-icons" class="cw-provider-head-icons">__CW_AUTH_HEADER_ICONS__</span>
-              </div>
+            <div class="section open cw-settings-section cw-settings-provider-section" id="sec-auth" data-accordion="off">
               <div class="body"><div id="auth-providers"></div></div>
             </div>
 
-            <div class="section cw-settings-section cw-settings-provider-section" id="sec-sync">
-              <div class="head" data-toggle-section="sec-sync"><span class="chev"></span><strong>Synchronization</strong></div>
+            <div class="section cw-settings-section cw-settings-provider-section cw-connections-source" id="sec-meta"><div class="head" data-toggle-section="sec-meta"><span class="chev"></span><strong>Metadata / ID Mapping</strong></div><div class="body">
+<div id="metadata-providers">
+  <div id="meta-provider-panel" class="cw-meta-provider-stack"></div>
+  <div id="meta-provider-raw" class="hidden"></div>
+</div>
+</div></div>
+          </div>
+        </section>
+
+        <section class="cw-settings-pane" data-pane="sync">
+          <div class="cw-settings-pane-head">
+            <div>
+              <div class="cw-settings-pane-kicker">Synchronization</div>
+              <h3>Sync pairs</h3>
+              <p>Choose providers and manage how data syncs between them.</p>
+            </div>
+          </div>
+          <div class="cw-settings-pane-stack cw-settings-sync-stack">
+            <div class="section open cw-settings-section" id="sec-sync" data-accordion="off">
+              <div class="head"><strong>Providers</strong></div>
               <div class="body">
-                <div class="sub">Providers</div><div id="providers_list" class="grid2"></div>
-                <div class="sep"></div><div class="sub">Pairs</div><div id="pairs_list"></div>
+                <div id="providers_list" class="grid2"></div>
+                <div class="sep"></div><h4 class="cw-sync-subhead">Pairs</h4><div id="pairs_list"></div>
                 <div class="footer"><div class="pair-selectors" style="margin-top:1em;">
                   <label for="source-provider" style="margin-right:1em;">Source:</label><select id="source-provider" name="source_provider" style="margin-left:.5em;"></select>
                   <label for="target-provider">Target:</label><select id="target-provider" name="target_provider" style="margin-left:.5em;"></select>
                 </div></div>
               </div>
             </div>
-
-            <div class="section cw-settings-section cw-settings-provider-section" id="sec-meta"><div class="head" data-toggle-section="sec-meta"><span class="chev"></span><strong>Metadata / ID Mapping</strong></div><div class="body">
-<div id="metadata-providers">
-  <div id="meta-provider-panel" class="cw-meta-provider-stack"></div>
-  <div id="meta-provider-raw" class="hidden"></div>
-</div>
-</div></div>
           </div>
         </section>
 
@@ -1081,17 +1057,6 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
                             <option value="hours:24">Last 24 hours, max 5</option>
                             <option value="hours:48">Last 48 hours, max 5</option>
                             <option value="hours:72">Last 72 hours, max 5</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_AI">Help ASK AI</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Help ASK AI: Shows or hides the in-app AI help entry point." aria-label="Help ASK AI setting help">help</button>
-                          </div>
-                          <select id="ui_show_AI" name="ui_show_AI">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
                           </select>
                         </div>
 
@@ -1498,7 +1463,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
 </div>
 
 
-<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)},logout=()=>{closeMenu("settings");if(typeof window.cwAppLogout==="function")return window.cwAppLogout();window.location.href="/logout"};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuLogout=logout;window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs")return(window.showTab?.("settings"),window.cwProvidersJump?.("sec-sync"));if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)},logout=()=>{closeMenu("settings");if(typeof window.cwAppLogout==="function")return window.cwAppLogout();window.location.href="/logout"};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():undefined);window.cwSettingsMenuLogout=logout;window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
 
 __CW_ASSET_BLOCK__
 
@@ -1513,7 +1478,9 @@ __CW_ASSET_BLOCK__
 <script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
 <script>(()=>{const sync=e=>{const pane=String(e?.detail?.pane||window.__cwSettingsPane||'overview').toLowerCase();document.querySelectorAll('#cw-settings-menu .cw-menu-item[data-settings-pane]').forEach(item=>{const active=item.dataset.settingsPane===pane;item.classList.toggle('active',active);if(active)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current')})};document.addEventListener('cw-settings-pane-changed',sync);document.addEventListener('DOMContentLoaded',sync,{once:true})})();</script>
 
-<script>(()=>{const scrollTo=id=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});window.cwProvidersJump=sectionId=>(window.cwSettingsSelect?.('providers'),setTimeout(()=>{window.openSection?.(sectionId);scrollTo(sectionId)},0));window.cwOverviewJump=(sectionId,authGroupId='')=>(window.cwSettingsSelect?.('providers'),setTimeout(async()=>{if(sectionId==='sec-auth'){window.openSection?.('sec-auth');try{await window.mountAuthProviders?.()}catch{}if(authGroupId){window.openSection?.(authGroupId);scrollTo(authGroupId)}else scrollTo('sec-auth');return}window.openSection?.(sectionId);scrollTo(sectionId)},0))})();</script>
+<script>(()=>{const ready=()=>{const input=document.querySelector('#cw-settings-nav .cw-settings-search input'),items=[...document.querySelectorAll('#cw-settings-nav .cw-settings-nav-btn')];if(!input||!items.length)return;const apply=()=>{const q=input.value.trim().toLowerCase();items.forEach(btn=>{btn.hidden=!!q&&!btn.textContent.toLowerCase().includes(q)})};input.addEventListener('input',apply);document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&String(e.key).toLowerCase()==='k'){e.preventDefault();window.showTab?.('settings');setTimeout(()=>input.focus(),0)}})};document.readyState==='loading'?document.addEventListener('DOMContentLoaded',ready,{once:true}):ready()})();</script>
+
+<script>(()=>{const scrollTo=id=>document.getElementById(id)?.scrollIntoView({behavior:'smooth',block:'start'});window.cwSyncJump=()=>{window.cwSettingsSelect?.('sync');setTimeout(()=>scrollTo('sec-sync'),0)};window.cwProvidersJump=sectionId=>{if(sectionId==='sec-sync')return window.cwSyncJump?.();window.cwSettingsSelect?.('providers');setTimeout(()=>{window.openSection?.(sectionId);scrollTo(sectionId)},0)};window.cwOverviewJump=(sectionId,authGroupId='')=>{if(sectionId==='sec-sync')return window.cwSyncJump?.();return(window.cwSettingsSelect?.('providers'),setTimeout(async()=>{if(sectionId==='sec-auth'){window.openSection?.('sec-auth');try{await window.mountAuthProviders?.()}catch{}if(authGroupId){window.openSection?.(authGroupId);scrollTo(authGroupId)}else scrollTo('sec-auth');return}window.openSection?.(sectionId);scrollTo(sectionId)},0))}})();</script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -1525,13 +1492,21 @@ __CW_ASSET_BLOCK__
     const el = $(id);
     if (el) el.style.width = value;
   };
+  const setDone = (selector, done) => document.querySelector(selector)?.classList.toggle("is-done", !!done);
   const plural = (n, singular, pluralForm) => `${n} ${n === 1 ? singular : (pluralForm || `${singular}s`)}`;
   const state = { primary: "auth" };
 
   const open = (key) => {
     if (key === "auth") return window.cwOverviewJump?.("sec-auth");
-    if (key === "meta") return window.cwOverviewJump?.("sec-meta");
-    if (key === "sync") return window.cwProvidersJump?.("sec-sync");
+    if (key === "meta") {
+      if (typeof window.openMetadataProviderForm === "function") {
+        window.cwSettingsSelect?.("providers");
+        setTimeout(() => window.openMetadataProviderForm?.("TMDB_METADATA")?.catch?.(() => window.cwOverviewJump?.("sec-meta")), 0);
+        return;
+      }
+      return window.cwOverviewJump?.("sec-meta");
+    }
+    if (key === "sync") return window.cwSyncJump?.();
     if (key === "scheduling" || key === "automation") return window.cwSettingsSelect?.("scheduling");
     if (key === "scrobbler") return window.cwSettingsSelect?.("scrobbler");
     if (key === "app") return window.cwSettingsSelect?.("app");
@@ -1557,21 +1532,26 @@ __CW_ASSET_BLOCK__
     card.classList.toggle("is-done", !!opts.done);
     card.classList.toggle("is-active", !!opts.active);
     card.classList.toggle("is-optional", !!opts.optional);
+    const statusKey = String(opts.status || "").trim().toLowerCase();
+    card.classList.toggle("is-inactive", statusKey === "inactive");
+    card.classList.toggle("is-warning", ["missing", "needs setup", "disabled", "inactive"].includes(statusKey));
 
     const statusEl = card.querySelector(".cw-settings-step-state");
-    const copyEl = card.querySelector(".cw-settings-step-copy");
+    const detailEl = card.querySelector(".cw-settings-step-detail");
     const primaryLinkEl = card.querySelector(`#cw-settings-step-${step}-link`);
     const secondaryLinkEl = card.querySelector(`#cw-settings-step-${step}-alt-link`);
 
     if (statusEl) statusEl.textContent = opts.status || "";
-    if (copyEl) copyEl.textContent = opts.copy || "";
+    if (detailEl) detailEl.textContent = opts.detail || "";
     if (primaryLinkEl) primaryLinkEl.textContent = opts.link || "";
     if (secondaryLinkEl) secondaryLinkEl.textContent = opts.altLink || "";
   };
 
   const render = (data = {}) => {
     const authCount = Number(data?.auth?.configured || 0);
-    const pairCount = Number(data?.pairs?.count || 0);
+    const pairTotal = Number(data?.pairs?.total ?? data?.pairs?.count ?? 0);
+    const pairActive = Number(data?.pairs?.enabled ?? data?.pairs?.active ?? data?.pairs?.count ?? 0);
+    const pairDisabled = Number(data?.pairs?.disabled ?? Math.max(0, pairTotal - pairActive));
     const metaConfigured = Number(data?.meta?.configured || 0);
     const metaDetected = Number(data?.meta?.detected || 0);
     const scheduleOn = !!data?.sched?.enabled;
@@ -1581,19 +1561,25 @@ __CW_ASSET_BLOCK__
     const steps = {
       auth: authCount > 0,
       meta: metaConfigured > 0,
-      sync: pairCount > 0 || scrobOn,
+      sync: pairActive > 0,
       scheduling: scheduleOn || scrobOn
     };
     const order = ["auth", "meta", "sync", "scheduling"];
-    const next = order.find((step) => !steps[step]) || "scheduling";
+    const next = order.find((step) => !steps[step]);
     const doneCount = order.filter((step) => steps[step]).length;
     const overviewGrid = document.getElementById("cw-settings-overview-grid");
 
     state.primary = doneCount === 4 ? "scheduling" : next;
     overviewGrid?.classList.toggle("cw-settings-overview-complete", doneCount === 4);
+    const percent = Math.round((doneCount / 4) * 100);
+    const ring = $("cw-settings-progress-ring");
+    if (ring) ring.style.setProperty("--cw-setup-progress", `${percent}%`);
+    setText("cw-settings-progress-count", `${doneCount}/4`);
+    setText("cw-settings-progress-percent", `${percent}%`);
     setText("cw-settings-progress-text", `${doneCount} of 4 steps ready`);
-    setWidth("cw-settings-progress-bar", `${Math.max(6, Math.min(100, (doneCount / 4) * 100))}%`);
+    setWidth("cw-settings-progress-bar", `${Math.max(6, Math.min(100, percent))}%`);
     setText("cw-settings-scrobbler-cta", scrobOn ? "Scrobbler settings" : "Open scrobbler");
+    order.forEach((step) => setDone(`[data-step-node="${step}"]`, steps[step]));
 
     if (!steps.auth) {
       setText("cw-settings-hero-title", "Connect a service");
@@ -1619,34 +1605,35 @@ __CW_ASSET_BLOCK__
 
     setText("cw-settings-stat-auth", String(authCount));
     setText("cw-settings-stat-auth-copy", authCount ? `${plural(authCount, "provider profile")} connected` : "No providers connected yet");
-    setText("cw-settings-stat-pairs", String(pairCount));
-    setText("cw-settings-stat-pairs-copy", pairCount ? `${plural(pairCount, "pair")} ready` : "No sync pairs yet");
+    setText("cw-settings-stat-pairs", String(pairActive));
+    setText("cw-settings-stat-pairs-copy", pairTotal ? (pairDisabled ? `${pairActive} active, ${pairDisabled} disabled` : `${plural(pairActive, "pair")} active`) : "No sync pairs yet");
     setText("cw-settings-stat-automation", automationOn ? "Live" : "Off");
     setText("cw-settings-stat-automation-copy", scheduleOn && scrobOn ? "Scheduling and scrobbler are on" : scheduleOn ? "Scheduling is on" : scrobOn ? "Scrobbler is on" : "Scheduling and scrobbler are off");
-
     setStep("auth", {
-      status: steps.auth ? `${authCount} connected` : "Needs setup",
-      copy: steps.auth ? `${plural(authCount, "provider profile")} saved.` : "Link Plex, Jellyfin, Emby, or your trackers.",
-      link: "Open connections",
+      status: steps.auth ? "Connected" : "Needs setup",
+      copy: steps.auth ? `${plural(authCount, "provider profile")} connected` : "Connect provider profiles first",
+      detail: steps.auth ? `${plural(authCount, "provider")} connected` : "No providers connected",
+      link: "Manage",
       done: steps.auth,
       active: next === "auth"
     });
 
     setStep("meta", {
       status: steps.meta ? (metaDetected > metaConfigured ? `Partial ${metaConfigured}/${Math.max(metaDetected, metaConfigured)}` : "Ready") : "Missing",
-      copy: steps.meta ? (metaDetected > metaConfigured ? `${metaConfigured} of ${Math.max(metaDetected, metaConfigured)} metadata providers are configured.` : "Metadata is set up.") : "Add TMDb to improve matching and metadata lookups.",
-      link: "Open metadata",
+      copy: steps.meta ? (metaDetected > metaConfigured ? `${metaConfigured} of ${Math.max(metaDetected, metaConfigured)} metadata providers configured` : "TMDb configured and ready") : "Configure TMDb for matching and enrichment",
+      detail: steps.meta ? (metaDetected > metaConfigured ? `${metaConfigured} of ${Math.max(metaDetected, metaConfigured)} ready` : "TMDb configured") : "Metadata provider needed",
+      link: "Manage",
       done: steps.meta,
       active: next === "meta"
     });
 
-    const syncStatus = pairCount > 0 && scrobOn ? "Both on" : pairCount > 0 ? "Sync pairs ready" : scrobOn ? "Scrobbler ready" : "Optional";
-    const syncCopy = pairCount > 0 && scrobOn ? `${plural(pairCount, "pair")} set up and scrobbler is on.` : pairCount > 0 ? `${plural(pairCount, "pair")} set up. You can still add scrobbler if you want.` : scrobOn ? "Scrobbler is on. Sync pairs are optional." : "You can use sync pairs, scrobbler, or both. Most people set up at least one.";
+    const syncStatus = pairActive > 0 ? "Active" : pairTotal > 0 ? "Disabled" : "Optional";
+    const syncCopy = pairTotal ? (pairDisabled ? `${pairActive} active, ${pairDisabled} disabled` : `${plural(pairActive, "sync pair")} active`) : "No sync pairs active";
     setStep("sync", {
       status: syncStatus,
       copy: syncCopy,
-      link: "Sync pairs",
-      altLink: "Scrobbler",
+      detail: pairTotal ? (pairDisabled ? `${pairActive} active, ${pairDisabled} disabled` : `${plural(pairActive, "active pair")}`) : "No sync pairs configured",
+      link: "Manage",
       done: steps.sync,
       active: next === "sync",
       optional: !steps.sync
@@ -1654,8 +1641,9 @@ __CW_ASSET_BLOCK__
 
     setStep("scheduling", {
       status: scheduleOn && scrobOn ? "Both on" : scheduleOn ? "Scheduling on" : scrobOn ? "Scrobbler on" : "Optional",
-      copy: scheduleOn && scrobOn ? "Scheduling and scrobbler are both on." : scheduleOn ? "Scheduling is on." : scrobOn ? "Scrobbler is on." : "Optional. Turn on scheduling, scrobbler, or both.",
-      link: "Open scheduling",
+      copy: scheduleOn && scrobOn ? "Scheduling and scrobbler enabled" : scheduleOn ? "Scheduling enabled" : scrobOn ? "Scrobbler enabled" : "Scheduling and scrobbler optional",
+      detail: scheduleOn && scrobOn ? "2 of 2 enabled" : scheduleOn || scrobOn ? "1 of 2 enabled" : "No automation configured",
+      link: "Manage",
       done: steps.scheduling,
       active: next === "scheduling",
       optional: !steps.scheduling
@@ -1670,21 +1658,15 @@ __CW_ASSET_BLOCK__
 
 <script>(()=>{const origFetch=window.fetch;if(typeof origFetch!=='function'||origFetch.__cwAuthPendingWrapped)return;const pending=()=>window.cwIsAuthSetupPending?.()===true,allowPath=p=>p.startsWith('/api/app-auth/')||p==='/api/config/meta'||p.startsWith('/api/config/meta?')||p.startsWith('/assets/')||p==='/favicon.svg';const emptyJson=(body='{}')=>new Response(body,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});window.fetch=Object.assign(async function(resource,init){try{if(!pending())return await origFetch(resource,init);const url=typeof resource==='string'?resource:String(resource?.url||'');const u=new URL(url,location.origin);if(u.origin!==location.origin||!u.pathname.startsWith('/api/')||allowPath(u.pathname)||allowPath(u.pathname+u.search))return await origFetch(resource,init);const method=String(init?.method||resource?.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD')return await origFetch(resource,init);if(u.pathname.startsWith('/api/config'))return emptyJson('{}');if(u.pathname.startsWith('/api/status'))return emptyJson('{"providers":{}}');if(u.pathname.startsWith('/api/pairs'))return emptyJson('[]');if(u.pathname.startsWith('/api/scheduling'))return emptyJson('{}');if(u.pathname.startsWith('/api/insights'))return emptyJson('{}');if(u.pathname.startsWith('/api/watch/'))return emptyJson('{}');if(u.pathname.startsWith('/api/webhooks/'))return emptyJson('{}');return emptyJson('{}')}catch{return await origFetch(resource,init)}},{__cwAuthPendingWrapped:true})})();</script>
 
-<script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),visible=()=>{if(!page)return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),fab=$('save-fab'),frost=$('save-frost'),page=$('page-settings'),tab=$('tab-settings'),noSave=new Set(['overview','providers','sync','maintenance']),pane=()=>String(window.__cwSettingsPane||'overview').toLowerCase(),visible=()=>{if(!page||noSave.has(pane()))return false;const cs=getComputedStyle(page);return!page.classList.contains('hidden')&&cs.display!=='none'&&cs.visibility!=='hidden'},update=()=>{const on=visible();fab?.classList.toggle('hidden',!on);frost?.classList.toggle('hidden',!on)},watch=(el,attrs)=>el&&new MutationObserver(update).observe(el,{attributes:true,attributeFilter:attrs});document.addEventListener('DOMContentLoaded',()=>{watch(page,['class','style']);watch(tab,['class']);update()},{once:true});document.addEventListener('tab-changed',update);document.addEventListener('cw-settings-pane-changed',update);window.addEventListener('hashchange',update);document.querySelector('.tabs')?.addEventListener('click',update,true)})();</script>
 
 <script>(()=>{const install=()=>{const orig=window.saveSettings;if(typeof orig!=='function'||orig._wrapped)return;window.saveSettings=Object.assign(async function(btnOrEvent){const btn=btnOrEvent instanceof HTMLElement?btnOrEvent:document.getElementById('save-fab-btn');if(btn&&!btn.dataset.defaultHtml)btn.dataset.defaultHtml=btn.innerHTML;if(btn)btn.disabled=true;try{const ret=orig.apply(this,arguments);await(ret&&typeof ret.then==='function'?ret:Promise.resolve());window.invalidateConfigCache?.();window.manualRefreshStatus?.();if(btn){btn.innerHTML='Settings saved';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-label">SAVE</span>';btn.disabled=false},1600)}return ret}catch(e){if(btn){btn.innerHTML='Save failed';setTimeout(()=>{btn.innerHTML=btn.dataset.defaultHtml||'<span class="btn-label">SAVE</span>';btn.disabled=false},2000)}throw e}},{_wrapped:true})};document.readyState==='complete'?install():window.addEventListener('load',install,{once:true})})();</script>
 </body></html>
 
 """
 
-def get_index_html(include_gitbook_embed: bool = True, ui_show_ai: bool = True) -> str:
+def get_index_html() -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block())
-    html = html.replace("__CW_AUTH_HEADER_ICONS__", _auth_header_icons_html())
-    core_script = '<script src="/assets/helpers/core.js?v=__CW_VERSION__"></script>'
-    if core_script in html and "__cwUiShowAI" not in html:
-        html = html.replace(core_script, f'<script>window.__cwUiShowAI={"true" if ui_show_ai else "false"};</script>\n{core_script}', 1)
-    if include_gitbook_embed and "gitbook/embed/script.js" not in html:
-        html = html.replace(core_script, f"{GITBOOK_EMBED_BLOCK}\n\n{core_script}", 1) if core_script in html else f"{html}\n\n{GITBOOK_EMBED_BLOCK}\n"
     return (
         html
         .replace("__CW_CURRENT_VERSION__", CURRENT_VERSION)

@@ -174,31 +174,36 @@ def _tmdb_sync_html() -> str:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
-            <div class="sub">Sync (watchlist/ratings) via TMDb v3 session. Metadata TMDb is configured separately.</div>
+            <div class="cw-auth-journey" style="--cw-auth-c1:0,179,229;--cw-auth-c2:144,206,161;--cw-auth-logo:url('/assets/img/TMDB.svg')">
+              <div class="cw-auth-journey-text">
+                <div class="cw-auth-journey-title">Connect to TMDb</div>
+                <div class="cw-auth-journey-copy">Add your TMDb v3 API key and connect to create a session. This syncs your TMDb watchlist and ratings; metadata TMDb is configured separately.</div>
+              </div>
+            </div>
+
+            <div class="sub">&nbsp;</div>
             
                 <div class="grid2">
                   <div>
                     <label for="tmdb_sync_api_key">API Key (v3)</label>
                     <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="new-password" placeholder="Enter TMDb API key" spellcheck="false" autocapitalize="off" />
                     <div id="tmdb_sync_hint" class="msg warn" style="margin-top:8px">
-                      You need an TMDb API key. Create one at
+                      Create one at
                       <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb Preferences</a>
-                      and use the url: https://www.themoviedb.org/settings/api
                     </div>
                   </div>
             
                   <div>
                     <label for="tmdb_sync_session_id">Session ID (v3)</label>
                     <input id="tmdb_sync_session_id" name="tmdb_sync_session_id" type="password" autocomplete="off" placeholder="Created after approval" readonly aria-readonly="true" tabindex="-1" />
-                    <div class="muted">Created automatically after TMDb approval.</div>
+                    
                   </div>
                 </div>
             
                 <div style="margin-top:10px">
-                  <div class="field-label">Status</div>
                   <div class="inline">
-                    <button id="tmdb_sync_connect" class="btn">Connect</button>
-                    <button id="tmdb_sync_disconnect" class="btn danger">Disconnect</button>
+                    <button id="tmdb_sync_connect" class="btn">Connect TMDb</button>
+                    <button id="tmdb_sync_disconnect" class="btn danger">Delete</button>
                     <div id="tmdb_sync_msg" class="msg ok hidden" aria-live="polite" style="margin-left:auto"></div>
                   </div>
                 </div>

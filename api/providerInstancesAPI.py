@@ -20,6 +20,7 @@ _CFG_KEY_ALIAS = {
     "tmdb": "tmdb_sync",
     "tmdb_sync": "tmdb_sync",
 }
+_MAX_GENERATED_PROFILES = 9
 
 
 def _cfg_key(provider: str) -> str:
@@ -65,26 +66,19 @@ def _canonical_profile_id(provider: str, instance_id: Any) -> str | None:
         num = int(m.group(1))
     except Exception:
         return ""
+    if num < 1 or num > _MAX_GENERATED_PROFILES:
+        return ""
     return f"{prov}-P{num:02d}"
 
 
 def _next_profile_id(provider: str, insts: dict[str, Any]) -> str:
     prov = _prov_prefix(provider)
-    best = 0
-    for k in (insts or {}).keys():
-        m = re.fullmatch(rf"{re.escape(prov)}-P(\d{{2,}})", str(k).strip().upper())
-        if not m:
-            continue
-        try:
-            best = max(best, int(m.group(1)))
-        except Exception:
-            pass
-    n = best + 1 if best else 1
-    cand = f"{prov}-P{n:02d}"
-    while cand in insts:
-        n += 1
+    existing = {str(k).strip().upper() for k in (insts or {}).keys()}
+    for n in range(1, _MAX_GENERATED_PROFILES + 1):
         cand = f"{prov}-P{n:02d}"
-    return cand
+        if cand not in existing:
+            return cand
+    return ""
 
 
 def _create_instance(insts: dict[str, Any], inst: str, payload: dict[str, Any]) -> None:
@@ -163,6 +157,9 @@ def api_provider_instances_create_next(provider: str, payload: dict[str, Any] = 
         blk["instances"] = insts
 
     inst = _next_profile_id(provider, insts)
+    if not inst:
+        return {"ok": False, "error": "profile_limit_reached"}
+
     if inst in insts and isinstance(insts.get(inst), dict):
         return {"ok": True, "id": inst}
 

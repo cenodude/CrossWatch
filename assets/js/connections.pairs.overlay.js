@@ -620,6 +620,12 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
     watchSyncSection();
     renderOrEnhance();
   });
+  document.addEventListener("cw-settings-pane-changed", (ev) => {
+    if (String(ev?.detail?.pane || "").toLowerCase() === "sync") {
+      renderOrEnhance(true);
+      scheduleViewportLimit(120);
+    }
+  });
   document.addEventListener("cx-state-change", renderOrEnhance);
   window.addEventListener("cx:pairs:changed", () => { renderOrEnhance(true); });
 

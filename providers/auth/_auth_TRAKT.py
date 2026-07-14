@@ -182,6 +182,26 @@ class _TraktProvider:
       filter: brightness(1.06);
       box-shadow: 0 0 18px rgba(0,224,132,.5);
     }
+
+    /* Quick Connect-style link-code card */
+    #sec-trakt .hidden{display:none !important}
+    #sec-trakt .trk-qc{margin-top:12px;padding:14px;border-radius:12px;border:1px solid rgba(0,224,132,.35);background:rgba(0,224,132,.06)}
+    #sec-trakt .trk-qc-codewrap{display:flex;align-items:center;justify-content:center;gap:12px}
+    #sec-trakt .trk-qc-code{
+      font-size:2em;font-weight:700;letter-spacing:.24em;padding:6px 0 6px .24em;color:#8ff0c2;
+      text-align:center;text-transform:uppercase;font-variant-numeric:tabular-nums;
+    }
+    #sec-trakt .trk-qc-copy{
+      appearance:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+      width:34px;height:34px;border-radius:9px;flex:0 0 auto;
+      border:1px solid rgba(0,224,132,.35);background:rgba(0,224,132,.08);color:#8ff0c2;
+      transition:background .15s ease, border-color .15s ease, color .15s ease, transform .12s ease;
+    }
+    #sec-trakt .trk-qc-copy:hover{background:rgba(0,224,132,.16);border-color:rgba(0,224,132,.6)}
+    #sec-trakt .trk-qc-copy:active{transform:scale(.94)}
+    #sec-trakt .trk-qc-copy.copied{background:rgba(0,224,132,.24);border-color:rgba(0,224,132,.75)}
+    #sec-trakt .trk-qc-copy svg{width:16px;height:16px;display:block}
+    #sec-trakt .trk-qc-meta{display:flex;justify-content:space-between;gap:12px;margin-top:6px}
   </style>
 
   <div class="head" data-toggle-section="sec-trakt">
@@ -204,6 +224,13 @@ class _TraktProvider:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
+            <div class="cw-auth-journey" style="--cw-auth-c1:225,20,60;--cw-auth-c2:159,66,198;--cw-auth-logo:url('/assets/img/TRAKT.svg')">
+              <div class="cw-auth-journey-text">
+                <div class="cw-auth-journey-title">Connect to Trakt</div>
+                <div class="cw-auth-journey-copy">Add your Trakt Client ID and Secret, then click Connect TRAKT and open trakt.tv/activate to enter the link code shown here. Once approved, CrossWatch can sync your Trakt watchlist, history and ratings.</div>
+              </div>
+            </div>
+
             <div class="grid2">
               <div>
                 <label for="trakt_client_id">Client ID</label>
@@ -224,19 +251,27 @@ class _TraktProvider:
 
             <div class="sep"></div>
 
-            <div>
-              <div class="field-label">Link code (PIN)</div>
-              <div style="display:flex;gap:8px">
-                <input id="trakt_pin" placeholder="" readonly>
-                <button id="btn-copy-trakt-pin" class="btn copy" type="button">Copy</button>
-              </div>
-            </div>
-
+            <input id="trakt_pin" type="hidden">
             <div class="inline" style="margin-top:10px">
               <button id="btn-connect-trakt" class="btn" type="button">Connect TRAKT</button>
+              <button id="btn-trakt-cancel" class="btn danger hidden" type="button">Cancel</button>
+              <button id="btn-trakt-restart" class="btn hidden" type="button">Restart</button>
               <button id="btn-delete-trakt" class="btn danger" type="button">Delete</button>
-              <div class="sub">Open <a href="https://trakt.tv/activate" target="_blank" rel="noopener">trakt.tv/activate</a> and enter your code.</div>
               <div id="trakt_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
+            </div>
+
+            <div id="trakt_qc_state" class="trk-qc hidden">
+              <div class="trk-qc-codewrap">
+                <div class="trk-qc-code" id="trakt_qc_code">------</div>
+                <button type="button" id="trakt_qc_copy" class="trk-qc-copy" title="Copy code" aria-label="Copy code">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
+              </div>
+              <div class="sub" id="trakt_qc_help">Opening trakt.tv/activate &mdash; enter this code there and approve CrossWatch.</div>
+              <div class="trk-qc-meta">
+                <span class="sub" id="trakt_qc_status">Waiting for authorization&hellip;</span>
+                <span class="sub" id="trakt_qc_timer"></span>
+              </div>
             </div>
           </div>
         </div>
@@ -330,6 +365,25 @@ class _TraktProvider:
             headers=_headers(),
             timeout=30,
         )
+
+        if r.status_code == 429:
+            try:
+                retry_after = int(float(r.headers.get("Retry-After") or 0))
+            except Exception:
+                retry_after = 0
+            return {"ok": False, "status": "slow_down", "retry_after": retry_after}
+
+        if r.status_code == 410:
+            return {"ok": False, "status": "expired_token"}
+        if r.status_code == 404:
+            return {"ok": False, "status": "not_found"}
+        if r.status_code == 409:
+            return {"ok": False, "status": "already_used"}
+        if r.status_code == 418:
+            return {"ok": False, "status": "access_denied"}
+
+        if r.status_code >= 500:
+            return {"ok": False, "status": "server_error", "status_code": int(r.status_code)}
 
         if r.status_code in (400, 401, 403):
             try:

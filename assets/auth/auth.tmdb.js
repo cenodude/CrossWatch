@@ -64,6 +64,7 @@
   }
 
   function setConn(ok, msg) {
+    try { Shared.setConnectLocked("tmdb_sync_connect", !!ok); } catch {}
     return Shared.setStatus("tmdb_sync_msg", ok, msg);
   }
 
@@ -126,7 +127,13 @@
         if (!silent) note("TMDb pending approval");
         return;
       }
-      setConn(false, j.error || "Not connected");
+      const hasKey = !!txt(el("tmdb_sync_api_key")?.value);
+      if (hasKey) {
+        setConn(false, j.error || "Not connected");
+      } else {
+        try { Shared.setConnectLocked("tmdb_sync_connect", false); } catch {}
+        try { Shared.setStatusPill("tmdb_sync_msg", "clear"); } catch {}
+      }
       if (!silent) note("TMDb not connected");
     } catch {
       setConn(false, "TMDb verify failed");

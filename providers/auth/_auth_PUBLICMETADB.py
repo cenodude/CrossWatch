@@ -148,6 +148,8 @@ def html() -> str:
     #sec-publicmetadb .inline .msg.hidden{display:none}
     #sec-publicmetadb .btn.danger{ background:#a8182e; border-color:rgba(255,107,107,.4) }
     #sec-publicmetadb .btn.danger:hover{ filter:brightness(1.08) }
+    #sec-publicmetadb .publicmetadb-actions{display:flex;gap:12px;align-items:center;margin-top:12px;flex-wrap:wrap}
+    #sec-publicmetadb .publicmetadb-actions .msg{margin-top:0}
     #sec-publicmetadb #publicmetadb_save{
       background: linear-gradient(135deg,#16a34a,#22c55e);
       border-color: rgba(34,197,94,.45);
@@ -176,26 +178,28 @@ def html() -> str:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
+            <div class="cw-auth-journey" style="--cw-auth-c1:155,155,155;--cw-auth-c2:155,155,155;--cw-auth-logo:url('/assets/img/PUBLICMETADB.svg')">
+              <div class="cw-auth-journey-text">
+                <div class="cw-auth-journey-title">Connect to PublicMetaDB</div>
+                <div class="cw-auth-journey-copy">Paste your PublicMetaDB API key and click Connect. Create a key in PublicMetaDB Settings &rsaquo; API.</div>
+              </div>
+            </div>
+
             <div class="grid2">
               <div>
                 <label for="publicmetadb_key">API Key</label>
-                <div style="display:flex;gap:8px">
-                  <input id="publicmetadb_key" name="publicmetadb_key" type="password" placeholder="pm-..." />
-                  <button id="publicmetadb_save" class="btn">Connect</button>
-                </div>
+                <input id="publicmetadb_key" name="publicmetadb_key" type="password" placeholder="pm-..." />
                 <div id="publicmetadb_hint" class="msg warn" style="margin-top:8px">
                   Create an API key in
                   <a href="https://publicmetadb.com" target="_blank" rel="noopener">PublicMetaDB Settings &gt; API</a>.
                 </div>
               </div>
+            </div>
 
-              <div>
-                <div class="field-label">Status</div>
-                <div class="inline">
-                  <button id="publicmetadb_disconnect" class="btn danger">Disconnect</button>
-                  <div id="publicmetadb_msg" class="msg ok hidden" aria-live="polite"></div>
-                </div>
-              </div>
+            <div class="publicmetadb-actions">
+              <button id="publicmetadb_save" class="btn">Connect PublicMetaDB</button>
+              <button id="publicmetadb_disconnect" class="btn danger">Delete</button>
+              <div id="publicmetadb_msg" class="msg ok hidden" aria-live="polite"></div>
             </div>
           </div>
         </div>
