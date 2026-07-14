@@ -80,8 +80,8 @@ _HELPER_SCRIPTS = (
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "main-status.js",
+    "syncbar.js", "run-summary-stream.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
 )
 def _asset_block() -> str:
     helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in _HELPER_SCRIPTS)
