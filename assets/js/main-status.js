@@ -21,6 +21,14 @@
   let providersCache = null;
   let authMo = null;
   let metaMo = null;
+  let authRetry = 0;
+  let dots = null;
+
+  function activeTab() {
+    return String(
+      document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main"
+    ).toLowerCase();
+  }
 
   function getCachedConfig() {
     return window.CW?.Cache?.getCfg?.() || window._cfgCache || {};
@@ -50,29 +58,41 @@
     return false;
   }
 
+  function ensureDot(head) {
+    const existing = head.querySelector(".auth-dot");
+    if (existing) return existing;
+    if (getComputedStyle(head).display !== "flex") {
+      Object.assign(head.style, { display: "flex", alignItems: "center" });
+    }
+    return head.appendChild(
+      Object.assign(document.createElement("span"), { className: "auth-dot" })
+    );
+  }
+
   function setDot(id, on) {
     const sec = $(id);
     const head = sec?.querySelector(".head") || sec?.firstElementChild;
     if (!head) return false;
-    if (getComputedStyle(head).display !== "flex") {
-      Object.assign(head.style, { display: "flex", alignItems: "center" });
-    }
-    const dot =
-      head.querySelector(".auth-dot") ||
-      head.appendChild(Object.assign(document.createElement("span"), { className: "auth-dot" }));
-    dot.classList.toggle("on", !!on);
-    dot.title = on ? "Configured" : "Not configured";
+    const dot = ensureDot(head);
+    const want = !!on;
+    const state = want ? "1" : "0";
+    if (dot.dataset.on === state) return true;
+    dot.dataset.on = state;
+    dot.classList.toggle("on", want);
+    dot.title = want ? "Configured" : "Not configured";
     dot.setAttribute("aria-label", dot.title);
     return true;
   }
 
-  async function refreshAuthDots(force = false) {
-    const cfg = await loadConfig(force);
+  function applyAuthDots(cfg) {
     if (cfg && typeof cfg === "object") {
-      try { window.CW?.Cache?.setCfg?.(cfg); } catch {}
       try { window._cfgCache = cfg; } catch {}
     }
     return AUTH_MAP.reduce((any, [id, key]) => setDot(id, isProviderConfigured(key, cfg)) || any, false);
+  }
+
+  async function refreshAuthDots(force = false) {
+    return applyAuthDots(await loadConfig(force));
   }
 
   window.refreshAuthDots = refreshAuthDots;
@@ -108,21 +128,46 @@
 
   window.syncMetadataProviderDot = syncMetadataProviderDot;
 
-  function observe(hostId, slot, delay, fn, opts) {
-    const host = $(hostId);
+  function observeMeta(fn) {
+    const host = $("meta-tmdb-dot");
     if (!host) {
-      setTimeout(() => observe(hostId, slot, delay, fn, opts), 150);
+      setTimeout(() => observeMeta(fn), 150);
       return;
     }
     fn();
-    if ((slot === "auth" && authMo) || (slot === "meta" && metaMo)) return;
-    const mo = new MutationObserver(() => {
-      clearTimeout(mo._t);
-      mo._t = setTimeout(fn, delay);
+    if (metaMo) return;
+    metaMo = new MutationObserver(fn);
+    metaMo.observe(host, { childList: true, characterData: true, subtree: true });
+  }
+
+  function connectAuthObserver() {
+    if (authMo) return;
+    const host = $("auth-providers");
+    if (!host) {
+      clearTimeout(authRetry);
+      authRetry = setTimeout(() => {
+        if (activeTab() === "settings") connectAuthObserver();
+      }, 150);
+      return;
+    }
+    authMo = new MutationObserver(() => {
+      clearTimeout(authMo._t);
+      authMo._t = setTimeout(() => {
+        dots?.onMutation();
+        renderProviders();
+      }, 200);
     });
-    mo.observe(host, opts);
-    if (slot === "auth") authMo = mo;
-    else metaMo = mo;
+    authMo.observe(host, { childList: true, subtree: true });
+    dots?.onMutation();
+    renderProviders();
+  }
+
+  function disconnectAuthObserver() {
+    clearTimeout(authRetry);
+    if (!authMo) return;
+    clearTimeout(authMo._t);
+    authMo.disconnect();
+    authMo = null;
   }
 
   function titleCase(v) {
@@ -319,14 +364,29 @@
     btn.addEventListener("click", (e) => window.manualRefreshStatus?.(e));
   }
 
+  function makeDotsController() {
+    const create = window.CW?.createAuthDotsController;
+    if (typeof create !== "function") return null;
+    return create({
+      loadConfig,
+      getCachedConfig,
+      applyDots: applyAuthDots,
+      activeTab,
+      connectObserver: connectAuthObserver,
+      disconnectObserver: disconnectAuthObserver,
+    });
+  }
+
   function init() {
     bindStatusButton();
-    observe("auth-providers", "auth", 200, () => refreshAuthDots(true).catch(() => {}).finally(renderProviders), { childList: true, subtree: true });
-    observe("meta-tmdb-dot", "meta", 0, syncMetadataProviderDot, { childList: true, characterData: true, subtree: true });
+    dots = makeDotsController();
+    dots?.syncObserver();
+    observeMeta(syncMetadataProviderDot);
     renderCachedProviders();
     let tries = 0;
     (function retry() {
-      refreshAuthDots(false)
+      const done = dots ? dots.refresh(false) : refreshAuthDots(false);
+      done
         .then((ok) => {
           renderProviders();
           return ok || ++tries >= 50 || setTimeout(retry, 200);
@@ -338,7 +398,18 @@
   document.addEventListener(
     "settings-collect",
     () => {
-      refreshAuthDots(true).catch(() => {}).finally(renderProviders);
+      dots?.applyCached();
+      renderProviders();
+      syncMetadataProviderDot();
+    },
+    true
+  );
+
+  document.addEventListener(
+    "config-saved",
+    () => {
+      const done = dots ? dots.onConfigChanged() : refreshAuthDots(true);
+      done.catch(() => {}).finally(renderProviders);
       syncMetadataProviderDot();
     },
     true
@@ -348,7 +419,8 @@
     "tab-changed",
     (event) => {
       const tab = String(event?.detail?.id || event?.detail?.tab || "").toLowerCase();
-      refreshAuthDots(tab === "settings").catch(() => {}).finally(renderProviders);
+      const done = dots ? dots.onTabChanged(tab) : refreshAuthDots(tab === "settings");
+      done.catch(() => {}).finally(renderProviders);
       syncMetadataProviderDot();
       if (tab === "main") setTimeout(renderCachedProviders, 0);
     },
@@ -359,13 +431,15 @@
     "cw-status-updated",
     (event) => {
       const providers = event?.detail?.providers || null;
-      refreshAuthDots(false).catch(() => {}).finally(() => applyStatusProviders(providers));
+      const done = dots ? dots.refresh(false) : refreshAuthDots(false);
+      done.catch(() => {}).finally(() => applyStatusProviders(providers));
     },
     true
   );
 
   window.addEventListener("auth-changed", () => {
-    refreshAuthDots(true).catch(() => {}).finally(renderProviders);
+    const done = dots ? dots.onConfigChanged() : refreshAuthDots(true);
+    done.catch(() => {}).finally(renderProviders);
   });
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
