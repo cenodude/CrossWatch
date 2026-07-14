@@ -358,6 +358,18 @@ _apply_auth_reset_env_once()
 app = FastAPI()
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
+from api.scrobbleAPI import WebhookAuthError
+
+@app.exception_handler(WebhookAuthError)
+async def _handle_webhook_auth_error(request: Request, exc: WebhookAuthError) -> JSONResponse:
+    client = request.client.host if request.client else "-"
+    LOG(
+        f"Rejected webhook request, provider={exc.provider or '-'}, reason={exc.reason}, client={client}, path={request.url.path}",
+        level="WARN",
+        module="WEBHOOK",
+    )
+    return JSONResponse({"detail": exc.reason}, status_code=401)
+
 def _is_closed_log_stream(request: Request, err: Exception) -> bool:
     return (
         request.method == "GET"
@@ -396,8 +408,11 @@ async def conditional_access_logger(request: Request, call_next):
                 if should_log:
                     dt_ms = int((time.time() - t0) * 1000)
                     host = f"{client.host}:{client.port}" if client else "-"
-                    qs = _redact_query_string(request.url.query)
-                    path_qs = path + (f"?{qs}" if qs else "")
+                    if path.startswith("/webhook/"):
+                        path_qs = path
+                    else:
+                        qs = _redact_query_string(request.url.query)
+                        path_qs = path + (f"?{qs}" if qs else "")
                     proto = f"HTTP/{request.scope.get('http_version','1.1')}"
                     print(f'{host} - "{request.method} {path_qs} {proto}" {status} ({dt_ms} ms)')
 

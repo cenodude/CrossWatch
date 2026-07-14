@@ -71,6 +71,14 @@ except Exception:
 
 router = APIRouter(tags=["scrobbler"])
 
+
+class WebhookAuthError(Exception):
+    def __init__(self, provider: str = "", reason: str = "invalid_webhook_token") -> None:
+        self.provider = str(provider or "").strip().lower()
+        self.reason = str(reason or "invalid_webhook_token").strip() or "invalid_webhook_token"
+        super().__init__(self.reason)
+
+
 # Webhook URL token helpers
 _WEBHOOK_KEYS = ("plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher")
 
@@ -110,12 +118,23 @@ def _ensure_route_ratings_webhook_ids(cfg: dict[str, Any], regenerate: bool = Fa
         route_id = str(raw.get("id") or f"R{idx + 1}").strip() or f"R{idx + 1}"
         options = normalize_route_options(raw.get("options"))
         ratings = dict(options.get("ratings") or {})
-        if regenerate or not str(ratings.get("webhook_id") or "").strip():
-            ratings["webhook_id"] = _gen_webhook_id()
-            changed = True
-        if regenerate or not str(ratings.get("webhook_token") or "").strip():
-            ratings["webhook_token"] = _gen_webhook_id()
-            changed = True
+        mode = str(ratings.get("mode") or "off").strip().lower() or "off"
+        has_targets = bool(list(ratings.get("targets") or []))
+        if mode == "custom" and has_targets:
+            if regenerate or not str(ratings.get("webhook_id") or "").strip():
+                ratings["webhook_id"] = _gen_webhook_id()
+                changed = True
+            if regenerate or not str(ratings.get("webhook_token") or "").strip():
+                ratings["webhook_token"] = _gen_webhook_id()
+                changed = True
+        else:
+            if mode == "custom" and not has_targets:
+                ratings["mode"] = "off"
+                changed = True
+            if str(ratings.get("webhook_id") or "").strip() or str(ratings.get("webhook_token") or "").strip():
+                changed = True
+            ratings["webhook_id"] = ""
+            ratings["webhook_token"] = ""
         options["ratings"] = ratings
         raw["options"] = options
         out.append(
@@ -240,7 +259,7 @@ def _resolve_media_webhook_request(request: Request, provider: str, legacy_key: 
     expected = str(ids.get(legacy_key) or "").strip()
     got = _extract_url_token(request)
     if not expected or not got or not hmac.compare_digest(expected, got):
-        raise HTTPException(status_code=401, detail="invalid_webhook_token")
+        raise WebhookAuthError(provider_lc, "invalid_webhook_token")
     return apply_webhook_settings(cfg, provider_lc, "default"), "default", None
 
 
@@ -279,7 +298,7 @@ def _resolve_plexwatcher_target(request: Request) -> tuple[str, dict[str, Any], 
             if isinstance(route_cfg, dict):
                 return "route", route_cfg, hook
 
-    raise HTTPException(status_code=401, detail="invalid_webhook_token")
+    raise WebhookAuthError("plex", "invalid_webhook_token")
 
 
 def _event_trigger_route_label(route: dict[str, Any]) -> str:
@@ -365,8 +384,34 @@ async def api_webhook_regenerate(payload: dict[str, Any] | None = Body(default=N
     key = str(body.get("key") or "").strip()
     provider = str(body.get("provider") or "").strip().lower()
     instance = str(body.get("instance") or "").strip()
+    route_id = str(body.get("route_id") or body.get("route") or "").strip()
 
-    if key:
+    if route_id:
+        sc = cfg.setdefault("scrobble", {})
+        watch = sc.setdefault("watch", {})
+        routes = watch.get("routes")
+        if not isinstance(routes, list):
+            return JSONResponse({"ok": False, "error": "routes_not_configured"}, status_code=400)
+        found = False
+        for idx, raw in enumerate(routes):
+            if not isinstance(raw, dict):
+                continue
+            rid = str(raw.get("id") or f"R{idx + 1}").strip() or f"R{idx + 1}"
+            if rid != route_id:
+                continue
+            options = normalize_route_options(raw.get("options"))
+            ratings = dict(options.get("ratings") or {})
+            ratings["webhook_id"] = _gen_webhook_id()
+            ratings["webhook_token"] = _gen_webhook_id()
+            options["ratings"] = ratings
+            raw["options"] = options
+            found = True
+            break
+        if not found:
+            return JSONResponse({"ok": False, "error": "route_not_found"}, status_code=404)
+        route_hooks = _ensure_route_ratings_webhook_ids(cfg)
+        profile_hooks = _ensure_media_profile_webhook_ids(cfg)
+    elif key:
         if key not in _WEBHOOK_KEYS:
             return JSONResponse({"ok": False, "error": "invalid_key"}, status_code=400)
         ids[key] = _gen_webhook_id()
@@ -1137,20 +1182,12 @@ def debug_watch_status(request: Request) -> dict[str, Any]:
     return out
 
 @router.post("/api/watch/start")
-def debug_watch_start(
-    request: Request,
-    provider: str | None = Query(None),
-    sink: str | None = Query(None),
-) -> dict[str, Any]:
+def debug_watch_start(request: Request) -> dict[str, Any]:
     if callable(_reset_currently_watching):
         try:
             _reset_currently_watching()
         except Exception:
             pass
-
-    if provider is not None or sink is not None:
-        # Watcher startup is route-driven now; query overrides are ignored for backward compatibility.
-        pass
 
     if not (HAVE_WATCH_MANAGER and callable(_wm_start_from_config)):
         raise HTTPException(status_code=500, detail="WatchManager unavailable")

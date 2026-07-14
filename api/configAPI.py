@@ -149,16 +149,12 @@ def _watch_runtime_fingerprint(cfg: dict[str, Any]) -> str:
     sources = sc.get("sources")
     sources = sources if isinstance(sources, dict) else {}
     routes = watch.get("routes")
-    filters = watch.get("filters")
     relevant = {
         "scrobble_enabled": bool(sc.get("enabled")),
         "mode": str(sc.get("mode") or ""),
         "source_watcher": bool(sources.get("watcher", sources.get("watch", False))),
         "watch_autostart": bool(watch.get("autostart")),
         "routes": routes if isinstance(routes, list) else None,
-        "provider": watch.get("provider"),
-        "sink": watch.get("sink"),
-        "filters": filters if isinstance(filters, dict) else {},
     }
     return _stable_json(relevant)
 

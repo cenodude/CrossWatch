@@ -480,8 +480,8 @@ class SimklSink(ScrobbleSink):
 
     def _route_source(self, cfg: dict[str, Any]) -> tuple[str, str]:
         watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, dict) else {}
-        source = str(watch.get("route_provider") or watch.get("provider") or "watcher").strip().lower() or "watcher"
-        source_instance = str(watch.get("route_provider_instance") or watch.get("provider_instance") or "default").strip() or "default"
+        source = str(watch.get("route_provider") or "watcher").strip().lower() or "watcher"
+        source_instance = str(watch.get("route_provider_instance") or "default").strip() or "default"
         return source, source_instance
 
     def _mkey(self, ev: Any) -> str:
