@@ -182,6 +182,30 @@ def _transform_secret_tree(obj: Any, *, decrypt: bool, path: tuple[str, ...] = (
 
     return obj
 
+
+def _encrypt_secret_tree_stable(obj: Any, prev: Any, path: tuple[str, ...] = ()) -> Any:
+    if isinstance(obj, dict):
+        prev_d = prev if isinstance(prev, dict) else {}
+        return {k: _encrypt_secret_tree_stable(v, prev_d.get(k), path + (str(k),)) for k, v in obj.items()}
+
+    if isinstance(obj, list):
+        prev_l = prev if isinstance(prev, list) else []
+        return [
+            _encrypt_secret_tree_stable(v, prev_l[i] if i < len(prev_l) else None, path + (str(i),))
+            for i, v in enumerate(obj)
+        ]
+
+    if isinstance(obj, str) and _is_sensitive_path(path):
+        if isinstance(prev, str) and prev.startswith(_ENC_PREFIX):
+            try:
+                if _decrypt_secret(prev) == obj:
+                    return prev
+            except Exception:
+                pass
+        return _encrypt_secret(obj)
+
+    return obj
+
 # Default config
 DEFAULT_CFG: dict[str, Any] = {
     # --- Providers -----------------------------------------------------------
@@ -1637,4 +1661,12 @@ def save_config(cfg: dict[str, Any]) -> None:
             if isinstance(it, dict):
                 it["features"] = _normalize_features_map(it.get("features"))  # type: ignore[arg-type]
 
-    _write_json_atomic(_cfg_file(), cast(dict[str, Any], _transform_secret_tree(data, decrypt=False)))
+    prev_raw: dict[str, Any] = {}
+    try:
+        p = _cfg_file()
+        if p.exists():
+            prev_raw = _read_json(p)
+    except Exception:
+        prev_raw = {}
+
+    _write_json_atomic(_cfg_file(), cast(dict[str, Any], _encrypt_secret_tree_stable(data, prev_raw)))

@@ -367,10 +367,10 @@ class WatchService:
         self._psn_sessions: set[str] = set()
         self._allowed_sessions: set[str] = set()
         self._last_seen: dict[str, float] = {}
-        self._last_emit: dict[str, tuple[str, int]] = {}
+        self._last_emit: dict[str, tuple[str, float]] = {}
         self._attempt = 0
         self._no_sessions_access = False  # True when token cannot access /status/sessions (shared server)
-        self._max_seen: dict[str, int] = {}
+        self._max_seen: dict[str, float] = {}
         self._first_seen: dict[str, float] = {}
         self._last_pause_ts: dict[str, float] = {}
         self._filtered_ts: dict[str, float] = {}
@@ -1179,7 +1179,7 @@ class WatchService:
 
             if ev.action == "stop" and best == want:
                 prev = self._last_emit.get(sk or "", (None, None))[1] if sk else None
-                if isinstance(prev, int):
+                if isinstance(prev, (int, float)):
                     best = prev
 
             if best != want:
@@ -1688,7 +1688,7 @@ def process_rating_webhook(
         return {"ok": True, "ignored": True}
 
     watch_cfg = (sc.get("watch") or {})
-    provider_name = str(watch_cfg.get("route_provider") or watch_cfg.get("provider") or "plex").lower().strip()
+    provider_name = str(watch_cfg.get("route_provider") or "").lower().strip()
     if provider_name != "plex":
         return {"ok": True, "ignored": True}
 
@@ -1697,6 +1697,8 @@ def process_rating_webhook(
     ratings_opts_raw = route_opts.get("ratings")
     ratings_opts: dict[str, Any] = ratings_opts_raw if isinstance(ratings_opts_raw, dict) else {}
     ratings_mode = str(ratings_opts.get("mode") or "inherit").strip().lower() or "inherit"
+    if route_hook is not None and ratings_mode == "inherit":
+        ratings_mode = "off"
     route_sink = str(watch_cfg.get("route_sink") or "").strip().lower()
     custom_targets = {
         str(item or "").strip().lower()

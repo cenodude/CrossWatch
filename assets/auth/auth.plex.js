@@ -528,6 +528,7 @@ function ensurePlexInstanceUI() {
       onAuthorized: async (cfg) => {
         try { plexQcStop(); } catch {}
         try { setPlexSuccess(true, "Connected"); } catch {}
+        try { d.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "plex", key: "PLEX" } })); } catch {}
         try {
           const tok = String(getPlexCfgBlock(cfg || {}).account_token || "").trim();
           if (tok !== __plexLastTok) {

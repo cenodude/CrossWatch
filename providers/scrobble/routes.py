@@ -48,9 +48,9 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
 
     ratings_raw = raw.get("ratings")
     ratings_src = ratings_raw if isinstance(ratings_raw, dict) else {}
-    ratings_mode = str(ratings_src.get("mode") or "inherit").strip().lower() or "inherit"
+    ratings_mode = str(ratings_src.get("mode") or "off").strip().lower() or "off"
     if ratings_mode not in ROUTE_RATINGS_MODES:
-        ratings_mode = "inherit"
+        ratings_mode = "off"
 
     targets_raw = ratings_src.get("targets")
     if isinstance(targets_raw, str):

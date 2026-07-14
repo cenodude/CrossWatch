@@ -1036,25 +1036,13 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
     cfg = load_config() if cfg is None else cfg
     plex = _plex(cfg, instance_id)
     changed = False
-    if not isinstance(plex.get("history"), dict):
-        plex["history"] = {}
-        changed = True
-    if not isinstance(plex.get("ratings"), dict):
-        plex["ratings"] = {}
-        changed = True
-    if not isinstance(plex.get("scrobble"), dict):
-        plex["scrobble"] = {}
-        changed = True
-    if not isinstance(plex["history"].get("libraries"), list):
-        plex["history"]["libraries"] = []
-        changed = True
-    if not isinstance(plex["ratings"].get("libraries"), list):
-        plex["ratings"]["libraries"] = []
-        changed = True
-    if not isinstance(plex["scrobble"].get("libraries"), list):
-        plex["scrobble"]["libraries"] = []
-        changed = True
     for sec in ("history", "progress", "ratings", "scrobble"):
+        if not isinstance(plex.get(sec), dict):
+            plex[sec] = {}
+            changed = True
+        if not isinstance(plex[sec].get("libraries"), list):
+            plex[sec]["libraries"] = []
+            changed = True
         libs = plex[sec]["libraries"]
         norm = sorted({str(x).strip() for x in libs if str(x).strip()})
         if libs != norm:
