@@ -16,7 +16,7 @@
     selectId: "mdblist_instance",
     storageKey: "cw.ui.mdblist.auth.instance.v1",
   });
-  let pollTimer = null;
+  let mdblPoller = null;
   let methodOverride = "";
 
   function isMaskedSecret(v) {
@@ -87,6 +87,7 @@
   }
 
   function setConn(ok, msg) {
+    try { Shared.setConnectLocked(["mdblist_device_start", "mdblist_device_restart", "mdblist_save"], !!ok); } catch {}
     return Shared.setStatus("mdblist_msg", ok, msg);
   }
 
@@ -98,15 +99,86 @@
     return Shared.copyField(id, btn, { emptyMessage: "Nothing to copy" });
   }
 
-  function setMethodUI(method) {
-    const m = method === "api_key" ? "api_key" : "device_code";
-    const sel = el("mdblist_auth_method");
-    if (sel) {
-      sel.value = m;
+  const MDBL_ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  const MDBL_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+  let mdblQcDeadline = 0, mdblQcTimer = null, mdblQcCopyRevert = null;
+
+  function mdblQcSetState(show) {
+    const box = el("mdblist_qc_state"); if (box) box.classList.toggle("hidden", !show);
+    const start = el("mdblist_device_start"), cancel = el("mdblist_device_cancel"), restart = el("mdblist_device_restart");
+    if (start) start.classList.toggle("hidden", show);
+    if (cancel) cancel.classList.toggle("hidden", !show);
+    if (restart) restart.classList.add("hidden");
+  }
+  function mdblQcShowRestart() {
+    const restart = el("mdblist_device_restart"), start = el("mdblist_device_start"), cancel = el("mdblist_device_cancel");
+    if (restart) restart.classList.remove("hidden");
+    if (start) start.classList.add("hidden");
+    if (cancel) cancel.classList.add("hidden");
+  }
+  function mdblQcUpdateTimer() {
+    if (mdblQcDeadline && Date.now() > mdblQcDeadline) { mdblQcTimeout(); return; }
+    const t = el("mdblist_qc_timer"); if (!t) return;
+    const left = Math.max(0, Math.round((mdblQcDeadline - Date.now()) / 1000));
+    const mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
+    t.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+  }
+  function mdblQcStop() {
+    if (mdblQcTimer) { clearInterval(mdblQcTimer); mdblQcTimer = null; }
+    stopPoll();
+    mdblQcDeadline = 0;
+    mdblQcSetState(false);
+  }
+  function mdblQcTimeout() {
+    if (mdblQcTimer) { clearInterval(mdblQcTimer); mdblQcTimer = null; }
+    stopPoll();
+    mdblQcDeadline = 0;
+    const st = el("mdblist_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    const t = el("mdblist_qc_timer"); if (t) t.textContent = "";
+    mdblQcShowRestart();
+  }
+  function mdblQcShowCode(code, secondsLeft) {
+    const codeInput = el("mdblist_device_code"); if (codeInput) codeInput.value = code || "";
+    const codeEl = el("mdblist_qc_code"); if (codeEl) codeEl.textContent = code || "------";
+    const st = el("mdblist_qc_status"); if (st) st.textContent = "Waiting for approval…";
+    mdblQcDeadline = Date.now() + (Math.max(30, Number(secondsLeft) || 300) * 1000);
+    mdblQcSetState(true);
+    mdblQcUpdateTimer();
+    if (mdblQcTimer) clearInterval(mdblQcTimer);
+    mdblQcTimer = setInterval(mdblQcUpdateTimer, 1000);
+  }
+  async function mdblQcCopy(btn) {
+    const code = ((el("mdblist_qc_code") && el("mdblist_qc_code").textContent) || (el("mdblist_device_code") && el("mdblist_device_code").value) || "").replace(/\s+/g, "").trim();
+    if (!code || code === "------") return;
+    let ok = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch (_) {}
+    if (!ok) {
       try {
-        window.CW?.IconSelect?.enhance(sel, sel.__cwIconSelectCfg || { className: "cw-plain-select" });
+        const ta = document.createElement("textarea");
+        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
       } catch (_) {}
     }
+    if (!ok) { note("Copy failed"); return; }
+    btn.classList.add("copied"); btn.innerHTML = MDBL_ICON_CHECK; btn.title = "Copied!";
+    if (mdblQcCopyRevert) clearTimeout(mdblQcCopyRevert);
+    mdblQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = MDBL_ICON_COPY; btn.title = "Copy code"; }, 1400);
+  }
+
+  function setMethodUI(method) {
+    const m = method === "api_key" ? "api_key" : "device_code";
+    const hidden = el("mdblist_auth_method");
+    if (hidden) hidden.value = m;
+    document.querySelectorAll("#sec-mdblist .mdbl-method").forEach((b) => {
+      const on = (b.dataset.method || "") === m;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    document.querySelectorAll("#sec-mdblist [data-method-actions]").forEach((node) => {
+      node.classList.toggle("hidden", (node.dataset.methodActions || "") !== m);
+    });
     const dev = el("mdblist_device_panel");
     const api = el("mdblist_api_panel");
     if (dev) dev.style.display = m === "device_code" ? "" : "none";
@@ -127,7 +199,7 @@
   function ensureMDBListInstanceUI() {
     profile?.ensureUI(() => {
       methodOverride = "";
-      stopPoll();
+      try { mdblQcStop(); } catch (_) {}
       void hydrate();
     });
   }
@@ -153,12 +225,13 @@
       if (data.pending) {
         const code = el("mdblist_device_code");
         if (code && data.pending.user_code) code.value = txt(data.pending.user_code);
-        if (data.pending.user_code && !pollTimer) startPoll(Math.max(2, Number(data.pending.interval || 5)));
+        if (data.pending.user_code && !(mdblPoller && mdblPoller.isRunning())) startPoll(Math.max(2, Number(data.pending.interval || 5)));
       }
       let msg = ok ? (statusMethod === "api_key" ? "Connected with API key" : "Connected with Device Code") : "Not connected";
       if (data.pending && !data.device_configured) msg = "Waiting for Device Code approval";
       if (ok && data.expires_at && statusMethod === "device_code") msg = "Connected with Device Code";
       setConn(data.pending && !data.device_configured ? false : ok, msg);
+      if (ok) { try { mdblQcStop(); } catch (_) {} }
       if (showToast) note(ok ? "MDBList verified" : "MDBList not connected");
     } catch {
       setConn(false, "MDBList verify failed");
@@ -188,6 +261,7 @@
   async function onMethodChange() {
     const method = el("mdblist_auth_method")?.value === "api_key" ? "api_key" : "device_code";
     methodOverride = method === "device_code" ? "device_code" : "";
+    if (method === "api_key") { try { mdblQcStop(); } catch (_) {} }
     setMethodUI(method);
     try {
       await saveAuth({ auth_method: method });
@@ -218,42 +292,57 @@
     }
   }
 
-  function stopPoll() {
-    if (pollTimer) clearTimeout(pollTimer);
-    pollTimer = null;
+  function ensureMdblPoller() {
+    if (mdblPoller) return mdblPoller;
+    mdblPoller = Shared.createDevicePoll({
+      url: () => mdblApi("/api/mdblist/device/poll"),
+      method: "POST",
+      body: "{}",
+      onAuthorized: async () => {
+        methodOverride = "";
+        try { mdblQcStop(); } catch (_) {}
+        note("MDBList connected");
+        await hydrate();
+      },
+      onExpired: () => mdblQcTimeout(),
+      onTimeout: () => mdblQcTimeout(),
+      onTerminal: (verdict) => {
+        const label = String((verdict && verdict.message) || "").replace(/_/g, " ") || "Authorization failed";
+        const st = el("mdblist_qc_status"); if (st) st.textContent = label;
+        setConn(false, label);
+        if (mdblQcTimer) { clearInterval(mdblQcTimer); mdblQcTimer = null; }
+        mdblQcDeadline = 0;
+        mdblQcShowRestart();
+      },
+      classify: (status, data) => {
+        if (data && data.ok) return { state: "authorized" };
+        const s = String((data && (data.status || data.error)) || "");
+        if (!s || s === "authorization_pending") return { state: "pending" };
+        if (s === "slow_down") return { state: "slow_down" };
+        if (s === "expired_token" || s === "expired") return { state: "expired" };
+        if (s === "network_error" || s === "internal") return { state: "network" };
+        if (s === "http:429") return { state: "slow_down" };
+        if (/^http:5\d\d$/.test(s)) return { state: "network" };
+        return { state: "terminal", message: s };
+      },
+    });
+    return mdblPoller;
   }
 
+  function stopPoll() { if (mdblPoller) mdblPoller.stop(); }
+
   function startPoll(intervalSec) {
-    stopPoll();
-    const run = async () => {
-      try {
-        const r = await fetchJSON(mdblApi("/api/mdblist/device/poll"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: "{}",
-          cache: "no-store"
-        });
-        const data = r.data || {};
-        if (r.ok && data.ok) {
-          stopPoll();
-          methodOverride = "";
-          note("MDBList connected");
-          await hydrate();
-          return;
-        }
-        const status = String(data.status || data.error || "");
-        if (status && !["authorization_pending", "slow_down"].includes(status)) {
-          setConn(false, status.replace(/_/g, " "));
-          stopPoll();
-          return;
-        }
-      } catch (_) {}
-      pollTimer = setTimeout(run, Math.max(2, Number(intervalSec || 5)) * 1000);
-    };
-    pollTimer = setTimeout(run, Math.max(2, Number(intervalSec || 5)) * 1000);
+    ensureMdblPoller().start({
+      intervalMs: Math.max(5, Number(intervalSec || 5)) * 1000,
+      deadlineMs: mdblQcDeadline || 0,
+    });
   }
 
   async function onDeviceStart() {
+    try { mdblQcStop(); } catch (_) {}
+    const startBtn = el("mdblist_device_start");
+    if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
+
     let win = null;
     try { win = window.open("about:blank", "_blank"); } catch (_) {}
     try {
@@ -266,29 +355,52 @@
       });
       const data = r.data || {};
       if (!r.ok || !data.ok) throw new Error(String(data.error || "device_start_failed"));
-      const code = el("mdblist_device_code");
-      if (code) code.value = txt(data.user_code);
+
+      const code = txt(data.user_code);
+      const url = txt(data.verification_uri || data.verification_url) || "https://mdblist.com/oauth/device/";
+      const secs = Number(data.expires_in || data.expiresIn || 0) || 300;
+
+      const helpEl = el("mdblist_qc_help");
+      if (helpEl) helpEl.textContent = win
+        ? "Opening the MDBList approval page — enter this code there and approve CrossWatch."
+        : "Open the MDBList approval page and enter this code to approve CrossWatch.";
+
+      mdblQcShowCode(code, secs);
       setConn(false, "Waiting for approval");
       startPoll(Math.max(2, Number(data.interval || 5)));
+
       if (win && !win.closed) {
-        try { win.location.href = txt(data.verification_uri || "https://mdblist.com/oauth/device/"); win.focus(); } catch (_) {}
+        try {
+          win.document.write(
+            '<!doctype html><meta charset="utf-8"><title>CrossWatch → MDBList</title>' +
+            '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
+            '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening the MDBList approval page…</div>' +
+            '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#8ff0c2">' + code + '</div>' +
+            '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
+          );
+        } catch (_) {}
+        setTimeout(function () { try { if (win && !win.closed) win.location.href = url; } catch (_) {} }, 3000);
       } else {
-        note("Popup blocked - allow popups and try again");
+        note("Popup blocked - open the MDBList page and enter the code.");
       }
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch (_) {}
+      try { mdblQcStop(); } catch (_) {}
       note("MDBList Device Code start failed: " + (e && e.message ? e.message : e));
+    } finally {
+      if (startBtn) { startBtn.disabled = false; startBtn.classList.remove("busy"); }
     }
   }
 
   async function onDisc() {
-    stopPoll();
+    try { mdblQcStop(); } catch (_) {}
     try {
       methodOverride = "";
       const r = await fetchJSON(mdblApi("/api/mdblist/disconnect"), { method: "POST" });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       maskInput(el("mdblist_key"), false);
       const code = el("mdblist_device_code"); if (code) code.value = "";
+      const codeEl = el("mdblist_qc_code"); if (codeEl) codeEl.textContent = "------";
       setConn(false);
       note("MDBList disconnected");
       await hydrate();
@@ -298,14 +410,21 @@
   }
 
   function wire() {
-    const method = el("mdblist_auth_method");
-    if (method && !method.__wired) { method.addEventListener("change", onMethodChange); method.__wired = true; }
+    document.querySelectorAll("#sec-mdblist .mdbl-method").forEach((b) => {
+      if (b.__wired) return;
+      b.__wired = true;
+      b.addEventListener("click", () => { setMethodUI(b.dataset.method); onMethodChange(); });
+    });
     const s = el("mdblist_save");
     if (s && !s.__wired) { s.addEventListener("click", onSaveApiKey); s.__wired = true; }
     const start = el("mdblist_device_start");
     if (start && !start.__wired) { start.addEventListener("click", onDeviceStart); start.__wired = true; }
-    const copyCode = el("mdblist_copy_code");
-    if (copyCode && !copyCode.__wired) { copyCode.addEventListener("click", () => copyField("mdblist_device_code", copyCode)); copyCode.__wired = true; }
+    const copyCode = el("mdblist_qc_copy");
+    if (copyCode && !copyCode.__wired) { copyCode.addEventListener("click", (e) => { e.preventDefault(); mdblQcCopy(copyCode); }); copyCode.__wired = true; }
+    const devCancel = el("mdblist_device_cancel");
+    if (devCancel && !devCancel.__wired) { devCancel.addEventListener("click", () => mdblQcStop()); devCancel.__wired = true; }
+    const devRestart = el("mdblist_device_restart");
+    if (devRestart && !devRestart.__wired) { devRestart.addEventListener("click", () => onDeviceStart()); devRestart.__wired = true; }
     const d = el("mdblist_disconnect");
     if (d && !d.__wired) { d.addEventListener("click", onDisc); d.__wired = true; }
     const dd = el("mdblist_disconnect_device");

@@ -19,6 +19,9 @@
   let connected = false;
 
   const EMBY_SUBTAB_KEY = "cw.ui.emby.auth.subtab.v1";
+  let embyAutoTabInst = "";
+  let embyNewProfileInst = "";
+  let embyQuickSave = null;
 
   const embyProfile = Shared.createProfileAdapter({
     provider: "emby",
@@ -62,7 +65,11 @@
     if (!root) return;
 
     const want = String(tab || "auth").toLowerCase();
-    const sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+    let sub = ["auth", "settings", "whitelist"].includes(want) ? want : "auth";
+    const state = getEmbySetupState();
+    if (sub === "settings" && !state.settingsEnabled) sub = "auth";
+    if (sub === "whitelist" && !state.whitelistEnabled) sub = state.settingsEnabled ? "settings" : "auth";
+    try { Shared.applyMediaTabState(root, state); } catch {}
 
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
       btn.classList.toggle("active", String(btn.dataset.sub || "").toLowerCase() === sub);
@@ -82,11 +89,21 @@
     if (sub === "whitelist") {
       try { embyLoadLibraries(); } catch {}
     }
+    try { Shared.setMediaAuthStep(root, sub); } catch {}
   }
 
   function mountEmbyAuthTabs() {
     const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]');
     if (!root) return;
+    try {
+      Shared.mediaAuthGuide(root, {
+        kind: "emby",
+        label: "Emby",
+        title: "Connect to Emby",
+        copy: "Enter your Emby server URL, username and password, then sign in. Next, validate the settings, pick the user, and optionally whitelist libraries."
+      });
+      syncEmbySetupTabs();
+    } catch {}
 
     root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
       if (btn.__embyTabWired) return;
@@ -102,6 +119,52 @@
     embyAuthSubSelect(last, { persist: false });
   }
 
+  function getEmbySetupState() {
+    const server = (Q("#emby_server_url")?.value || Q("#emby_server")?.value || "").trim();
+    const user = (Q("#emby_username")?.value || Q("#emby_user")?.value || "").trim();
+    const userId = (Q("#emby_user_id")?.value || "").trim();
+    const configured = connected || !!(server || user || userId);
+    return {
+      configured,
+      connected,
+      settingsEnabled: connected,
+      whitelistEnabled: connected,
+    };
+  }
+
+  function syncEmbySetupTabs(opts = {}) {
+    const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby .cw-panel");
+    if (!root) return;
+    const state = getEmbySetupState();
+    try { Shared.applyMediaTabState(root, state); } catch {}
+    if (opts.auto) {
+      const inst = getEmbyInstance();
+      if (embyAutoTabInst !== inst) {
+        embyAutoTabInst = inst;
+        const cur = root.querySelector(".cw-subtile.active[data-sub]")?.dataset?.sub || "auth";
+        if (cur === "auth") embyAuthSubSelect("auth", { persist: false });
+        return;
+      }
+    }
+    if (opts.preferSettings && state.settingsEnabled) {
+      const cur = root.querySelector(".cw-subtile.active[data-sub]")?.dataset?.sub || "auth";
+      if (cur === "auth") {
+        embyAuthSubSelect("settings", { persist: opts.persist !== false });
+        return;
+      }
+    }
+    const active = root.querySelector(".cw-subtile.active[data-sub]");
+    embyAuthSubSelect(active?.dataset?.sub || "auth", { persist: false });
+  }
+
+  async function persistEmbyRuntimeSettings() {
+    if (!getEmbySetupState().configured) return null;
+    embyQuickSave ||= Shared.saveMergedConfig((cfg) => {
+      mergeEmbyIntoCfg(cfg);
+    }).finally(() => { embyQuickSave = null; });
+    return embyQuickSave;
+  }
+
   // helpers
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
@@ -115,15 +178,8 @@
     const msg = Q("#emby_msg");
     if (connected) setMsgBanner(msg, "ok", "Connected");
     else setMsgBanner(msg, null, "");
-  }
-
-  // libraries UI
-  function applyFilter() {
-    const qv = (Q("#emby_lib_filter")?.value || "").toLowerCase().trim();
-    Qa("#emby_lib_matrix .lm-row").forEach((r) => {
-      const name = (r.querySelector(".lm-name")?.textContent || "").toLowerCase();
-      r.classList.toggle("hide", !!qv && !name.includes(qv));
-    });
+    try { Shared.setConnectLocked("btn-emby-login", connected); } catch {}
+    try { syncEmbySetupTabs(); } catch {}
   }
 
   function syncHidden() {
@@ -168,7 +224,6 @@
       f.appendChild(row);
     });
     box.appendChild(f);
-    applyFilter();
     syncHidden();
     syncSelectAll();
   }
@@ -179,6 +234,7 @@
       return;
     }
     try {
+      await persistEmbyRuntimeSettings();
       const r = await fetch(embyApi(LIB_URL), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
       const libs = Array.isArray(d?.libraries) ? d.libraries : (Array.isArray(d) ? d : []);
@@ -222,6 +278,7 @@
       hydrated = true;
       if (lastLibraries.length) renderLibraries(lastLibraries);
       else await embyLoadLibraries();
+      syncEmbySetupTabs({ auto: true });
     } catch { /* ignore */ }
   }
 
@@ -316,6 +373,7 @@
       setMsgBanner(msg, "ok", "Disconnected");
       hydrated = false;
       try { await hydrateFromConfig(true); } catch {}
+      try { syncEmbySetupTabs(); } catch {}
     } catch (e) {
       setMsgBanner(msg, "warn", String(e?.message || e || "Delete failed."));
     }
@@ -425,8 +483,6 @@
     }
   }, true);
 
-  document.addEventListener("input", (ev) => { if (ev.target?.id === "emby_lib_filter") applyFilter(); }, true);
-
   function findEmbyPickUserButton() {
     const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby");
     if (!root) return null;
@@ -450,6 +506,7 @@
 
   async function embyPickUser(ev) {
     try { ev?.preventDefault?.(); } catch {}
+    try { await persistEmbyRuntimeSettings(); } catch {}
     if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
       window.notify?.("User picker not available", "warn");
       return;
@@ -492,6 +549,20 @@
     }
   }, true);
 
+  document.addEventListener("input", (ev) => {
+    const id = ev?.target?.id || "";
+    if (["emby_server", "emby_server_url", "emby_user", "emby_username", "emby_user_id"].includes(id)) syncEmbySetupTabs();
+  }, true);
+
+  document.addEventListener("cw-auth-profile-created", (ev) => {
+    const provider = String(ev?.detail?.provider || "").toLowerCase();
+    if (provider !== "emby") return;
+    embyNewProfileInst = getEmbyInstance();
+    embyAutoTabInst = embyNewProfileInst;
+    try { syncEmbySetupTabs(); } catch {}
+    try { embyAuthSubSelect("auth", { persist: false }); } catch {}
+  }, true);
+
   // expose
   window.embyAuto = embyAuto;
   window.embyLoadLibraries = embyLoadLibraries;
@@ -499,6 +570,7 @@
   window.embyLogin = embyLogin;
   window.embyDeleteToken = embyDeleteToken;
   window.embyPickUser = embyPickUser;
+  window.persistEmbyRuntimeSettings = persistEmbyRuntimeSettings;
 
   // integration
   window.registerSettingsCollector?.(mergeEmbyIntoCfg);

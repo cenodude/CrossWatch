@@ -171,6 +171,7 @@
   }
 
   function setConn(ok, msg) {
+    try { Shared.setConnectLocked("publicmetadb_save", !!ok); } catch {}
     return Shared.setStatus("publicmetadb_msg", ok, msg);
   }
 

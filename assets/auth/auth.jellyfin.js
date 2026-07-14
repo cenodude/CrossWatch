@@ -100,7 +100,7 @@
         kind: "jellyfin",
         label: "Jellyfin",
         title: "Connect to Jellyfin",
-        copy: "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries."
+        copy: "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. Next, validate the settings, pick the user, and optionally whitelist libraries."
       });
       syncJfySetupTabs();
     } catch {}

@@ -64,6 +64,8 @@
   }
 
   function setAniListSuccess(on, txt) {
+    anilistConnected = !!on;
+    try { Shared.setConnectLocked("btn-connect-anilist", anilistConnected); } catch {}
     return Shared.setStatusPill("anilist_msg", on ? "ok" : (txt ? "warn" : null), txt || (on ? "Connected" : ""));
   }
 
@@ -308,7 +310,8 @@
         const next = computeRedirect();
         if (rid.textContent !== next) rid.textContent = next;
       }
-      if (btn) btn.disabled = !ok;
+      if (btn && !anilistConnected) btn.disabled = !ok;
+      try { Shared.setConnectLocked("btn-connect-anilist", anilistConnected); } catch {}
       if (hint) hint.classList.toggle("hidden", ok);
       renderMappingRecommendation();
     } catch (e) {
@@ -395,6 +398,7 @@
       }
       try { setAniListSuccess(false, ""); } catch {}
       anilistConnected = false;
+      try { updateAniListButtonState(); } catch {}
       queueMappingRecommendationRefresh();
     }
   }

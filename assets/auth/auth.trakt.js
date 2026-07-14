@@ -33,6 +33,7 @@
   }
 
   var traktConnected = false;
+  var traktPoller = null;
 
   function getTraktInstance() {
     return traktProfile ? traktProfile.getInstance() : "default";
@@ -80,9 +81,8 @@
     try {
       var msg = _el('trakt_msg');
       if (!msg) return;
-      var pinEl = _el('trakt_pin'); var pin = _str(pinEl ? pinEl.value : '');
+      try { Shared.setConnectLocked(["btn-connect-trakt", "btn-trakt-restart"], !!traktConnected); } catch (_) {}
       if (traktConnected) return Shared.setStatusPill(msg, "ok", "Connected");
-      if (pin) return Shared.setStatusPill(msg, "warn", "Code: " + pin);
       return Shared.setStatusPill(msg, null);
     } catch (_) {}
   }
@@ -90,8 +90,11 @@
   function setTraktSuccess(show) {
     try {
       traktConnected = !!show;
-      if (show) updateTraktBanner();
-      else { var el = _el('trakt_msg'); if (el) { el.classList.add('hidden'); el.textContent = ''; el.classList.remove('ok','warn'); } }
+      if (show) { try { trqcStop(); } catch (_) {} updateTraktBanner(); }
+      else {
+        try { Shared.setConnectLocked(["btn-connect-trakt", "btn-trakt-restart"], false); } catch (_) {}
+        var el = _el('trakt_msg'); if (el) { el.classList.add('hidden'); el.textContent = ''; el.classList.remove('ok','warn'); }
+      }
     } catch (_) {}
   }
 
@@ -117,6 +120,7 @@
       _markSecretField(_el("trakt_client_secret"), _str(t.client_secret || (isDefault ? (cfg.trakt && cfg.trakt.client_secret) : "")));
       traktConnected = !!_str(t.access_token || (getTraktInstance() === 'default' ? a.access_token : ''));
       _setVal("trakt_pin",           _str((t._pending_device && t._pending_device.user_code) || ''));
+      if (traktConnected) { try { trqcStop(); } catch (_) {} }
       updateTraktHint();
       updateTraktBanner();
     } catch (e) {
@@ -152,9 +156,84 @@
     await _copyText(text);
   };
 
+  var TRK_ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+  var TRK_ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+  var trqcDeadline = 0, trqcTimer = null, trqcCopyRevert = null;
+
+  function trqcSetState(show) {
+    var box = _el("trakt_qc_state"); if (box) box.classList.toggle("hidden", !show);
+    var connect = _el("btn-connect-trakt"), cancel = _el("btn-trakt-cancel"), restart = _el("btn-trakt-restart");
+    if (connect) connect.classList.toggle("hidden", show);
+    if (cancel) cancel.classList.toggle("hidden", !show);
+    if (restart) restart.classList.add("hidden");
+  }
+  function trqcShowRestart() {
+    var restart = _el("btn-trakt-restart"), connect = _el("btn-connect-trakt"), cancel = _el("btn-trakt-cancel");
+    if (restart) restart.classList.remove("hidden");
+    if (connect) connect.classList.add("hidden");
+    if (cancel) cancel.classList.add("hidden");
+  }
+  function trqcUpdateTimer() {
+    if (trqcDeadline && Date.now() > trqcDeadline) { trqcTimeout(); return; }
+    var el = _el("trakt_qc_timer"); if (!el) return;
+    var left = Math.max(0, Math.round((trqcDeadline - Date.now()) / 1000));
+    var mm = Math.floor(left / 60), ss = String(left % 60).padStart(2, "0");
+    el.textContent = left > 0 ? ("Expires in " + mm + ":" + ss) : "";
+  }
+  function trqcStop() {
+    if (trqcTimer) { clearInterval(trqcTimer); trqcTimer = null; }
+    if (traktPoller) traktPoller.stop();
+    trqcDeadline = 0;
+    trqcSetState(false);
+  }
+  function trqcTimeout() {
+    if (trqcTimer) { clearInterval(trqcTimer); trqcTimer = null; }
+    trqcDeadline = 0;
+    var st = _el("trakt_qc_status"); if (st) st.textContent = "Link code expired. Restart to try again.";
+    var el = _el("trakt_qc_timer"); if (el) el.textContent = "";
+    trqcShowRestart();
+  }
+  function trqcShowCode(code, secondsLeft) {
+    var pinEl = _el("trakt_pin"); if (pinEl) pinEl.value = code || "";
+    var codeEl = _el("trakt_qc_code"); if (codeEl) codeEl.textContent = code || "------";
+    var st = _el("trakt_qc_status"); if (st) st.textContent = "Waiting for authorization…";
+    trqcDeadline = Date.now() + (Math.max(30, Number(secondsLeft) || 300) * 1000);
+    trqcSetState(true);
+    trqcUpdateTimer();
+    if (trqcTimer) clearInterval(trqcTimer);
+    trqcTimer = setInterval(trqcUpdateTimer, 1000);
+  }
+  async function trqcCopy(btn) {
+    var code = ((_el("trakt_qc_code") && _el("trakt_qc_code").textContent) || (_el("trakt_pin") && _el("trakt_pin").value) || "").replace(/\s+/g, "").trim();
+    if (!code || code === "------") return;
+    var ok = false;
+    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch (_) {}
+    if (!ok) {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch (_) {}
+    }
+    if (!ok) { _notify("Copy failed"); return; }
+    btn.classList.add("copied"); btn.innerHTML = TRK_ICON_CHECK; btn.title = "Copied!";
+    if (trqcCopyRevert) clearTimeout(trqcCopyRevert);
+    trqcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = TRK_ICON_COPY; btn.title = "Copy code"; }, 1400);
+  }
+  function wireTraktQc() {
+    var copy = _el("trakt_qc_copy");
+    if (copy && !copy.__wired) { copy.__wired = true; copy.addEventListener("click", function (e) { e.preventDefault(); trqcCopy(copy); }); }
+    var cancel = _el("btn-trakt-cancel");
+    if (cancel && !cancel.__wired) { cancel.__wired = true; cancel.addEventListener("click", function () { trqcStop(); }); }
+    var restart = _el("btn-trakt-restart");
+    if (restart && !restart.__wired) { restart.__wired = true; restart.addEventListener("click", function () { requestTraktPin(); }); }
+  }
+
   var __traktInitDone = false;
   function initTraktAuthUI() {
-    Shared.wireCopyButton("btn-copy-trakt-pin", "trakt_pin");
+    wireTraktQc();
 
     try {
       ensureTraktInstanceUI();
@@ -201,107 +280,45 @@
     }
   }
 
-  // Device code poller
-  function startTraktDevicePoll(maxMs) {
-    try { if (String(location.port || "") === "8787") return; } catch (_) {}
-
-    try { if (window._traktPoll) clearTimeout(window._traktPoll); } catch (_){}
-    var MAX_MS = typeof maxMs === "number" ? maxMs : 180000; // 3 min
-    var deadline = Date.now() + MAX_MS;
-    var backoff = [1200, 2000, 3000, 4000, 5000, 7000, 10000, 12000];
-    var i = 0;
-
-    var tick = async function () {
-      if (Date.now() >= deadline) { window._traktPoll = null; return; }
-      try {
-        var cfg = await fetchConfig();
-        var t = cfg ? getTraktCfgBlock(cfg) : null;
-        var ok = !!(t && _str(t.access_token));
-        if (ok) { setTraktSuccess(true); window._traktPoll = null; return; }
-      } catch (_) { /* ignore; keep polling */ }
-      var delay = backoff[Math.min(i++, backoff.length - 1)];
-      window._traktPoll = setTimeout(tick, delay);
-    };
-
-    window._traktPoll = setTimeout(tick, backoff[0]);
+  function traktTokenFromCfg(cfg) {
+    var tok = _str(cfg && ((cfg.trakt && cfg.trakt.access_token) || (cfg.auth && cfg.auth.trakt && cfg.auth.trakt.access_token)));
+    try {
+      var t = cfg ? getTraktCfgBlock(cfg) : null;
+      tok = _str(t && t.access_token) || (getTraktInstance() === 'default' ? tok : '');
+    } catch (_) {}
+    return tok;
   }
 
-  function startTraktTokenPoll() {
-    try { if (window._traktPollCfg) clearTimeout(window._traktPollCfg); } catch (_){}
-    try { if (window._traktVisPollCfg) document.removeEventListener("visibilitychange", window._traktVisPollCfg); } catch (_){}
-    window._traktVisPollCfg = null;
+  function ensureTraktPoller() {
+    if (traktPoller) return traktPoller;
+    traktPoller = Shared.createDevicePoll({
+      url: function () { return "/api/config?ts=" + Date.now(); },
+      method: "GET",
+      minIntervalMs: 2000,
+      onAuthorized: function () { setTraktSuccess(true); },
+      shouldPause: function () {
+        if (document.hidden) return true;
+        var page = _el("page-settings");
+        return !(page && !page.classList.contains("hidden"));
+      },
+      classify: function (status, data) {
+        return traktTokenFromCfg(data) ? { state: "authorized" } : { state: "pending" };
+      },
+    });
+    return traktPoller;
+  }
 
+  function startTraktTokenPoll(deadlineMs) {
     var pinNow = _str(_el("trakt_pin")?.value);
     if (traktConnected || !pinNow) {
-      window._traktPollCfg = null;
+      if (traktPoller) traktPoller.stop();
       return;
     }
-
-    var MAX_MS    = 120000;
-    var startTs   = Date.now();
-    var deadline  = startTs + MAX_MS;
-    var fastUntil = startTs + 30000; // 2s polling for ~30s
-    var backoff   = [5000, 7500, 10000, 15000, 20000, 20000];
-    var i = 0;
-    var inFlight = false;
-
-    var cleanup = function () {
-      try { if (window._traktPollCfg) clearTimeout(window._traktPollCfg); } catch (_){}
-      window._traktPollCfg = null;
-      try {
-        if (window._traktVisPollCfg) document.removeEventListener("visibilitychange", window._traktVisPollCfg);
-      } catch (_){}
-      window._traktVisPollCfg = null;
-    };
-
-    var poll = async function () {
-      if (Date.now() >= deadline) { cleanup(); return; }
-
-      var page = _el("page-settings");
-      var settingsVisible = !!(page && !page.classList.contains("hidden"));
-      if (document.hidden || !settingsVisible) {
-        window._traktPollCfg = setTimeout(poll, 5000);
-        return;
-      }
-      if (inFlight) return;
-
-      inFlight = true;
-      var cfg = null;
-      try { cfg = await fetchConfig(); } catch (_) { cfg = null; }
-      inFlight = false;
-
-      var tok = _str(cfg && ((cfg.trakt && cfg.trakt.access_token) || (cfg.auth && cfg.auth.trakt && cfg.auth.trakt.access_token)));
-      try {
-        var t = cfg ? getTraktCfgBlock(cfg) : null;
-        tok = _str(t && t.access_token) || (getTraktInstance() === 'default' ? tok : '');
-      } catch (_) {}
-      if (tok) {
-        setTraktSuccess(true);
-        cleanup();
-        return;
-      }
-
-      var delay = (Date.now() < fastUntil) ? 2000 : backoff[Math.min(i++, backoff.length - 1)];
-      window._traktPollCfg = setTimeout(poll, delay);
-    };
-
-    window._traktVisPollCfg = function () {
-      if (document.hidden) return;
-      var page = _el("page-settings");
-      var settingsVisible = !!(page && !page.classList.contains("hidden"));
-      if (!settingsVisible) return;
-      if (!window._traktPollCfg) return;
-      clearTimeout(window._traktPollCfg);
-      window._traktPollCfg = null;
-      void poll();
-    };
-    document.addEventListener("visibilitychange", window._traktVisPollCfg);
-
-    window._traktPollCfg = setTimeout(poll, 2000);
+    ensureTraktPoller().start({ intervalMs: 2000, deadlineMs: Number(deadlineMs) || 0 });
   }
 
-  // Pin request flow
   async function requestTraktPin() {
+    try { trqcStop(); } catch (_) {}
     setTraktSuccess(false);
 
     var cidEl = _el("trakt_client_id");
@@ -316,8 +333,11 @@
     if (cidState.value) payload.client_id = cidState.value;
     if (secState.value) payload.client_secret = secState.value;
 
+    var connectBtn = _el("btn-connect-trakt");
+    if (connectBtn) { connectBtn.disabled = true; connectBtn.classList.add("busy"); }
+
     var win = null;
-    try { win = window.open("https://trakt.tv/activate", "_blank"); } catch (_) {}
+    try { win = window.open("about:blank", "_blank"); } catch (_) {}
 
     var resp, data;
     try {
@@ -328,8 +348,9 @@
       });
     } catch (e) {
       console.warn("[trakt] pin fetch failed", e);
-      _notify("Failed to request code");
       try { if (win && !win.closed) win.close(); } catch (_) {}
+      _notify("Failed to request code");
+      if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
       return;
     }
 
@@ -340,42 +361,45 @@
       const body   = (data && data.body) ? `: ${String(data.body).slice(0, 180)}` : "";
       _notify(((data && data.error) || "Code request failed") + status + body);
       try { if (win && !win.closed) win.close(); } catch (_) {}
+      if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
       return;
     }
 
     var code = _str(data.user_code);
-    var url  = _str(data.verification_url) || "https://trakt.tv/activate";
+    var url  = _str(data.verification_url || data.verificationUrl) || "https://trakt.tv/activate";
+    var secs = Number(data.expiresIn || data.expires_in || 0) || 300;
 
-    try {
-      var pinEl = _el("trakt_pin");
-      if (pinEl) pinEl.value = code;
+    var helpEl = _el("trakt_qc_help");
+    if (helpEl) helpEl.textContent = win
+      ? "Opening trakt.tv/activate — enter this code there and approve CrossWatch."
+      : "Open trakt.tv/activate and enter this code to approve CrossWatch.";
 
-      var msg = _el("trakt_msg");
-      if (msg) {
-        msg.textContent = code ? "Code: " + code : "Code request ok";
-        msg.classList.remove("hidden");
-      }
+    trqcShowCode(code, secs);
+    try { startTraktTokenPoll(trqcDeadline); } catch (_) {}
 
-      if (code) {
-        try { await Shared.copyText(code, null, { failureMessage: false }); } catch (_) {}
-        try { startTraktDevicePoll(); } catch (_) {}
-        try { startTraktTokenPoll(); } catch (_) {}
-      }
-
-      if (win && !win.closed) {
-        try { win.location.href = url; win.focus(); } catch (_) {}
-      } else {
-        _notify("Popup blocked - allow popups and try again");
-      }
-    } catch (e) {
-      console.warn("[trakt] ui update failed", e);
+    if (win && !win.closed) {
+      try {
+        win.document.write(
+          '<!doctype html><meta charset="utf-8"><title>CrossWatch → Trakt</title>' +
+          '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
+          '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening trakt.tv/activate…</div>' +
+          '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#8ff0c2">' + code + '</div>' +
+          '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
+        );
+      } catch (_) {}
+      setTimeout(function () { try { if (win && !win.closed) win.location.href = url; } catch (_) {} }, 3000);
+    } else {
+      _notify("Popup blocked - open trakt.tv/activate and enter the code.");
     }
+
+    if (connectBtn) { connectBtn.disabled = false; connectBtn.classList.remove("busy"); }
   }
 
   // Disconnect Trakt via backend endpoint
   async function traktDeleteToken() {
-    var btn = document.querySelector('#sec-trakt .btn.danger');
+    var btn = _el('btn-delete-trakt') || document.querySelector('#sec-trakt .btn.danger');
     var msg = document.getElementById('trakt_msg');
+    try { trqcStop(); } catch (_) {}
     if (btn) { btn.disabled = true; btn.classList.add('busy'); }
     if (msg) { msg.classList.remove('hidden'); msg.classList.remove('warn'); msg.textContent=''; }
     try {
@@ -388,6 +412,7 @@
       var j = await r.json().catch(()=>({}));
       if (r.ok && (j.ok !== false)) {
         _setVal('trakt_pin',''); setTraktSuccess(false);
+        try { var ce = _el('trakt_qc_code'); if (ce) ce.textContent = '------'; } catch (_) {}
         if (msg) msg.textContent = 'Disconnected';
       } else {
         if (msg) { msg.classList.add('warn'); msg.textContent = 'Could not remove token.'; }
@@ -427,7 +452,6 @@
     window.hydrateSecretsRaw            = hydrateAllSecretsRaw;
     window.requestTraktPin              = requestTraktPin;
     window.startTraktTokenPoll          = startTraktTokenPoll;
-    window.startTraktDevicePoll         = startTraktDevicePoll;
     window.traktDeleteToken             = traktDeleteToken;
   } catch (_) {}
 })();

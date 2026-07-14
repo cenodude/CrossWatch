@@ -80,6 +80,22 @@
     return r.ok ? (r.data || {}) : {};
   }
 
+  async function saveMergedConfig(mergeFn) {
+    const fresh = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
+    const cfg = fresh.ok && fresh.data && typeof fresh.data === "object" ? fresh.data : {};
+    try { mergeFn?.(cfg); } catch (_) {}
+    const saved = await fetchJSON("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cfg),
+      cache: "no-store",
+    });
+    if (!saved.ok) throw new Error(`POST /api/config ${saved.status || ""}`.trim());
+    try { w._cfgCache = JSON.parse(JSON.stringify(cfg)); } catch (_) { w._cfgCache = cfg; }
+    try { w.CW?.Cache?.setCfg?.(cfg); } catch (_) {}
+    return cfg;
+  }
+
   function setStatusPill(target, state, msg) {
     const node = typeof target === "string" ? el(target) : target;
     if (!node) return;
@@ -99,6 +115,102 @@
 
   function setStatus(msgId, ok, msg) {
     setStatusPill(msgId, ok ? "ok" : "warn", msg);
+  }
+
+  function setConnectLocked(targets, locked, message) {
+    const list = Array.isArray(targets) ? targets : [targets];
+    const title = txt(message) || "Already connected, delete existing connection first.";
+    list.forEach((target) => {
+      const node = typeof target === "string" ? el(target) : target;
+      if (!node) return;
+      if (locked) {
+        if (!Object.prototype.hasOwnProperty.call(node.dataset, "cwConnectLockPrevTitle")) {
+          node.dataset.cwConnectLockPrevTitle = node.getAttribute("title") || "";
+        }
+        node.disabled = true;
+        node.setAttribute("aria-disabled", "true");
+        node.setAttribute("title", title);
+        node.classList.add("cw-auth-connect-locked");
+      } else {
+        node.disabled = false;
+        node.removeAttribute("aria-disabled");
+        node.classList.remove("cw-auth-connect-locked");
+        if (node.dataset.cwConnectLockPrevTitle !== undefined) {
+          const previous = node.dataset.cwConnectLockPrevTitle;
+          if (previous) node.setAttribute("title", previous);
+          else node.removeAttribute("title");
+          delete node.dataset.cwConnectLockPrevTitle;
+        }
+      }
+    });
+  }
+
+  function mediaAuthGuide(root, opts) {
+    if (!root) return null;
+    let node = root.querySelector(".cw-auth-journey");
+    if (!node) {
+      node = d.createElement("div");
+      node.className = "cw-auth-journey";
+      const authPanel = root.querySelector('.cw-subpanel[data-sub="auth"]');
+      if (authPanel) authPanel.insertBefore(node, authPanel.firstChild || null);
+    }
+    const label = txt(opts?.label) || "media server";
+    const kind = txt(opts?.kind).toLowerCase();
+    const title = txt(opts?.title) || `Connect ${label}`;
+    const copy = txt(opts?.copy) || (
+      kind === "plex"
+        ? "Click Connect Plex, then use the link code shown here in the browser window. Once the account is connected, CrossWatch will move you to Settings to validate the server."
+        : `Enter your ${label} server URL and sign in. After the connection succeeds, CrossWatch will move you to Settings so you can validate the server and pick the right user.`
+    );
+    const brand = kind === "plex"
+      ? { c1: "229,160,13", c2: "229,160,13", logo: "PLEX", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-plex" }
+      : kind === "emby"
+        ? { c1: "82,181,75", c2: "82,181,75", logo: "EMBY", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-emby" }
+        : { c1: "0,164,220", c2: "170,92,195", logo: "JELLYFIN", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-jellyfin" };
+    node.style.setProperty("--cw-auth-c1", brand.c1);
+    node.style.setProperty("--cw-auth-c2", brand.c2);
+    node.style.setProperty("--cw-auth-logo", `url("/assets/img/${brand.logo}.svg")`);
+    node.innerHTML = `
+      <span class="material-symbols-rounded cw-auth-journey-icon" aria-hidden="true">link</span>
+      <div class="cw-auth-journey-text">
+        <div class="cw-auth-journey-title">${title}</div>
+        <div class="cw-auth-journey-copy">${copy}</div>
+      </div>
+      <a class="cw-auth-journey-help" href="${brand.help}" target="_blank" rel="noopener noreferrer" aria-label="Open ${label} guide" title="Open guide"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
+    return node;
+  }
+
+  function setMediaAuthStep(root, step) {
+    if (!root) return;
+    const order = ["auth", "settings", "whitelist"];
+    const active = Math.max(0, order.indexOf(txt(step).toLowerCase()));
+    root.querySelectorAll(".cw-auth-step").forEach((node, index) => {
+      node.classList.toggle("active", index <= active);
+    });
+  }
+
+  function applyMediaTabState(root, state) {
+    if (!root) return;
+    const settingsEnabled = !!state?.settingsEnabled;
+    const whitelistEnabled = !!state?.whitelistEnabled;
+    root.querySelectorAll(".cw-subtile[data-sub]").forEach((btn) => {
+      const sub = txt(btn.dataset.sub).toLowerCase();
+      const disabled = (sub === "settings" && !settingsEnabled) || (sub === "whitelist" && !whitelistEnabled);
+      btn.disabled = disabled;
+      btn.classList.toggle("is-disabled", disabled);
+      if (disabled) btn.setAttribute("aria-disabled", "true");
+      else btn.removeAttribute("aria-disabled");
+      if (disabled) {
+        btn.title = sub === "settings" ? "Connect or configure this profile first." : "Connect this profile before whitelisting libraries.";
+      } else {
+        btn.removeAttribute("title");
+      }
+    });
+    root.querySelectorAll(".cw-subpanel[data-sub]").forEach((panel) => {
+      const sub = txt(panel.dataset.sub).toLowerCase();
+      const locked = (sub === "settings" && !settingsEnabled) || (sub === "whitelist" && !whitelistEnabled);
+      panel.classList.toggle("is-locked", locked);
+    });
   }
 
   function flashCopyButton(btn, text) {
@@ -276,7 +388,9 @@
       head.__cwProfileAdapter = true;
 
       const wrap = d.createElement("div");
-      wrap.className = "inline";
+      wrap.className = "inline cw-profile-switcher";
+      wrap.dataset.cwProfileProvider = apiProvider;
+      wrap.dataset.cwProfileSelect = selectId;
       wrap.style.display = "flex";
       wrap.style.gap = "8px";
       wrap.style.alignItems = "center";
@@ -286,6 +400,7 @@
 
       const lab = d.createElement("span");
       lab.className = "muted";
+      lab.dataset.cwProfileLabel = "true";
       lab.textContent = "Profile";
 
       const sel = d.createElement("select");
@@ -301,13 +416,13 @@
 
       const btnNew = d.createElement("button");
       btnNew.type = "button";
-      btnNew.className = "btn secondary";
+      btnNew.className = "btn secondary cw-profile-new";
       btnNew.id = `${selectId}_new`;
       btnNew.textContent = "New";
 
       const btnDel = d.createElement("button");
       btnDel.type = "button";
-      btnDel.className = "btn secondary";
+      btnDel.className = "btn secondary cw-profile-delete";
       btnDel.id = `${selectId}_del`;
       btnDel.textContent = "Delete";
 
@@ -332,9 +447,11 @@
           if (!r.ok || (j && j.ok === false) || !id) throw new Error(String((j && j.error) || "create_failed"));
           setInstance(id);
           await refreshOptions(true);
+          try { panel.dispatchEvent(new CustomEvent("cw-auth-profile-created", { bubbles: true, detail: { provider: apiProvider, instance: id } })); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
-          notify("Could not create profile: " + (e && e.message ? e.message : e));
+          const message = e && e.message === "profile_limit_reached" ? "Maximum 10 profiles reached." : (e && e.message ? e.message : e);
+          notify("Could not create profile: " + message);
         }
       });
       btnDel.addEventListener("click", async () => {
@@ -357,11 +474,176 @@
     return { getInstance, setInstance, api, cfgBlock, refreshOptions, ensureUI };
   }
 
+  (function wireQcAutoScroll() {
+    const TOP_PAD = 42;
+    const scrollContainer = (node) => {
+      const panel = node?.closest?.(".cw-connection-modal-panel");
+      const direct = panel?.querySelector(":scope > .auth-card, :scope > .cw-subpanels");
+      if (direct) return direct;
+      let p = node?.parentElement;
+      while (p && p !== d.body) {
+        const oy = w.getComputedStyle(p).overflowY;
+        if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight) return p;
+        p = p.parentElement;
+      }
+      return null;
+    };
+    const revealScroll = (node, oldClass) => {
+      if (!node || !node.id || !/_qc_state$/.test(node.id)) return;
+      const wasHidden = /(^|\s)hidden(\s|$)/.test(oldClass || "");
+      const isHidden = node.classList.contains("hidden");
+      if (wasHidden === isHidden) return;
+      const container = scrollContainer(node);
+      if (!container) return;
+      requestAnimationFrame(() => {
+        try {
+          if (!isHidden) {
+            const delta = node.getBoundingClientRect().top - container.getBoundingClientRect().top - TOP_PAD;
+            container.scrollTo({ top: Math.max(0, container.scrollTop + delta), behavior: "smooth" });
+          } else {
+            container.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        } catch (_) {}
+      });
+    };
+    const obs = new MutationObserver((records) => {
+      for (const m of records) {
+        if (m.type === "attributes" && m.attributeName === "class") revealScroll(m.target, m.oldValue);
+      }
+    });
+    const attach = () => {
+      const root = d.getElementById("auth-providers") || d.body;
+      if (!root) return;
+      try { obs.observe(root, { subtree: true, attributes: true, attributeFilter: ["class"], attributeOldValue: true }); } catch (_) {}
+    };
+    if (d.readyState === "loading") d.addEventListener("DOMContentLoaded", attach, { once: true });
+    else attach();
+  })();
+
+  function createDevicePoll(opts) {
+    opts = opts || {};
+    const minIntervalMs = Math.max(1000, Number(opts.minIntervalMs) || 5000);
+    const maxTotalMs = Math.max(minIntervalMs, Number(opts.maxTotalMs) || 300000);
+    const backoffCapMs = Math.max(minIntervalMs, Number(opts.backoffCapMs) || 60000);
+    const method = String(opts.method || "POST").toUpperCase();
+
+    let gen = 0;
+    let timer = null;
+    let controller = null;
+    let deadline = 0;
+    let baseIntervalMs = minIntervalMs;
+    let backoffStep = 0;
+    let running = false;
+
+    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const abort = () => { if (controller) { try { controller.abort(); } catch (_) {} controller = null; } };
+
+    function stop() {
+      gen++;
+      running = false;
+      clearTimer();
+      abort();
+      backoffStep = 0;
+    }
+
+    function parseRetryAfter(value) {
+      if (!value) return 0;
+      const s = String(value).trim();
+      if (/^\d+$/.test(s)) return Math.max(0, parseInt(s, 10) * 1000);
+      const when = Date.parse(s);
+      return isNaN(when) ? 0 : Math.max(0, when - Date.now());
+    }
+
+    function backoffDelay() {
+      const grown = baseIntervalMs * Math.pow(2, Math.max(0, backoffStep));
+      return Math.min(backoffCapMs, grown) + Math.floor(Math.random() * 500);
+    }
+
+    function schedule(myGen, delay) {
+      if (myGen !== gen) return;
+      clearTimer();
+      timer = setTimeout(() => tick(myGen), Math.max(minIntervalMs, Number(delay) || minIntervalMs));
+    }
+
+    async function tick(myGen) {
+      if (myGen !== gen) return;
+      if (Date.now() >= deadline) {
+        stop();
+        try { opts.onTimeout?.(); } catch (_) {}
+        return;
+      }
+      if (opts.shouldPause && opts.shouldPause()) {
+        schedule(myGen, minIntervalMs);
+        return;
+      }
+
+      controller = new AbortController();
+      let status = 0, data = null, retryAfterMs = 0, failed = false;
+      try {
+        const target = typeof opts.url === "function" ? opts.url() : String(opts.url || "");
+        const init = { method, cache: "no-store", signal: controller.signal };
+        if (method !== "GET" && method !== "HEAD") {
+          init.headers = opts.headers || { "Content-Type": "application/json" };
+          init.body = opts.body != null ? opts.body : "{}";
+        } else if (opts.headers) {
+          init.headers = opts.headers;
+        }
+        const r = await fetch(target, init);
+        status = r.status;
+        if (status === 429) retryAfterMs = parseRetryAfter(r.headers.get("Retry-After"));
+        try { data = await r.json(); } catch (_) { data = null; }
+      } catch (_) {
+        failed = true;
+      } finally {
+        controller = null;
+      }
+
+      if (myGen !== gen) return;
+
+      if (failed) { backoffStep++; schedule(myGen, backoffDelay()); return; }
+      if (status === 429) { backoffStep++; schedule(myGen, Math.max(retryAfterMs, backoffDelay())); return; }
+      if (status >= 500) { backoffStep++; schedule(myGen, backoffDelay()); return; }
+
+      const verdict = (opts.classify && opts.classify(status, data || {})) || {};
+      const state = verdict.state || "pending";
+      if (verdict.intervalMs) baseIntervalMs = Math.max(minIntervalMs, Number(verdict.intervalMs));
+
+      if (state === "authorized") { stop(); try { opts.onAuthorized?.(data || {}); } catch (_) {} return; }
+      if (state === "expired") { stop(); try { opts.onExpired?.(data || {}); } catch (_) {} return; }
+      if (state === "terminal") { stop(); try { opts.onTerminal?.(verdict, data || {}); } catch (_) {} return; }
+      if (state === "slow_down" || state === "network" || state === "server") {
+        backoffStep++;
+        schedule(myGen, Math.max(retryAfterMs, backoffDelay()));
+        return;
+      }
+
+      backoffStep = 0;
+      try { opts.onPending?.(data || {}); } catch (_) {}
+      schedule(myGen, baseIntervalMs);
+    }
+
+    function start(startOpts) {
+      stop();
+      const myGen = ++gen;
+      running = true;
+      backoffStep = 0;
+      baseIntervalMs = Math.max(minIntervalMs, Number(startOpts?.intervalMs) || minIntervalMs);
+      const now = Date.now();
+      const cap = now + maxTotalMs;
+      const provided = Number(startOpts?.deadlineMs) || 0;
+      deadline = provided > now ? Math.min(cap, provided) : cap;
+      schedule(myGen, baseIntervalMs);
+    }
+
+    return { start, stop, isRunning: () => running };
+  }
+
   w.CW = w.CW || {};
   w.CW.AuthShared = {
     el,
     txt,
     notify,
+    createDevicePoll,
     isMaskedSecret,
     readSecretField,
     maskSecret,
@@ -369,8 +651,13 @@
     wireSecretInput,
     fetchJSON,
     getConfig,
+    saveMergedConfig,
     setStatusPill,
     setStatus,
+    setConnectLocked,
+    mediaAuthGuide,
+    setMediaAuthStep,
+    applyMediaTabState,
     copyText,
     copyField,
     wireCopyButton,

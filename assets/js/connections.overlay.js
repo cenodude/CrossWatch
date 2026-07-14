@@ -326,12 +326,12 @@ html[data-cw-theme="flat-light"] #providers_list .prov-btn.target{
     host.__cxConnectionsBound = true;
   }
 
-  async function loadProvidersIfNeeded() {
-    if (Array.isArray(window.cx?.providers) && window.cx.providers.length) return window.cx.providers;
+  async function loadProvidersIfNeeded(force = false) {
+    if (!force && Array.isArray(window.cx?.providers) && window.cx.providers.length) return window.cx.providers;
 
     try {
       const arr = typeof window.loadProviders === "function"
-        ? await window.loadProviders()
+        ? await window.loadProviders(!!force)
         : await fetch("/api/sync/providers", { cache: "no-store" }).then((r) => r.ok ? r.json() : []);
       window.cx = window.cx || {};
       window.cx.providers = Array.isArray(arr) ? arr : [];
@@ -352,11 +352,11 @@ html[data-cw-theme="flat-light"] #providers_list .prov-btn.target{
     renderCards(Array.isArray(window.cx?.providers) ? window.cx.providers : []);
   }
 
-  async function renderOrEnhance() {
+  async function renderOrEnhance(force = false) {
     if (_renderBusy) return;
     _renderBusy = true;
     try {
-      await loadProvidersIfNeeded();
+      await loadProvidersIfNeeded(!!force);
       renderConnections();
     } finally {
       _renderBusy = false;
@@ -364,6 +364,9 @@ html[data-cw-theme="flat-light"] #providers_list .prov-btn.target{
   }
 
   document.addEventListener("DOMContentLoaded", renderOrEnhance);
+  document.addEventListener("cw-settings-pane-changed", (ev) => {
+    if (String(ev?.detail?.pane || "").toLowerCase() === "sync") renderOrEnhance(true);
+  });
   document.addEventListener("cx-state-change", renderConnections);
   window.addEventListener("cx:pairs:changed", resetPick);
 

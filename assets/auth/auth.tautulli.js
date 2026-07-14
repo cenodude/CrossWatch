@@ -65,6 +65,7 @@
   }
 
   function setConn(ok, msg) {
+    try { Shared.setConnectLocked("tautulli_save", !!ok); } catch {}
     return Shared.setStatus("tautulli_msg", ok, msg);
   }
 

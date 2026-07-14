@@ -198,6 +198,13 @@ def html() -> str:
 
         <div class="cw-subpanels">
           <div class="cw-subpanel active" data-sub="auth">
+            <div class="cw-auth-journey" style="--cw-auth-c1:2,169,255;--cw-auth-c2:2,169,255;--cw-auth-logo:url('/assets/img/ANILIST.svg')">
+              <div class="cw-auth-journey-text">
+                <div class="cw-auth-journey-title">Connect to AniList</div>
+                <div class="cw-auth-journey-copy">Add your AniList Client ID and Secret, then click Connect AniList and approve the request in the browser window. Once linked, CrossWatch can sync your AniList anime list.</div>
+              </div>
+            </div>
+
             <div class="grid2">
                   <div>
                     <label for="anilist_client_id">Client ID</label>
