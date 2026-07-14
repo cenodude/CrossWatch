@@ -1070,7 +1070,11 @@ function findSharedSinkProfileProviderConflicts(routes) {
       const btn = $(`#${id}`, root);
       if (!btn || btn.querySelector(".material-symbols-rounded")) return;
       const label = btn.textContent.trim();
-      btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span>`;
+      btn.textContent = "";
+      const ico = el("span", { className: "material-symbols-rounded", textContent: icon });
+      ico.setAttribute("aria-hidden", "true");
+      btn.appendChild(ico);
+      btn.appendChild(el("span", { textContent: label }));
     });
     const inp = $("#sc-pms-input", root);
     if (inp && !inp.closest(".sc-server-url-field")) {
