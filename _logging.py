@@ -249,6 +249,7 @@ class Logger:
         safe_extra = _redact_log_value(extra) if extra else None
 
         with self._lock:
+            # codeql[py/clear-text-logging-sensitive-data]
             self.stream.write(safe_message_text + "\n")
             self.stream.flush()
             if self._json_stream:
