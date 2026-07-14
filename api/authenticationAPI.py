@@ -8,11 +8,12 @@ from typing import Any, Callable, Optional
 import copy
 
 import importlib
+import logging
 import re
 import secrets
 import threading
 import time
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 
 import requests
 from fastapi import Body, Request, HTTPException, Response, Query
@@ -40,6 +41,8 @@ from providers.sync.plex._utils import (
 import providers.sync.plex._utils as plex_utils
 
 __all__ = ["register_auth"]
+
+_LOG = logging.getLogger("crosswatch.api.authentication")
 
 
 def _provider_auth():
@@ -558,8 +561,9 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     out["reachable"] = True
                     out["status"] = int(r2.status_code)
                     out["verify_ssl"] = False
-        except Exception as e:
-            out["error"] = str(e)
+        except Exception:
+            _LOG.exception("plex PMS probe failed")
+            out["error"] = "probe_failed"
         return out
 
 

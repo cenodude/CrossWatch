@@ -759,9 +759,10 @@ def reset_all_to_default(payload: dict[str, Any] | None = Body(None)) -> dict[st
         try:
             cfg_path.rename(dst)
             report["backup"] = str(dst)
-        except Exception as e:
+        except Exception:
+            _LOG.exception("reset-all-default config backup failed")
             report["ok"] = False
-            report["errors"].append(f"config_backup_failed: {e}")
+            report["errors"].append("config_backup_failed")
             return report
 
     files = ["last_sync.json", "state.json", "statistics.json"]

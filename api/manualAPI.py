@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import logging
 from datetime import date as dt_date, datetime, timezone
 from typing import Any
 
@@ -14,6 +15,8 @@ from cw_platform.modules_registry import load_sync_ops
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
+
+_LOG = logging.getLogger("crosswatch.api.manual")
 
 
 def _tmdb_api_key(cfg: dict[str, Any]) -> str:
@@ -291,8 +294,9 @@ def api_manual_watched(payload: dict[str, Any] = Body(...)) -> JSONResponse:
             try:
                 hr = ops.add(cfg_view, [item_payload], feature="history")
                 history_res = dict(hr) if isinstance(hr, dict) else {"ok": bool(hr)}
-            except Exception as exc:
-                history_res = {"ok": False, "error": str(exc)}
+            except Exception:
+                _LOG.exception("manual history add failed for %s:%s", provider, instance)
+                history_res = {"ok": False, "error": "history_add_failed"}
         elif do_history:
             history_skipped = "history_not_supported"
 
@@ -303,8 +307,9 @@ def api_manual_watched(payload: dict[str, Any] = Body(...)) -> JSONResponse:
                 try:
                     wr = ops.add(cfg_view, [item_payload], feature="watchlist")
                     watchlist_res = dict(wr) if isinstance(wr, dict) else {"ok": bool(wr)}
-                except Exception as exc:
-                    watchlist_res = {"ok": False, "error": str(exc)}
+                except Exception:
+                    _LOG.exception("manual watchlist add failed for %s:%s", provider, instance)
+                    watchlist_res = {"ok": False, "error": "watchlist_add_failed"}
             else:
                 watchlist_skipped = "watchlist_not_supported"
 
@@ -318,8 +323,9 @@ def api_manual_watched(payload: dict[str, Any] = Body(...)) -> JSONResponse:
                 try:
                     rr = ops.add(cfg_view, [rating_payload], feature="ratings")
                     rating_res = dict(rr) if isinstance(rr, dict) else {"ok": bool(rr)}
-                except Exception as exc:
-                    rating_res = {"ok": False, "error": str(exc)}
+                except Exception:
+                    _LOG.exception("manual rating add failed for %s:%s", provider, instance)
+                    rating_res = {"ok": False, "error": "rating_add_failed"}
             else:
                 rating_skipped = "ratings_not_supported"
 

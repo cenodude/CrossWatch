@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +13,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 from cw_platform import config_base
+
+_LOG = logging.getLogger("crosswatch.tls")
 
 
 def _resolve_cfg_path(raw: str, config_dir: Path) -> Path:
@@ -60,8 +63,9 @@ def cert_info(cert_path: Path) -> dict[str, Any]:
     try:
         pem = cert_path.read_bytes()
         cert = x509.load_pem_x509_certificate(pem)
-    except Exception as e:
-        return {"exists": True, "path": str(cert_path), "error": f"Failed to parse certificate: {e}"}
+    except Exception:
+        _LOG.exception("failed to parse TLS certificate")
+        return {"exists": True, "path": str(cert_path), "error": "invalid_certificate"}
 
     subj = cert.subject.rfc4514_string()
     iss = cert.issuer.rfc4514_string()

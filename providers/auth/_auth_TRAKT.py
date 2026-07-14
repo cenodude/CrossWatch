@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import re
 import threading
 import time
 from typing import Any
@@ -20,28 +19,42 @@ try:
 except ImportError:
     _real_log = None
 
-_SECRET_TEXT_RE = re.compile(
-    r"(?i)(\b(?:access_token|refresh_token|client_secret|authorization|token|code)\b\s*[=:]\s*)([^\s,;]+)"
-)
-_SECRET_JSON_RE = re.compile(
-    r'(?i)("(?:access_token|refresh_token|client_secret|authorization|token|code)"\s*:\s*")([^"]*)(")'
-)
-
-
-def _redact_log_message(msg: Any) -> str:
+def _public_log_message(msg: Any) -> str:
     text = str(msg or "")
-    text = _SECRET_JSON_RE.sub(r"\1****\3", text)
-    text = _SECRET_TEXT_RE.sub(r"\1****", text)
-    return text
+    if text == "TRAKT: request device code":
+        return "TRAKT: request device code"
+    if text == "TRAKT: device code received":
+        return "TRAKT: device code received"
+    if text == "TRAKT: exchange device code":
+        return "TRAKT: exchange device code"
+    if text == "TRAKT: tokens stored":
+        return "TRAKT: tokens stored"
+    if text == "TRAKT: missing client_id/client_secret/refresh_token for refresh":
+        return "TRAKT: missing refresh credentials"
+    if text == "TRAKT: refresh token":
+        return "TRAKT: refresh token"
+    if text == "TRAKT: refresh ok":
+        return "TRAKT: refresh ok"
+    if text.startswith("TRAKT: token refresh network error"):
+        return "TRAKT: token refresh network error"
+    if text.startswith("TRAKT: token refresh failed"):
+        return "TRAKT: token refresh failed"
+    if text.startswith("TRAKT: token refresh invalid JSON"):
+        return "TRAKT: token refresh invalid JSON"
+    if text == "TRAKT: token refresh succeeded but no access_token in response":
+        return "TRAKT: token refresh succeeded without access token"
+    if text.startswith("TRAKT[") and text.endswith("]: disconnected"):
+        return "TRAKT: disconnected"
+    return "TRAKT: auth event"
 
 
 def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
-    safe_msg = _redact_log_message(msg)
+    public_msg = _public_log_message(msg)
     try:
         if _real_log is not None:
-            _real_log(safe_msg, level=level, module=module, **_)
+            _real_log(public_msg, level=level, module=module, **_)
         else:
-            print(f"[{module}] {level}: {safe_msg}")
+            print(f"[{module}] {level}: {public_msg}")
     except Exception:
         pass
 

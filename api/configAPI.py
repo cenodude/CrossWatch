@@ -191,7 +191,7 @@ def _apply_watch_runtime(app: Any, cfg: dict[str, Any], watcher_was_running: boo
         from providers.scrobble import watch_manager as wm
     except Exception as e:
         WATCH_LOG.error(f"watcher runtime refresh unavailable: {type(e).__name__}: {e}")
-        return {"watcher_reload_error": f"watch_manager unavailable: {e}"}
+        return {"watcher_reload_error": "watch_manager_unavailable"}
     try:
         if not source_enabled(cfg, "watcher"):
             wm.stop_all(app, wait=False)
@@ -204,7 +204,7 @@ def _apply_watch_runtime(app: Any, cfg: dict[str, Any], watcher_was_running: boo
                 out["watcher_reloaded"] = True
                 WATCH_LOG.info("Watcher routing changed; refreshed watcher runtime")
     except Exception as e:
-        out["watcher_reload_error"] = str(e)
+        out["watcher_reload_error"] = "watcher_reload_failed"
         WATCH_LOG.error(f"watcher runtime refresh failed: {type(e).__name__}: {e}")
     return out
 
@@ -549,7 +549,7 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
         try:
             result.update(_apply_watch_runtime(request.app, cfg, watcher_was_running))
         except Exception as e:
-            result["watcher_reload_error"] = str(e)
+            result["watcher_reload_error"] = "watcher_reload_failed"
             WATCH_LOG.error(f"watcher runtime refresh failed: {type(e).__name__}: {e}")
     return result
 
