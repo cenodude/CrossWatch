@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -30,6 +31,15 @@ LEVELS: dict[str, int] = {
 _CFG_CACHE: dict[str, Any] | None = None
 _CFG_TS: float = 0.0
 _CFG_TTL: float = 5.0
+_REDACTED = "****"
+_SENSITIVE_KEY_RE = re.compile(
+    r"(password|passwd|pwd|secret|token|api[_-]?key|apikey|authorization|cookie|session)",
+    re.IGNORECASE,
+)
+_SENSITIVE_PAIR_RE = re.compile(
+    r"(?i)([\"']?\b(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|authorization|cookie|session(?:_id)?)\b[\"']?\s*[:=]\s*[\"']?)([^,\s\"';&}]+)"
+)
+_BEARER_RE = re.compile(r"(?i)(\bBearer\s+)([A-Za-z0-9._~+/=-]+)")
 
 
 def _debug_enabled() -> bool:
@@ -64,6 +74,34 @@ def _decide_use_color(requested: bool) -> bool:
         return True
 
     return True
+
+
+def _redact_log_text(value: Any) -> str:
+    text = str(value)
+    text = _BEARER_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", text)
+    text = _SENSITIVE_PAIR_RE.sub(lambda m: f"{m.group(1)}{_REDACTED}", text)
+    return text
+
+
+def _redact_log_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for key, child in value.items():
+            key_text = str(key)
+            if _SENSITIVE_KEY_RE.search(key_text):
+                out[key_text] = _REDACTED
+            else:
+                out[key_text] = _redact_log_value(child)
+        return out
+    if isinstance(value, list):
+        return [_redact_log_value(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_log_value(child) for child in value)
+    if isinstance(value, set):
+        return [_redact_log_value(child) for child in value]
+    if isinstance(value, str):
+        return _redact_log_text(value)
+    return value
 
 
 LogHook = Callable[[dict[str, Any], str, str, str, Mapping[str, Any] | None], None]
@@ -205,25 +243,30 @@ class Logger:
         msg: str,
         extra: Optional[Mapping[str, Any]],
     ) -> None:
+        safe_message_text = _redact_log_text(message_text)
+        safe_msg = _redact_log_text(msg)
+        safe_ctx = _redact_log_value(self._context or {})
+        safe_extra = _redact_log_value(extra) if extra else None
+
         with self._lock:
-            self.stream.write(message_text + "\n")
+            self.stream.write(safe_message_text + "\n")
             self.stream.flush()
             if self._json_stream:
                 payload: dict[str, Any] = {
                     "ts": datetime.datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
                     "level": display_level,
-                    "msg": msg,
-                    "ctx": self._context or {},
+                    "msg": safe_msg,
+                    "ctx": safe_ctx,
                 }
-                if extra:
-                    payload["extra"] = dict(extra)
+                if safe_extra:
+                    payload["extra"] = safe_extra
                 self._json_stream.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 self._json_stream.flush()
 
         hook = self._hook
         if hook:
             try:
-                hook(dict(self._context or {}), display_level, msg, message_text, extra)
+                hook(dict(safe_ctx or {}), display_level, safe_msg, safe_message_text, safe_extra)
             except Exception:
                 pass
 
@@ -243,13 +286,15 @@ class Logger:
                 return
 
         self.use_color = _decide_use_color(bool(self._color_requested))
+        safe_parts = tuple(_redact_log_value(part) for part in parts)
+        safe_extra = _redact_log_value(extra) if extra else None
 
-        line = self._fmt_text(display_level, *parts, extra=extra)
+        line = self._fmt_text(display_level, *safe_parts, extra=safe_extra)
         self._write_sinks(
             display_level,
             line,
-            msg=" ".join(str(p) for p in parts),
-            extra=extra,
+            msg=" ".join(str(p) for p in safe_parts),
+            extra=safe_extra,
         )
 
     def debug(self, *parts: Any, extra: Optional[Mapping[str, Any]] = None) -> None:

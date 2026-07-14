@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import re
 import time
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 from typing import Any, Callable, Iterable, Mapping
 
 import requests
