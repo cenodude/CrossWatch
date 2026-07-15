@@ -868,6 +868,11 @@
     syncConnectionProfileChips(card);
   }
 
+  function findConnectionProfileToolbar(panel, info) {
+    const scoped = `.cw-profile-switcher[data-cw-profile-provider="${info?.provider}"]`;
+    return panel?.querySelector(scoped) || panel?.querySelector(".cw-profile-switcher") || document.querySelector(scoped) || null;
+  }
+
   function ensureConnectionProfileBlock(panel, nav, info) {
     if (!panel || !nav || !connectionModalSupportsProfiles(info)) return null;
     let card = nav.querySelector(":scope > .cw-connection-profile-card");
@@ -888,18 +893,20 @@
     }
 
     const slot = card.querySelector(".cw-connection-profile-slot");
-    const toolbar = panel.querySelector(".cw-profile-switcher") || document.querySelector(`.cw-profile-switcher[data-cw-profile-provider="${info.provider}"]`);
-    if (toolbar && slot && toolbar.parentElement !== slot) slot.appendChild(toolbar);
-    if (toolbar) decorateConnectionProfileToolbar(toolbar, card, info);
+    const toolbar = findConnectionProfileToolbar(panel, info);
+    if (toolbar && slot) {
+      if (toolbar.parentElement !== slot) slot.appendChild(toolbar);
+      decorateConnectionProfileToolbar(toolbar, card, info);
+    }
+    card.classList.toggle("hidden", !toolbar);
 
     if (!toolbar && !panel.__cwConnectionProfileObserveBound && typeof MutationObserver === "function") {
       panel.__cwConnectionProfileObserveBound = true;
       const mo = new MutationObserver(() => {
-        const found = panel.querySelector(".cw-profile-switcher");
-        if (!found) return;
+        if (!findConnectionProfileToolbar(panel, info)) return;
         try { mo.disconnect(); } catch {}
         panel.__cwConnectionProfileObserveBound = false;
-        ensureConnectionProfileBlock(panel, nav, info);
+        ensureConnectionModalNav(panel, info);
         scheduleConnectionModalSize(panel, info);
       });
       mo.observe(panel, { childList: true, subtree: true });
@@ -941,9 +948,10 @@
       });
     }
     const profileCard = ensureConnectionProfileBlock(panel, nav, info);
+    const cardVisible = !!profileCard && !profileCard.classList.contains("hidden");
     const tabCount = nav.querySelectorAll(".cw-subtile[data-sub]").length || 1;
-    nav.style.gridTemplateRows = profileCard ? `repeat(${tabCount}, 92px) auto` : `repeat(${tabCount}, 92px)`;
-    if (profileCard) profileCard.style.gridRow = String(tabCount + 1);
+    nav.style.gridTemplateRows = cardVisible ? `repeat(${tabCount}, 92px) auto` : `repeat(${tabCount}, 92px)`;
+    if (cardVisible) profileCard.style.gridRow = String(tabCount + 1);
     return nav;
   }
 
@@ -1280,6 +1288,8 @@
     section.querySelector(":scope > .head")?.setAttribute("aria-expanded", "true");
     openAuthOverlay("form", info.key);
     try { await window.cwEnsureAuthSection?.(info.sectionId); } catch {}
+    const providerId = connectionInfoForKey(info.key)?.provider || String(info.key || "").toLowerCase();
+    try { window.cwAuth?.[providerId]?.init?.(); } catch {}
     enhanceConnectionModal(section, overlay, info.key);
     wireCopyButtons();
   }
