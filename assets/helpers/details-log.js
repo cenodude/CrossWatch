@@ -1057,17 +1057,9 @@ function toggleDetails() {
   if (!d) return;
   const isOpen = d.classList.contains("hidden");
   const layout = document.getElementById("layout");
-  const statsCard = document.getElementById("stats-card");
-  const insightsFooter = document.getElementById("insights-footer");
-
-  if (!isOpen && statsCard && insightsFooter) {
-    const footerHeight = insightsFooter.getBoundingClientRect().height || insightsFooter.offsetHeight || 120;
-    statsCard.style.paddingBottom = `${footerHeight + 14}px`;
-  }
 
   d.classList.toggle("hidden", !isOpen);
   layout?.classList.toggle("details-open", isOpen);
-  if (isOpen) statsCard?.style.removeProperty("padding-bottom");
   if (isOpen) {
     try { initDetailsTabs(); } catch {}
     try { setDetailsTab(window._detailsTab || "sync"); } catch {}
