@@ -754,11 +754,10 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         want_autostart = source_enabled(cfg, "watcher") and bool(watch.get("autostart"))
 
         if want_webhooks:
-            LOG(
-                "Webhook listening; endpoints ready for Plex/Jellyfin/Emby events",
-                level="INFO",
-                module="WEBHOOK",
-            )
+            from providers.webhooks.config import describe_active_webhooks
+
+            for message, level in describe_active_webhooks(cfg):
+                LOG(message, level=level, module="WEBHOOK")
         if want_webhooks and source_enabled(cfg, "watcher"):
             LOG(
                 "Webhook and Watcher are both enabled, do not use both for the same tracker.",

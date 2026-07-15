@@ -147,6 +147,7 @@
         method: "POST", headers: { "Content-Type": "application/json" }, body: "{}", cache: "no-store",
       });
       const j = await r.json().catch(() => ({}));
+      if (Shared.reportProviderUsage({ status: r.status, data: j })) return;
       if (r.ok && (j.ok !== false)) {
         try { setSimklSuccess(false); } catch {}
         try { const ce = $("simkl_qc_code"); if (ce) ce.textContent = "------"; } catch {}

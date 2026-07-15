@@ -74,6 +74,101 @@
     return { ok: r.ok, data, status: r.status };
   }
 
+  const PROVIDER_LABELS = {
+    plex: "Plex", emby: "Emby", jellyfin: "Jellyfin",
+    trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList",
+  };
+
+  function providerLabel(provider) {
+    const key = txt(provider).toLowerCase();
+    return PROVIDER_LABELS[key] || (key ? key.toUpperCase() : "provider");
+  }
+
+  function describeUsage(usage) {
+    const feature = txt(usage?.feature).toLowerCase();
+    const role = txt(usage?.role).toLowerCase();
+    if (feature === "watcher") {
+      const routeId = txt(usage?.route_id);
+      const where = routeId ? `Watcher route ${routeId}` : "a Watcher route";
+      const side = role === "provider" ? "source" : "sink";
+      return `${where} (${side})${usage?.enabled ? "" : " (disabled)"}`;
+    }
+    if (feature === "webhook") {
+      const inst = txt(usage?.instance) || "default";
+      const name = providerLabel(usage?.provider);
+      const source = inst === "default" ? name : `${name} ${inst}`;
+      return `${source} webhook (${role === "sink" ? "destination" : "source"})`;
+    }
+    return txt(usage?.label) || "an unknown configuration";
+  }
+
+  function isProviderInUse(res) {
+    const data = res?.data ?? res;
+    return res?.status === 409 || txt(data?.error) === "provider_in_use";
+  }
+
+  function providerUsageMessage(res) {
+    const data = res?.data ?? res;
+    if (!isProviderInUse(res)) return "";
+    const usages = Array.isArray(data?.usages) ? data.usages : [];
+    if (!usages.length) return txt(data?.message) || "This connection is still in use.";
+    const inst = txt(data?.instance) || "default";
+    const name = providerLabel(data?.provider);
+    const subject = inst === "default" ? `${name} connection` : `${name} profile ${inst}`;
+    const details = usages.map(describeUsage).join(", ");
+    return `Cannot delete ${subject} because it is used by ${details}. Remove this profile from Watcher or Webhooks first.`;
+  }
+
+  const CONNECTION_WARN_VISIBLE_MS = 10000;
+  const CONNECTION_WARN_FADE_MS = 700;
+
+  function connectionWarnNodes() {
+    const all = [...d.querySelectorAll(".cw-connection-footer-warn")];
+    const visible = all.filter((node) => node.offsetParent !== null);
+    return visible.length ? visible : all;
+  }
+
+  function clearConnectionWarning(node) {
+    if (!node) return;
+    clearTimeout(node.__cwWarnFade);
+    clearTimeout(node.__cwWarnHide);
+    node.__cwWarnFade = 0;
+    node.__cwWarnHide = 0;
+    node.classList.add("hidden");
+    node.classList.remove("is-fading");
+    node.textContent = "";
+  }
+
+  function clearConnectionWarnings() {
+    d.querySelectorAll(".cw-connection-footer-warn").forEach(clearConnectionWarning);
+  }
+
+  function showConnectionWarning(message) {
+    const text = txt(message);
+    if (!text) return false;
+    const nodes = connectionWarnNodes();
+    if (!nodes.length) return false;
+    nodes.forEach((node) => {
+      clearTimeout(node.__cwWarnFade);
+      clearTimeout(node.__cwWarnHide);
+      node.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">warning</span><span class="cw-connection-footer-warn-text"></span>`;
+      node.lastElementChild.textContent = text;
+      node.classList.remove("hidden", "is-fading");
+      node.__cwWarnFade = setTimeout(() => {
+        node.classList.add("is-fading");
+        node.__cwWarnHide = setTimeout(() => clearConnectionWarning(node), CONNECTION_WARN_FADE_MS);
+      }, CONNECTION_WARN_VISIBLE_MS);
+    });
+    return true;
+  }
+
+  function reportProviderUsage(res) {
+    const message = providerUsageMessage(res);
+    if (!message) return false;
+    if (!showConnectionWarning(message)) notify(message);
+    return true;
+  }
+
   async function getConfig() {
     if (w._cfgCache) return w._cfgCache;
     const r = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
@@ -163,10 +258,10 @@
         : `Enter your ${label} server URL and sign in. After the connection succeeds, CrossWatch will move you to Settings so you can validate the server and pick the right user.`
     );
     const brand = kind === "plex"
-      ? { c1: "229,160,13", c2: "229,160,13", logo: "PLEX", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-plex" }
+      ? { c1: "229,160,13", c2: "229,160,13", logo: "PLEX", help: w.CW.HelpLinks.url("plex") }
       : kind === "emby"
-        ? { c1: "82,181,75", c2: "82,181,75", logo: "EMBY", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-emby" }
-        : { c1: "0,164,220", c2: "170,92,195", logo: "JELLYFIN", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-jellyfin" };
+        ? { c1: "82,181,75", c2: "82,181,75", logo: "EMBY", help: w.CW.HelpLinks.url("emby") }
+        : { c1: "0,164,220", c2: "170,92,195", logo: "JELLYFIN", help: w.CW.HelpLinks.url("jellyfin") };
     node.style.setProperty("--cw-auth-c1", brand.c1);
     node.style.setProperty("--cw-auth-c2", brand.c2);
     node.style.setProperty("--cw-auth-logo", `url("/assets/img/${brand.logo}.svg")`);
@@ -459,9 +554,10 @@
         if (id === "default") return notify("Default profile cannot be deleted.");
         if (!confirm(`Delete ${label} profile "${id}"?`)) return;
         try {
-          const r = await fetch(`/api/provider-instances/${encodeURIComponent(apiProvider)}/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok || (j && j.ok === false)) throw new Error(String((j && j.error) || "delete_failed"));
+          const r = await fetchJSON(`/api/provider-instances/${encodeURIComponent(apiProvider)}/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
+          if (reportProviderUsage(r)) return;
+          const j = r.data || {};
+          if (!r.ok || j.ok === false) throw new Error(String(j.error || "delete_failed"));
           setInstance("default");
           await refreshOptions(false);
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
@@ -650,6 +746,11 @@
     markSecretField,
     wireSecretInput,
     fetchJSON,
+    isProviderInUse,
+    providerUsageMessage,
+    reportProviderUsage,
+    showConnectionWarning,
+    clearConnectionWarnings,
     getConfig,
     saveMergedConfig,
     setStatusPill,

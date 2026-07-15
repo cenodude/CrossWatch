@@ -19,6 +19,7 @@ import requests
 from fastapi import Body, Request, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+from api.provider_guard import usage_conflict_response
 from cw_platform.config_base import DEFAULT_CFG, load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
 from cw_platform.value_coercion import coerce_bool
@@ -263,7 +264,23 @@ def _reset_provider_block(cfg: dict[str, Any], provider_key: str, inst: str) -> 
         blk["account_id"] = ""
     return True
 
-    
+
+_PLEX_LEGACY_FIELDS = ("account_token", "pms_token", "server_url", "client_id", "machine_id", "username", "account_id")
+
+
+def _plex_delete_falls_back_to_default(cfg: dict[str, Any], inst: str) -> bool:
+    if inst == "default":
+        return False
+    base = cfg.get("plex")
+    if not isinstance(base, dict):
+        return False
+    insts = base.get("instances")
+    if not isinstance(insts, dict) or inst not in insts or not isinstance(insts.get(inst), dict):
+        if not isinstance(insts, dict) or not insts:
+            return any(str(base.get(k) or "").strip() for k in _PLEX_LEGACY_FIELDS)
+    return False
+
+
 def _to_int(val: Any, default: int = 0) -> int:
     try:
         return int(val)
@@ -485,20 +502,19 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     
     
     @app.post("/api/plex/token/delete", tags=["auth"])
-    def api_plex_token_delete(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_plex_token_delete(instance: str | None = Query(None)) -> Any:
         cfg = load_config() or {}
         if not isinstance(cfg, dict):
             cfg = dict(cfg)
         inst = normalize_instance_id(instance)
+        if _plex_delete_falls_back_to_default(cfg, inst):
+            inst = "default"
+
+        conflict = usage_conflict_response(cfg, "plex", inst)
+        if conflict is not None:
+            return conflict
+
         ok = _reset_provider_block(cfg, "plex", inst)
-        if not ok and inst != "default":
-            base = cfg.get("plex")
-            if isinstance(base, dict):
-                insts = base.get("instances")
-                if (not isinstance(insts, dict) or not insts) and any(str(base.get(k) or "").strip() for k in ("account_token","pms_token","server_url","client_id","machine_id","username","account_id")):
-                    ok = _reset_provider_block(cfg, "plex", "default")
-                    if ok:
-                        inst = "default"
         if not ok:
             return {"ok": False, "error": "not_found", "instance": inst}
         save_config(cfg)
@@ -837,9 +853,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return JSONResponse({"ok": False, "error": "Login failed"}, 500)
 
     @app.post("/api/jellyfin/token/delete", tags=["auth"])
-    def api_jellyfin_token_delete(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_jellyfin_token_delete(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         cfg = load_config()
+        conflict = usage_conflict_response(cfg, "jellyfin", inst)
+        if conflict is not None:
+            return conflict
         jf = ensure_instance_block(cfg, "jellyfin", inst)
         jf["access_token"] = ""
         save_config(cfg)
@@ -1093,9 +1112,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         }
 
     @app.post("/api/emby/token/delete", tags=["auth"])
-    def api_emby_token_delete(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_emby_token_delete(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         cfg = load_config()
+        conflict = usage_conflict_response(cfg, "emby", inst)
+        if conflict is not None:
+            return conflict
         em = ensure_instance_block(cfg, "emby", inst)
         em["access_token"] = ""
         save_config(cfg)
@@ -1638,10 +1660,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return out
 
     @app.post("/api/mdblist/disconnect", tags=["auth"])
-    def api_mdblist_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_mdblist_disconnect(instance: str | None = Query(None)) -> Any:
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "mdblist", inst)
+            if conflict is not None:
+                return conflict
             m = ensure_instance_block(cfg, "mdblist", inst)
             m["api_key"] = ""
             _provider_auth().clear_oauth("mdblist", m)
@@ -1969,10 +1994,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "internal"}
         
     @app.post("/api/trakt/token/delete", tags=["auth"])
-    def api_trakt_token_delete(instance: str = Query("default")) -> dict[str, Any]:
+    def api_trakt_token_delete(instance: str = Query("default")) -> Any:
         try:
             inst = normalize_instance_id(instance)
             cfg = load_config()
+            conflict = usage_conflict_response(cfg, "trakt", inst)
+            if conflict is not None:
+                return conflict
             tr = ensure_instance_block(cfg, "trakt", inst)
             tr["access_token"] = ""
             tr["refresh_token"] = ""
@@ -2186,9 +2214,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return PlainTextResponse("Error", 500)
 
     @app.post("/api/simkl/token/delete", tags=["auth"])
-    def api_simkl_token_delete(instance: str = Query("default")) -> dict[str, Any]:
+    def api_simkl_token_delete(instance: str = Query("default")) -> Any:
         cfg = load_config()
         inst = normalize_instance_id(instance)
+        conflict = usage_conflict_response(cfg, "simkl", inst)
+        if conflict is not None:
+            return conflict
         s = ensure_instance_block(cfg, "simkl", inst)
         try:
             from providers.auth._auth_SIMKL import app_pin_client_id as _simkl_pin_cid

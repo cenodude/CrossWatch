@@ -68,11 +68,14 @@ _LAST_SCROBBLE_SOURCE_LOG: tuple[bool, bool, bool] | None = None
 def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None:
     global _LAST_SCROBBLE_SOURCE_LOG
     try:
+        from providers.webhooks.config import describe_active_webhooks
+
         sc = cfg.get("scrobble") if isinstance(cfg.get("scrobble"), dict) else {}
         enabled = bool((sc or {}).get("enabled"))
         webhook = source_enabled(cfg, "webhook")
         watcher = source_enabled(cfg, "watcher")
-        state = (enabled, webhook, watcher)
+        webhook_lines = describe_active_webhooks(cfg) if webhook else []
+        state = (enabled, webhook, watcher, tuple(webhook_lines))
         if state == _LAST_SCROBBLE_SOURCE_LOG:
             return
         _LAST_SCROBBLE_SOURCE_LOG = state
@@ -88,8 +91,8 @@ def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None
             if callable(logger):
                 logger(message, level=level)
 
-        if webhook:
-            emit("Webhook listening; endpoints ready for Plex/Jellyfin/Emby events", module="WEBHOOK")
+        for message, level in webhook_lines:
+            emit(message, level=level, module="WEBHOOK")
         if watcher:
             emit("Watcher source enabled", module="WATCH")
         if webhook and watcher:

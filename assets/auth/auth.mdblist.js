@@ -397,6 +397,7 @@
     try {
       methodOverride = "";
       const r = await fetchJSON(mdblApi("/api/mdblist/disconnect"), { method: "POST" });
+      if (Shared.reportProviderUsage(r)) return;
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error("disconnect_failed");
       maskInput(el("mdblist_key"), false);
       const code = el("mdblist_device_code"); if (code) code.value = "";

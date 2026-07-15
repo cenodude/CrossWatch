@@ -368,6 +368,10 @@
         cache: "no-store",
       });
       const j = await r.json().catch(() => ({}));
+      if (Shared.reportProviderUsage({ status: r.status, data: j })) {
+        setMsgBanner(msg, null, "");
+        return;
+      }
       if (!r.ok || j?.ok === false) throw new Error(String(j?.error || `HTTP ${r.status}`));
       setConnected(false);
       setMsgBanner(msg, "ok", "Disconnected");

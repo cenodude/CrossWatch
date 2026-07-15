@@ -18,7 +18,8 @@ from urllib.parse import parse_qs
 
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
-from providers.webhooks.config import apply_webhook_settings
+from cw_platform.provider_usage import webhook_source_enabled
+from providers.webhooks.config import apply_webhook_settings, media_source_connected, webhook_sinks
 from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.sources import scrobble_sources
@@ -237,10 +238,23 @@ def _extract_url_params(request: Request) -> dict[str, str]:
     return out
 
 
+def _webhook_profile_gate(cfg: dict[str, Any], provider: str, instance: str) -> dict[str, Any] | None:
+    if not media_source_connected(cfg, provider, instance):
+        return {"ok": True, "ignored": True, "error": "provider_not_connected"}
+    if not webhook_source_enabled(cfg, provider, instance):
+        return {"ok": True, "ignored": True, "error": "profile_disabled"}
+    if not webhook_sinks(cfg, provider, instance):
+        return {"ok": True, "ignored": True, "error": "no_destinations"}
+    return None
+
+
 def _resolve_media_webhook_request(request: Request, provider: str, legacy_key: str) -> tuple[dict[str, Any] | None, str, dict[str, Any] | None]:
     cfg = load_config() or {}
-    params = _extract_url_params(request)
     provider_lc = str(provider or "").strip().lower()
+    if not scrobble_sources(cfg).get("webhook"):
+        return None, "default", {"ok": True, "ignored": True, "error": "webhook_disabled"}
+
+    params = _extract_url_params(request)
     if "profile" in params:
         secret = str(params.get("profile") or "").strip()
         if not secret:
@@ -252,6 +266,9 @@ def _resolve_media_webhook_request(request: Request, provider: str, legacy_key: 
             if not expected or not hmac.compare_digest(expected, secret):
                 continue
             inst = normalize_instance_id(hook.get("instance"))
+            blocked = _webhook_profile_gate(cfg, provider_lc, inst)
+            if blocked:
+                return None, inst, blocked
             return apply_webhook_settings(build_provider_config_view(cfg, provider_lc, inst), provider_lc, inst), inst, None
         return None, "default", {"ok": True, "ignored": True, "error": "invalid_profile"}
 
@@ -260,7 +277,25 @@ def _resolve_media_webhook_request(request: Request, provider: str, legacy_key: 
     got = _extract_url_token(request)
     if not expected or not got or not hmac.compare_digest(expected, got):
         raise WebhookAuthError(provider_lc, "invalid_webhook_token")
+    blocked = _webhook_profile_gate(cfg, provider_lc, "default")
+    if blocked:
+        return None, "default", blocked
     return apply_webhook_settings(cfg, provider_lc, "default"), "default", None
+
+
+_WEBHOOK_IGNORE_REASONS: dict[str, tuple[str, str]] = {
+    "profile_disabled": ("profile is disabled for webhooks", "INFO"),
+    "webhook_disabled": ("webhook source is disabled", "INFO"),
+    "provider_not_connected": ("provider is not connected", "WARN"),
+    "no_destinations": ("no destinations selected", "WARN"),
+    "invalid_profile": ("invalid profile route", "WARN"),
+}
+
+
+def _webhook_ignore_log(prefix: str, target_error: dict[str, Any] | None) -> tuple[str, str]:
+    key = str((target_error or {}).get("error") or "").strip()
+    text, level = _WEBHOOK_IGNORE_REASONS.get(key, (key or "unknown reason", "WARN"))
+    return f"{prefix}: ignored ({text})", level
 
 
 def _resolve_plexwatcher_target(request: Request) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
@@ -1282,7 +1317,7 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
 
     target_cfg, provider_instance, target_error = _resolve_media_webhook_request(request, "jellyfin", "jellyfintrakt")
     if target_error:
-        log(f"jf-webhook: ignored invalid profile route", "WARN")
+        log(*_webhook_ignore_log("jf-webhook", target_error))
         return JSONResponse(target_error, status_code=200)
 
     raw = await request.body()
@@ -1441,7 +1476,7 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
 
     target_cfg, provider_instance, target_error = _resolve_media_webhook_request(request, "emby", "embytrakt")
     if target_error:
-        log("emby-webhook: ignored invalid profile route", "WARN")
+        log(*_webhook_ignore_log("emby-webhook", target_error))
         return JSONResponse(target_error, status_code=200)
 
     raw = await request.body()
@@ -1597,7 +1632,7 @@ async def webhook_trakt(request: Request) -> JSONResponse:
 
     target_cfg, provider_instance, target_error = _resolve_media_webhook_request(request, "plex", "plextrakt")
     if target_error:
-        log("plex-webhook: ignored invalid profile route", "WARN")
+        log(*_webhook_ignore_log("plex-webhook", target_error))
         return JSONResponse(target_error, status_code=200)
 
     raw = await request.body()

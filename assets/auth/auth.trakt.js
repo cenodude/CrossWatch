@@ -410,6 +410,7 @@
         cache: 'no-store'
       });
       var j = await r.json().catch(()=>({}));
+      if (window.CW.AuthShared.reportProviderUsage({ status: r.status, data: j })) return;
       if (r.ok && (j.ok !== false)) {
         _setVal('trakt_pin',''); setTraktSuccess(false);
         try { var ce = _el('trakt_qc_code'); if (ce) ce.textContent = '------'; } catch (_) {}

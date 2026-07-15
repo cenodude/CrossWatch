@@ -1087,9 +1087,12 @@
   }
 
   document.addEventListener("cw-settings-pane-changed", async (e) => {
-    if (scrobblerInit) return;
     if (String(e?.detail?.pane || "").toLowerCase() !== "scrobbler") return;
     try { await window.loadConfig?.(); } catch {}
+    if (scrobblerInit) {
+      try { await window.Scrobbler?.refresh?.(); } catch {}
+      return;
+    }
     try { ensureScrobbler(); setTimeout(ensureScrobbler, 200); } catch {}
   });
 
