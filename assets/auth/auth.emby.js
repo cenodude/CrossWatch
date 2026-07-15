@@ -564,6 +564,10 @@
   }, true);
 
   // expose
+  window.cwAuth = window.cwAuth || {};
+  window.cwAuth.emby = window.cwAuth.emby || {};
+  window.cwAuth.emby.init = ensureHydrate;
+
   window.embyAuto = embyAuto;
   window.embyLoadLibraries = embyLoadLibraries;
   window.mergeEmbyIntoCfg = mergeEmbyIntoCfg;

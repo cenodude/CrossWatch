@@ -788,6 +788,10 @@
     if (jfyQcPoller) jfyQcPoller.stop();
   });
 
+  window.cwAuth = window.cwAuth || {};
+  window.cwAuth.jellyfin = window.cwAuth.jellyfin || {};
+  window.cwAuth.jellyfin.init = ensureHydrate;
+
   window.jfyAuto = jfyAuto;
   window.jfyLoadLibraries = jfyLoadLibraries;
   window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;
