@@ -206,7 +206,7 @@ export default {
           <div class="card" role="listitem">
             <div class="ico" aria-hidden="true"><span class="material-symbols-rounded">key</span></div>
             <div>
-              <div><b>Authentication providers</b></div>
+              <div><b>Connections</b></div>
               <div class="muted">Next: link one or more providers in Settings.</div>
             </div>
           </div>
