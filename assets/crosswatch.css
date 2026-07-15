@@ -1507,6 +1507,10 @@ html[data-cw-theme=flat-light] .cw-history-copy span{color:#667085}
 #page-settings #auth-providers .cw-connection-modal-footer .btn{min-height:42px}
 #page-settings #auth-providers .cw-connection-footer-delete{grid-column:1}
 #page-settings #auth-providers .cw-connection-modal-footer>span{grid-column:2}
+#page-settings #auth-providers .cw-connection-footer-warn{grid-column:2;justify-self:start;display:inline-flex;align-items:center;gap:9px;min-width:0;max-width:100%;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,120,140,.46);background:linear-gradient(180deg,rgba(190,42,72,.32),rgba(100,22,42,.40));color:#ffdbe2;font-size:13px;font-weight:750;line-height:1.35;text-align:left;box-shadow:0 10px 22px rgba(120,20,45,.22),inset 0 1px 0 rgba(255,255,255,.06);opacity:1;transition:opacity .7s ease}
+#page-settings #auth-providers .cw-connection-footer-warn.is-fading{opacity:0}
+#page-settings #auth-providers .cw-connection-footer-warn .material-symbols-rounded{flex:0 0 auto;font-size:19px;color:#ff9fb0}
+#page-settings #auth-providers .cw-connection-footer-warn-text{min-width:0}
 #page-settings #auth-providers .cw-connection-footer-cancel{grid-column:3;width:auto!important;min-width:110px}
 #page-settings #auth-providers .cw-connection-footer-save{grid-column:4;width:auto!important;min-width:150px}
 #page-settings #auth-providers .cw-connection-footer-delete{display:inline-flex;align-items:center;gap:8px}

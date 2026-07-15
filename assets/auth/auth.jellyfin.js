@@ -382,6 +382,7 @@
         cache: 'no-store'
       });
       const j = await r.json().catch(() => ({}));
+      if (Shared.reportProviderUsage({ status: r.status, data: j })) return;
       if (r.ok && (j.ok !== false)) {
         const pass = document.querySelector('#jfy_pass'); if (pass) pass.value = '';
         setConnected(false);

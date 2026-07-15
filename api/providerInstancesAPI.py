@@ -11,6 +11,7 @@ from functools import lru_cache
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
+from api.provider_guard import usage_conflict_response
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import list_instance_ids, provider_key, normalize_instance_id
 
@@ -194,7 +195,7 @@ def api_provider_instances_create(provider: str, instance_id: str, payload: dict
 
 
 @router.delete("/provider-instances/{provider}/{instance_id}")
-def api_provider_instances_delete(provider: str, instance_id: str) -> dict[str, Any]:
+def api_provider_instances_delete(provider: str, instance_id: str) -> Any:
     inst = normalize_instance_id(instance_id)
     if inst == "default":
         return {"ok": False, "error": "cannot_delete_default"}
@@ -204,6 +205,10 @@ def api_provider_instances_delete(provider: str, instance_id: str) -> dict[str, 
     insts = blk.get("instances")
     if not isinstance(insts, dict) or inst not in insts:
         return {"ok": False, "error": "not_found"}
+
+    conflict = usage_conflict_response(cfg, provider_key(provider), inst)
+    if conflict is not None:
+        return conflict
 
     insts.pop(inst, None)
     save_config(cfg)

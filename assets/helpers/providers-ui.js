@@ -443,7 +443,7 @@
 
   const CONNECTION_MODAL_INFO = Object.freeze({
     PLEX: {
-      provider: "plex", logo: "PLEX", size: "wide", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-plex", deleteSelector: "#btn-delete-plex",
+      provider: "plex", logo: "PLEX", size: "wide", help: window.CW.HelpLinks.url("plex"), deleteSelector: "#btn-delete-plex",
       tabs: { auth: ["lock", "Authentication", "Connect your Plex account using a secure link code"], settings: ["tune", "Settings", "Configure server and sync preferences"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
       copy: { auth: ["Plex Authentication", "Connect your Plex account to CrossWatch using a secure link code."], settings: ["Plex Settings", "Configure your server URL, selected profile and sync preferences."], whitelist: ["Plex Whitelisting", "Choose which libraries CrossWatch can use for history, ratings, progress and scrobbling."] },
       journey: ["Link Plex, then tune the server", "Click Connect Plex to get a link code. CrossWatch shows the code, then opens plex.tv/link so you can enter it and approve access. Next, validate the server URL and optionally whitelist libraries.", "229,160,13", "229,160,13", "PLEX"],
@@ -451,7 +451,7 @@
       order: ["#plex_qc_state", ".cw-subpanel[data-sub=auth]>.inline"]
     },
     JELLYFIN: {
-      provider: "jellyfin", logo: "JELLYFIN", size: "wide", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-jellyfin", deleteSelector: ".cw-jfy-delete",
+      provider: "jellyfin", logo: "JELLYFIN", size: "wide", help: window.CW.HelpLinks.url("jellyfin"), deleteSelector: ".cw-jfy-delete",
       tabs: { auth: ["lock", "Authentication", "Connect with Quick Connect or password"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
       copy: { auth: ["Jellyfin Authentication", "Connect your Jellyfin server to CrossWatch."], settings: ["Jellyfin Settings", "Configure server URL, user details and sync preferences."], whitelist: ["Jellyfin Whitelisting", "Choose which libraries CrossWatch can use for sync."] },
       journey: ["Connect to Jellyfin", "Enter your Jellyfin server URL, then connect with Quick Connect (recommended) or your username and password. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "0,164,220", "0,124,220", "JELLYFIN"],
@@ -459,7 +459,7 @@
       order: [".grid2", ".jfy-methods", ".jfy-pane[data-method=quick]", ".jfy-pane[data-method=password]", ".jfy-actions-row"]
     },
     EMBY: {
-      provider: "emby", logo: "EMBY", size: "wide", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-media-servers/auth-emby", deleteSelector: "#btn-emby-delete",
+      provider: "emby", logo: "EMBY", size: "wide", help: window.CW.HelpLinks.url("emby"), deleteSelector: "#btn-emby-delete",
       tabs: { auth: ["lock", "Authentication", "Connect with your Emby credentials"], settings: ["tune", "Settings", "Configure server and user details"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
       copy: { auth: ["Emby Authentication", "Connect your Emby server to CrossWatch."], settings: ["Emby Settings", "Configure server URL, user details and sync preferences."], whitelist: ["Emby Whitelisting", "Choose which libraries CrossWatch can use for sync."] },
       journey: ["Connect to Emby", "Enter your Emby server URL, username and password, then sign in. CrossWatch will move you to Settings next so you can validate the server, pick the user, and optionally whitelist libraries.", "82,181,75", "82,181,75", "EMBY"],
@@ -467,7 +467,7 @@
       order: [".grid2", ".inline"]
     },
     TRAKT: {
-      provider: "trakt", logo: "TRAKT", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-trackers/auth-trakt", deleteSelector: "#btn-delete-trakt",
+      provider: "trakt", logo: "TRAKT", help: window.CW.HelpLinks.url("trakt"), deleteSelector: "#btn-delete-trakt",
       tabs: { auth: ["lock", "Authentication", "Connect your Trakt account"] },
       copy: { auth: ["Trakt Authentication", "Connect your Trakt account with your API credentials."] },
       journey: ["Connect to Trakt", "Add your Trakt Client ID and Secret, then click Connect Trakt and approve the link code at trakt.tv/activate. Once approved, CrossWatch can sync your Trakt watchlist, history and ratings.", "225,20,60", "159,66,198", "TRAKT"],
@@ -477,7 +477,7 @@
       actions: [{ row: ".inline", status: "#trakt_msg", buttons: "#btn-connect-trakt, #btn-trakt-cancel, #btn-trakt-restart" }]
     },
     SIMKL: {
-      provider: "simkl", logo: "SIMKL", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-trackers/auth-simkl", deleteSelector: "#btn-delete-simkl, #btn-delete-simkl-oauth",
+      provider: "simkl", logo: "SIMKL", help: window.CW.HelpLinks.url("simkl"), deleteSelector: "#btn-delete-simkl, #btn-delete-simkl-oauth",
       tabs: { auth: ["lock", "Authentication", "Connect with PIN or OAuth"] },
       copy: { auth: ["SIMKL Authentication", "Connect SIMKL with a PIN code or your OAuth app credentials."] },
       journey: ["Connect to SIMKL", "Connect with a PIN code (recommended) - CrossWatch shows a short code you enter at simkl.com/pin, no keys needed. OAuth with your own SIMKL app credentials remains available.", "218,225,232", "12,12,12", "SIMKL"],
@@ -487,7 +487,7 @@
       actions: [{ row: ".smk-method-row", status: "#simkl_msg", buttons: "#btn-connect-simkl-pin, #btn-simkl-pin-cancel, #btn-simkl-pin-restart, #btn-connect-simkl", extract: ".smk-actions", order: "6" }]
     },
     TMDB: {
-      provider: "tmdb", logo: "TMDB", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-trackers/auth-tmdb", deleteSelector: "#tmdb_sync_disconnect",
+      provider: "tmdb", logo: "TMDB", help: window.CW.HelpLinks.url("tmdb"), deleteSelector: "#tmdb_sync_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect TMDb sync"] },
       copy: { auth: ["TMDb Authentication", "Connect TMDb sync with a v3 API key."] },
       journey: ["Connect to TMDb", "Add your TMDb v3 API key, then connect and approve the session in TMDb. CrossWatch stores the session ID for TMDb watchlist and ratings sync.", "0,179,229", "144,206,161", "TMDB"],
@@ -496,7 +496,7 @@
       actions: [{ row: ".inline", status: "#tmdb_sync_msg", buttons: "#tmdb_sync_connect", wrapParent: true, parentClass: "cw-tmdb-sync-action-wrap", order: "4" }]
     },
     MDBLIST: {
-      provider: "mdblist", logo: "MDBLIST", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-trackers/auth-mdblist", deleteSelector: "#mdblist_disconnect_device, #mdblist_disconnect_api",
+      provider: "mdblist", logo: "MDBLIST", help: window.CW.HelpLinks.url("mdblist"), deleteSelector: "#mdblist_disconnect_device, #mdblist_disconnect_api",
       tabs: { auth: ["lock", "Authentication", "Connect with device code or API key"] },
       copy: { auth: ["MDBList Authentication", "Connect MDBList with device code or API key."] },
       journey: ["Connect to MDBList", "Connect with a Device Code (recommended) or paste a legacy API key. Device Code opens a browser window so you can approve CrossWatch without sharing a key.", "64,132,200", "64,132,200", "MDBLIST"],
@@ -506,7 +506,7 @@
       actions: [{ row: ".mdbl-method-row", status: "#mdblist_msg", buttons: "#mdblist_device_start, #mdblist_device_cancel, #mdblist_device_restart, #mdblist_save", extract: ".mdbl-actions", order: "6" }]
     },
     PUBLICMETADB: {
-      provider: "publicmetadb", logo: "PUBLICMETADB", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-trackers/auth-publicmetadb", deleteSelector: "#publicmetadb_disconnect",
+      provider: "publicmetadb", logo: "PUBLICMETADB", help: window.CW.HelpLinks.url("publicmetadb"), deleteSelector: "#publicmetadb_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect your PublicMetaDB API key"] },
       copy: { auth: ["PublicMetaDB Authentication", "Connect PublicMetaDB with an API key."] },
       journey: ["Connect to PublicMetaDB", "Paste your PublicMetaDB API key and click Connect PublicMetaDB. CrossWatch uses the key for metadata-backed matching and provider lookups.", "155,155,155", "155,155,155", "PUBLICMETADB"],
@@ -515,7 +515,7 @@
       actions: [{ row: ".publicmetadb-actions", status: "#publicmetadb_msg", buttons: "#publicmetadb_save" }]
     },
     ANILIST: {
-      provider: "anilist", logo: "ANILIST", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-trackers/auth-anilist", deleteSelector: "#btn-delete-anilist",
+      provider: "anilist", logo: "ANILIST", help: window.CW.HelpLinks.url("anilist"), deleteSelector: "#btn-delete-anilist",
       tabs: { auth: ["lock", "Authentication", "Connect your AniList account"] },
       copy: { auth: ["AniList Authentication", "Connect AniList with your API credentials."] },
       journey: ["Connect to AniList", "Add your AniList Client ID and Secret, then click Connect AniList and approve the request in the browser window. Anime ID Mapping can improve AniList matching.", "2,169,255", "2,169,255", "ANILIST"],
@@ -524,7 +524,7 @@
       actions: [{ row: ".inline", status: "#anilist_msg", buttons: "#btn-connect-anilist" }]
     },
     TAUTULLI: {
-      provider: "tautulli", logo: "TAUTULLI", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/authentication/auth-others/auth-tautulli", deleteSelector: "#tautulli_disconnect",
+      provider: "tautulli", logo: "TAUTULLI", help: window.CW.HelpLinks.url("tautulli"), deleteSelector: "#tautulli_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect your Tautulli server"] },
       copy: { auth: ["Tautulli Authentication", "Connect Tautulli with server URL and API key."] },
       journey: ["Connect to Tautulli", "Enter your Tautulli server URL and API key, optionally choose a user ID, then connect. CrossWatch can use Tautulli history for supported sync flows.", "190,190,190", "84,115,145", "TAUTULLI"],
@@ -533,7 +533,7 @@
       actions: [{ row: "#tautulli_actions_row", status: "#tautulli_msg", buttons: "#tautulli_save" }]
     },
     TMDB_METADATA: {
-      provider: "tmdb", logo: "TMDB", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/metadata-id-mapping/tmdb-metadata", deleteSelector: "#tmdb_delete",
+      provider: "tmdb", logo: "TMDB", help: window.CW.HelpLinks.url("tmdb-metadata"), deleteSelector: "#tmdb_delete",
       tabs: { api: ["key", "API key", "Connect TMDb metadata"], advanced: ["tune", "Advanced", "Configure locale and cache behavior"] },
       copy: { api: ["TMDb Metadata", "Metadata and images fetched from TMDb."], advanced: ["TMDb Metadata Settings", "Configure metadata locale, cache and advanced options."] },
       journey: ["Connect TMDb Metadata", "Add a TMDb API key to enable metadata lookups, matching data and images. Advanced options let you tune locale and cache behavior when available.", "0,179,229", "144,206,161", "TMDB"],
@@ -544,7 +544,7 @@
       actions: [{ row: ".inline", status: "#tmdb_check_msg", buttons: "#tmdb_check", connectedSelector: "#tmdb_api_key", connectedText: "Connected" }]
     },
     ANIME_MAPPING: {
-      provider: "anime-mapping", logo: "ANILIST", help: "https://wiki.crosswatch.app/crosswatch/settings/connections/metadata-id-mapping/anime-id-mapping", deleteSelector: "",
+      provider: "anime-mapping", logo: "ANILIST", help: window.CW.HelpLinks.url("anime-mapping"), deleteSelector: "",
       tabs: { overview: ["hub", "Mapping", "Manage the local anime ID index"] },
       copy: { overview: ["Anime ID Mapping", "Local anime ID index for AniList watchlist and ratings pairs."] },
       journey: ["Enable Anime ID Mapping", "Use the local AniBridge mapping dataset to translate anime identifiers between AniList and TMDb, TVDb, IMDb, MyAnimeList and AniDB.", "2,169,255", "78,141,255", "ANILIST"],
@@ -883,7 +883,7 @@
         <div class="cw-connection-profile-head">
           <span class="material-symbols-rounded" aria-hidden="true">group</span>
           <strong>Connection profiles</strong>
-          <a class="material-symbols-rounded cw-connection-profile-help" href="https://wiki.crosswatch.app/crosswatch/settings/connections/profiles" target="_blank" rel="noopener noreferrer" aria-label="Open connection profiles guide" title="Open connection profiles guide">help</a>
+          <a class="material-symbols-rounded cw-connection-profile-help" href="${window.CW.HelpLinks.url("connection-profiles")}" target="_blank" rel="noopener noreferrer" aria-label="Open connection profiles guide" title="Open connection profiles guide">help</a>
         </div>
         <div class="cw-connection-profile-body">
           <div class="cw-connection-profile-slot"></div>
@@ -1177,7 +1177,7 @@
     if (!panel.querySelector(":scope > .cw-connection-modal-footer")) {
       const footer = document.createElement("div");
       footer.className = "cw-connection-modal-footer";
-      footer.innerHTML = `<button type="button" class="btn danger cw-connection-footer-delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete connection</span></button><span></span><button type="button" class="btn cw-connection-footer-cancel">Cancel</button><button type="button" class="btn primary cw-connection-footer-save">Save changes</button>`;
+      footer.innerHTML = `<button type="button" class="btn danger cw-connection-footer-delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete connection</span></button><span class="cw-connection-footer-warn hidden" role="alert" aria-live="polite"></span><button type="button" class="btn cw-connection-footer-cancel">Cancel</button><button type="button" class="btn primary cw-connection-footer-save">Save changes</button>`;
       panel.appendChild(footer);
       footer.querySelector(".cw-connection-footer-delete")?.addEventListener("click", (ev) => {
         const trigger = ev.currentTarget;
@@ -1329,6 +1329,7 @@
 
   function closeAuthProviderOverlay() {
     parkActiveAuthForm();
+    try { window.CW.AuthShared.clearConnectionWarnings(); } catch {}
     const overlay = document.getElementById("cw-auth-connection-overlay");
     overlay?.classList.add("hidden");
     overlay?.setAttribute("aria-hidden", "true");

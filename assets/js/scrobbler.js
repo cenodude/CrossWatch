@@ -200,8 +200,8 @@ function clearStickyNote(id) {
     t.textContent = `.sc-shell #sc-server-required:empty,.sc-shell #sc-note:empty,.sc-shell #sc-endpoint-note:empty,.sc-shell #sc-webhook-warning:empty{display:none!important}.sc-shell .cc-head>div:first-child{display:inline-flex;align-items:center;gap:10px;min-width:0}.sc-shell .cx-switch-wrap,.sc-shell .sc-opt-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sc-shell .cx-switch-wrap .sc-toggle,.sc-shell .sc-opt-row .muted{display:inline-flex;align-items:center;min-height:40px;margin:0}.sc-shell .cx-switch-wrap .cx-help,.sc-shell .sc-opt-row .cx-help{display:inline-flex;align-items:center;justify-content:center;align-self:center;margin:0}.sc-shell .sc-inline-head{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}.sc-shell .sc-webhook-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.sc-shell .sc-webhook-filter-grid>div{align-content:start}.sc-shell .sc-webhook-filter-grid .chips{min-height:32px}.sc-shell .sc-route-select-host{display:block;width:100%}.sc-shell .sc-route-select-host>.cw-icon-select{width:100%}.sc-shell .sc-route-table .cw-icon-select-btn{min-height:34px;padding:0 10px;border-radius:14px}.sc-shell .sc-route-table .cw-icon-select-label{font-size:13px}.sc-shell #sc-filters.sc-filters-enhanced>.body{display:grid;grid-template-columns:minmax(0,1fr);gap:18px}.sc-shell #sc-filters.sc-filters-enhanced #sc-route-filter-wrap{display:grid;gap:10px;width:100%;max-width:none;margin:0!important;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:stretch}.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid>div{display:grid;gap:10px;align-content:start;min-width:0;padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.015));border:1px solid rgba(255,255,255,.08)}.sc-shell #sc-filters.sc-filters-enhanced #sc-whitelist{min-height:44px;align-content:flex-start}.sc-shell #sc-filters.sc-filters-enhanced #sc-users-note,.sc-shell #sc-filters.sc-filters-enhanced #sc-uuid-note{min-height:18px}.sc-shell .sc-filter-input-row{display:grid!important;align-items:center;gap:8px}.sc-shell .sc-filter-input-row--actions{grid-template-columns:minmax(0,1fr) 84px 84px}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:block;min-height:1px}.sc-shell .sc-filter-input-row .btn{width:100%}.sc-shell #sc-advanced .body{display:block}.sc-shell .sc-advanced-header{display:flex;align-items:center;margin:0 0 16px}.sc-shell .sc-advanced-title{display:inline-flex;align-items:center;gap:8px;min-height:28px;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-shell .sc-advanced-title .cx-help{margin:0}.sc-shell .sc-advanced-fields{display:grid;gap:16px}.sc-shell .sc-advanced-note{margin-top:12px}.sc-shell .sc-adv-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) 36px 112px;align-items:center;min-height:88px}.sc-shell .sc-adv-grid .field input{width:112px}.sc-shell .sc-adv-grid .field label{line-height:1.35}.sc-shell .sc-adv-grid .field .cx-help{justify-self:center;transform:none}@media (max-width:1180px){.sc-shell .sc-adv-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-shell .sc-webhook-filter-grid{grid-template-columns:1fr}}@media (max-width:980px){.sc-shell #sc-filters.sc-filters-enhanced .sc-filter-grid{grid-template-columns:1fr}}@media (max-width:640px){.sc-shell .sc-filter-input-row,.sc-shell .sc-filter-input-row--actions,.sc-shell .sc-filter-input-row--fetch{grid-template-columns:minmax(0,1fr)!important}.sc-shell .sc-filter-input-row--fetch .sc-filter-input-spacer{display:none}.sc-shell .sc-adv-grid{grid-template-columns:1fr}.sc-shell .sc-adv-grid .field{grid-template-columns:minmax(0,1fr) auto}.sc-shell .sc-adv-grid .field input{grid-column:1 / -1;width:100%}}`;
     t.textContent += `.sc-user-pop{z-index:10050!important}.cw-media-user-picker{z-index:10060!important}.sc-route-modal-card{scrollbar-width:thin;scrollbar-color:rgba(124,92,255,.92) rgba(255,255,255,.06)}.sc-route-modal-card::-webkit-scrollbar{width:12px}.sc-route-modal-card::-webkit-scrollbar-track{background:rgba(255,255,255,.06);border-radius:999px}.sc-route-modal-card::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(124,92,255,.95),rgba(86,60,180,.92));border-radius:999px;border:2px solid rgba(7,9,14,.88)}.sc-route-modal-card::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(145,116,255,.98),rgba(104,79,206,.95))}.sc-route-modal .chips{min-width:0}.sc-route-modal .chip{display:inline-grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:6px;max-width:100%;min-width:0;white-space:nowrap;overflow:hidden}.sc-route-modal .chip>span:first-child{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sc-route-modal .chip .rm{display:inline-flex;align-items:center;justify-content:center;min-width:16px}.sc-route-filter-uuid-list .chip{width:100%}.sc-route-filter-uuid-list .chip>span:first-child{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}`;
     t.textContent += `@media (max-width:980px){.sc-route-filter-grid{grid-template-columns:1fr!important}}`;
-    t.textContent += `.sc-shell-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:18px}.sc-shell-head-side{display:grid;justify-items:end;gap:10px}.sc-shell-toggle{justify-content:flex-end}.sc-webhook-recommend{display:grid;gap:6px;padding:16px 18px!important;font-size:13px!important;line-height:1.5!important}.sc-webhook-recommend strong{font-size:14px;color:#f6f8ff}.sc-webhook-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);gap:14px}.sc-webhook-card{display:grid;gap:12px;padding:16px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}.sc-webhook-card-wide{grid-column:1/-1}.sc-webhook-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sc-webhook-card-title{display:flex;align-items:center;gap:10px;min-width:0;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.74)}.sc-webhook-card-title .wh-logo{width:24px;height:24px}.sc-webhook-card-sub{font-size:12px;line-height:1.45;color:rgba(196,204,222,.72)}.sc-webhook-url-row{display:grid;grid-template-columns:128px minmax(0,1fr) auto auto;gap:10px;align-items:center}.sc-webhook-url-row code,.sc-webhook-profile-row code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sc-webhook-profile-toggle{display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;font-size:12px;color:rgba(196,204,222,.78)}.sc-webhook-profile-list{display:none;gap:8px}.sc-webhook-profile-list.is-open{display:grid}.sc-webhook-profile-row{display:grid;grid-template-columns:128px minmax(0,1fr) auto auto auto;gap:10px;align-items:center}.sc-webhook-profile-name,.sc-webhook-row-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-webhook-icon-btn{width:94px;min-width:94px;min-height:44px;padding:0!important;font-size:24px!important}.sc-webhook-destinations{display:grid;gap:10px;align-content:start}.sc-webhook-destinations .sc-pillbar{min-height:40px}.sc-webhook-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sc-webhook-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}.sc-webhook-advanced{display:grid;gap:14px}.sc-webhook-advanced .sc-subbox{margin-top:0}@media (max-width:1120px){.sc-webhook-grid{grid-template-columns:1fr}.sc-webhook-filter-grid{grid-template-columns:1fr!important}.sc-shell-head{grid-template-columns:1fr}.sc-shell-head-side{justify-items:start}}@media (max-width:760px){.sc-webhook-url-row{grid-template-columns:88px minmax(0,1fr) auto auto}.sc-webhook-profile-row{grid-template-columns:88px minmax(0,1fr) auto auto auto}.sc-webhook-icon-btn{width:62px;min-width:62px}}html[data-cw-theme="flat-light"] .sc-webhook-card{background:#f8fafc!important;border-color:rgba(16,24,40,.16)!important;color:#172033!important}html[data-cw-theme="flat-light"] .sc-webhook-card-title{color:#172033!important}html[data-cw-theme="flat-light"] .sc-webhook-card-sub{color:#4b5565!important}html[data-cw-theme="flat-light"] .sc-webhook-recommend strong{color:#111827!important}`;
-    t.textContent += `.sc-shell .sc-webhook-card-title .wh-logo{width:36px;height:36px;border-radius:999px;padding:7px;background:radial-gradient(circle at 28% 22%,rgba(255,255,255,.26),transparent 33%),linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.11);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 10px 20px rgba(0,0,0,.24)}#card-scrobbler button.sc-webhook-round-btn,#sec-scrobbler button.sc-webhook-round-btn,button.sc-webhook-round-btn{display:inline-flex!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;width:42px!important;min-width:42px!important;max-width:42px!important;height:42px!important;min-height:42px!important;max-height:42px!important;aspect-ratio:1/1!important;padding:0!important;border-radius:50%!important;font-size:21px!important;line-height:1!important;flex:0 0 42px!important}#card-scrobbler button.sc-webhook-round-danger,#sec-scrobbler button.sc-webhook-round-danger,button.sc-webhook-round-danger{color:#ffdbe2!important;background:linear-gradient(180deg,rgba(190,42,72,.34),rgba(100,22,42,.42))!important;border-color:rgba(255,105,135,.52)!important;box-shadow:0 10px 22px rgba(120,20,45,.22),inset 0 1px 0 rgba(255,255,255,.08)!important}#card-scrobbler button.sc-webhook-round-danger:hover,#sec-scrobbler button.sc-webhook-round-danger:hover,button.sc-webhook-round-danger:hover{background:linear-gradient(180deg,rgba(220,54,88,.44),rgba(126,27,50,.50))!important;border-color:rgba(255,128,154,.68)!important}.sc-profile-filter-modal-card{display:grid;gap:12px}.sc-profile-filter-head{display:flex;align-items:center;justify-content:space-between;gap:14px}.sc-profile-filter-title{display:grid;gap:4px}.sc-profile-filter-title-main{font-size:19px;font-weight:900;color:#f4f7ff;letter-spacing:-.01em}.sc-profile-filter-grid{display:grid;gap:10px}.sc-profile-filter-box{display:grid;gap:8px;min-width:0;padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))}.sc-profile-filter-box-title{display:inline-flex;align-items:center;gap:8px;min-height:28px;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.72)}.sc-profile-filter-box-title .cx-help{margin:0}.sc-profile-filter-actions{display:grid;gap:8px;align-items:center}.sc-profile-filter-actions .btn{min-height:40px;border-radius:14px}.sc-profile-filter-foot{display:flex;justify-content:flex-end;gap:10px}.sc-modal-close{display:inline-flex!important;align-items:center!important;gap:8px!important;min-height:42px!important;padding:0 14px!important;border-radius:12px!important;font-weight:900!important;letter-spacing:.05em!important;text-transform:uppercase!important}.sc-modal-close .material-symbols-rounded{font-size:22px!important}@media (min-width:760px){.sc-profile-filter-grid.is-plex{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-profile-filter-grid:not(.is-plex){grid-template-columns:minmax(0,1fr)}}@media (max-width:760px){.sc-webhook-url-row{grid-template-columns:88px minmax(0,1fr) 42px 42px}.sc-webhook-profile-row{grid-template-columns:88px minmax(0,1fr) 42px 42px 42px}.sc-profile-filter-modal-card{width:calc(100vw - 24px)!important}.sc-profile-filter-actions{grid-template-columns:minmax(0,1fr)!important}}`;
+    t.textContent += `.sc-shell-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:18px}.sc-shell-head-side{display:grid;justify-items:end;gap:10px}.sc-shell-toggle{justify-content:flex-end}.sc-webhook-recommend{display:grid;gap:6px;padding:16px 18px!important;font-size:13px!important;line-height:1.5!important}.sc-webhook-recommend strong{font-size:14px;color:#f6f8ff}.sc-webhook-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(280px,.8fr);gap:14px}.sc-webhook-card{display:grid;gap:12px;padding:16px;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.018));box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}.sc-webhook-card-wide{grid-column:1/-1}.sc-webhook-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.sc-webhook-card-title{display:flex;align-items:center;gap:10px;min-width:0;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.74)}.sc-webhook-card-title .wh-logo{width:24px;height:24px}.sc-webhook-card-sub{font-size:12px;line-height:1.45;color:rgba(196,204,222,.72)}.sc-webhook-url-row{display:grid;grid-template-columns:128px auto minmax(0,1fr) auto auto;gap:10px;align-items:center}.sc-webhook-url-row code,.sc-webhook-profile-row code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sc-webhook-profile-toggle{display:inline-flex;align-items:center;gap:8px;width:max-content;max-width:100%;font-size:12px;color:rgba(196,204,222,.78)}.sc-webhook-profile-list{display:none;gap:8px}.sc-webhook-profile-list.is-open{display:grid}.sc-webhook-profile-row{display:grid;grid-template-columns:128px auto minmax(0,1fr) auto auto auto;gap:10px;align-items:center}.sc-webhook-enable{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;font-size:12px;color:rgba(196,204,222,.78)}html[data-cw-theme="flat-light"] .sc-webhook-enable{color:#4b5565!important}.sc-webhook-enable.is-disabled{opacity:.5;cursor:not-allowed}.sc-webhook-sinks-note{margin-top:8px}.sc-webhook-sinks-note:empty{display:none}.sc-webhook-sinks-note.warn{display:flex;align-items:center;gap:6px;opacity:1;background:none;border:0;padding:0;font-size:12px;font-weight:700;color:#ffb4a2}html[data-cw-theme="flat-light"] .sc-webhook-sinks-note.warn{color:#b42318!important}.sc-webhook-profile-name,.sc-webhook-row-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(224,230,246,.68)}.sc-webhook-icon-btn{width:94px;min-width:94px;min-height:44px;padding:0!important;font-size:24px!important}.sc-webhook-destinations{display:grid;gap:10px;align-content:start}.sc-webhook-destinations .sc-pillbar{min-height:40px}.sc-webhook-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.sc-webhook-filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}.sc-webhook-advanced{display:grid;gap:14px}.sc-webhook-advanced .sc-subbox{margin-top:0}@media (max-width:1120px){.sc-webhook-grid{grid-template-columns:1fr}.sc-webhook-filter-grid{grid-template-columns:1fr!important}.sc-shell-head{grid-template-columns:1fr}.sc-shell-head-side{justify-items:start}}@media (max-width:760px){.sc-webhook-url-row{grid-template-columns:88px auto minmax(0,1fr) auto auto}.sc-webhook-profile-row{grid-template-columns:88px auto minmax(0,1fr) auto auto auto}.sc-webhook-icon-btn{width:62px;min-width:62px}}html[data-cw-theme="flat-light"] .sc-webhook-card{background:#f8fafc!important;border-color:rgba(16,24,40,.16)!important;color:#172033!important}html[data-cw-theme="flat-light"] .sc-webhook-card-title{color:#172033!important}html[data-cw-theme="flat-light"] .sc-webhook-card-sub{color:#4b5565!important}html[data-cw-theme="flat-light"] .sc-webhook-recommend strong{color:#111827!important}`;
+    t.textContent += `.sc-shell .sc-webhook-card-title .wh-logo{width:36px;height:36px;border-radius:999px;padding:7px;background:radial-gradient(circle at 28% 22%,rgba(255,255,255,.26),transparent 33%),linear-gradient(145deg,rgba(255,255,255,.12),rgba(255,255,255,.025));border:1px solid rgba(255,255,255,.11);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 10px 20px rgba(0,0,0,.24)}#card-scrobbler button.sc-webhook-round-btn,#sec-scrobbler button.sc-webhook-round-btn,button.sc-webhook-round-btn{display:inline-flex!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important;width:42px!important;min-width:42px!important;max-width:42px!important;height:42px!important;min-height:42px!important;max-height:42px!important;aspect-ratio:1/1!important;padding:0!important;border-radius:50%!important;font-size:21px!important;line-height:1!important;flex:0 0 42px!important}#card-scrobbler button.sc-webhook-round-danger,#sec-scrobbler button.sc-webhook-round-danger,button.sc-webhook-round-danger{color:#ffdbe2!important;background:linear-gradient(180deg,rgba(190,42,72,.34),rgba(100,22,42,.42))!important;border-color:rgba(255,105,135,.52)!important;box-shadow:0 10px 22px rgba(120,20,45,.22),inset 0 1px 0 rgba(255,255,255,.08)!important}#card-scrobbler button.sc-webhook-round-danger:hover,#sec-scrobbler button.sc-webhook-round-danger:hover,button.sc-webhook-round-danger:hover{background:linear-gradient(180deg,rgba(220,54,88,.44),rgba(126,27,50,.50))!important;border-color:rgba(255,128,154,.68)!important}.sc-profile-filter-modal-card{display:grid;gap:12px}.sc-profile-filter-head{display:flex;align-items:center;justify-content:space-between;gap:14px}.sc-profile-filter-title{display:grid;gap:4px}.sc-profile-filter-title-main{font-size:19px;font-weight:900;color:#f4f7ff;letter-spacing:-.01em}.sc-profile-filter-grid{display:grid;gap:10px}.sc-profile-filter-box{display:grid;gap:8px;min-width:0;padding:12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))}.sc-profile-filter-box-title{display:inline-flex;align-items:center;gap:8px;min-height:28px;font-size:11px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.72)}.sc-profile-filter-box-title .cx-help{margin:0}.sc-profile-filter-actions{display:grid;gap:8px;align-items:center}.sc-profile-filter-actions .btn{min-height:40px;border-radius:14px}.sc-profile-filter-foot{display:flex;justify-content:flex-end;gap:10px}.sc-modal-close{display:inline-flex!important;align-items:center!important;gap:8px!important;min-height:42px!important;padding:0 14px!important;border-radius:12px!important;font-weight:900!important;letter-spacing:.05em!important;text-transform:uppercase!important}.sc-modal-close .material-symbols-rounded{font-size:22px!important}@media (min-width:760px){.sc-profile-filter-grid.is-plex{grid-template-columns:repeat(2,minmax(0,1fr))}.sc-profile-filter-grid:not(.is-plex){grid-template-columns:minmax(0,1fr)}}@media (max-width:760px){.sc-webhook-url-row{grid-template-columns:88px auto minmax(0,1fr) 42px 42px}.sc-webhook-profile-row{grid-template-columns:88px auto minmax(0,1fr) 42px 42px 42px}.sc-profile-filter-modal-card{width:calc(100vw - 24px)!important}.sc-profile-filter-actions{grid-template-columns:minmax(0,1fr)!important}}`;
     d.head.appendChild(t);
   }
 
@@ -403,10 +403,6 @@ function clearStickyNote(id) {
     });
     return uniq.join(",");
   }
-  function normSinkCsvOrDefault(raw, dflt = "trakt") {
-    const v = normSinkCsv(raw);
-    return v || String(dflt || "trakt").toLowerCase();
-  }
 
   function ensureSinkPillBar(bar) {
     if (!bar || bar.dataset.scBuilt === "1") return;
@@ -479,16 +475,100 @@ function clearStickyNote(id) {
     return key ? `scrobble.webhook.providers.${key}.sinks` : "scrobble.webhook.sinks";
   }
 
+  function mediaProviderConnected(providerKey, instance = "default") {
+    const key = String(providerKey || "").trim().toLowerCase();
+    const ov = overlayCfgFor(key, instance) || {};
+    if (key === "plex") return !!String(ov.account_token || ov.pms_token || "").trim();
+    if (key === "emby" || key === "jellyfin") return !!String(ov.access_token || "").trim();
+    return false;
+  }
+
+  function webhookProfileEnabledPath(providerKey, instance) {
+    const key = String(providerKey || "").trim().toLowerCase();
+    const inst = String(instance || "default").trim() || "default";
+    return `scrobble.webhook.profiles.${key}.${inst}.enabled`;
+  }
+
+  function webhookProfileEnabled(providerKey, instance) {
+    const key = String(providerKey || "").trim().toLowerCase();
+    const inst = String(instance || "default").trim() || "default";
+    const stored = read(webhookProfileEnabledPath(key, inst), null);
+    if (stored != null) return stored === true;
+    if (inst === "default") {
+      const legacy = read(`scrobble.webhook.providers.${key}.enabled`, null);
+      if (legacy != null) return legacy === true;
+    }
+    return true;
+  }
+
   function webhookSinkCsv(providerKey = "") {
-    const path = webhookSinkPath(providerKey);
-    const own = read(path, null);
-    if (own != null && String(own).trim() !== "") return normSinkCsvOrDefault(own, "trakt");
-    return normSinkCsvOrDefault(read("scrobble.webhook.sinks", "trakt"), "trakt");
+    const key = String(providerKey || "").trim().toLowerCase();
+    if (key) {
+      const own = read(webhookSinkPath(key), null);
+      if (own != null) return normSinkCsv(own);
+    }
+    const base = read("scrobble.webhook.sinks", null);
+    return base == null ? "" : normSinkCsv(base);
+  }
+
+  function webhookSinkInstanceMap(providerKey = "") {
+    const key = String(providerKey || "").trim().toLowerCase();
+    const layers = [read("scrobble.webhook.sink_instances", null)];
+    if (key) layers.push(read(`scrobble.webhook.providers.${key}.sink_instances`, null));
+    const out = {};
+    layers.forEach((src) => {
+      if (!src || typeof src !== "object") return;
+      Object.keys(src).forEach((k) => {
+        const sink = String(k || "").trim().toLowerCase();
+        const inst = String(src[k] || "").trim();
+        if (sink && inst) out[sink] = inst;
+      });
+    });
+    return out;
+  }
+
+  function webhookSinkAvailability(providerKey = "") {
+    const instances = webhookSinkInstanceMap(providerKey);
+    const cache = {};
+    const out = {};
+    SINK_ORDER.forEach((key) => {
+      const inst = canonicalInstanceId(instances[key] || "default");
+      if (!cache[inst]) cache[inst] = sinkConnectionAvailability(inst);
+      out[key] = !!cache[inst][key];
+    });
+    return out;
+  }
+
+  function webhookAvailableSinkCsv(providerKey = "") {
+    return availableSinkCsv(webhookSinkCsv(providerKey), webhookSinkAvailability(providerKey));
   }
 
   function syncWebhookSinkPills(root = STATE.mount) {
     $all("[data-webhook-sinks-provider]", root || d).forEach((bar) => {
-      syncPillBar(bar, webhookSinkCsv(bar.getAttribute("data-webhook-sinks-provider")));
+      const providerKey = bar.getAttribute("data-webhook-sinks-provider");
+      syncPillBar(bar, webhookSinkCsv(providerKey), webhookSinkAvailability(providerKey));
+    });
+    syncWebhookSinkNotes(root);
+  }
+
+  function syncWebhookSinkNotes(root = STATE.mount) {
+    $all("[data-webhook-sinks-note]", root || d).forEach((note) => {
+      const providerKey = String(note.getAttribute("data-webhook-sinks-note") || "").trim().toLowerCase();
+      const selected = sinkCsvItems(webhookSinkCsv(providerKey));
+      const availability = webhookSinkAvailability(providerKey);
+      const usable = selected.filter((sink) => availability[sink] === true);
+      note.classList.remove("warn");
+      if (!selected.length) {
+        note.textContent = "No destination selected - webhook events for this provider are ignored.";
+        note.classList.add("warn");
+        return;
+      }
+      if (!usable.length) {
+        note.textContent = `Not connected: ${selected.map((s) => providerLabel(s) || s).join(", ")} - webhook events are ignored.`;
+        note.classList.add("warn");
+        return;
+      }
+      note.textContent = "";
     });
   }
 
@@ -2196,12 +2276,12 @@ function chip(text, onRemove, onClick) {
   }
 
   function buildWebhookDestinations(providerKey) {
-    return `<div class="sc-webhook-card sc-webhook-destinations"><div class="sc-webhook-card-head"><div><div class="sc-webhook-card-title">Destinations</div><div class="sc-webhook-card-sub">Choose where this provider sends webhook scrobbles.</div></div></div><div class="sc-pillbar" data-webhook-sinks-provider="${providerKey}"></div></div>`;
+    return `<div class="sc-webhook-card sc-webhook-destinations"><div class="sc-webhook-card-head"><div><div class="sc-webhook-card-title">Destinations</div><div class="sc-webhook-card-sub">Choose where this provider sends webhook scrobbles.</div></div></div><div class="sc-pillbar" data-webhook-sinks-provider="${providerKey}"></div><div class="micro-note sc-webhook-sinks-note" data-webhook-sinks-note="${providerKey}"></div></div>`;
   }
 
   function buildWebhookEndpoint(providerKey, label, codeId, copyId) {
     const key = providerKey === "jellyfin" ? "jellyfintrakt" : providerKey === "emby" ? "embytrakt" : "plextrakt";
-    return `<div class="sc-webhook-card sc-webhook-card-wide"><div class="sc-webhook-card-head"><div><div class="sc-webhook-card-title">${providerLogImg(providerKey)}<span>${label} endpoint</span></div></div></div><div class="sc-webhook-url-row"><div class="sc-webhook-row-label">Default</div><code id="${codeId}"></code><button id="${copyId}" class="btn small sc-webhook-round-btn material-symbols-rounded" title="Copy endpoint" aria-label="Copy endpoint">content_copy</button><button type="button" class="btn small sc-webhook-round-btn sc-webhook-round-danger material-symbols-rounded" title="Regenerate endpoint" aria-label="Regenerate endpoint" data-webhook-regen-key="${key}" data-webhook-regen-label="${label} default endpoint">refresh</button></div><label class="sc-webhook-profile-toggle"><input type="checkbox" data-webhook-profile-toggle="${providerKey}"><span>Show profile-specific URLs</span></label><div class="sc-webhook-profile-list" data-webhook-profile-list="${providerKey}"></div></div>`;
+    return `<div class="sc-webhook-card sc-webhook-card-wide"><div class="sc-webhook-card-head"><div><div class="sc-webhook-card-title">${providerLogImg(providerKey)}<span>${label} endpoint</span></div><div class="sc-webhook-card-sub">Enable the profiles that may scrobble through webhooks.</div></div></div><div class="micro-note sc-webhook-sinks-note" data-webhook-conn-note="${providerKey}"></div><div class="sc-webhook-url-row"><div class="sc-webhook-row-label">Default</div><label class="sc-toggle sc-webhook-enable" title="Use this profile for webhook scrobbling"><input type="checkbox" data-webhook-enable="${providerKey}" data-webhook-enable-instance="default"><span class="one-line">Enabled</span></label><code id="${codeId}"></code><button id="${copyId}" class="btn small sc-webhook-round-btn material-symbols-rounded" title="Copy endpoint" aria-label="Copy endpoint">content_copy</button><button type="button" class="btn small sc-webhook-round-btn sc-webhook-round-danger material-symbols-rounded" title="Regenerate endpoint" aria-label="Regenerate endpoint" data-webhook-regen-key="${key}" data-webhook-regen-label="${label} default endpoint">refresh</button></div><label class="sc-webhook-profile-toggle"><input type="checkbox" data-webhook-profile-toggle="${providerKey}"><span>Show profile-specific URLs</span></label><div class="sc-webhook-profile-list" data-webhook-profile-list="${providerKey}"></div></div>`;
   }
 
   function buildWebhookOptions(providerKey, { plex = false } = {}) {
@@ -2563,7 +2643,7 @@ function chip(text, onRemove, onClick) {
   }
 
   function webhookPlexRatingsPairs(enabled) {
-    const targets = new Set(webhookSinkCsv("plex").split(",").filter(Boolean));
+    const targets = new Set(sinkCsvItems(webhookAvailableSinkCsv("plex")));
     const on = !!enabled;
     return [
       ["scrobble.webhook.plex_trakt_ratings", on && targets.has("trakt")],
@@ -2783,7 +2863,7 @@ function chip(text, onRemove, onClick) {
         ? hooks.map((hook) => {
             const inst = String(hook?.instance || "default").trim() || "default";
             const url = profileWebhookUrl(providerKey, hook?.webhook_token);
-            return `<div class="sc-webhook-profile-row"><div class="sc-webhook-profile-name">${esc(inst)}</div><code>${esc(url)}</code><button type="button" class="btn small sc-webhook-round-btn material-symbols-rounded" title="Profile filters" aria-label="Profile filters" data-webhook-profile-filter="${esc(providerKey)}" data-webhook-profile-instance="${esc(inst)}">settings</button><button type="button" class="btn small sc-webhook-round-btn material-symbols-rounded" title="Copy endpoint" aria-label="Copy endpoint" data-copy-webhook-url="${esc(url)}">content_copy</button><button type="button" class="btn small sc-webhook-round-btn sc-webhook-round-danger material-symbols-rounded" title="Regenerate endpoint" aria-label="Regenerate endpoint" data-webhook-regen-provider="${esc(providerKey)}" data-webhook-regen-instance="${esc(inst)}">refresh</button></div>`;
+            return `<div class="sc-webhook-profile-row"><div class="sc-webhook-profile-name">${esc(inst)}</div><label class="sc-toggle sc-webhook-enable" title="Use this profile for webhook scrobbling"><input type="checkbox" data-webhook-enable="${esc(providerKey)}" data-webhook-enable-instance="${esc(inst)}"${webhookProfileEnabled(providerKey, inst) ? " checked" : ""}><span class="one-line">Enabled</span></label><code>${esc(url)}</code><button type="button" class="btn small sc-webhook-round-btn material-symbols-rounded" title="Profile filters" aria-label="Profile filters" data-webhook-profile-filter="${esc(providerKey)}" data-webhook-profile-instance="${esc(inst)}">settings</button><button type="button" class="btn small sc-webhook-round-btn material-symbols-rounded" title="Copy endpoint" aria-label="Copy endpoint" data-copy-webhook-url="${esc(url)}">content_copy</button><button type="button" class="btn small sc-webhook-round-btn sc-webhook-round-danger material-symbols-rounded" title="Regenerate endpoint" aria-label="Regenerate endpoint" data-webhook-regen-provider="${esc(providerKey)}" data-webhook-regen-instance="${esc(inst)}">refresh</button></div>`;
           }).join("")
         : "";
       const toggle = $(`[data-webhook-profile-toggle="${providerKey}"]`, STATE.mount || d);
@@ -2791,6 +2871,38 @@ function chip(text, onRemove, onClick) {
       if (toggleWrap) toggleWrap.style.display = hooks.length ? "" : "none";
       if (toggle && !hooks.length) toggle.checked = false;
       host.classList.toggle("is-open", !!toggle?.checked);
+    });
+    syncWebhookEnableToggles();
+  }
+
+  function syncWebhookEnableToggles(root = STATE.mount) {
+    $all("[data-webhook-enable]", root || d).forEach((input) => {
+      const providerKey = String(input.getAttribute("data-webhook-enable") || "").trim().toLowerCase();
+      const inst = String(input.getAttribute("data-webhook-enable-instance") || "default").trim() || "default";
+      if (!providerKey) return;
+      const connected = mediaProviderConnected(providerKey, inst);
+      input.disabled = !connected;
+      input.checked = connected && webhookProfileEnabled(providerKey, inst);
+      const label = input.closest(".sc-webhook-enable");
+      if (label) {
+        label.classList.toggle("is-disabled", !connected);
+        label.title = connected
+          ? "Use this profile for webhook scrobbling"
+          : `Connect ${providerLabel(providerKey) || providerKey} first`;
+      }
+    });
+    syncWebhookConnNotes(root);
+  }
+
+  function syncWebhookConnNotes(root = STATE.mount) {
+    $all("[data-webhook-conn-note]", root || d).forEach((note) => {
+      const providerKey = String(note.getAttribute("data-webhook-conn-note") || "").trim().toLowerCase();
+      const name = providerLabel(providerKey) || providerKey;
+      const connected = mediaProviderConnected(providerKey, "default");
+      note.classList.toggle("warn", !connected);
+      note.textContent = connected
+        ? ""
+        : `${name} is not connected - connect it in Connections before using this webhook.`;
     });
   }
 
@@ -3530,6 +3642,20 @@ async function hydrateJellyfin() {
       if (host) host.classList.toggle("is-open", !!toggle.checked);
     });
 
+    on(STATE.webhookHost, "change", (e) => {
+      const input = e.target?.closest?.("[data-webhook-enable]");
+      if (!input) return;
+      const providerKey = String(input.getAttribute("data-webhook-enable") || "").trim().toLowerCase();
+      const inst = String(input.getAttribute("data-webhook-enable-instance") || "default").trim() || "default";
+      if (!providerKey) return;
+      const path = webhookProfileEnabledPath(providerKey, inst);
+      const value = !!input.checked;
+      write(path, value);
+      const name = inst === "default" ? providerLabel(providerKey) || providerKey : inst;
+      persistConfigPaths([[path, value]], "sc-endpoint-note");
+      setNote("sc-endpoint-note", `${name} webhook ${value ? "enabled" : "disabled"}`, "ok");
+    });
+
     on(STATE.webhookHost, "click", (e) => {
       const btn = e.target?.closest?.("button[data-sink]");
       const bar = btn?.closest?.("[data-webhook-sinks-provider]");
@@ -3537,9 +3663,11 @@ async function hydrateJellyfin() {
       e.preventDefault();
       const providerKey = String(bar.getAttribute("data-webhook-sinks-provider") || "").trim().toLowerCase();
       const key = String(btn.getAttribute("data-sink") || "").trim().toLowerCase();
-      const cur = webhookSinkCsv(providerKey).split(",").filter(Boolean);
+      const availability = webhookSinkAvailability(providerKey);
+      if (!key || availability[key] !== true) return;
+      const cur = sinkCsvItems(availableSinkCsv(webhookSinkCsv(providerKey), availability));
       const next = cur.includes(key) ? cur.filter((x) => x !== key) : [...cur, key];
-      const csv = normSinkCsvOrDefault(next.join(","), "trakt");
+      const csv = normSinkCsv(next.join(","));
       const path = webhookSinkPath(providerKey);
       write(path, csv);
       syncWebhookSinkPills(STATE.webhookHost);
@@ -3760,7 +3888,7 @@ async function hydrateJellyfin() {
       plex_trakt_ratings: !!read("scrobble.webhook.plex_trakt_ratings", false),
       plex_simkl_ratings: !!read("scrobble.webhook.plex_simkl_ratings", false),
       plex_mdblist_ratings: !!read("scrobble.webhook.plex_mdblist_ratings", false),
-      sinks: normSinkCsvOrDefault(read("scrobble.webhook.sinks", "trakt"), "trakt"),
+      sinks: webhookSinkCsv(""),
       providers: read("scrobble.webhook.providers", {}) || {},
       profiles: read("scrobble.webhook.profiles", {}) || {},
       filters_plex: {
@@ -3836,6 +3964,7 @@ async function init(opts = {}) {
         try {
           if (!d.hidden) {
             try { await refreshCfgBeforePopulate(); } catch {}
+            try { populate(); } catch {}
             try { if (isRoutesMode()) await renderRoutesUi(); } catch {}
             try { await refreshWatcher(); } catch {}
             try { applyModeDisable(); } catch {}
@@ -3862,12 +3991,22 @@ async function init(opts = {}) {
     if (provider() === "jellyfin") await hydrateJellyfin();
   }
 
+  async function refresh() {
+    if (!STATE.mount) return;
+    try { await refreshCfgBeforePopulate(); } catch {}
+    try { ensureWatchRoutesArray(); } catch {}
+    try { populate(); } catch {}
+    try { if (isRoutesMode()) await renderRoutesUi(); } catch {}
+    try { await refreshWatcher(); } catch {}
+    try { applyModeDisable(); } catch {}
+  }
+
   function mountLegacy(targetEl, cfg) {
     return init({ mountId: targetEl?.id, cfg: cfg || (w._cfgCache || {}) });
   }
 
   w.ScrobUI = { $, $all, el, on, setNote, injectStyles, DEFAULTS, STATE, read, write, asArray, clamp100, norm100, API };
-  w.Scrobbler = { init, mount: mountLegacy, getConfig: getScrobbleConfig, getRootPatch };
+  w.Scrobbler = { init, mount: mountLegacy, refresh, getConfig: getScrobbleConfig, getRootPatch };
   w.getScrobbleConfig = getScrobbleConfig;
   w.getRootPatch = getRootPatch;
 

@@ -565,6 +565,7 @@ async function plexDeleteToken() {
       cache: "no-store"
     });
     const j = await r.json().catch(() => ({}));
+    if (Shared.reportProviderUsage({ status: r.status, data: j })) return;
     if (r.ok && (j.ok !== false)) {
       ["plex_pin", "plex_username", "plex_account_id"].forEach((id) => { const el = $(id); if (el) el.value = ""; });
       try { const codeEl = $("plex_qc_code"); if (codeEl) codeEl.textContent = "----"; } catch {}
