@@ -15,9 +15,23 @@
   window._lastSyncEpoch = window._lastSyncEpoch || null;
   window.__wallRenderSignature = window.__wallRenderSignature || "";
   const WALL_PREVIEW_CACHE_KEY = "cw.wall.preview.v2";
-  const WALL_PREVIEW_LEGACY_CACHE_KEY = `cw.wall.preview.${window.APP_VERSION || "v1"}`;
+  const WALL_PREVIEW_MIGRATION_KEY = "cw.wallPreviewMigrated.v1";
   const WALL_PREVIEW_REFRESH_TTL_MS = 60 * 1000;
   const DEFAULT_INSTANCE = "default";
+
+  const migrateWallPreviewCache = () => {
+    try {
+      if (localStorage.getItem(WALL_PREVIEW_MIGRATION_KEY)) return;
+      const stale = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) || "";
+        if (key.startsWith("cw.wall.preview.")) stale.push(key);
+      }
+      for (const key of stale) localStorage.removeItem(key);
+      localStorage.setItem(WALL_PREVIEW_MIGRATION_KEY, "1");
+    } catch {}
+  };
+  migrateWallPreviewCache();
 
   const json = async (url, opt) => {
     if (authSetupPending()) throw new Error("auth setup pending");
@@ -71,16 +85,8 @@
 
   const readWallCache = () => {
     try {
-      let raw = localStorage.getItem(WALL_PREVIEW_CACHE_KEY)
-        || localStorage.getItem(WALL_PREVIEW_LEGACY_CACHE_KEY);
-      if (!raw) {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i) || "";
-          if (!key.startsWith("cw.wall.preview.") || key === WALL_PREVIEW_CACHE_KEY) continue;
-          raw = localStorage.getItem(key);
-          if (raw) break;
-        }
-      }
+      const raw = localStorage.getItem(WALL_PREVIEW_CACHE_KEY);
+      if (!raw) return null;
       const data = JSON.parse(raw);
       return Array.isArray(data?.items) ? data : null;
     } catch {
@@ -92,6 +98,10 @@
     try {
       localStorage.setItem(WALL_PREVIEW_CACHE_KEY, JSON.stringify({ items, last_sync_epoch: lastSyncEpoch || 0, total }));
     } catch {}
+  };
+
+  const clearWallCache = () => {
+    try { localStorage.removeItem(WALL_PREVIEW_CACHE_KEY); } catch {}
   };
 
   const hasRenderedWall = (row = document.getElementById("poster-row")) => !!(row?.childElementCount && !row.classList.contains("hidden"));
@@ -845,17 +855,13 @@
 
     const myReq = ++wallReqSeq;
     const refreshVersion = window.__cwWallPreviewDirtyVersion;
-    let renderedWall = hasRenderedWall(row);
+    const renderedWall = hasRenderedWall(row);
     if (!renderedWall) {
       msg.textContent = "Loading...";
       msg.classList.remove("is-empty");
       msg.classList.remove("hidden");
       row.closest(".wall-wrap")?.classList.remove("is-empty");
       row.classList.add("hidden");
-      const cached = readWallCache();
-      if (cached) {
-        renderedWall = renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
-      }
     }
 
     const limit = Number.isFinite(window.MAX_WALL_POSTERS) ? Math.max(1, Number(window.MAX_WALL_POSTERS)) : 20;
@@ -867,6 +873,7 @@
       if (myReq !== wallReqSeq) return false;
       if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
       if (!gate.allowed) {
+        clearWallCache();
         hidePreviewCard(card, row, msg);
         return false;
       }
@@ -877,13 +884,14 @@
       const data = wallResult.data;
       if (myReq !== wallReqSeq) return false;
       if (!isOnMain()) { hidePreviewCard(card, row, msg, { preserve: true }); return false; }
-      if (data?.missing_tmdb_key) { hidePreviewCard(card, row, msg); return false; }
+      if (data?.missing_tmdb_key) { clearWallCache(); hidePreviewCard(card, row, msg); return false; }
       if (!data?.ok) { msg.textContent = data?.error || "No state data found."; return false; }
 
       let items = Array.isArray(data.items) ? data.items.slice() : [];
       if (!items.length) items = (data.items || []).filter((it) => String(it?.status || "").toLowerCase() === "both");
       window._lastSyncEpoch = data.last_sync_epoch || null;
       if (!items.length) {
+        clearWallCache();
         setWallEmpty(row, msg, "No items to show yet.");
         markPreviewClean(refreshVersion);
         return true;
@@ -893,6 +901,10 @@
       markPreviewClean(refreshVersion);
       return true;
     } catch {
+      const cached = readWallCache();
+      if (cached?.items?.length) {
+        return renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
+      }
       if (!renderedWall) {
         row.classList.add("hidden");
         msg.classList.remove("hidden");
