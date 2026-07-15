@@ -2285,6 +2285,10 @@ def api_run_summary_file() -> Response:
         headers={"Content-Disposition": 'attachment; filename="last_sync.json"'},
     )
 
+_SSE_HEARTBEAT_SEC = 15.0
+_SSE_HEARTBEAT_COMMENT = ": keep-alive\n\n"
+
+
 @router.get("/run/summary/stream")
 async def api_run_summary_stream(request: Request) -> StreamingResponse:
     import html, re
@@ -2336,11 +2340,13 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
         last_key = None
         last_idx = 0
         last_hydrate_sig = None
+        last_emit = time.monotonic()
         LOG_BUFFERS = _rt()[0]
 
         while True:
             if await request.is_disconnected():
                 break
+            emitted = False
             buf_len = 0
             try:
                 buf = LOG_BUFFERS.get("SYNC") or []
@@ -2359,6 +2365,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                             evt = (str(obj.get("event") or "log").strip() or "log")
                             yield f"event: {evt}\n"
                             yield f"data: {json.dumps(obj, separators=(',',':'))}\n\n"
+                            emitted = True
                     last_idx = len(buf)
             except Exception:
                 pass
@@ -2396,6 +2403,14 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             if key != last_key:
                 last_key = key
                 yield f"data: {json.dumps(snap, separators=(',',':'))}\n\n"
+                emitted = True
+
+            now = time.monotonic()
+            if emitted:
+                last_emit = now
+            elif (now - last_emit) >= _SSE_HEARTBEAT_SEC:
+                yield _SSE_HEARTBEAT_COMMENT
+                last_emit = now
 
             await asyncio.sleep(0.25)
 
@@ -2407,6 +2422,5 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             "Pragma": "no-cache",
             "Expires": "0",
             "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
         },
     )

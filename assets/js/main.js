@@ -549,15 +549,21 @@
       on(esSummary, ["run:error", "run:aborted"], () => {
         try { sync.error(); setRunButtonState(false); } catch {}
       });
-      esSummary.onerror = () => {
-        safe(esSummary?.close?.bind(esSummary));
-        esSummary = null;
-        window.esSum = null;
-        if (authSetupPending()) return;
-        setTimeout(openSummaryStream, 2000);
-      };
+      esSummary.onopen = () => safe(summaryStream.onOpen.bind(summaryStream));
+      esSummary.onerror = () => summaryStream.onError();
     } catch {}
   };
+
+  const summaryStream = window.CW.createSummaryStreamController({
+    isHidden: () => document.hidden,
+    openStream: () => window.openSummaryStream(),
+    closeStream: () => {
+      safe(esSummary?.close?.bind(esSummary));
+      esSummary = null;
+      window.esSum = null;
+    },
+    pullSummary: () => { pullSummary().then(renderAll); },
+  });
 
   window.openLogStream = function openLogStream() {
     try {
@@ -574,11 +580,13 @@
   };
 
   window.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") {
-      if (authSetupPending()) return;
-      openSummaryStream();
-      openLogStream();
+    if (document.hidden) {
+      summaryStream.onVisibility();
+      return;
     }
+    if (authSetupPending()) return;
+    summaryStream.onVisibility();
+    openLogStream();
   });
 
   window.addEventListener("auth-changed", () => {
