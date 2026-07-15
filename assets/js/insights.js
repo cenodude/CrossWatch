@@ -362,35 +362,18 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
   const refitProviderNumbers = () => { $$("#stat-providers .tile .n").forEach(fitProviderNumber); $$("#stat-providers .tile .mse").forEach(fitProviderMSE); };
   w.addEventListener("resize", refitProviderNumbers, { passive: true });
 
-  const footWrap = (() => {
-    let timer = 0;
-    const ensure = () => {
-      ensureStyles();
-      let foot = $("#insights-footer");
-      if (!foot) {
-        foot = d.createElement("div");
-        foot.id = "insights-footer";
-        foot.className = "ins-footer";
-        foot.innerHTML = '<div class="ins-foot-wrap"></div>';
-        ($("#stats-card") || d.body).appendChild(foot);
-      }
-      return $(".ins-foot-wrap", foot) || foot;
-    };
-    ensure.reserve = () => {
-      const card = $("#stats-card"), foot = $("#insights-footer");
-      if (!card || !foot) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if ($("main#layout")?.classList.contains("details-open")) {
-          card.style.removeProperty("padding-bottom");
-          return;
-        }
-        card.style.paddingBottom = `${(foot.getBoundingClientRect().height || foot.offsetHeight || 120) + 14}px`;
-      }, 0);
-    };
-    w.addEventListener("resize", ensure.reserve, { passive: true });
-    return ensure;
-  })();
+  const footWrap = () => {
+    ensureStyles();
+    let foot = $("#insights-footer");
+    if (!foot) {
+      foot = d.createElement("div");
+      foot.id = "insights-footer";
+      foot.className = "ins-footer";
+      foot.innerHTML = '<div class="ins-foot-wrap"></div>';
+      ($("#stats-card") || d.body).appendChild(foot);
+    }
+    return $(".ins-foot-wrap", foot) || foot;
+  };
 
   function placeSwitchBeforeTiles() {
     const wrap = footWrap(), sw = $("#insights-switch"), grid = $("#stat-providers");
@@ -444,7 +427,6 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
     }
     placeSwitchBeforeTiles();
     markActiveSwitcher();
-    footWrap.reserve();
   }
 
   const providerSelected = prov => {
@@ -478,7 +460,7 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
 
     if (!keys.length) {
       host.hidden = true;
-      return footWrap.reserve();
+      return;
     }
 
     host.hidden = false;
@@ -533,7 +515,6 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
 
     [...host.querySelectorAll(".tile")].forEach(tile => !seen.has(tile.id) && tile.remove());
     placeSwitchBeforeTiles();
-    footWrap.reserve();
   }
 
   function renderCrossWatchSnapshotHint(cwSnapshots) {
@@ -608,8 +589,6 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
     const configured = await getConfiguredProviders(forceConfigured);
     renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
     renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
-    footWrap.reserve();
-    if (!statsOnly) setTimeout(footWrap.reserve, 0);
   }
 
   async function refreshInsights(force = false) {

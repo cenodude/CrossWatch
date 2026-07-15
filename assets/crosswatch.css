@@ -68,7 +68,8 @@ code{padding:2px 6px;border:1px solid var(--border);border-radius:8px;background
 @media(max-width:900px){.details-grid{grid-template-columns:1fr}
 }
 #layout{display:grid;gap:16px;align-items:stretch}
-#layout:not(.single):not(.full){grid-template-columns:minmax(620px,1fr) minmax(360px,420px)}
+#layout:not(.single):not(.full){grid-template-columns:minmax(620px,1fr) minmax(360px,420px);align-items:start;align-content:start}
+#layout:not(.single):not(.full)>#ops-card,#layout:not(.single):not(.full)>#stats-card{align-self:start;height:auto;min-height:0}
 #layout.full,#layout.single,.cw-settings-hub--single{grid-template-columns:1fr}
 .section>.head{position:relative;display:flex;align-items:center;gap:10px;padding:12px 44px 12px 14px;cursor:pointer}
 .section>.head .chev,.tab-caret{display:inline-block;flex:0 0 auto;font-size:0;line-height:0;color:currentColor}
@@ -543,7 +544,7 @@ main.full #stats-card,main.single #stats-card{grid-column:1;grid-row:auto;align-
 #stats-card .tile.g3 .k{color:#dfe3ee}
 #stats-card{grid-row:1;grid-column:2;align-self:start;height:auto;position:relative;overflow:hidden;isolation:isolate;transition:filter .2s ease}
 main#layout.details-open #stats-card{align-self:start;height:auto}
-main#layout.details-open #insights-footer{position:static!important;left:auto!important;right:auto!important;bottom:auto!important;margin-top:10px}
+main#layout.details-open #insights-footer{margin-top:10px}
 #stats-card.expanded{filter:brightness(1.02)}
 .sparkline .dot{r:2.5;opacity:.9}
 .sparkline .dot:hover{transform:scale(1.6)}
@@ -561,7 +562,7 @@ main#layout.details-open #insights-footer{position:static!important;left:auto!im
 @media(max-width:1100px){#ops-card,#placeholder-card,#stats-card{grid-column:1}
 }
 html.cw-compact #stats-card{grid-column:1!important;grid-row:auto!important;align-self:start!important;height:auto!important;padding-bottom:16px!important}
-html.cw-compact #insights-footer{position:static!important;left:auto!important;right:auto!important;bottom:auto!important;margin-top:10px!important}
+html.cw-compact #insights-footer{margin-top:10px!important}
 html.cw-compact #stats-card .stat-tiles{display:grid!important}
 html.cw-compact #stats-card .stat-block{display:block!important}
 html.cw-compact #stats-card #sync-history{max-height:260px;overflow:auto}
