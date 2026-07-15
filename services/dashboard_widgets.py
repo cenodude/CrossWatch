@@ -680,6 +680,24 @@ def _merge_media_row(prev: Mapping[str, Any], row: Mapping[str, Any], *, sort_ke
     return chosen
 
 
+_RATING_TRACKER_FLAG = "_tracker_rating"
+
+
+def _merge_rating_row(prev: Mapping[str, Any], row: Mapping[str, Any]) -> dict[str, Any]:
+    prev_row = dict(prev)
+    next_row = dict(row)
+    prev_tracker = bool(prev_row.get(_RATING_TRACKER_FLAG))
+    next_tracker = bool(next_row.get(_RATING_TRACKER_FLAG))
+    if prev_tracker == next_tracker:
+        return _merge_media_row(prev_row, next_row, sort_key="sort_epoch")
+    chosen, other = (prev_row, next_row) if prev_tracker else (next_row, prev_row)
+    _merge_sources(chosen, other)
+    _copy_richer_media_fields(chosen, other)
+    if not chosen.get("type") and other.get("type"):
+        chosen["type"] = other["type"]
+    return chosen
+
+
 def _tracker_feature_items(kind: str) -> dict[str, Any]:
     try:
         from services.editor import load_state
@@ -709,7 +727,7 @@ def latest_ratings_widget(
                 break
         prev = rows.get(match_key)
         if prev:
-            rows[match_key] = _merge_media_row(prev, row, sort_key="sort_epoch")
+            rows[match_key] = _merge_rating_row(prev, row)
         else:
             rows[match_key] = row
         for alias in _rating_aliases(rows[match_key]):
@@ -719,6 +737,7 @@ def latest_ratings_widget(
         item = _unwrap_rating_item(raw_item)
         row = _rating_row(str(raw_key), item, _sources_from_item(item))
         if row:
+            row[_RATING_TRACKER_FLAG] = True
             put(row)
 
     providers = state.get("providers") if isinstance(state.get("providers"), Mapping) else {}
@@ -743,6 +762,8 @@ def latest_ratings_widget(
     )
     cap = max(1, min(int(limit or 12), 24))
     selected = _resolve_missing_art_rows(items[:cap], size="w342")
+    for row in selected:
+        row.pop(_RATING_TRACKER_FLAG, None)
     return {"ok": True, "items": selected, "total": len(items)}
 
 

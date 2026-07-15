@@ -420,6 +420,66 @@ def test_latest_ratings_widget_merges_provider_local_movie_ids_and_inherits_art(
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
 
 
+def test_latest_ratings_widget_keeps_tracker_rated_at_over_destination_sync_time() -> None:
+    tracker_items = {
+        "movie|imdb:tt0113277": {
+            "type": "movie",
+            "title": "Heat",
+            "year": 1995,
+            "rating": 8,
+            "rated_at": "2020-01-01T00:00:00Z",
+            "sources_by_provider": {"TRAKT": ["main"]},
+        },
+        "movie|imdb:tt0468569": {
+            "type": "movie",
+            "title": "The Dark Knight",
+            "year": 2008,
+            "rating": 9,
+            "rated_at": "2026-01-05T00:00:00Z",
+            "sources_by_provider": {"TRAKT": ["main"]},
+        },
+    }
+    state = {
+        "providers": {
+            "TMDB": {
+                "ratings": {
+                    "baseline": {
+                        "items": {
+                            "tmdb:rating:949": {
+                                "type": "movie",
+                                "title": "Heat",
+                                "year": 1995,
+                                "ids": {"tmdb": 949},
+                                "rating": 8,
+                                "rated_at": "2026-02-01T00:00:00Z",
+                            },
+                            "tmdb:rating:680": {
+                                "type": "movie",
+                                "title": "Pulp Fiction",
+                                "year": 1994,
+                                "ids": {"tmdb": 680},
+                                "rating": 7,
+                                "rated_at": "2026-01-10T00:00:00Z",
+                            },
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    payload = dashboard_widgets.latest_ratings_widget(state, limit=5, tracker_items=tracker_items)
+
+    titles = [item["title"] for item in payload["items"]]
+    assert titles == ["Pulp Fiction", "The Dark Knight", "Heat"]
+
+    heat = payload["items"][2]
+    assert heat["rated_at"] == "2020-01-01T00:00:00Z"
+    assert heat["tmdb"] == 949
+    assert {source["provider"] for source in heat["sources"]} == {"TRAKT", "TMDB"}
+    assert all(not key.startswith("_") for key in heat)
+
+
 def test_latest_ratings_widget_resolves_missing_art_from_metadata(monkeypatch) -> None:
     fake = FakeMetadataManager()
     monkeypatch.setattr(dashboard_widgets, "_METADATA_MANAGER", fake)
