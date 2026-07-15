@@ -145,7 +145,7 @@ def _ensure_route_ratings_webhook_ids(cfg: dict[str, Any], regenerate: bool = Fa
                 "provider_instance": str(raw.get("provider_instance") or "default").strip() or "default",
                 "sink": str(raw.get("sink") or "").strip().lower(),
                 "sink_instance": str(raw.get("sink_instance") or "default").strip() or "default",
-                "mode": str(ratings.get("mode") or "inherit").strip().lower() or "inherit",
+                "mode": str(ratings.get("mode") or "off").strip().lower() or "off",
                 "targets": list(ratings.get("targets") or []),
                 "webhook_id": str(ratings.get("webhook_id") or "").strip(),
                 "webhook_token": str(ratings.get("webhook_token") or "").strip(),
