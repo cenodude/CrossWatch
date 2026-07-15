@@ -256,8 +256,7 @@ class _TraktProvider:
             </div>
 
             <div id="trakt_hint" class="msg warn hidden" style="margin-top:8px">
-              You need a Trakt API application. Create one at
-              <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Trakt Applications</a>.
+              You need a Trakt API application. Create one at <a href="https://trakt.tv/oauth/applications" target="_blank" rel="noopener">Trakt Applications</a>
               Set the Redirect URL to <code id="trakt_redirect_uri_preview">urn:ietf:wg:oauth:2.0:oob</code>.
               <button id="btn-copy-trakt-redirect" class="btn" type="button" style="margin-left:8px">Copy Redirect URL</button>
             </div>

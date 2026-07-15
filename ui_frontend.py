@@ -75,7 +75,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "provider-meta.js", "icon-select.js", "scrobbler-ui.js", "scrobbler-user-picker.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "scrobbler-ui.js", "scrobbler-user-picker.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
     "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -420,13 +420,13 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         <span class="tab-caret" aria-hidden="true"></span>
       </button>
       <div class="cw-menu hidden" id="cw-settings-menu" role="menu" aria-labelledby="tab-settings">
-        <button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect('overview')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">settings</span><span>Settings overview</span></button>
+        <button class="cw-menu-item active" data-settings-pane="overview" type="button" role="menuitem" aria-current="page" onclick="window.cwSettingsMenuSelect('overview')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">grid_view</span><span>Settings overview</span></button>
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">link</span><span>Connections</span></button>
+        <button class="cw-menu-item" data-settings-pane="providers" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('providers')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">device_hub</span><span>Connections</span></button>
         <button class="cw-menu-item" data-settings-pane="sync" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('pairs')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sync_alt</span><span>Sync pairs</span></button>
-        <button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">music_note</span><span>Scrobbler</span></button>
-        <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">calendar_month</span><span>Scheduling</span></button>
-        <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">shield</span><span>UI and Security</span></button>
+        <button class="cw-menu-item" data-settings-pane="scrobbler" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scrobbler')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">sensors</span><span>Scrobbler</span></button>
+        <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>
+        <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>
         <button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
         <button class="cw-menu-item danger" type="button" role="menuitem" onclick="window.cwSettingsMenuLogout()"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>
