@@ -734,7 +734,7 @@ def _parse_rows(
                     ts = _as_epoch(watched_at)
                 if not ts or s_num < 0 or e_num <= 0:
                     continue
-                episode_ids = _episode_lookup_ids(episode) if s_num == 0 else {}
+                episode_ids = _episode_lookup_ids(episode)
                 ep = {
                     "type": "episode",
                     "season": s_num,
@@ -1143,7 +1143,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             group = _merge_show_group(shows_scoped, show_entry)
             season = _merge_show_season(group, s_num)
             ep_payload: dict[str, Any] = {"number": e_num, "watched_at": watched_at}
-            if s_num == 0 and episode_ids:
+            if episode_ids:
                 ep_payload["ids"] = dict(episode_ids)
             season.setdefault("episodes", []).append(ep_payload)
             scoped_items.setdefault(ids_key, []).append(item)
@@ -1389,7 +1389,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 group = _merge_show_group(shows_scoped, show_entry)
                 season = _merge_show_season(group, s_num)
                 episode_payload: dict[str, Any] = {"number": e_num}
-                if s_num == 0:
+                if episode_ids:
                     episode_payload["ids"] = dict(episode_ids)
                 season.setdefault("episodes", []).append(episode_payload)
                 thaw_keys.append(_thaw_key(item))
