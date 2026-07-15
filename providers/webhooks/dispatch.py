@@ -9,7 +9,7 @@ from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent
-from providers.webhooks.config import webhook_settings, webhook_sinks
+from providers.webhooks.config import sink_configured, webhook_settings, webhook_sink_instance, webhook_sinks
 
 
 class DispatchResponse:
@@ -53,13 +53,6 @@ def _int(v: Any) -> int | None:
         return int(v) if v not in (None, "") else None
     except Exception:
         return None
-
-
-def _sink_instance(settings: Mapping[str, Any], sink: str) -> str:
-    wh = settings if isinstance(settings, Mapping) else {}
-    sink_instances = wh.get("sink_instances")
-    instances = sink_instances if isinstance(sink_instances, Mapping) else {}
-    return normalize_instance_id(str(instances.get(sink) or "default"))
 
 
 def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str, Any]]) -> Any:
@@ -187,8 +180,14 @@ def dispatch_scrobble(
         raw=raw,
     )
     targets: list[dict[str, Any]] = []
+    dispatched: list[str] = []
     for sink in sinks:
-        inst = _sink_instance(wh, sink)
+        inst = webhook_sink_instance(wh, sink)
+        if not sink_configured(cfg, sink, inst):
+            targets.append({"target": sink, "target_instance": inst, "ok": False, "skipped": True, "error": "not_configured"})
+            _emit(logger, f"webhook sink {sink}:{inst} skipped: not configured in Connections", "WARNING")
+            continue
+        dispatched.append(sink)
         route_cfg = _route_cfg(cfg, provider_lc, provider_inst, sink, inst)
 
         def _provider(route_cfg: dict[str, Any] = route_cfg) -> dict[str, Any]:
@@ -202,7 +201,7 @@ def dispatch_scrobble(
             target["error"] = str(e)
             _emit(logger, f"webhook sink {sink}:{inst} failed: {e}", "ERROR")
         targets.append(target)
-    ok = any(bool(t.get("ok")) for t in targets)
+    ok = not targets or any(bool(t.get("ok")) for t in targets)
     payload = {
         "action": path,
         "status": 200 if ok else 502,
@@ -210,5 +209,5 @@ def dispatch_scrobble(
         "activity_recorded": True,
         "targets": targets,
     }
-    _emit(logger, f"webhook dispatch {path} -> {','.join(sinks)} status={payload['status']}", "DEBUG")
+    _emit(logger, f"webhook dispatch {path} -> {','.join(dispatched) or 'none'} status={payload['status']}", "DEBUG")
     return DispatchResponse(payload["status"], payload)

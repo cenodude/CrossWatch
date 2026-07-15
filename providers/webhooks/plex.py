@@ -24,7 +24,7 @@ from providers.scrobble.currently_watching import update_from_payload as _cw_upd
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.sources import source_enabled
-from providers.webhooks.config import webhook_sinks
+from providers.webhooks.config import configured_webhook_sinks
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
 
 try:
@@ -67,7 +67,7 @@ _DEF_TRAKT: dict[str, Any] = {
 
 
 def _sinks_from_webhook_cfg(cfg: dict[str, Any], provider_instance: Any = None) -> set[str]:
-    return set(webhook_sinks(cfg, "plex", provider_instance))
+    return set(configured_webhook_sinks(cfg, "plex", provider_instance))
 
 
 def _archive(event_type: str, media_type: str, md: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, **kw: Any) -> None:
