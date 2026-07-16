@@ -559,8 +559,13 @@ class SIMKLModule:
             _log("write_skipped", feature=feature, level="info", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         count, unresolved = mod.add(self, lst)
-        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-        return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+        exact_confirmed = getattr(self, "_simkl_history_add_confirmed_keys", None) if feature == "history" else None
+        exact_skipped = getattr(self, "_simkl_history_add_skipped_keys", None) if feature == "history" else None
+        confirmed_keys = [str(k) for k in exact_confirmed if k] if isinstance(exact_confirmed, list) else _confirmed_keys(self.key_of, lst, unresolved)
+        out = {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+        if isinstance(exact_skipped, list):
+            out["skipped_keys"] = [str(k) for k in exact_skipped if k]
+        return out
     def remove(
         self,
         feature: str,

@@ -15,6 +15,7 @@ import asyncio
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from cw_platform.reason_labels import friendly_reason
 from cw_platform.value_coercion import coerce_bool
 
 __all__ = ["router", "_is_sync_running", "_load_state", "_find_state_path"]
@@ -444,33 +445,16 @@ def _spot_sig(it: dict) -> str:
         return f"{typ}|title:{t}|year:{y}"
 
 def _friendly_unresolved_reason(raw: Any) -> str:
-    r = str(raw or "").strip()
-    low = r.lower()
-    if not low:
-        return "unresolved"
-    if "not_in_plex_catalog" in low or "not_in_library" in low or "not_in_catalog" in low:
-        return "Not in library"
-    if "episode_missing" in low:
-        return "Show found · episode missing"
-    if "ambiguous" in low:
-        return "Ambiguous match"
-    if "missing_watched_at" in low:
-        return "Missing watched date"
-    if any(t in low for t in ("missing_id", "no_id", "unmatched", "no_confirmations", "provider_unresolved", "id_mismatch")):
-        return "ID mismatch"
-    if "provider_down" in low or "unavailable" in low:
-        return "provider unavailable"
-    if "not_removed" in low:
-        return "not removed"
-    if "exception" in low:
-        return "error"
-    if "failed" in low:
-        return "request failed"
-    if "fallback" in low or "unconfirmed" in low:
-        return "unconfirmed"
-    return r
+    return friendly_reason(raw)
 
 def _format_unresolved_line(it: Mapping[str, Any]) -> str:
+    nested = it.get("item")
+    if isinstance(nested, Mapping):
+        merged = dict(nested)
+        for field in ("reason", "feature", "provider"):
+            if it.get(field) not in (None, ""):
+                merged[field] = it.get(field)
+        it = merged
     series = str(it.get("series_title") or it.get("show_title") or "").strip()
     title = str(it.get("title") or it.get("name") or "").strip()
     reason = _friendly_unresolved_reason(it.get("reason"))
@@ -490,6 +474,12 @@ def _format_unresolved_line(it: Mapping[str, Any]) -> str:
 def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
     with SUMMARY_LOCK:
         items = list(SUMMARY.get("unresolved_items") or [])
+    if not items:
+        try:
+            from cw_platform.orchestrator._unresolved import load_unresolved_items
+            items = load_unresolved_items()
+        except Exception:
+            items = []
     if not items:
         return
     seen: set[str] = set()
