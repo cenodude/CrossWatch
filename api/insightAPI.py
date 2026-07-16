@@ -11,7 +11,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 def _env() -> tuple[
@@ -29,7 +29,201 @@ def _env() -> tuple[
         return None, (lambda: {}), (lambda _cfg: None), (lambda *a, **k: None)
 
 
+_AUTH_KEYS = {
+    "plex": ("account_token", "token", "access_token"),
+    "emby": ("access_token", "api_key", "token"),
+    "jellyfin": ("access_token", "api_key", "token"),
+    "trakt": ("access_token", "refresh_token"),
+    "simkl": ("access_token", "refresh_token"),
+    "anilist": ("access_token", "token"),
+    "mdblist": ("api_key", "access_token"),
+    "publicmetadb": ("api_key",),
+}
+_SETTINGS_PROVIDERS = [*_AUTH_KEYS, "tmdb", "tautulli"]
+
+
+def _txt(v: Any) -> str:
+    return str(v or "").strip()
+
+
+def _dict(v: Any) -> dict[str, Any]:
+    return v if isinstance(v, dict) else {}
+
+
+def _has(block: Any, *keys: str) -> bool:
+    return any(_txt(_dict(block).get(k)) for k in keys)
+
+
+def _uniq(values: list[Any]) -> list[str]:
+    return list(dict.fromkeys(x for x in (_txt(v).lower() for v in values) if x))
+
+
+def _positive_epoch(v: Any) -> int | None:
+    try:
+        n = int(v or 0)
+    except Exception:
+        return None
+    return n if n > 0 else None
+
+
+def _settings_auth_summary(cfg: dict[str, Any]) -> dict[str, Any]:
+    def configured(provider: str, block: Any) -> bool:
+        if provider == "tmdb":
+            b = _dict(block)
+            return _has(b, "api_key") and bool(_txt(b.get("session_id") or b.get("session")))
+        if provider == "tautulli":
+            tb = _dict(block) or _dict(cfg.get("tautulli")) or _dict(_dict(cfg.get("auth")).get("tautulli"))
+            return bool(_txt(tb.get("server_url") or tb.get("server")))
+        return _has(block, *_AUTH_KEYS.get(provider, ("access_token", "api_key", "token")))
+
+    profiles: list[dict[str, Any]] = []
+    for provider in _SETTINGS_PROVIDERS:
+        base = _dict(cfg.get(provider))
+        instances = _dict(base.get("instances"))
+        blocks = [base, *instances.values()]
+        count = sum(1 for block in blocks if configured(provider, block))
+        if not count and provider == "tmdb":
+            count = 1 if configured(provider, _dict(cfg.get("tmdb_sync")) or _dict(_dict(cfg.get("auth")).get("tmdb_sync"))) else 0
+        if count:
+            profiles.append({"provider": provider, "count": count})
+    return {"configured": len(profiles), "profiles": profiles}
+
+
+def _settings_pairs_summary(cfg: dict[str, Any]) -> dict[str, Any]:
+    items = cfg.get("pairs") if isinstance(cfg.get("pairs"), list) else cfg.get("connections")
+    items = items if isinstance(items, list) else []
+    enabled = sum(1 for item in items if not isinstance(item, dict) or item.get("enabled") is not False)
+    return {"count": len(items), "total": len(items), "enabled": enabled, "active": enabled, "disabled": max(0, len(items) - enabled)}
+
+
+def _settings_metadata_summary(cfg: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from .metaAPI import metadata_providers_manifests
+
+        providers = [p for p in metadata_providers_manifests() if isinstance(p, dict)]
+    except Exception:
+        providers = []
+    tmdb_cfg = _dict(cfg.get("tmdb"))
+    metadata_cfg = _dict(cfg.get("metadata"))
+    has_tmdb = bool(_txt(tmdb_cfg.get("api_key") or metadata_cfg.get("tmdb_api_key")))
+    configured = sum(
+        1 for p in providers
+        if (p.get("enabled") is not False or ("tmdb" in _txt(p.get("id") or p.get("name")).lower() and has_tmdb))
+        and (p.get("ready") is True or p.get("ok") or ("tmdb" in _txt(p.get("id") or p.get("name")).lower() and has_tmdb))
+    )
+    if has_tmdb and not any("tmdb" in _txt(p.get("id") or p.get("name")).lower() for p in providers):
+        configured += 1
+    detected = len(providers) or (1 if has_tmdb else 0)
+    return {"detected": detected, "configured": configured or (1 if has_tmdb and not providers else 0)}
+
+
+def _settings_scheduling_summary(cfg: dict[str, Any]) -> dict[str, Any]:
+    scfg = _dict(cfg.get("scheduling"))
+    st: dict[str, Any] = {}
+    try:
+        from .schedulingAPI import _env as _sched_env
+
+        _, _, scheduler, hint, *_ = _sched_env()
+        st = scheduler.status() if scheduler is not None and hasattr(scheduler, "status") else {}
+        st = st if isinstance(st, dict) else {}
+        if isinstance(hint, dict) and not _positive_epoch(st.get("next_run_at")):
+            st["next_run_at"] = _positive_epoch(hint.get("next_run_at")) or 0
+    except Exception:
+        pass
+    scfg = _dict(st.get("config")) or scfg
+    adv = _dict(scfg.get("advanced"))
+    rules = adv.get("event_rules") or adv.get("eventRules") or []
+    jobs = adv.get("capture_jobs") or adv.get("captureJobs") or []
+    next_run = _positive_epoch(st.get("next_run_at") or st.get("next_run") or scfg.get("next_run_at") or scfg.get("next_run"))
+    return {
+        "enabled": bool(scfg.get("enabled") or adv.get("enabled")),
+        "advanced": bool(adv.get("enabled")),
+        "running": bool(st.get("running")),
+        "nextRun": next_run,
+        "next_run_at": next_run or 0,
+        "eventTriggers": sum(
+            1 for r in rules
+            if isinstance(r, dict) and r.get("active") is not False
+            and _txt(_dict(r.get("action")).get("kind") or "sync_pair") == "sync_pair"
+            and _txt(_dict(r.get("action")).get("pair_id") or _dict(r.get("action")).get("pairId") or r.get("pair_id"))
+            and _txt(_dict(r.get("filters")).get("route_id") or _dict(r.get("filters")).get("routeId"))
+        ),
+        "captureSchedules": sum(
+            1 for j in jobs
+            if isinstance(j, dict) and j.get("active") is not False
+            and _txt(j.get("provider")) and _txt(j.get("feature")) and _txt(j.get("at"))
+        ),
+    }
+
+
+def _settings_scrobbler_summary(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
+    sc = _dict(cfg.get("scrobble"))
+    enabled = bool(sc.get("enabled"))
+    mode = _txt(sc.get("mode") or "webhook").lower()
+    raw_sources = _dict(sc.get("sources"))
+    sources = {
+        "webhook": bool(raw_sources.get("webhook")) if raw_sources else mode == "webhook",
+        "watcher": bool(raw_sources.get("watcher", raw_sources.get("watch"))) if raw_sources else mode == "watch",
+    }
+    watch = _dict(sc.get("watch"))
+    routes = watch.get("routes")
+    out = {
+        "enabled": enabled,
+        "mode": mode if enabled else "",
+        "sources": sources,
+        "watcher": {"alive": False},
+        "providers": _uniq([r.get("provider") for r in routes if isinstance(r, dict)]) if enabled and isinstance(routes, list) else [],
+        "sinks": _uniq([r.get("sink") for r in routes if isinstance(r, dict)]) if enabled and isinstance(routes, list) else [],
+    }
+    if enabled and sources["watcher"]:
+        try:
+            from .scrobbleAPI import debug_watch_status
+
+            st = debug_watch_status(request)
+            st = st if isinstance(st, dict) else {}
+            out["watcher"] = {"alive": bool(st.get("alive"))}
+            out["providers"] = _uniq([g.get("provider") for g in st.get("groups", []) if isinstance(g, dict)]) or out["providers"]
+            out["sinks"] = _uniq(st.get("sinks", [])) or out["sinks"]
+        except Exception:
+            pass
+    return out
+
+
+def _settings_activity_summary() -> dict[str, Any]:
+    try:
+        from services.activity import list_events
+
+        items = (list_events(limit=3, offset=0).get("items") or [])[:3]
+    except Exception:
+        items = []
+    return {"items": items}
+
+
 def register_insights(app: FastAPI) -> None:
+    @app.get("/api/settings/overview", tags=["settings"])
+    def api_settings_overview(request: Request) -> JSONResponse:
+        _, load_config, _, _ = _env()
+        try:
+            cfg = load_config() or {}
+        except Exception:
+            cfg = {}
+        auth = _settings_auth_summary(cfg)
+        pairs = _settings_pairs_summary(cfg)
+        metadata = _settings_metadata_summary(cfg)
+        scheduling = _settings_scheduling_summary(cfg)
+        scrobbler = _settings_scrobbler_summary(cfg, request)
+        activity = _settings_activity_summary()
+        payload = {
+            "ok": True,
+            "auth": auth,
+            "pairs": pairs,
+            "metadata": metadata,
+            "scheduling": scheduling,
+            "scrobbler": scrobbler,
+            "recent_activity": activity,
+        }
+        return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
     @app.get("/api/stats/raw", tags=["insight"])
     def api_stats_raw() -> JSONResponse:
         CW, _, _, _ = _env()

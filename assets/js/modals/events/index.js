@@ -37,11 +37,7 @@ const PAGE_SIZE = 25;
 const RUN_ITEMS_PAGE_SIZE = 100;
 
 const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress" };
-const REASON_LABEL = {
-  not_in_plex_catalog: "Not in library",
-  not_in_library: "Not in library",
-};
-const reasonLabel = (reason) => REASON_LABEL[String(reason || "").toLowerCase()] || String(reason || "");
+const reasonLabel = (reason, label = "") => String(label || reason || "");
 
 const provShort = (src, dst) => {
   const a = (src || "").toUpperCase();
@@ -152,10 +148,10 @@ const titleLine = (e) => {
     case "write_succeeded":
       return isRating(e) ? "Rating update" : "Write succeeded";
     case "write_attempted": return "Add attempted";
-    case "write_failed": return `${(e.destination_provider || "Destination").toUpperCase()} rejected item · ${reasonLabel(e.reason_code || "failed")}`;
+    case "write_failed": return `${(e.destination_provider || "Destination").toUpperCase()} rejected item · ${reasonLabel(e.reason_code || "failed", e.reason_label)}`;
     case "unresolved_recorded": {
       const r = e.reason_code || e.operation || "";
-      return r ? `Recorded as unresolved · ${reasonLabel(r)}` : "Recorded as unresolved";
+      return r ? `Recorded as unresolved · ${reasonLabel(r, e.reason_label)}` : "Recorded as unresolved";
     }
     case "unresolved_cleared": return "Unresolved cleared";
     case "blackbox_promoted": return e.reason_code ? `Item blackboxed · ${e.reason_code}` : "Item blackboxed";
@@ -1315,7 +1311,7 @@ export default {
       })();
       const summaryCards =
         scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", isProblem ? "Problem" : "Outcome",
-          `<span>${esc(reasonLabel(reason) || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
+          `<span>${esc(reasonLabel(reason, g.reason_label) || statusLabel(g.status))}</span>`, [esc(problemSub)]) +
         scard("swap_horiz", "info", "Route", esc(routeShort), [esc(modeTxt)],
           feat && feat !== "–" ? `<span class="ev-badge info">${esc(feat)}</span>` : "") +
         scard("inventory_2", "info", "Item", g.item_key ? `<span class="mono">${esc(g.item_key)}</span>` : "–", [item ? esc(item) : ""]) +

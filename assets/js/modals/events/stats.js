@@ -181,7 +181,7 @@ export default function createStatsView(host, { fetchJson }) {
     }).join("") || `<tr><td colspan="3" class="stat-empty-cell">No route activity.</td></tr>`;
 
     const fails = (d.failure_reasons || []).map((f) => `
-      <tr><td class="stat-fr-reason">${esc(f.reason)}</td>
+      <tr><td class="stat-fr-reason" title="${esc(f.reason)}">${esc(f.label || f.reason)}</td>
       <td class="stat-rt-num">${fmtNum(f.count)}</td>
       <td class="stat-rt-num">${f.share.toFixed(1)}%</td>
       <td class="stat-fr-trend">${fmtDelta(f.delta)}</td></tr>`).join("") || `<tr><td colspan="4" class="stat-empty-cell">No failures in this period.</td></tr>`;
