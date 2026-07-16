@@ -25,6 +25,7 @@ issues/
 
 # Python cache
 __pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -32,6 +33,7 @@ __pycache__/
 *.egg-info/
 .eggs/
 .pytest_cache/
+**/.pytest_cache/
 .pytest_tmp/
 .coverage
 .coverage.*
@@ -115,6 +117,8 @@ backups/
 archive/
 archives/
 snapshots/
+sync_reports/
+**/sync_reports/
 reports/
 runtime/
 instance/

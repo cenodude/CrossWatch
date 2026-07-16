@@ -37,7 +37,9 @@ COPY . /app
 
 # --- cleanup & avoid import shadows ---
 RUN rm -rf /app/.venv /app/.vscode /app/.idea || true \
+ && rm -rf /app/docker || true \
  && find /app -type d -name "__pycache__" -prune -exec rm -rf {} + || true \
+ && find /app -type d -empty -delete || true \
  && find /app -maxdepth 2 -type f -name "packaging.py" -delete || true \
  && find /app -maxdepth 2 -type d -name "packaging" -exec rm -rf {} + || true
 
