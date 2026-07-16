@@ -21,6 +21,7 @@ docker-compose.yml
 .agents/
 .codex/
 .claude/
+issues/
 
 # Python cache
 __pycache__/
@@ -40,7 +41,34 @@ htmlcov/
 .tox/
 .nox/
 .hypothesis/
+
+# CrossWatch
 .cw_state/
+**/.cw_state/
+.cw_provider/
+**/.cw_provider/
+.cw_master_key
+**/.cw_master_key
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+.cache/
+**/.cache/
+*.cache
+
+# Local test and benchmark output
+test-results/
+playwright-report/
+blob-report/
+allure-results/
+junit.xml
+*.junit.xml
 
 # VE
 .venv/
@@ -95,6 +123,14 @@ downloads/
 exports/
 tmp/
 temp/
+
+# Local temporary files
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*~
 
 # OS
 .DS_Store
