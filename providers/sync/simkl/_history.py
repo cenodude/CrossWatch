@@ -6,6 +6,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
 from itertools import chain
 from pathlib import Path
 from typing import Any, Iterable, Mapping, cast
@@ -822,6 +823,12 @@ def _parse_rows(
                             source_alias = source_title_alias_cache.get(show_key, {}).get(title_key)
                             if isinstance(source_alias, Mapping):
                                 alias = source_alias
+                            if alias is None:
+                                alias = _source_episode_alias_for_native_number(
+                                    source_title_alias_cache.get(show_key, {}),
+                                    title_value,
+                                    e_num_internal,
+                                )
                     tvdb_map = episode.get("tvdb")
                     if alias is not None:
                         s_m = _int_or_none(alias.get("season"))
@@ -1418,6 +1425,67 @@ def _title_match_key(value: Any) -> str:
     return " ".join(part for part in re.split(r"[^a-z0-9]+", text) if part)
 
 
+def _title_loose_match(left: Any, right: Any) -> bool:
+    left_key = _title_match_key(left)
+    right_key = _title_match_key(right)
+    if not left_key or not right_key:
+        return False
+    if left_key == right_key:
+        return True
+    left_tokens = set(left_key.split())
+    right_tokens = set(right_key.split())
+    overlap = len(left_tokens & right_tokens)
+    token_score = overlap / max(len(left_tokens | right_tokens), 1)
+    sequence_score = SequenceMatcher(None, left_key, right_key).ratio()
+    return token_score >= 0.4 or sequence_score >= 0.6 or (overlap >= 3 and token_score >= 0.2 and sequence_score >= 0.4)
+
+
+def _title_match_score(left: Any, right: Any) -> float:
+    left_key = _title_match_key(left)
+    right_key = _title_match_key(right)
+    if not left_key or not right_key:
+        return 0.0
+    left_tokens = set(left_key.split())
+    right_tokens = set(right_key.split())
+    token_score = len(left_tokens & right_tokens) / max(len(left_tokens | right_tokens), 1)
+    sequence_score = SequenceMatcher(None, left_key, right_key).ratio()
+    return max(token_score, sequence_score)
+
+
+def _source_episode_alias_for_native_number(
+    aliases: Mapping[str, Mapping[str, Any]],
+    title: Any,
+    episode_number: int,
+) -> Mapping[str, Any] | None:
+    if episode_number < 30:
+        return None
+    scored: list[tuple[float, Mapping[str, Any]]] = []
+    for alias in aliases.values():
+        if _int_or_none(alias.get("episode")) != episode_number:
+            continue
+        if not _title_loose_match(title, alias.get("title")):
+            continue
+        scored.append((_title_match_score(title, alias.get("title")), alias))
+    if not scored:
+        return None
+    scored.sort(key=lambda row: row[0], reverse=True)
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][1]
+
+
+def _anime_source_episode_absolute_match(item: Mapping[str, Any], rows: list[dict[str, Any]], e_num: int) -> int | None:
+    if e_num < 30:
+        return None
+    native_hits = [row for row in rows if _row_anime_episode_number(row) == e_num]
+    if not native_hits:
+        return None
+    row = max(native_hits, key=lambda candidate: _title_match_score(item.get("title"), candidate.get("title")))
+    if not _title_loose_match(item.get("title"), row.get("title")):
+        return None
+    return e_num
+
+
 def _anime_episode_rows(
     session: Any,
     headers: Mapping[str, str],
@@ -1555,6 +1623,9 @@ def _anime_retry_episode_number(
                 mapped = _row_anime_episode_number(title_hits[0])
                 if mapped:
                     return mapped
+        absolute = _anime_source_episode_absolute_match(item, rows, e_num)
+        if absolute:
+            return absolute
     return None
 
 
