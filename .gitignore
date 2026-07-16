@@ -35,6 +35,7 @@ pip-wheel-metadata/
 *.swo
 .agents/
 .codex/
+issues/
 
 # Docker and container data
 docker-compose.override.yml
