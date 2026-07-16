@@ -1688,30 +1688,23 @@ def process_rating_webhook(
         return {"ok": True, "ignored": True}
 
     watch_cfg = (sc.get("watch") or {})
-    provider_name = str(watch_cfg.get("route_provider") or "").lower().strip()
-    if provider_name != "plex":
-        return {"ok": True, "ignored": True}
+    if route_hook is not None:
+        provider_name = str(watch_cfg.get("route_provider") or "").lower().strip()
+        if provider_name != "plex":
+            return {"ok": True, "ignored": True}
 
-    route_opts_raw = watch_cfg.get("route_options")
-    route_opts: dict[str, Any] = route_opts_raw if isinstance(route_opts_raw, dict) else {}
-    ratings_opts_raw = route_opts.get("ratings")
-    ratings_opts: dict[str, Any] = ratings_opts_raw if isinstance(ratings_opts_raw, dict) else {}
-    ratings_mode = str(ratings_opts.get("mode") or "inherit").strip().lower() or "inherit"
-    if route_hook is not None and ratings_mode == "inherit":
-        ratings_mode = "off"
-    route_sink = str(watch_cfg.get("route_sink") or "").strip().lower()
-    custom_targets = {
-        str(item or "").strip().lower()
-        for item in (ratings_opts.get("targets") or [])
-        if str(item or "").strip()
-    }
-    if ratings_mode == "custom" and route_sink in {"trakt", "simkl", "mdblist"}:
-        custom_targets = {route_sink} if route_sink in custom_targets or not custom_targets else {route_sink}
-
-    if ratings_mode == "off":
-        return {"ok": True, "ignored": True}
-
-    if ratings_mode == "custom":
+        route_opts_raw = watch_cfg.get("route_options")
+        route_opts: dict[str, Any] = route_opts_raw if isinstance(route_opts_raw, dict) else {}
+        ratings_opts_raw = route_opts.get("ratings")
+        ratings_opts: dict[str, Any] = ratings_opts_raw if isinstance(ratings_opts_raw, dict) else {}
+        ratings_mode = str(ratings_opts.get("mode") or "off").strip().lower() or "off"
+        if ratings_mode != "custom":
+            return {"ok": True, "ignored": True}
+        custom_targets = {
+            str(item or "").strip().lower()
+            for item in (ratings_opts.get("targets") or [])
+            if str(item or "").strip()
+        }
         enable_trakt = "trakt" in custom_targets
         enable_simkl = "simkl" in custom_targets
         enable_mdblist = "mdblist" in custom_targets

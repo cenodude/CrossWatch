@@ -11,7 +11,7 @@ DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin"}
 ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
-ROUTE_RATINGS_MODES = {"inherit", "off", "custom"}
+ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_KEYS = {"watched_at", "force_stop_at"}
 
 
@@ -178,6 +178,12 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
         out[r["provider"]] = _provider_view(out, r["provider"], r["provider_instance"])
     if r["sink"]:
         out[r["sink"]] = _provider_view(out, r["sink"], r["sink_instance"])
+    ratings = (r.get("options") or {}).get("ratings")
+    rating_targets = ratings.get("targets") if isinstance(ratings, dict) else []
+    for target in rating_targets if isinstance(rating_targets, list) else []:
+        target_key = str(target or "").strip().lower()
+        if target_key in ROUTE_SINKS:
+            out[target_key] = _provider_view(out, target_key, r["sink_instance"])
 
     w["filters"] = _deep_clone(r.get("filters") or {})
     w["route_id"] = r["id"]

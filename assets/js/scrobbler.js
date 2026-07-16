@@ -543,6 +543,33 @@ function clearStickyNote(id) {
     return availableSinkCsv(webhookSinkCsv(providerKey), webhookSinkAvailability(providerKey));
   }
 
+  function globalPlexRatingsAvailability() {
+    return sinkConnectionAvailability("default");
+  }
+
+  function globalPlexRatingsTargets() {
+    const targets = [];
+    if (read("scrobble.watch.plex_trakt_ratings", false)) targets.push("trakt");
+    if (read("scrobble.watch.plex_simkl_ratings", false)) targets.push("simkl");
+    if (read("scrobble.watch.plex_mdblist_ratings", false)) targets.push("mdblist");
+    return normSinkCsv(targets.join(","));
+  }
+
+  function globalPlexRatingsPairs(csv) {
+    const targets = new Set(sinkCsvItems(csv));
+    return [
+      ["scrobble.watch.plex_trakt_ratings", targets.has("trakt")],
+      ["scrobble.watch.plex_simkl_ratings", targets.has("simkl")],
+      ["scrobble.watch.plex_mdblist_ratings", targets.has("mdblist")],
+    ];
+  }
+
+  function setGlobalPlexRatingsCsv(csv) {
+    const pairs = globalPlexRatingsPairs(normSinkCsv(csv));
+    pairs.forEach(([path, value]) => write(path, value));
+    return pairs;
+  }
+
   function syncWebhookSinkPills(root = STATE.mount) {
     $all("[data-webhook-sinks-provider]", root || d).forEach((bar) => {
       const providerKey = bar.getAttribute("data-webhook-sinks-provider");
@@ -576,15 +603,14 @@ function clearStickyNote(id) {
     const sel = $("#sc-plex-ratings", STATE.mount);
     const bar = $("#sc-plex-ratings-pills", STATE.mount);
     if (!sel || !bar) return;
-    const route = getActiveRoute();
-    const availability = route ? routeRatingsAvailability(route) : {};
-    const available = routeRatingsCsv(route);
-    sel.value = available || "none";
+    const availability = globalPlexRatingsAvailability();
+    const selected = globalPlexRatingsTargets();
+    sel.value = selected || "none";
     $all("option", sel).forEach((option) => {
       const val = String(option.value || "").toLowerCase();
       option.disabled = val !== "none" && sinkCsvItems(val).some((k) => availability[k] === false);
     });
-    syncPillBar(bar, available, availability);
+    syncPillBar(bar, selected, availability);
   }
 
 
@@ -739,7 +765,7 @@ serverUUID: async (instanceId) => {
     const autoRemove = ["inherit", "on", "off"].includes(autoRemoveRaw) ? autoRemoveRaw : "inherit";
     const ratingsSrc = (src.ratings && typeof src.ratings === "object") ? src.ratings : {};
     const ratingsModeRaw = String(ratingsSrc.mode || "off").trim().toLowerCase();
-    const ratingsMode = ["inherit", "off", "custom"].includes(ratingsModeRaw) ? ratingsModeRaw : "off";
+    const ratingsMode = ["off", "custom"].includes(ratingsModeRaw) ? ratingsModeRaw : "off";
     const targetsIn = Array.isArray(ratingsSrc.targets) ? ratingsSrc.targets : (ratingsSrc.targets ? [ratingsSrc.targets] : []);
     const targets = [];
     const seen = new Set();
@@ -783,12 +809,8 @@ serverUUID: async (instanceId) => {
     if (opts.auto_remove_watchlist !== "inherit") {
       parts.push(`Auto-remove ${opts.auto_remove_watchlist === "on" ? "On" : "Off"}`);
     }
-    if (String(route?.provider || "").toLowerCase() === "plex") {
-      if (opts.ratings.mode === "off") {
-        parts.push("Ratings Off");
-      } else if (opts.ratings.mode === "custom") {
-        parts.push("Ratings webhook");
-      }
+    if (String(route?.provider || "").toLowerCase() === "plex" && opts.ratings.mode === "custom") {
+      parts.push("Ratings webhook");
     }
     return parts;
   }
@@ -859,15 +881,14 @@ serverUUID: async (instanceId) => {
     if (String(route?.provider || "").toLowerCase() !== "plex") return "";
     const opts = routeOptions(route);
     if (opts.ratings.mode !== "custom") return "";
-    return availableSinkCsv(normSinkCsv((opts.ratings.targets || []).join(",")), routeRatingsAvailability(route));
+    return normSinkCsv((opts.ratings.targets || []).join(","));
   }
 
   function routeRatingsAvailability(route) {
     const availability = sinkConnectionAvailability(route?.sink_instance || "default");
-    const routeSink = String(route?.sink || "").trim().toLowerCase();
     const out = {};
     SINK_ORDER.forEach((key) => {
-      out[key] = !!(availability[key] && key === routeSink);
+      out[key] = !!availability[key];
     });
     return out;
   }
@@ -877,7 +898,7 @@ serverUUID: async (instanceId) => {
     const routes = getRoutes().map((item, index) => normalizeRoute(item, `R${index + 1}`));
     const route = routes.find((item) => String(item.id || "") === String(rid || ""));
     if (!route || String(route.provider || "").toLowerCase() !== "plex") return null;
-    const selectedTargets = sinkCsvItems(availableSinkCsv(csv, routeRatingsAvailability(route)))
+    const selectedTargets = sinkCsvItems(normSinkCsv(csv))
       .filter((k) => ROUTE_SINKS.includes(k));
     const selected = selectedTargets.length > 0;
     const prev = routeOptions(route);
@@ -1459,7 +1480,7 @@ try {
     });
     ratingsBox.append(
       el("div", { style: "font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;color:rgba(224,230,246,.7)", textContent: "Ratings" }),
-      el("div", { className: "micro-note", textContent: "Enable or disable the route-specific Plex ratings webhook for this route." }),
+      el("div", { className: "micro-note", textContent: "Off uses the shared global ratings webhook when global ratings are configured. Enabled creates a separate ratings webhook for this route with its own destinations and profile routing." }),
     );
     const ratingsSelect = el("select", {
       id: "sc-route-options-ratings-select",
@@ -1529,9 +1550,9 @@ try {
         if (String(opt.value || "") === "custom") opt.disabled = !isPlex;
       });
       ratingsState.textContent = mode === "off"
-          ? "Ratings are disabled for this route."
+          ? "Off uses the shared global ratings webhook when global ratings are configured."
           : isPlex
-            ? "This route uses its own Plex ratings webhook and its own selected targets."
+            ? "Enabled creates a separate ratings webhook for this route with its own destinations and profile routing."
             : "Custom route ratings webhooks currently apply to Plex routes only.";
       ratingsTargetsWrap.style.display = mode === "custom" && isPlex ? "" : "none";
       ratingsUrlWrap.style.display = mode === "custom" && isPlex ? "" : "none";
@@ -1569,7 +1590,7 @@ try {
       modalState.rid = route.id;
       modalState.provider = String(route.provider || "").toLowerCase();
       modalState.routeSink = String(route.sink || "").toLowerCase();
-      modalState.ratingsTargets = sinkCsvItems(availableSinkCsv((opts.ratings.targets || []).join(","), routeRatingsAvailability(route)));
+      modalState.ratingsTargets = sinkCsvItems(normSinkCsv((opts.ratings.targets || []).join(",")));
       overlay.dataset.rid = route.id;
       title.textContent = `Route Options • ${route.id}`;
       subtitle.textContent = routeLabel(route);
@@ -2303,7 +2324,7 @@ function chip(text, onRemove, onClick) {
     injectStyles();
 
         if (STATE.webhookHost) {
-      STATE.webhookHost.innerHTML = `<div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="webhook">${buildShellHeader({ kicker: "Fallback input", title: "Webhooks", copy: "Media-server callbacks for setups where Watcher is not the right fit.", tiles: `<button type="button" class="cw-subtile active" data-sub="plex">Plex</button><button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button><button type="button" class="cw-subtile" data-sub="emby">Emby</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>`, toggleId: "sc-enable-webhook", toggleText: "Enable", tilesLabel: "Webhook sections" })}<div id="sc-webhook-warning" class="micro-note sc-webhook-recommend" style="margin-top:10px"></div><div id="sc-endpoint-note" class="micro-note"></div><div class="cw-subpanels" style="gap:14px">${buildWebhookProviderPanel("plex", "Plex", "sc-webhook-url-plex", "sc-copy-plex", { active: true, plex: true })}${buildWebhookProviderPanel("jellyfin", "Jellyfin", "sc-webhook-url-jf", "sc-copy-jf")}${buildWebhookProviderPanel("emby", "Emby", "sc-webhook-url-emby", "sc-copy-emby")}<div class="cw-subpanel" data-sub="advanced"><div class="sc-webhook-advanced"><div class="sc-subbox"><div class="head">Advanced</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-watched-at-webhook", "Watched threshold", "sc-help-adv-watched-at", DEFAULTS.trakt.watched_at)}${buildAdvField("sc-force-stop-webhook", "Defensive final-stop trust threshold", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1-100.</div></div></div></div></div></div></div></div>`;
+      STATE.webhookHost.innerHTML = `<div class="cw-panel"><div class="cw-meta-provider-panel active" data-provider="webhook">${buildShellHeader({ title: "Webhooks", copy: "Media-server callbacks for setups where Watcher is not the right fit.", tiles: `<button type="button" class="cw-subtile active" data-sub="plex">Plex</button><button type="button" class="cw-subtile" data-sub="jellyfin">Jellyfin</button><button type="button" class="cw-subtile" data-sub="emby">Emby</button><button type="button" class="cw-subtile" data-sub="advanced">Advanced</button>`, toggleId: "sc-enable-webhook", toggleText: "Enable", tilesLabel: "Webhook sections" })}<div id="sc-webhook-warning" class="micro-note sc-webhook-recommend" style="margin-top:10px"></div><div id="sc-endpoint-note" class="micro-note"></div><div class="cw-subpanels" style="gap:14px">${buildWebhookProviderPanel("plex", "Plex", "sc-webhook-url-plex", "sc-copy-plex", { active: true, plex: true })}${buildWebhookProviderPanel("jellyfin", "Jellyfin", "sc-webhook-url-jf", "sc-copy-jf")}${buildWebhookProviderPanel("emby", "Emby", "sc-webhook-url-emby", "sc-copy-emby")}<div class="cw-subpanel" data-sub="advanced"><div class="sc-webhook-advanced"><div class="sc-subbox"><div class="head">Advanced</div><div class="body"><div class="sc-adv-grid">${buildAdvField("sc-pause-debounce-webhook", "Pause", "sc-help-adv-pause", DEFAULTS.watch.pause_debounce_seconds)}${buildAdvField("sc-suppress-start-webhook", "Suppress", "sc-help-adv-suppress", DEFAULTS.watch.suppress_start_at)}${buildAdvField("sc-regress-webhook", "Regress %", "sc-help-adv-regress", DEFAULTS.trakt.regress_tolerance_percent)}${buildAdvField("sc-watched-at-webhook", "Watched threshold", "sc-help-adv-watched-at", DEFAULTS.trakt.watched_at)}${buildAdvField("sc-force-stop-webhook", "Defensive final-stop trust threshold", "sc-help-adv-force-stop", DEFAULTS.trakt.force_stop_at)}</div><div class="micro-note" style="margin-top:6px">Empty resets to defaults. Values are 1-100.</div></div></div></div></div></div></div></div>`;
 
       STATE.webhookHost.querySelector(".cw-panel")?.classList.add("sc-shell");
       enhanceWebhookFiltersUI(STATE.webhookHost);
@@ -2663,16 +2684,9 @@ function chip(text, onRemove, onClick) {
     const sel = $("#sc-plex-ratings", STATE.mount);
     if (!wrap || !sel) return;
 
-    const route = getActiveRoute();
-    const prov = String(route?.provider || "").toLowerCase();
-    const isPlexRoute = !!route && prov === "plex";
-    wrap.style.display = isPlexRoute ? "" : "none";
+    wrap.style.display = "";
     const label = wrap.querySelector(".sc-opt-row .muted");
-    if (label) label.textContent = "Route ratings";
-    if (!isPlexRoute) {
-      try { updatePlexWatcherWebhookUrl(); } catch {}
-      return;
-    }
+    if (label) label.textContent = "Enable ratings";
 
     const options = [
       ["none", "None"],
@@ -2686,7 +2700,7 @@ function chip(text, onRemove, onClick) {
     ];
 
     sel.innerHTML = options.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
-    sel.value = routeRatingsCsv(route) || "none";
+    sel.value = globalPlexRatingsTargets() || "none";
     try { syncPlexRatingsPillsFromSelect(); } catch {}
 
     try {
@@ -2699,8 +2713,7 @@ function chip(text, onRemove, onClick) {
     const code = $("#sc-plexwatcher-url", STATE.mount);
     if (!wrap || !code) return;
 
-    const route = getActiveRoute();
-    const on = !!routeRatingsCsv(route);
+    const on = !!globalPlexRatingsTargets();
     wrap.style.display = on ? "flex" : "none";
 
     try {
@@ -2730,7 +2743,7 @@ function chip(text, onRemove, onClick) {
     } catch {}
 
     if (on) {
-      code.textContent = routeCustomRatingsUrl(route) || "Save once to generate the route-specific webhook URL.";
+      code.textContent = `${location.origin}/webhook/plexwatcher?${STATE.webhookIds?.plexwatcher || ""}`;
     }
     else setNote("sc-plexwatcher-note", "");
   }
@@ -3441,14 +3454,11 @@ async function hydrateJellyfin() {
 
     on($("#sc-copy-plexwatcher", STATE.mount), "click", async (e) => {
       setNote("sc-plexwatcher-note", "");
-      let route = getActiveRoute();
-      if (!routeCustomRatingsUrl(route)) {
-        try { await persistCurrentScrobblerState(null, { throwOnError: true }); } catch {}
+      if (!STATE.webhookIds?.plexwatcher) {
         try { await refreshWebhookIds(); } catch {}
         try { updatePlexWatcherWebhookUrl(); } catch {}
-        route = getActiveRoute();
       }
-      const url = routeCustomRatingsUrl(route);
+      const url = `${location.origin}/webhook/plexwatcher?${STATE.webhookIds?.plexwatcher || ""}`;
       if (!url) return;
       await copyWebhookFromCode("#sc-plexwatcher-url", "", "", url, e.currentTarget);
     });
@@ -3456,13 +3466,12 @@ async function hydrateJellyfin() {
       const btn = e.currentTarget;
       const prev = btn.textContent;
       setNote("sc-plexwatcher-note", "");
-      const route = getActiveRoute();
-      if (!route || String(route.provider || "").toLowerCase() !== "plex") return;
-      if (!confirm(`Regenerate this webhook URL?\n\n${routeLabel(route)}\n\nOnly this route URL will change.`)) return;
+      if (!confirm("Regenerate the global Plex ratings webhook URL?\n\nOnly this URL will change.")) return;
       try {
         if (typeof STATE.regenWebhookIds !== "function") throw new Error("regenerate_not_ready");
         btn.textContent = "sync";
-        await STATE.regenWebhookIds({ route_id: route.id }, btn);
+        await STATE.regenWebhookIds({ key: "plexwatcher" }, btn);
+        try { updatePlexWatcherWebhookUrl(); } catch {}
         btn.textContent = "check";
       } catch {
         btn.textContent = "error";
@@ -3725,14 +3734,13 @@ async function hydrateJellyfin() {
       }
     });
 
-    const persistActiveRouteRatings = async () => {
+    const persistGlobalPlexRatings = async (pairs) => {
       try {
-        await persistCurrentScrobblerState("sc-pms-note");
+        await persistConfigPaths(pairs || globalPlexRatingsPairs(globalPlexRatingsTargets()), "sc-pms-note");
         await refreshWebhookIds();
       } catch {}
       try { syncPlexRatingsPillsFromSelect(); } catch {}
       try { updatePlexWatcherWebhookUrl(); } catch {}
-      try { renderRoutesUi(); } catch {}
     };
 
     const ratSel = $("#sc-plex-ratings", STATE.mount);
@@ -3745,21 +3753,20 @@ async function hydrateJellyfin() {
         if (!btn || btn.disabled) return;
         const key = String(btn.getAttribute("data-sink") || "").toLowerCase().trim();
         if (!key) return;
-        const route = getActiveRoute();
-        const availability = route ? routeRatingsAvailability(route) : {};
+        const availability = globalPlexRatingsAvailability();
         if (availability[key] === false) return;
-        const curArr = sinkCsvItems(routeRatingsCsv(route));
+        const curArr = sinkCsvItems(globalPlexRatingsTargets());
         const has = curArr.includes(key);
         const nextArr = has ? curArr.filter((x) => x !== key) : [...curArr, key];
-        const nextCsv = availableSinkCsv(nextArr.join(","), availability);
+        const nextCsv = normSinkCsv(nextArr.join(","));
         const nextSel = nextCsv ? nextCsv : "none";
-        setActiveRouteRatingsCsv(nextCsv);
+        const pairs = setGlobalPlexRatingsCsv(nextCsv);
         if (ratSel.value !== nextSel) {
           ratSel.value = nextSel;
           ratSel.dispatchEvent(new Event("change", { bubbles: true }));
         } else {
           syncPillBar(ratPills, nextCsv, availability);
-          persistActiveRouteRatings();
+          persistGlobalPlexRatings(pairs);
         }
       });
     }
@@ -3805,8 +3812,9 @@ async function hydrateJellyfin() {
     if (ratingsSel) {
       on(ratingsSel, "change", (e) => {
         ratingsSel.dataset.cxUserChanged = "1";
-        setActiveRouteRatingsCsv(e.target.value);
-        persistActiveRouteRatings();
+        const selected = csvFromSelect(e.target, true);
+        const pairs = setGlobalPlexRatingsCsv(selected);
+        persistGlobalPlexRatings(pairs);
       });
     }
 
@@ -3903,9 +3911,9 @@ async function hydrateJellyfin() {
     watch: {
       routes: routesOut,
       autostart: !!read("scrobble.watch.autostart", false),
-      plex_simkl_ratings: false,
-      plex_trakt_ratings: false,
-      plex_mdblist_ratings: false,
+      plex_simkl_ratings: !!read("scrobble.watch.plex_simkl_ratings", false),
+      plex_trakt_ratings: !!read("scrobble.watch.plex_trakt_ratings", false),
+      plex_mdblist_ratings: !!read("scrobble.watch.plex_mdblist_ratings", false),
       pause_debounce_seconds: read("scrobble.watch.pause_debounce_seconds", DEFAULTS.watch.pause_debounce_seconds),
       suppress_start_at: read("scrobble.watch.suppress_start_at", DEFAULTS.watch.suppress_start_at),
     },
