@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_message
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
 STATE_PATH = CONFIG_DIR / "state.json"
@@ -43,28 +44,6 @@ _INFLIGHT_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
 _LOG = logging.getLogger("crosswatch.analyzer")
 _TRACKER_PROVIDER_BASES = {"TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
 _MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
-_PLEX_HISTORY_REASON_MESSAGES = {
-    "in_catalog_watched": "Plex catalog already has this item marked watched.",
-    "in_catalog_unwatched": "Plex catalog has this item, but it is not marked watched yet.",
-    "not_in_plex_catalog": "Plex could not find this item in the selected libraries.",
-    "show_matched_episode_missing": "Plex found the show, but not this season and episode in the selected libraries.",
-    "resolve_ambiguous": "Plex found multiple possible matches and skipped the item to avoid writing to the wrong media.",
-    "confirmed_watched_exact_date": "Plex confirmed this item as watched with a matching watched date.",
-    "confirmed_watched_date_mismatch": "Plex confirmed this item as watched, but the watched date differs from the source date.",
-    "confirmed_watched_no_date": "Plex confirmed this item as watched, but Plex did not expose a watched date to compare.",
-    "write_failed": "Plex write failed before the watched state could be confirmed.",
-    "scrobble_failed": "Plex scrobble failed before the watched state could be confirmed.",
-    "missing_watched_at": "The source item has no watched date, so CrossWatch cannot backdate the Plex history write.",
-    "home_scope_not_applied": "Plex Home scope was required but could not be applied.",
-}
-_MEDIA_SERVER_LIBRARY_REASON_MESSAGES = {
-    "not_in_library": "The media server library does not contain this item.",
-    "not_found": "The media server could not find a matching library item.",
-}
-_TRACKER_TO_MEDIA_SERVER_MESSAGE = (
-    "Tracker to media server syncs can have expected gaps because trackers store history "
-    "for items that are not present in your media server libraries."
-)
 
 
 def _sig_lock(sig: tuple[Any, ...]) -> threading.Lock:
@@ -2491,7 +2470,7 @@ def _history_normalization_issues(s: dict[str, Any], cfg: dict[str, Any] | None 
             severe = drift >= 10 or ratio >= 1.5
             tracker_to_media = _is_tracker_to_media_server(a, [b])
             if tracker_to_media:
-                summary = _TRACKER_TO_MEDIA_SERVER_MESSAGE
+                summary = TRACKER_TO_MEDIA_SERVER_MESSAGE
             else:
                 summary = (
                     "History sets diverge substantially between providers. "
@@ -2815,25 +2794,10 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
 
 
 def _unresolved_reason_message(dst: str, feature: str, reasons: list[str]) -> str:
-    dst_name = str(dst or "").upper()
-    dst_base = _provider_base(dst_name)
-    feature_key = str(feature or "").lower()
-
     for reason in reasons:
-        r = str(reason or "").strip()
-        if not r:
-            continue
-        if dst_base == "PLEX" and feature_key == "history" and r in _PLEX_HISTORY_REASON_MESSAGES:
-            msg = _PLEX_HISTORY_REASON_MESSAGES[r]
-            if r == "not_in_plex_catalog":
-                return f"{msg} {_TRACKER_TO_MEDIA_SERVER_MESSAGE}"
-            return msg
-        if _is_media_server_provider(dst_name) and r in _MEDIA_SERVER_LIBRARY_REASON_MESSAGES:
-            return _MEDIA_SERVER_LIBRARY_REASON_MESSAGES[r]
-        if r == "missing_ids_for_key":
-            return "The item is missing IDs needed for a safe provider match."
-        if r in {"apply:add:failed", "two:apply:add:failed"}:
-            return "The provider did not confirm this write."
+        message = reason_message(reason, provider=dst, feature=feature)
+        if message:
+            return message
     return ""
 
 
@@ -2970,14 +2934,14 @@ def _problems(
                 }
                 if tracker_to_media and not blocked:
                     prob["sync_context"] = "tracker_to_media_server"
-                    prob["message"] = _TRACKER_TO_MEDIA_SERVER_MESSAGE
+                    prob["message"] = TRACKER_TO_MEDIA_SERVER_MESSAGE
                 if include_hints:
                     hints = _missing_peer_hints(unresolved_index, feat, alias_keys, missing_targets, blocked)
                     if tracker_to_media and not blocked:
                         hints.append(
                             {
                                 "kind": "tracker_to_media_server_gap",
-                                "message": _TRACKER_TO_MEDIA_SERVER_MESSAGE,
+                                "message": TRACKER_TO_MEDIA_SERVER_MESSAGE,
                             }
                         )
                     if hints:

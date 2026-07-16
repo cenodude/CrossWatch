@@ -74,6 +74,7 @@
     currentlyWatching: 'currentlyWatching',
     status: 'status',
     insights: 'insights',
+    settingsOverview: 'settingsOverview',
   };
 
   const TTL = {
@@ -86,6 +87,7 @@
     currentlyWatching: 3000,
     status: 3000,
     insights: 10000,
+    settingsOverview: 30000,
   };
 
   const Cache = {
@@ -106,7 +108,7 @@
     async save(cfg){
       const out = await j('/api/config', { method: 'POST', headers: JSON_HDR, body: JSON.stringify(cfg || {}) });
       Cache.setCfg(cfg || {});
-      invalidate([KEY.pairs, KEY.metadataProviders, KEY.schedulingStatus, KEY.watchStatus, KEY.currentlyWatching, KEY.status, KEY.insights]);
+      invalidate([KEY.pairs, KEY.metadataProviders, KEY.schedulingStatus, KEY.watchStatus, KEY.currentlyWatching, KEY.status, KEY.insights, KEY.settingsOverview]);
       return out;
     }
   };
@@ -117,13 +119,13 @@
       const has = !!(p && p.id);
       const url = has ? `/api/pairs/${encodeURIComponent(p.id)}` : '/api/pairs';
       const out = await j(url, { method: has ? 'PUT' : 'POST', headers: JSON_HDR, body: JSON.stringify(p || {}) });
-      invalidate([KEY.pairs, KEY.status, KEY.insights]);
+      invalidate([KEY.pairs, KEY.status, KEY.insights, KEY.settingsOverview]);
       return out;
     },
     async delete(id){
       if (!id) return null;
       const out = await j(`/api/pairs/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      invalidate([KEY.pairs, KEY.status, KEY.insights]);
+      invalidate([KEY.pairs, KEY.status, KEY.insights, KEY.settingsOverview]);
       return out;
     }
   };
@@ -148,9 +150,10 @@
 
   const Status = { get(force = false){ return memo(KEY.status, TTL.status, () => j('/api/status'), force); } };
   const Insights = { get(force = false){ return memo(KEY.insights, TTL.insights, () => j('/api/insights'), force); } };
+  const Settings = { overview(force = false){ return memo(KEY.settingsOverview, TTL.settingsOverview, () => j('/api/settings/overview'), force); } };
 
   document.addEventListener('config-saved', () => invalidate());
   window.addEventListener('auth-changed', () => invalidate());
 
-  Object.assign(NS, { API: { j, f, Config, Pairs, Providers, Metadata, Scheduling, Watch, Status, Insights }, Cache });
+  Object.assign(NS, { API: { j, f, Config, Pairs, Providers, Metadata, Scheduling, Watch, Status, Insights, Settings }, Cache });
 })();
