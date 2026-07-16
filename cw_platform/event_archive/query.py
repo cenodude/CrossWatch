@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from .db import get_conn, events_db_path
+from ..reason_labels import friendly_reason
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 
@@ -25,6 +26,14 @@ _COLUMNS = (
     "match_basis", "source_kind", "session_key", "source_file", "source_mtime", "detail",
     "acknowledged_at", "acknowledged_by",
 )
+
+
+def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        reason = row.get("reason_code") or row.get("reason")
+        if reason:
+            row["reason_label"] = friendly_reason(reason)
+    return rows
 
 
 def _bound_limit(limit: Any) -> int:
@@ -90,7 +99,7 @@ def _run(
         ).fetchall()
     except Exception:
         return {"items": [], "total": 0, "limit": lim, "offset": off}
-    return {"items": [dict(r) for r in rows], "total": total, "limit": lim, "offset": off}
+    return {"items": _with_reason_labels([dict(r) for r in rows]), "total": total, "limit": lim, "offset": off}
 
 
 def recent(*, limit: int = _DEFAULT_LIMIT, offset: int = 0, visibility: str | None = "open", order: str | None = "newest", domain: str | None = None, conn: sqlite3.Connection | None = None) -> dict[str, Any]:

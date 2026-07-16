@@ -14,6 +14,7 @@ from typing import Any
 from .db import get_conn
 from . import query as _query
 from .scrobble_recorder import session_token
+from ..reason_labels import friendly_reason
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 
@@ -47,6 +48,14 @@ _UNRESOLVED_TYPES_SQL = "('write_failed','unresolved_recorded')"
 
 # DO NOT FORGET to update the version when the correlation key/status/summary logic
 CORRELATION_VERSION = 13
+
+
+def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for row in rows:
+        reason = row.get("reason_code") or row.get("reason")
+        if reason:
+            row["reason_label"] = friendly_reason(reason)
+    return rows
 
 
 def _P(v: Any) -> str:
@@ -700,7 +709,7 @@ def list_groups(
     except Exception as exc:
         _LOG.warning("group list failed: %s", exc)
         return {"items": [], "total": 0, "limit": lim, "offset": off}
-    return {"items": [dict(r) for r in rows], "total": total, "limit": lim, "offset": off}
+    return {"items": _with_reason_labels([dict(r) for r in rows]), "total": total, "limit": lim, "offset": off}
 
 
 def get_group(group_id: Any, *, conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
@@ -713,7 +722,7 @@ def get_group(group_id: Any, *, conn: sqlite3.Connection | None = None) -> dict[
         ).fetchone()
     except Exception:
         return None
-    return dict(row) if row else None
+    return _with_reason_labels([dict(row)])[0] if row else None
 
 
 def group_events(group_id: Any, *, order: str | None = "asc", limit: int = 500, offset: int = 0, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
@@ -733,7 +742,7 @@ def group_events(group_id: Any, *, order: str | None = "asc", limit: int = 500, 
         ).fetchall()
     except Exception:
         return {"items": [], "total": 0}
-    return {"items": [dict(r) for r in rows], "total": total, "limit": lim, "offset": off}
+    return {"items": _query._with_reason_labels([dict(r) for r in rows]), "total": total, "limit": lim, "offset": off}
 
 
 def run_problem_items(
@@ -784,7 +793,7 @@ def run_problem_items(
     except Exception as exc:
         _LOG.warning("run problem items failed: %s", exc)
         return {"items": [], "total": 0, "limit": lim if lim is not None else limit, "offset": off}
-    return {"items": [dict(r) for r in rows], "total": total, "limit": lim if lim is not None else total, "offset": off}
+    return {"items": _with_reason_labels([dict(r) for r in rows]), "total": total, "limit": lim if lim is not None else total, "offset": off}
 
 
 def _run_children_bulk(
@@ -874,7 +883,7 @@ def _run_child_groups_bulk(
     for row in rows:
         group_id = row["id"]
         problem_at = int(row["problem_at"] or 0)
-        group = {col: row[col] for col in _GROUP_COLUMNS}
+        group = _with_reason_labels([{col: row[col] for col in _GROUP_COLUMNS}])[0]
         for run_id, since, until in windows:
             if since <= problem_at <= until and group_id not in seen[run_id]:
                 seen[run_id].add(group_id)

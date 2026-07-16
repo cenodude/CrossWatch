@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from .db import get_conn
+from ..reason_labels import friendly_reason
 
 _HOUR = 3600
 _DAY = 86400
@@ -262,7 +263,7 @@ def _compute(conn: Any, since: int, until: int, bucket: int) -> dict[str, Any]:
     prev_fails = _fail_map(prev_since, since)
     total_fail = sum(cur_fails.values()) or 1
     failure_reasons = [{
-        "reason": k, "count": v, "prev": prev_fails.get(k, 0),
+        "reason": k, "label": friendly_reason(k), "count": v, "prev": prev_fails.get(k, 0),
         "share": round(v / total_fail * 100.0, 1), "delta": _delta(v, prev_fails.get(k, 0)),
     } for k, v in sorted(cur_fails.items(), key=lambda x: x[1], reverse=True)[:8]]
 
