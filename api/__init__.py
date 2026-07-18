@@ -9,7 +9,6 @@ from .tlsAPI import router as tls_router
 from .maintenanceAPI import router as maintenance_router
 from .activityAPI import router as activity_router
 from .dashboardAPI import router as dashboard_router
-from .mobileAPI import router as mobile_router
 from .metaAPI import router as meta_router
 from .animeMappingAPI import router as anime_mapping_router
 from .manualAPI import router as manual_router
@@ -49,7 +48,6 @@ __all__ = [
     "maintenance_router",
     "activity_router",
     "dashboard_router",
-    "mobile_router",
     "meta_router",
     "anime_mapping_router",
     "manual_router",
@@ -97,7 +95,6 @@ def register(
     app.include_router(maintenance_router)
     app.include_router(activity_router)
     app.include_router(dashboard_router)
-    app.include_router(mobile_router)
     app.include_router(scheduling_router)
     app.include_router(scrobble_router)
     app.include_router(scrobbler_management_router)

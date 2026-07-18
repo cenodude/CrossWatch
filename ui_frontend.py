@@ -275,29 +275,6 @@ html[data-cw-theme=flat-light] :is(#cw-settings-menu.cw-menu,#cw-about-menu.cw-m
 #page-settings .cw-settings-status{display:grid;gap:3px;min-width:220px}
 #page-settings .cw-settings-status strong{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:rgba(228,234,248,.72)}
 #page-settings .cw-settings-status .sub{margin:0!important}
-#page-settings .cw-mobile-companion{display:grid;gap:14px}
-#page-settings .cw-mobile-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
-#page-settings .cw-mobile-title{display:grid;gap:4px;min-width:220px}
-#page-settings .cw-mobile-title strong{font-size:15px;color:var(--cw-ov-fg)!important}
-#page-settings .cw-mobile-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-#page-settings .cw-mobile-banner{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:16px;border:1px solid rgba(245,158,11,.24);background:linear-gradient(135deg,rgba(245,158,11,.14),rgba(124,92,255,.08));color:var(--cw-ov-fg)}
-#page-settings .cw-mobile-banner .material-symbols-rounded{flex:0 0 auto;width:28px;height:28px;border-radius:10px;display:grid;place-items:center;background:rgba(245,158,11,.16);color:#fbbf24;font-size:18px;line-height:1}
-#page-settings .cw-mobile-banner-copy{display:grid;gap:3px;min-width:0}
-#page-settings .cw-mobile-banner-copy strong{font-size:13px;line-height:1.25;color:var(--cw-ov-fg)!important}
-#page-settings .cw-mobile-banner-copy span{font-size:12px;line-height:1.45;color:var(--cw-ov-muted)!important}
-#page-settings .cw-mobile-pairing{display:grid;grid-template-columns:252px minmax(0,1fr);gap:18px;align-items:center;padding:16px;border-radius:18px;border:1px solid rgba(124,92,255,.20);background:linear-gradient(180deg,rgba(124,92,255,.10),rgba(255,255,255,.025))}
-#page-settings .cw-mobile-pairing.hidden{display:none}
-#page-settings .cw-mobile-qr{width:236px;min-height:236px;padding:12px;border-radius:18px;background:#fff;display:grid;place-items:center;box-shadow:0 16px 32px rgba(0,0,0,.22)}
-#page-settings .cw-mobile-qr img{display:block;width:212px;height:212px;object-fit:contain}
-#page-settings .cw-mobile-pairing-details{display:grid;gap:8px;min-width:0}
-#page-settings .cw-mobile-code{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:rgba(0,0,0,.24);font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;font-size:18px;font-weight:900;letter-spacing:.14em;color:#f6f8ff;overflow-wrap:anywhere}
-#page-settings .cw-mobile-uri{height:auto!important;min-height:38px!important;font-family:ui-monospace,SFMono-Regular,Consolas,Menlo,monospace;font-size:12px!important}
-#page-settings .cw-mobile-devices{display:grid;gap:8px}
-#page-settings .cw-mobile-device-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:10px 12px;border-radius:16px;border:1px solid rgba(255,255,255,.08);background:rgba(0,0,0,.14)}
-#page-settings .cw-mobile-device-meta{display:grid;gap:3px;min-width:0}
-#page-settings .cw-mobile-device-meta strong{font-size:14px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#page-settings .cw-mobile-device-meta .sub{font-size:12px}
-#page-settings .cw-mobile-device-row .btn{min-height:34px!important;border-radius:12px!important;padding:0 12px!important}
 #page-settings .cw-settings-shell label{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:rgba(226,232,248,.74)!important}
 #page-settings .cw-settings-shell input,#page-settings .cw-settings-shell select{height:34px;min-height:34px;padding:0 12px;border-radius:12px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important;color:#eef3ff!important;line-height:1.1;font-size:14px}
 #page-settings .cw-settings-shell textarea{min-height:96px;padding:10px 12px;border-radius:12px!important;background:linear-gradient(180deg,rgba(3,5,9,.96),rgba(1,3,6,.985))!important;color:#eef3ff!important;line-height:1.4;font-size:14px}
@@ -1215,41 +1192,6 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
                           Optional. This adds a <code>Sign in with Plex</code> button to the login screen while keeping local CrossWatch password sign-in as your fallback.
                         </div>
                       </div>
-                    </div>
-
-                    <div class="cw-settings-block cw-mobile-companion">
-                      <div class="cw-mobile-head">
-                        <div class="cw-mobile-title">
-                          <div class="cw-field-label-row">
-                            <strong>CrossWatch companion app</strong>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Companion app: Pair trusted phones and tablets with scoped mobile tokens, then revoke them here when needed." aria-label="Companion app help">help</button>
-                          </div>
-                          <div class="sub" id="mobile_auth_state">No paired devices</div>
-                        </div>
-                        <div class="cw-mobile-actions">
-                          <button class="btn primary" type="button" id="btn-mobile-pairing-start" onclick="cwMobilePairingStart?.()">Add device</button>
-                          <button class="btn" type="button" id="btn-mobile-devices-refresh" onclick="cwMobileDevicesRefresh?.()">Refresh</button>
-                        </div>
-                      </div>
-
-                      <div class="cw-mobile-banner" role="note">
-                        <span class="material-symbols-rounded" aria-hidden="true">science</span>
-                        <div class="cw-mobile-banner-copy">
-                          <strong>Preview feature</strong>
-                          <span>The Android companion app is a side-project preview and not production-ready yet. Use it for local testing only, and revoke devices you no longer use.</span>
-                        </div>
-                      </div>
-
-                      <div class="cw-mobile-pairing hidden" id="mobile_pairing_box">
-                        <div class="cw-mobile-qr" id="mobile_pairing_qr"></div>
-                        <div class="cw-mobile-pairing-details">
-                          <div class="cw-mobile-code" id="mobile_pairing_code">----------</div>
-                          <input class="cw-mobile-uri" id="mobile_pairing_uri" type="text" readonly autocomplete="off" aria-label="Companion pairing URI">
-                          <div class="sub" id="mobile_pairing_expiry"></div>
-                        </div>
-                      </div>
-
-                      <div class="cw-mobile-devices" id="mobile_devices_list"></div>
                     </div>
 
                     <div class="cw-settings-statusrow">
