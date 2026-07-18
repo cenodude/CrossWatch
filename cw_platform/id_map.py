@@ -330,6 +330,15 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         if opt in item and item.get(opt) not in (None, ""):
             out[opt] = item.get(opt)
 
+    abs_raw = item.get("_trakt_number_abs")
+    if isinstance(abs_raw, (int, str)) and str(abs_raw).strip():
+        try:
+            abs_no = int(abs_raw)
+            if abs_no > 0:
+                out["_trakt_number_abs"] = abs_no
+        except Exception:
+            pass
+
     # Preserve internal flags needed by orchestrator blocklist logic.
     try:
         if bool(item.get("_cw_marked")):

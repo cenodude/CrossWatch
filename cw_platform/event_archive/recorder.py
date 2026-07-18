@@ -365,6 +365,28 @@ class RunRecorder:
             self._flush()
             return
 
+        if event == "archive:item_resolutions":
+            dst = _norm_prov(f.get("provider")) or self._dst
+            src = self._src if self._src and self._src != dst else self._a
+            op = str(f.get("op") or "add")
+            for row in (f.get("items") or []):
+                if not isinstance(row, Mapping):
+                    continue
+                k = str(row.get("key") or "")
+                if not k:
+                    continue
+                raw_it = row.get("item")
+                it: Mapping[str, Any] = raw_it if isinstance(raw_it, Mapping) else {}
+                self._add(
+                    event_type="unresolved_cleared", operation=op, severity="info",
+                    source_provider=src or None, destination_provider=dst or None,
+                    source_instance=self._si or None, destination_instance=self._di or None,
+                    reason_code="unresolved_cleared", reason="unresolved_cleared",
+                    item_key=k, **_item_fields(it),
+                )
+            self._flush()
+            return
+
         if event == "debug" and str(f.get("msg") or "") == "blocked.counts":
             bb = int(f.get("blocked_blackbox") or 0)
             dst_p = _norm_prov(f.get("dst")) or None
