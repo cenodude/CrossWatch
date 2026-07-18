@@ -18,14 +18,20 @@ _ASSET_VERSION_CACHE: dict[str, float | str] = {"ts": 0.0, "val": CURRENT_VERSIO
 DEFAULT_MANIFEST: str = r"""{
   "name": "CrossWatch",
   "short_name": "CrossWatch",
+  "description": "Sync watchlists, history and ratings across Plex, Trakt, SIMKL, Jellyfin and more.",
+  "id": "/",
   "start_url": "/?ui=compact",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "orientation": "any",
   "background_color": "#0b0b0f",
   "theme_color": "#0b0b0f",
   "icons": [
-    { "src": "/assets/pwa/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "/assets/pwa/icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "/assets/pwa/icon-192.png?v=__CW_VERSION__", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/pwa/icon-512.png?v=__CW_VERSION__", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/assets/pwa/icon-192-maskable.png?v=__CW_VERSION__", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/assets/pwa/icon-512-maskable.png?v=__CW_VERSION__", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }"""
 
@@ -62,7 +68,12 @@ def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
 
     @app.get("/manifest.webmanifest", include_in_schema=False, tags=["ui"])
     def manifest_webmanifest() -> Response:
-        return asset_response("manifest.webmanifest", DEFAULT_MANIFEST, "application/manifest+json", **{"Cache-Control": "public, max-age=3600"})
+        try:
+            content = (assets_dir / "manifest.webmanifest").read_text(encoding="utf-8")
+        except Exception:
+            content = DEFAULT_MANIFEST
+        content = content.replace("__CW_VERSION__", _asset_version_token())
+        return Response(content=content, media_type="application/manifest+json", headers={"Cache-Control": "public, max-age=3600"})
 
     @app.get("/sw.js", include_in_schema=False, tags=["ui"])
     def service_worker() -> Response:
@@ -171,10 +182,12 @@ def _get_index_html_static() -> str:
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__"><link rel="alternate icon" href="/favicon.ico?v=__CW_VERSION__">
 <meta name="theme-color" content="#0b0b0f">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/assets/pwa/apple-touch-icon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/pwa/apple-touch-icon.png?v=__CW_VERSION__">
+<meta name="application-name" content="CrossWatch">
+<meta name="apple-mobile-web-app-title" content="CrossWatch">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <script>
 (() => {
   try {
