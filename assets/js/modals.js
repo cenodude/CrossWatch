@@ -30,6 +30,8 @@ ModalRegistry.register('tls-cert',     () => import(_cwVer('./modals/tls/index.j
 ModalRegistry.register('setup-wizard', () => import(_cwVer('./modals/setup-wizard/index.js')));
 ModalRegistry.register('upgrade-warning', () => import(_cwVer('./modals/upgrade-warning/index.js')));
 ModalRegistry.register('capture-compare', () => import(_cwVer('./modals/capture-compare/index.js')));
+ModalRegistry.register('scrobbler-webhook', () => import(_cwVer('./modals/scrobbler-webhook/index.js')));
+ModalRegistry.register('scrobbler-route', () => import(_cwVer('./modals/scrobbler-route/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
@@ -65,3 +67,5 @@ window.cxOpenModalFor = async (pairOrId = null) => {
 
 window.openInsightSettingsModal = (props = {}) => ModalRegistry.open('insight-settings', props);
 window.openCaptureCompare = (props = {}) => ModalRegistry.open('capture-compare', props);
+window.openScrobblerWebhookModal = (props = {}) => ModalRegistry.open('scrobbler-webhook', props);
+window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-route', props);

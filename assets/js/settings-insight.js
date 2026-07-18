@@ -261,13 +261,9 @@
     const sources = scrob.sources || {};
     const isWatch = sources.watcher && !sources.webhook ? true : String(mode || '').toLowerCase() === 'watch';
     const sectionId = isWatch ? 'sc-sec-watch' : 'sc-sec-webhook';
-    const hostId = isWatch ? 'scrob-watcher' : 'scrob-webhook';
-    const sub = isWatch ? 'watcher' : 'plex';
     await openPaneSection('scrobbler', sectionId);
-    await wait(80);
-    const host = d.getElementById(hostId);
-    const tab = host?.querySelector?.(`.cw-subtile[data-sub="${sub}"]`);
-    tab?.click?.();
+    for (let i = 0; !d.getElementById(sectionId) && i < 40; i += 1) await wait(50);
+    d.getElementById(sectionId)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
   }
 
   async function openTmdbMetadataModal() {

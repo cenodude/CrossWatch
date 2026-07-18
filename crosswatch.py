@@ -750,7 +750,8 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         sc = (cfg.get("scrobble") or {}) or {}
         watch = (sc.get("watch") or {}) if isinstance(sc.get("watch"), dict) else {}
         from providers.scrobble.sources import source_enabled
-        want_webhooks = source_enabled(cfg, "webhook")
+        from providers.webhooks.config import active_webhook_endpoints
+        want_webhooks = source_enabled(cfg, "webhook") and bool(active_webhook_endpoints(cfg))
         want_autostart = source_enabled(cfg, "watcher") and bool(watch.get("autostart"))
 
         if want_webhooks:

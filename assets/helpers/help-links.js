@@ -18,6 +18,9 @@
     "tmdb-metadata": "crosswatch/settings/connections/metadata/tmdb-metadata",
     "anime-mapping": "crosswatch/settings/connections/metadata/anime-id-mapping",
     "connection-profiles": "crosswatch/settings/connections/profiles",
+    "scrobbler-watcher": "crosswatch/settings/scrobbler/watcher",
+    "scrobbler-webhooks": "crosswatch/settings/scrobbler/webhooks",
+    "scrobbler-filters": "crosswatch/settings/scrobbler/filters",
   });
 
   function normalizeKey(v){ return String(v || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""); }

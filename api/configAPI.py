@@ -62,17 +62,17 @@ def _nostore(res: JSONResponse) -> JSONResponse:
 
 router = APIRouter(prefix="/api", tags=["config"])
 
-_LAST_SCROBBLE_SOURCE_LOG: tuple[bool, bool, bool] | None = None
+_LAST_SCROBBLE_SOURCE_LOG: tuple[bool, bool, bool, tuple[tuple[str, str], ...]] | None = None
 
 
 def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None:
     global _LAST_SCROBBLE_SOURCE_LOG
     try:
-        from providers.webhooks.config import describe_active_webhooks
+        from providers.webhooks.config import active_webhook_endpoints, describe_active_webhooks
 
         sc = cfg.get("scrobble") if isinstance(cfg.get("scrobble"), dict) else {}
         enabled = bool((sc or {}).get("enabled"))
-        webhook = source_enabled(cfg, "webhook")
+        webhook = source_enabled(cfg, "webhook") and bool(active_webhook_endpoints(cfg))
         watcher = source_enabled(cfg, "watcher")
         webhook_lines = describe_active_webhooks(cfg) if webhook else []
         state = (enabled, webhook, watcher, tuple(webhook_lines))

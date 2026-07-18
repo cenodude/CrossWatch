@@ -81,7 +81,8 @@ class WebhookAuthError(Exception):
 
 
 # Webhook URL token helpers
-_WEBHOOK_KEYS = ("plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher")
+_LEGACY_MEDIA_WEBHOOK_KEYS = ("plextrakt", "jellyfintrakt", "embytrakt")
+_WEBHOOK_KEYS = (*_LEGACY_MEDIA_WEBHOOK_KEYS, "plexwatcher")
 
 def _gen_webhook_id() -> str:
     return secrets.token_urlsafe(24).rstrip("=")
@@ -89,8 +90,11 @@ def _gen_webhook_id() -> str:
 def _ensure_webhook_ids(cfg: dict[str, Any]) -> dict[str, str]:
     sec = cfg.setdefault("security", {})
     ids = sec.setdefault("webhook_ids", {})
+    # Once a user removes the legacy media webhook endpoints, don't recreate them.
+    legacy_removed = bool(sec.get("legacy_webhooks_removed"))
+    ensure_keys = ("plexwatcher",) if legacy_removed else _WEBHOOK_KEYS
     changed = False
-    for k in _WEBHOOK_KEYS:
+    for k in ensure_keys:
         v = str(ids.get(k) or "").strip()
         if not v:
             ids[k] = _gen_webhook_id()
@@ -164,6 +168,15 @@ def _profile_webhook_key(provider: str, instance: str) -> str:
     return f"profile:{str(provider or '').strip().lower()}:{normalize_instance_id(instance)}"
 
 
+def _source_has_webhook(cfg: dict[str, Any], provider: str, instance: str) -> bool:
+    try:
+        from providers.webhooks.config import webhook_sinks
+
+        return bool(webhook_sinks(cfg, provider, instance))
+    except Exception:
+        return False
+
+
 def _ensure_media_profile_webhook_ids(cfg: dict[str, Any], regenerate: bool = False) -> list[dict[str, Any]]:
     sec = cfg.setdefault("security", {})
     ids = sec.setdefault("webhook_ids", {})
@@ -177,6 +190,11 @@ def _ensure_media_profile_webhook_ids(cfg: dict[str, Any], regenerate: bool = Fa
         for raw_inst in instances:
             inst = normalize_instance_id(raw_inst)
             key = _profile_webhook_key(provider, inst)
+            if not (media_source_connected(cfg, provider, inst) and _source_has_webhook(cfg, provider, inst)):
+                if str(ids.get(key) or "").strip():
+                    del ids[key]
+                    changed = True
+                continue
             if regenerate or not str(ids.get(key) or "").strip():
                 ids[key] = _gen_webhook_id()
                 changed = True
