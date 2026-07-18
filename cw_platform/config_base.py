@@ -1407,6 +1407,53 @@ def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
     am["features"] = _string_list(am.get("features"), ["watchlist", "ratings"])
 
 
+def _normalize_scrobble_webhook(cfg: dict[str, Any]) -> None:
+    # Drop legacy global webhook destinations
+    sc = cfg.get("scrobble")
+    if not isinstance(sc, dict):
+        return
+    wh = sc.get("webhook")
+    if not isinstance(wh, dict):
+        return
+
+    wh.pop("sinks", None)
+    wh.pop("sink_instances", None)
+
+    providers = wh.get("providers")
+    if isinstance(providers, dict):
+        for prov in list(providers.keys()):
+            node = providers.get(prov)
+            if not isinstance(node, dict):
+                continue
+            node.pop("sinks", None)
+            node.pop("sink_instances", None)
+            if not node:
+                del providers[prov]
+        if not providers:
+            wh.pop("providers", None)
+
+    # Empty per-profile sink overrides
+    profiles = wh.get("profiles")
+    if isinstance(profiles, dict):
+        for prov in list(profiles.keys()):
+            prov_node = profiles.get(prov)
+            if not isinstance(prov_node, dict):
+                continue
+            for inst in list(prov_node.keys()):
+                node = prov_node.get(inst)
+                if not isinstance(node, dict):
+                    continue
+                if isinstance(node.get("sinks"), list) and not node.get("sinks"):
+                    node.pop("sinks", None)
+                    node.pop("sink_instances", None)
+                if not node:
+                    del prov_node[inst]
+            if not prov_node:
+                del profiles[prov]
+        if not profiles:
+            wh.pop("profiles", None)
+
+
 def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui = _ensure_dict(cfg, "ui")
 
@@ -1575,8 +1622,18 @@ def _ensure_webhook_ids(cfg: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         sec["webhook_ids"] = {}
         wh = sec["webhook_ids"]
 
+# temp flag to remove legacy webhooks from config if present
+    legacy_removed = bool(sec.get("legacy_webhooks_removed"))
+    required = ["plexwatcher"] if legacy_removed else ["plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher"]
+
     changed = False
-    for k in ("plextrakt", "jellyfintrakt", "embytrakt", "plexwatcher"):
+    if legacy_removed:
+        for k in ("plextrakt", "jellyfintrakt", "embytrakt"):
+            if k in wh:
+                wh.pop(k, None)
+                changed = True
+
+    for k in required:
         v = wh.get(k)
         if not isinstance(v, str) or len(v.strip()) < 16:
             wh[k] = _new_webhook_id()
@@ -1604,6 +1661,7 @@ def load_config() -> dict[str, Any]:
     _normalize_anime_mapping(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
+    _normalize_scrobble_webhook(cfg)
     pairs = cfg.get("pairs")
     if isinstance(pairs, list):
         for it in pairs:
@@ -1654,6 +1712,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_anime_mapping(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)
+    _normalize_scrobble_webhook(data)
     _normalize_ui(data)
     pairs = data.get("pairs")
     if isinstance(pairs, list):

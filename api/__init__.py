@@ -24,6 +24,7 @@ from .probesAPI import (
     STATUS_CACHE as PROBES_STATUS_CACHE,
 )
 from .scrobbleAPI import router as scrobble_router
+from .scrobblerManagementAPI import router as scrobbler_management_router
 from .authenticationAPI import register_auth
 from .wallAPI import register_wall
 from .versionAPI import router as version_router
@@ -57,6 +58,7 @@ __all__ = [
     "backups_router",
     "scheduling_router",
     "scrobble_router",
+    "scrobbler_management_router",
     "sync_router",
     "version_router",
     "analyzer_router",
@@ -98,6 +100,7 @@ def register(
     app.include_router(mobile_router)
     app.include_router(scheduling_router)
     app.include_router(scrobble_router)
+    app.include_router(scrobbler_management_router)
     app.include_router(sync_router)
     app.include_router(version_router)
     app.include_router(analyzer_router)

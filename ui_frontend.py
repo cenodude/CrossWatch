@@ -75,13 +75,14 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "scrobbler-ui.js", "scrobbler-user-picker.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
     "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
     "syncbar.js", "run-summary-stream.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "scrobbler.js",
 )
 def _asset_block() -> str:
     helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__"></script>' for name in _HELPER_SCRIPTS)
@@ -892,30 +893,17 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
         </section>
 
         <section class="cw-settings-pane" data-pane="scrobbler">
-          <div class="cw-settings-pane-head">
-            <div>
-              <div class="cw-settings-pane-kicker">Scrobbler</div>
-              <h3>Webhook and watcher routing</h3>
-              <p>Webhooks and watcher mode with route ingestion and filters</p>
-            </div>
-            <div class="cw-settings-jumpbar" aria-label="Scrobbler sections">
-              <button type="button" class="cw-settings-jump" data-target="sc-sec-webhook" onclick="cwScrobblerJump?.('sc-sec-webhook')">Webhook</button>
-              <button type="button" class="cw-settings-jump" data-target="sc-sec-watch" onclick="cwScrobblerJump?.('sc-sec-watch')">Watcher</button>
-            </div>
-          </div>
           <div id="sec-scrobbler" class="cw-settings-pane-stack cw-settings-scrobbler-stack" data-accordion="off">
             <div id="scrobble-mount" class="cw-settings-pane-stack cw-settings-scrobbler-stack-inner">
-              <div class="section cw-settings-section cw-settings-provider-section" id="sc-sec-webhook">
-                <div class="head" data-toggle-section="sc-sec-webhook">
-                  <span class="chev"></span><strong>Webhook</strong>
+              <div class="sc2-page">
+                <div class="cw-settings-pane-head sc2-pane-head">
+                  <div>
+                    <div class="cw-settings-pane-kicker">Scrobbler</div>
+                    <h3>Webhooks and Watcher</h3>
+                    <p>Receive real time scrobbles via Watcher routes or webhooks. <b>Watcher is recommended</b> Only use both for specific use cases!</p>
+                  </div>
                 </div>
-                <div class="body"><div id="scrob-webhook"></div></div>
-              </div>
-              <div class="section open cw-settings-section cw-settings-provider-section" id="sc-sec-watch">
-                <div class="head" data-toggle-section="sc-sec-watch">
-                  <span class="chev"></span><strong>Watcher</strong>
-                </div>
-                <div class="body"><div id="scrob-watcher"></div></div>
+                <div class="sc2-empty">Loading Scrobbler...</div>
               </div>
             </div>
           </div>
@@ -1654,7 +1642,7 @@ __CW_ASSET_BLOCK__
   document.addEventListener("DOMContentLoaded", () => render({}), { once: true });
 })();
 </script>
-<script>(()=>{window.cwScrobblerJump=sectionId=>(window.cwSettingsSelect?.('scrobbler'),setTimeout(()=>{window.openSection?.(sectionId);document.getElementById(sectionId)?.scrollIntoView({behavior:'smooth',block:'start'})},0));window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{const t=String(tab||'').trim().toLowerCase();window.cwUiSettingsSelect?.(t);document.querySelector(`#ui_settings_panels .cw-settings-panel[data-tab="${t}"]`)?.scrollIntoView({behavior:'smooth',block:'start'})},0))})();</script>
+<script>(()=>{window.cwScrobblerJump=sectionId=>{window.cwSettingsSelect?.('scrobbler');let tries=0;const jump=()=>{const el=document.getElementById(sectionId);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});return}if(++tries<40)setTimeout(jump,50)};setTimeout(jump,0)};window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{const t=String(tab||'').trim().toLowerCase();window.cwUiSettingsSelect?.(t);document.querySelector(`#ui_settings_panels .cw-settings-panel[data-tab="${t}"]`)?.scrollIntoView({behavior:'smooth',block:'start'})},0))})();</script>
 
 <script>(()=>{const origFetch=window.fetch;if(typeof origFetch!=='function'||origFetch.__cwAuthPendingWrapped)return;const pending=()=>window.cwIsAuthSetupPending?.()===true,allowPath=p=>p.startsWith('/api/app-auth/')||p==='/api/config/meta'||p.startsWith('/api/config/meta?')||p.startsWith('/assets/')||p==='/favicon.svg';const emptyJson=(body='{}')=>new Response(body,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});window.fetch=Object.assign(async function(resource,init){try{if(!pending())return await origFetch(resource,init);const url=typeof resource==='string'?resource:String(resource?.url||'');const u=new URL(url,location.origin);if(u.origin!==location.origin||!u.pathname.startsWith('/api/')||allowPath(u.pathname)||allowPath(u.pathname+u.search))return await origFetch(resource,init);const method=String(init?.method||resource?.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD')return await origFetch(resource,init);if(u.pathname.startsWith('/api/config'))return emptyJson('{}');if(u.pathname.startsWith('/api/status'))return emptyJson('{"providers":{}}');if(u.pathname.startsWith('/api/pairs'))return emptyJson('[]');if(u.pathname.startsWith('/api/scheduling'))return emptyJson('{}');if(u.pathname.startsWith('/api/insights'))return emptyJson('{}');if(u.pathname.startsWith('/api/watch/'))return emptyJson('{}');if(u.pathname.startsWith('/api/webhooks/'))return emptyJson('{}');return emptyJson('{}')}catch{return await origFetch(resource,init)}},{__cwAuthPendingWrapped:true})})();</script>
 

@@ -62,7 +62,10 @@ def webhook_sinks(cfg: Mapping[str, Any] | None, provider: str, provider_instanc
     raw = wh.get("sinks", _MISSING)
     if raw is _MISSING or raw is None:
         return []
-    items = raw if isinstance(raw, (list, tuple, set)) else str(raw).split(",")
+    if isinstance(raw, Mapping):
+        items = [k for k, v in raw.items() if v not in (False, None, "")]
+    else:
+        items = raw if isinstance(raw, (list, tuple, set)) else str(raw).split(",")
     out: list[str] = []
     for item in items:
         sink = str(item or "").strip().lower()
@@ -136,6 +139,8 @@ def active_webhook_endpoints(cfg: Mapping[str, Any] | None) -> list[dict[str, An
             if not media_source_connected(cfg, provider, inst):
                 continue
             selected = webhook_sinks(cfg, provider, inst)
+            if not selected:
+                continue
             ready = configured_webhook_sinks(cfg, provider, inst)
             out.append(
                 {
