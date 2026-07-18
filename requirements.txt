@@ -8,5 +8,4 @@ websockets
 python-multipart
 packaging
 cryptography
-qrcode
 defusedxml
