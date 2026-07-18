@@ -9,7 +9,7 @@ import os
 import re
 import datetime as _dt
 
-from ._pairs_oneway import _emit_item_failures, compute_effective_add, select_baseline_keys
+from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, select_baseline_keys
 
 try:
     from ._pairs_oneway import (
@@ -1721,6 +1721,9 @@ def _two_way_sync(
                 if success_A:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
                     clear_unresolved(a, feature, success_A)
+                    resolved_A = [k for k in success_A if k in unresolved_before_A]
+                    if resolved_A:
+                        _emit_item_resolutions(emit, a, feature, pair_key, resolved_A, k2i_A)
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,
@@ -1851,6 +1854,9 @@ def _two_way_sync(
                 if success_B:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
                     clear_unresolved(b, feature, success_B)
+                    resolved_B = [k for k in success_B if k in unresolved_before_B]
+                    if resolved_B:
+                        _emit_item_resolutions(emit, b, feature, pair_key, resolved_B, k2i_B)
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,

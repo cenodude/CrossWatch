@@ -39,6 +39,7 @@ URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_REDIRECT = f"{BASE}/redirect"
 URL_ANIME_EPISODES = f"{BASE}/anime/episodes"
+_CACHE_SCHEMA = 2
 
 
 def _unresolved_path() -> str:
@@ -333,6 +334,8 @@ def _cache_load() -> dict[str, dict[str, Any]]:
     data = _load_json(_cache_path())
     if not isinstance(data, dict):
         return {}
+    if int(data.get("schema") or 0) != _CACHE_SCHEMA:
+        return {}
     items = data.get("items")
     if not isinstance(items, dict):
         return {}
@@ -346,8 +349,15 @@ def _cache_load() -> dict[str, dict[str, Any]]:
     return out
 
 
+def _cache_doc_is_stale() -> bool:
+    data = _load_json(_cache_path())
+    if not isinstance(data, dict) or not data:
+        return False
+    return int(data.get("schema") or 0) != _CACHE_SCHEMA
+
+
 def _cache_save(items: Mapping[str, Any]) -> None:
-    _save_json(_cache_path(), {"generated_at": _as_iso(_now_epoch()), "items": dict(items)})
+    _save_json(_cache_path(), {"schema": _CACHE_SCHEMA, "generated_at": _as_iso(_now_epoch()), "items": dict(items)})
 
 
 def _evict_removes_from_cache(items_list: list[Mapping[str, Any]]) -> None:
@@ -639,6 +649,49 @@ def _source_title_episode_aliases(show_ids: Mapping[str, Any]) -> dict[str, dict
     return out
 
 
+def _source_abs_episode_aliases(show_ids: Mapping[str, Any]) -> dict[int, dict[str, Any]]:
+    try:
+        path = Path(_trakt_history_index_path())
+        data = json.loads(path.read_text("utf-8")) if path.exists() else {}
+    except Exception:
+        data = {}
+    items = data.get("items") if isinstance(data, Mapping) else None
+    if not isinstance(items, Mapping):
+        return {}
+
+    grouped: dict[int, dict[tuple[int, int], dict[str, Any]]] = {}
+    for item in items.values():
+        if not isinstance(item, Mapping):
+            continue
+        if str(item.get("type") or "").lower() != "episode":
+            continue
+        abs_num = _int_or_none(item.get("_trakt_number_abs"))
+        if abs_num is None or abs_num <= 0:
+            continue
+        raw_show_ids = item.get("show_ids")
+        item_show_ids: Mapping[str, Any] = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
+        if not _show_ids_overlap(show_ids, item_show_ids):
+            continue
+        source = _source_season_episode(item)
+        if source is None:
+            continue
+        s_num, e_num = source
+        grouped.setdefault(abs_num, {})[(s_num, e_num)] = {
+            "season": s_num,
+            "episode": e_num,
+            "show_ids": dict(item_show_ids),
+            "title": item.get("title"),
+            "series_title": item.get("series_title"),
+            "series_year": item.get("series_year") or item.get("year"),
+        }
+
+    out: dict[int, dict[str, Any]] = {}
+    for abs_num, choices in grouped.items():
+        if len(choices) == 1:
+            out[abs_num] = next(iter(choices.values()))
+    return out
+
+
 def _apply_since_limit(
     out: dict[str, dict[str, Any]],
     *,
@@ -694,6 +747,7 @@ def _parse_rows(
     anime_aliases = _load_anime_episode_alias_cache()
     anime_episode_cache = _load_anime_episode_map_cache()
     source_title_alias_cache: dict[str, dict[str, dict[str, Any]]] = {}
+    source_abs_alias_cache: dict[str, dict[int, dict[str, Any]]] = {}
 
     for row in movie_rows:
         if not isinstance(row, Mapping):
@@ -806,6 +860,12 @@ def _parse_rows(
                         alias = alias_raw
                     if alias is None:
                         show_key = json.dumps({str(k): str(v) for k, v in show_ids.items() if v not in (None, "")}, sort_keys=True)
+                        if show_key not in source_abs_alias_cache:
+                            source_abs_alias_cache[show_key] = _source_abs_episode_aliases(show_ids)
+                        abs_alias = source_abs_alias_cache.get(show_key, {}).get(e_num_internal)
+                        if isinstance(abs_alias, Mapping):
+                            alias = abs_alias
+                    if alias is None:
                         title_value = episode.get("title")
                         if not _title_match_key(title_value) and session is not None and headers is not None and timeout is not None:
                             title_value = _anime_episode_title_for_number(
@@ -956,7 +1016,8 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     normalize_flat_watermarks()
 
     cached = _cache_load()
-    wm = get_watermark("history") or ""
+    cache_stale = _cache_doc_is_stale()
+    wm = "" if cache_stale else (get_watermark("history") or "")
     removed_wm = get_watermark("history_removed") or ""
 
     acts, _ = fetch_activities(session, _headers(adapter, force_refresh=True), timeout=timeout)
@@ -1616,6 +1677,13 @@ def _anime_retry_episode_number(
             mapped = _row_anime_episode_number(direct[0])
             if mapped:
                 return mapped
+        abs_num = _int_or_none(item.get("_trakt_number_abs"))
+        if abs_num is not None and abs_num > 0:
+            abs_hits = [row for row in rows if _row_anime_episode_number(row) == abs_num]
+            if len(abs_hits) == 1:
+                mapped = _row_anime_episode_number(abs_hits[0])
+                if mapped:
+                    return mapped
         title_key = _title_match_key(item.get("title"))
         if title_key:
             title_hits = [row for row in rows if _title_match_key(row.get("title")) == title_key]
@@ -2384,6 +2452,53 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     _info("write_done", op="add", ok=False, applied=0, unresolved=len(unresolved))
     return 0, unresolved
 
+def _native_anime_remove_body(
+    items_list: list[Mapping[str, Any]],
+    *,
+    session: Any,
+    headers: Mapping[str, str],
+    timeout: float,
+    resolve_cache: dict[str, str],
+    misses: set[str],
+) -> tuple[dict[str, Any], list[str], set[int], list[Mapping[str, Any]]]:
+    episode_cache = _load_anime_episode_map_cache()
+    groups: dict[str, tuple[dict[str, str], list[Mapping[str, Any]]]] = {}
+    detected: set[int] = set()
+    for item in items_list:
+        if str(item.get("type") or "").lower() != "episode":
+            continue
+        native_ids = _native_anime_ids_for_mismatched_show(session, headers, timeout, item, resolve_cache, misses)
+        ids = {k: str(v) for k, v in native_ids.items() if k in {"simkl", "tvdb"} and v}
+        if not ids.get("simkl"):
+            continue
+        detected.add(id(item))
+        gkey = json.dumps(ids, sort_keys=True)
+        _ids, grouped = groups.setdefault(gkey, (dict(ids), []))
+        grouped.append(item)
+
+    anime_out: list[dict[str, Any]] = []
+    thaw: list[str] = []
+    mapped_ids: set[int] = set()
+    for _gkey, (ids, grouped) in groups.items():
+        mapped = _anime_retry_episode_numbers_for_group(
+            grouped, ids, session=session, headers=headers, timeout=timeout, episode_cache=episode_cache
+        )
+        episodes: list[dict[str, Any]] = []
+        for item in grouped:
+            number = mapped.get(_thaw_key(item))
+            if number is None:
+                continue
+            episodes.append({"number": number})
+            thaw.append(_thaw_key(item))
+            mapped_ids.add(id(item))
+        if episodes:
+            anime_out.append({"ids": dict(ids), "episodes": episodes})
+
+    unmapped = [item for item in items_list if id(item) in detected and id(item) not in mapped_ids]
+    body = {"anime": anime_out} if anime_out else {}
+    return body, thaw, detected, unmapped
+
+
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     session = adapter.client.session
     headers = _headers(adapter)
@@ -2394,13 +2509,50 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         _info("write_skipped", op="remove", reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
     chunk_size = max(1, int(getattr(adapter.cfg, "history_chunk_size", 100) or 100))
+    native_resolve_cache = _load_anime_resolve_cache()
+    native_resolve_misses: set[str] = set()
     ok = 0
     for part in _chunk_items(items_list, chunk_size):
+        native_body, native_thaw, native_detected, native_unmapped = _native_anime_remove_body(
+            list(part),
+            session=session,
+            headers=headers,
+            timeout=timeout,
+            resolve_cache=native_resolve_cache,
+            misses=native_resolve_misses,
+        )
+        for item in native_unmapped:
+            unresolved.append({"item": id_minimal(item), "hint": "simkl_anime_remove_unmapped:episodes", "reason": "simkl_anime_remove_unmapped:episodes"})
+        if native_body:
+            try:
+                resp = session.post(
+                    URL_REMOVE,
+                    headers=headers,
+                    params=simkl_api_params_from_headers(headers),
+                    json=native_body,
+                    timeout=timeout,
+                )
+                if 200 <= resp.status_code < 300:
+                    _unfreeze(native_thaw)
+                    ok += len(native_thaw)
+                    _evict_removes_from_cache([it for it in part if id(it) in native_detected and id(it) not in {id(u) for u in native_unmapped}])
+                else:
+                    _warn("write_failed", op="remove", target="anime", status=resp.status_code, body=(resp.text or '')[:200])
+                    for item in part:
+                        if id(item) in native_detected and id(item) not in {id(u) for u in native_unmapped}:
+                            unresolved.append({"item": id_minimal(item), "hint": _write_failure_hint(resp, reason="anime_remove_failed")})
+            except Exception as exc:
+                _warn("write_failed", op="remove", target="anime", error=str(exc))
+                for item in part:
+                    if id(item) in native_detected and id(item) not in {id(u) for u in native_unmapped}:
+                        unresolved.append({"item": id_minimal(item), "hint": _write_failure_hint(exc=exc, reason="anime_remove_failed")})
         movies: list[dict[str, Any]] = []
         shows_whole: list[dict[str, Any]] = []
         shows_scoped: dict[str, dict[str, Any]] = {}
         thaw_keys: list[str] = []
         for item in part:
+            if id(item) in native_detected:
+                continue
             typ = str(item.get("type") or "").lower()
             bucket = str(item.get("simkl_bucket") or "").strip().lower()
             if typ == "movie" and bucket == "anime":

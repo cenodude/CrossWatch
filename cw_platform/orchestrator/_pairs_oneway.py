@@ -57,6 +57,25 @@ def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -
         pass
 
 
+def _emit_item_resolutions(emit, provider, feature, pair, keys, key2item) -> None:
+    try:
+        all_keys = [k for k in (keys or []) if k]
+        if not all_keys:
+            return
+        items = [{"key": k, "item": key2item.get(k)} for k in all_keys]
+        emit(
+            "archive:item_resolutions",
+            provider=provider,
+            feature=feature,
+            pair=pair,
+            op="add",
+            items=items,
+            total=len(all_keys),
+        )
+    except Exception:
+        pass
+
+
 def compute_effective_add(
     *,
     attempted_keys,
@@ -1478,6 +1497,9 @@ def run_one_way_feature(
                 if success_keys and not ambiguous_partial:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
                     clear_unresolved(dst, feature, success_keys)
+                    resolved_keys = [k for k in success_keys if k in unresolved_before]
+                    if resolved_keys:
+                        _emit_item_resolutions(emit, dst, feature, pair_key, resolved_keys, key2item)
                     clear_items_for_feature(
                         ctx.state_store,
                         dbg,

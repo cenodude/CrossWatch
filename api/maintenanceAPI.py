@@ -262,7 +262,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         retry_files = sum(1 for item in files if any(token in str(item.get("name") or "").lower() for token in retry_names))
         response.update(
             title="Retry provider items",
-            note="Clears retry guards, tombstones, phantom records and provider health state. Playback and activity files stay untouched.",
+            note="Clears provider runtime caches: retry guards, tombstones, phantom records, provider health, plus history, watermark and mapping index caches. Playback and activity files stay untouched.",
             metrics=[
                 _metric("Runtime files", len(files)),
                 _metric("Retry / guard files", retry_files),

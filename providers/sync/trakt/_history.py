@@ -35,6 +35,7 @@ URL_ADD = f"{BASE}/sync/history"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 URL_COLL_ADD = f"{BASE}/sync/collection"
 RESOLVE_ENABLE = False
+_CACHE_SCHEMA = 2
 
 def _int_or_none(x: Any) -> int | None:
     if x is None:
@@ -183,6 +184,17 @@ def _chunked_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mappin
         yield seq[i : i + size]
 
 
+_NATIVE_ANIME_PROVIDERS = {"SIMKL", "ANILIST"}
+
+
+def _episodes_extended() -> str | None:
+    for env_key in ("CW_PAIR_SRC", "CW_PAIR_DST"):
+        prov = str(os.getenv(env_key) or "").strip().upper()
+        if prov in _NATIVE_ANIME_PROVIDERS:
+            return "full"
+    return None
+
+
 def _history_number_fallback_enabled(adapter: Any) -> bool:
     return True if not RESOLVE_ENABLE else bool(_cfg_get(adapter, "history_number_fallback", False))
 
@@ -213,7 +225,10 @@ def _load_cache_doc() -> dict[str, Any]:
         p = _cache_path()
         if not p.exists():
             return {}
-        return json.loads(p.read_text("utf-8") or "{}")
+        doc = json.loads(p.read_text("utf-8") or "{}")
+        if not isinstance(doc, dict) or int(doc.get("schema") or 0) != _CACHE_SCHEMA:
+            return {}
+        return doc
     except Exception:
         return {}
 
@@ -225,6 +240,7 @@ def _save_cache_doc(items: Mapping[str, Any], watched_at: str | None, validated_
         cache_path = _cache_path()
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         doc = {
+            "schema": _CACHE_SCHEMA,
             "generated_at": _now_iso(),
             "items": dict(items),
             "wm": {"watched_at": watched_at or ""},
@@ -389,12 +405,14 @@ def _preflight_total(
         return None
 
 
-def _history_params(*, page: int, limit: int, start_at: str | None = None, end_at: str | None = None) -> dict[str, Any]:
+def _history_params(*, page: int, limit: int, start_at: str | None = None, end_at: str | None = None, extended: str | None = None) -> dict[str, Any]:
     params: dict[str, Any] = {"page": int(page), "limit": int(limit)}
     if start_at:
         params["start_at"] = str(start_at)
     if end_at:
         params["end_at"] = str(end_at)
+    if extended:
+        params["extended"] = str(extended)
     return params
 
 def _fetch_history(
@@ -408,6 +426,7 @@ def _fetch_history(
     max_retries: int,
     start_at: str | None = None,
     end_at: str | None = None,
+    extended: str | None = None,
     bump: Callable[[int], None] | None = None,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -419,7 +438,7 @@ def _fetch_history(
             "GET",
             url,
             headers=headers,
-            params=_history_params(page=page, limit=per_page, start_at=start_at, end_at=end_at),
+            params=_history_params(page=page, limit=per_page, start_at=start_at, end_at=end_at, extended=extended),
             timeout=timeout,
             max_retries=max_retries,
         )
@@ -467,6 +486,9 @@ def _fetch_history(
                 m["watched_at"] = w
                 if hid is not None:
                     m["_trakt_history_id"] = str(hid)
+                abs_no = _int_or_none(ep.get("number_abs"))
+                if abs_no is not None and abs_no > 0:
+                    m["_trakt_number_abs"] = abs_no
                 out.append(m)
                 added += 1
         if bump and added:
@@ -497,6 +519,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
     cfg_max_pages = int(_cfg_num(adapter, "history_max_pages", max_pages, int))
     if cfg_max_pages <= 0:
         cfg_max_pages = max_pages
+
+    epi_extended = _episodes_extended()
 
     doc = _load_cache_doc()
     cached_items: dict[str, dict[str, Any]] = dict(doc.get("items") or {})
@@ -594,6 +618,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                     timeout=timeout,
                     max_retries=retries,
                     start_at=start_at,
+                    extended=epi_extended,
                 )
 
                 added = 0
@@ -723,6 +748,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
         max_pages=cfg_max_pages,
         timeout=timeout,
         max_retries=retries,
+        extended=epi_extended,
         bump=bump,
     )
     idx: dict[str, dict[str, Any]] = {}
