@@ -234,35 +234,12 @@ def html() -> str:
 
     /* user picker */
     #sec-plex .userpick{position:relative;display:inline-block}
-    #sec-plex .userpop{color:#e9eefb}
-    #sec-plex .userrow strong{color:#fff}
-    #sec-plex .userpop{
-      position:fixed;left:0;top:0;width:320px !important;max-width:92vw;max-height:340px;overflow:hidden;
-      background:#0b0d12;border:1px solid var(--border);border-radius:12px;padding:8px;z-index:9999;box-shadow:0 12px 30px rgba(0,0,0,.55)
-    }
-    #sec-plex .userpop.hidden{display:none}
-    #sec-plex .userpop .pophead{display:flex;gap:8px;align-items:center;margin-bottom:8px}
-    #sec-plex .userpop .pophead input{flex:1;min-width:0}
-    #sec-plex .userpop .userlist{display:flex;flex-direction:column;gap:6px;max-height:280px;overflow:auto}
-    #sec-plex .userrow{display:block;text-align:left;padding:10px 12px;border-radius:10px;background:#0a0d14;border:1px solid rgba(255,255,255,.06);cursor:pointer}
-    #sec-plex .userrow:hover{background:#0f1320;border-color:#b066ff;box-shadow:0 0 0 2px rgba(176,102,255,.15)}
-    #sec-plex .userrow .row1{display:flex;align-items:center;gap:10px;margin-bottom:2px}
-    #sec-plex .tag{font-size:.75em;opacity:.9;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
-    #sec-plex .tag.owner{color:#b066ff;border-color:#b066ff;box-shadow:0 0 6px rgba(176,102,255,.55)}
-    #sec-plex .tag.friend{color:#00d1ff;border-color:#00d1ff;box-shadow:0 0 6px rgba(0,209,255,.55)}
-    #sec-plex .tag.managed{color:#35ff8f;border-color:#35ff8f;box-shadow:0 0 6px rgba(53,255,143,.55)}
     #sec-plex .fieldline{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
 
     /* SSL toggle */
     #sec-plex .sslopt{display:flex;align-items:center;gap:8px;white-space:nowrap}
     #sec-plex .sslopt input[type="checkbox"]{width:18px;height:18px;accent-color:#00d1ff;cursor:pointer}
     #sec-plex .sslopt .lbl{opacity:.9}
-
-    /* neon scrollbar (user list) */
-    #sec-plex .userpop .userlist{scrollbar-width:thin;scrollbar-color:#00d1ff #0b0d12}
-    #sec-plex .userpop .userlist::-webkit-scrollbar{width:10px}
-    #sec-plex .userpop .userlist::-webkit-scrollbar-track{background:#0b0d12;border-radius:10px}
-    #sec-plex .userpop .userlist::-webkit-scrollbar-thumb{border-radius:10px;border:2px solid #0b0d12;background:linear-gradient(180deg,#00d1ff 0%,#b066ff 100%);box-shadow:0 0 8px rgba(0,209,255,.55),0 0 8px rgba(176,102,255,.55)}
 
     /* pin row */
     #sec-plex .pinrow{ margin-top:8px; display:flex; gap:12px; align-items:center; }
@@ -380,15 +357,7 @@ def html() -> str:
               <label for="plex_username" style="margin-top:10px">Username</label>
               <div class="fieldline userpick">
                 <input id="plex_username" name="plex_username" placeholder="Plex Home profile">
-                <button class="btn" id="plex_user_pick_btn" title="Choose from server users">Pick</button>
-                <div id="plex_user_pop" class="userpop hidden">
-                  <div class="pophead">
-                    <input id="plex_user_filter" placeholder="Filter users...">
-                    <button type="button" class="btn" id="plex_user_close">Close</button>
-                  </div>
-                  <div id="plex_user_list" class="userlist"></div>
-                  <div class="sub" style="margin-top:6px">Click a user to fill Username and Account_ID.</div>
-                </div>
+                <button class="cw-userpick-icon material-symbols-rounded" id="plex_user_pick_btn" type="button" title="Choose from server users" aria-label="Choose from server users">person_search</button>
               </div>
 
               <label for="plex_account_id" style="margin-top:10px">Account_ID</label>

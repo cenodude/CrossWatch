@@ -176,7 +176,7 @@ function ensurePlexInstanceUI() {
       mergePlexIntoCfg(cfg);
     }).then((cfg) => {
       if (currUrl && currUrl !== (w.__lastPlexUrl || "")) {
-        try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
+        try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
         w.__lastPlexUrl = currUrl;
       }
       return cfg;
@@ -533,7 +533,7 @@ function ensurePlexInstanceUI() {
           const tok = String(getPlexCfgBlock(cfg || {}).account_token || "").trim();
           if (tok !== __plexLastTok) {
             __plexLastTok = tok;
-            try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
+            try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
           }
           try { await fetch(plexApi("/api/plex/inspect"), { cache: "no-store" }); } catch {}
           try { await hydratePlexFromConfigRaw(); } catch {}
@@ -570,7 +570,7 @@ async function plexDeleteToken() {
       ["plex_pin", "plex_username", "plex_account_id"].forEach((id) => { const el = $(id); if (el) el.value = ""; });
       try { const codeEl = $("plex_qc_code"); if (codeEl) codeEl.textContent = "----"; } catch {}
       try { const st = getPlexState(); st.libs = []; st.connected = false; } catch {}
-      try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
+      try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
       try { setPlexBanner("warn", "Disconnected"); } catch {}
       try { setPlexBannerDetail("warn", "Token deleted and saved."); } catch {}
       try { notify("Plex disconnected (saved)."); } catch {}
@@ -869,7 +869,7 @@ const tags = [
       if (!needsResolve) return;
 
       if (opts.bustCache) {
-        try { __plexUsersByInst.delete(getPlexInstance()); __plexUsersMetaByInst.delete(getPlexInstance()); } catch {}
+        try { __plexUsersByInst.delete(getPlexInstance()); } catch {}
       }
 
       const users = await fetchPlexUsers();
@@ -898,9 +898,7 @@ const tags = [
     } catch {}
   }
 
-  // User picker
   const __plexUsersByInst = new Map();
-  const __plexUsersMetaByInst = new Map();
 
   async function fetchPlexUsers() {
     const inst = getPlexInstance();
@@ -910,16 +908,13 @@ const tags = [
     }
     if (__plexUsersByInst.has(inst)) return __plexUsersByInst.get(inst) || [];
     let out = [];
-    let meta = {};
     try {
       await persistPlexRuntimeSettings();
       const r = await fetch(plexApi("/api/plex/pickusers"), { cache: "no-store" });
       const j = await r.json();
       out = Array.isArray(j?.users) ? j.users : [];
-      meta = j && typeof j === "object" ? j : {};
-    } catch { out = []; meta = {}; }
+    } catch { out = []; }
     __plexUsersByInst.set(inst, out);
-    __plexUsersMetaByInst.set(inst, meta);
     return out;
   }
 
@@ -951,115 +946,34 @@ const tags = [
     }
   }
 
-  function renderPlexUserList() {
-    const listEl = $("plex_user_list"); if (!listEl) return;
-    const qv = ($("plex_user_filter")?.value || "").trim().toLowerCase();
-    const rankType = { owner:0, managed:1, friend:2 };
-    const rankSrc  = { cloud:0, pms:1 };
-    const by = new Map();
-
-    const inst = getPlexInstance();
-    const src = __plexUsersByInst.get(inst) || [];
-    const meta = __plexUsersMetaByInst.get(inst) || {};
-
-    for (const u of src) {
-      const uname = (u.username || u.title || `user#${u.id}`).trim();
-      if (!uname) continue;
-      const key = uname.toLowerCase();
-      const id = Number(u.id ?? u.account_id ?? 0);
-      if (!Number.isFinite(id) || id <= 0) continue;
-
-      const type = String(u.type || "friend").toLowerCase();
-      const label = String(u.label || "");
-      const source = String(u.source || "").toLowerCase();
-
-      const cur = by.get(key);
-      if (!cur) { by.set(key, { id, username: uname, type, label, source }); continue; }
-
-      const srNew = rankSrc[source] ?? 9;
-      const srCur = rankSrc[cur.source] ?? 9;
-      const trNew = rankType[type] ?? 9;
-      const trCur = rankType[cur.type] ?? 9;
-
-      const better = (srNew < srCur) ||
-        (srNew === srCur && trNew < trCur) ||
-        (srNew === srCur && trNew === trCur && id < cur.id);
-
-      if (better) by.set(key, { id, username: uname, type, label, source });
-    }
-
-    let users = Array.from(by.values());
-    users = users.filter(u => {
-      if (!qv) return true;
-      const hay = `${u.username} ${u.type || ""} ${u.label || ""} ${u.source || ""}`.toLowerCase();
-      return hay.includes(qv);
+  async function openPlexUserPicker() {
+    const btn = $("plex_user_pick_btn");
+    if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") return;
+    try { await persistPlexRuntimeSettings(); } catch {}
+    window.cwMediaUserPicker.open({
+      provider: "plex",
+      instance: getPlexInstance(),
+      anchorEl: btn,
+      title: "Pick Plex user",
+      onPick: (u) => {
+        const uname = String(u?.name || "").trim();
+        const uid = String(u?.id || "").trim();
+        const raw = u?.raw || {};
+        const uEl = $("plex_username"); if (uEl) uEl.value = uname;
+        const aEl = $("plex_account_id"); if (aEl) aEl.value = uid;
+        setPlexUserScopeNotice({ username: uname, type: raw.type, label: raw.label, source: raw.source });
+        try { document.dispatchEvent(new CustomEvent("settings-collect", { detail: { section: "plex-users" } })); } catch {}
+      },
     });
-    users.sort((a,b)=> ((rankType[a.type||"friend"] ?? 9) - (rankType[b.type||"friend"] ?? 9)) || a.username.localeCompare(b.username));
-
-    const esc = s => String(s||"").replace(/[&<>"']/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-    listEl.innerHTML = users.length ? users.map(u => `
-      <button type="button" class="userrow" data-uid="${esc(u.id)}" data-username="${esc(u.username)}" data-usertype="${esc(u.type)}" data-userlabel="${esc(u.label)}" data-usersource="${esc(u.source)}">
-        <div class="row1">
-          <strong>${esc(u.username)}</strong>
-          <span class="tag ${esc(u.type)}">${esc(u.label || u.type)}</span>
-        </div>
-      </button>
-    `).join("") : `<div class="sub">${esc(meta.reason === "token_required" ? (meta.message || "Connect this Plex profile first.") : "No users found.")}</div>`;
   }
 
-  function placePlexUserPop() {
-    const pop = $("plex_user_pop");
-    const anchor = $("plex_user_pick_btn")?.closest(".userpick") || $("plex_user_pick_btn");
-    if (!pop || !anchor) return;
-    const r = anchor.getBoundingClientRect();
-    const W = Math.min(360, Math.max(280, Math.round(window.innerWidth * 0.9)));
-    pop.style.width = W + "px";
-    const left = Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8));
-    const top  = Math.min(window.innerHeight - 48, r.bottom + 8);
-    pop.style.left = left + "px";
-    pop.style.top  = top  + "px";
-  }
-
-  function openPlexUserPicker() {
-    const pop = $("plex_user_pop"); if (!pop) return;
-    pop.classList.remove("hidden");
-    fetchPlexUsers().then(() => { renderPlexUserList(); placePlexUserPop(); $("plex_user_filter")?.focus(); });
-  }
-
-  function closePlexUserPicker() { $("plex_user_pop")?.classList.add("hidden"); }
+  function closePlexUserPicker() { try { window.cwMediaUserPicker?.close?.(); } catch {} }
 
   function mountPlexUserPicker() {
     const pickBtn = $("plex_user_pick_btn");
     if (pickBtn && !pickBtn.__wired){
       pickBtn.__wired = true;
-      pickBtn.addEventListener("click", (e)=>{ e.preventDefault(); openPlexUserPicker(); try{ placePlexUserPop(); }catch{} });
-    }
-    const closeBtn = $("plex_user_close");
-    if (closeBtn && !closeBtn.__wired){
-      closeBtn.__wired = true;
-      closeBtn.addEventListener("click", (e)=>{ e.preventDefault(); closePlexUserPicker(); });
-    }
-    const filter = $("plex_user_filter");
-    if (filter && !filter.__wired){
-      filter.__wired = true;
-      filter.addEventListener("input", renderPlexUserList);
-    }
-    const list = $("plex_user_list");
-    if (list && !list.__wired){
-      list.__wired = true;
-      list.addEventListener("click",(e)=>{
-        const row = e.target.closest(".userrow"); if (!row) return;
-        const uname = row.dataset.username || "";
-        const uid   = row.dataset.uid || "";
-        const type  = row.dataset.usertype || "";
-        const label = row.dataset.userlabel || "";
-        const source = row.dataset.usersource || "";
-        const uEl = $("plex_username"); if (uEl) uEl.value = uname;
-        const aEl = $("plex_account_id"); if (aEl) aEl.value = uid;
-        setPlexUserScopeNotice({ username: uname, type, label, source });
-        closePlexUserPicker();
-        try{ document.dispatchEvent(new CustomEvent("settings-collect",{detail:{section:"plex-users"}})); }catch{}
-      });
+      pickBtn.addEventListener("click", (e)=>{ e.preventDefault(); openPlexUserPicker(); });
     }
     ["plex_username", "plex_account_id"].forEach((id) => {
       const input = $(id);
@@ -1067,29 +981,6 @@ const tags = [
       input.__plexUserScopeNoticeWired = true;
       input.addEventListener("input", () => setPlexUserScopeNotice(null));
     });
-    if (!document.__plexUserAway){
-      document.__plexUserAway = true;
-      document.addEventListener("click",(e)=>{
-        const pop = $("plex_user_pop");
-        if (!pop || pop.classList.contains("hidden")) return;
-        if (pop.contains(e.target) || e.target.id==="plex_user_pick_btn") return;
-        closePlexUserPicker();
-      });
-      document.addEventListener("keydown",(e)=>{ if (e.key === "Escape") closePlexUserPicker(); });
-    }
-    if (!window.__plexUserPos){
-      window.__plexUserPos = true;
-      let raf = null;
-      const safeReposition = ()=>{
-        const pop = $("plex_user_pop");
-        if (!pop || pop.classList.contains("hidden")) return;
-        if (raf) return;
-        raf = requestAnimationFrame(()=>{ raf = null; try{ placePlexUserPop(); }catch{} });
-      };
-      window.addEventListener("resize", safeReposition, { passive:true });
-      window.addEventListener("scroll", safeReposition, { passive:true, capture:true });
-      document.addEventListener("scroll", safeReposition, { passive:true, capture:true });
-    }
   }
 
   // Libraries

@@ -479,7 +479,7 @@ def html() -> str:
               <label for="jfy_user_id" style="margin-top:10px">User_ID</label>
               <div class="inp-row">
                 <input id="jfy_user_id" name="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
-                <button id="jfy_pick_user" class="btn" type="button">Pick user</button>
+                <button id="jfy_pick_user" class="cw-userpick-icon material-symbols-rounded" type="button" title="Pick user" aria-label="Pick user">person_search</button>
               </div>
               <div class="sub">Uses your signed-in account. Admin accounts show all users; otherwise you'll only see yourself.</div>
 

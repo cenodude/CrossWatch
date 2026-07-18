@@ -2162,6 +2162,13 @@ html[data-cw-theme] header .tabs .tab :is(span,b,strong){color:inherit!important
 .scrm-filter-tools{display:flex;gap:8px;align-items:center}
 .scrm-filter-tools .scwm-filter-icon{color:rgb(var(--scrm-c1));border-color:rgba(var(--scrm-c1),.32)}
 .scrm-filter-tools .scwm-filter-icon:hover{border-color:rgba(var(--scrm-c1),.55);background:rgba(var(--scrm-c1),.12)}
+/* shared provider-colored user-picker icon trigger (connection settings) */
+.cw-userpick-icon{flex:0 0 auto;width:40px;min-width:40px;height:40px;min-height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;font-size:20px;line-height:1;background:rgba(var(--upk-c1,124,92,255),.10);border:1px solid rgba(var(--upk-c1,124,92,255),.32);color:rgb(var(--upk-c1,124,92,255));cursor:pointer;transition:background .14s ease,border-color .14s ease,transform .12s ease}
+.cw-userpick-icon:hover{background:rgba(var(--upk-c1,124,92,255),.16);border-color:rgba(var(--upk-c1,124,92,255),.55)}
+.cw-userpick-icon:active{transform:scale(.94)}
+#sec-plex .cw-userpick-icon{--upk-c1:var(--plex-rgb)}
+#sec-emby .cw-userpick-icon{--upk-c1:var(--emby-rgb)}
+#sec-jellyfin .cw-userpick-icon{--upk-c1:var(--jellyfin-rgb)}
 .scrm-journey-compact:has(.scrm-journey-help){grid-template-columns:auto minmax(0,1fr) auto}
 .scrm-journey-help{position:relative;z-index:1;justify-self:end;display:grid;place-items:center;width:44px;height:44px;border-radius:999px;border:1px solid rgba(var(--scrm-c1),.58);background:rgba(var(--scrm-c1),.16);color:rgb(var(--scrm-c1));text-decoration:none;box-shadow:0 0 26px rgba(var(--scrm-c1),.16),inset 0 1px 0 rgba(255,255,255,.08);transition:background .14s ease,border-color .14s ease,transform .14s ease}
 .scrm-journey-help:hover{transform:translateY(-1px);border-color:rgba(var(--scrm-c1),.78);background:rgba(var(--scrm-c1),.24)}
