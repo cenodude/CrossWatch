@@ -26,6 +26,7 @@ def _user_agent() -> str:
 
 STATE_DIR = Path("/config/.cw_state")
 _ACT_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
+_SETTINGS_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
 
 
 def _pair_scope() -> str | None:
@@ -219,6 +220,60 @@ def fetch_last_activities(
         return None
     except Exception:
         return None
+
+
+def _pos_int(v: Any) -> int | None:
+    if not isinstance(v, (int, str)):
+        return None
+    try:
+        n = int(v)
+    except Exception:
+        return None
+    return n if n > 0 else None
+
+
+def fetch_user_settings(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0, max_retries: int = 3) -> dict[str, Any] | None:
+    global _SETTINGS_MEMO
+    now = time.time()
+    ts, cached = _SETTINGS_MEMO
+    if cached is not None and (now - ts) < 300.0:
+        return cached
+    try:
+        r = request_with_retries(session, "GET", "https://api.trakt.tv/users/settings", headers=dict(headers), timeout=timeout, max_retries=max_retries)
+        if 200 <= r.status_code < 300:
+            data = r.json() if (r.text or "").strip() else {}
+            _SETTINGS_MEMO = (now, data)
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def resolve_watchlist_limit(adapter: Any, cfg: Mapping[str, Any]) -> int | None:
+    override = _pos_int(cfg.get("watchlist_limit"))
+    if override is not None:
+        return override
+
+    settings = fetch_user_settings(
+        adapter.client.session,
+        headers_for_adapter(adapter),
+        timeout=float(getattr(adapter.cfg, "timeout", 15.0) or 15.0),
+        max_retries=int(getattr(adapter.cfg, "max_retries", 3) or 3),
+    )
+    if not isinstance(settings, Mapping):
+        return None
+
+    limits = settings.get("limits")
+    wl = limits.get("watchlist") if isinstance(limits, Mapping) else None
+    item_count = _pos_int(wl.get("item_count")) if isinstance(wl, Mapping) else None
+    if item_count is not None:
+        return item_count
+
+    user = settings.get("user")
+    user = user if isinstance(user, Mapping) else {}
+    if not (user.get("vip") or user.get("vip_og") or user.get("vip_ep")):
+        return 250
+    return None
 
 
 def extract_latest_ts(activities: Mapping[str, Any], paths: Iterable[Iterable[str]]) -> str | None:

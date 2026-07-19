@@ -22,6 +22,7 @@ from ._common import (
     _last_limit_path,
     _record_limit_error,
     headers_for_adapter,
+    resolve_watchlist_limit,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal
@@ -331,8 +332,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     batch = _cfg_int(cfg, "watchlist_batch_size", 100)
     log_rates = _cfg_bool(cfg, "watchlist_log_rate_limits", True)
 
-    vip = bool(cfg.get("vip"))
-    wl_limit = None if vip else int(cfg.get("watchlist_limit") or 100)
+    wl_limit = resolve_watchlist_limit(adapter, cfg)
     current_count = _current_watchlist_size()
     capacity = None if wl_limit is None else max(0, wl_limit - current_count)
 
