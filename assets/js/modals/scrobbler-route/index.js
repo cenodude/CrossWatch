@@ -614,7 +614,7 @@ export async function mount(shell, incoming = {}) {
   saving = false;
   confirmDelete = false;
   modalKey = String(props.mode === "create" ? "__new__" : (props.route?.id || "__new__"));
-  activeTab = normalizeActiveTab(lastTab[modalKey] || "route");
+  activeTab = normalizeActiveTab("route");
   if (root) root.dataset.scrmTab = activeTab;
   render();
   if (props.mode === "delete") armDeleteConfirm(root.querySelector("[data-delete]"));
