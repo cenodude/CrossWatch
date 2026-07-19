@@ -283,7 +283,11 @@ def _safe_webhook_settings(settings: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _base_url(request: Request) -> str:
-    return str(request.base_url).rstrip("/")
+    base = str(request.base_url).rstrip("/")
+    proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    if proto == "https" and base.startswith("http://"):
+        base = "https://" + base[7:]
+    return base
 
 
 def _profile_endpoint_url(request: Request, provider: str, token: str) -> str:
