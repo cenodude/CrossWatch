@@ -222,46 +222,37 @@ def fetch_last_activities(
         return None
 
 
-def fetch_user_settings(
-    session: Any,
-    headers: Mapping[str, str],
-    *,
-    timeout: float = 15.0,
-    max_retries: int = 3,
-) -> dict[str, Any] | None:
+def _pos_int(v: Any) -> int | None:
+    if not isinstance(v, (int, str)):
+        return None
+    try:
+        n = int(v)
+    except Exception:
+        return None
+    return n if n > 0 else None
+
+
+def fetch_user_settings(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0, max_retries: int = 3) -> dict[str, Any] | None:
     global _SETTINGS_MEMO
     now = time.time()
     ts, cached = _SETTINGS_MEMO
     if cached is not None and (now - ts) < 300.0:
         return cached
-    url = "https://api.trakt.tv/users/settings"
     try:
-        r = request_with_retries(
-            session,
-            "GET",
-            url,
-            headers=dict(headers),
-            timeout=timeout,
-            max_retries=max_retries,
-        )
+        r = request_with_retries(session, "GET", "https://api.trakt.tv/users/settings", headers=dict(headers), timeout=timeout, max_retries=max_retries)
         if 200 <= r.status_code < 300:
             data = r.json() if (r.text or "").strip() else {}
             _SETTINGS_MEMO = (now, data)
             return data
-        return None
     except Exception:
-        return None
+        pass
+    return None
 
 
 def resolve_watchlist_limit(adapter: Any, cfg: Mapping[str, Any]) -> int | None:
-    raw = cfg.get("watchlist_limit")
-    if raw is not None and str(raw).strip():
-        try:
-            v = int(raw)
-            if v > 0:
-                return v
-        except Exception:
-            pass
+    override = _pos_int(cfg.get("watchlist_limit"))
+    if override is not None:
+        return override
 
     settings = fetch_user_settings(
         adapter.client.session,
@@ -274,21 +265,13 @@ def resolve_watchlist_limit(adapter: Any, cfg: Mapping[str, Any]) -> int | None:
 
     limits = settings.get("limits")
     wl = limits.get("watchlist") if isinstance(limits, Mapping) else None
-    item_count = wl.get("item_count") if isinstance(wl, Mapping) else None
-    if isinstance(item_count, (int, str)):
-        try:
-            iv = int(item_count)
-            if iv > 0:
-                return iv
-        except Exception:
-            pass
+    item_count = _pos_int(wl.get("item_count")) if isinstance(wl, Mapping) else None
+    if item_count is not None:
+        return item_count
 
     user = settings.get("user")
-    if isinstance(user, Mapping):
-        vip = bool(user.get("vip") or user.get("vip_og") or user.get("vip_ep"))
-    else:
-        vip = False
-    if not vip:
+    user = user if isinstance(user, Mapping) else {}
+    if not (user.get("vip") or user.get("vip_og") or user.get("vip_ep")):
         return 250
     return None
 
