@@ -1461,6 +1461,9 @@ html[data-cw-theme=flat-light] .cw-history-copy span{color:#667085}
 #page-settings #auth-providers .cw-connection-modal-panel .cw-connection-footer-save.is-failed .cw-save-result-icon{animation:cwSaveShake .5s ease}
 @keyframes cwSavePop{0%{transform:scale(.2) rotate(-14deg);opacity:0}55%{transform:scale(1.28) rotate(5deg);opacity:1}100%{transform:scale(1) rotate(0)}}
 @keyframes cwSaveShake{0%{transform:scale(.4);opacity:0}40%{transform:scale(1.15);opacity:1}55%{transform:translateX(-3px)}70%{transform:translateX(3px)}85%{transform:translateX(-2px)}100%{transform:translateX(0) scale(1)}}
+.cw-connection-footer-save .cw-save-result-icon{font-size:22px;line-height:1;font-weight:700}
+.cw-connection-footer-save.is-saved .cw-save-result-icon{animation:cwSavePop .45s cubic-bezier(.16,.84,.22,1)}
+.cw-connection-footer-save.is-failed .cw-save-result-icon{animation:cwSaveShake .5s ease}
 #page-settings #auth-providers .cw-connection-success-burst{position:absolute;inset:0;z-index:2;overflow:hidden;pointer-events:none;opacity:0}
 #page-settings #auth-providers .cw-connection-success-burst.is-active{opacity:1}
 #page-settings #auth-providers .cw-connection-success-burst span{position:absolute;left:var(--x,78%);top:var(--y,62%);width:var(--w,7px);height:var(--h,12px);border-radius:2px;background:var(--c,#00e084);box-shadow:0 0 12px color-mix(in srgb,var(--c,#00e084) 70%,transparent);opacity:0;transform:translate(-50%,-50%) rotate(var(--r,0deg)) scale(.45);animation:cwConnectionConfetti 1.45s cubic-bezier(.16,.84,.22,1) var(--d,0ms) forwards}

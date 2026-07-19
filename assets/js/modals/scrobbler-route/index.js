@@ -561,10 +561,35 @@ async function save(regenerate = false) {
     props.mode = "edit";
     busy(false);
     render();
+    flashSave(true);
   } catch (err) {
     busy(false);
     render(err.payload?.errors || [{ message: err.message }]);
+    flashSave(false);
   }
+}
+
+let flashTimer = 0;
+function flashSave(ok) {
+  const btn = root?.querySelector(".cw-connection-footer-save");
+  if (!btn) return;
+  const label = btn.textContent || "Save changes";
+  const grad = ok ? "#00e084,#2ea859" : "#ff5a6a,#d1342f";
+  const bd = ok ? "rgba(0,224,132,.6)" : "rgba(255,112,124,.6)";
+  btn.classList.remove("is-saved", "is-failed");
+  btn.classList.add(ok ? "is-saved" : "is-failed");
+  btn.innerHTML = `<span class="material-symbols-rounded cw-save-result-icon">${ok ? "check" : "close"}</span>`;
+  btn.style.cssText = `background:linear-gradient(135deg,${grad})!important;border-color:${bd}!important;color:#fff!important;-webkit-text-fill-color:#fff!important;pointer-events:none!important`;
+  const ic = btn.querySelector(".cw-save-result-icon");
+  if (ic) ic.style.cssText = "color:#fff!important;-webkit-text-fill-color:#fff!important";
+  if (flashTimer) clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => {
+    const b = root?.querySelector(".cw-connection-footer-save");
+    if (!b) return;
+    b.classList.remove("is-saved", "is-failed");
+    b.style.cssText = "";
+    b.textContent = label;
+  }, 1500);
 }
 
 function resetDeleteConfirm(btn) {
