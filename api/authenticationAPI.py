@@ -46,6 +46,16 @@ __all__ = ["register_auth"]
 _LOG = logging.getLogger("crosswatch.api.authentication")
 
 
+def _apply_media_overrides(cfg: Any, provider: str, inst: str, server: str | None, verify_ssl: bool | None) -> dict[str, Any]:
+    block = ensure_instance_block(cfg, provider, inst)
+    s = str(server or "").strip()
+    if s:
+        block["server_url" if provider == "plex" else "server"] = s
+    if verify_ssl is not None:
+        block["verify_ssl"] = coerce_bool(verify_ssl)
+    return block
+
+
 def _provider_auth():
     from providers.auth import runtime as provider_auth
 
@@ -521,18 +531,19 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         _probe_bust("plex")
         return {"ok": True, "instance": inst}
     @app.get("/api/plex/libraries", tags=["media providers"])
-    def plex_libraries(instance: str | None = Query(None)) -> dict[str, Any]:
+    def plex_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
+        _apply_media_overrides(cfg, "plex", inst, server, verify_ssl)
         ensure_whitelist_defaults(cfg, instance_id=inst)
         return {"libraries": fetch_libraries_from_cfg(cfg, instance_id=inst), "instance": inst}
 
     
     @app.get("/api/plex/pms/probe", tags=["media providers"])
-    def plex_pms_probe(timeout: float = 5.0, instance: str | None = Query(None)) -> dict[str, Any]:
+    def plex_pms_probe(timeout: float = 5.0, instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        plex = ensure_instance_block(cfg, "plex", inst)
+        plex = _apply_media_overrides(cfg, "plex", inst, server, verify_ssl)
         token = (plex.get("account_token") or "").strip()
         base = (plex.get("server_url") or "").strip().rstrip("/")
 
@@ -584,10 +595,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
 
     @app.get("/api/plex/pickusers", tags=["media providers"])
-    def plex_pickusers(instance: str | None = Query(None)) -> dict[str, Any]:
+    def plex_pickusers(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        plex = ensure_instance_block(cfg, "plex", inst)
+        override = bool(str(server or "").strip())
+        plex = _apply_media_overrides(cfg, "plex", inst, server, verify_ssl)
         token = (plex.get("account_token") or "").strip()
         base = (plex.get("server_url") or "").strip()
         if not token:
@@ -623,10 +635,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                     if url2 and not (plex.get("server_url") or "").strip():
                         plex["server_url"] = url2
                         base = url2
-                    try:
-                        save_config(cfg)
-                    except Exception:
-                        pass
+                    if not override:
+                        try:
+                            save_config(cfg)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             sess_tok = pms_token or token
@@ -791,8 +804,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
 
     @app.get("/api/plex/users", tags=["media providers"])
-    def plex_users(instance: str | None = Query(None)) -> dict[str, Any]:
-        return plex_pickusers(instance=instance)
+    def plex_users(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
+        return plex_pickusers(instance=instance, server=server, verify_ssl=verify_ssl)
 
     # JELLYFIN
     @app.post("/api/jellyfin/login", tags=["auth"])
@@ -951,9 +964,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return jf_inspect_and_persist(cfg, instance_id=inst)
 
     @app.get("/api/jellyfin/libraries", tags=["media providers"])
-    def jf_libraries(instance: str | None = Query(None)):
+    def jf_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)):
         cfg = load_config()
         inst = normalize_instance_id(instance)
+        _apply_media_overrides(cfg, "jellyfin", inst, server, verify_ssl)
         jf_ensure_whitelist_defaults(cfg, instance_id=inst)
         return {
             "libraries": jf_fetch_libraries_from_cfg(cfg, instance_id=inst),
@@ -961,10 +975,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         }
 
     @app.get("/api/jellyfin/users", tags=["media providers"], response_model=None)
-    def jf_users(instance: str | None = Query(None)) -> dict[str, Any]:
+    def jf_users(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        jf = ensure_instance_block(cfg, "jellyfin", inst)
+        jf = _apply_media_overrides(cfg, "jellyfin", inst, server, verify_ssl)
 
         server = _clean_media_base(jf.get("server"))
         access_token = str((jf.get("access_token") or "")).strip()
@@ -1161,9 +1175,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return out
 
     @app.get("/api/emby/libraries", tags=["media providers"])
-    def emby_libraries(instance: str | None = Query(None)) -> dict[str, Any]:
+    def emby_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
+        _apply_media_overrides(cfg, "emby", inst, server, verify_ssl)
         try:
             emby_ensure_whitelist_defaults(cfg, instance_id=inst)
         except TypeError:
@@ -1175,10 +1190,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"libraries": libs, "instance": inst}
 
     @app.get("/api/emby/users", tags=["media providers"], response_model=None)
-    def emby_users(instance: str | None = Query(None)) -> dict[str, Any]:
+    def emby_users(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
-        em = ensure_instance_block(cfg, "emby", inst)
+        em = _apply_media_overrides(cfg, "emby", inst, server, verify_ssl)
 
         server = _clean_media_base(em.get("server"))
         access_token = str((em.get("access_token") or "")).strip()

@@ -21,7 +21,6 @@
   const EMBY_SUBTAB_KEY = "cw.ui.emby.auth.subtab.v1";
   let embyAutoTabInst = "";
   let embyNewProfileInst = "";
-  let embyQuickSave = null;
 
   const embyProfile = Shared.createProfileAdapter({
     provider: "emby",
@@ -87,7 +86,7 @@
     }
 
     if (sub === "whitelist") {
-      try { embyLoadLibraries(); } catch {}
+      try { embyLoadLibraries(true); } catch {}
     }
     try { Shared.setMediaAuthStep(root, sub); } catch {}
   }
@@ -157,14 +156,6 @@
     embyAuthSubSelect(active?.dataset?.sub || "auth", { persist: false });
   }
 
-  async function persistEmbyRuntimeSettings() {
-    if (!getEmbySetupState().configured) return null;
-    embyQuickSave ||= Shared.saveMergedConfig((cfg) => {
-      mergeEmbyIntoCfg(cfg);
-    }).finally(() => { embyQuickSave = null; });
-    return embyQuickSave;
-  }
-
   // helpers
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
@@ -193,39 +184,33 @@
     if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
-  function syncSelectAll() {
-    const rows = Qa("#emby_lib_matrix .lm-row:not(.hide)");
-    const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
-    const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
-    const allProg = rows.length && rows.every(r => r.querySelector(".lm-dot.prog")?.classList.contains("on"));
-    const allScr = rows.length && rows.every(r => r.querySelector(".lm-dot.scr")?.classList.contains("on"));
-    const h = Q("#emby_hist_all"), r = Q("#emby_rate_all"), p = Q("#emby_prog_all"), s = Q("#emby_scr_all");
-    if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
-    if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
-    if (p) { p.classList.toggle("on", !!allProg); p.setAttribute("aria-pressed", allProg ? "true" : "false"); }
-    if (s) { s.classList.toggle("on", !!allScr); s.setAttribute("aria-pressed", allScr ? "true" : "false"); }
-  }
+  let wlHandle = null;
+  const setFor = (fk) => ({ hist: H, rate: R, prog: P, scr: S }[fk]);
 
   function renderLibraries(libs) {
-    lastLibraries = Array.isArray(libs) ? libs : [];
-    const box = Q("#emby_lib_matrix"); if (!box) return;
-    box.innerHTML = "";
-    const f = document.createDocumentFragment();
-    (Array.isArray(libs) ? libs : []).forEach((it) => {
-      const id = String(it.key);
-      const row = document.createElement("div");
-      row.className = "lm-row"; row.dataset.id = id;
-      row.innerHTML = `
-        <div class="lm-name">${ESC(it.title)}</div>
-        <button class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
-        <button class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>
-        <button class="lm-dot prog${P.has(id) ? " on" : ""}" data-kind="progress" aria-pressed="${P.has(id)}" title="Toggle Progress"></button>
-        <button class="lm-dot scr${S.has(id) ? " on" : ""}" data-kind="scrobble" aria-pressed="${S.has(id)}" title="Toggle Scrobble"></button>`;
-      f.appendChild(row);
-    });
-    box.appendChild(f);
+    if (Array.isArray(libs)) lastLibraries = libs;
     syncHidden();
-    syncSelectAll();
+    const host = Q("#emby_lib_matrix");
+    if (!host || !window.cwWhitelistTable) return;
+    if (wlHandle) { wlHandle.render(); return; }
+    wlHandle = window.cwWhitelistTable.mount({
+      host,
+      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "scr", label: "Scrobble" } ],
+      getLibs: () => lastLibraries,
+      isOn: (fk, id) => setFor(fk).has(String(id)),
+      setOn: (fk, id, on) => { const s = setFor(fk); if (on) s.add(String(id)); else s.delete(String(id)); },
+      commit: syncHidden,
+      load: async () => { await embyLoadLibraries(true); },
+    });
+  }
+
+  function embyLiveQS() {
+    let qs = "";
+    const server = (Q("#emby_server_url")?.value || Q("#emby_server")?.value || "").trim();
+    if (server) qs += `&server=${encodeURIComponent(server)}`;
+    const cb = Q("#emby_verify_ssl") || Q("#emby_verify_ssl_dup");
+    if (cb) qs += `&verify_ssl=${(Q("#emby_verify_ssl")?.checked || Q("#emby_verify_ssl_dup")?.checked) ? 1 : 0}`;
+    return qs;
   }
 
   async function embyLoadLibraries(force = false) {
@@ -234,8 +219,7 @@
       return;
     }
     try {
-      await persistEmbyRuntimeSettings();
-      const r = await fetch(embyApi(LIB_URL), { cache: "no-store" });
+      const r = await fetch(embyApi(LIB_URL) + embyLiveQS(), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
       const libs = Array.isArray(d?.libraries) ? d.libraries : (Array.isArray(d) ? d : []);
       renderLibraries(libs);
@@ -412,81 +396,6 @@
     return cfg;
   }
 
-  // library toggles
-  document.addEventListener("click", (ev) => {
-    const btn = ev?.target?.closest ? ev.target.closest("#emby_lib_matrix .lm-dot") : null;
-    if (btn) {
-      const row = btn.closest(".lm-row");
-      const id = row ? String(row.dataset.id || "") : "";
-      const kind = String(btn.dataset.kind || "");
-      const on = !btn.classList.contains("on");
-      btn.classList.toggle("on", on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-
-      if (id) {
-        if (kind === "history") { on ? H.add(id) : H.delete(id); }
-        if (kind === "ratings") { on ? R.add(id) : R.delete(id); }
-        if (kind === "progress") { on ? P.add(id) : P.delete(id); }
-        if (kind === "scrobble") { on ? S.add(id) : S.delete(id); }
-      }
-      syncHidden();
-      syncSelectAll();
-      return;
-    }
-
-    if (ev?.target?.id === "emby_hist_all") {
-      const b = Q("#emby_hist_all");
-      if (!b) return;
-      const on = !b.classList.contains("on");
-      b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-      H = new Set();
-      Qa("#emby_lib_matrix .lm-dot.hist").forEach((x) => {
-        x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = x.closest(".lm-row"); if (r) H.add(String(r.dataset.id || "")); }
-      });
-      syncHidden(); syncSelectAll(); return;
-    }
-
-    if (ev?.target?.id === "emby_rate_all") {
-      const b = Q("#emby_rate_all");
-      if (!b) return;
-      const on = !b.classList.contains("on");
-      b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-      R = new Set();
-      Qa("#emby_lib_matrix .lm-dot.rate").forEach((x) => {
-        x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = x.closest(".lm-row"); if (r) R.add(String(r.dataset.id || "")); }
-      });
-      syncHidden(); syncSelectAll(); return;
-    }
-
-    if (ev?.target?.id === "emby_scr_all") {
-      const b = Q("#emby_scr_all");
-      if (!b) return;
-      const on = !b.classList.contains("on");
-      b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-      S = new Set();
-      Qa("#emby_lib_matrix .lm-dot.scr").forEach((x) => {
-        x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = x.closest(".lm-row"); if (r) S.add(String(r.dataset.id || "")); }
-      });
-      syncHidden(); syncSelectAll(); return;
-    }
-
-    if (ev?.target?.id === "emby_prog_all") {
-      const b = Q("#emby_prog_all");
-      if (!b) return;
-      const on = !b.classList.contains("on");
-      b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-      P = new Set();
-      Qa("#emby_lib_matrix .lm-dot.prog").forEach((x) => {
-        x.classList.toggle("on", on); x.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = x.closest(".lm-row"); if (r) P.add(String(r.dataset.id || "")); }
-      });
-      syncHidden(); syncSelectAll(); return;
-    }
-  }, true);
-
   function findEmbyPickUserButton() {
     const root = Q('#sec-emby .cw-meta-provider-panel[data-provider="emby"]') || Q("#sec-emby");
     if (!root) return null;
@@ -510,7 +419,6 @@
 
   async function embyPickUser(ev) {
     try { ev?.preventDefault?.(); } catch {}
-    try { await persistEmbyRuntimeSettings(); } catch {}
     if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
       window.notify?.("User picker not available", "warn");
       return;
@@ -519,6 +427,8 @@
     window.cwMediaUserPicker.open({
       provider: "emby",
       instance: inst,
+      server: (Q("#emby_server_url")?.value || Q("#emby_server")?.value || "").trim(),
+      verifySsl: !!(Q("#emby_verify_ssl")?.checked || Q("#emby_verify_ssl_dup")?.checked),
       anchorEl: findEmbyPickUserButton() || Q("#emby_pick_user") || null,
       title: "Pick Emby user",
       onPick: (u) => {
@@ -571,6 +481,7 @@
   window.cwAuth = window.cwAuth || {};
   window.cwAuth.emby = window.cwAuth.emby || {};
   window.cwAuth.emby.init = ensureHydrate;
+  window.cwAuth.emby.rehydrate = () => { try { hydrateFromConfig(true); } catch {} };
 
   window.embyAuto = embyAuto;
   window.embyLoadLibraries = embyLoadLibraries;
@@ -578,7 +489,6 @@
   window.embyLogin = embyLogin;
   window.embyDeleteToken = embyDeleteToken;
   window.embyPickUser = embyPickUser;
-  window.persistEmbyRuntimeSettings = persistEmbyRuntimeSettings;
 
   // integration
   window.registerSettingsCollector?.(mergeEmbyIntoCfg);

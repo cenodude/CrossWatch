@@ -492,19 +492,7 @@ def html() -> str:
 
           <div class="cw-subpanel" data-sub="whitelist">
             <div style="max-width:980px">
-              <div class="lm-head">
-                <div class="title">Whitelist Libraries</div>
-                <div class="lm-col"><span class="sub">Select all:</span></div>
-                <div class="lm-col"><button id="jfy_hist_all" type="button" class="lm-dot hist" title="Toggle all History" aria-pressed="false"></button><span class="sub">History</span></div>
-                <div class="lm-col"><button id="jfy_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings" aria-pressed="false"></button><span class="sub">Ratings</span></div>
-                <div class="lm-col"><button id="jfy_prog_all" type="button" class="lm-dot prog" title="Toggle all Progress" aria-pressed="false"></button><span class="sub">Progress</span></div>
-                <div class="lm-col"><button id="jfy_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble" aria-pressed="false"></button><span class="sub">Scrobble</span></div>
-              </div>
-              <div id="jfy_lib_matrix" class="lm-rows"></div>
-              <div class="inline" style="gap:12px;margin-top:12px;margin-bottom:0">
-                <button id="btn-jfy-load-libraries" class="btn" type="button" title="Load Jellyfin libraries">Load libraries</button>
-              </div>
-              <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
+              <div id="jfy_lib_matrix"></div>
               <select id="jfy_lib_history" name="jfy_lib_history" class="lm-hidden" multiple></select>
               <select id="jfy_lib_ratings" name="jfy_lib_ratings" class="lm-hidden" multiple></select>
               <select id="jfy_lib_progress" name="jfy_lib_progress" class="lm-hidden" multiple></select>
