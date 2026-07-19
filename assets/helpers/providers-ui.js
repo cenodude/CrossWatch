@@ -774,11 +774,40 @@
     }, 1900);
   }
 
+  function showConnectionDisconnected(panel) {
+    if (!panel) return;
+    const node = panel.querySelector(".cw-connection-status-pill, #plex_msg, #jfy_msg, #emby_msg");
+    if (!node) return;
+    node.textContent = "Disconnected";
+    node.classList.remove("hidden", "ok", "cw-connection-status-transient", "cw-connection-status-dismissing");
+    node.classList.add("warn");
+    node.removeAttribute("aria-hidden");
+    scheduleConnectionStatusDismissal(node);
+  }
+
+  function connectionModalCurrentConnected(panel, info, cfg = getCachedConfig()) {
+    if (!info || info.key === "TMDB_METADATA" || info.key === "ANIME_MAPPING") return true;
+    if (connectionModalStatusTarget(panel)) return true;
+    const inst = String(panel?.querySelector(".cw-profile-switcher select")?.value || "default");
+    return configuredProfileIds(cfg, info.provider).some((id) => String(id) === inst);
+  }
+
+  function updateConnectionSaveEnabled(panel, info, cfg = getCachedConfig()) {
+    const save = panel?.querySelector(".cw-connection-footer-save");
+    if (!save) return;
+    const connected = connectionModalCurrentConnected(panel, info, cfg);
+    save.disabled = !connected;
+    save.classList.toggle("is-disabled", !connected);
+    if (connected) save.removeAttribute("title");
+    else save.title = "Connect this profile before saving.";
+  }
+
   function syncConnectionSuccessState(panel, info, cfg = getCachedConfig()) {
     if (!panel || !info) return;
     const connected = connectionModalConnected(panel, info, cfg);
     if (connected && panel.__cwConnectionWasConnected === false) playConnectionSuccess(panel, info);
     panel.__cwConnectionWasConnected = connected;
+    updateConnectionSaveEnabled(panel, info, cfg);
   }
 
   function connectionProfileFullName(option) {
@@ -1155,6 +1184,27 @@
     syncConnectionStatusDismissals(panel);
   }
 
+  function connectionDeleteBlockedByProfiles(panel, info) {
+    if (!panel || !info) return false;
+    const sel = panel.querySelector(".cw-profile-switcher select");
+    const current = String(sel?.value || "default").toLowerCase();
+    if (current !== "default") return false;
+    return configuredProfileIds(getCachedConfig(), info.provider).some((id) => String(id).toLowerCase() !== "default");
+  }
+
+  function flashConnectionResult(btn, ok) {
+    if (!btn) return;
+    if (!btn.__cwSaveLabel) btn.__cwSaveLabel = btn.textContent;
+    if (btn.__cwSaveTimer) clearTimeout(btn.__cwSaveTimer);
+    btn.classList.remove("is-saved", "is-failed");
+    btn.innerHTML = `<span class="material-symbols-rounded cw-save-result-icon">${ok ? "check" : "close"}</span>`;
+    btn.classList.add(ok ? "is-saved" : "is-failed");
+    btn.__cwSaveTimer = setTimeout(() => {
+      btn.textContent = btn.__cwSaveLabel || "Save changes";
+      btn.classList.remove("is-saved", "is-failed");
+    }, 1600);
+  }
+
   function resetConnectionDeleteConfirm(btn) {
     if (!btn) return;
     if (btn.__cwConnectionDeleteTimer) clearTimeout(btn.__cwConnectionDeleteTimer);
@@ -1181,6 +1231,11 @@
       panel.appendChild(footer);
       footer.querySelector(".cw-connection-footer-delete")?.addEventListener("click", (ev) => {
         const trigger = ev.currentTarget;
+        if (connectionDeleteBlockedByProfiles(panel, info)) {
+          resetConnectionDeleteConfirm(trigger);
+          try { window.CW.AuthShared.showConnectionWarning("Remove the additional profiles before deleting the main connection."); } catch {}
+          return;
+        }
         if (trigger?.dataset?.cwConfirmDelete !== "1") {
           armConnectionDeleteConfirm(trigger);
           return;
@@ -1188,6 +1243,11 @@
         resetConnectionDeleteConfirm(trigger);
         const btn = info.deleteSelector ? panel.querySelector(info.deleteSelector) || document.querySelector(info.deleteSelector) : null;
         btn?.click?.();
+        [700, 1600].forEach((delay) => setTimeout(() => {
+          const warn = panel.querySelector(".cw-connection-footer-warn");
+          if (warn && !warn.classList.contains("hidden")) return;
+          showConnectionDisconnected(panel);
+        }, delay));
       });
       footer.querySelector(".cw-connection-footer-cancel")?.addEventListener("click", () => {
         resetConnectionDeleteConfirm(footer.querySelector(".cw-connection-footer-delete"));
@@ -1202,8 +1262,11 @@
           if (ret && typeof ret.then === "function") await ret;
           const cfg = await loadConfig(true);
           syncConnectionSuccessState(panel, info, cfg);
-          if (!keepOpen) closeAuthProviderOverlay();
-        } catch {}
+          flashConnectionResult(btn, true);
+          if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
+        } catch {
+          flashConnectionResult(btn, false);
+        }
       });
     }
     const deleteBtn = panel.querySelector(".cw-connection-footer-delete");
@@ -1235,6 +1298,7 @@
     if (["PLEX", "JELLYFIN", "EMBY"].includes(info.key)) selectConnectionModalSub(panel, info, "auth", overlay);
     syncConnectionModalCopy(panel, info, overlay);
     panel.__cwConnectionWasConnected = connectionModalConnected(panel, info);
+    updateConnectionSaveEnabled(panel, info);
     ensureConnectionSuccessBurst(panel);
     scheduleConnectionModalSize(panel, info);
     resetConnectionModalScroll(panel);
@@ -1327,7 +1391,28 @@
     requestAnimationFrame(() => overlay.querySelector("[data-cw-auth-close]")?.focus?.());
   }
 
+  function pruneEmptyProfileOnClose() {
+    const overlay = document.getElementById("cw-auth-connection-overlay");
+    const panel = overlay?.querySelector(".cw-connection-modal-panel");
+    if (!panel) return;
+    const info = connectionInfoForKey(panel.dataset.cwConnectionKey);
+    if (!info || !connectionModalSupportsProfiles(info)) return;
+    const switcher = panel.querySelector(".cw-profile-switcher");
+    const apiProvider = String(switcher?.dataset?.cwProfileProvider || info.provider || "");
+    const inst = String(switcher?.querySelector("select")?.value || "default");
+    if (!apiProvider || inst.toLowerCase() === "default") return;
+    (async () => {
+      try {
+        const cfg = await loadConfig(true);
+        if (configuredProfileIds(cfg, info.provider).some((id) => String(id) === inst)) return;
+        await fetch(`/api/provider-instances/${encodeURIComponent(apiProvider)}/${encodeURIComponent(inst)}`, { method: "DELETE", cache: "no-store" });
+        try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
+      } catch {}
+    })();
+  }
+
   function closeAuthProviderOverlay() {
+    try { pruneEmptyProfileOnClose(); } catch {}
     parkActiveAuthForm();
     try { window.CW.AuthShared.clearConnectionWarnings(); } catch {}
     const overlay = document.getElementById("cw-auth-connection-overlay");

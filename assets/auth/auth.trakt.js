@@ -241,8 +241,6 @@
       var secEl = _el("trakt_client_secret");
       _wireSecretField(idEl, updateTraktHint);
       _wireSecretField(secEl, updateTraktHint);
-      if (idEl)  idEl.addEventListener('change', function(){ void persistTraktClientFields(); });
-      if (secEl) secEl.addEventListener('change', function(){ void persistTraktClientFields(); });
 
       var copyRedirect = _el("btn-copy-trakt-redirect");
       if (copyRedirect && !copyRedirect.__wired) { copyRedirect.addEventListener("click", () => window.copyTraktRedirect()); copyRedirect.__wired = true; }

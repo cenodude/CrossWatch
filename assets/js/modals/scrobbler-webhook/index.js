@@ -654,7 +654,7 @@ export async function mount(shell, incoming = {}) {
   saving = false;
   destructive = "";
   modalKey = String(props.mode === "create" ? "__new__" : `${props.webhook?.provider || ""}:${props.webhook?.provider_instance || ""}`);
-  activeTab = normalizeActiveTab(lastTab[modalKey] || "source");
+  activeTab = normalizeActiveTab("source");
   if (root) root.dataset.scrmTab = activeTab;
   originalSink = String(props.webhook?.sink || "").toLowerCase();
   render();
