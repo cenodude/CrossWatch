@@ -1354,6 +1354,7 @@
     try { await window.cwEnsureAuthSection?.(info.sectionId); } catch {}
     const providerId = connectionInfoForKey(info.key)?.provider || String(info.key || "").toLowerCase();
     try { window.cwAuth?.[providerId]?.init?.(); } catch {}
+    try { window.cwAuth?.[providerId]?.rehydrate?.(); } catch {}
     enhanceConnectionModal(section, overlay, info.key);
     wireCopyButtons();
   }

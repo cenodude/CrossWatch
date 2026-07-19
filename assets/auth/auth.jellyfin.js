@@ -20,7 +20,6 @@
   const JFY_SUBTAB_KEY = "cw.ui.jellyfin.auth.subtab.v1";
   let jfyAutoTabInst = "";
   let jfyNewProfileInst = "";
-  let jfyQuickSave = null;
 
   const _notify = Shared.notify;
   const jfyProfile = Shared.createProfileAdapter({
@@ -86,7 +85,7 @@
     }
 
     if (sub === "whitelist") {
-      try { jfyLoadLibraries(); } catch {}
+      try { jfyLoadLibraries(true); } catch {}
     }
     if (sub !== "auth") { try { jfyQcStop({ cancel: true }); } catch {} }
     try { Shared.setMediaAuthStep(root, sub); } catch {}
@@ -157,14 +156,6 @@
     jfyAuthSubSelect(active?.dataset?.sub || "auth", { persist: false });
   }
 
-  async function persistJfyRuntimeSettings() {
-    if (!getJfySetupState().configured) return null;
-    jfyQuickSave ||= Shared.saveMergedConfig((cfg) => {
-      mergeJellyfinIntoCfg(cfg);
-    }).finally(() => { jfyQuickSave = null; });
-    return jfyQuickSave;
-  }
-
 
   const put = (sel, val) => { const el = Q(sel); if (el != null) el.value = (val ?? "") + ""; };
   const visible = (el) => !!el && getComputedStyle(el).display !== "none" && !el.hidden;
@@ -205,47 +196,33 @@
     if (selS) selS.innerHTML = [...S].map(id => `<option selected value="${id}">${id}</option>`).join("");
   }
 
-  function syncSelectAll() {
-    const rows = Qa("#jfy_lib_matrix .lm-row:not(.hide)");
-    const allHist = rows.length && rows.every(r => r.querySelector(".lm-dot.hist")?.classList.contains("on"));
-    const allRate = rows.length && rows.every(r => r.querySelector(".lm-dot.rate")?.classList.contains("on"));
-    const allProg = rows.length && rows.every(r => r.querySelector(".lm-dot.prog")?.classList.contains("on"));
-    const allScr = rows.length && rows.every(r => r.querySelector(".lm-dot.scr")?.classList.contains("on"));
-    const h = Q("#jfy_hist_all"), r = Q("#jfy_rate_all"), p = Q("#jfy_prog_all"), s = Q("#jfy_scr_all");
-    if (h) { h.classList.toggle("on", !!allHist); h.setAttribute("aria-pressed", allHist ? "true" : "false"); }
-    if (r) { r.classList.toggle("on", !!allRate); r.setAttribute("aria-pressed", allRate ? "true" : "false"); }
-    if (p) { p.classList.toggle("on", !!allProg); p.setAttribute("aria-pressed", allProg ? "true" : "false"); }
-    if (s) { s.classList.toggle("on", !!allScr); s.setAttribute("aria-pressed", allScr ? "true" : "false"); }
-  }
+  let wlHandle = null;
+  const setFor = (fk) => ({ hist: H, rate: R, prog: P, scr: S }[fk]);
 
   function renderLibraries(libs) {
-    lastLibraries = Array.isArray(libs) ? libs : [];
-    const box = Q("#jfy_lib_matrix"); if (!box) return;
-    box.innerHTML = "";
-    const f = document.createDocumentFragment();
-    (Array.isArray(libs) ? libs : []).forEach((it) => {
-      const id = String(it.key);
-      const row = document.createElement("div");
-      row.className = "lm-row"; row.dataset.id = id;
-      row.innerHTML = `
-        <div class="lm-name">${ESC(it.title)}</div>
-        <button type="button" class="lm-dot hist${H.has(id) ? " on" : ""}" data-kind="history" aria-pressed="${H.has(id)}" title="Toggle History"></button>
-        <button type="button" class="lm-dot rate${R.has(id) ? " on" : ""}" data-kind="ratings" aria-pressed="${R.has(id)}" title="Toggle Ratings"></button>
-        <button type="button" class="lm-dot prog${P.has(id) ? " on" : ""}" data-kind="progress" aria-pressed="${P.has(id)}" title="Toggle Progress"></button>
-        <button type="button" class="lm-dot scr${S.has(id) ? " on" : ""}" data-kind="scrobble" aria-pressed="${S.has(id)}" title="Toggle Scrobble"></button>`;
-      f.appendChild(row);
-    });
-    box.appendChild(f);
+    if (Array.isArray(libs)) lastLibraries = libs;
     syncHidden();
-    syncSelectAll();
+    const host = Q("#jfy_lib_matrix");
+    if (!host || !window.cwWhitelistTable) return;
+    if (wlHandle) { wlHandle.render(); return; }
+    wlHandle = window.cwWhitelistTable.mount({
+      host,
+      features: [ { key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "scr", label: "Scrobble" } ],
+      getLibs: () => lastLibraries,
+      isOn: (fk, id) => setFor(fk).has(String(id)),
+      setOn: (fk, id, on) => { const s = setFor(fk); if (on) s.add(String(id)); else s.delete(String(id)); },
+      commit: syncHidden,
+      load: async () => { await jfyLoadLibraries(true); },
+    });
   }
 
-  function repaint() {
-    const libs = Qa("#jfy_lib_matrix .lm-row").map(r => ({
-      key: r.dataset.id,
-      title: r.querySelector(".lm-name")?.textContent || ""
-    }));
-    renderLibraries(libs);
+  function jfyLiveQS() {
+    let qs = "";
+    const server = (Q("#jfy_server_url")?.value || Q("#jfy_server")?.value || "").trim();
+    if (server) qs += `&server=${encodeURIComponent(server)}`;
+    const cb = Q("#jfy_verify_ssl") || Q("#jfy_verify_ssl_dup");
+    if (cb) qs += `&verify_ssl=${(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked) ? 1 : 0}`;
+    return qs;
   }
 
   async function jfyLoadLibraries(force = false) {
@@ -254,8 +231,7 @@
       return;
     }
     try {
-      await persistJfyRuntimeSettings();
-      const r = await fetch(jfyApi(LIB_URL), { cache: "no-store" });
+      const r = await fetch(jfyApi(LIB_URL) + jfyLiveQS(), { cache: "no-store" });
       const d = r.ok ? await r.json().catch(() => ({})) : {};
       const libs = Array.isArray(d?.libraries) ? d.libraries : (Array.isArray(d) ? d : []);
       renderLibraries(libs);
@@ -418,86 +394,8 @@
     return cfg;
   }
 
-  document.addEventListener("click", (ev) => {
-    const t = ev.target; if (!(t instanceof Element)) return;
-    const btn = t.closest(".lm-dot") || t.closest(".lm-col")?.querySelector(".lm-dot"); if (!btn) return;
-
-    if (btn.id === "jfy_hist_all") {
-      ev.preventDefault(); ev.stopPropagation();
-      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-      H = new Set();
-      Qa("#jfy_lib_matrix .lm-dot.hist").forEach((b) => {
-        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = b.closest(".lm-row"); if (r) H.add(String(r.dataset.id || "")); }
-      });
-      syncHidden();
-      repaint();
-      syncSelectAll();
-      return;
-    }
-
-    if (btn.id === "jfy_rate_all") {
-      ev.preventDefault(); ev.stopPropagation();
-      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-      R = new Set();
-      Qa("#jfy_lib_matrix .lm-dot.rate").forEach((b) => {
-        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = b.closest(".lm-row"); if (r) R.add(String(r.dataset.id || "")); }
-      });
-      syncHidden();
-      repaint();
-      syncSelectAll();
-      return;
-    }
-
-    if (btn.id === "jfy_scr_all") {
-      ev.preventDefault(); ev.stopPropagation();
-      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-      S = new Set();
-      Qa("#jfy_lib_matrix .lm-dot.scr").forEach((b) => {
-        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = b.closest(".lm-row"); if (r) S.add(String(r.dataset.id || "")); }
-      });
-      syncHidden();
-      repaint();
-      syncSelectAll();
-      return;
-    }
-
-    if (btn.id === "jfy_prog_all") {
-      ev.preventDefault(); ev.stopPropagation();
-      const on = !btn.classList.contains("on"); btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-      P = new Set();
-      Qa("#jfy_lib_matrix .lm-dot.prog").forEach((b) => {
-        b.classList.toggle("on", on); b.setAttribute("aria-pressed", on ? "true" : "false");
-        if (on) { const r = b.closest(".lm-row"); if (r) P.add(String(r.dataset.id || "")); }
-      });
-      syncHidden();
-      repaint();
-      syncSelectAll();
-      return;
-    }
-
-    if (btn.closest("#jfy_lib_matrix")) {
-      ev.preventDefault(); ev.stopPropagation();
-      const row = btn.closest(".lm-row"); if (!row) return;
-      const id = String(row.dataset.id || ""), kind = btn.dataset.kind;
-      const on = !btn.classList.contains("on");
-      btn.classList.toggle("on", on); btn.setAttribute("aria-pressed", on ? "true" : "false");
-      if (kind === "history") { (on ? H.add(id) : H.delete(id)); }
-      else if (kind === "ratings") { (on ? R.add(id) : R.delete(id)); }
-      else if (kind === "progress") { (on ? P.add(id) : P.delete(id)); }
-      else if (kind === "scrobble") { (on ? S.add(id) : S.delete(id)); }
-      syncHidden();
-      repaint();
-      syncSelectAll();
-      return;
-    }
-  }, true);
-
   async function jfyPickUser(ev) {
     try { ev?.preventDefault?.(); } catch {}
-    try { await persistJfyRuntimeSettings(); } catch {}
     if (!window.cwMediaUserPicker || typeof window.cwMediaUserPicker.open !== "function") {
       window.notify?.("User picker not available", "warn");
       return;
@@ -506,6 +404,8 @@
     window.cwMediaUserPicker.open({
       provider: "jellyfin",
       instance: inst,
+      server: (Q("#jfy_server_url")?.value || Q("#jfy_server")?.value || "").trim(),
+      verifySsl: !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked),
       anchorEl: Q("#jfy_pick_user") || null,
       title: "Pick Jellyfin user",
       onPick: (u) => {
@@ -792,13 +692,13 @@
   window.cwAuth = window.cwAuth || {};
   window.cwAuth.jellyfin = window.cwAuth.jellyfin || {};
   window.cwAuth.jellyfin.init = ensureHydrate;
+  window.cwAuth.jellyfin.rehydrate = () => { try { hydrateFromConfig(true); } catch {} };
 
   window.jfyAuto = jfyAuto;
   window.jfyLoadLibraries = jfyLoadLibraries;
   window.mergeJellyfinIntoCfg = mergeJellyfinIntoCfg;
   window.jfyLogin = jfyLogin;
   window.jfyDeleteToken = jfyDeleteToken;
-  window.persistJfyRuntimeSettings = persistJfyRuntimeSettings;
 
   window.registerSettingsCollector?.(mergeJellyfinIntoCfg);
   document.addEventListener("settings-collect", (e) => { try { mergeJellyfinIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);

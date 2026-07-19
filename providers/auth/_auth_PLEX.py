@@ -376,18 +376,7 @@ def html() -> str:
 
           <div class="cw-subpanel" data-sub="whitelist">
             <div style="max-width:980px">
-              <div class="lm-head">
-                <div class="title">Whitelist Libraries</div>
-                <div class="lm-col"><button id="plex_hist_all" type="button" class="lm-dot hist" title="Toggle all History"></button><span class="sub">History</span></div>
-                <div class="lm-col"><button id="plex_rate_all" type="button" class="lm-dot rate" title="Toggle all Ratings"></button><span class="sub">Ratings</span></div>
-                <div class="lm-col"><button id="plex_prog_all" type="button" class="lm-dot prog" title="Toggle all Progress"></button><span class="sub">Progress</span></div>
-                <div class="lm-col"><button id="plex_scr_all" type="button" class="lm-dot scr" title="Toggle all Scrobble"></button><span class="sub">Scrobble</span></div>
-              </div>
-              <div id="plex_lib_matrix" class="lm-rows"></div>
-              <div class="plex-btnrow" style="margin-top:12px;margin-bottom:0">
-                <button id="btn-plex-load-libraries" class="btn" type="button" title="Load Plex libraries">Load libraries</button>
-              </div>
-              <div class="sub" style="margin-top:6px">Empty = all libraries.</div>
+              <div id="plex_lib_matrix"></div>
               <select id="plex_lib_history" class="lm-hidden" multiple></select>
               <select id="plex_lib_ratings" class="lm-hidden" multiple></select>
               <select id="plex_lib_progress" class="lm-hidden" multiple></select>

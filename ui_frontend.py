@@ -101,6 +101,7 @@ def _asset_block() -> str:
     return "\n".join((
         helper_tags,
         '<script src="/assets/helpers/media_user_picker.js?v=__CW_VERSION__" defer></script>',
+        '<script src="/assets/helpers/whitelist_table.js?v=__CW_VERSION__" defer></script>',
         '<script src="/assets/crosswatch.js?v=__CW_VERSION__"></script>',
         app_tags,
         '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__"></script>',
@@ -152,6 +153,7 @@ def _get_index_html_static() -> str:
     watchlist: "Watchlist",
     playback_progress: "Playback Progress",
     snapshots: "Captures",
+    playlists: "Playlists",
     editor: "Editor",
     settings: "Settings",
   };
@@ -209,6 +211,7 @@ def _get_index_html_static() -> str:
 
 <link rel="stylesheet" href="/assets/themes/tokens.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/whitelist.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
 <style id="cw-dark-shell-overrides">
 :root{--cw-ov-shell:linear-gradient(180deg,rgba(8,10,14,.96),rgba(3,5,8,.98));--cw-ov-shell-soft:linear-gradient(180deg,rgba(11,14,20,.94),rgba(5,7,10,.97));--cw-ov-shell-strong:linear-gradient(180deg,rgba(13,16,23,.96),rgba(6,8,11,.98));--cw-ov-border:rgba(255,255,255,.075);--cw-ov-border-strong:rgba(255,255,255,.12);--cw-ov-shadow:0 20px 48px rgba(0,0,0,.36),inset 0 1px 0 rgba(255,255,255,.03);--cw-ov-fg:rgba(242,245,255,.96);--cw-ov-soft:rgba(194,202,222,.72)}
@@ -402,6 +405,7 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
     <button id="tab-watchlist" class="tab" type="button" onclick="showTab('watchlist')">Watchlist</button>
     <button id="tab-playback_progress" class="tab" type="button" onclick="showTab('playback_progress')">Playback</button>
     <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
+    <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">Playlists</button>
     <button id="tab-editor" class="tab" type="button" onclick="showTab('editor')">Editor</button>
     <div class="cw-tabmenu" id="tab-settings-menu">
       <button id="tab-settings" class="tab" type="button"
@@ -642,6 +646,8 @@ html[data-cw-theme=flat-light] #page-settings .cw-maint-action.restart .cw-maint
   </section>
 
   <section id="page-snapshots" class="card hidden"></section>
+
+  <section id="page-playlists" class="card hidden tab-page"></section>
 
   <section id="page-editor" class="card hidden"></section>
 

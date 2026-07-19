@@ -139,17 +139,25 @@
     return isAdmin ? "Admin" : "";
   }
 
+  function overrideQS() {
+    let qs = "";
+    if (STATE.server) qs += `&server=${encodeURIComponent(STATE.server)}`;
+    if (STATE.verifySsl != null) qs += `&verify_ssl=${STATE.verifySsl ? 1 : 0}`;
+    return qs;
+  }
+
   async function fetchUsers(provider, instance) {
     const p = String(provider || "").toLowerCase();
     const inst = canonicalInstanceId(instance);
     if (!p) return [];
 
+    const extra = overrideQS();
     const urls = p === "plex"
       ? [
-          `/api/plex/pickusers?instance=${encodeURIComponent(inst)}`,
-          `/api/plex/users?instance=${encodeURIComponent(inst)}`,
+          `/api/plex/pickusers?instance=${encodeURIComponent(inst)}${extra}`,
+          `/api/plex/users?instance=${encodeURIComponent(inst)}${extra}`,
         ]
-      : [`/api/${encodeURIComponent(p)}/users?instance=${encodeURIComponent(inst)}`];
+      : [`/api/${encodeURIComponent(p)}/users?instance=${encodeURIComponent(inst)}${extra}`];
 
     let lastError = null;
     for (const url of urls) {
@@ -212,6 +220,8 @@
     all: [],
     overlay: true,
     seq: 0,
+    server: "",
+    verifySsl: null,
   };
 
   function place() {
@@ -283,6 +293,8 @@
     STATE.title = String(opts?.title || "Pick user");
     STATE.onPick = typeof opts?.onPick === "function" ? opts.onPick : null;
     STATE.overlay = opts?.overlay !== false;
+    STATE.server = String(opts?.server || "").trim();
+    STATE.verifySsl = (opts && "verifySsl" in opts) ? opts.verifySsl : null;
     const seq = ++STATE.seq;
 
     const overlay = d.getElementById(OVERLAY_ID);
