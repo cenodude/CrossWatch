@@ -2661,8 +2661,9 @@ def _fallback_ids_for_item(item: Mapping[str, Any], ids: Mapping[str, Any] | Non
             out[ns] = value
     return out
 
-def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
-    unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+def _iter_unresolved_files(
+    allowed_scopes: set[str] | None,
+) -> Iterable[tuple[str, str, str, bool, str, list[tuple[str, dict[str, Any], dict[str, Any]]]]]:
     cw_state = _read_cw_state(allowed_scopes)
     for name, body in (cw_state or {}).items():
         if not isinstance(body, dict):
@@ -2724,11 +2725,6 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
             continue
         prov_raw, feat_raw = stem.split("_", 1)
 
-        prov_key = prov_raw.upper()
-        feat_key = feat_raw.lower()
-        key = (prov_key, feat_key)
-        idx = unresolved_index.setdefault(key, {})
-
         rows: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
         if pending:
             items = body.get("items")
@@ -2761,7 +2757,6 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
                     )
                 )
         else:
-            rows = []
             for uk, raw_rec in body.items():
                 if not isinstance(raw_rec, dict):
                     continue
@@ -2769,6 +2764,15 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
                 raw_item = rec.get("item")
                 item = cast(dict[str, Any], raw_item) if isinstance(raw_item, dict) else {}
                 rows.append((str(uk), item, rec))
+
+        yield prov_raw.upper(), feat_raw.lower(), kind, pending, name, rows
+
+
+def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
+    unresolved_index: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+    for prov_key, feat_key, kind, pending, name, rows in _iter_unresolved_files(allowed_scopes):
+        key = (prov_key, feat_key)
+        idx = unresolved_index.setdefault(key, {})
 
         for uk, item, rec in rows:
             vv = dict(item)
@@ -2791,6 +2795,244 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
                 lst = idx.setdefault(ak, [])
                 lst.append(meta)
     return unresolved_index
+
+
+def _unresolved_records(allowed_scopes: set[str] | None) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for prov_key, feat_key, kind, pending, name, rows in _iter_unresolved_files(allowed_scopes):
+        if kind != "unresolved":
+            continue
+        for uk, item, rec in rows:
+            alias_key = uk.split("@", 1)[0] if "@" in uk else uk
+            vv = dict(item)
+            vv["_key"] = alias_key
+            aks = _alias_keys(vv)
+            if not aks:
+                continue
+            reason = str(rec.get("reason") or rec.get("hint") or rec.get("error") or "").strip()
+            records.append(
+                {
+                    "provider": prov_key,
+                    "feature": feat_key,
+                    "key": alias_key,
+                    "alias_keys": aks,
+                    "ids": dict(item.get("ids") or {}) if isinstance(item, dict) else {},
+                    "item": item if isinstance(item, dict) else {},
+                    "reason": reason,
+                    "pending": pending,
+                    "file": name,
+                }
+            )
+    return records
+
+
+def _cluster_by_alias(candidates: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    parent = list(range(len(candidates)))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    alias_to_idx: dict[str, int] = {}
+    for i, cand in enumerate(candidates):
+        for ak in cand.get("alias") or ():
+            if ak in alias_to_idx:
+                union(i, alias_to_idx[ak])
+            else:
+                alias_to_idx[ak] = i
+
+    clusters: dict[int, list[dict[str, Any]]] = {}
+    for i in range(len(candidates)):
+        clusters.setdefault(find(i), []).append(candidates[i])
+    return list(clusters.values())
+
+
+def _attention_model(
+    mismatch_rows: Iterable[Mapping[str, Any]],
+    unresolved_records: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+
+    def add_candidate(
+        feature: Any,
+        provider_base: Any,
+        alias_keys: Iterable[str],
+        *,
+        current: bool = False,
+        unresolved: bool = False,
+        blocked: bool = False,
+        data: Mapping[str, Any] | None = None,
+    ) -> None:
+        alias = {str(a) for a in (alias_keys or []) if a}
+        if not alias:
+            return
+        feat = str(feature or "").lower()
+        base = _provider_base(provider_base)
+        groups.setdefault((feat, base), []).append(
+            {
+                "alias": alias,
+                "current_mismatch": bool(current),
+                "unresolved": bool(unresolved),
+                "blocked": bool(blocked),
+                "data": dict(data or {}),
+            }
+        )
+
+    for row in mismatch_rows:
+        feat = row.get("feature")
+        aliases = row.get("alias_keys") or []
+        blocked = bool(row.get("blocked"))
+        data = {
+            "provider": row.get("provider"),
+            "key": row.get("key"),
+            "title": row.get("title"),
+            "year": row.get("year"),
+            "type": row.get("type"),
+            "series_title": row.get("series_title"),
+            "season": row.get("season"),
+            "episode": row.get("episode"),
+            "ids": row.get("ids") or {},
+        }
+        targets = row.get("targets") or []
+        if not targets:
+            add_candidate(feat, row.get("provider"), aliases, current=not blocked, blocked=blocked, data=data)
+            continue
+        for target in targets:
+            add_candidate(
+                feat,
+                target,
+                aliases,
+                current=not blocked,
+                blocked=blocked,
+                data={**data, "target": target},
+            )
+
+    for rec in unresolved_records:
+        add_candidate(
+            rec.get("feature"),
+            rec.get("provider"),
+            rec.get("alias_keys") or [],
+            unresolved=True,
+            data={
+                "provider": rec.get("provider"),
+                "key": rec.get("key"),
+                "ids": rec.get("ids") or {},
+                "reason": rec.get("reason"),
+                "item": rec.get("item") or {},
+            },
+        )
+
+    rows: list[dict[str, Any]] = []
+    counts = {"current_mismatch": 0, "pending_retry": 0, "blocked": 0, "total": 0}
+    for (feat, base), cands in groups.items():
+        for cluster in _cluster_by_alias(cands):
+            cm = any(c["current_mismatch"] for c in cluster)
+            un = any(c["unresolved"] for c in cluster)
+            bl = any(c["blocked"] for c in cluster)
+            alias_union = sorted(set().union(*[c["alias"] for c in cluster]))
+            data: dict[str, Any] = {}
+            for want_current in (True, False):
+                for c in cluster:
+                    if bool(c["current_mismatch"]) == want_current and c["data"]:
+                        data = {**c["data"], **data}
+                        break
+                if data:
+                    break
+            rows.append(
+                {
+                    **data,
+                    "feature": feat,
+                    "provider": base,
+                    "current_mismatch": cm,
+                    "unresolved": un,
+                    "blocked": bl,
+                    "keys": alias_union,
+                }
+            )
+            counts["total"] += 1
+            if cm:
+                counts["current_mismatch"] += 1
+            if un:
+                counts["pending_retry"] += 1
+            if bl:
+                counts["blocked"] += 1
+
+    rows.sort(
+        key=lambda r: (
+            0 if r.get("current_mismatch") else 1,
+            0 if r.get("unresolved") else 1,
+            str(r.get("feature") or ""),
+            str(r.get("provider") or ""),
+            str((r.get("keys") or [""])[0]),
+        )
+    )
+    return {"rows": rows, "counts": counts}
+
+
+def _attention_mismatch_rows(problems: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for p in problems:
+        t = str(p.get("type") or "")
+        if t not in ("missing_peer", "blocked_manual"):
+            continue
+        vv = {
+            "ids": p.get("ids") or {},
+            "type": p.get("item_type"),
+            "season": p.get("season"),
+            "episode": p.get("episode"),
+            "series_title": p.get("series_title"),
+            "title": p.get("title"),
+            "year": p.get("year"),
+            "_key": p.get("key"),
+        }
+        rows.append(
+            {
+                "provider": p.get("provider"),
+                "feature": p.get("feature"),
+                "key": p.get("key"),
+                "targets": p.get("targets") or [],
+                "alias_keys": _alias_keys(vv),
+                "blocked": t == "blocked_manual",
+                "title": p.get("title"),
+                "year": p.get("year"),
+                "type": p.get("item_type"),
+                "series_title": p.get("series_title"),
+                "season": p.get("season"),
+                "episode": p.get("episode"),
+                "ids": p.get("ids") or {},
+            }
+        )
+    return rows
+
+
+def _attention_from_analysis(
+    problems: Iterable[Mapping[str, Any]],
+    allowed_scopes: set[str] | None,
+    ctx: _AnalysisContext | None,
+) -> dict[str, Any]:
+    mismatch_rows = _attention_mismatch_rows(problems)
+    records = _unresolved_records(allowed_scopes)
+
+    scope_bases: set[tuple[str, str]] = set()
+    if ctx is not None:
+        for (src, feat), targets in ctx.pairs.items():
+            scope_bases.add((_provider_base(src), str(feat).lower()))
+            for target in targets:
+                scope_bases.add((_provider_base(target), str(feat).lower()))
+    if scope_bases:
+        records = [
+            rec
+            for rec in records
+            if (_provider_base(rec.get("provider")), str(rec.get("feature") or "").lower()) in scope_bases
+        ]
+    return _attention_model(mismatch_rows, records)
 
 
 def _unresolved_reason_message(dst: str, feature: str, reasons: list[str]) -> str:
@@ -3402,6 +3644,10 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
         stats = _pair_stats(state, selected_cfg, context)
         t_after_stats = time.perf_counter()
         exclusions = _pair_exclusions(state, selected_cfg, context)
+        try:
+            attention = _attention_from_analysis(problems, allowed, context)
+        except Exception:
+            attention = {"rows": [], "counts": {"current_mismatch": 0, "pending_retry": 0, "blocked": 0, "total": 0}}
         completed = time.perf_counter()
         timings = {
             "state_load": st_tim.get("state_load", 0.0),
@@ -3419,6 +3665,7 @@ def _cached_analysis(pairs_raw: str | None, *, include_system: bool = False, inc
             "summary": _diagnostic_summary(problems),
             "pair_stats": stats,
             "pair_exclusions": exclusions,
+            "attention": attention,
             "timings_ms": timings,
         }
         _LOG.info(

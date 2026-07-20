@@ -390,7 +390,8 @@ export default {
             <div class="an-side-status">
               <div class="an-status-title">Analysis status</div>
               <div class="count-stack">
-                <button type="button" id="an-issues-count" class="an-status-row active" aria-pressed="true" title="Items missing at one or more destinations."><i class="an-status-dot issue-dot"></i><b>Issues</b><em>0</em></button>
+                <button type="button" id="an-issues-count" class="an-status-row active" aria-pressed="true" title="Items currently missing at one or more destinations."><i class="an-status-dot issue-dot"></i><b>Current mismatches</b><em>0</em></button>
+                <button type="button" id="an-pending-count" class="an-status-row" aria-pressed="false" title="Items attempted last sync that remain unresolved and are pending a retry."><i class="an-status-dot pending-dot"></i><b>Pending retries</b><em>0</em></button>
                 <button type="button" id="an-system-count" class="an-status-row" aria-pressed="false" title="Background state and integrity diagnostics."><i class="an-status-dot system-dot"></i><b>System</b><em>0</em></button>
                 <button type="button" id="an-blocked-count" class="an-status-row" aria-pressed="false" title="Items held back by a manual block list or an active blackbox."><i class="an-status-dot blocked-dot"></i><b>Blocked</b><em>0</em></button>
               </div>
@@ -486,6 +487,7 @@ export default {
     const pairBar = Q("#an-pairs", root);
     const summaryMeta = Q("#an-summary-meta", root);
     const issuesCount = Q("#an-issues-count", root);
+    const pendingCount = Q("#an-pending-count", root);
     const systemCount = Q("#an-system-count", root);
     const blockedCount = Q("#an-blocked-count", root);
     const search = Q("#an-search", root);
@@ -527,7 +529,6 @@ export default {
     let SCOPE = "issues";
     let NORMALIZATION = [];
     let EXTRA_FINDINGS = [];
-    let UNRESOLVED_FINDINGS = [];
     let SUMMARY = {};
     let LIMIT_INFO = {};
     let LIMIT_AFFECTED = new Map();
@@ -539,6 +540,7 @@ export default {
     let PROFILE_LABELS = {};
     let DETAIL_LOADED = new Set();
     let DETAIL_VIEW = "issues";
+    let ATTENTION = { rows: [], counts: { current_mismatch: 0, pending_retry: 0, blocked: 0, total: 0 } };
     let ISSUE_ITEMS = [];
     let ISSUE_OFFSET = 0;
     let ALL_TOTAL = 0;
@@ -847,6 +849,7 @@ export default {
     });
 
     issuesCount?.addEventListener("click", () => setDetailView("issues"));
+    pendingCount?.addEventListener("click", () => setDetailView("pending"));
     systemCount?.addEventListener("click", () => setDetailView("system"));
     blockedCount?.addEventListener("click", () => setDetailView("blocked"));
 
@@ -1277,7 +1280,6 @@ export default {
       if (requestController.signal.aborted) return;
       const list = Array.isArray(sys && sys.problems) ? sys.problems : [];
       EXTRA_FINDINGS = CORE_EXTRA.concat(list.filter(p => p && p.type !== "cw_state_unresolved_backlog"));
-      UNRESOLVED_FINDINGS = list.filter(p => p && p.type === "cw_state_unresolved_backlog");
       BLOCKED_FINDINGS = BLOCKED_MANUAL.concat(list.filter(p => p && p.type === "cw_state_blackbox_active"));
       setStatusCount(systemCount, "System", systemFindings().length);
       const blockedTotal = BLOCKED_FINDINGS.reduce((acc, p) => {
@@ -1289,14 +1291,14 @@ export default {
         return acc + 1;
       }, 0);
       setStatusCount(blockedCount, "Blocked", blockedTotal);
-      const unresolvedTotal = unresolvedIssueCount();
-      setStatusCount(issuesCount, "Issues", UNSYNCED.size, "Unique items needing attention");
+      setStatusCount(issuesCount, "Current mismatches", UNSYNCED.size, "Items currently missing at a destination");
+      setStatusCount(pendingCount, "Pending retries", pendingRows().length, "Items attempted last sync that remain unresolved");
       setSummary();
       renderActiveDetail();
     }
 
     function updateStatusActive() {
-      const map = [[issuesCount, "issues"], [systemCount, "system"], [blockedCount, "blocked"]];
+      const map = [[issuesCount, "issues"], [pendingCount, "pending"], [systemCount, "system"], [blockedCount, "blocked"]];
       for (const [el, v] of map) {
         if (!el) continue;
         const on = v === DETAIL_VIEW;
@@ -1309,20 +1311,19 @@ export default {
       return (EXTRA_FINDINGS || []).filter(p => p && p.type !== "cw_state_blackbox_active");
     }
 
-    function unresolvedIssueCount() {
-      return (UNRESOLVED_FINDINGS || []).reduce((acc, p) => {
-        const c = Number(p && p.count);
-        const n = Number.isFinite(c) && c > 0
-          ? c
-          : (Array.isArray(p && p.affected_items) ? p.affected_items.length : 0) || 1;
-        return acc + n;
-      }, 0);
-    }
-
     function renderUnresolvedSection() {
-      const blocks = renderGenericFindingBlocks(UNRESOLVED_FINDINGS);
-      if (!blocks) return "";
-      return `<div class="issue"><div class="h">Unresolved items</div><div style="opacity:.85">These were attempted during the last sync but could not be matched or written at the destination. They need attention until they resolve or are cleared.</div></div>` + blocks;
+      const rows = pendingRows();
+      if (!rows.length) return "";
+      const blocks = rows.map(r => {
+        const { base, states } = attentionRowLabel(r);
+        const prov = String(r.provider || "").toUpperCase();
+        const feat = String(r.feature || "");
+        const reason = String(r.reason || "").trim();
+        const badges = states.map(s => `<span class="badge mono">${escHtml(s)}</span>`).join(" ");
+        const meta = [prov, feat].filter(Boolean).join(" · ");
+        return `<div class="issue"><div class="h">${escHtml(base)} ${badges}</div><div style="opacity:.85">${escHtml(meta)}${reason ? " — " + escHtml(reason) : ""}</div></div>`;
+      }).join("");
+      return `<div class="issue"><div class="h">Pending retries</div><div style="opacity:.85">Items attempted during the last sync that could not be matched or written at the destination. They stay here until a later sync confirms them or they are cleared.</div></div>` + blocks;
     }
 
     function renderIssuesEmpty() {
@@ -1367,7 +1368,36 @@ export default {
       issues.scrollTop = 0;
     }
 
+    function pendingRows() {
+      return (ATTENTION && Array.isArray(ATTENTION.rows) ? ATTENTION.rows : []).filter(r => r && r.unresolved);
+    }
+
+    function attentionRowLabel(r) {
+      const series = String(r.series_title || "").trim();
+      const title = String(r.title || "").trim();
+      const season = r.season;
+      const episode = r.episode;
+      const type = String(r.type || "").toLowerCase();
+      let base = title || series || String((r.keys || [])[0] || r.key || "");
+      if (type === "episode" && season != null && episode != null) {
+        base = `${series || title || base} - S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}`;
+      }
+      const states = [];
+      if (r.current_mismatch) states.push("current mismatch");
+      if (r.unresolved) states.push("pending retry");
+      if (r.blocked) states.push("blocked");
+      return { base, states };
+    }
+
+    function renderPendingDetail() {
+      const section = renderUnresolvedSection();
+      issues.innerHTML = section ||
+        `<div class="issue"><div class="h">No pending retries</div><div>Nothing was left unresolved after the last sync for the selected routes.</div></div>`;
+      issues.scrollTop = 0;
+    }
+
     function renderActiveDetail() {
+      if (DETAIL_VIEW === "pending") { renderPendingDetail(); return; }
       if (DETAIL_VIEW === "system") { renderSystemDetail(); return; }
       if (DETAIL_VIEW === "blocked") { renderBlockedDetail(); return; }
       if (SELECTED && ITEMS.some(r => tagOf(r.provider, r.feature, r.key) === SELECTED)) {
@@ -1378,7 +1408,7 @@ export default {
     }
 
     function setDetailView(view) {
-      DETAIL_VIEW = (view === "system" || view === "blocked") ? view : "issues";
+      DETAIL_VIEW = (view === "pending" || view === "system" || view === "blocked") ? view : "issues";
       updateStatusActive();
       renderActiveDetail();
       if (issues) issues.scrollTop = 0;
@@ -1832,7 +1862,8 @@ function profileLabel(provider, instance) {
       ITEMS = s.items || [];
       ALL_TOTAL = Number(s.total || 0);
       VIEW = ITEMS.slice();
-      setStatusCount(issuesCount, "Issues", 0);
+      setStatusCount(issuesCount, "Current mismatches", 0);
+      setStatusCount(pendingCount, "Pending retries", 0);
       setStatusCount(systemCount, "System", 0);
       setStatusCount(blockedCount, "Blocked", 0);
       draw();
@@ -1873,6 +1904,9 @@ function profileLabel(provider, instance) {
       PAIR_STATS = meta.pair_stats || [];
       PAIR_EXCLUSIONS = meta.pair_exclusions || [];
       SUMMARY = meta.summary || {};
+      ATTENTION = (meta.attention && typeof meta.attention === "object")
+        ? { rows: Array.isArray(meta.attention.rows) ? meta.attention.rows : [], counts: meta.attention.counts || {} }
+        : { rows: [], counts: {} };
       ANALYSIS_TIMINGS = meta.timings_ms || {};
       PAIR_SCOPE_KEYS = buildPairScopeKeys(pairMap);
       renderPairs();
@@ -1896,9 +1930,6 @@ function profileLabel(provider, instance) {
           p.type !== "blocked_manual" &&
           p.type !== "history_show_normalization" &&
           p.type !== "cw_state_unresolved_backlog"
-      );
-      UNRESOLVED_FINDINGS = all.filter(
-        p => p && p.type === "cw_state_unresolved_backlog"
       );
       BLOCKED_FINDINGS = all.filter(
         p => p && (p.type === "blocked_manual" || p.type === "cw_state_blackbox_active")
@@ -2095,14 +2126,13 @@ function profileLabel(provider, instance) {
         }
       } catch {}
 
-      const unresolvedTotal = unresolvedIssueCount();
-      const parts = [`Issues: ${keep.length}`];
+      const parts = [`Current mismatches: ${keep.length}`];
       if (per.history) parts.push(`H:${per.history}`);
       if (per.watchlist) parts.push(`W:${per.watchlist}`);
       if (per.ratings) parts.push(`R:${per.ratings}`);
       if (per.progress) parts.push(`P:${per.progress}`);
-      if (unresolvedTotal) parts.push(`U:${unresolvedTotal}`);
-      setStatusCount(issuesCount, "Issues", keep.length, parts.slice(1).join(" · ") || "Unique items needing attention");
+      setStatusCount(issuesCount, "Current mismatches", keep.length, parts.slice(1).join(" · ") || "Items currently missing at a destination");
+      setStatusCount(pendingCount, "Pending retries", pendingRows().length, "Items attempted last sync that remain unresolved");
       setStatusCount(systemCount, "System", systemFindings().length);
       const blockedTotal = BLOCKED_FINDINGS.reduce((acc, p) => {
         if (p.type === "cw_state_blackbox_active") {
