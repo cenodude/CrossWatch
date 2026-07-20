@@ -18,6 +18,7 @@ from ._pairs_metrics import ApiMetrics, persist_api_totals
 from ..provider_instances import build_pair_config_view, build_provider_config_view, normalize_instance_id
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
+from ._pairs_playlists import run_playlist_mappings
 from ..value_coercion import coerce_bool
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
@@ -436,7 +437,23 @@ def run_pairs(ctx) -> dict[str, Any]:
                     features_ran.add(feature)
 
                     try:
-                        if mode == "two-way":
+                        if feature == "playlists":
+                            res = run_playlist_mappings(
+                                ctx,
+                                src,
+                                dst,
+                                fcfg=fcfg,
+                                health_map=health_map,
+                                full_cfg=cfg,
+                                pair=pair,
+                            )
+                            added_total += int(res.get("added", 0))
+                            removed_total += int(res.get("removed", 0))
+                            updated_total += int(res.get("updated", 0))
+                            unresolved_total += int(res.get("unresolved", 0))
+                            skipped_total += int(res.get("skipped", 0))
+                            errors_total += int(res.get("errors", 0))
+                        elif mode == "two-way":
                             res = run_two_way_feature(ctx, src, dst, feature=feature, fcfg=fcfg, health_map=health_map)
                             updated_total += int(res.get("upd_to_A", 0)) + int(res.get("upd_to_B", 0))
                             added_total += int(res.get("adds_to_A", 0)) + int(res.get("adds_to_B", 0))
