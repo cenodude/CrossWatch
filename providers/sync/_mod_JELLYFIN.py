@@ -21,6 +21,12 @@ from .jellyfin import _watchlist as feat_watchlist
 from .jellyfin import _history as feat_history
 from .jellyfin import _ratings as feat_ratings
 from .jellyfin import _progress as feat_progress
+try:
+    from .jellyfin import _playlists as feat_playlists
+except Exception as e:
+    feat_playlists = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_JELLYFIN_DEBUG"):
+        cw_log("JELLYFIN", "playlists", "warn", "feature_import_failed", error=str(e))
 from ._mod_common import (
     build_session,
     request_with_retries,
@@ -165,6 +171,19 @@ _FEATURES: dict[str, Any] = {
     "progress": feat_progress,
 }
 
+_PLAYLIST_CAPABILITIES: dict[str, Any] = {
+    "read": True,
+    "create": True,
+    "add": True,
+    "remove": True,
+    "reorder": False,
+    "smart": False,
+    "smart_writable": False,
+    "media_types": ["movie", "show"],
+    "endpoint_types": ["playlist", "collection"],
+    "unordered_endpoint_types": ["collection"],
+}
+
 _HEALTH_SHADOW_NAME = "jellyfin.health.shadow.json"
 
 
@@ -214,7 +233,7 @@ def get_manifest() -> Mapping[str, Any]:
             "watchlist": True,
             "history": True,
             "ratings": False,
-            "playlists": False,
+            "playlists": feat_playlists is not None,
             "progress": True,
         },
         "requires": ["requests"],
@@ -228,6 +247,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
 
@@ -353,6 +373,7 @@ class JFClient:
 
 class JELLYFINModule:
     def __init__(self, cfg: Mapping[str, Any]):
+        self.instance_id = "default"
         inst = _pick_instance_id("JELLYFIN")
         jf = _merge_instance_block((cfg or {}).get("jellyfin") or {}, inst)
         auth = _merge_instance_block(dict((cfg or {}).get("auth") or {}).get("jellyfin") or {}, inst)
@@ -446,9 +467,11 @@ class JELLYFINModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": False, "progress": True}
+        toggles = {"watchlist": True, "history": True, "ratings": False, "playlists": feat_playlists is not None, "progress": True}
         present = _present_flags()
-        return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
+        out = {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
+        out["playlists"] = bool(feat_playlists is not None)
+        return out
 
     def _is_enabled(self, feature: str) -> bool:
         return bool(self.supported_features().get(feature, False))
@@ -701,6 +724,7 @@ class _JellyfinOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "playlists": _PLAYLIST_CAPABILITIES,
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
@@ -754,5 +778,86 @@ class _JellyfinOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def _pl(self) -> Any:
+        if feat_playlists is None:
+            raise RuntimeError("Jellyfin playlists feature is unavailable")
+        return feat_playlists
+
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None):
+        ad = self._adapter(cfg)
+        try:
+            ad.instance_id = normalize_instance_id(instance)
+        except Exception:
+            ad.instance_id = "default"
+        return ad
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
+        if feat_playlists is None:
+            return []
+        return list(self._pl().list_resources(self._playlist_adapter(cfg, instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
+        return self._pl().get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def create_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        name: str,
+        *,
+        media_type: str | None = None,
+        items: Iterable[Mapping[str, Any]] | None = None,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        return self._pl().create(
+            self._playlist_adapter(cfg, instance),
+            name,
+            media_type=media_type,
+            items=list(items or []),
+            dry_run=dry_run,
+        )
+
+    def add_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return self._pl().add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return self._pl().remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        ordered_keys: Iterable[str],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        keys = list(ordered_keys or [])
+        if dry_run:
+            return {"ok": True, "count": 0, "dry_run": True}
+        return self._pl().reorder(self._playlist_adapter(cfg, instance), playlist_id, keys)
 
 OPS = _JellyfinOPS()

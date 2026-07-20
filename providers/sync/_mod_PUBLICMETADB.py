@@ -14,6 +14,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from ._log import log as cw_log
 from ._mod_common import HitSession, SimpleRateLimiter, build_session, parse_rate_limit, request_with_retries, safe_json
 from .publicmetadb import _history as feat_history
+from .publicmetadb import _playlists as feat_playlists
 from .publicmetadb import _progress as feat_progress
 from .publicmetadb import _ratings as feat_ratings
 from .publicmetadb import _watchlist as feat_watchlist
@@ -57,8 +58,24 @@ def _confirmed_keys(items: Iterable[Mapping[str, Any]], unresolved: Any) -> list
     return out
 
 
+_PLAYLIST_CAPABILITIES: dict[str, Any] = {
+    "read": True,
+    "create": True,
+    "add": True,
+    "remove": True,
+    "reorder": False,
+    "smart": False,
+    "smart_writable": False,
+    "media_types": ["movie", "show"],
+    "requires_ids": ["tmdb"],
+    "endpoint_types": ["playlist"],
+    "ordered_endpoint_types": [],
+    "unordered_endpoint_types": ["playlist"],
+}
+
+
 def _features_flags() -> dict[str, bool]:
-    return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
+    return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -104,6 +121,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "requires_duration": True,
                 "server_completion_percent": 80,
             },
+            "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
 
@@ -262,6 +280,7 @@ class PUBLICMETADBModule:
         self.client = PUBLICMETADBClient(self.cfg, cfg).connect()
         self.raw_cfg = cfg
         self.config = cfg
+        self.instance_id = "default"
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
@@ -308,7 +327,7 @@ class PUBLICMETADBModule:
             "ok": ok,
             "status": status,
             "latency_ms": latency_ms,
-            "features": {"watchlist": ok, "ratings": ok, "history": ok, "progress": ok, "playlists": False},
+            "features": {"watchlist": ok, "ratings": ok, "history": ok, "progress": ok, "playlists": ok},
             "details": {"reason": reason} if reason else None,
             "api": {"lists": {"status": code, "rate": rate}},
         }
@@ -402,6 +421,84 @@ class _PUBLICMETADBOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def _pl(self) -> Any:
+        return feat_playlists
+
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None):
+        from cw_platform.provider_instances import normalize_instance_id
+
+        ad = self._adapter(cfg)
+        try:
+            ad.instance_id = normalize_instance_id(instance)
+        except Exception:
+            ad.instance_id = "default"
+        return ad
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
+        return list(self._pl().list_resources(self._playlist_adapter(cfg, instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
+        return self._pl().get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def create_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        name: str,
+        *,
+        media_type: str | None = None,
+        items: Iterable[Mapping[str, Any]] | None = None,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        return self._pl().create(
+            self._playlist_adapter(cfg, instance),
+            name,
+            media_type=media_type,
+            items=list(items or []),
+            dry_run=dry_run,
+        )
+
+    def add_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return self._pl().add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return self._pl().remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        ordered_keys: Iterable[str],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        if dry_run:
+            return {"ok": True, "count": 0, "dry_run": True}
+        return self._pl().reorder(self._playlist_adapter(cfg, instance), playlist_id, list(ordered_keys or []))
 
 
 OPS = _PUBLICMETADBOPS()
