@@ -592,8 +592,9 @@ async def crosswatch_tracker_import(file: UploadFile = File(...)) -> dict[str, A
     filename = file.filename or "upload.json"
     try:
         stats = import_tracker_upload(payload, filename)
-    except ValueError as e:
-        return {"ok": False, "error": str(e)}
+    except ValueError:
+        _LOG.warning("tracker import rejected: %s", filename, exc_info=True)
+        return {"ok": False, "error": "Import failed; expected a valid CrossWatch tracker ZIP or JSON file."}
     return {"ok": True, **stats}
 
 
