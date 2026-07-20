@@ -44,6 +44,7 @@ const post = (url, body) =>
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+const listParts = (data, defs) => defs.flatMap(([k, label]) => data && data[k] != null ? [`${data[k]} ${label}${data[k] === 1 ? "" : "s"}`] : []);
 const SIMPLE_OPS = {
   state: "/api/maintenance/clear-state",
   cache: "/api/maintenance/clear-cache",
@@ -85,13 +86,18 @@ const OPS = [
     key: "tracker",
     kind: "tracker",
     icon: "deployed_code",
-    title: "Reset local tracker",
-    tag: "local library",
-    desc: "Clears local Watchlist, History and Ratings tracker data.",
+    title: "CW tracker archive",
+    tag: "archive & recovery",
+    desc: "Manage local tracker state files, snapshots, exports and imports.",
     extra: `
       <div class="action-options">
         <label><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
         <label><input type="checkbox" id="cxm-cw-snaps"><span>All snapshots</span></label>
+      </div>
+      <div class="archive-actions">
+        <button type="button" class="run-btn secondary" id="cxm-cw-export" data-label="Download tracker archive">Download ZIP</button>
+        <button type="button" class="run-btn secondary" id="cxm-cw-import" data-label="Import tracker archive">Import file</button>
+        <input type="file" id="cxm-cw-import-file" accept=".zip,.json" hidden>
       </div>
     `,
   },
@@ -169,10 +175,10 @@ const GROUPS = [
     keys: ["state", "cache"],
   },
   {
-    id: "local",
-    icon: "verified_user",
-    title: "Local cleanup",
-    desc: "Clean local tracker data.",
+    id: "archive",
+    icon: "inventory_2",
+    title: "Archive & Recovery",
+    desc: "Manage CW Tracker state, snapshots and archive files.",
     keys: ["tracker"],
   },
   {
@@ -270,7 +276,7 @@ function injectCSS() {
 }
 
 export default {
-  async mount(root) {
+  async mount(root, props = {}) {
     await injectCSS();
 
     const shell = root.closest(".cx-modal-shell");
@@ -319,12 +325,12 @@ export default {
                   </button>
                   <button type="button" class="category-run-btn" data-run-group="sync" aria-label="Run all Sync tools">Run</button>
                 </div>
-                <div class="side-nav-item" data-group="local">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-local">
-                    <span class="material-symbols-rounded" aria-hidden="true">shield</span>
-                    <span>Local cleanup</span>
+                <div class="side-nav-item" data-group="archive">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-archive">
+                    <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
+                    <span>Archive & Recovery</span>
                   </button>
-                  <button type="button" class="category-run-btn" data-run-group="local" aria-label="Run all Local cleanup tools">Run</button>
+                  <button type="button" class="category-run-btn" data-run-group="archive" aria-label="Run all Archive and Recovery tools">Run</button>
                 </div>
                 <div class="side-nav-item" data-group="playback">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-playback">
@@ -427,6 +433,39 @@ export default {
       statusEl.textContent = msg;
       statusEl.className = "status-message" + (kind ? " " + kind : "");
       statusEl.hidden = !msg;
+    };
+
+    const downloadTrackerArchive = () => {
+      const a = document.createElement("a");
+      a.href = "/api/maintenance/crosswatch-tracker/export";
+      a.download = "crosswatch-tracker.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setStatus("Downloading tracker archive...", "ok");
+    };
+
+    const importTrackerArchive = async (file) => {
+      if (!file || operationBusy) return;
+      const form = new FormData();
+      form.append("file", file);
+      setOperationBusy(true);
+      setStatus("Importing tracker archive...", "busy");
+      try {
+        const data = await fjson("/api/maintenance/crosswatch-tracker/import", {
+          method: "POST",
+          body: form,
+        });
+        if (data?.ok === false) throw new Error(data.error || "Import failed");
+        const parts = listParts(data, [["files", "file"], ["states", "state file"], ["snapshots", "snapshot"]]);
+        setStatus("Imported " + (parts.length ? parts.join(", ") : "tracker archive") + ".", "ok");
+        await refreshSummary();
+        if (selectedInsightKind === "tracker") await loadActionInsight("tracker");
+      } catch (e) {
+        setStatus(`Import failed: ${e.message || String(e)}`, "err");
+      } finally {
+        setOperationBusy(false);
+      }
     };
 
     let selectedInsightKind = null;
@@ -851,6 +890,18 @@ export default {
       });
     });
 
+    root.querySelector("#cxm-cw-export")?.addEventListener("click", downloadTrackerArchive);
+    const archiveInput = root.querySelector("#cxm-cw-import-file");
+    root.querySelector("#cxm-cw-import")?.addEventListener("click", () => archiveInput?.click());
+    archiveInput?.addEventListener("change", async () => {
+      const file = archiveInput.files && archiveInput.files[0];
+      try {
+        await importTrackerArchive(file);
+      } finally {
+        try { archiveInput.value = ""; } catch {}
+      }
+    });
+
     root.querySelectorAll(".category-run-btn[data-run-group]").forEach((btn) => {
       btn.addEventListener("click", () => runGroup(btn.dataset.runGroup, btn));
     });
@@ -894,6 +945,12 @@ export default {
     showOverviewStatus();
     await refreshSummary();
     setStatus("");
+    const initialGroup = String(props?.group || props?.target || "").trim().toLowerCase();
+    if (initialGroup) {
+      [...root.querySelectorAll(".side-nav-btn[data-target]")]
+        .find((btn) => btn.dataset.target === `cxm-group-${initialGroup}`)
+        ?.click();
+    }
   },
   unmount() {},
 };

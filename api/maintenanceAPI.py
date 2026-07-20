@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -12,7 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, File, UploadFile
+from fastapi.responses import StreamingResponse
 
 _LOG = logging.getLogger("crosswatch.api.maintenance")
 
@@ -568,6 +570,31 @@ def crosswatch_tracker_status() -> dict[str, Any]:
         "root": str(root),
         **info,
     }
+
+
+@router.get("/crosswatch-tracker/export")
+def crosswatch_tracker_export() -> StreamingResponse:
+    from services.editor import export_tracker_zip
+
+    data = export_tracker_zip()
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={"Content-Disposition": "attachment; filename=crosswatch-tracker.zip"},
+    )
+
+
+@router.post("/crosswatch-tracker/import")
+async def crosswatch_tracker_import(file: UploadFile = File(...)) -> dict[str, Any]:
+    from services.editor import import_tracker_upload
+
+    payload = await file.read()
+    filename = file.filename or "upload.json"
+    try:
+        stats = import_tracker_upload(payload, filename)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, **stats}
 
 
 @router.post("/clear-state")
