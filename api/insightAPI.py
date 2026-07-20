@@ -1898,6 +1898,26 @@ def register_insights(app: FastAPI) -> None:
         except Exception:
             pass
 
+        if "playlists" in feature_keys:
+            pl_counts: dict[str, int] = {}
+            pl_inst_counts: dict[str, dict[str, int]] = {}
+            try:
+                from services import playlists as playlists_svc
+
+                summary = playlists_svc.provider_count_summary(cfg) or {}
+                pl_counts = dict(summary.get("providers") or {})
+                pl_inst_counts = dict(summary.get("providers_instances") or {})
+            except Exception:
+                pass
+            if pl_counts:
+                lane_counts = providers_by_feature.setdefault("playlists", {})
+                lane_inst_counts = providers_instances_by_feature.setdefault("playlists", {})
+                for provider, count in pl_counts.items():
+                    lane_counts[provider] = max(int(lane_counts.get(provider) or 0), count)
+                    existing = lane_inst_counts.setdefault(provider, {})
+                    for inst, inst_count in (pl_inst_counts.get(provider) or {"default": count}).items():
+                        existing[inst] = max(int(existing.get(inst) or 0), int(inst_count or 0))
+
         providers_instances_mse_by_feature: dict[str, dict[str, dict[str, dict[str, int]]]] = {
             feat: {k: {"default": {"movies": 0, "shows": 0, "anime": 0, "episodes": 0}} for k in providers_set}
             for feat in feature_keys

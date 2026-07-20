@@ -22,8 +22,7 @@
     ["playlists", "queue_music"]
   ].map(([key, icon]) => ({ key, icon, label: featureLabel(key) }));
   const FEAT_KEYS = FEATS.map((f) => f.key);
-  const FEAT_BY_KEY = Object.fromEntries(FEATS.map((f) => [f.key, f]));
-  const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: false, playlists: true };
+  const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: true, playlists: true };
   const EMPTY_ENABLED = () => Object.fromEntries(FEAT_KEYS.map((k) => [k, false]));
   const mkLane = () => ({ added: 0, removed: 0, updated: 0, spotAdd: [], spotRem: [], spotUpd: [] });
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -76,12 +75,7 @@
   const runKeyOf = (s) => s?.run_id || s?.run_uuid || s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) : null);
   const defaultEnabledMap = () => ({ ...DEFAULT_ENABLED });
   const getEnabledMap = () => enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
-  const getDisplayFeats = () => {
-    const enabled = getEnabledMap() || defaultEnabledMap();
-    const keys = ["watchlist", "ratings", "history"];
-    keys.push(enabled.progress ? "progress" : "playlists");
-    return keys.map((key) => FEAT_BY_KEY[key]).filter(Boolean);
-  };
+  const getDisplayFeats = () => FEATS;
   const fmtDelta = (a, r, u) => `+${a || 0} / -${r || 0} / ~${u || 0}`;
 
   const fetchJSON = async (url, fallback = null, signal) => {
@@ -246,9 +240,10 @@
   };
 
   function renderLanes() {
-    const wrap = Object.assign(document.createElement("div"), { className: "lanes" });
+    const displayFeats = getDisplayFeats();
+    const wrap = Object.assign(document.createElement("div"), { className: `lanes lanes-count-${displayFeats.length}` });
     const running = sync.isRunning();
-    for (const feat of getDisplayFeats()) {
+    for (const feat of displayFeats) {
       const enabled = !!getEnabledMap()[feat.key];
       const { added, removed, updated, items, spotAdd, spotRem, spotUpd } = getLaneStats(summary || {}, feat.key);
       const lane = Object.assign(document.createElement("div"), { className: `lane${enabled ? "" : " disabled"}` });

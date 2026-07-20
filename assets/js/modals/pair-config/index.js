@@ -1318,7 +1318,7 @@ function renderFeaturePanel(state){
 
     const trColRow = hasTrakt(state)
       ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-tr-hs-col"><span class="cx-provider-pill provider-trakt">TRAKT</span> Add to collection</label>
+          <label for="cx-tr-hs-col"><span class="cx-provider-pill provider-trakt">TRAKT</span> Add to library</label>
           <label class="switch">
             <input id="cx-tr-hs-col" type="checkbox" ${trColOn ? "checked" : ""}>
             <span class="slider"></span>
@@ -1505,12 +1505,41 @@ left.innerHTML = `
 
   if (state.feature === "playlists") {
     const pl=getOpts(state,"playlists");
+    if(!Array.isArray(pl.mappings)) pl.mappings=[];
     left.innerHTML=`<div class="panel-title">Playlists</div>
-      <div class="grid2"><div class="opt-row"><label for="cx-pl-enable">Enable</label><label class="switch"><input id="cx-pl-enable" type="checkbox" ${pl.enable?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="cx-pl-add">Add</label><label class="switch"><input id="cx-pl-add" type="checkbox" ${pl.add?"checked":""}><span class="slider"></span></label></div>
-      <div class="opt-row"><label for="cx-pl-remove">Remove</label><label class="switch"><input id="cx-pl-remove" type="checkbox" ${pl.remove?"checked":""}><span class="slider"></span></label></div></div>`;
-    right.innerHTML=`<div class="panel-title">Advanced</div><div class="muted">Experimental.</div>`;
+      <div class="opt-row"><label for="cx-pl-enable">Enable</label><label class="switch"><input id="cx-pl-enable" type="checkbox" ${pl.enable?"checked":""}><span class="slider"></span></label></div>
+      <div class="hint">Enables playlist sync for this pair. Attach one or more mapping profiles (MAP-xx) on the right; each carries its own source/target lists and rules.</div>
+      <input id="cx-pl-add" type="checkbox" ${pl.add?"checked":""} hidden>
+      <input id="cx-pl-remove" type="checkbox" ${pl.remove?"checked":""} hidden>`;
+    right.innerHTML=`<div class="panel-title">Mapping profiles</div>
+      <div class="muted" style="margin-bottom:10px">Attach mapping profiles whose endpoints match this pair. Only compatible, unattached MAP-ids are shown. Create and edit them on the Playlists page.</div>
+      <div id="cx-pl-maplist"><div class="muted">Loading…</div></div>
+      <button type="button" class="cx-btn" style="margin-top:10px" onclick="window.cxCloseModal&&window.cxCloseModal();window.showTab&&window.showTab('playlists')">Open Playlists page →</button>`;
     applySubDisable("playlists");
+    (async()=>{
+      const host=ID("cx-pl-maplist"); if(!host) return;
+      const e=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+      let data; try{ const r=await fetch("/api/playlists/mappings",{cache:"no-store"}); data=await r.json(); }catch(err){ host.innerHTML='<div class="muted">Could not load mapping profiles.</div>'; return; }
+      const all=(data&&data.mappings)||[];
+      const twoWay=isTwoWayMode(state);
+      const norm=(p,i)=>`${String(p||"").toUpperCase()}#${String(i||"default")}`;
+      const A=norm(state.src,state.src_instance), B=norm(state.dst,state.dst_instance);
+      const sel=new Set((getOpts(state,"playlists").mappings||[]).map(String));
+      const compat=(m)=>{const s=norm((m.source||{}).provider,(m.source||{}).instance),t=norm((m.target||{}).provider,(m.target||{}).instance);return twoWay?((s===A&&t===B)||(s===B&&t===A)):(s===A&&t===B)};
+      const avail=(m)=>!m.assigned_pair||sel.has(String(m.id));
+      const choices=all.filter(m=>m.valid!==false&&compat(m)&&avail(m));
+      if(!choices.length){ host.innerHTML=`<div class="muted">No compatible mapping profiles. On the Playlists page, create endpoints for ${e(state.src)} and ${e(state.dst)}, then a MAP-xx linking them.</div>`; return; }
+      host.innerHTML=choices.map(m=>`<label class="opt-row" style="justify-content:flex-start;gap:10px;cursor:pointer">
+        <input type="checkbox" class="cx-plmap" value="${e(m.id)}" ${sel.has(String(m.id))?"checked":""}>
+        <span><b>${e(m.id)}</b> ${e(m.name||"")} <span class="muted">(${e((m.source||{}).label)} → ${e((m.target||{}).label)}, ${e(m.membership)})</span></span>
+      </label>`).join("");
+      host.querySelectorAll(".cx-plmap").forEach(cb=>cb.addEventListener("change",()=>{
+        const opts=getOpts(state,"playlists");
+        const ids=[...host.querySelectorAll(".cx-plmap:checked")].map(x=>x.value);
+        state.options.playlists=Object.assign({},opts,{mappings:ids});
+        state.visited.add("playlists");
+      }));
+    })();
     return;
   }
 

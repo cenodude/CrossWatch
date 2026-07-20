@@ -903,6 +903,9 @@ html[data-cw-theme=flat-light] #ops-card #details{--det-console-bg:#fff;--det-co
 #ux-lanes{margin-top:14px}
 .lanes{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:900px){.lanes{grid-template-columns:1fr 1fr}
+.lanes.lanes-count-5{grid-template-columns:repeat(6,minmax(0,1fr))}
+.lanes.lanes-count-5>.lane:nth-child(-n+2){grid-column:span 3}
+.lanes.lanes-count-5>.lane:nth-child(n+3){grid-column:span 2}
 }
 .lane{border:1px solid rgba(255,255,255,.08);border-radius:20px;padding:14px 16px;background:radial-gradient(720px 180px at 0 0,rgba(124,92,255,.1),transparent 52%),linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.012));box-shadow:0 14px 28px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.02);transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease}
 .lane:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.12);box-shadow:0 16px 32px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.03)}

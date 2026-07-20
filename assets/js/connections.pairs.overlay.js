@@ -20,6 +20,8 @@
     if (typeof v === "string") v = v.toLowerCase().trim();
     return v === true || v === 1 || v === "1" || v === "true" || v === "on" || v === "yes";
   };
+  const playlistMappingIds = (v) => Array.isArray(v?.mappings) ? v.mappings.map((x) => String(x || "").trim()).filter(Boolean) : [];
+  const hasPlaylistMappings = (v) => truthy(v) && playlistMappingIds(v).length > 0;
 
   function ensureStyles() {
     const css = `
@@ -483,6 +485,21 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
   }
   window.deletePairCard = deletePairCard;
 
+  async function openPlaylistMappingsForPair(pairId, trigger) {
+    const id = String(pairId || "").trim();
+    if (!id) return;
+    try {
+      if (typeof window.showTab === "function") await window.showTab("playlists");
+      const api = window.Playlists;
+      if (api?.openMappingForPair) {
+        await api.openMappingForPair(id, trigger || null, { returnToSyncPairs: true });
+      }
+    } catch (e) {
+      console.warn("[pairs.overlay] playlist mappings open failed", e);
+    }
+  }
+  window.cxOpenPlaylistMappingsForPair = openPlaylistMappingsForPair;
+
   function renderPairsOverlay() {
     ensureStyles();
     const containers = ensureHost(); if (!containers) return;
@@ -533,6 +550,10 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
                 ${bead("pr", "Progress", f.progress)}
                 ${bead("pl", "Playlists", f.playlists)}
               </div>
+
+              ${hasPlaylistMappings(f.playlists) ? `<button class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h11"></path><path d="M4 12h11"></path><path d="M4 18h7"></path><path d="M17 15l4 3-4 3"></path></svg>
+              </button>` : ""}
 
               <label class="icon-btn power ${enabled ? "" : "off"}" data-tip="Enable / disable" role="switch" aria-checked="${enabled}">
                 <input class="sr-only" type="checkbox" name="pair-enabled" ${enabled ? "checked" : ""}

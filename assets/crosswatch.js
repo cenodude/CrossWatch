@@ -19,7 +19,7 @@
       const tgt = D.getElementById("page-" + id) || D.getElementById(id);
       if (tgt) tgt.classList.remove("hidden");
 
-      ["main", "watchlist", "playback_progress", "snapshots", "editor", "settings"].forEach(n => {
+      ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"].forEach(n => {
         const th = D.getElementById("tab-" + n);
         if (th) th.classList.toggle("active", n === id);
       });
