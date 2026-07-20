@@ -14,6 +14,7 @@ from .animeMappingAPI import router as anime_mapping_router
 from .manualAPI import router as manual_router
 from .insightAPI import register_insights
 from .watchlistAPI import router as watchlist_router
+from .playlistsAPI import router as playlists_router
 from .snapshotsAPI import router as snapshots_router
 from .backupsAPI import router as backups_router
 from .schedulingAPI import router as scheduling_router
@@ -52,6 +53,7 @@ __all__ = [
     "anime_mapping_router",
     "manual_router",
     "watchlist_router",
+    "playlists_router",
     "snapshots_router",
     "backups_router",
     "scheduling_router",
@@ -90,6 +92,7 @@ def register(
     app.include_router(anime_mapping_router)
     app.include_router(manual_router)
     app.include_router(watchlist_router)
+    app.include_router(playlists_router)
     app.include_router(snapshots_router)
     app.include_router(backups_router)
     app.include_router(maintenance_router)
