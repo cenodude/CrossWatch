@@ -854,7 +854,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "watchlist", "playback_progress", "snapshots", "editor", "settings"].forEach((name) => {
+    ["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab);
     });
   }
@@ -867,6 +867,7 @@
     byId("page-watchlist")?.classList.toggle("hidden", tab !== "watchlist");
     byId("page-playback_progress")?.classList.toggle("hidden", tab !== "playback_progress");
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
+    byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-settings")?.classList.toggle("hidden", tab !== "settings");
 
@@ -964,6 +965,21 @@
         console.warn("Snapshots load/refresh failed:", e);
       }
       state.currentTab = "snapshots";
+      return;
+    }
+
+    if (tab === "playlists") {
+      try {
+        await ensurePageModule("playlists", "/assets/js/playlists.js", "Playlists");
+        window.Playlists?.mount?.(byId("page-playlists"));
+      } catch (e) {
+        console.warn("Playlists load/refresh failed:", e);
+        const root = byId("page-playlists");
+        if (root && !root.children.length) {
+          root.innerHTML = '<div class="cw-page-load-error">Playlists failed to load. Refresh the page and try again.</div>';
+        }
+      }
+      state.currentTab = "playlists";
       return;
     }
 

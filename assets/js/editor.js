@@ -4,9 +4,6 @@
 (function () {
   const PAGE_SIZE = 50;
   const STORAGE_KEY = "cw-editor-ui";
-  let cwTrackerEnabled = true;
-
-
   const ensureStyle = (id, txt) => {
     let s = document.getElementById(id);
     if (!s) {
@@ -409,7 +406,6 @@
     source: "state",
     kind: "watchlist",
     snapshot: "",
-    pair: "",
     instance: "default",
     pairs: [],
     baselineItems: {},
@@ -425,6 +421,10 @@
     saving: false,
     snapshots: [],
     instance: "default",
+    playlistEndpoints: [],
+    playlistResource: null,
+    playlistWarnings: [],
+    playlistOriginalKeys: [],
     importEnabled: false,
     importProviders: [],
     importProvider: "",
@@ -446,7 +446,7 @@
       if (!raw) return;
       const saved = JSON.parse(raw);
 
-      const sources = ["tracker", "pair", "state"];
+      const sources = ["state", "playlist"];
       if (saved.source && sources.includes(saved.source)) state.source = saved.source;
 
       if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
@@ -457,7 +457,6 @@
       if (typeof saved.snapshot === "string") state.snapshot = saved.snapshot;
       if (typeof saved.instance === "string" && saved.instance.trim()) state.instance = saved.instance;
 
-      if (typeof saved.pair === "string") state.pair = saved.pair;
       if (typeof saved.filter === "string") state.filter = saved.filter;
 
       if (saved.typeFilter && typeof saved.typeFilter === "object") {
@@ -471,18 +470,6 @@
       if (saved.sortDir === "asc" || saved.sortDir === "desc") state.sortDir = saved.sortDir;
     } catch (_) {}
   }
-
-  async function loadTrackerAvailability() {
-    try {
-      const res = await fetch(`/api/config?cb=${Date.now()}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(String(res.status));
-      const cfg = await res.json().catch(() => ({}));
-      cwTrackerEnabled = ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false);
-    } catch (_) {
-      cwTrackerEnabled = true;
-    }
-  }
-
   restoreUIState();
 
   function wireStaticLabels(root) {
@@ -517,6 +504,20 @@
   host.innerHTML = `<div class="cw-root"><div class="cw-topline"><div class="cw-head-copy"><div class="cw-title-row"><div><div class="cw-title">Editor</div><div class="cw-sub">Edit your current state, tracker or cache</div></div></div></div><div class="cw-head-pills"><span class="cw-chip"><strong id="cw-pill-source">Current state</strong></span><span class="cw-chip"><strong id="cw-pill-kind">Watchlist</strong></span><span class="cw-chip"><strong id="cw-pill-count">0 rows</strong></span></div></div><div class="cw-wrap"><div class="cw-main"><div class="cw-controls"><input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id..."><span class="cw-status-text" id="cw-status"></span><div class="cw-controls-spacer"></div><div class="cw-bulk" id="cw-bulk" style="display:none"><span class="cw-bulk-count" id="cw-bulk-count"></span><button id="cw-bulk-remove" class="cw-btn danger" type="button"></button><button id="cw-bulk-restore" class="cw-btn" type="button"></button><button id="cw-bulk-clear" class="cw-btn" type="button">Clear</button></div><button id="cw-reload" class="cw-btn" type="button">Reload</button><button id="cw-add" class="cw-btn" type="button">Add row</button><button id="cw-save" class="cw-btn primary" type="button">Save changes</button></div><div class="cw-table-wrap" id="cw-table-wrap"><table class="cw-table"><thead><tr><th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th><th class="cw-action-head" style="width:46px"></th><th style="width:12%" data-sort="key" class="sortable">Key</th><th style="width:13%" data-sort="type" class="sortable">Type</th><th style="width:33%" data-sort="title" class="sortable">Title</th><th style="width:84px">Year</th><th style="width:12%" id="cw-col-id-a">TMDB</th><th style="width:21%" data-sort="extra" class="sortable">Extra</th></tr></thead><tbody id="cw-tbody"></tbody></table></div><div class="cw-pager" id="cw-pager" style="display:none"><button id="cw-prev" class="cw-btn" type="button">Previous</button><span id="cw-page-info" class="cw-page-info"></span><button id="cw-next" class="cw-btn" type="button">Next</button></div><div class="cw-empty" id="cw-empty" style="display:none">No rows match this view.</div></div><aside class="cw-side"><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title">Workspace</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Source</label><select id="cw-source" class="cw-select"><option value="state">Current State</option><option value="pair">Pair Cache</option><option value="tracker">CW Tracker</option></select><label>Kind</label><select id="cw-kind" class="cw-select"><option value="watchlist">Watchlist</option><option value="history">History</option><option value="ratings">Ratings</option><option value="progress">Progress</option></select><label id="cw-pair-label" style="display:none">Pair</label><select id="cw-pair" class="cw-select" style="display:none"></select><label id="cw-snapshot-label">Snapshot</label><select id="cw-snapshot" class="cw-select"><option value="">Latest</option></select><label id="cw-instance-label" style="display:none">Profile</label><select id="cw-instance" class="cw-select" style="display:none"><option value="default">Default</option></select></div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><div class="field-label">Types</div><div id="cw-type-filter" class="cw-type-filter"><button type="button" data-type="movie" class="cw-type-chip active">Movies</button><button type="button" data-type="show" class="cw-type-chip active">Shows</button><button type="button" data-type="anime" class="cw-type-chip active">Anime</button><button type="button" data-type="season" class="cw-type-chip active">Seasons</button><button type="button" data-type="episode" class="cw-type-chip active">Episodes</button><button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked</button></div></div></div><div class="ins-row" id="cw-state-bulk" style="display:none"><details class="cw-collapse" id="cw-bulk-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Block rules</summary><div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px"><select id="cw-bulk-type" class="cw-select" style="width:100%"></select><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button><button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button></div><div class="cw-status-text">Current State only • affects baseline items</div></div></details></div><div class="ins-row" id="cw-import-row" style="display:none"><details class="cw-collapse" id="cw-import-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Import provider state</summary><div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select><select id="cw-import-instance" class="cw-select" style="min-width:180px"></select><select id="cw-import-mode" class="cw-select" style="min-width:180px"><option value="replace">Replace baseline</option><option value="merge">Merge (keep old)</option></select></div><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist </label><label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History </label><label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings </label><label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress </label><span style="flex:1 1 auto"></span><button id="cw-import-run" class="cw-btn sm" type="button">Import</button></div><div id="cw-import-progress" style="display:none"><div class="cw-progress"><span></span></div><div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div></div></div></details></div></div><div class="ins-card"><div class="ins-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">insights</span></div><div class="ins-title" style="margin-right:auto">Pulse</div><span class="cw-tag" id="cw-tag-status"><span class="cw-tag-dot"></span><span id="cw-tag-label">Idle</span></span></div><div class="ins-row"><div class="ins-metrics"><div class="metric-row"><div class="metric"><span class="material-symbol">view_list</span><div><div class="m-val" id="cw-summary-total">0</div><div class="m-lbl">Total rows</div></div></div><div class="metric"><span class="material-symbol">visibility</span><div><div class="m-val" id="cw-summary-visible">0</div><div class="m-lbl">Rows visible</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">movie</span><div><div class="m-val" id="cw-summary-movies">0</div><div class="m-lbl">Movies</div></div></div><div class="metric"><span class="material-symbol">monitoring</span><div><div class="m-val" id="cw-summary-shows">0</div><div class="m-lbl">Shows</div></div></div><div class="metric"><span class="material-symbol">layers</span><div><div class="m-val" id="cw-summary-seasons">0</div><div class="m-lbl">Seasons</div></div></div><div class="metric"><span class="material-symbol">live_tv</span><div><div class="m-val" id="cw-summary-episodes">0</div><div class="m-lbl">Episodes</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">description</span><div><div class="m-val" id="cw-summary-state-files">0</div><div class="m-lbl">State files</div></div></div><div class="metric"><span class="material-symbol">folder_copy</span><div><div class="m-val" id="cw-summary-snapshots">0</div><div class="m-lbl">Snapshots</div></div></div></div><div id="cw-state-hint" class="cw-state-hint" style="display:none"><strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them. </div></div></div></div><div class="ins-card" id="cw-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Archive</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-download" class="cw-btn" type="button">Download ZIP</button><button id="cw-upload" class="cw-btn" type="button">Import file</button><input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none"></div></div></div></div><div class="ins-card" id="cw-state-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Policy backup</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-state-download" class="cw-btn" type="button">Download JSON</button><button id="cw-state-upload" class="cw-btn" type="button">Import file</button><input id="cw-state-upload-input" type="file" accept=".json" style="display:none"></div></div></div></div></aside></div></div>`;
 
   wireStaticLabels(host);
+
+  const sourceSelectBoot = document.getElementById("cw-source");
+  if (sourceSelectBoot) {
+    sourceSelectBoot.querySelector('option[value="pair"]')?.remove();
+    sourceSelectBoot.querySelector('option[value="tracker"]')?.remove();
+    if (!sourceSelectBoot.querySelector('option[value="playlist"]')) {
+      const opt = document.createElement("option");
+      opt.value = "playlist";
+      opt.textContent = "Playlist Endpoint";
+      sourceSelectBoot.appendChild(opt);
+    }
+  }
+  const subBoot = host.querySelector(".cw-sub");
+  if (subBoot) subBoot.textContent = "Edit your current state or playlist endpoints";
 
   host.querySelectorAll("input,select,textarea").forEach((field, idx) => {
     if (!field.name) field.name = field.id || `cw-field-${idx + 1}`;
@@ -608,6 +609,9 @@
     bulkBlockTypeBtn: "cw-bulk-block-type",
     bulkUnblockTypeBtn: "cw-bulk-unblock-type",
   });
+
+  if (backupCard) backupCard.remove();
+  [summaryStateFiles, summarySnapshots].forEach(el => el?.closest(".metric")?.remove());
 
   function decorateImportPanel() {
     const details = document.getElementById("cw-import-details");
@@ -768,10 +772,10 @@
   let statusStickyUntil = 0;
 
   function syncHeaderPills(visible, total) {
-    const srcMap = { tracker: "Tracker snapshots", pair: "Pair cache", state: "Current state" };
-    const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress" };
+    const srcMap = { state: "Current state", playlist: "Playlist endpoint" };
+    const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", playlist: "Playlist" };
     if (pillSource) pillSource.textContent = srcMap[state.source] || "Source";
-    if (pillKind) pillKind.textContent = kindMap[state.kind] || "Kind";
+    if (pillKind) pillKind.textContent = state.source === "playlist" ? "Playlist" : (kindMap[state.kind] || "Kind");
     const all = typeof total === "number" ? total : ((state.rows && state.rows.length) || 0);
     const vis = typeof visible === "number" ? visible : all;
     if (pillCount) pillCount.textContent = all ? `${vis}/${all} rows` : "0 rows";
@@ -801,7 +805,31 @@
     kindSel.value = state.kind;
   }
 
+  function currentPlaylistEndpoint() {
+    const id = String(state.snapshot || "").trim();
+    return (state.playlistEndpoints || []).find(ep => String(ep && ep.id || "") === id) || null;
+  }
+
+  function playlistEditable() {
+    if (state.source !== "playlist") return true;
+    const r = state.playlistResource || {};
+    return !!r && !r.smart && !!(r.can_add || r.can_remove || r.can_reorder);
+  }
+
+  function syncActionButtons() {
+    const r = state.playlistResource || {};
+    const playlist = state.source === "playlist";
+    if (addBtn) addBtn.disabled = state.loading || state.saving || (playlist && (!r.can_add || r.smart));
+    if (saveBtn) saveBtn.disabled = state.saving || state.loading || (playlist && !playlistEditable());
+  }
+
   function allowedTypesForKind(kind) {
+    if (state.source === "playlist") {
+      const ep = currentPlaylistEndpoint();
+      const values = (state.playlistResource && state.playlistResource.media_types) || (ep && ep.media_types) || [];
+      const allowed = values.map(x => String(x || "").toLowerCase()).filter(x => ["movie", "show", "anime", "season", "episode"].includes(x));
+      return allowed.length ? allowed : ["movie", "show", "anime"];
+    }
     return kind === "watchlist"
       ? ["movie", "show", "anime"]
       : ["movie", "show", "anime", "season", "episode"];
@@ -1084,7 +1112,6 @@
         kind: state.kind,
         snapshot: state.snapshot,
         instance: state.instance,
-        pair: state.pair,
         filter: state.filter,
         typeFilter: state.typeFilter,
         blockedOnly: state.blockedOnly,
@@ -1182,32 +1209,31 @@
   }
 
   function syncSourceUI() {
-    if (!cwTrackerEnabled && state.source === "tracker") state.source = "state";
+    if (state.source !== "state" && state.source !== "playlist") state.source = "state";
     if (sourceSel) {
-      const trackerOption = sourceSel.querySelector('option[value="tracker"]');
-      if (trackerOption) trackerOption.remove();
-      if (cwTrackerEnabled && !sourceSel.querySelector('option[value="tracker"]')) {
-        sourceSel.insertAdjacentHTML("beforeend", '<option value="tracker">CW Tracker</option>');
+      sourceSel.querySelector('option[value="pair"]')?.remove();
+      sourceSel.querySelector('option[value="tracker"]')?.remove();
+      if (!sourceSel.querySelector('option[value="playlist"]')) {
+        sourceSel.insertAdjacentHTML("beforeend", '<option value="playlist">Playlist Endpoint</option>');
       }
     }
     const isState = state.source === "state";
-    const isPair = state.source === "pair";
+    const isPlaylist = state.source === "playlist";
     if (sourceSel) sourceSel.value = state.source;
-    if (pairLabel) pairLabel.style.display = isPair ? "" : "none";
-    if (pairSel) pairSel.style.display = isPair ? "" : "none";
-    if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
-    if (instanceLabel) instanceLabel.style.display = "";
-    if (instanceSel) instanceSel.style.display = "";
-    if (backupCard) backupCard.style.display = isState ? "none" : "";
+    if (pairLabel) pairLabel.style.display = "none";
+    if (pairSel) pairSel.style.display = "none";
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Endpoint";
+    if (kindSel) kindSel.disabled = isPlaylist;
+    if (instanceLabel) instanceLabel.style.display = isPlaylist ? "none" : "";
+    if (instanceSel) instanceSel.style.display = isPlaylist ? "none" : "";
+    if (backupCard) backupCard.style.display = "none";
     if (stateBackupCard) stateBackupCard.style.display = isState ? "" : "none";
     if (blockedOnlyBtn) blockedOnlyBtn.style.display = isState ? "" : "none";
 
-    if (!isState) {
-      const nextInst = renderInstanceOptions(instanceSel, [{ id: "default", label: "Default" }], "default");
-      if (state.instance !== nextInst) {
-        state.instance = nextInst;
-        persistUIState();
-      }
+    if (isPlaylist) {
+      state.kind = "watchlist";
+      state.instance = "default";
+      syncKindUI();
     }
 
     if (!isState && state.blockedOnly) {
@@ -1217,26 +1243,22 @@
     }
     syncStateBulkUI();
     syncImportUI();
+    syncTypeFilterUI();
+    syncActionButtons();
     syncHeaderPills();
   }
 
   function showStateHint(mode) {
     if (!stateHint) return;
-    if (mode === "tracker") {
-      stateHint.innerHTML =
-        "<strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them.";
-      stateHint.style.display = "block";
-      return;
-    }
-    if (mode === "pair") {
-      stateHint.innerHTML =
-        "<strong>No pair cache found.</strong> Run a CrossWatch sync once to generate .cw_state pair indexes. Then select a Pair and Dataset here.";
-      stateHint.style.display = "block";
-      return;
-    }
     if (mode === "state") {
       stateHint.innerHTML =
         "<strong>No state.json found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
+      stateHint.style.display = "block";
+      return;
+    }
+    if (mode === "playlist") {
+      stateHint.innerHTML =
+        "<strong>No playlist endpoints found.</strong> Create an endpoint on the Playlists page first. Then select it here to edit its items.";
       stateHint.style.display = "block";
       return;
     }
@@ -1567,7 +1589,7 @@
         episode: isEpisode,
       });
     }
-    rows.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+    if (state.source !== "playlist") rows.sort((a, b) => (a.title || "").localeCompare(b.title || ""));
     return rows;
   }
 
@@ -2476,17 +2498,44 @@
     return "Snapshot";
   }
 
+  function playlistEndpointLabel(ep) {
+    if (!ep) return "Endpoint";
+    const name = String(ep.name || ep.id || "Endpoint");
+    const provider = String(ep.provider_label || ep.provider || "").trim();
+    const playlist = String(ep.playlist_name || ep.playlist_id || "").trim();
+    const type = String(ep.playlist_type || ep.resource_kind || ep.kind || "").trim();
+    const parts = [name];
+    if (provider) parts.push(provider);
+    if (playlist && playlist !== name) parts.push(playlist);
+    if (type) parts.push(type);
+    return parts.join(" - ");
+  }
+
   function rebuildSnapshots() {
     if (!snapSel) return;
     const isState = state.source === "state";
-    const isPair = state.source === "pair";
-    if (snapLabel) snapLabel.textContent = isState ? "Provider" : isPair ? "Dataset" : "Snapshot";
-    if (instanceLabel) instanceLabel.style.display = "";
-    if (instanceSel) instanceSel.style.display = "";
+    const isPlaylist = state.source === "playlist";
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Endpoint";
+    if (instanceLabel) instanceLabel.style.display = isPlaylist ? "none" : "";
+    if (instanceSel) instanceSel.style.display = isPlaylist ? "none" : "";
 
-    if (isState || isPair) {
+    if (isPlaylist) {
+      const list = Array.isArray(state.playlistEndpoints) ? state.playlistEndpoints : [];
+      const options = list
+        .map(ep => `<option value="${_escapeHtml(ep && ep.id)}">${_escapeHtml(playlistEndpointLabel(ep))}</option>`)
+        .join("");
+      snapSel.innerHTML = options || `<option value="">No endpoints</option>`;
+      const opts = Array.from(snapSel.options).map(o => o.value);
+      const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
+      if (next !== state.snapshot) state.snapshot = next;
+      snapSel.value = state.snapshot || "";
+      syncProviderIconSelect(snapSel, false);
+      return;
+    }
+
+    if (isState) {
       const list = Array.isArray(state.snapshots) ? state.snapshots : [];
-      const options = list.map(p => `<option value="${p}">${isState ? providerLabel(p, p) : p}</option>`).join("");
+      const options = list.map(p => `<option value="${p}">${providerLabel(p, p)}</option>`).join("");
       snapSel.innerHTML = options;
       const opts = Array.from(snapSel.options).map(o => o.value);
       const next = opts.includes(state.snapshot) ? state.snapshot : opts[0] || "";
@@ -2495,51 +2544,6 @@
       syncProviderIconSelect(snapSel, isState);
       return;
     }
-
-    const options = (state.snapshots || [])
-      .map(s => {
-        const label = formatSnapshotLabel(s);
-        return `<option value="${s.name}">${label}</option>`;
-      })
-      .join("");
-
-    snapSel.innerHTML = `<option value="">Latest</option>` + options;
-    snapSel.value = state.snapshot || "";
-    syncProviderIconSelect(snapSel, false);
-  }
-
-
-  function rebuildPairs() {
-    if (!pairSel) return;
-    const isPair = state.source === "pair";
-    if (!isPair) return;
-    const list = Array.isArray(state.pairs) ? state.pairs : [];
-    const esc = s => String(s || "").replace(/[&<>\"\']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "\'": "&#39;" }[c] || c));
-    const options = list
-      .map(p => {
-        const scope = p && p.scope ? String(p.scope) : "";
-        const label = p && p.label ? String(p.label) : scope;
-        return `<option value="${esc(scope)}">${esc(label)}</option>`;
-      })
-      .join("");
-    pairSel.innerHTML = options || `<option value="">No pairs</option>`;
-    const opts = Array.from(pairSel.options).map(o => o.value);
-    const next = opts.includes(state.pair) ? state.pair : opts[0] || "";
-    if (next !== state.pair) state.pair = next;
-    pairSel.value = state.pair || "";
-  }
-
-  async function loadPairs() {
-    try {
-      const data = await fetchJSON("/api/editor/pairs");
-      state.pairs = Array.isArray(data && data.pairs) ? data.pairs : [];
-      if (!state.pair) state.pair = (data && data.default) ? String(data.default) : "";
-      rebuildPairs();
-    } catch (e) {
-      console.error(e);
-      state.pairs = [];
-      rebuildPairs();
-    }
   }
 
 const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
@@ -2547,7 +2551,14 @@ const on = (el, ev, fn) => el && el.addEventListener(ev, fn);
 async function fetchJSON(url, opts) {
   if (window.cwIsAuthSetupPending?.() === true) throw new Error("auth setup pending");
   const res = await fetch(url, Object.assign({ cache: "no-store" }, opts || {}));
-  if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const data = await res.json();
+      detail = data && (data.detail || data.error || data.message) ? String(data.detail || data.error || data.message) : "";
+    } catch (_) {}
+    throw new Error(detail || `Request failed: ${res.status}`);
+  }
   return await res.json();
 }
 
@@ -2620,25 +2631,12 @@ function bindFileImport(btn, input, url, done) {
 
   async function loadSnapshots() {
     try {
-      if (state.source === "pair") {
-        if (!state.pair || !Array.isArray(state.pairs) || !state.pairs.length) await loadPairs();
-        rebuildPairs();
-        if (!state.pair) {
-          state.snapshots = [];
-          rebuildSnapshots();
-          showStateHint("pair");
-          return;
-        }
-        const data = await fetchJSON(`/api/editor/pairs/datasets?kind=${encodeURIComponent(state.kind)}&pair=${encodeURIComponent(state.pair)}`);
-        const dsets = Array.isArray(data && data.datasets) ? data.datasets : [];
-        state.snapshots = dsets.map(d => (d && d.name ? String(d.name) : "")).filter(Boolean);
-        const defDs = data && data.default_dataset ? String(data.default_dataset) : "";
+      if (state.source === "playlist") {
+        const data = await fetchJSON("/api/editor/playlists/endpoints");
+        state.playlistEndpoints = Array.isArray(data && data.endpoints) ? data.endpoints : [];
+        state.snapshots = state.playlistEndpoints;
         rebuildSnapshots();
-        const opts = state.snapshots;
-        const next = opts.includes(state.snapshot) ? state.snapshot : (defDs && opts.includes(defDs) ? defDs : (opts[0] || ""));
-        if (next !== state.snapshot) state.snapshot = next;
-        if (snapSel) snapSel.value = state.snapshot || "";
-        if (!state.snapshots.length) showStateHint("pair");
+        if (!state.playlistEndpoints.length) showStateHint("playlist");
         else showStateHint(null);
         return;
       }
@@ -2667,39 +2665,8 @@ function bindFileImport(btn, input, url, done) {
         else showStateHint(null);
         return;
       }
-      const data = await fetchJSON(`/api/editor/snapshots?kind=${encodeURIComponent(state.kind)}`);
-      state.snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+      state.source = "state";
       rebuildSnapshots();
-    } catch (e) {
-      console.error(e);
-    }
-  }
-
-
-  async function loadTrackerCounts() {
-    try {
-      const data = await fetchJSON("/api/maintenance/crosswatch-tracker");
-      const counts = data && data.counts ? data.counts : {};
-
-      let stateFiles = counts.state_files != null ? counts.state_files : 0;
-      let snaps = counts.snapshots != null ? counts.snapshots : 0;
-
-      if (stateFiles === 0 && snaps === 0) {
-        for (let i = 0; i < 3; i += 1) {
-          await new Promise(r => setTimeout(r, 400));
-          const d2 = await fetchJSON("/api/maintenance/crosswatch-tracker");
-          const c2 = d2 && d2.counts ? d2.counts : {};
-          stateFiles = c2.state_files != null ? c2.state_files : stateFiles;
-          snaps = c2.snapshots != null ? c2.snapshots : snaps;
-          if (stateFiles || snaps) break;
-        }
-      }
-
-      if (summaryStateFiles) summaryStateFiles.textContent = String(stateFiles);
-      if (summarySnapshots) summarySnapshots.textContent = String(snaps);
-
-      if (stateFiles === 0 && snaps === 0) showStateHint("tracker");
-      else showStateHint(null);
     } catch (e) {
       console.error(e);
     }
@@ -2719,9 +2686,9 @@ function bindFileImport(btn, input, url, done) {
   }
 
   async function loadState() {
-    if (state.source === "pair") {
-      const scope = String(state.pair || "").trim();
-      if (!scope) {
+    if (state.source === "playlist") {
+      const endpointId = String(state.snapshot || "").trim();
+      if (!endpointId) {
         state.items = {};
         state.rows = [];
         state.selected = new Set();
@@ -2729,31 +2696,41 @@ function bindFileImport(btn, input, url, done) {
         state.ridSeq = 1;
         state.hasChanges = false;
         state.page = 0;
+        state.playlistResource = null;
+        state.playlistWarnings = [];
+        state.playlistOriginalKeys = [];
         renderRows();
-        showStateHint("pair");
-        setTag("loaded", "No cache yet");
+        showStateHint("playlist");
+        setTag("loaded", "No endpoint");
         setStatus("");
+        syncActionButtons();
         return;
       }
     }
+    if (state.source !== "state" && state.source !== "playlist") state.source = "state";
     state.loading = true;
     setTag("warn", "Loading");
     try {
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
-      if (state.source === "tracker" && state.snapshot) params.set("snapshot", state.snapshot);
       if (state.source === "state" && state.snapshot) {
         params.set("provider", state.snapshot);
         params.set("provider_instance", state.instance || "default");
       }
-      if (state.source === "pair") {
-        if (state.pair) params.set("pair", state.pair);
-        if (state.snapshot) params.set("dataset", state.snapshot);
-      }
+      if (state.source === "playlist" && state.snapshot) params.set("endpoint", state.snapshot);
 
       const data = await fetchJSON(`/api/editor?${params.toString()}`);
       if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
 
-      if (state.source === "state") {
+      if (state.source === "playlist") {
+        state.playlistResource = data.resource || null;
+        state.playlistWarnings = Array.isArray(data.resource && data.resource.warnings) ? data.resource.warnings.map(String) : [];
+        state.playlistOriginalKeys = Array.isArray(data.original_keys) ? data.original_keys.map(String) : [];
+        state.items = data.items || {};
+        state.selected = new Set();
+        state.pageRids = [];
+        state.ridSeq = 1;
+        state.rows = buildRows(state.items);
+      } else if (state.source === "state") {
         if (data && typeof data.provider === "string" && data.provider.trim()) {
           state.snapshot = data.provider.trim();
           if (snapSel) {
@@ -2790,12 +2767,6 @@ function bindFileImport(btn, input, url, done) {
           row._origin = baselineKeys.has(row.key) ? "baseline" : "manual";
           if (row._origin === "baseline") row.deleted = blocked.has(row.key);
         }
-      } else {
-        state.items = data.items || {};
-        state.selected = new Set();
-        state.pageRids = [];
-        state.ridSeq = 1;
-        state.rows = buildRows(state.items);
       }
 
       state.hasChanges = false;
@@ -2807,11 +2778,14 @@ function bindFileImport(btn, input, url, done) {
         const hasManual = state.manualAdds && Object.keys(state.manualAdds).length > 0;
         const hasBlocks = Array.isArray(state.manualBlocks) && state.manualBlocks.length > 0;
         showStateHint(hasBaseline || hasManual || hasBlocks ? null : "state");
-      } else {
-        showStateHint(null);
+      } else if (state.source === "playlist") {
+        showStateHint(state.snapshot ? null : "playlist");
       }
 
       setTag("loaded", "Ready");
+      if (state.source === "playlist" && state.playlistWarnings.length) {
+        setStatus(state.playlistWarnings[0]);
+      }
     } catch (e) {
       console.error(e);
       const msg = String(e || "");
@@ -2832,6 +2806,7 @@ function bindFileImport(btn, input, url, done) {
       }
     } finally {
       state.loading = false;
+      syncActionButtons();
     }
   }
 
@@ -2870,7 +2845,7 @@ function bindFileImport(btn, input, url, done) {
 
     state.saving = true;
     setTag("warn", "Saving");
-    if (saveBtn) saveBtn.disabled = true;
+    syncActionButtons();
 
     try {
       const items = {};
@@ -2921,14 +2896,26 @@ function bindFileImport(btn, input, url, done) {
       }
 
       const payload = { kind: state.kind, source: state.source, items };
-      if (state.source === "pair") {
-        payload.pair = state.pair;
-        payload.dataset = state.snapshot;
-      }
       if (state.source === "state") {
         payload.provider = state.snapshot;
         payload.provider_instance = state.instance || "default";
         payload.blocks = blocks;
+      }
+      if (state.source === "playlist") {
+        payload.endpoint = state.snapshot;
+        const currentKeys = new Set((state.playlistOriginalKeys || []).map(String));
+        const nextKeys = new Set(Object.keys(items));
+        const removals = Array.from(currentKeys).filter(k => !nextKeys.has(k)).length;
+        if (removals && state.playlistWarnings.length) {
+          const text = state.playlistWarnings.join("\n");
+          if (!window.confirm(`${text}\n\nRemove ${removals} item${removals === 1 ? "" : "s"} from this playlist endpoint?`)) {
+            state.saving = false;
+            setTag("warn", "Unsaved changes");
+            setStatus("Save cancelled");
+            syncActionButtons();
+            return;
+          }
+        }
       }
 
       const res = await fetchJSON("/api/editor", {
@@ -2939,15 +2926,27 @@ function bindFileImport(btn, input, url, done) {
 
       state.hasChanges = false;
       setTag("warn", "Saved");
-      setStatus(`Saved ${res.count || Object.keys(items).length} items`);
-      await loadSnapshots();
+      if (state.source === "playlist") {
+        const added = Number(res.added || 0);
+        const removed = Number(res.removed || 0);
+        const reordered = Number(res.reordered || 0);
+        const unresolved = Number(res.unresolved_count || 0);
+        const parts = [`+${added}`, `-${removed}`];
+        if (reordered) parts.push(`${reordered} reordered`);
+        if (unresolved) parts.push(`${unresolved} unresolved`);
+        setStatus(`Applied playlist changes: ${parts.join(", ")}`);
+        await loadState();
+      } else {
+        setStatus(`Saved ${res.count || Object.keys(items).length} items`);
+        await loadSnapshots();
+      }
     } catch (e) {
       console.error(e);
       setTag("error", "Save failed");
       setStatus(String(e));
     } finally {
       state.saving = false;
-      if (saveBtn) saveBtn.disabled = false;
+      syncActionButtons();
     }
   }
 
@@ -2965,7 +2964,7 @@ function bindFileImport(btn, input, url, done) {
       raw,
       deleted: false,
       episode: false,
-      _origin: state.source === "state" ? "manual" : "tracker",
+      _origin: state.source === "state" ? "manual" : "playlist",
     });
     state.page = 0;
     markChanged();
@@ -3027,32 +3026,21 @@ function bindFileImport(btn, input, url, done) {
     });
   }
 
-  on(downloadBtn, "click", () => downloadFile("/api/editor/export", "crosswatch-tracker.zip", "Tracker export downloaded"));
-
-  bindFileImport(uploadBtn, uploadInput, "/api/editor/import", async data => {
-    const parts = listParts(data, [["files", "file"], ["states", "state file"], ["snapshots", "snapshot"]]);
-    let msg = "Imported " + (parts.length ? parts.join(", ") : "tracker data");
-    if (data.overwritten) msg += ` (${data.overwritten} overwritten)`;
-    setTag("loaded", "Ready");
-    setStatusSticky(msg, 5000);
-    if (window.cxToast) window.cxToast(msg);
-    await loadTrackerCounts();
-    await loadSnapshots();
-    await loadState();
-  });
-
   if (sourceSel) {
     sourceSel.addEventListener("change", async () => {
-      state.source = (sourceSel.value || "tracker").trim();
+      state.source = (sourceSel.value || "state").trim();
+      if (state.source !== "state" && state.source !== "playlist") state.source = "state";
       state.snapshot = "";
       state.page = 0;
+      if (state.source === "playlist") {
+        state.kind = "watchlist";
+        state.instance = "default";
+      }
       persistUIState();
       syncSourceUI();
       clearSelection();
       if (state.source === "state") await loadImportProviders();
       else if (importRow) syncImportUI();
-      if (state.source === "pair") await loadPairs();
-      if (state.source === "tracker") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
       await settleStateView();
@@ -3061,6 +3049,11 @@ function bindFileImport(btn, input, url, done) {
 
   if (kindSel) {
     kindSel.addEventListener("change", async () => {
+      if (state.source === "playlist") {
+        state.kind = "watchlist";
+        syncKindUI();
+        return;
+      }
       const prevKind = state.kind;
       state.kind = (kindSel.value || "watchlist").trim();
       if (prevKind === "watchlist" && state.kind !== "watchlist") {
@@ -3143,23 +3136,10 @@ if (importProviderSel) {
     });
   }
 
-  if (pairSel) {
-    pairSel.addEventListener("change", async () => {
-      state.pair = pairSel.value || "";
-      state.snapshot = "";
-      state.page = 0;
-      persistUIState();
-      await loadSnapshots();
-      await loadState();
-    });
-  }
-
   if (reloadBtn) {
     reloadBtn.addEventListener("click", async () => {
       state.snapshot = (snapSel && snapSel.value) ? snapSel.value : "";
       state.page = 0;
-      if (state.source === "pair") await loadPairs();
-      if (state.source !== "state") await loadTrackerCounts();
       await loadSnapshots();
       await loadState();
       await settleStateView();
@@ -3206,8 +3186,7 @@ if (importProviderSel) {
   });
 
   (async () => {
-    await loadTrackerAvailability();
-    if (!cwTrackerEnabled && state.source === "tracker") {
+    if (state.source !== "state" && state.source !== "playlist") {
       state.source = "state";
       state.snapshot = "";
       state.instance = "default";
@@ -3215,9 +3194,7 @@ if (importProviderSel) {
     }
     syncSourceUI();
     await loadImportProviders();
-    setTag("warn", state.source === "state" ? "Loading current state…" : state.source === "pair" ? "Loading pair cache…" : "Loading tracker state…");
-    if (state.source === "pair") await loadPairs();
-    if (state.source === "tracker") await loadTrackerCounts();
+    setTag("warn", state.source === "state" ? "Loading current state…" : "Loading playlist endpoint…");
     await loadSnapshots();
     await loadState();
     await settleStateView();

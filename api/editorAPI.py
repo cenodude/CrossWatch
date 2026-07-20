@@ -18,19 +18,13 @@ from cw_platform.id_map import canonical_key, merge_ids, minimal
 from cw_platform.modules_registry import load_sync_ops, state_read_features
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.playlists import PlaylistSnapshot, supports_playlists
+from cw_platform import playlists_runner
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
+from services import playlists as playlist_svc
 
 from services.editor import (
     Kind,
-    export_tracker_zip,
-    import_tracker_upload,
-    list_snapshots,
-    load_state,
-    save_state,
-    list_pairs,
-    list_pair_datasets,
-    load_pair_state,
-    save_pair_state,
 )
 
 router = APIRouter(prefix="/api/editor", tags=["editor"])
@@ -767,6 +761,181 @@ def _normalize_kind(val: str | None) -> Kind:
         raise HTTPException(status_code=400, detail=f"Unsupported kind: {k}")
     return k  # type: ignore[return-value]
 
+
+def _playlist_endpoint(cfg: dict[str, Any], endpoint_id: str) -> dict[str, Any]:
+    eid = str(endpoint_id or "").strip()
+    if not eid:
+        raise HTTPException(status_code=400, detail="Missing playlist endpoint")
+    ep = playlists_runner.get_endpoint(cfg, eid)
+    if not ep:
+        raise HTTPException(status_code=404, detail="Playlist endpoint not found")
+    provider = str(ep.get("provider") or "").strip().upper()
+    ops = load_sync_ops(provider)
+    if not ops or not supports_playlists(ops):
+        raise HTTPException(status_code=400, detail=f"Provider not playlist-capable: {provider or '?'}")
+    playlist_id = str(ep.get("playlist_id") or "").strip()
+    if not playlist_id:
+        raise HTTPException(status_code=400, detail="Playlist endpoint has no provider playlist id")
+    inst = normalize_instance_id(ep.get("instance"))
+    view = build_provider_config_view(cfg, provider, inst)
+    return {"endpoint": dict(ep), "provider": provider, "instance": inst, "playlist_id": playlist_id, "ops": ops, "view": view}
+
+
+def _playlist_endpoint_rows(snap: PlaylistSnapshot) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for item in snap.items or []:
+        media = dict(item.item or {})
+        try:
+            media = minimal(media)
+        except Exception:
+            pass
+        if item.playlist_item_id:
+            media["_playlist_item_id"] = item.playlist_item_id
+        if item.provider_media_id:
+            media["_provider_media_id"] = item.provider_media_id
+        if item.position is not None:
+            media["_position"] = item.position
+        key = str(item.key or canonical_key(media) or "").strip()
+        if key:
+            out[key] = media
+    return out
+
+
+def _playlist_resource_meta(resource: Any) -> dict[str, Any]:
+    extra = getattr(resource, "extra", None)
+    extra = extra if isinstance(extra, dict) else {}
+    warnings = [str(w) for w in (extra.get("warnings") or []) if str(w).strip()]
+    if extra.get("remove_warning"):
+        warnings.append(str(extra.get("remove_warning")))
+    seen: set[str] = set()
+    warnings = [w for w in warnings if not (w in seen or seen.add(w))]
+    return {
+        "id": getattr(resource, "id", ""),
+        "name": getattr(resource, "name", ""),
+        "provider": getattr(resource, "provider", ""),
+        "instance": getattr(resource, "instance", "default"),
+        "kind": getattr(resource, "kind", ""),
+        "can_read": bool(getattr(resource, "can_read", False)),
+        "can_add": bool(getattr(resource, "can_add", False)),
+        "can_remove": bool(getattr(resource, "can_remove", False)),
+        "can_reorder": bool(getattr(resource, "can_reorder", False)),
+        "smart": bool(getattr(resource, "is_smart", False)),
+        "media_types": list(getattr(resource, "media_types", ()) or []),
+        "warnings": warnings,
+        "extra": dict(extra),
+    }
+
+
+def _playlist_clean_items(items_raw: Any) -> dict[str, dict[str, Any]]:
+    items = _normalize_items(items_raw)
+    out: dict[str, dict[str, Any]] = {}
+    for key, raw in items.items():
+        item = dict(raw) if isinstance(raw, dict) else {}
+        try:
+            clean = minimal(item)
+        except Exception:
+            clean = item
+        final_key = str(canonical_key(clean) or key or "").strip()
+        if final_key:
+            out[final_key] = clean
+    return out
+
+
+def _merge_result_warnings(result: dict[str, Any], source: Any) -> None:
+    raw = source.get("warnings") if isinstance(source, dict) else []
+    values = [raw] if isinstance(raw, str) else list(raw or []) if isinstance(raw, list) else []
+    warnings = result.setdefault("warnings", [])
+    seen = {str(w) for w in warnings}
+    for value in values:
+        text = str(value or "").strip()
+        if text and text not in seen:
+            warnings.append(text)
+            seen.add(text)
+
+
+@router.get("/playlists/endpoints")
+def api_editor_playlist_endpoints() -> dict[str, Any]:
+    cfg = load_config() or {}
+    endpoints = playlist_svc.list_endpoints(cfg)
+    return {"ok": True, "endpoints": endpoints}
+
+
+@router.get("/playlists/{endpoint_id}")
+def api_editor_playlist_endpoint(endpoint_id: str) -> dict[str, Any]:
+    cfg = load_config() or {}
+    ctx = _playlist_endpoint(cfg, endpoint_id)
+    snap = ctx["ops"].get_playlist_snapshot(ctx["view"], ctx["playlist_id"], instance=ctx["instance"])
+    if not isinstance(snap, PlaylistSnapshot):
+        raise HTTPException(status_code=500, detail="Provider returned an invalid playlist snapshot")
+    items = _playlist_endpoint_rows(snap)
+    resource = _playlist_resource_meta(snap.resource)
+    return {
+        "ok": True,
+        "kind": "playlist",
+        "source": "playlist",
+        "endpoint": ctx["endpoint"],
+        "resource": resource,
+        "ts": None,
+        "checkpoint": snap.checkpoint,
+        "count": len(items),
+        "items": items,
+        "original_keys": list(items.keys()),
+    }
+
+
+@router.post("/playlists/{endpoint_id}")
+def api_editor_playlist_endpoint_save(endpoint_id: str, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    cfg = load_config() or {}
+    ctx = _playlist_endpoint(cfg, endpoint_id)
+    snap = ctx["ops"].get_playlist_snapshot(ctx["view"], ctx["playlist_id"], instance=ctx["instance"])
+    if not isinstance(snap, PlaylistSnapshot):
+        raise HTTPException(status_code=500, detail="Provider returned an invalid playlist snapshot")
+    resource = snap.resource
+    if resource.is_smart:
+        raise HTTPException(status_code=400, detail="Smart or read-only playlist endpoints cannot be edited")
+    submitted = _playlist_clean_items(payload.get("items"))
+    current = snap.by_key()
+    current_keys = set(current.keys())
+    desired_keys = list(submitted.keys())
+    desired_set = set(desired_keys)
+    add_keys = [k for k in desired_keys if k not in current_keys]
+    remove_keys = [k for k in current_keys if k not in desired_set]
+    if add_keys and not resource.can_add:
+        raise HTTPException(status_code=400, detail="Playlist endpoint does not support adding items")
+    if remove_keys and not resource.can_remove:
+        raise HTTPException(status_code=400, detail="Playlist endpoint does not support removing items")
+    result: dict[str, Any] = {
+        "ok": True,
+        "source": "playlist",
+        "endpoint_id": endpoint_id,
+        "planned_additions": len(add_keys),
+        "planned_removals": len(remove_keys),
+        "added": 0,
+        "removed": 0,
+        "reordered": 0,
+        "unresolved": [],
+        "warnings": list(_playlist_resource_meta(resource).get("warnings") or []),
+    }
+    if add_keys:
+        add_res = ctx["ops"].add_playlist_items(ctx["view"], ctx["playlist_id"], [submitted[k] for k in add_keys], instance=ctx["instance"]) or {}
+        result["added"] = int(add_res.get("count") or 0)
+        result["unresolved"].extend(add_res.get("unresolved") or [])
+        _merge_result_warnings(result, add_res)
+    if remove_keys:
+        remove_res = ctx["ops"].remove_playlist_items(ctx["view"], ctx["playlist_id"], [dict(current[k].item or {}) for k in remove_keys if k in current], instance=ctx["instance"]) or {}
+        result["removed"] = int(remove_res.get("count") or 0)
+        result["unresolved"].extend(remove_res.get("unresolved") or [])
+        _merge_result_warnings(result, remove_res)
+    final_order = [k for k in desired_keys if k in desired_set]
+    current_order = [k for k in snap.ordered_keys() if k in desired_set]
+    if resource.can_reorder and final_order and final_order != current_order:
+        reorder_res = ctx["ops"].reorder_playlist_items(ctx["view"], ctx["playlist_id"], final_order, instance=ctx["instance"]) or {}
+        result["reordered"] = int(reorder_res.get("reordered") or reorder_res.get("count") or 0)
+        _merge_result_warnings(result, reorder_res)
+    result["unresolved_count"] = len(result["unresolved"])
+    result["ok"] = result["unresolved_count"] == 0
+    return result
+
 @router.get("/state/providers")
 def api_editor_state_providers() -> dict[str, Any]:
     raw_state = _load_current_state()
@@ -778,56 +947,15 @@ def api_editor_state_providers() -> dict[str, Any]:
 def api_editor_get_state(
     kind: str = Query("watchlist"),
     snapshot: str | None = Query(None),
-    source: str = Query("tracker"),
+    source: str = Query("state"),
     provider: str | None = Query(None),
     provider_instance: str | None = Query(None),
-    pair: str | None = Query(None),
-    dataset: str | None = Query(None),
+    endpoint: str | None = Query(None),
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
-    src = (source or "tracker").strip().lower()
-    if src in ("tracker", "cw", "crosswatch"):
-        state = load_state(k, snapshot=snapshot)
-        items = state.get("items") or {}
-        if not isinstance(items, dict):
-            items = {}
-        return {
-            "kind": k,
-            "source": "tracker",
-            "snapshot": snapshot,
-            "provider": None,
-            "provider_instance": None,
-            "ts": state.get("ts"),
-            "count": len(items),
-            "items": items,
-        }
-
-    if src in ("pair", "pair-cache", "cache"):
-        scope = (pair or "").strip()
-        if not scope:
-            return {
-                "kind": k,
-                "source": "pair",
-                "pair": None,
-                "dataset": None,
-                "ts": None,
-                "count": 0,
-                "items": {},
-            }
-        ds = (dataset or snapshot or "").strip() or None
-        state = load_pair_state(k, scope, dataset=ds)
-        items = state.get("items") or {}
-        if not isinstance(items, dict):
-            items = {}
-        return {
-            "kind": k,
-            "source": "pair",
-            "pair": scope,
-            "dataset": state.get("file"),
-            "ts": state.get("ts"),
-            "count": len(items),
-            "items": items,
-        }
+    src = (source or "state").strip().lower()
+    if src in ("playlist", "playlists", "playlist-endpoint"):
+        return api_editor_playlist_endpoint((endpoint or snapshot or "").strip())
 
     if src in ("state", "current"):
         raw_state = _load_current_state()
@@ -883,31 +1011,6 @@ def api_editor_get_state(
             "manual_blocks": manual_blocks,
         }
     raise HTTPException(status_code=400, detail=f"Unsupported source: {src}")
-
-@router.get("/pairs")
-def api_editor_list_pairs() -> dict[str, Any]:
-    return list_pairs()
-
-@router.get("/pairs/datasets")
-def api_editor_pair_datasets(
-    kind: str = Query("watchlist"),
-    pair: str = Query(""),
-) -> dict[str, Any]:
-    k = _normalize_kind(kind)
-    scope = str(pair or "").strip()
-    if not scope:
-        return {"kind": k, "pair": "", "datasets": [], "default_dataset": ""}
-    dsets = list_pair_datasets(k, scope)
-    default_dataset = str(dsets[0]["name"]) if dsets else ""
-    return {"kind": k, "pair": scope, "datasets": dsets, "default_dataset": default_dataset}
-
-@router.get("/snapshots")
-def api_editor_list_snapshots(
-    kind: str = Query("watchlist"),
-) -> dict[str, Any]:
-    k = _normalize_kind(kind)
-    snaps = list_snapshots(k)
-    return {"kind": k, "snapshots": snaps}
 
 def _normalize_items(items: Any) -> dict[str, Any]:
     if isinstance(items, dict):
@@ -965,35 +1068,12 @@ def _canonicalize_manual_items(items: dict[str, Any]) -> dict[str, Any]:
 @router.post("")
 def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     kind = _normalize_kind(str(payload.get("kind") or "watchlist"))
-    src = str(payload.get("source") or "tracker").strip().lower()
+    src = str(payload.get("source") or "state").strip().lower()
     items_raw = payload.get("items")
     items = _normalize_items(items_raw)
-    if src in ("tracker", "cw", "crosswatch"):
-        state = save_state(kind, items)
-        return {
-            "ok": True,
-            "kind": kind,
-            "source": "tracker",
-            "provider": None,
-            "provider_instance": None,
-            "count": len(items),
-            "ts": state.get("ts"),
-        }
-    if src in ("pair", "pair-cache", "cache"):
-        scope = str(payload.get("pair") or "").strip()
-        if not scope:
-            raise HTTPException(status_code=400, detail="Missing pair for source=pair")
-        ds = str(payload.get("dataset") or payload.get("snapshot") or "").strip() or None
-        state = save_pair_state(kind, scope, ds, items)
-        return {
-            "ok": True,
-            "kind": kind,
-            "source": "pair",
-            "pair": scope,
-            "dataset": state.get("file"),
-            "count": len(items),
-            "ts": state.get("ts"),
-        }
+    if src in ("playlist", "playlists", "playlist-endpoint"):
+        endpoint_id = str(payload.get("endpoint") or payload.get("snapshot") or "").strip()
+        return api_editor_playlist_endpoint_save(endpoint_id, payload)
     if src in ("state", "current"):
         provider = str(payload.get("provider") or "").strip()
         if not provider:
@@ -1087,27 +1167,6 @@ async def api_editor_state_manual_import(
 
     stats = _policy_stats(merged)
     return {"ok": True, "mode": mode_n, **stats}
-
-@router.get("/export")
-def api_editor_export() -> StreamingResponse:
-    data = export_tracker_zip()
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="application/zip",
-        headers={"Content-Disposition": "attachment; filename=crosswatch-tracker.zip"},
-    )
-
-@router.post("/import")
-async def api_editor_import(file: UploadFile = File(...)) -> dict[str, Any]:
-    payload = await file.read()
-    filename = file.filename or "upload.json"
-    try:
-        stats = import_tracker_upload(payload, filename)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    return {"ok": True, **stats}
-
-
 
 def _import_enabled() -> bool:
     try:

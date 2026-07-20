@@ -43,7 +43,7 @@
 
   function normalizePrefs(p, instancesByProvider = {}) {
     const out = clone(p), f = out.features && typeof out.features === "object" ? out.features : {};
-    out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists === true };
+    out.features = { watchlist: f.watchlist !== false, ratings: f.ratings !== false, history: f.history !== false, progress: f.progress !== false, playlists: f.playlists !== false };
     out.instances = out.instances && typeof out.instances === "object" ? out.instances : {};
     out.known_instances = out.known_instances && typeof out.known_instances === "object" ? out.known_instances : {};
     for (const [prov, list] of Object.entries(instancesByProvider || {})) {
@@ -156,6 +156,10 @@
 }
 #insights-switch .seg-btn:first-child{
   border-left:0!important;
+}
+#insights-switch .seg[data-count="5"] .seg-btn{
+  padding:0 8px!important;
+  font-size:12px!important;
 }
 #insights-switch .seg-btn:hover{
   background:#272c36!important;
@@ -420,6 +424,7 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
     }
     const seg = $(".seg", host), sig = _visibleFeats.join(",");
     host.style.setProperty("--ins-feat-count", String(Math.max(1, _visibleFeats.length)));
+    if (seg) seg.dataset.count = String(Math.max(1, _visibleFeats.length));
     if (host.dataset.feats !== sig || host.dataset.cur !== _feature) {
       seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${_feature === f}">${featureLabel(f)}</button>`).join("");
       host.dataset.feats = sig;
