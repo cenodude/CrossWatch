@@ -75,7 +75,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.5"
+__VERSION__ = "1.6"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -110,6 +110,12 @@ try:
 except Exception as e:
     feat_ratings = None
     _log("feature_import_failed", level="warn", import_feature="ratings", error=str(e))
+
+try:
+    from .simkl import _playlists as feat_playlists
+except Exception as e:
+    feat_playlists = None
+    _log("feature_import_failed", level="warn", import_feature="playlists", error=str(e))
 
 
 class SIMKLError(RuntimeError):
@@ -167,13 +173,29 @@ if feat_history:
 if feat_ratings:
     _FEATURES["ratings"] = feat_ratings
 
+_PLAYLIST_CAPABILITIES = {
+    "read": True,
+    "create": False,
+    "add": True,
+    "remove": True,
+    "reorder": False,
+    "smart": False,
+    "fixed_endpoints": True,
+    "endpoint_types": ["status_bucket"],
+    "media_types": ["movie", "show", "anime"],
+    "bidirectional": True,
+    "unordered": True,
+    "destructive_remove": True,
+    "remove_warning": "Removing from a SIMKL status bucket removes the item from the full SIMKL library and clears its SIMKL rating.",
+}
+
 
 def _features_flags() -> dict[str, bool]:
     return {
         "watchlist": "watchlist" in _FEATURES,
         "ratings": "ratings" in _FEATURES,
         "history": "history" in _FEATURES,
-        "playlists": False,
+        "playlists": feat_playlists is not None,
     }
 
 
@@ -182,7 +204,7 @@ def supported_features() -> dict[str, bool]:
         "watchlist": True,
         "ratings": True,
         "history": True,
-        "playlists": False,
+        "playlists": True,
     }
     present = _features_flags()
     return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
@@ -218,6 +240,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": True,
             },
+            "playlists": dict(_PLAYLIST_CAPABILITIES),
         },
     }
 
@@ -341,6 +364,7 @@ class SIMKLModule:
             os.environ.setdefault("CW_SIMKL_DEBUG", "1")
 
         self.client = SIMKLClient(self.cfg, simkl_cfg).connect()
+        self.instance_id = "default"
         self.raw_cfg = cfg
         self.config = cfg
         self.progress_factory = (
@@ -403,7 +427,7 @@ class SIMKLModule:
             "watchlist": bool(enabled.get("watchlist") and "watchlist" in _FEATURES and core_ok),
             "ratings": bool(enabled.get("ratings") and "ratings" in _FEATURES and core_ok),
             "history": bool(enabled.get("history") and "history" in _FEATURES and core_ok),
-            "playlists": False,
+            "playlists": bool(enabled.get("playlists") and feat_playlists and core_ok),
         }
 
         if not need_core:
@@ -538,6 +562,24 @@ class SIMKLModule:
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
 
+    def prepare_source_snapshot(self, feature: str, items: Any) -> int:
+        feats = supported_features()
+        if not feats.get(feature) or feature not in _FEATURES:
+            return 0
+        mod = _FEATURES.get(feature)
+        hook = getattr(mod, "prepare_source_snapshot", None)
+        if not callable(hook):
+            return 0
+        seq = list(items.values()) if isinstance(items, Mapping) else list(items or [])
+        if not seq:
+            return 0
+        try:
+            produced = hook(seq)
+            return produced if isinstance(produced, int) else 0
+        except Exception as e:
+            _log("prepare_source_snapshot_failed", feature=feature, error=str(e))
+            return 0
+
     def add(
         self,
         feature: str,
@@ -586,9 +628,51 @@ class SIMKLModule:
         if not mod:
             _log("write_skipped", feature=feature, level="info", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
+        if feature == "history":
+            setattr(self, "_simkl_history_remove_confirmed_keys", [])
+            setattr(self, "_simkl_history_remove_skipped_keys", [])
         count, unresolved = mod.remove(self, lst)
-        confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
-        return {"ok": True, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+        exact_confirmed = getattr(self, "_simkl_history_remove_confirmed_keys", None) if feature == "history" else None
+        exact_skipped = getattr(self, "_simkl_history_remove_skipped_keys", None) if feature == "history" else None
+        if isinstance(exact_confirmed, list):
+            confirmed_keys = [str(k) for k in exact_confirmed if k]
+            count = len(confirmed_keys)
+        else:
+            confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
+        accounted = set(confirmed_keys)
+        for u in (unresolved or []):
+            obj: Any = u
+            if isinstance(u, Mapping):
+                if isinstance(u.get("key"), str) and u.get("key"):
+                    accounted.add(str(u.get("key")))
+                    continue
+                if "item" in u:
+                    obj = u.get("item")
+            if isinstance(obj, str) and obj:
+                accounted.add(obj)
+                continue
+            if isinstance(obj, Mapping):
+                try:
+                    k = str(self.key_of(obj) or "").strip()
+                except Exception:
+                    k = ""
+                if k:
+                    accounted.add(k)
+        unaccounted = 0
+        for it in lst:
+            try:
+                k = str(self.key_of(it) or "").strip()
+            except Exception:
+                k = ""
+            if k and k not in accounted:
+                unaccounted += 1
+        if unaccounted:
+            _log("write_incomplete", feature=feature, level="warn", op="remove",
+                 attempted=len(lst), confirmed=len(confirmed_keys), unaccounted=unaccounted)
+        out = {"ok": not unaccounted, "count": int(count), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+        if isinstance(exact_skipped, list):
+            out["skipped_keys"] = [str(k) for k in exact_skipped if k]
+        return out
 class _SIMKLOPS:
     def name(self) -> str:
         return "SIMKL"
@@ -617,6 +701,7 @@ class _SIMKLOPS:
                 "index_semantics": "present",
                 "observed_deletes": True,
             },
+            "playlists": dict(_PLAYLIST_CAPABILITIES),
         }
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
@@ -645,6 +730,11 @@ class _SIMKLOPS:
     def _adapter(self, cfg: Mapping[str, Any]) -> SIMKLModule:
         return SIMKLModule(cfg)
 
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None = None) -> SIMKLModule:
+        adapter = self._adapter(cfg)
+        adapter.instance_id = str(instance or "default").strip() or "default"
+        return adapter
+
     def build_index(
         self,
         cfg: Mapping[str, Any],
@@ -652,6 +742,15 @@ class _SIMKLOPS:
         feature: str,
     ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
+
+    def prepare_source_snapshot(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+        items: Any,
+    ) -> int:
+        return self._adapter(cfg).prepare_source_snapshot(feature, items)
 
     def add(
         self,
@@ -678,5 +777,72 @@ class _SIMKLOPS:
 
     def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
         return self._adapter(cfg).dropped_show_tokens()
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
+        if feat_playlists is None:
+            return []
+        return feat_playlists.list_resources(self._playlist_adapter(cfg, instance))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def create_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        name: str,
+        *,
+        media_type: str | None = None,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, dry_run=dry_run)
+
+    def add_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True}
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        warning = _PLAYLIST_CAPABILITIES["remove_warning"]
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "warnings": [warning]}
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        ordered_keys: Iterable[str],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
 
 OPS = _SIMKLOPS()

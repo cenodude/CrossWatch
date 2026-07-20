@@ -647,6 +647,29 @@ def _maybe_backfill_anilist_shadow(
             collisions=int(collisions),
         )
 
+def prepare_source_snapshot(
+    ops: Any,
+    *,
+    config: Mapping[str, Any],
+    feature: str,
+    items: Mapping[str, Mapping[str, Any]],
+    dbg: Callable[..., Any] | None = None,
+) -> bool:
+    """Offer the normalized source items to a provider before its own index is built."""
+    hook = getattr(ops, "prepare_source_snapshot", None)
+    if not callable(hook) or not items:
+        return False
+    try:
+        hook(config, feature=feature, items=items)
+    except Exception as e:
+        if dbg is not None:
+            dbg("snapshot.prepare_failed", feature=feature, error=str(e))
+        return False
+    if dbg is not None:
+        dbg("snapshot.prepared", feature=feature, count=len(items))
+    return True
+
+
 def build_snapshots_for_feature(
     *,
     feature: str,
@@ -656,12 +679,25 @@ def build_snapshots_for_feature(
     snap_ttl_sec: int,
     dbg: Callable[..., Any],
     emit_info: Callable[[str], Any],
+    build_order: "list[str] | tuple[str, ...] | None" = None,
+    on_snapshot: Callable[[str, SnapIndex], Any] | None = None,
 ) -> dict[str, SnapIndex]:
     snaps: dict[str, SnapIndex] = {}
     now = time.time()
     allowed = allowed_providers_for_feature(config, feature)
 
-    for name, ops in providers.items():
+    ordered: list[tuple[str, InventoryOps]] = []
+    if build_order:
+        seen: set[str] = set()
+        for want in build_order:
+            if want in providers and want not in seen:
+                seen.add(want)
+                ordered.append((want, providers[want]))
+        ordered.extend((n, o) for n, o in providers.items() if n not in seen)
+    else:
+        ordered = list(providers.items())
+
+    for name, ops in ordered:
         try:
             feats_raw = ops.features()  # type: ignore[call-arg]
         except Exception:
@@ -691,6 +727,8 @@ def build_snapshots_for_feature(
                 if (now - ts) < snap_ttl_sec:
                     snaps[name] = cached_idx
                     dbg("snapshot.memo", provider=name, feature=feature, count=_eventish_count(feature, cached_idx), raw_count=len(cached_idx))
+                    if on_snapshot is not None:
+                        on_snapshot(name, cached_idx)
                     continue
 
         try:
@@ -717,6 +755,8 @@ def build_snapshots_for_feature(
                 snap_cache[memo_key] = (now, canon)
 
         dbg("snapshot", provider=name, feature=feature, count=_eventish_count(feature, canon), raw_count=len(canon))
+        if on_snapshot is not None:
+            on_snapshot(name, canon)
 
     _maybe_backfill_anilist_shadow(snaps, feature=feature, dbg=dbg)
     return snaps

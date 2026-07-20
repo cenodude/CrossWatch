@@ -9,7 +9,7 @@ import os
 import re
 import datetime as _dt
 
-from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, select_baseline_keys
+from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, is_remove_retry_reason, select_baseline_keys
 
 try:
     from ._pairs_oneway import (
@@ -78,6 +78,7 @@ from ._snapshots import (
     coerce_suspect_snapshot,
     module_checkpoint,
     needs_post_apply_refresh,
+    prepare_source_snapshot,
     provider_index_semantics,
     prev_checkpoint,
     refresh_destination_after_apply,
@@ -85,7 +86,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._tombstones import clear_items_for_feature, keys_for_feature
-from ._unresolved import load_unresolved_keys, record_unresolved, clear_unresolved
+from ._unresolved import load_unresolved_keys, load_unresolved_pending, record_unresolved, clear_unresolved
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
 from ._pairs_blocklist import apply_blocklist
@@ -387,10 +388,23 @@ def _two_way_sync(
 
     pair_providers = {a: aops, b: bops}
 
+    if str(a).strip().upper() == "SIMKL" and str(b).strip().upper() != "SIMKL":
+        build_order = [b, a]
+        prep_after, prep_ops = b, aops
+    else:
+        build_order = [a, b]
+        prep_after, prep_ops = a, bops
+
+    def _on_snapshot(name: str, idx: Mapping[str, Any]) -> None:
+        if name != prep_after:
+            return
+        prepare_source_snapshot(prep_ops, config=provider_cfg, feature=feature, items=idx, dbg=dbg)
+
     snaps = build_snapshots_for_feature(
         feature=feature, config=provider_cfg, providers=pair_providers,
         snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
         dbg=dbg, emit_info=info,
+        build_order=build_order, on_snapshot=_on_snapshot,
     )
     A_cur = snaps.get(a) or {}
     B_cur = snaps.get(b) or {}
@@ -1412,6 +1426,59 @@ def _two_way_sync(
         add_to_A = [it for it in add_to_A if not _present(A_eff, A_alias, it)]
         add_to_B = [it for it in add_to_B if not _present(B_eff, B_alias, it)]
 
+    def _retry_pending_removes(
+        dst_name: str,
+        dst_eff: dict[str, Any],
+        dst_alias: dict[str, str],
+        src_eff: dict[str, Any],
+        src_alias: dict[str, str],
+        planned_items: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        if not allow_removals:
+            return planned_items
+        planned = {k for k in (_ck(it) for it in planned_items) if k}
+        retry: list[dict[str, Any]] = []
+        stale: list[str] = []
+        try:
+            pending = load_unresolved_pending(dst_name, feature)
+        except Exception:
+            pending = []
+        for rec in pending or []:
+            if not isinstance(rec, Mapping) or not is_remove_retry_reason(rec.get("reason")):
+                continue
+            item = rec.get("item")
+            key = str(rec.get("key") or "")
+            if not isinstance(item, Mapping):
+                continue
+            if _present(src_eff, src_alias, item):
+                if key:
+                    stale.append(key)
+                continue
+            dv = _find_in_idx(dst_eff, dst_alias, item)
+            if not dv:
+                if key:
+                    stale.append(key)
+                continue
+            rk = _ck(dv) or _ck(item)
+            if not rk or rk in planned:
+                continue
+            planned.add(rk)
+            retry.append(_minimal(dv))
+        if stale and not dry_run_flag:
+            try:
+                clear_unresolved(dst_name, feature, stale)
+            except Exception:
+                pass
+        if retry:
+            emit("debug", msg="unresolved.remove_retry", feature=feature, dst=dst_name, count=len(retry))
+        return list(planned_items) + retry
+
+    rem_from_A = _retry_pending_removes(a, A_eff, A_alias, B_eff, B_alias, rem_from_A)
+    rem_from_B = _retry_pending_removes(b, B_eff, B_alias, A_eff, A_alias, rem_from_B)
+    retry_remove_keys = {k for k in (_ck(it) for it in (rem_from_A or []) + (rem_from_B or [])) if k}
+    add_to_A = [it for it in add_to_A if _ck(it) not in retry_remove_keys]
+    add_to_B = [it for it in add_to_B if _ck(it) not in retry_remove_keys]
+
     rem_from_A = _maybe_block_massdelete(
         rem_from_A, baseline_size=len(A_eff),
         allow_mass_delete=allow_mass_delete,
@@ -1432,6 +1499,10 @@ def _two_way_sync(
 
     resA_rem: dict[str, Any] = {"ok": True, "count": 0}
     resB_rem: dict[str, Any] = {"ok": True, "count": 0}
+    eff_rem_A = 0
+    eff_rem_B = 0
+    remove_unresolved_A = 0
+    remove_unresolved_B = 0
     remA_keys = [_ck(_minimal(it)) for it in (rem_from_A or []) if _ck(_minimal(it))]
     remB_keys = [_ck(_minimal(it)) for it in (rem_from_B or []) if _ck(_minimal(it))]
 
@@ -1466,6 +1537,7 @@ def _two_way_sync(
     if rem_from_A:
         if a_down:
             record_unresolved(a, feature, rem_from_A, hint="provider_down:remove")
+            remove_unresolved_A = len(set(remA_keys))
             emit("writes:skipped", dst=a, feature=feature, reason="provider_down", op="remove", count=len(rem_from_A))
         else:
             emit("two:apply:remove:A:start", dst=a, feature=feature, count=len(rem_from_A))
@@ -1474,30 +1546,44 @@ def _two_way_sync(
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, a), chunk_pause_ms=_pause_for(a),
             )
-            prov_count_A = _confirmed(resA_rem)
-            if prov_count_A and not dry_run_flag:
-                removed_now = 0
-                for k in remA_keys:
-                    if k in A_eff:
-                        A_eff.pop(k, None)
-                        removed_now += 1
-                        if removed_now >= prov_count_A:
-                            break
-                _mark_tombs(rem_from_A)
+            decA_rem = compute_effective_remove(
+                attempted_keys=remA_keys,
+                provider_confirmed_count=_confirmed(resA_rem),
+                provider_confirmed_keys=[str(x) for x in ((resA_rem or {}).get("confirmed_keys") or []) if x],
+                provider_unresolved_count=int((resA_rem or {}).get("unresolved", 0)),
+                provider_errors=int((resA_rem or {}).get("errors", 0)),
+            )
+            okA_keys = list(decA_rem["success_keys"])
+            eff_rem_A = len(okA_keys)
+            remove_unresolved_A = max(int((resA_rem or {}).get("unresolved", 0)), len(decA_rem["failed_keys"]))
+            if okA_keys and not dry_run_flag:
+                okA_set = set(okA_keys)
+                for k in okA_keys:
+                    A_eff.pop(k, None)
+                _mark_tombs([it for it in rem_from_A if _ck(_minimal(it)) in okA_set])
                 _bust_snapshot(a)
+                clear_unresolved(a, feature, okA_keys)
+            if decA_rem["failed_keys"] and not dry_run_flag:
+                failA = set(decA_rem["failed_keys"])
+                record_unresolved(
+                    a, feature,
+                    [it for it in rem_from_A if _ck(_minimal(it)) in failA],
+                    hint="two:apply:remove:unconfirmed",
+                )
 
             emit("two:apply:remove:A:done", dst=a, feature=feature,
-                 count=_confirmed(resA_rem),
+                 count=eff_rem_A,
                  attempted=int(resA_rem.get("attempted", 0)),
-                 removed=_confirmed(resA_rem),
+                 removed=eff_rem_A,
                  skipped=int(resA_rem.get("skipped", 0)),
-                 unresolved=int(resA_rem.get("unresolved", 0)),
+                 unresolved=remove_unresolved_A,
                  errors=int(resA_rem.get("errors", 0)),
                  result=resA_rem)
 
     if rem_from_B:
         if b_down:
             record_unresolved(b, feature, rem_from_B, hint="provider_down:remove")
+            remove_unresolved_B = len(set(remB_keys))
             emit("writes:skipped", dst=b, feature=feature, reason="provider_down", op="remove", count=len(rem_from_B))
         else:
             emit("two:apply:remove:B:start", dst=b, feature=feature, count=len(rem_from_B))
@@ -1506,24 +1592,37 @@ def _two_way_sync(
                 dry_run=dry_run_flag, emit=emit, dbg=dbg,
                 chunk_size=effective_chunk_size(ctx, b), chunk_pause_ms=_pause_for(b),
             )
-            prov_count_B = _confirmed(resB_rem)
-            if prov_count_B and not dry_run_flag:
-                removed_now = 0
-                for k in remB_keys:
-                    if k in B_eff:
-                        B_eff.pop(k, None)
-                        removed_now += 1
-                        if removed_now >= prov_count_B:
-                            break
-                _mark_tombs(rem_from_B)
+            decB_rem = compute_effective_remove(
+                attempted_keys=remB_keys,
+                provider_confirmed_count=_confirmed(resB_rem),
+                provider_confirmed_keys=[str(x) for x in ((resB_rem or {}).get("confirmed_keys") or []) if x],
+                provider_unresolved_count=int((resB_rem or {}).get("unresolved", 0)),
+                provider_errors=int((resB_rem or {}).get("errors", 0)),
+            )
+            okB_keys = list(decB_rem["success_keys"])
+            eff_rem_B = len(okB_keys)
+            remove_unresolved_B = max(int((resB_rem or {}).get("unresolved", 0)), len(decB_rem["failed_keys"]))
+            if okB_keys and not dry_run_flag:
+                okB_set = set(okB_keys)
+                for k in okB_keys:
+                    B_eff.pop(k, None)
+                _mark_tombs([it for it in rem_from_B if _ck(_minimal(it)) in okB_set])
                 _bust_snapshot(b)
+                clear_unresolved(b, feature, okB_keys)
+            if decB_rem["failed_keys"] and not dry_run_flag:
+                failB = set(decB_rem["failed_keys"])
+                record_unresolved(
+                    b, feature,
+                    [it for it in rem_from_B if _ck(_minimal(it)) in failB],
+                    hint="two:apply:remove:unconfirmed",
+                )
 
             emit("two:apply:remove:B:done", dst=b, feature=feature,
-                 count=_confirmed(resB_rem),
+                 count=eff_rem_B,
                  attempted=int(resB_rem.get("attempted", 0)),
-                 removed=_confirmed(resB_rem),
+                 removed=eff_rem_B,
                  skipped=int(resB_rem.get("skipped", 0)),
-                 unresolved=int(resB_rem.get("unresolved", 0)),
+                 unresolved=remove_unresolved_B,
                  errors=int(resB_rem.get("errors", 0)),
                  result=resB_rem)
 
@@ -2053,8 +2152,8 @@ def _two_way_sync(
     emit("two:done", a=a, b=b, feature=feature,
          upd_to_A=eff_upd_A, upd_to_B=eff_upd_B,
          adds_to_A=eff_add_A, adds_to_B=eff_add_B,
-         rem_from_A=_confirmed(resA_rem),
-         rem_from_B=_confirmed(resB_rem))
+         rem_from_A=eff_rem_A,
+         rem_from_B=eff_rem_B)
 
     skipped_total = int(resA_upd.get("skipped", 0)) + int(resB_upd.get("skipped", 0)) + \
                     int(resA_add.get("skipped", 0)) + int(resB_add.get("skipped", 0)) + \
@@ -2062,19 +2161,21 @@ def _two_way_sync(
     errors_total = int(resA_upd.get("errors", 0)) + int(resB_upd.get("errors", 0)) + \
                    int(resA_add.get("errors", 0)) + int(resB_add.get("errors", 0)) + \
                    int(resA_rem.get("errors", 0)) + int(resB_rem.get("errors", 0))
-    unresolved_total = int(unresolved_new_A_total) + int(unresolved_new_B_total)
+    unresolved_A_total = int(unresolved_new_A_total) + int(remove_unresolved_A)
+    unresolved_B_total = int(unresolved_new_B_total) + int(remove_unresolved_B)
+    unresolved_total = unresolved_A_total + unresolved_B_total
 
     return {
         "ok": True, "feature": feature, "a": a, "b": b,
         "upd_to_A": eff_upd_A, "upd_to_B": eff_upd_B,
         "adds_to_A": eff_add_A, "adds_to_B": eff_add_B,
-        "rem_from_A": _confirmed(resA_rem),
-        "rem_from_B": _confirmed(resB_rem),
+        "rem_from_A": eff_rem_A,
+        "rem_from_B": eff_rem_B,
         "resA_update": resA_upd, "resB_update": resB_upd,
         "resA_add": resA_add, "resB_add": resB_add,
         "resA_remove": resA_rem, "resB_remove": resB_rem,
-        "unresolved_to_A": int(unresolved_new_A_total),
-        "unresolved_to_B": int(unresolved_new_B_total),
+        "unresolved_to_A": unresolved_A_total,
+        "unresolved_to_B": unresolved_B_total,
         "unresolved": unresolved_total,
         "skipped": skipped_total,
         "errors": errors_total,
