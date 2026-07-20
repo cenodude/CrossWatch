@@ -110,6 +110,49 @@ def compute_effective_add(
     }
 
 
+def compute_effective_remove(
+    *,
+    attempted_keys,
+    provider_confirmed_count,
+    provider_confirmed_keys,
+    provider_unresolved_count=0,
+    provider_errors=0,
+) -> dict[str, Any]:
+    attempted = [str(k) for k in (attempted_keys or []) if k]
+    exact = {str(k) for k in (provider_confirmed_keys or []) if k}
+    if exact:
+        success = [k for k in attempted if k in exact]
+        return {
+            "effective": len(success),
+            "ambiguous": False,
+            "have_exact_keys": True,
+            "success_keys": success,
+            "failed_keys": [k for k in attempted if k not in exact],
+        }
+    pc = int(provider_confirmed_count or 0)
+    clean = int(provider_unresolved_count or 0) == 0 and int(provider_errors or 0) == 0
+    if attempted and pc == len(attempted) and clean:
+        return {
+            "effective": len(attempted),
+            "ambiguous": False,
+            "have_exact_keys": False,
+            "success_keys": list(attempted),
+            "failed_keys": [],
+        }
+    return {
+        "effective": 0,
+        "ambiguous": bool(attempted) and pc > 0,
+        "have_exact_keys": False,
+        "success_keys": [],
+        "failed_keys": list(attempted),
+    }
+
+
+def is_remove_retry_reason(reason) -> bool:
+    r = str(reason or "").strip().lower()
+    return r.startswith("apply:remove") or r.startswith("two:apply:remove") or r.startswith("provider_down:remove")
+
+
 def select_baseline_keys(success_keys, result) -> list:
     presence_raw = (result or {}).get("presence_confirmed_keys")
     if isinstance(presence_raw, list):
@@ -132,13 +175,14 @@ from ._snapshots import (
     coerce_suspect_snapshot,
     module_checkpoint,
     needs_post_apply_refresh,
+    prepare_source_snapshot,
     provider_index_semantics,
     prev_checkpoint,
     refresh_destination_after_apply,
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._unresolved import load_unresolved_keys, load_unresolved_map, record_unresolved, clear_unresolved
+from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved
 from ._planner import diff, diff_ratings, diff_progress, _pick_rating
 from ._phantoms import PhantomGuard
 from ._tombstones import clear_items_for_feature
@@ -838,6 +882,17 @@ def run_one_way_feature(
 
     pair_providers = {src: src_ops, dst: dst_ops}
 
+    def _on_snapshot(name: str, idx: Mapping[str, Any]) -> None:
+        if name != src:
+            return
+        prepare_source_snapshot(
+            dst_ops,
+            config=provider_cfg,
+            feature=feature,
+            items=idx,
+            dbg=dbg,
+        )
+
     snaps = build_snapshots_for_feature(
         feature=feature,
         config=provider_cfg,
@@ -846,6 +901,8 @@ def run_one_way_feature(
         snap_ttl_sec=ctx.snap_ttl_sec,
         dbg=dbg,
         emit_info=ctx.emit_info,
+        build_order=[src, dst],
+        on_snapshot=_on_snapshot,
     )
 
     src_cur = snaps.get(src) or {}
@@ -1181,6 +1238,44 @@ def run_one_way_feature(
                     pass
         else:
             removes = _observed_source_removes()
+
+        if not dst_suspect:
+            planned = {k for k in (_ck(it) for it in removes) if k}
+            retry_removes: list[dict[str, Any]] = []
+            stale_pending: list[str] = []
+            try:
+                pending = load_unresolved_pending(dst, feature)
+            except Exception:
+                pending = []
+            for rec in pending or []:
+                if not isinstance(rec, Mapping) or not is_remove_retry_reason(rec.get("reason")):
+                    continue
+                item = rec.get("item")
+                key = str(rec.get("key") or "")
+                if not isinstance(item, Mapping):
+                    continue
+                if _present(src_idx, src_alias, item):
+                    if key:
+                        stale_pending.append(key)
+                    continue
+                dv = _find_in_idx(dst_full, dst_alias, item)
+                if not dv:
+                    if key:
+                        stale_pending.append(key)
+                    continue
+                rk = _ck(dv) or _ck(item)
+                if not rk or rk in planned:
+                    continue
+                planned.add(rk)
+                retry_removes.append(_minimal(dv))
+            if stale_pending and not bool(ctx.dry_run or sync_cfg.get("dry_run", False)):
+                try:
+                    clear_unresolved(dst, feature, stale_pending)
+                except Exception:
+                    pass
+            if retry_removes:
+                removes = list(removes) + retry_removes
+                emit("debug", msg="unresolved.remove_retry", feature=feature, dst=dst, count=len(retry_removes))
 
     if not allow_adds:
         adds = []
@@ -1523,16 +1618,26 @@ def run_one_way_feature(
     removed_count = 0
     rem_keys_attempted: list[str] = []
     res_remove: dict[str, Any] = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+    rem_key2item: dict[str, dict[str, Any]] = {}
     if removes:
         try:
-            rem_keys_attempted = [
-                _ck(_minimal(it)) for it in removes if _ck(_minimal(it))
-            ]
+            for it in removes:
+                k = _ck(_minimal(it))
+                if k:
+                    rem_key2item.setdefault(k, it)
+            rem_keys_attempted = list(rem_key2item.keys())
         except Exception:
             rem_keys_attempted = []
 
         if dst_down:
             record_unresolved(dst, feature, removes, hint="provider_down:remove")
+            res_remove = {
+                "attempted": len(rem_keys_attempted),
+                "confirmed": 0,
+                "skipped": 0,
+                "unresolved": len(rem_keys_attempted),
+                "errors": 0,
+            }
             emit("writes:skipped", dst=dst, feature=feature, reason="provider_down", op="remove", count=len(removes))
         else:
             rem_res = apply_remove(
@@ -1547,14 +1652,27 @@ def run_one_way_feature(
                 chunk_size=effective_chunk_size(ctx, dst),
                 chunk_pause_ms=_pause_for(dst),
             )
-            removed_count = int((rem_res or {}).get("confirmed", (rem_res or {}).get("count", 0)) or 0)
+            _rem_decision = compute_effective_remove(
+                attempted_keys=rem_keys_attempted,
+                provider_confirmed_count=int((rem_res or {}).get("confirmed", (rem_res or {}).get("count", 0)) or 0),
+                provider_confirmed_keys=[str(x) for x in ((rem_res or {}).get("confirmed_keys") or []) if x],
+                provider_unresolved_count=int((rem_res or {}).get("unresolved", 0)),
+                provider_errors=int((rem_res or {}).get("errors", 0)),
+            )
+            rem_success_keys = list(_rem_decision["success_keys"])
+            rem_failed_keys = list(_rem_decision["failed_keys"])
+            removed_count = len(rem_success_keys)
             res_remove = {
                 "attempted": int((rem_res or {}).get("attempted", 0)),
-                "confirmed": int((rem_res or {}).get("confirmed", (rem_res or {}).get("count", 0)) or 0),
+                "confirmed": removed_count,
                 "skipped": int((rem_res or {}).get("skipped", 0)),
-                "unresolved": int((rem_res or {}).get("unresolved", 0)),
+                "unresolved": max(int((rem_res or {}).get("unresolved", 0)), len(rem_failed_keys)),
                 "errors": int((rem_res or {}).get("errors", 0)),
             }
+            if _rem_decision["ambiguous"]:
+                emit("debug", msg="remove.ambiguous_partial", feature=feature, dst=dst,
+                     attempted=len(rem_keys_attempted),
+                     provider_confirmed=int((rem_res or {}).get("confirmed", 0)))
 
             if removed_count and not dry_run_flag:
                 try:
@@ -1564,11 +1682,12 @@ def run_one_way_feature(
                     ks = t.setdefault("keys", {})
 
                     removed_tokens = set()
-                    for it in (removes or []):
+                    for k in rem_success_keys:
+                        it = rem_key2item.get(k)
+                        if not it:
+                            continue
                         try:
-                            ck = _ck(_minimal(it))
-                            if ck:
-                                removed_tokens.add(ck)
+                            removed_tokens.add(k)
                             ids = (it.get("ids") or {})
                             for idk, idv in (ids or {}).items():
                                 if idv is None or str(idv) == "":
@@ -1586,10 +1705,24 @@ def run_one_way_feature(
                 except Exception:
                     pass
             if not dry_run_flag and removed_count:
-                for k in rem_keys_attempted:
+                for k in rem_success_keys:
                     if k in dst_full:
                         dst_full.pop(k, None)
                 _bust_snapshot(dst)
+                try:
+                    clear_unresolved(dst, feature, rem_success_keys)
+                except Exception:
+                    pass
+            if not dry_run_flag and rem_failed_keys:
+                try:
+                    record_unresolved(
+                        dst,
+                        feature,
+                        [rem_key2item[k] for k in rem_failed_keys if k in rem_key2item],
+                        hint="apply:remove:unconfirmed",
+                    )
+                except Exception:
+                    pass
 
     if (not dry_run_flag) and (not dst_down) and needs_post_apply_refresh(post_apply_add_res):
         _r = post_apply_add_res or {}
@@ -1718,8 +1851,7 @@ def run_one_way_feature(
     emit("feature:done", src=src, dst=dst, feature=feature)
 
     unresolved_total = (
-        int((res_update or {}).get("unresolved", 0))
-        + int(unresolved_new_total)
+        int(unresolved_new_total)
         + int((res_remove or {}).get("unresolved", 0))
     )
 

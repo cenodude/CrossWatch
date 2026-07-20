@@ -14,6 +14,7 @@ __all__ = [
     "load_unresolved_keys",
     "load_unresolved_map",
     "load_unresolved_items",
+    "load_unresolved_pending",
     "record_unresolved",
     "clear_unresolved",
 ]
@@ -254,6 +255,36 @@ def load_unresolved_items(dst: str | None = None) -> list[dict[str, Any]]:
     return list(out.values())
 
 
+def load_unresolved_pending(dst: str, feature: str) -> list[dict[str, Any]]:
+    if not dst or not feature:
+        return []
+    data = _read_json(_pending_path(dst, feature))
+    if not isinstance(data, dict):
+        return []
+    raw_items = data.get("items")
+    items: dict[str, Any] = raw_items if isinstance(raw_items, dict) else {}
+    raw_hints = data.get("hints")
+    hints: dict[str, Any] = raw_hints if isinstance(raw_hints, dict) else {}
+    keys = data.get("keys")
+    key_iter = keys if isinstance(keys, list) else list(items.keys())
+
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw_ck in key_iter:
+        ck = str(raw_ck or "").strip()
+        if not ck or ck in seen:
+            continue
+        seen.add(ck)
+        hint = hints.get(ck)
+        reason = str(hint.get("reason") or "").strip() if isinstance(hint, Mapping) else ""
+        rec: dict[str, Any] = {"key": ck, "reason": reason, "feature": str(feature).strip().lower()}
+        item = items.get(ck)
+        if isinstance(item, Mapping):
+            rec["item"] = dict(item)
+        out.append(rec)
+    return out
+
+
 # Write helpers
 def _to_ck_and_min(
     item: str | Mapping[str, Any],
@@ -328,9 +359,9 @@ def record_unresolved(
         if ck not in existing:
             data["keys"].append(ck)
             existing.add(ck)
-            if min_item is not None:
-                data["items"][ck] = min_item
             added += 1
+        if min_item is not None:
+            data["items"][ck] = min_item
 
         effective_hint = item_hint or hint
         if effective_hint:

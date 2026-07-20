@@ -326,7 +326,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
             out[opt] = item.get(opt)
 
     # Preserve provider-specific raw history ids
-    for opt in ("_trakt_history_id", "history_id"):
+    for opt in ("_trakt_history_id", "history_id", "simkl_bucket", "anime_type", "_simkl_episode_number"):
         if opt in item and item.get(opt) not in (None, ""):
             out[opt] = item.get(opt)
 
