@@ -40,7 +40,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "2.0"
+__VERSION__ = "2.1"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -108,7 +108,26 @@ except Exception as e:
     if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
         _warn("feature_import_failed", feature="progress", error=str(e))
 
-feat_playlists = None
+try:
+    from .plex import _playlists as feat_playlists
+except Exception as e:
+    feat_playlists = None
+    if os.environ.get("CW_DEBUG") or os.environ.get("CW_PLEX_DEBUG"):
+        _warn("feature_import_failed", feature="playlists", error=str(e))
+
+_PLAYLIST_CAPABILITIES: dict[str, Any] = {
+    "read": True,
+    "create": True,
+    "add": True,
+    "remove": True,
+    "reorder": True,
+    "smart": True,
+    "smart_writable": False,
+    "media_types": ["movie", "show", "episode"],
+    "endpoint_types": ["playlist", "collection"],
+    "ordered_endpoint_types": ["playlist"],
+    "unordered_endpoint_types": ["watchlist", "collection"],
+}
 
 
 class PLEXError(RuntimeError):
@@ -469,7 +488,7 @@ def get_manifest() -> Mapping[str, Any]:
         "version": __VERSION__,
         "type": "sync",
         "bidirectional": True,
-        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": False, "progress": True},
+        "features": {"watchlist": True, "history": True, "ratings": True, "playlists": True, "progress": True},
         "requires": ["plexapi"],
         "capabilities": {
             "bidirectional": True,
@@ -483,6 +502,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
 @dataclass
@@ -1069,7 +1089,6 @@ _FEATURES: dict[str, Any] = {
     "watchlist": feat_watchlist,
     "history": feat_history,
     "ratings": feat_ratings,
-    "playlists": feat_playlists,
     "progress": feat_progress,
 }
 
@@ -1080,7 +1099,7 @@ def _features_flags() -> dict[str, bool]:
         "history": "history" in _FEATURES and _FEATURES["history"] is not None,
         "ratings": "ratings" in _FEATURES and _FEATURES["ratings"] is not None,
         "progress": "progress" in _FEATURES and _FEATURES["progress"] is not None,
-        "playlists": "playlists" in _FEATURES and _FEATURES["playlists"] is not None,
+        "playlists": feat_playlists is not None,
     }
 
 
@@ -1120,6 +1139,7 @@ class PLEXModule:
                 pass
 
         self.client = PLEXClient(self.cfg).connect()
+        self.instance_id = "default"
         self.progress_factory = (
             lambda feature, total=None, throttle_ms=300: make_snapshot_progress(
                 ctx,
@@ -1132,7 +1152,7 @@ class PLEXModule:
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
-        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": False, "progress": True}
+        toggles = {"watchlist": True, "ratings": True, "history": True, "playlists": True, "progress": True}
         present = _features_flags()
         return {k: bool(toggles.get(k, False) and present.get(k, False)) for k in toggles.keys()}
 
@@ -1412,6 +1432,7 @@ class _PlexOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "playlists": _PLAYLIST_CAPABILITIES,
         }
 
     def index_semantics(self, cfg: Mapping[str, Any], *, feature: str) -> str | None:
@@ -1490,6 +1511,89 @@ class _PlexOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def _pl(self) -> Any:
+        if feat_playlists is None:
+            raise PLEXError("Plex playlists feature is unavailable")
+        return feat_playlists
+
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None):
+        from cw_platform.provider_instances import normalize_instance_id
+
+        ad = self._adapter(cfg)
+        try:
+            ad.instance_id = normalize_instance_id(instance)
+        except Exception:
+            ad.instance_id = "default"
+        return ad
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
+        if feat_playlists is None:
+            return []
+        return list(self._pl().list_resources(self._playlist_adapter(cfg, instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
+        return self._pl().get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def create_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        name: str,
+        *,
+        media_type: str | None = None,
+        items: Iterable[Mapping[str, Any]] | None = None,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        return self._pl().create(
+            self._playlist_adapter(cfg, instance),
+            name,
+            media_type=media_type,
+            items=list(items or []),
+            dry_run=dry_run,
+        )
+
+    def add_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return self._pl().add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        items: Iterable[Mapping[str, Any]],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return self._pl().remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        ordered_keys: Iterable[str],
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        keys = list(ordered_keys or [])
+        if dry_run:
+            return {"ok": True, "count": 0, "dry_run": True}
+        return self._pl().reorder(self._playlist_adapter(cfg, instance), playlist_id, keys)
 
 
 OPS = _PlexOPS()

@@ -983,6 +983,14 @@ def playlist_remove_entries(http: Any, playlist_id: str, entry_ids: Iterable[str
     return getattr(r, "status_code", 0) in (200, 204)
 
 
+def playlist_move_item(http: Any, playlist_id: str, item_id: str, new_index: int) -> bool:
+    iid = str(item_id or "").strip()
+    if not iid:
+        return True
+    r = http.post(f"/Playlists/{playlist_id}/Items/{iid}/Move/{max(0, int(new_index))}")
+    return getattr(r, "status_code", 0) in (200, 204)
+
+
 # collections (BoxSets)
 def find_seed_item_id(http: Any, user_id: str) -> str | None:
     for t in ("Movie", "Series"):
