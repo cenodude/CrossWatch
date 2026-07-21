@@ -10,7 +10,8 @@
     ["app_state", "Normal"],
     ["full", "Full"]
   ];
-  const state = { backups: [], schedule: {}, selected: "", controlsHeight: {}, rowStatus: {}, message: "", mode: "manual", refreshing: false };
+  const state = { backups: [], schedule: {}, selected: "", controlsHeight: {}, rowStatus: {}, rowFlash: {}, message: "", mode: "manual", refreshing: false };
+  const flashTimers = {};
 
   function $(id){ return document.getElementById(id); }
 
@@ -53,6 +54,31 @@
   }
 
   function icon(name){ return el("span", { class: "material-symbols-rounded br-icon", text: name }); }
+
+  function flashRowIcon(path, action, ok){
+    const key = `${path}::${action}`;
+    state.rowFlash[key] = ok ? "ok" : "fail";
+    renderBody();
+    clearTimeout(flashTimers[key]);
+    flashTimers[key] = setTimeout(() => {
+      delete state.rowFlash[key];
+      delete flashTimers[key];
+      renderBody();
+    }, 1500);
+  }
+
+  function rowAction(path, action, title, glyph, handler, extraClass){
+    const flash = state.rowFlash[`${path}::${action}`];
+    const shown = flash === "ok" ? "check" : flash === "fail" ? "close" : glyph;
+    const cls = ["br-iconbtn", extraClass, flash ? `flash is-${flash}` : ""].filter(Boolean).join(" ");
+    return el("button", {
+      class: cls,
+      type: "button",
+      title,
+      "aria-label": title,
+      on: { click: (e) => { e.stopPropagation(); handler(path); } }
+    }, [icon(shown)]);
+  }
 
   function fmtBytes(n){
     const v = Number(n || 0);
@@ -111,6 +137,15 @@ html[data-cw-theme=flat-light] #cw-backups-modal{--br-overlay:rgba(15,23,42,.42)
 #cw-backups-modal .br-icon{font-size:20px;line-height:1}
 #cw-backups-modal .br-iconbtn.spin .br-icon{animation:brspin .8s linear infinite}
 @keyframes brspin{to{transform:rotate(360deg)}}
+#cw-backups-modal .br-iconbtn.danger{color:#f08a97;border-color:rgba(216,102,114,.42)}
+#cw-backups-modal .br-iconbtn.danger:hover{background:rgba(216,102,114,.16);border-color:rgba(216,102,114,.66);color:#ffd9df}
+#cw-backups-modal .br-iconbtn.flash{pointer-events:none}
+#cw-backups-modal .br-iconbtn.flash.is-ok{background:rgba(46,168,89,.18);border-color:rgba(0,224,132,.62);color:#7ef0b4}
+#cw-backups-modal .br-iconbtn.flash.is-fail{background:rgba(209,52,47,.18);border-color:rgba(255,112,124,.62);color:#ff9aa5}
+#cw-backups-modal .br-iconbtn.flash.is-ok .br-icon{animation:brpop .45s cubic-bezier(.16,.84,.22,1)}
+#cw-backups-modal .br-iconbtn.flash.is-fail .br-icon{animation:brshake .5s ease}
+@keyframes brpop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.18);opacity:1}100%{transform:scale(1);opacity:1}}
+@keyframes brshake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
 #cw-backups-modal .br-body{flex:1 1 auto;min-height:0;padding:14px;display:grid;grid-template-rows:minmax(145px,var(--br-controls-height,215px)) 10px minmax(0,1fr);grid-template-columns:minmax(0,1fr);gap:8px;overflow:hidden}
 #cw-backups-modal .br-panel{min-width:0;min-height:0;border:1px solid var(--br-border);border-radius:12px;background:var(--br-panel);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
 #cw-backups-modal .br-controls{padding:12px;display:grid;grid-template-rows:auto minmax(0,1fr);gap:10px;overflow:hidden}
@@ -243,7 +278,7 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
       ]),
       el("button", { class: "br-close", type: "button", title: "Close", "aria-label": "Close", on: { click: close } }, [icon("close")])
     ]);
-    const body = el("div", { class: "br-body", id: "br-body" });
+    const body = el("div", { class: "br-body cw-scrollbars", id: "br-body" });
     dialog.appendChild(head);
     dialog.appendChild(body);
     modal.appendChild(dialog);
@@ -261,11 +296,14 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
   function renderBody(){
     const body = $("br-body");
     if (!body) return;
+    const listTop = $("br-list")?.scrollTop || 0;
     body.replaceChildren();
     applySplitHeight(body);
     body.appendChild(renderControls());
     body.appendChild(renderSplitter(body));
     body.appendChild(renderListPanel());
+    const list = $("br-list");
+    if (list && listTop) list.scrollTop = listTop;
   }
 
   function splitMode(){
@@ -438,7 +476,7 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
       }, [icon("refresh")])
     ]));
     renderStatus(panel);
-    const list = el("div", { class: "br-list", id: "br-list" });
+    const list = el("div", { class: "br-list cw-scrollbars", id: "br-list" });
     if (!state.backups.length) {
       list.appendChild(el("div", { class: "br-row" }, [el("div", { class: "br-main" }, [el("div", { class: "br-name", text: "No backups yet" }), el("div", { class: "br-meta" }, [el("span", { text: "Create one manually or enable the schedule." })])])]));
     } else {
@@ -465,10 +503,10 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
       main.appendChild(el("div", { class: `br-row-note ${note.kind || ""}`, text: note.text }));
     }
     const actions = el("div", { class: "br-row-actions" }, [
-      el("button", { class: "br-iconbtn", type: "button", title: "Download", "aria-label": "Download", on: { click: (e) => { e.stopPropagation(); downloadBackup(path); } } }, [icon("download")]),
-      el("button", { class: "br-iconbtn", type: "button", title: "Validate", "aria-label": "Validate", on: { click: (e) => { e.stopPropagation(); validateBackup(path); } } }, [icon("verified")]),
-      el("button", { class: "br-iconbtn", type: "button", title: "Restore", "aria-label": "Restore", on: { click: (e) => { e.stopPropagation(); restoreBackup(path); } } }, [icon("settings_backup_restore")]),
-      el("button", { class: "br-iconbtn", type: "button", title: "Delete", "aria-label": "Delete", on: { click: (e) => { e.stopPropagation(); deleteBackup(path); } } }, [icon("delete")])
+      rowAction(path, "download", "Download", "download", downloadBackup),
+      rowAction(path, "validate", "Validate", "verified", validateBackup),
+      rowAction(path, "restore", "Restore", "settings_backup_restore", restoreBackup),
+      rowAction(path, "delete", "Delete", "delete", deleteBackup, "danger")
     ]);
     row.appendChild(main);
     row.appendChild(actions);
@@ -522,6 +560,7 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
   function downloadBackup(path){
     if (!path) return;
     window.location.href = `/api/backups/download?path=${encodeURIComponent(path)}`;
+    flashRowIcon(path, "download", true);
   }
 
   async function validateBackup(path){
@@ -533,10 +572,10 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
       state.rowStatus[path] = errors.length
         ? { kind: "warn", text: `Validation found ${errors.length} issue(s).` }
         : { kind: "ok", text: "Successfully validated." };
-      renderBody();
+      flashRowIcon(path, "validate", !errors.length);
     } catch (e) {
       state.rowStatus[path] = { kind: "warn", text: `Validation failed: ${e.message || e}` };
-      renderBody();
+      flashRowIcon(path, "validate", false);
     }
   }
 
@@ -548,9 +587,11 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
       toast("Restoring backup...");
       await postJSON("/api/backups/restore", { path, restart: true });
       toast("Restore applied. Restarting...");
+      flashRowIcon(path, "restore", true);
       setTimeout(() => { try { window.location.reload(); } catch {} }, 2400);
     } catch (e) {
       toast(`Restore failed: ${e.message || e}`, 4200);
+      flashRowIcon(path, "restore", false);
     }
   }
 
@@ -560,9 +601,11 @@ body.br-backups-open #save-fab,body.br-backups-open #save-frost{display:none!imp
     try {
       await postJSON("/api/backups/delete", { path });
       toast("Backup deleted");
-      await refresh();
+      flashRowIcon(path, "delete", true);
+      setTimeout(() => { refresh().catch(() => {}); }, 800);
     } catch (e) {
       toast(`Delete failed: ${e.message || e}`, 3200);
+      flashRowIcon(path, "delete", false);
     }
   }
 

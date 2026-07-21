@@ -189,11 +189,13 @@ def html() -> str:
               <div>
                 <label for="publicmetadb_key">API Key</label>
                 <input id="publicmetadb_key" name="publicmetadb_key" type="password" placeholder="pm-..." />
-                <div id="publicmetadb_hint" class="msg warn" style="margin-top:8px">
-                  Create an API key in
-                  <a href="https://publicmetadb.com" target="_blank" rel="noopener">PublicMetaDB Settings &gt; API</a>.
-                </div>
               </div>
+            </div>
+
+            <div id="publicmetadb_hint" class="msg warn" style="margin-top:8px">
+              <span class="cw-hint-body">
+                <span class="cw-hint-line"><span>Create an API key in <a href="https://publicmetadb.com" target="_blank" rel="noopener">PublicMetaDB Settings &gt; API</a></span></span>
+              </span>
             </div>
 
             <div class="publicmetadb-actions">
