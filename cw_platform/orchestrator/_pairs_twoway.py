@@ -9,7 +9,7 @@ import os
 import re
 import datetime as _dt
 
-from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, is_remove_retry_reason, select_baseline_keys
+from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, is_remove_retry_reason, resolve_baseline_writes, select_baseline_keys
 
 try:
     from ._pairs_oneway import (
@@ -408,6 +408,7 @@ def _two_way_sync(
     )
     A_cur = snaps.get(a) or {}
     B_cur = snaps.get(b) or {}
+
 
     prev_state = getattr(ctx, "_stable_prev_state", None)
     if not prev_state:
@@ -1836,11 +1837,10 @@ def _two_way_sync(
                 pass
             
             baseline_keys_A = select_baseline_keys(success_A, resA_add)
-            if baseline_keys_A and not dry_run_flag:
-                for k in baseline_keys_A:
-                    v = k2i_A.get(k)
-                    if v:
-                        A_eff[k] = v
+            baseline_writes_A = resolve_baseline_writes(baseline_keys_A, k2i_A, resA_add)
+            if baseline_writes_A and not dry_run_flag:
+                for dk, item in baseline_writes_A:
+                    A_eff[dk] = item
                 _bust_snapshot(a)
             post_apply_A_res = resA_add
             emit("two:apply:add:A:done", dst=a, feature=feature,
@@ -1969,11 +1969,10 @@ def _two_way_sync(
                 pass
             
             baseline_keys_B = select_baseline_keys(success_B, resB_add)
-            if baseline_keys_B and not dry_run_flag:
-                for k in baseline_keys_B:
-                    v = k2i_B.get(k)
-                    if v:
-                        B_eff[k] = v
+            baseline_writes_B = resolve_baseline_writes(baseline_keys_B, k2i_B, resB_add)
+            if baseline_writes_B and not dry_run_flag:
+                for dk, item in baseline_writes_B:
+                    B_eff[dk] = item
                 _bust_snapshot(b)
             post_apply_B_res = resB_add
             emit("two:apply:add:B:done", dst=b, feature=feature,
@@ -2055,8 +2054,8 @@ def _two_way_sync(
             pf = _ensure_pf(pmap, prov, inst, feat)
             pf["checkpoint"] = chk
 
-        # Normalize key drift so state doesn't inflate.
-        if feature in ("history", "ratings", "progress"):
+        # Normalize key drift so state doesn't inflate. History baselines stay provider-native.
+        if feature in ("ratings", "progress"):
             def _merge_payload(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
                 out = dict(base or {})
                 for k, v in (extra or {}).items():

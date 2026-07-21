@@ -16,7 +16,10 @@ _PASSTHROUGH_KEY_LISTS = (
     "accepted_not_seen_live_keys",
     "date_confirmed_keys",
     "date_mismatch_keys",
+    "removed_destination_keys",
 )
+
+_PASSTHROUGH_KEY_MAPS = ("confirmed_destinations",)
 
 def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5) -> Any:
     last = None
@@ -139,6 +142,11 @@ def _normalize(
     unresolved_list = res.get("unresolved") or []
     unresolved_keys: list[str] = []
 
+    try:
+        from ..id_map import canonical_key as _ckey  # type: ignore
+    except Exception:  # pragma: no cover
+        _ckey = None  # type: ignore
+
     if isinstance(unresolved_list, list) and unresolved_list:
         def _unwrap(x: Mapping[str, Any]) -> tuple[Mapping[str, Any], str | None]:
             inner = x.get("item")
@@ -191,28 +199,31 @@ def _normalize(
             show_ids = (x or {}).get("show_ids") or {}
             return any(show_ids.get(k) for k in _id_keys)
 
-        try:
-            from ..id_map import canonical_key as _ckey  # type: ignore
-        except Exception:  # pragma: no cover
-            _ckey = None  # type: ignore
-
         # Extract unresolved canonical keys for the orchestrator (used for blackbox/flap decisions).
-        try:
-            for raw in unresolved_list:
-                if not isinstance(raw, Mapping):
-                    continue
-                item_u, _ = _unwrap(raw)
-                if not isinstance(item_u, Mapping):
-                    continue
-                if _ckey:
-                    try:
-                        k = _ckey(item_u) or ""
-                    except Exception:
-                        k = ""
-                    if k:
-                        unresolved_keys.append(str(k))
-        except Exception:
-            pass
+        provider_ukeys = res.get("unresolved_keys")
+        if isinstance(provider_ukeys, list) and provider_ukeys:
+            unresolved_keys.extend(str(k) for k in provider_ukeys if k)
+        else:
+            try:
+                for raw in unresolved_list:
+                    if not isinstance(raw, Mapping):
+                        continue
+                    explicit = raw.get("key")
+                    if isinstance(explicit, str) and explicit.strip():
+                        unresolved_keys.append(explicit.strip())
+                        continue
+                    item_u, _ = _unwrap(raw)
+                    if not isinstance(item_u, Mapping):
+                        continue
+                    if _ckey:
+                        try:
+                            k = _ckey(item_u) or ""
+                        except Exception:
+                            k = ""
+                        if k:
+                            unresolved_keys.append(str(k))
+            except Exception:
+                pass
 
         # Persist unresolved items so the operator can inspect them.
         try:
@@ -246,7 +257,39 @@ def _normalize(
     skipped_reported_raw = res.get("skipped")
     skipped_exact = len(skeys)
     inferred_remainder = max(0, attempted - int(confirmed) - unresolved - errors)
-    if skipped_reported_raw is not None:
+    exact_basis = bool(res.get("ambiguous")) or (tag == "apply:add" and bool(ckeys))
+    if exact_basis:
+        skipped = skipped_exact
+        skipped_inferred = 0
+        skip_basis = "provider_keys_exact"
+        accounted = set(ckeys) | set(skeys) | set(unresolved_keys)
+        leftover: list[Mapping[str, Any]] = []
+        for it in items:
+            if not isinstance(it, Mapping):
+                continue
+            k = ""
+            if _ckey:
+                try:
+                    k = str(_ckey(it) or "")
+                except Exception:
+                    k = ""
+            if k and k in accounted:
+                continue
+            leftover.append(it)
+            if k:
+                unresolved_keys.append(k)
+        if leftover:
+            unresolved += len(leftover)
+            try:
+                record_unresolved(
+                    dst,
+                    feature,
+                    [dict(it) for it in leftover],
+                    hint=f"{tag}:unaccounted",
+                )
+            except Exception:
+                pass
+    elif skipped_reported_raw is not None:
         skipped = max(0, int(skipped_reported_raw or 0))
         skipped_inferred = 0
         skip_basis = "provider_keys+count" if skeys else "provider_count"
@@ -254,6 +297,9 @@ def _normalize(
         skipped = inferred_remainder
         skipped_inferred = max(0, skipped - skipped_exact)
         skip_basis = "provider_keys+inferred_remainder" if skeys else "inferred_remainder"
+    if unresolved_keys:
+        _seen: set[str] = set()
+        unresolved_keys = [k for k in unresolved_keys if k and (k not in _seen and not _seen.add(k))]
     out = {
         "ok": ok,
         "attempted": attempted,
@@ -273,6 +319,10 @@ def _normalize(
         v = res.get(f)
         if isinstance(v, list):
             out[f] = [str(x) for x in v if x]
+    for f in _PASSTHROUGH_KEY_MAPS:
+        v = res.get(f)
+        if isinstance(v, Mapping):
+            out[f] = {str(k): dict(vv) if isinstance(vv, Mapping) else vv for k, vv in v.items()}
     rc = res.get("reason_counts")
     if isinstance(rc, Mapping):
         out["reason_counts"] = dict(rc)
@@ -338,6 +388,10 @@ def _apply_chunked(
             v = res.get(f)
             if isinstance(v, list):
                 agg.setdefault(f, []).extend(v)
+        for f in _PASSTHROUGH_KEY_MAPS:
+            v = res.get(f)
+            if isinstance(v, Mapping):
+                agg.setdefault(f, {}).update(v)
         rc = res.get("reason_counts")
         if isinstance(rc, Mapping):
             agg_rc = agg.setdefault("reason_counts", {})

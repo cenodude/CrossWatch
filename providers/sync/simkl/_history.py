@@ -411,6 +411,20 @@ def _with_native_identity(item: Mapping[str, Any], info: Mapping[str, Any] | Non
     return out
 
 
+_INJECT_GRACE_SEC = 3600
+
+
+def _has_expired_injection(cached: Mapping[str, Any]) -> bool:
+    now_epoch = int(time.time())
+    for v in (cached or {}).values():
+        if not isinstance(v, Mapping):
+            continue
+        injected_at = _int_or_none(v.get("_cw_injected_at"))
+        if injected_at is not None and (now_epoch - injected_at) > _INJECT_GRACE_SEC:
+            return True
+    return False
+
+
 def _inject_adds_into_cache(items_list: list[Mapping[str, Any]]) -> None:
     """Inject newly-written items into the history cache immediately after a write.
 
@@ -459,6 +473,7 @@ def _inject_adds_into_cache(items_list: list[Mapping[str, Any]]) -> None:
             anime_type = str(item.get("anime_type") or "").strip().lower()
             if anime_type:
                 entry["anime_type"] = anime_type
+        entry["_cw_injected_at"] = int(time.time())
         to_inject[event_key] = entry
 
     if not to_inject:
@@ -1207,6 +1222,9 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         removal_changed = bool(removed_wm) and any(t > removed_wm for t in removal_candidates)
 
         unchanged = bool(wm) and (not act_latest or act_latest <= wm) and not removal_changed
+        if unchanged and cached and _has_expired_injection(cached):
+            unchanged = False
+            _dbg("index_reconcile", reason="injected_grace_expired", strategy="full_replace")
         if unchanged and cached:
             _dbg("index_cache_hit", source="cache", reason="activities_unchanged", watermark=wm, count=len(cached))
             _info("index_done", count=len(cached), source="cache")
@@ -1227,16 +1245,10 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         date_from: str | None = None
         strategy = "full"
         reason = "cold_start"
-    elif removal_changed:
-        # removed_from_list changed: full fetch to get current state, replace cache
+    else:
         date_from = None
         strategy = "full_replace"
-        reason = "removed_from_list_changed"
-    else:
-        # Activities changed: delta fetch from watermark, merge into cache
-        date_from = wm
-        strategy = "delta"
-        reason = "activities_changed"
+        reason = "removed_from_list_changed" if removal_changed else "activities_changed"
 
     _dbg("index_reconcile", reason=reason, strategy=strategy, date_from=date_from or "-", watermark=wm or "-")
 
@@ -1267,32 +1279,28 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
     _dedupe_history_movies(fetched)
     _dbg("index_fetch_counts", movies=movies_cnt, episodes=eps_cnt, from_date=date_from or "")
 
-    # An empty delta is complete: retain the cache and let the activity
-    # watermark advance below. Do not turn it into another full-library call.
-    if strategy == "delta" and not fetched and (movies_cnt == 0 and eps_cnt == 0):
-        _dbg(
-            "index_reconcile",
-            reason="incremental_empty",
-            strategy="delta_keep_cache",
-            watermark=wm or "-",
-        )
-
-    # Build final index
-    if strategy == "delta":
-        final = {str(k): dict(v) for k, v in cached.items() if isinstance(v, Mapping)}
-        final.update(fetched)
-        _dedupe_history_movies(final)
-    else:
-        final = fetched
+    final = fetched
+    carried = 0
+    now_epoch = int(time.time())
+    for k, v in cached.items():
+        if k in final or not isinstance(v, Mapping):
+            continue
+        injected_at = _int_or_none(v.get("_cw_injected_at"))
+        if injected_at is None or (now_epoch - injected_at) > _INJECT_GRACE_SEC:
+            continue
+        final[str(k)] = dict(v)
+        carried += 1
+    if carried:
+        _dbg("index_reconcile", reason="injected_write_grace", carried=carried, strategy=strategy)
 
     _cache_save(final)
 
     # Update watermarks
     latest_any = max([t for t in (latest_ts_movies, latest_ts_shows, latest_ts_anime) if isinstance(t, int)], default=None)
-    if latest_any is not None:
-        update_watermark_if_new("history", _as_iso(latest_any))
-    elif act_latest:
+    if act_latest:
         update_watermark_if_new("history", act_latest)
+    elif latest_any is not None:
+        update_watermark_if_new("history", _as_iso(latest_any))
 
     # Initialize watermark
     removal_candidates = [t for t in (rm_m, rm_s, rm_a) if isinstance(t, str) and t]

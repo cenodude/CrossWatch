@@ -583,6 +583,23 @@ class TRAKTModule:
         mod = _FEATURES.get(feature)
         return mod.build_index(self, **kwargs) if mod else {}
 
+    def prepare_source_snapshot(self, feature: str, items: Any) -> int:
+        if str(feature or "").lower() != "history" or feature not in _FEATURES:
+            return 0
+        mod = _FEATURES.get(feature)
+        hook = getattr(mod, "prepare_source_snapshot", None)
+        if not callable(hook):
+            return 0
+        seq = list(items.values()) if isinstance(items, Mapping) else list(items or [])
+        if not seq:
+            return 0
+        try:
+            produced = hook(seq)
+            return produced if isinstance(produced, int) else 0
+        except Exception as e:
+            _warn(feature, "prepare_source_snapshot_failed", error=str(e))
+            return 0
+
     def add(
         self,
         feature: str,
@@ -605,6 +622,18 @@ class TRAKTModule:
         try:
             skipped_keys: list[str] = []
             res = mod.add(self, lst)
+
+            if isinstance(res, dict) and isinstance(res.get("confirmed_keys"), list):
+                exact = [str(x) for x in (res.get("confirmed_keys") or []) if x]
+                out: dict[str, Any] = dict(res)
+                out["ok"] = bool(res.get("ok", True))
+                out["count"] = len(exact)
+                out["unresolved"] = res.get("unresolved") or []
+                out["confirmed_keys"] = exact
+                sk = out.get("skipped_keys")
+                if isinstance(sk, list) and sk:
+                    out["skipped"] = len(sk)
+                return out
 
             if isinstance(res, tuple):
                 if len(res) == 2:
@@ -629,7 +658,7 @@ class TRAKTModule:
                     sk = set(skipped_keys)
                     confirmed_keys = [k for k in confirmed_keys if k not in sk]
 
-            out: dict[str, Any] = {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            out = {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
             if skipped_keys:
                 out["skipped_keys"] = skipped_keys
                 out["skipped"] = len(skipped_keys)
@@ -657,7 +686,13 @@ class TRAKTModule:
             _warn(feature, "write_skipped", op="remove", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
         try:
-            cnt, unresolved = mod.remove(self, lst)
+            raw = mod.remove(self, lst)
+            if isinstance(raw, Mapping):
+                out = dict(raw)
+                out.setdefault("ok", True)
+                out.setdefault("confirmed_keys", [])
+                return out
+            cnt, unresolved = raw
             confirmed_keys = _confirmed_keys(self.key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
         except Exception as e:
@@ -714,6 +749,40 @@ class _TraktOPS:
         feature: str,
     ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
+
+    def prepare_source_snapshot(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+        items: Any,
+    ) -> int:
+        return TRAKTModule(cfg, connect=False).prepare_source_snapshot(feature, items)
+
+    def destination_comparison_view(
+        self,
+        cfg: Mapping[str, Any],
+        *,
+        feature: str,
+        index: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        if str(feature or "").lower() != "history":
+            return index
+        mod = _FEATURES.get(feature)
+        hook = getattr(mod, "destination_comparison_view", None)
+        if not callable(hook):
+            return index
+        try:
+            adapter = None
+            try:
+                adapter = self._adapter(cfg)
+            except Exception as e:
+                _warn(feature, "destination_comparison_adapter_failed", error=str(e))
+            out = hook(index, adapter)
+            return out if isinstance(out, Mapping) else index
+        except Exception as e:
+            _warn(feature, "destination_comparison_failed", error=str(e))
+            return index
 
     def add(
         self,
