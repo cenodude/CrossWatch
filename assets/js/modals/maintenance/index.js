@@ -175,13 +175,6 @@ const GROUPS = [
     keys: ["state", "cache"],
   },
   {
-    id: "archive",
-    icon: "inventory_2",
-    title: "Archive & Recovery",
-    desc: "Manage CW Tracker state, snapshots and archive files.",
-    keys: ["tracker"],
-  },
-  {
     id: "playback",
     icon: "play_circle",
     title: "Playback",
@@ -201,6 +194,13 @@ const GROUPS = [
     title: "Events",
     desc: "Check, optimize and rebuild the event history archive.",
     keys: ["events-health", "events-optimize", "events-rebuild"],
+  },
+  {
+    id: "archive",
+    icon: "inventory_2",
+    title: "Archive & Recovery",
+    desc: "Manage CW Tracker state, snapshots and archive files.",
+    keys: ["tracker"],
   },
   {
     id: "captures",
@@ -325,13 +325,6 @@ export default {
                   </button>
                   <button type="button" class="category-run-btn" data-run-group="sync" aria-label="Run all Sync tools">Run</button>
                 </div>
-                <div class="side-nav-item" data-group="archive">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-archive">
-                    <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
-                    <span>Archive & Recovery</span>
-                  </button>
-                  <button type="button" class="category-run-btn" data-run-group="archive" aria-label="Run all Archive and Recovery tools">Run</button>
-                </div>
                 <div class="side-nav-item" data-group="playback">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-playback">
                     <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
@@ -351,6 +344,13 @@ export default {
                     <span class="material-symbols-rounded" aria-hidden="true">history</span>
                     <span>Events</span>
                   </button>
+                </div>
+                <div class="side-nav-item" data-group="archive">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-archive">
+                    <span class="material-symbols-rounded" aria-hidden="true">inventory_2</span>
+                    <span>Archive & Recovery</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="archive" aria-label="Run all Archive and Recovery tools">Run</button>
                 </div>
                 <div class="side-nav-item" data-group="captures">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-captures">
