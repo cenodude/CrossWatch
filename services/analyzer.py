@@ -2033,6 +2033,161 @@ def _history_show_index(s: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]
     return out
 
 
+
+def _minute_epoch(value: Any) -> int | None:
+    ts = _parse_epochish(value)
+    return None if ts is None else ts // 60
+
+
+def _alias_destination_key(rec: Mapping[str, Any]) -> str:
+    dest = str(rec.get("destination_key") or "").strip()
+    if dest:
+        return dest
+    event = str(rec.get("destination_event_key") or "").strip()
+    return event.split("@", 1)[0] if event else ""
+
+
+def _pair_alias_scope_key(pair: Mapping[str, Any], index: int, mode: str, src: str, dst: str, si: str, ti: str) -> str:
+    mode_norm = "two-way" if str(mode or "").strip().lower() in (
+        "two-way", "two_way", "two way", "bi", "both", "mirror", "two"
+    ) else "one-way"
+    a = f"{src}#{si}"
+    b = f"{dst}#{ti}"
+    base = "-".join(sorted([a, b])) if mode_norm == "two-way" else f"{a}-{b}"
+    raw_id = pair.get("id") or pair.get("pair_id") or pair.get("name") or pair.get("label") or ""
+    pid = str(raw_id).strip() or str(index)
+    return f"{mode_norm}:{base}:{pid}"
+
+
+def _expected_alias_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+    out: dict[str, tuple[str, str]] = {}
+    for index, pair in enumerate(cfg.get("pairs") or []):
+        if not isinstance(pair, Mapping) or pair.get("enabled") is False:
+            continue
+        src = str(pair.get("src") or pair.get("source") or "").upper().strip()
+        dst = str(pair.get("dst") or pair.get("target") or "").upper().strip()
+        if not (src and dst):
+            continue
+        si = normalize_instance_id(pair.get("src_instance") or pair.get("source_instance"))
+        ti = normalize_instance_id(pair.get("dst_instance") or pair.get("target_instance"))
+        mode = str(pair.get("mode") or "one-way")
+        key = _pair_alias_scope_key(pair, index, mode, src, dst, si, ti)
+        src_tok = _prov_token(src, si)
+        dst_tok = _prov_token(dst, ti)
+        out[f"{key}|{src}>{dst}"] = (src_tok, dst_tok)
+        if key.startswith("two-way:"):
+            out[f"{key}|{dst}>{src}"] = (dst_tok, src_tok)
+    return out
+
+
+def _history_pair_alias_index(
+    pairs: Mapping[tuple[str, str], list[str]],
+    cfg: Mapping[str, Any] | None = None,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    if not CWS_DIR.exists() or not CWS_DIR.is_dir():
+        return out
+
+    allowed = {
+        (src, dst)
+        for (src, feat), targets in (pairs or {}).items()
+        if str(feat or "").lower() == "history"
+        for dst in targets
+    }
+    if not allowed:
+        return out
+
+    expected = _expected_alias_scopes(cfg or {})
+
+    for path in sorted(CWS_DIR.glob("*history.pair_alias*.json")):
+        try:
+            doc = json.loads(path.read_text("utf-8"))
+        except Exception:
+            continue
+        if not isinstance(doc, Mapping):
+            continue
+        scoped = expected.get(str(doc.get("scope") or "").strip())
+        if scoped is None or scoped not in allowed:
+            continue
+        items = doc.get("items")
+        if not isinstance(items, Mapping):
+            continue
+
+        entry = out.setdefault(scoped, {"by_event": {}, "by_minute": {}, "by_plain": {}, "ambiguous": set()})
+        for src_event_key, rec in items.items():
+            if not isinstance(rec, Mapping):
+                continue
+            dest_key = _alias_destination_key(rec)
+            if not dest_key:
+                continue
+            event_key = str(src_event_key or "").strip()
+            if not event_key:
+                continue
+            base, _, stamp = event_key.partition("@")
+            entry["by_event"][event_key] = dest_key
+            minute = _minute_epoch(rec.get("watched_at"))
+            if minute is None and stamp:
+                minute = _minute_epoch(stamp)
+            if minute is not None:
+                entry["by_minute"][(base, minute)] = dest_key
+            if base in entry["by_plain"] and entry["by_plain"][base] != dest_key:
+                entry["ambiguous"].add(base)
+            else:
+                entry["by_plain"][base] = dest_key
+
+    for entry in out.values():
+        for base in entry["ambiguous"]:
+            entry["by_plain"].pop(base, None)
+    return out
+
+
+def _history_key_index(s: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for prov, feat, key, item in _iter_items(s):
+        if feat != "history" or not isinstance(item, dict):
+            continue
+        out.setdefault(_norm_prov_token(prov), {})[str(key)] = item
+    return out
+
+
+def _alias_peer_key(
+    ctx: "_AnalysisContext",
+    src_tok: str,
+    dst_tok: str,
+    item_key: str,
+    item: Mapping[str, Any],
+) -> str | None:
+    entry = (ctx.history_pair_aliases or {}).get((src_tok, dst_tok))
+    if not entry:
+        return None
+    base = str(item_key or "").split("@", 1)[0]
+    if not base:
+        return None
+    minute = _minute_epoch(item.get("watched_at"))
+    ts = _parse_epochish(item.get("watched_at"))
+    if ts is not None:
+        hit = entry["by_event"].get(f"{base}@{ts}")
+        if hit:
+            return hit
+    if minute is not None:
+        hit = entry["by_minute"].get((base, minute))
+        if hit:
+            return hit
+    return entry["by_plain"].get(base)
+
+
+def _alias_peer_present(ctx: "_AnalysisContext", dst_tok: str, dest_key: str, item: Mapping[str, Any]) -> bool:
+    dest_items = (ctx.history_keys or {}).get(dst_tok) or {}
+    dest_item = dest_items.get(dest_key)
+    if not isinstance(dest_item, Mapping):
+        return False
+    src_minute = _minute_epoch(item.get("watched_at"))
+    dst_minute = _minute_epoch(dest_item.get("watched_at"))
+    if src_minute is not None and dst_minute is not None and src_minute != dst_minute:
+        return False
+    return True
+
+
 @dataclass
 class _AnalysisContext:
     state: dict[str, Any]
@@ -2043,19 +2198,24 @@ class _AnalysisContext:
     pair_libs: dict[tuple[str, str, str], set[str]]
     pair_types: dict[tuple[str, str, str], set[str]]
     history_show_index: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    history_pair_aliases: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
+    history_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _AnalysisContext:
     config = cfg if cfg is not None else _cfg()
+    pairs = _pair_map(config, s)
     return _AnalysisContext(
         state=s,
         cfg=config,
-        pairs=_pair_map(config, s),
+        pairs=pairs,
         aliases=_indices_for(s),
         history_exact=_history_exact_indices(s),
         pair_libs=_pair_lib_filters(config),
         pair_types=_pair_type_filters(config),
         history_show_index=_history_show_index(s),
+        history_pair_aliases=_history_pair_alias_index(pairs, config),
+        history_keys=_history_key_index(s),
     )
 
 
@@ -2080,6 +2240,9 @@ def _target_has_peer(
     # For history episodes/seasons, exact show+season+episode identity wins over
     # generic alias overlap: provider episode IDs differ across Emby/Jellyfin.
     if feat_key == "history":
+        alias_dest = _alias_peer_key(ctx, prov_key, dst_key, item_key, item)
+        if alias_dest:
+            return _alias_peer_present(ctx, dst_key, alias_dest, item)
         exact_key = _history_exact_key(item)
         if exact_key is not None:
             return exact_key in (ctx.history_exact.get(dst_key) or set())
@@ -2121,6 +2284,7 @@ def _has_peer_by_pairs(
     idx_cache: dict[tuple[str, str], dict[str, str]],
     pair_libs: dict[tuple[str, str, str], set[str]] | None = None,
     pair_types: dict[tuple[str, str, str], set[str]] | None = None,
+    cfg: dict[str, Any] | None = None,
 ) -> bool:
     if feat not in ("history", "watchlist", "ratings", "progress"):
         return True
@@ -2133,12 +2297,14 @@ def _has_peer_by_pairs(
 
     ctx = _AnalysisContext(
         state=s,
-        cfg={},
+        cfg=cfg or {},
         pairs=pairs,
         aliases=idx_cache,
         history_exact=_history_exact_indices(s),
         pair_libs=pair_libs or {},
         pair_types=pair_types or {},
+        history_pair_aliases=_history_pair_alias_index(pairs, cfg or {}),
+        history_keys=_history_key_index(s),
     )
     filtered_targets = _eligible_targets(ctx, prov_key, feat_key, item)
     if not filtered_targets:
@@ -3543,6 +3709,7 @@ def _apply_fix(s: dict[str, Any], body: dict[str, Any]) -> dict[str, Any]:
         idx,
         pair_libs,
         pair_types,
+        cfg,
     )
     return {"ok": True, "changes": ch or ["ids merged from peers"], "new_key": new}
 
@@ -3863,6 +4030,7 @@ def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, An
             idx,
             pair_libs,
             pair_types,
+            cfg,
         )
 
         _save_state_at(h["path"], s)
@@ -3953,6 +4121,7 @@ def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any
             idx,
             pair_libs,
             pair_types,
+            cfg,
         )
         _save_state_at(h["path"], s)
         touched += 1
