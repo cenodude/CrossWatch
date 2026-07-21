@@ -333,6 +333,138 @@ def test_recent_history_widget_merges_provider_local_episode_ids_and_inherits_ar
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
 
 
+def _translated_anime_state() -> dict:
+    return {
+        "providers": {
+            "SIMKL": {
+                "instances": {
+                    "SIMKL-P01": {
+                        "history": {
+                            "baseline": {
+                                "items": {
+                                    "tmdb:12971#s01e291@1767229200": {
+                                        "type": "episode",
+                                        "series_title": "Dragon Ball Z",
+                                        "season": 1,
+                                        "episode": 291,
+                                        "show_ids": {"tmdb": 12971},
+                                        "watched_at": "2026-01-01T02:00:00Z",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "TRAKT": {
+                "instances": {
+                    "TRAKT-P01": {
+                        "history": {
+                            "baseline": {
+                                "items": {
+                                    "tmdb:12971#s09e01@1767229200": {
+                                        "type": "episode",
+                                        "series_title": "Dragon Ball Z",
+                                        "season": 9,
+                                        "episode": 1,
+                                        "show_ids": {"tmdb": 12971},
+                                        "watched_at": "2026-01-01T02:00:00Z",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+
+def test_recent_history_widget_merges_translated_episode_via_pair_alias(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "list_events",
+        lambda **_kwargs: {"ok": True, "total": 0, "items": []},
+    )
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "_history_alias_representatives",
+        lambda: {"tmdb:12971#s01e291": "tmdb:12971#s09e01", "tmdb:12971#s09e01": "tmdb:12971#s09e01"},
+    )
+
+    payload = dashboard_widgets.recent_history_widget(_translated_anime_state(), limit=5)
+
+    assert payload["total"] == 1
+    assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
+
+
+def test_recent_history_widget_keeps_translated_episode_split_without_alias(monkeypatch) -> None:
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "list_events",
+        lambda **_kwargs: {"ok": True, "total": 0, "items": []},
+    )
+    monkeypatch.setattr(dashboard_widgets, "_history_alias_representatives", dict)
+
+    payload = dashboard_widgets.recent_history_widget(_translated_anime_state(), limit=5)
+
+    assert payload["total"] == 2
+
+
+def _write_pair_alias(tmp_path, scope, items, name="trakt_history.pair_alias.p1.json"):
+    import json
+
+    (tmp_path / name).write_text(json.dumps({"scope": scope, "items": items}), encoding="utf-8")
+
+
+def _alias_sandbox(monkeypatch, tmp_path, pairs):
+    import cw_platform.config_base as config_base
+    import services.analyzer as analyzer
+
+    sandbox = tmp_path / ".cw_state"
+    sandbox.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(analyzer, "CWS_DIR", sandbox)
+    monkeypatch.setattr(config_base, "load_config", lambda: {"pairs": pairs})
+    return sandbox
+
+
+_ALIAS_PAIR = {
+    "id": "p1",
+    "enabled": True,
+    "source": "SIMKL",
+    "target": "TRAKT",
+    "source_instance": "SIMKL-P01",
+    "target_instance": "TRAKT-P01",
+    "mode": "one-way",
+    "features": {"history": {"enable": True}},
+}
+_ALIAS_SCOPE = "one-way:SIMKL#SIMKL-P01-TRAKT#TRAKT-P01:p1|SIMKL>TRAKT"
+
+
+def test_history_alias_representatives_reads_scoped_file(monkeypatch, tmp_path) -> None:
+    sandbox = _alias_sandbox(monkeypatch, tmp_path, [_ALIAS_PAIR])
+    _write_pair_alias(sandbox, _ALIAS_SCOPE, {
+        "tmdb:12971#s01e291@1767229200": {
+            "destination_key": "tmdb:12971#s09e01",
+            "destination_event_key": "tmdb:12971#s09e01@1767229200",
+        }
+    })
+
+    reps = dashboard_widgets._history_alias_representatives()
+
+    assert reps["tmdb:12971#s01e291"] == "tmdb:12971#s09e01"
+    assert reps["tmdb:12971#s09e01"] == "tmdb:12971#s09e01"
+
+
+def test_history_alias_representatives_rejects_foreign_scope(monkeypatch, tmp_path) -> None:
+    sandbox = _alias_sandbox(monkeypatch, tmp_path, [_ALIAS_PAIR])
+    _write_pair_alias(sandbox, "one-way:PLEX#PLEX-P01-TRAKT#TRAKT-P01:p9|PLEX>TRAKT", {
+        "tmdb:12971#s01e291@1767229200": {"destination_key": "tmdb:12971#s09e01"}
+    })
+
+    assert dashboard_widgets._history_alias_representatives() == {}
+
+
 def test_recent_history_widget_resolves_missing_art_from_metadata(monkeypatch) -> None:
     fake = FakeMetadataManager()
     monkeypatch.setattr(dashboard_widgets, "_METADATA_MANAGER", fake)

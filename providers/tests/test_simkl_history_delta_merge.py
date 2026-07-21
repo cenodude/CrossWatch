@@ -63,7 +63,7 @@ def _seed_cache(m, coords, watched_at=OLD_WATCHED):
     return seed
 
 
-def test_delta_merges_without_evicting_untouched_episodes(monkeypatch):
+def test_activity_change_refetches_full_library_without_date_from(monkeypatch):
     import sync.simkl._history as m
 
     _state_store(monkeypatch, m)
@@ -76,9 +76,10 @@ def test_delta_merges_without_evicting_untouched_episodes(monkeypatch):
     stale[stale_key]["series_title"] = "STALE"
     m._cache_save(stale)
 
-    delta_rows = {
+    since_seen: list = []
+    full_rows = {
         "movies": [],
-        "shows": [_aot_row([(4, 28)], OLD_WATCHED), _aot_row([(4, 29)], NEW_WATCHED)],
+        "shows": [_aot_row(seeded, OLD_WATCHED), _aot_row([(4, 29)], NEW_WATCHED)],
         "anime": [],
     }
     adapter = _patch_index_env(
@@ -87,15 +88,41 @@ def test_delta_merges_without_evicting_untouched_episodes(monkeypatch):
         watermark=OLD_WATCHED,
         removed_watermark="",
         acts=_acts(NEW_WATCHED),
-        rows=delta_rows,
+        rows=full_rows,
+    )
+    monkeypatch.setattr(
+        m, "_fetch_all_items",
+        lambda *a, since_iso=None, **k: (since_seen.append(since_iso), dict(full_rows))[1],
     )
 
     out = m.build_index(adapter)
 
+    assert since_seen == [None]
     assert _coords_of(out) == sorted(seeded + [(4, 29)])
-    assert set(seed) <= set(out)
     assert out[stale_key]["series_title"] == "Attack on Titan"
-    assert len(out) == len(seed) + 1
+    assert m._cache_load().keys() == out.keys()
+
+
+def test_absent_episode_is_dropped_immediately(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    seeded = [(1, 1), (1, 2), (2, 1)]
+    _seed_cache(m, seeded)
+
+    surviving = {"movies": [], "shows": [_aot_row([(1, 1), (2, 1)], OLD_WATCHED)], "anime": []}
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows=surviving,
+    )
+
+    out = m.build_index(adapter)
+
+    assert _coords_of(out) == [(1, 1), (2, 1)]
     assert m._cache_load().keys() == out.keys()
 
 
@@ -123,7 +150,7 @@ def test_removal_refresh_replaces_cache_and_prunes(monkeypatch):
     assert m._cache_load().keys() == out.keys()
 
 
-def test_injected_historical_episode_survives_later_delta(monkeypatch):
+def test_injected_episode_survives_full_replace_within_grace(monkeypatch):
     import sync.simkl._history as m
 
     _state_store(monkeypatch, m)
@@ -141,14 +168,14 @@ def test_injected_historical_episode_survives_later_delta(monkeypatch):
     m._inject_adds_into_cache([historical])
     injected_key = next(k for k, v in m._cache_load().items() if (v.get("season"), v.get("episode")) == (3, 7))
 
-    delta_rows = {"movies": [], "shows": [_aot_row([(1, 3)], NEW_WATCHED)], "anime": []}
+    full_rows = {"movies": [], "shows": [_aot_row([(1, 1), (1, 2), (1, 3)], NEW_WATCHED)], "anime": []}
     adapter = _patch_index_env(
         monkeypatch,
         m,
         watermark=OLD_WATCHED,
         removed_watermark="",
         acts=_acts(NEW_WATCHED),
-        rows=delta_rows,
+        rows=full_rows,
     )
 
     out = m.build_index(adapter)
@@ -156,3 +183,40 @@ def test_injected_historical_episode_survives_later_delta(monkeypatch):
     assert injected_key in out
     assert injected_key in m._cache_load()
     assert _coords_of(out) == [(1, 1), (1, 2), (1, 3), (3, 7)]
+
+
+def test_injected_episode_is_dropped_after_grace_window(monkeypatch):
+    import sync.simkl._history as m
+
+    _state_store(monkeypatch, m)
+    _seed_cache(m, [(1, 1), (1, 2)])
+
+    historical = {
+        "type": "episode",
+        "season": 3,
+        "episode": 7,
+        "watched_at": "2019-03-03T00:00:00Z",
+        "ids": {},
+        "show_ids": {k: str(v) for k, v in AOT_SHOW_IDS.items()},
+        "series_title": "Attack on Titan",
+    }
+    m._inject_adds_into_cache([historical])
+    stale = m._cache_load()
+    injected_key = next(k for k, v in stale.items() if (v.get("season"), v.get("episode")) == (3, 7))
+    stale[injected_key]["_cw_injected_at"] = 0
+    m._cache_save(stale)
+
+    full_rows = {"movies": [], "shows": [_aot_row([(1, 1), (1, 2)], NEW_WATCHED)], "anime": []}
+    adapter = _patch_index_env(
+        monkeypatch,
+        m,
+        watermark=OLD_WATCHED,
+        removed_watermark="",
+        acts=_acts(NEW_WATCHED),
+        rows=full_rows,
+    )
+
+    out = m.build_index(adapter)
+
+    assert injected_key not in out
+    assert _coords_of(out) == [(1, 1), (1, 2)]
