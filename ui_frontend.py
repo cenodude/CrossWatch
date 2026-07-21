@@ -87,7 +87,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 _HELPER_SCRIPTS = (
     "help-links.js", "provider-meta.js", "icon-select.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
-    "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
+    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
