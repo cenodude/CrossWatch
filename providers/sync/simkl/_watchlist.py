@@ -259,7 +259,7 @@ def _normalize_row(bucket: str, row: Any) -> dict[str, Any]:
         title = node.get("title")
         year = node.get("year")
 
-        at = node.get("anime_type") or node.get("animeType")
+        at = row.get("anime_type") or row.get("animeType") or node.get("anime_type") or node.get("animeType")
         if isinstance(at, str) and at.strip():
             anime_type = at.strip().lower()
 
