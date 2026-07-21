@@ -232,6 +232,7 @@
     const raw = String(item?.type || "").toLowerCase();
     if (raw === "episode") return item?.episode_label || "Episode";
     if (raw === "season") return "Season";
+    if (String(item?.art_type || "").toLowerCase() === "movie") return "Movie";
     if (raw === "show") return "Show";
     return "Movie";
   }
@@ -264,7 +265,10 @@
     const tmdb = item?.tmdb;
     if (!tmdb) return "/assets/img/placeholder_poster.svg";
     const kind = String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?size=${encodeURIComponent(size)}`;
+    const isEpisode = String(item?.type || "").toLowerCase() === "episode";
+    const title = item?.title && !isEpisode ? `&title=${encodeURIComponent(String(item.title))}` : "";
+    const year = item?.year && !isEpisode ? `&year=${encodeURIComponent(String(item.year))}` : "";
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?size=${encodeURIComponent(size)}${title}${year}`;
   }
 
   function tmdbLink(item) {

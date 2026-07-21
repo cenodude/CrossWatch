@@ -167,7 +167,10 @@ html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-shape{background:#2a2f39}h
     const tmdb = source?.tmdb || it?.tmdb;
     if (!tmdb) return "";
     const typ = media === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${typ}/${encodeURIComponent(String(tmdb))}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}`;
+    const evidenceTitle = media === "movie" ? it?.title : it?.series_title;
+    const title = evidenceTitle ? `&title=${encodeURIComponent(String(evidenceTitle))}` : "";
+    const year = media === "movie" && it?.year ? `&year=${encodeURIComponent(String(it.year))}` : "";
+    return `/art/tmdb/${typ}/${encodeURIComponent(String(tmdb))}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${title}${year}`;
   };
   const providerPills = (it) => {
     const providers = Array.isArray(it.providers) && it.providers.length
