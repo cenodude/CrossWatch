@@ -32,7 +32,7 @@ class FakeTmdb(TmdbProvider):
         self.routes = routes
         self.calls: list[str] = []
 
-    def _get(self, url: str, params: dict | None = None) -> object:
+    def _get(self, url: str, params: dict | None = None, *, quiet_404: bool = False) -> object:
         path = url.replace("https://api.themoviedb.org/3", "")
         self.calls.append(path)
         if path not in self.routes:
@@ -60,6 +60,7 @@ def _install(monkeypatch, tmp_path, provider, resolve_result=None):
     monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
     monkeypatch.setattr(metaAPI, "_cfg_ui_locale", lambda: "en-US")
     metaAPI._resolve_tmdb_cached.cache_clear()
+    metaAPI._RESOLVED_ENTITY_MEMO.clear()
 
 
 def test_wrong_tv_namespace_resolves_to_movie() -> None:
