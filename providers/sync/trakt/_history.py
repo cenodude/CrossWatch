@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -194,6 +195,882 @@ def _episodes_extended() -> str | None:
             return "full"
     return None
 
+
+_SRC_SNAPSHOT: dict[str, Any] = {"scope": "", "by_key": {}}
+_SIMKL_MAP_CACHE: dict[str, dict[str, Any]] = {}
+_SIMKL_MAP_MISS: set[str] = set()
+_SHOW_CATALOG_CACHE: dict[str, list[dict[str, Any]]] = {}
+_EP_SEARCH_CACHE: dict[tuple[str, str], dict[str, Any] | None] = {}
+_SHOW_PATH_MISS: set[str] = set()
+_DEST_CLAIMS: dict[str, str] = {}
+_TRAKT_EP_ID_KEYS = ("tvdb", "tmdb", "imdb")
+_TRAKT_ID_FIELDS = ("trakt", "slug", "tmdb", "imdb", "tvdb")
+_MAP_RUN: dict[str, Any] = {"scope": ""}
+_ALIAS_STATE: dict[str, Any] = {"scope": "", "items": {}}
+_ALIAS_REBUILD: dict[str, Any] = {"scope": "", "rebuilt": 0, "ambiguous": 0}
+
+
+def _trakt_ids_only(ids: Mapping[str, Any] | None) -> dict[str, Any]:
+    return {k: v for k, v in (ids or {}).items() if k in _TRAKT_ID_FIELDS and v not in (None, "")}
+
+
+def _genuine_episode_ids(item: Mapping[str, Any]) -> dict[str, str]:
+    ids = item.get("ids") or {}
+    show_ids = item.get("show_ids") or {}
+    out: dict[str, str] = {}
+    for ns in _TRAKT_EP_ID_KEYS:
+        value = str(ids.get(ns) or "").strip()
+        if not value:
+            continue
+        if value == str(show_ids.get(ns) or "").strip():
+            continue
+        out[ns] = value
+    return out
+
+
+def _is_native_anime(item: Mapping[str, Any]) -> bool:
+    if str(item.get("simkl_bucket") or "").strip().lower() == "anime":
+        return True
+    native = _int_or_none(item.get("_simkl_episode_number"))
+    return native is not None and native > 0
+
+
+def _pair_env(key: str) -> str:
+    return str(os.getenv(key) or "").strip().upper()
+
+
+def _simkl_to_trakt_active() -> bool:
+    return _pair_env("CW_PAIR_SRC") == "SIMKL" and _pair_env("CW_PAIR_DST") == "TRAKT"
+
+
+def _map_scope() -> str:
+    run = str(os.getenv("CW_RUN_ID") or "").strip()
+    return f"{run or 'no-run'}|{_pair_scope() or 'unscoped'}|{_pair_env('CW_PAIR_SRC')}>{_pair_env('CW_PAIR_DST')}"
+
+
+def _reset_simkl_maps(scope: str) -> None:
+    _SIMKL_MAP_CACHE.clear()
+    _SIMKL_MAP_MISS.clear()
+    _SHOW_CATALOG_CACHE.clear()
+    _EP_SEARCH_CACHE.clear()
+    _SHOW_PATH_CACHE.clear()
+    _SHOW_PATH_MISS.clear()
+    _DEST_CLAIMS.clear()
+    _MAP_RUN["scope"] = scope
+
+
+def _ensure_map_scope() -> None:
+    scope = _map_scope()
+    if not _MAP_RUN.get("scope") or _MAP_RUN.get("scope") != scope:
+        _reset_simkl_maps(scope)
+
+
+def _title_key(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    return " ".join(part for part in re.split(r"[^a-z0-9]+", text) if part)
+
+
+def _remember_source_items(by_key: Mapping[str, Mapping[str, Any]]) -> None:
+    if not by_key:
+        return
+    store = _SRC_SNAPSHOT.setdefault("by_key", {})
+    for k, it in by_key.items():
+        if k:
+            store[k] = dict(it)
+
+
+def _source_item_for_key(key: str, req_index: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    rec = ((req_index or {}).get("src_items") or {}).get(key)
+    if isinstance(rec, Mapping) and isinstance(rec.get("source"), Mapping):
+        return dict(rec["source"])
+    stored = (_SRC_SNAPSHOT.get("by_key") or {}).get(key)
+    return dict(stored) if isinstance(stored, Mapping) else {}
+
+
+def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
+    if not _simkl_to_trakt_active():
+        return 0
+    seq = [it for it in (items or []) if isinstance(it, Mapping)]
+    episodes = [it for it in seq if str(it.get("type") or "").lower() == "episode"]
+    if not episodes:
+        return 0
+    _ensure_map_scope()
+    _alias_load()
+    by_key: dict[str, dict[str, Any]] = {}
+    genuine = 0
+    copied = 0
+    native = 0
+    for it in episodes:
+        try:
+            k = str(canonical_key(it) or "")
+        except Exception:
+            k = ""
+        if not k:
+            continue
+        raw_ids = it.get("ids") or {}
+        show_ids = it.get("show_ids") or {}
+        if _genuine_episode_ids(it):
+            genuine += 1
+        elif any(
+            str(raw_ids.get(ns) or "").strip()
+            and str(raw_ids.get(ns) or "").strip() == str(show_ids.get(ns) or "").strip()
+            for ns in _TRAKT_EP_ID_KEYS
+        ):
+            copied += 1
+        if _is_native_anime(it):
+            native += 1
+        by_key[k] = dict(it)
+    _SRC_SNAPSHOT["scope"] = _map_scope()
+    _SRC_SNAPSHOT["by_key"] = by_key
+    _info(
+        "source_snapshot_prepared",
+        scope=_SRC_SNAPSHOT["scope"],
+        episodes=len(episodes),
+        genuine_episode_ids=genuine,
+        copied_show_ids=copied,
+        native_anime_episodes=native,
+        regular_episodes=len(episodes) - native,
+    )
+    return len(by_key)
+
+
+def _alias_path() -> Path:
+    return state_file("trakt_history.pair_alias.json")
+
+
+def _alias_scope() -> str:
+    return f"{_pair_scope() or 'unscoped'}|{_pair_env('CW_PAIR_SRC')}>{_pair_env('CW_PAIR_DST')}"
+
+
+def _alias_load() -> dict[str, dict[str, Any]]:
+    scope = _alias_scope()
+    if _ALIAS_STATE.get("scope") == scope and isinstance(_ALIAS_STATE.get("items"), dict):
+        return _ALIAS_STATE["items"]
+    items: dict[str, dict[str, Any]] = {}
+    try:
+        raw = json.loads(_alias_path().read_text("utf-8"))
+        if isinstance(raw, Mapping) and str(raw.get("scope") or "") == scope:
+            stored = raw.get("items")
+            if isinstance(stored, Mapping):
+                items = {str(k): dict(v) for k, v in stored.items() if isinstance(v, Mapping)}
+    except Exception:
+        items = {}
+    _ALIAS_STATE["scope"] = scope
+    _ALIAS_STATE["items"] = items
+    return items
+
+
+def _alias_save() -> None:
+    if _is_capture_mode():
+        return
+    try:
+        path = _alias_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps({"scope": _ALIAS_STATE.get("scope") or _alias_scope(), "items": _ALIAS_STATE.get("items") or {}}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except Exception as e:
+        _warn("alias_save_failed", error=str(e))
+
+
+def _alias_record(source_event_key: str, destination: Mapping[str, Any], *, basis: str = "") -> bool:
+    if not source_event_key or not isinstance(destination, Mapping):
+        return False
+    dest_key = str(destination.get("key") or "")
+    if not dest_key or dest_key == source_event_key:
+        return False
+    items = _alias_load()
+    existing = items.get(source_event_key)
+    if isinstance(existing, Mapping):
+        prev = str(existing.get("destination_event_key") or "")
+        if prev and prev != dest_key:
+            _warn("alias_conflict", source=source_event_key, existing=prev, incoming=dest_key)
+            return False
+    raw_item = destination.get("item")
+    item: Mapping[str, Any] = raw_item if isinstance(raw_item, Mapping) else {}
+    raw_ids = item.get("ids")
+    ids: Mapping[str, Any] = raw_ids if isinstance(raw_ids, Mapping) else {}
+    raw_show_ids = item.get("show_ids")
+    show_ids: Mapping[str, Any] = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
+    rec: dict[str, Any] = {"destination_event_key": dest_key, "destination_key": str(destination.get("plain_key") or dest_key.split("@", 1)[0])}
+    ep_id = str(ids.get("trakt") or "").strip()
+    if ep_id:
+        rec["destination_episode_id"] = ep_id
+    show_id = str(show_ids.get("trakt") or show_ids.get("tmdb") or show_ids.get("tvdb") or "").strip()
+    if show_id:
+        rec["destination_show_id"] = show_id
+    for field in ("season", "episode"):
+        value = _int_or_none(item.get(field))
+        if value is not None:
+            rec[field] = value
+    watched = _iso8601(item.get("watched_at"))
+    if watched:
+        rec["watched_at"] = watched
+    hid = _int_or_none(destination.get("history_id"))
+    if hid is not None:
+        rec["history_id"] = hid
+    elif isinstance(existing, Mapping) and _int_or_none(existing.get("history_id")) is not None:
+        rec["history_id"] = _int_or_none(existing.get("history_id"))
+    resolution = basis or str(destination.get("basis") or "")
+    if resolution:
+        rec["basis"] = resolution
+    items[source_event_key] = rec
+    return True
+
+
+def _alias_forget(source_event_keys: Iterable[str]) -> None:
+    items = _alias_load()
+    changed = False
+    for k in source_event_keys or []:
+        if k in items:
+            items.pop(k, None)
+            changed = True
+    if changed:
+        _alias_save()
+
+
+def _alias_forget_by_history_ids(history_ids: Iterable[int]) -> int:
+    wanted = {h for h in (history_ids or []) if h is not None}
+    if not wanted:
+        return 0
+    items = _alias_load()
+    stale = [
+        key for key, rec in items.items()
+        if isinstance(rec, Mapping) and _int_or_none(rec.get("history_id")) in wanted
+    ]
+    for key in stale:
+        items.pop(key, None)
+    if stale:
+        _alias_save()
+        _dbg("alias_forget_by_history_id", removed=len(stale), history_ids=len(wanted))
+    return len(stale)
+
+
+def _alias_forget_by_events(events: Iterable[tuple[str, str]]) -> int:
+    wanted: dict[str, set[str]] = {}
+    for key, watched in events or []:
+        base = str(key or "").split("@", 1)[0]
+        if not base:
+            continue
+        slot = wanted.setdefault(base, set())
+        if watched:
+            slot.add(watched)
+    if not wanted:
+        return 0
+    items = _alias_load()
+    stale: list[str] = []
+    for source_event_key, rec in items.items():
+        if not isinstance(rec, Mapping):
+            continue
+        bases = {
+            str(source_event_key).split("@", 1)[0],
+            str(rec.get("destination_key") or "").split("@", 1)[0],
+            str(rec.get("destination_event_key") or "").split("@", 1)[0],
+        }
+        hit = next((b for b in bases if b and b in wanted), None)
+        if hit is None:
+            continue
+        rec_watched = _iso8601(rec.get("watched_at"))
+        watched_set = wanted[hit]
+        if watched_set and rec_watched and rec_watched not in watched_set:
+            continue
+        stale.append(source_event_key)
+    for key in stale:
+        items.pop(key, None)
+    if stale:
+        _alias_save()
+        _dbg("alias_forget_by_key", removed=len(stale), keys=len(wanted))
+    return len(stale)
+
+
+def _alias_reconcile(index: Mapping[str, Any]) -> int:
+    items = _alias_load()
+    if not items or not index:
+        return 0
+    enriched = 0
+    for rec in items.values():
+        if not isinstance(rec, dict) or _int_or_none(rec.get("history_id")) is not None:
+            continue
+        dest = index.get(str(rec.get("destination_event_key") or ""))
+        if not isinstance(dest, Mapping):
+            dest = index.get(str(rec.get("destination_key") or ""))
+        if not isinstance(dest, Mapping):
+            continue
+        hid = _int_or_none(dest.get("_trakt_history_id") or dest.get("history_id"))
+        if hid is None:
+            continue
+        rec["history_id"] = hid
+        enriched += 1
+    if enriched:
+        _alias_save()
+    return enriched
+
+
+def _source_event_key(item: Mapping[str, Any]) -> str:
+    try:
+        base = str(canonical_key(item) or "")
+    except Exception:
+        base = ""
+    if not base:
+        return ""
+    watched = _iso8601(item.get("watched_at"))
+    ts = _as_epoch(watched) if watched else None
+    return f"{base}@{ts}" if ts else base
+
+
+def _destination_event_key(item: Mapping[str, Any]) -> str:
+    return _source_event_key(item)
+
+
+def _sanitize_destination(item: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {"type": str(item.get("type") or "").lower() or "episode"}
+    ids = _trakt_ids_only(item.get("ids") or {})
+    if ids:
+        out["ids"] = ids
+    show_ids = _trakt_ids_only(item.get("show_ids") or {})
+    if show_ids:
+        out["show_ids"] = show_ids
+    for field in ("season", "episode", "title", "year", "series_title", "watched_at"):
+        value = item.get(field)
+        if value not in (None, ""):
+            out[field] = value
+    return out
+
+
+def _show_tokens(item: Mapping[str, Any]) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    for field, value in (item.get("show_ids") or {}).items():
+        token = str(value or "").strip()
+        if token:
+            out.add((str(field).lower(), token))
+    return out
+
+
+def _rebuild_aliases_from_index(index: Mapping[str, Any], adapter: Any = None) -> tuple[int, int]:
+    source = _SRC_SNAPSHOT.get("by_key") or {}
+    if not source or not index:
+        return 0, 0
+
+    aliases = _alias_load()
+    claimed_dest = {str((rec or {}).get("destination_event_key") or "") for rec in aliases.values()}
+
+    dest_bases: set[str] = set()
+    dest_items: dict[str, Mapping[str, Any]] = {}
+    by_episode_watched: dict[tuple[str, int], list[str]] = {}
+    by_coords_watched: dict[tuple[str, str, int, int, int], list[str]] = {}
+    for dk, dv in index.items():
+        if not isinstance(dv, Mapping):
+            continue
+        key = str(dk)
+        dest_bases.add(key.split("@", 1)[0])
+        dest_items[key] = dv
+        watched = _as_epoch(_iso8601(dv.get("watched_at")) or "")
+        if watched is None:
+            continue
+        ep_trakt = str((dv.get("ids") or {}).get("trakt") or "").strip()
+        if ep_trakt:
+            by_episode_watched.setdefault((ep_trakt, watched), []).append(key)
+        season = _int_or_none(dv.get("season"))
+        episode = _int_or_none(dv.get("episode"))
+        if season is not None and episode is not None:
+            for token in _show_tokens(dv):
+                by_coords_watched.setdefault((*token, season, episode, watched), []).append(key)
+
+    pending: list[Mapping[str, Any]] = []
+    for src_item in source.values():
+        src_event_key = _source_event_key(src_item)
+        if not src_event_key or src_event_key in aliases:
+            continue
+        if src_event_key.split("@", 1)[0] in dest_bases:
+            continue
+        if _as_epoch(_iso8601(src_item.get("watched_at")) or "") is None:
+            continue
+        pending.append(src_item)
+
+    if not pending:
+        _ALIAS_REBUILD["scope"] = _alias_scope()
+        _ALIAS_REBUILD["rebuilt"] = 0
+        _ALIAS_REBUILD["ambiguous"] = 0
+        return 0, 0
+
+    if adapter is None:
+        _ALIAS_REBUILD["scope"] = _alias_scope()
+        _ALIAS_REBUILD["rebuilt"] = 0
+        _ALIAS_REBUILD["ambiguous"] = len(pending)
+        _warn("alias_rebuild_skipped", reason="no_adapter", pending=len(pending))
+        return 0, len(pending)
+
+    resolved_items, resolve_unresolved = _apply_simkl_resolution(adapter, pending)
+
+    proposals: dict[str, str] = {}
+    ambiguous = len(resolve_unresolved)
+    for outgoing in resolved_items:
+        src_key = str(outgoing.get("_cw_source_key") or "")
+        src_item = source.get(src_key)
+        if not isinstance(src_item, Mapping):
+            continue
+        src_event_key = _source_event_key(src_item)
+        watched = _as_epoch(_iso8601(src_item.get("watched_at")) or "")
+        if not src_event_key or watched is None:
+            continue
+
+        candidates: list[str] = []
+        ep_trakt = str((outgoing.get("ids") or {}).get("trakt") or "").strip()
+        if ep_trakt:
+            candidates = list(by_episode_watched.get((ep_trakt, watched)) or [])
+        if not candidates:
+            season = _int_or_none(outgoing.get("season"))
+            episode = _int_or_none(outgoing.get("episode"))
+            if season is not None and episode is not None:
+                seen: list[str] = []
+                for token in _show_tokens(outgoing):
+                    for dk in by_coords_watched.get((*token, season, episode, watched)) or []:
+                        if dk not in seen:
+                            seen.append(dk)
+                candidates = seen
+
+        candidates = [dk for dk in candidates if dk not in claimed_dest]
+        if not candidates:
+            continue
+        if len(candidates) > 1:
+            ambiguous += 1
+            _dbg("alias_rebuild_ambiguous", source=src_event_key, candidates=len(candidates))
+            continue
+        proposals[src_event_key] = candidates[0]
+
+    dest_claims: dict[str, list[str]] = {}
+    for src_event_key, dest_key in proposals.items():
+        dest_claims.setdefault(dest_key, []).append(src_event_key)
+
+    rebuilt = 0
+    for dest_key, src_keys in dest_claims.items():
+        if len(src_keys) != 1:
+            ambiguous += len(src_keys)
+            _dbg("alias_rebuild_ambiguous", destination=dest_key, sources=len(src_keys))
+            continue
+        dest_item = dest_items.get(dest_key) or {}
+        dest_plain = str(canonical_key(dest_item) or "") or dest_key.split("@", 1)[0]
+        payload = {
+            "key": dest_key,
+            "plain_key": dest_plain,
+            "item": _sanitize_destination(dest_item),
+            "history_id": dest_item.get("_trakt_history_id") or dest_item.get("history_id"),
+        }
+        if _alias_record(src_keys[0], payload, basis="rebuilt_from_resolver"):
+            rebuilt += 1
+
+    if rebuilt:
+        _alias_save()
+    _ALIAS_REBUILD["scope"] = _alias_scope()
+    _ALIAS_REBUILD["rebuilt"] = rebuilt
+    _ALIAS_REBUILD["ambiguous"] = ambiguous
+    if rebuilt or ambiguous:
+        _info(
+            "alias_rebuild",
+            rebuilt=rebuilt,
+            ambiguous=ambiguous,
+            pending=len(pending),
+            resolved=len(resolved_items),
+            destination=len(index),
+        )
+    return rebuilt, ambiguous
+
+
+def _alias_rebuild_incomplete() -> bool:
+    return _ALIAS_REBUILD.get("scope") == _alias_scope() and int(_ALIAS_REBUILD.get("ambiguous") or 0) > 0
+
+
+def destination_comparison_view(index: Mapping[str, Any], adapter: Any = None) -> dict[str, Any]:
+    aliases = _alias_load()
+    if _simkl_to_trakt_active():
+        _rebuild_aliases_from_index(index, adapter)
+        aliases = _alias_load()
+    if not aliases:
+        return dict(index)
+    enriched = _alias_reconcile(index)
+    exact_map: dict[str, str] = {}
+    base_map: dict[str, str] = {}
+    for src_key, rec in aliases.items():
+        dk = str((rec or {}).get("destination_event_key") or "")
+        if not dk:
+            continue
+        if "@" in dk:
+            exact_map[dk] = src_key
+        dest_base = str((rec or {}).get("destination_key") or dk.split("@", 1)[0])
+        src_base = str(src_key).split("@", 1)[0]
+        if dest_base and src_base and dest_base != src_base:
+            base_map.setdefault(dest_base, src_base)
+    out: dict[str, Any] = {}
+    remapped = 0
+    for k, v in (index or {}).items():
+        kk = str(k)
+        src = exact_map.get(kk) if "@" in kk else None
+        if src is None:
+            src = base_map.get(kk.split("@", 1)[0])
+        if src:
+            out[src] = v
+            remapped += 1
+        else:
+            out[kk] = v
+    if remapped or enriched:
+        _dbg("alias_comparison_view", remapped=remapped, enriched=enriched, aliases=len(aliases), index=len(index or {}))
+    return out
+
+
+def _search_trakt_episode(adapter: Any, service: str, value: str, *, timeout: float, retries: int) -> dict[str, Any] | None:
+    cache_key = (str(service), str(value))
+    if cache_key in _EP_SEARCH_CACHE:
+        return _EP_SEARCH_CACHE[cache_key]
+    out: dict[str, Any] | None = None
+    try:
+        r = request_with_retries(
+            adapter.client.session,
+            "GET",
+            f"{BASE}/search/{service}/{value}",
+            headers=headers_for_adapter(adapter),
+            params={"type": "episode"},
+            timeout=timeout,
+            max_retries=retries,
+        )
+        if r.status_code == 200:
+            rows = r.json() or []
+            hits = [row for row in rows if isinstance(row, Mapping) and isinstance(row.get("episode"), Mapping)]
+            if len(hits) == 1:
+                hit = hits[0]
+                episode = dict(hit.get("episode") or {})
+                show = dict(hit.get("show") or {})
+                out = {
+                    "ids": {k: str(v) for k, v in (episode.get("ids") or {}).items() if v not in (None, "")},
+                    "show_ids": {k: str(v) for k, v in (show.get("ids") or {}).items() if v not in (None, "")},
+                    "season": _int_or_none(episode.get("season")),
+                    "episode": _int_or_none(episode.get("number")),
+                    "title": episode.get("title"),
+                }
+    except Exception as e:
+        _dbg("simkl_trakt_lookup_failed", service=service, error=str(e))
+        out = None
+    _EP_SEARCH_CACHE[cache_key] = out
+    return out
+
+
+def _resolve_trakt_show_path(adapter: Any, show_ids: Mapping[str, Any], *, timeout: float, retries: int) -> str | None:
+    direct = _pick_show_path_id(show_ids or {})
+    if direct:
+        return direct
+    skey = json.dumps({k: str(v) for k, v in sorted((show_ids or {}).items()) if v not in (None, "")}, sort_keys=True)
+    if skey in _SHOW_PATH_CACHE:
+        return _SHOW_PATH_CACHE[skey]
+    if skey in _SHOW_PATH_MISS:
+        return None
+    found: str | None = None
+    for service in ("tmdb", "imdb", "tvdb"):
+        value = str((show_ids or {}).get(service) or "").strip()
+        if not value:
+            continue
+        try:
+            r = request_with_retries(
+                adapter.client.session,
+                "GET",
+                f"{BASE}/search/{service}/{value}",
+                headers=headers_for_adapter(adapter),
+                params={"type": "show"},
+                timeout=timeout,
+                max_retries=retries,
+            )
+        except Exception:
+            continue
+        if getattr(r, "status_code", 0) != 200:
+            continue
+        for hit in (r.json() or []):
+            if not isinstance(hit, Mapping):
+                continue
+            pid = _pick_show_path_id((hit.get("show") or {}).get("ids") or {})
+            if pid:
+                found = pid
+                break
+        if found:
+            break
+    if found:
+        _SHOW_PATH_CACHE[skey] = found
+    else:
+        _SHOW_PATH_MISS.add(skey)
+    return found
+
+
+def _trakt_show_catalog(adapter: Any, show_ids: Mapping[str, Any], *, timeout: float, retries: int) -> list[dict[str, Any]]:
+    path_id = _resolve_trakt_show_path(adapter, show_ids, timeout=timeout, retries=retries)
+    if not path_id:
+        return []
+    if path_id in _SHOW_CATALOG_CACHE:
+        return _SHOW_CATALOG_CACHE[path_id]
+    rows: list[dict[str, Any]] = []
+    try:
+        r = request_with_retries(
+            adapter.client.session,
+            "GET",
+            f"{BASE}/shows/{path_id}/seasons",
+            headers=headers_for_adapter(adapter),
+            params={"extended": "episodes,full"},
+            timeout=timeout,
+            max_retries=retries,
+        )
+        if r.status_code == 200:
+            for season in (r.json() or []):
+                if not isinstance(season, Mapping):
+                    continue
+                s_num = _int_or_none(season.get("number"))
+                for ep in (season.get("episodes") or []):
+                    if not isinstance(ep, Mapping):
+                        continue
+                    e_num = _int_or_none(ep.get("number"))
+                    if s_num is None or e_num is None:
+                        continue
+                    rows.append(
+                        {
+                            "season": s_num,
+                            "episode": e_num,
+                            "number_abs": _int_or_none(ep.get("number_abs")),
+                            "title": ep.get("title"),
+                            "ids": {k: str(v) for k, v in (ep.get("ids") or {}).items() if v not in (None, "")},
+                        }
+                    )
+    except Exception as e:
+        _dbg("simkl_trakt_catalog_failed", show=str(path_id), error=str(e))
+        rows = []
+    _SHOW_CATALOG_CACHE[path_id] = rows
+    return rows
+
+
+def _map_cache_key(item: Mapping[str, Any], show_ids: Mapping[str, Any]) -> str:
+    return json.dumps(
+        {
+            "record": str((item.get("show_ids") or {}).get("simkl") or ""),
+            "native": _int_or_none(item.get("_simkl_episode_number")),
+            "dst": "TRAKT",
+            "show": str(show_ids.get("trakt") or show_ids.get("tmdb") or show_ids.get("tvdb") or ""),
+            "s": _int_or_none(item.get("season")),
+            "e": _int_or_none(item.get("episode")),
+        },
+        sort_keys=True,
+    )
+
+
+def _catalog_absolute_rows(catalog: list[dict[str, Any]]) -> list[tuple[int, dict[str, Any]]]:
+    out: list[tuple[int, dict[str, Any]]] = []
+    for row in catalog:
+        if _int_or_none(row.get("season")) == 0:
+            continue
+        n = _int_or_none(row.get("number_abs"))
+        if n is None or n <= 0:
+            continue
+        out.append((n, row))
+    return out
+
+
+def _catalog_is_continuous(catalog: list[dict[str, Any]]) -> bool:
+    rows = _catalog_absolute_rows(catalog)
+    if not rows:
+        return False
+    numbers = [n for n, _ in rows]
+    return len(set(numbers)) == len(numbers)
+
+
+def _catalog_index(catalog: list[dict[str, Any]]) -> dict[str, Any]:
+    by_trakt: dict[str, dict[str, Any]] = {}
+    by_ext: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    by_abs: dict[int, list[dict[str, Any]]] = {}
+    by_title: dict[str, list[dict[str, Any]]] = {}
+    for row in catalog:
+        ids = row.get("ids") or {}
+        tid = str(ids.get("trakt") or "").strip()
+        if tid:
+            by_trakt[tid] = row
+        for ns in _TRAKT_EP_ID_KEYS:
+            value = str(ids.get(ns) or "").strip()
+            if value:
+                by_ext.setdefault((ns, value), []).append(row)
+        tkey = _title_key(row.get("title"))
+        if tkey:
+            by_title.setdefault(tkey, []).append(row)
+    for abs_no, row in _catalog_absolute_rows(catalog):
+        by_abs.setdefault(abs_no, []).append(row)
+    return {
+        "by_trakt": by_trakt,
+        "by_ext": by_ext,
+        "by_abs": by_abs,
+        "by_title": by_title,
+        "continuous": _catalog_is_continuous(catalog),
+    }
+
+
+def _resolve_from_catalog(item: Mapping[str, Any], index: Mapping[str, Any], show_ids: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    def _built(row: Mapping[str, Any], basis: str) -> dict[str, Any]:
+        return {
+            "show_ids": dict(show_ids),
+            "ids": _trakt_ids_only(row.get("ids") or {}),
+            "season": row.get("season"),
+            "episode": row.get("episode"),
+            "basis": basis,
+        }
+
+    existing = str((item.get("ids") or {}).get("trakt") or "").strip()
+    if existing:
+        row = (index.get("by_trakt") or {}).get(existing)
+        if row:
+            return _built(row, "catalogue_exact_id"), "catalogue_exact_id"
+
+    for ns, value in _genuine_episode_ids(item).items():
+        rows = (index.get("by_ext") or {}).get((ns, value)) or []
+        if len(rows) == 1:
+            return _built(rows[0], "catalogue_exact_id"), "catalogue_exact_id"
+
+    explicit_abs = _int_or_none(item.get("_trakt_number_abs"))
+    native = _int_or_none(item.get("_simkl_episode_number"))
+    abs_no: int | None = None
+    if explicit_abs and explicit_abs > 0:
+        abs_no = explicit_abs
+    elif native and native > 0 and index.get("continuous"):
+        abs_no = native
+    if abs_no:
+        rows = (index.get("by_abs") or {}).get(abs_no) or []
+        if len(rows) == 1:
+            return _built(rows[0], "catalogue_absolute"), "catalogue_absolute"
+        if len(rows) > 1:
+            return None, "trakt_absolute_number_unresolved"
+
+    tkey = _title_key(item.get("title"))
+    if tkey:
+        rows = (index.get("by_title") or {}).get(tkey) or []
+        if len(rows) == 1:
+            return _built(rows[0], "unique_title"), "unique_title"
+        if len(rows) > 1:
+            return None, "trakt_episode_title_ambiguous"
+
+    if _int_or_none(item.get("season")) == 0:
+        return None, "trakt_special_unmapped"
+    if explicit_abs or native:
+        return None, "trakt_absolute_number_unresolved"
+    return None, "trakt_episode_id_unresolved"
+
+
+def _destination_token(resolved: Mapping[str, Any]) -> str:
+    ids = resolved.get("ids") or {}
+    if ids.get("trakt"):
+        return f"trakt:{ids['trakt']}"
+    show = resolved.get("show_ids") or {}
+    show_token = show.get("trakt") or show.get("tmdb") or show.get("tvdb") or show.get("imdb") or ""
+    return f"{show_token}|s{resolved.get('season')}e{resolved.get('episode')}"
+
+
+def _apply_simkl_resolution(adapter: Any, items: list[Mapping[str, Any]]) -> tuple[list[Mapping[str, Any]], list[dict[str, Any]]]:
+    if not _simkl_to_trakt_active():
+        return list(items), []
+    _ensure_map_scope()
+    timeout = float(_cfg_num(adapter, "timeout", 10, float))
+    retries = int(_cfg_num(adapter, "max_retries", 3, int))
+
+    native_items: list[Mapping[str, Any]] = []
+    passthrough: list[Mapping[str, Any]] = []
+    for it in items:
+        if isinstance(it, Mapping) and str(it.get("type") or "").lower() == "episode" and _is_native_anime(it):
+            native_items.append(it)
+        else:
+            passthrough.append(it)
+
+    plan = {
+        "regular_direct": len(passthrough),
+        "native_anime": len(native_items),
+        "anime_groups": 0,
+        "catalog_requests": 0,
+        "catalog_cache_hits": 0,
+    }
+    if not native_items:
+        _info("simkl_trakt_resolution_plan", **plan)
+        return list(items), []
+
+    groups: dict[str, list[Mapping[str, Any]]] = {}
+    group_show_ids: dict[str, dict[str, Any]] = {}
+    for it in native_items:
+        show_ids = dict(it.get("show_ids") or {})
+        gkey = json.dumps(
+            {
+                "record": str(show_ids.get("simkl") or ""),
+                "show": {k: str(v) for k, v in sorted(show_ids.items()) if k in _TRAKT_ID_FIELDS and v not in (None, "")},
+            },
+            sort_keys=True,
+        )
+        groups.setdefault(gkey, []).append(it)
+        group_show_ids.setdefault(gkey, show_ids)
+    plan["anime_groups"] = len(groups)
+
+    out: list[Mapping[str, Any]] = list(passthrough)
+    unresolved: list[dict[str, Any]] = []
+    stats = {"resolved": 0, "unresolved": 0, "collisions": 0}
+    basis_counts: dict[str, int] = {}
+
+    for gkey, grouped in groups.items():
+        show_ids = group_show_ids.get(gkey) or {}
+        trakt_show_ids = _trakt_ids_only(show_ids)
+        path_id = _resolve_trakt_show_path(adapter, trakt_show_ids, timeout=timeout, retries=retries) if trakt_show_ids else None
+        catalog: list[dict[str, Any]] = []
+        if path_id:
+            if path_id in _SHOW_CATALOG_CACHE:
+                plan["catalog_cache_hits"] += 1
+            else:
+                plan["catalog_requests"] += 1
+            catalog = _trakt_show_catalog(adapter, trakt_show_ids, timeout=timeout, retries=retries)
+        index = _catalog_index(catalog) if catalog else {}
+
+        for it in grouped:
+            src_key = str(canonical_key(it) or "")
+            if not index:
+                stats["unresolved"] += 1
+                basis_counts["trakt_show_unresolved"] = basis_counts.get("trakt_show_unresolved", 0) + 1
+                unresolved.append({"item": id_minimal(it), "hint": "trakt_show_unresolved", "key": src_key})
+                continue
+            resolved, basis = _resolve_from_catalog(it, index, trakt_show_ids)
+            if resolved is None:
+                stats["unresolved"] += 1
+                basis_counts[basis] = basis_counts.get(basis, 0) + 1
+                unresolved.append({"item": id_minimal(it), "hint": basis, "key": src_key})
+                continue
+            watched = _iso8601(it.get("watched_at") or it.get("watchedAt")) or ""
+            token = f"{_destination_token(resolved)}@{watched}"
+            owner = _DEST_CLAIMS.get(token)
+            if owner and owner != src_key:
+                stats["collisions"] += 1
+                basis_counts["trakt_destination_collision"] = basis_counts.get("trakt_destination_collision", 0) + 1
+                unresolved.append({"item": id_minimal(it), "hint": "trakt_destination_collision", "key": src_key})
+                continue
+            _DEST_CLAIMS[token] = src_key
+            stats["resolved"] += 1
+            basis_counts[basis] = basis_counts.get(basis, 0) + 1
+            outgoing = dict(it)
+            outgoing["show_ids"] = _trakt_ids_only(resolved.get("show_ids") or show_ids)
+            outgoing["ids"] = _trakt_ids_only(resolved.get("ids") or {})
+            outgoing["season"] = resolved.get("season")
+            outgoing["episode"] = resolved.get("episode")
+            outgoing["_cw_source_key"] = src_key
+            outgoing["_cw_resolution_basis"] = basis
+            outgoing.pop("_simkl_episode_number", None)
+            outgoing.pop("simkl_bucket", None)
+            out.append(outgoing)
+
+    _info("simkl_trakt_resolution_plan", **plan)
+    _info(
+        "simkl_trakt_resolve_summary",
+        checked=len(native_items),
+        resolved=stats["resolved"],
+        unresolved=stats["unresolved"],
+        collisions=stats["collisions"],
+        **{k: v for k, v in basis_counts.items()},
+    )
+    return out, unresolved
 
 def _history_number_fallback_enabled(adapter: Any) -> bool:
     return True if not RESOLVE_ENABLE else bool(_cfg_get(adapter, "history_number_fallback", False))
@@ -1063,7 +1940,7 @@ def _parse_raw_history_id(item: Mapping[str, Any]) -> int | None:
 def _batch_add(
     adapter: Any,
     items: Iterable[Mapping[str, Any]],
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[str], list[dict[str, Any]], list[str], dict[str, Any]]:
     movies: list[dict[str, Any]] = []
     shows_map: dict[str, dict[str, Any]] = {}
     seasons: list[dict[str, Any]] = []
@@ -1073,6 +1950,15 @@ def _batch_add(
     accepted_minimals: list[dict[str, Any]] = []
 
     skipped_keys: list[str] = []
+    req_index: dict[str, Any] = {
+        "by_ep_ids": {},
+        "by_movie_ids": {},
+        "by_show_ep": {},
+        "by_show_season": {},
+        "by_show": {},
+        "src_items": {},
+        "leaf_kind": {},
+    }
 
     # De-dupe guards (Trakt will 409 on item+watched_at conflicts).
     seen_movies: set[tuple[str, str]] = set()
@@ -1084,6 +1970,39 @@ def _batch_add(
             {k: str(ids[k]) for k in ("trakt", "slug", "tmdb", "imdb", "tvdb") if k in ids and ids[k]},
             sort_keys=True,
         )
+
+    def _src_key(it: Mapping[str, Any], m: Mapping[str, Any]) -> str:
+        k = str(it.get("_cw_source_key") or "").strip()
+        if k:
+            return k
+        try:
+            return str(key_of(m) or "")
+        except Exception:
+            return ""
+
+    def _register(it: Mapping[str, Any], m: dict[str, Any], *, ids=None, show_ids=None, season=None, episode=None, movie=False) -> None:
+        sk = _src_key(it, m)
+        if not sk:
+            return
+        req_index["src_items"].setdefault(
+            sk,
+            {"source": _source_item_for_key(sk) or dict(it), "destination": dict(it)},
+        )
+        req_index["leaf_kind"].setdefault(sk, "movie" if movie else "episode")
+        for field, value in (ids or {}).items():
+            if value in (None, ""):
+                continue
+            bucket = "by_movie_ids" if movie else "by_ep_ids"
+            req_index[bucket].setdefault((str(field), str(value)), []).append(sk)
+        for field, value in (show_ids or {}).items():
+            if value in (None, ""):
+                continue
+            token = (str(field), str(value))
+            req_index["by_show"].setdefault(token, []).append(sk)
+            if season is not None:
+                req_index["by_show_season"].setdefault((*token, int(season)), []).append(sk)
+                if episode is not None:
+                    req_index["by_show_ep"].setdefault((*token, int(season), int(episode)), []).append(sk)
 
     def _accept(m: dict[str, Any]) -> None:
         accepted_minimals.append(m)
@@ -1121,7 +2040,9 @@ def _batch_add(
                 continue
             seen_movies.add(sig)
             movies.append(obj)
-            _accept(_history_item_minimal(kind, it, ids))
+            m = _history_item_minimal(kind, it, ids)
+            _register(it, m, ids=ids, movie=True)
+            _accept(m)
             continue
 
         if kind == "shows":
@@ -1182,7 +2103,9 @@ def _batch_add(
                     continue
                 seen_eps_flat.add(sig)
                 episodes_flat.append(obj)
-                _accept(_history_item_minimal(kind, it, ids))
+                m = _history_item_minimal(kind, it, ids)
+                _register(it, m, ids=ids, show_ids=show_ids, season=_int_or_none(season_no), episode=_int_or_none(episode_no))
+                _accept(m)
                 continue
 
             if show_scope_ok:
@@ -1203,7 +2126,9 @@ def _batch_add(
                 if when:
                     ep_obj["watched_at"] = when
                 season_entry.setdefault("episodes", []).append(ep_obj)
-                _accept(_history_item_minimal(kind, it, ids))
+                m = _history_item_minimal(kind, it, ids)
+                _register(it, m, ids=ids, show_ids=show_ids, season=season_i, episode=epn)
+                _accept(m)
                 continue
 
             m = _history_item_minimal(kind, it, ids)
@@ -1225,7 +2150,7 @@ def _batch_add(
         body["seasons"] = seasons
     if episodes_flat:
         body["episodes"] = episodes_flat
-    return body, unresolved, accepted_keys, accepted_minimals, skipped_keys
+    return body, unresolved, accepted_keys, accepted_minimals, skipped_keys, req_index
 
 
 def _batch_remove(
@@ -1350,6 +2275,173 @@ def _batch_remove(
     if raw_ids:
         body["ids"] = sorted(set(raw_ids))
     return body, unresolved, accepted_keys, accepted_minimals, raw_id_map
+
+def _deleted_event_count(deleted: Any) -> int:
+    if not isinstance(deleted, Mapping):
+        return 0
+    total = 0
+    for bucket in ("movies", "episodes", "shows", "seasons"):
+        total += int(_int_or_none(deleted.get(bucket)) or 0)
+    return total
+
+
+def _not_found_ids(not_found: Any) -> set[int]:
+    out: set[int] = set()
+    if not isinstance(not_found, Mapping):
+        return out
+    for raw in (not_found.get("ids") or []):
+        value = _int_or_none(raw if not isinstance(raw, Mapping) else raw.get("id"))
+        if value is not None:
+            out.add(value)
+    return out
+
+
+def _requires_alias_removal(item: Mapping[str, Any]) -> bool:
+    return _simkl_to_trakt_active() and _is_native_anime(item)
+
+
+def _exact_destination_for_removal(
+    item: Mapping[str, Any],
+    adapter: Any,
+    *,
+    timeout: float,
+    retries: int,
+) -> dict[str, Any] | None:
+    watched = _iso8601(item.get("watched_at") or item.get("watchedAt"))
+    if not watched:
+        return None
+
+    episode_id = str((item.get("ids") or {}).get("trakt") or "").strip()
+    show_trakt = str((item.get("show_ids") or {}).get("trakt") or "").strip()
+    if episode_id and show_trakt and episode_id == show_trakt:
+        _dbg("remove_copied_show_id_rejected", trakt=episode_id)
+        episode_id = ""
+    resolved: Mapping[str, Any] | None = None
+    if not episode_id:
+        for ns, value in _genuine_episode_ids(item).items():
+            found = _search_trakt_episode(adapter, ns, value, timeout=timeout, retries=retries)
+            if found and str((found.get("ids") or {}).get("trakt") or "").strip():
+                resolved = found
+                episode_id = str(found["ids"]["trakt"]).strip()
+                break
+    if not episode_id:
+        return None
+
+    out: dict[str, Any] = {"destination_episode_id": episode_id, "watched_at": watched}
+    if isinstance(resolved, Mapping):
+        dest_item = {
+            "type": "episode",
+            "ids": _trakt_ids_only(resolved.get("ids") or {}),
+            "show_ids": _trakt_ids_only(resolved.get("show_ids") or {}),
+            "season": resolved.get("season"),
+            "episode": resolved.get("episode"),
+            "watched_at": watched,
+        }
+        out["destination_key"] = str(canonical_key(dest_item) or "")
+        out["season"] = resolved.get("season")
+        out["episode"] = resolved.get("episode")
+    out["basis"] = "exact_episode_identity"
+    return out
+
+
+def _alias_lookup(
+    aliases: Mapping[str, Mapping[str, Any]],
+    item: Mapping[str, Any],
+) -> tuple[str, Mapping[str, Any] | None, str]:
+    source_event_key = _source_event_key(item)
+    rec = aliases.get(source_event_key) if source_event_key else None
+    if isinstance(rec, Mapping):
+        return source_event_key, rec, ""
+    base = str(source_event_key).split("@", 1)[0]
+    if not base:
+        return "", None, "trakt_history_alias_missing"
+    hits = [(k, v) for k, v in aliases.items() if str(k).split("@", 1)[0] == base and isinstance(v, Mapping)]
+    if len(hits) == 1:
+        return hits[0][0], hits[0][1], ""
+    if len(hits) > 1:
+        return "", None, "trakt_history_event_ambiguous"
+    return "", None, "trakt_history_alias_missing"
+
+
+def _cache_remove_event_keys(event_keys: Iterable[str], history_ids: Iterable[int]) -> None:
+    if _is_capture_mode() or _pair_scope() is None:
+        return
+    keys = {str(k) for k in (event_keys or []) if k}
+    hids = {str(h) for h in (history_ids or []) if h is not None}
+    if not keys and not hids:
+        return
+    try:
+        doc = _load_cache_doc()
+        cache_items: dict[str, dict[str, Any]] = dict(doc.get("items") or {})
+        if not cache_items:
+            return
+        wm_prev = str((doc.get("wm") or {}).get("watched_at") or "").strip() or None
+        removed = 0
+        for ek in list(cache_items.keys()):
+            item = cache_items.get(ek) or {}
+            hid = str(item.get("_trakt_history_id") or item.get("history_id") or "").strip()
+            if str(ek) in keys or (hid and hid in hids):
+                cache_items.pop(ek, None)
+                removed += 1
+        if removed <= 0:
+            return
+        _save_cache_doc(cache_items, wm_prev, validated_at="")
+        _dbg("cache_remove_exact", removed=removed, keys=len(keys), history_ids=len(hids))
+    except Exception as e:
+        _warn("cache_save_failed", cache="index", op="remove_exact", error=str(e))
+
+
+def _lookup_history_id(
+    adapter: Any,
+    rec: Mapping[str, Any],
+    *,
+    timeout: float,
+    retries: int,
+) -> tuple[int | None, str]:
+    episode_id = str(rec.get("destination_episode_id") or "").strip()
+    watched = _iso8601(rec.get("watched_at"))
+    if not episode_id or not watched:
+        return None, "trakt_history_event_not_found"
+    want = _as_epoch(watched)
+    if want is None:
+        return None, "trakt_history_event_not_found"
+    try:
+        r = request_with_retries(
+            adapter.client.session,
+            "GET",
+            f"{BASE}/sync/history/episodes/{episode_id}",
+            headers=headers_for_adapter(adapter),
+            params={"limit": 100, "start_at": watched, "end_at": watched},
+            timeout=timeout,
+            max_retries=retries,
+        )
+    except Exception as e:
+        _warn("history_lookup_failed", episode=episode_id, error=str(e))
+        return None, "trakt_history_event_not_found"
+    if r.status_code not in (200, 201):
+        _warn("history_lookup_failed", episode=episode_id, status=r.status_code)
+        return None, "trakt_history_event_not_found"
+    try:
+        rows = r.json() or []
+    except Exception:
+        rows = []
+    matches: list[int] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping):
+            continue
+        got = _as_epoch(_iso8601(row.get("watched_at")) or "")
+        if got is None or got != want:
+            continue
+        hid = _int_or_none(row.get("id"))
+        if hid is not None and hid not in matches:
+            matches.append(hid)
+    if not matches:
+        return None, "trakt_history_event_not_found"
+    if len(matches) > 1:
+        _warn("history_lookup_ambiguous", episode=episode_id, watched_at=watched, matches=len(matches))
+        return None, "trakt_history_event_ambiguous"
+    return matches[0], ""
+
 
 def _history_body_to_collection(body: Mapping[str, Any], types: set[str]) -> dict[str, Any]:
     out: dict[str, Any] = {}
@@ -1493,17 +2585,488 @@ def _unresolved_from_nf_shows(nf_shows: Any) -> list[dict[str, Any]]:
 
 
 
-def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]], list[str]]:
+def _not_found_scope_count(nf: Any) -> int:
+    if not isinstance(nf, Mapping):
+        return 0
+    total = 0
+    for bucket in ("movies", "episodes", "seasons"):
+        rows = nf.get(bucket)
+        total += len(rows) if isinstance(rows, list) else 0
+    for sh in nf.get("shows") or []:
+        if not isinstance(sh, Mapping):
+            continue
+        seasons = sh.get("seasons")
+        if not isinstance(seasons, list) or not seasons:
+            total += 1
+            continue
+        for season in seasons:
+            if not isinstance(season, Mapping):
+                continue
+            eps = season.get("episodes")
+            total += len(eps) if isinstance(eps, list) and eps else 1
+    return total
+
+
+def _nf_ids(obj: Mapping[str, Any], *nested: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    sources: list[Any] = [obj.get("ids")]
+    for key in nested:
+        inner = obj.get(key)
+        if isinstance(inner, Mapping):
+            sources.append(inner.get("ids"))
+    for src in sources:
+        if not isinstance(src, Mapping):
+            continue
+        for field, value in src.items():
+            if value in (None, ""):
+                continue
+            out.setdefault(str(field), str(value))
+    return out
+
+
+def _nf_number(obj: Mapping[str, Any], *nested: str) -> int | None:
+    n = _int_or_none(obj.get("number"))
+    if n is not None:
+        return n
+    for key in nested:
+        inner = obj.get(key)
+        if isinstance(inner, Mapping):
+            n = _int_or_none(inner.get("number"))
+            if n is not None:
+                return n
+    return None
+
+
+def _scope_keys(
+    req_index: Mapping[str, Any],
+    ids: Mapping[str, Any],
+    *,
+    season: int | None = None,
+    episode: int | None = None,
+) -> tuple[list[str], str]:
+    tokens = [(str(f), str(v)) for f, v in (ids or {}).items() if v not in (None, "")]
+    if not tokens:
+        return [], ""
+
+    def _gather(bucket: str, key_of_token) -> list[str]:
+        out: list[str] = []
+        table = req_index.get(bucket) or {}
+        for token in tokens:
+            out.extend(table.get(key_of_token(token)) or [])
+        return list(dict.fromkeys(out))
+
+    hits = _gather("by_ep_ids", lambda t: t)
+    if hits:
+        return hits, "episode_ids"
+
+    if season is not None and episode is not None:
+        hits = _gather("by_show_ep", lambda t: (*t, season, episode))
+        if hits:
+            return hits, "show_season_episode"
+
+    if season is not None:
+        hits = _gather("by_show_season", lambda t: (*t, season))
+        if hits:
+            return hits, "show_season"
+
+    hits = _gather("by_show", lambda t: t)
+    if hits:
+        return hits, "show"
+    return [], ""
+
+
+def _nf_season_number(obj: Mapping[str, Any]) -> int | None:
+    for key in ("season", "season_number"):
+        n = _int_or_none(obj.get(key))
+        if n is not None:
+            return n
+    for key in ("season", "episode"):
+        inner = obj.get(key)
+        if isinstance(inner, Mapping):
+            n = _int_or_none(inner.get("season") if key == "episode" else inner.get("number"))
+            if n is not None:
+                return n
+    return None
+
+
+def _correlate_not_found(nf: Any, req_index: Mapping[str, Any]) -> tuple[list[str], dict[str, str], int, int, list[dict[str, Any]]]:
+    if not isinstance(nf, Mapping):
+        return [], {}, 0, 0, []
+    hit_reason: dict[str, str] = {}
+    expanded = 0
+    matched_scopes = 0
+    unmatched: list[dict[str, Any]] = []
+
+    def _mark(keys: Iterable[str], reason: str) -> bool:
+        found = False
+        for k in keys or []:
+            found = True
+            if k and (k not in hit_reason or hit_reason[k] == "trakt_parent_not_found"):
+                hit_reason[k] = reason
+        return found
+
+    def _record_unmatched(bucket: str, ids: Mapping[str, Any], season: Any, episode: Any, candidates: Iterable[str]) -> None:
+        cands = [k for k in dict.fromkeys(candidates) if k]
+        unmatched.append({
+            "bucket": bucket,
+            "ids": dict(ids or {}),
+            "season": season,
+            "episode": episode,
+            "candidates": cands,
+        })
+        _dbg(
+            "not_found_scope_unmatched",
+            bucket=bucket,
+            ids=dict(ids or {}),
+            season=season,
+            episode=episode,
+            candidates=len(cands),
+        )
+
+    for obj in nf.get("movies") or []:
+        if not isinstance(obj, Mapping):
+            continue
+        ids = _nf_ids(obj, "movie")
+        hit = False
+        for field, value in ids.items():
+            hit = _mark(req_index.get("by_movie_ids", {}).get((field, value), []), "trakt_episode_not_found") or hit
+        if hit:
+            matched_scopes += 1
+        else:
+            _record_unmatched("movies", ids, None, None, [])
+
+    for obj in nf.get("episodes") or []:
+        if not isinstance(obj, Mapping):
+            continue
+        ids = _nf_ids(obj, "episode", "show")
+        s_num = _nf_season_number(obj)
+        e_num = _nf_number(obj, "episode")
+        keys, basis = _scope_keys(req_index, ids, season=s_num, episode=e_num)
+        if keys:
+            reason = "trakt_episode_not_found" if basis in ("episode_ids", "show_season_episode") else "trakt_parent_not_found"
+            if basis in ("show", "show_season"):
+                expanded += len(keys)
+            _mark(keys, reason)
+            matched_scopes += 1
+            continue
+        _record_unmatched("episodes", ids, s_num, e_num, [])
+
+    for obj in nf.get("seasons") or []:
+        if not isinstance(obj, Mapping):
+            continue
+        ids = _nf_ids(obj, "season", "show")
+        s_num = _nf_season_number(obj)
+        keys, basis = _scope_keys(req_index, ids, season=s_num)
+        if keys:
+            if basis in ("show", "show_season"):
+                expanded += len(keys)
+            _mark(keys, "trakt_parent_not_found")
+            matched_scopes += 1
+            continue
+        _record_unmatched("seasons", ids, s_num, None, [])
+
+    for sh in nf.get("shows") or []:
+        if not isinstance(sh, Mapping):
+            continue
+        show_ids = _nf_ids(sh, "show")
+        seasons = sh.get("seasons") or []
+        tokens = [(f, v) for f, v in show_ids.items()]
+
+        def _show_candidates() -> list[str]:
+            out: list[str] = []
+            for token in tokens:
+                out.extend(req_index.get("by_show", {}).get(token, []))
+            return out
+
+        if not isinstance(seasons, list) or not seasons:
+            scope_keys: set[str] = set()
+            for token in tokens:
+                scope_keys.update(req_index.get("by_show", {}).get(token, []))
+            expanded += len(scope_keys)
+            hit = _mark(scope_keys, "trakt_parent_not_found")
+            if hit:
+                matched_scopes += 1
+            else:
+                _record_unmatched("shows", show_ids, None, None, _show_candidates())
+            continue
+
+        for season in seasons:
+            if not isinstance(season, Mapping):
+                continue
+            s_num = _nf_number(season, "season")
+            eps = season.get("episodes") or []
+            if s_num is None:
+                continue
+            if isinstance(eps, list) and eps:
+                for ep in eps:
+                    if not isinstance(ep, Mapping):
+                        continue
+                    e_num = _nf_number(ep, "episode")
+                    ep_ids = _nf_ids(ep, "episode")
+                    hit = False
+                    for field, value in ep_ids.items():
+                        hit = _mark(req_index.get("by_ep_ids", {}).get((field, value), []), "trakt_episode_not_found") or hit
+                    if not hit and e_num is not None:
+                        for token in tokens:
+                            hit = _mark(req_index.get("by_show_ep", {}).get((*token, s_num, e_num), []), "trakt_episode_not_found") or hit
+                    if hit:
+                        matched_scopes += 1
+                        continue
+                    _record_unmatched("shows.episodes", show_ids, s_num, e_num, _show_candidates())
+                continue
+            season_keys: set[str] = set()
+            for token in tokens:
+                season_keys.update(req_index.get("by_show_season", {}).get((*token, s_num), []))
+            expanded += len(season_keys)
+            hit = _mark(season_keys, "trakt_parent_not_found")
+            if hit:
+                matched_scopes += 1
+            else:
+                _record_unmatched("shows.seasons", show_ids, s_num, None, _show_candidates())
+
+    return list(hit_reason.keys()), hit_reason, expanded, matched_scopes, unmatched
+
+def _retry_failed_episodes(
+    adapter: Any,
+    keys: list[str],
+    src_lookup: Any,
+    *,
+    timeout: float,
+    retries: int,
+    write_timeout: float,
+) -> tuple[set[str], dict[str, dict[str, Any]], int]:
+    recovered: set[str] = set()
+    destinations: dict[str, dict[str, Any]] = {}
+    searches = 0
+    if not keys:
+        return recovered, destinations, searches
+
+    payload: list[dict[str, Any]] = []
+    owner: dict[str, str] = {}
+    for k in keys:
+        item = src_lookup(k)
+        if not item:
+            continue
+        genuine = _genuine_episode_ids(item)
+        trakt_id = str((item.get("ids") or {}).get("trakt") or "").strip()
+        hit: dict[str, Any] | None = None
+        if trakt_id:
+            hit = {"ids": {"trakt": trakt_id}, "season": item.get("season"), "episode": item.get("episode")}
+        else:
+            for ns, value in genuine.items():
+                searches += 1
+                found = _search_trakt_episode(adapter, ns, value, timeout=timeout, retries=retries)
+                if found and found.get("ids", {}).get("trakt"):
+                    hit = found
+                    break
+        if not hit:
+            continue
+        ep_trakt = str((hit.get("ids") or {}).get("trakt") or "").strip()
+        if not ep_trakt:
+            continue
+        watched = _iso8601(item.get("watched_at") or item.get("watchedAt")) or ""
+        token = f"trakt:{ep_trakt}@{watched}"
+        claim = _DEST_CLAIMS.get(token)
+        if claim and claim != k:
+            continue
+        _DEST_CLAIMS[token] = k
+        obj: dict[str, Any] = {"ids": {"trakt": ep_trakt}}
+        if watched:
+            obj["watched_at"] = watched
+        payload.append(obj)
+        owner[ep_trakt] = k
+        destinations[k] = {
+            "ids": _trakt_ids_only(hit.get("ids") or {}),
+            "show_ids": _trakt_ids_only(hit.get("show_ids") or {}),
+            "season": hit.get("season"),
+            "episode": hit.get("episode"),
+            "type": "episode",
+            "watched_at": watched,
+        }
+
+    if not payload:
+        return recovered, destinations, searches
+
+    try:
+        r = request_with_retries(
+            adapter.client.session,
+            "POST",
+            URL_ADD,
+            headers=headers_for_adapter(adapter),
+            json={"episodes": payload},
+            timeout=write_timeout,
+            max_retries=retries,
+        )
+    except Exception as e:
+        _warn("write_failed", op="add_retry", error=str(e))
+        return recovered, {}, searches
+
+    if r.status_code not in (200, 201):
+        _warn("write_failed", op="add_retry", status=r.status_code)
+        return recovered, {}, searches
+
+    d = r.json() or {}
+    nf_ids: set[str] = set()
+    for obj in ((d.get("not_found") or {}).get("episodes") or []):
+        if isinstance(obj, Mapping):
+            tid = str((obj.get("ids") or {}).get("trakt") or "").strip()
+            if tid:
+                nf_ids.add(tid)
+    for ep_trakt, k in owner.items():
+        if ep_trakt in nf_ids:
+            destinations.pop(k, None)
+            continue
+        recovered.add(k)
+    _info("trakt_retry_result", op="add", attempted=len(payload), recovered=len(recovered), searches=searches)
+    return recovered, {k: v for k, v in destinations.items() if k in recovered}, searches
+
+
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     write_timeout = float(_cfg_num(adapter, "history_write_timeout", max(timeout, 60.0), float))
     items_list = list(items)
-    body, unresolved, accepted_keys, accepted_minimals, skipped_keys = _batch_add(adapter, items_list)
+
+    source_keys: list[str] = []
+    source_by_key: dict[str, Mapping[str, Any]] = {}
+    for it in items_list:
+        try:
+            k = str(canonical_key(it) or "")
+        except Exception:
+            k = ""
+        if k:
+            source_keys.append(k)
+            source_by_key[k] = it
+    _remember_source_items(source_by_key)
+
+    outgoing, resolve_unresolved = _apply_simkl_resolution(adapter, items_list)
+    body, unresolved, accepted_keys, accepted_minimals, skipped_keys, req_index = _batch_add(adapter, outgoing)
+    unresolved = list(resolve_unresolved) + list(unresolved)
+    sent_keys = [k for k in (req_index.get("src_items") or {}).keys() if k]
+
+    def _src(key: str) -> dict[str, Any]:
+        return _source_item_for_key(key, req_index) or dict(source_by_key.get(key) or {})
+
+    def _destination_for(k: str) -> dict[str, Any]:
+        rec = (req_index.get("src_items") or {}).get(k)
+        dest = rec.get("destination") if isinstance(rec, Mapping) else None
+        return _sanitize_destination(dest) if isinstance(dest, Mapping) else {}
+
+    def _basis_for(k: str) -> str:
+        rec = (req_index.get("src_items") or {}).get(k)
+        dest = rec.get("destination") if isinstance(rec, Mapping) else None
+        return str((dest or {}).get("_cw_resolution_basis") or "") if isinstance(dest, Mapping) else ""
+
+    def _result(*, ambiguous_keys: Iterable[str] = (), unmatched: int = 0, added_leaves: int = 0, existing_leaves: int = 0) -> dict[str, Any]:
+        ukeys: list[str] = []
+        reason_counts: dict[str, int] = {}
+        for u in unresolved:
+            if not isinstance(u, Mapping):
+                continue
+            hint = str(u.get("hint") or u.get("reason") or "unknown")
+            reason_counts[hint] = reason_counts.get(hint, 0) + 1
+            k = str(u.get("key") or "")
+            if not k:
+                inner = u.get("item")
+                obj: Mapping[str, Any] = inner if isinstance(inner, Mapping) else u
+                try:
+                    k = str(canonical_key(obj) or "")
+                except Exception:
+                    k = ""
+            if k:
+                ukeys.append(k)
+        skips = [k for k in dict.fromkeys(skipped_keys or []) if k]
+        skip_set = set(skips)
+
+        ambiguous_set = {k for k in ambiguous_keys if k}
+        if ambiguous_set:
+            seen_u = set(ukeys)
+            for k in sent_keys:
+                if k not in ambiguous_set or k in skip_set or k in seen_u:
+                    continue
+                unresolved.append({"item": id_minimal(_src(k)), "hint": "trakt_response_ambiguous", "key": k})
+                reason_counts["trakt_response_ambiguous"] = reason_counts.get("trakt_response_ambiguous", 0) + 1
+                ukeys.append(k)
+                seen_u.add(k)
+
+        ukeys = list(dict.fromkeys(ukeys))
+        ukey_set = set(ukeys)
+        present = [k for k in sent_keys if k not in ukey_set and k not in skip_set]
+
+        confirmed = list(present)
+        skips_out = list(skips)
+        if added_leaves or existing_leaves:
+            if existing_leaves and not added_leaves:
+                confirmed = []
+                skips_out = list(dict.fromkeys(skips_out + present))
+            elif added_leaves and existing_leaves:
+                confirmed = []
+                skips_out = list(skips_out)
+                for k in present:
+                    if k not in ukey_set:
+                        unresolved.append({"item": id_minimal(_src(k)), "hint": "trakt_added_existing_split_ambiguous", "key": k})
+                        reason_counts["trakt_added_existing_split_ambiguous"] = reason_counts.get("trakt_added_existing_split_ambiguous", 0) + 1
+                        ukeys.append(k)
+                ukeys = list(dict.fromkeys(ukeys))
+
+        destinations: dict[str, Any] = {}
+        confirmed_set = set(confirmed)
+        aliased = 0
+        for k in present:
+            dest_item = _destination_for(k)
+            if not dest_item:
+                continue
+            dest_event_key = _destination_event_key(dest_item)
+            dest_plain_key = str(canonical_key(dest_item) or "") or dest_event_key.split("@", 1)[0]
+            destinations[k] = {
+                "key": dest_plain_key,
+                "event_key": dest_event_key,
+                "item": dest_item,
+                "status": "added" if k in confirmed_set else "existing",
+            }
+            src_event_key = _source_event_key(_src(k))
+            alias_payload = dict(destinations[k])
+            alias_payload["key"] = dest_event_key
+            alias_payload["plain_key"] = dest_plain_key
+            if src_event_key and _alias_record(src_event_key, alias_payload, basis=str(_basis_for(k) or "")):
+                aliased += 1
+        if aliased:
+            _alias_save()
+            _dbg("alias_recorded", count=aliased, present=len(present))
+
+        out: dict[str, Any] = {
+            "ok": True,
+            "count": len(confirmed),
+            "confirmed_keys": confirmed,
+            "presence_confirmed_keys": present,
+            "confirmed_destinations": destinations,
+            "unresolved": unresolved,
+            "unresolved_keys": ukeys,
+            "skipped_keys": skips_out,
+            "reason_counts": reason_counts,
+            "ambiguous": bool(ambiguous_set),
+        }
+        _info(
+            "trakt_write_result",
+            op="add",
+            attempted=len(source_keys),
+            sent=len(sent_keys),
+            added=len(confirmed),
+            present=len(present),
+            unresolved=len(ukeys),
+            skipped=len(skips_out),
+            ambiguous=bool(ambiguous_set),
+            ambiguous_leaves=len(ambiguous_set),
+            unmatched_scopes=int(unmatched),
+        )
+        return out
+
     if not body:
         _info("write_skipped", op="add", reason="empty_payload", unresolved=len(unresolved))
-        return 0, unresolved, skipped_keys
+        return _result()
+
     _dbg("write_prepare", op="add", movies=len(body.get("movies") or []), shows=len(body.get("shows") or []), seasons=len(body.get("seasons") or []), episodes=len(body.get("episodes") or []), ids=len(body.get("ids") or []))
     r = request_with_retries(
         sess,
@@ -1514,104 +3077,84 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         timeout=write_timeout,
         max_retries=retries,
     )
-    ok_added = 0
-    ok_total = 0
-    added_total = 0
-    existing_total = 0
+
     if r.status_code in (200, 201):
         d = r.json() or {}
         added = d.get("added") or {}
         existing = d.get("existing") or {}
-        added_total = (
-            int(added.get("movies") or 0)
-            + int(added.get("shows") or 0)
-            + int(added.get("seasons") or 0)
-            + int(added.get("episodes") or 0)
-        )
-        existing_total = (
-            int(existing.get("movies") or 0)
-            + int(existing.get("shows") or 0)
-            + int(existing.get("seasons") or 0)
-            + int(existing.get("episodes") or 0)
-        )
-        ok_total = added_total + existing_total
-        ok_added = added_total
+        added_leaves = int(added.get("movies") or 0) + int(added.get("episodes") or 0)
+        existing_leaves = int(existing.get("movies") or 0) + int(existing.get("episodes") or 0)
         nf = d.get("not_found") or {}
-        nf_count = _not_found_count(nf)
-        
-        idx: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
-        try:
-            for m in accepted_minimals or []:
-                if not isinstance(m, dict):
-                    continue
-                m_type = str(m.get("type") or "")
-                for id_field in ("ids", "show_ids"):
-                    m_ids = m.get(id_field) or {}
-                    if not isinstance(m_ids, dict):
-                        continue
-                    for k in ("tmdb", "imdb", "tvdb", "trakt", "slug"):
-                        v = m_ids.get(k)
-                        if v:
-                            idx.setdefault((m_type, k, str(v)), []).append(m)
-        except Exception:
-            idx = {}
+        nf_scopes = _not_found_scope_count(nf)
 
-        nf_unresolved = _unresolved_from_not_found(nf)
-        for u in nf_unresolved:
-            try:
-                it = u.get("item") if isinstance(u, dict) else None
-                mapped: dict[str, Any] | None = None
-                if idx and isinstance(it, dict):
-                    u_type = str(it.get("type") or "")
-                    for id_field in ("ids", "show_ids"):
-                        u_ids = it.get(id_field) or {}
-                        if not isinstance(u_ids, dict):
-                            continue
-                        for k, v in u_ids.items():
-                            if v is None:
-                                continue
-                            cands = idx.get((u_type, str(k), str(v)))
-                            if cands and len(cands) == 1:
-                                mapped = cands[0]
-                                break
-                        if mapped:
-                            break
+        matched_keys, reasons, expanded, matched_scopes, unmatched_details = _correlate_not_found(nf, req_index)
 
-                if mapped is None and len(accepted_minimals or []) == 1:
-                    only = accepted_minimals[0]
-                    if isinstance(only, dict):
-                        mapped = only
+        retry_keys = [k for k in matched_keys if k in set(sent_keys)]
+        recovered, retry_dest, retry_searches = _retry_failed_episodes(
+            adapter,
+            retry_keys,
+            _src,
+            timeout=timeout,
+            retries=retries,
+            write_timeout=write_timeout,
+        )
+        if retry_keys:
+            _info("simkl_trakt_resolution_plan", retry_candidates=len(retry_keys), exact_search_requests=retry_searches)
+        for k in matched_keys:
+            if k in recovered:
+                continue
+            unresolved.append({"item": id_minimal(_src(k)), "hint": reasons.get(k) or "trakt_episode_not_found", "key": k})
+        if expanded:
+            _info("trakt_not_found_expanded", op="add", parent_not_found_expanded=expanded, matched=len(matched_keys))
 
-                if mapped is not None:
-                    u["item"] = mapped
-            except Exception:
-                pass
+        unmatched_scopes = max(0, nf_scopes - matched_scopes)
+        for k in recovered:
+            rec = (req_index.get("src_items") or {}).get(k)
+            if isinstance(rec, dict) and k in retry_dest:
+                rec["destination"] = dict(retry_dest[k])
 
-            unresolved.append(u)
+        sent_set = set(sent_keys)
+        leaf_kind: Mapping[str, str] = req_index.get("leaf_kind") or {}
+        matched_set = set(matched_keys) & sent_set
+        resolved_set = matched_set | set(skipped_keys or [])
 
-        if ok_total > 0:
-            unresolved_keys_for_cache: set[str] = set()
-            try:
-                for u in unresolved or []:
-                    obj = u.get("item") if isinstance(u, Mapping) and isinstance(u.get("item"), Mapping) else u
-                    if isinstance(obj, Mapping):
-                        k = str(key_of(id_minimal(obj)) or "").strip()
-                        if k:
-                            unresolved_keys_for_cache.add(k)
-            except Exception:
-                unresolved_keys_for_cache = set()
+        ambiguous_keys: set[str] = set()
+        for scope in unmatched_details:
+            for k in scope.get("candidates") or []:
+                if k in sent_set and k not in resolved_set:
+                    ambiguous_keys.add(k)
 
-            confirmed_for_cache: list[Mapping[str, Any]] = []
-            for m in items_list:
-                try:
-                    k = str(key_of(id_minimal(m)) or "").strip()
-                except Exception:
-                    k = ""
-                if not k or k in unresolved_keys_for_cache:
-                    continue
-                confirmed_for_cache.append(m)
+        for kind, bucket in (("movie", "movies"), ("episode", "episodes")):
+            group = [k for k in sent_keys if leaf_kind.get(k, "episode") == kind]
+            if not group:
+                continue
+            reported = int(added.get(bucket) or 0) + int(existing.get(bucket) or 0)
+            resolved_in_group = len([k for k in group if k in resolved_set])
+            flagged_in_group = len([k for k in group if k in ambiguous_keys])
+            shortfall = len(group) - (reported + resolved_in_group + flagged_in_group)
+            if shortfall <= 0:
+                continue
+            _dbg("not_found_group_shortfall", media=bucket, sent=len(group), reported=reported,
+                 resolved=resolved_in_group, flagged=flagged_in_group, shortfall=shortfall)
+            for k in group:
+                if k not in resolved_set:
+                    ambiguous_keys.add(k)
 
-            _cache_merge_from_source_items(adapter, confirmed_for_cache)
+        result = _result(
+            ambiguous_keys=ambiguous_keys,
+            unmatched=unmatched_scopes,
+            added_leaves=added_leaves,
+            existing_leaves=existing_leaves,
+        )
+
+        present_set = set(result["presence_confirmed_keys"])
+        confirmed_dest = [
+            _sanitize_destination(rec["destination"])
+            for k, rec in (req_index.get("src_items") or {}).items()
+            if k in present_set and isinstance(rec, Mapping) and isinstance(rec.get("destination"), Mapping)
+        ]
+        if confirmed_dest:
+            _cache_merge_from_source_items(adapter, confirmed_dest)
             if _history_collection_enabled(adapter):
                 coll_body = _history_body_to_collection(body, _history_collection_types(adapter))
                 if coll_body:
@@ -1632,40 +3175,121 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                             _warn("write_failed", op="add", target="collection", status=rc.status_code, body=((rc.text or "")[:200]))
                     except Exception as e:
                         _warn("write_failed", op="add", target="collection", error=str(e))
+        return result
 
-        if existing_total > 0 and added_total == 0 and nf_count == 0:
-            try:
-                skipped_keys = list(dict.fromkeys(list(skipped_keys or []) + list(accepted_keys or [])))
-            except Exception:
-                pass
-
-        elif ok_total == 0 and nf_count == 0 and not unresolved:
-            _dbg("write_prepare", op="add", reason="noop_response")
-    elif r.status_code == 409:
+    if r.status_code == 409:
         _dbg("write_item_skipped", op="add", reason="duplicate", status=409, body=((r.text or "")[:200]))
-        ok_total = len(accepted_minimals)
-        ok_added = 0
-        try:
-            skipped_keys = list(dict.fromkeys(list(skipped_keys or []) + list(accepted_keys or [])))
-        except Exception:
-            pass
+        skipped_keys = list(dict.fromkeys(list(skipped_keys or []) + sent_keys))
         _bust_index_cache("write:add:duplicate")
-    elif r.status_code == 420:
+        return _result()
+
+    if r.status_code == 420:
         _warn("rate_limit", op="add", status=420)
         _record_limit_error("history")
-        for m in accepted_minimals:
-            unresolved.append({"item": m, "hint": "trakt_limit"})
-        _info("write_done", op="add", ok=False, applied=0, unresolved=len(unresolved), skipped=len(skipped_keys))
-        return 0, unresolved, skipped_keys
-    else:
-        _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:200]))
-        for m in accepted_minimals:
-            unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
-    _info("write_done", op="add", ok=len(unresolved) == 0, applied=ok_added, unresolved=len(unresolved), skipped=len(skipped_keys))
-    return ok_added, unresolved, skipped_keys
+        for k in sent_keys:
+            unresolved.append({"item": id_minimal(_src(k)), "hint": "trakt_limit", "key": k})
+        return _result()
+
+    _warn("write_failed", op="add", status=r.status_code, body=((r.text or "")[:200]))
+    for k in sent_keys:
+        unresolved.append({"item": id_minimal(_src(k)), "hint": f"http:{r.status_code}", "key": k})
+    return _result()
 
 
-def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def _remove_exact(
+    adapter: Any,
+    plan: list[dict[str, Any]],
+    *,
+    timeout: float,
+    retries: int,
+    chunk_size: int,
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    sess = adapter.client.session
+    headers = headers_for_adapter(adapter)
+    confirmed_keys: list[str] = []
+    removed_destination_keys: list[str] = []
+    unresolved: list[dict[str, Any]] = []
+
+    by_id: dict[int, dict[str, Any]] = {}
+    for entry in plan:
+        by_id[int(entry["history_id"])] = entry
+
+    ids = sorted(by_id.keys())
+    for i in range(0, len(ids), max(1, chunk_size)):
+        batch = ids[i : i + max(1, chunk_size)]
+        _dbg("write_prepare", op="remove", mode="exact_ids", ids=len(batch))
+        r = request_with_retries(
+            sess,
+            "POST",
+            URL_REMOVE,
+            headers=headers,
+            json={"ids": list(batch)},
+            timeout=timeout,
+            max_retries=retries,
+        )
+        if r.status_code not in (200, 201):
+            _warn("write_failed", op="remove", mode="exact_ids", status=r.status_code, body=((r.text or "")[:200]))
+            for hid in batch:
+                entry = by_id[hid]
+                unresolved.append({"item": entry["item"], "hint": f"http:{r.status_code}", "key": entry["source_key"]})
+            continue
+        try:
+            payload = r.json() or {}
+        except Exception:
+            payload = {}
+        deleted = payload.get("deleted") or payload.get("removed") or {}
+        not_found = payload.get("not_found") or {}
+        nf_ids = _not_found_ids(not_found)
+        deleted_events = _deleted_event_count(deleted)
+        candidates = [hid for hid in batch if hid not in nf_ids]
+
+        _dbg(
+            "write_result",
+            op="remove",
+            mode="exact_ids",
+            submitted_ids=len(batch),
+            candidate_ids=len(candidates),
+            deleted_events=deleted_events,
+            already_absent=len(nf_ids),
+        )
+
+        if deleted_events != len(candidates):
+            _warn(
+                "remove_unconfirmed",
+                mode="exact_ids",
+                submitted_ids=len(batch),
+                candidate_ids=len(candidates),
+                deleted_events=deleted_events,
+                already_absent=len(nf_ids),
+            )
+            for hid in candidates:
+                entry = by_id[hid]
+                unresolved.append({"item": entry["item"], "hint": "trakt_history_remove_unconfirmed", "key": entry["source_key"]})
+            resolved_ids = sorted(nf_ids)
+        else:
+            resolved_ids = list(batch)
+
+        for hid in resolved_ids:
+            entry = by_id[hid]
+            confirmed_keys.append(entry["source_key"])
+            if entry.get("destination_key"):
+                removed_destination_keys.append(str(entry["destination_key"]))
+
+        if resolved_ids:
+            _cache_remove_event_keys(
+                [str(by_id[hid].get("destination_event_key") or "") for hid in resolved_ids],
+                resolved_ids,
+            )
+            _cache_remove_source_items(
+                adapter,
+                [by_id[hid]["item"] for hid in resolved_ids if isinstance(by_id[hid].get("item"), Mapping)],
+            )
+            _alias_forget([by_id[hid]["source_event_key"] for hid in resolved_ids if by_id[hid].get("source_event_key")])
+
+    return confirmed_keys, removed_destination_keys, unresolved
+
+
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
@@ -1674,58 +3298,344 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     items_list = list(items or [])
     if not items_list:
         _info("write_skipped", op="remove", reason="empty_payload", unresolved=0)
-        return 0, []
+        return {"ok": True, "count": 0, "confirmed_keys": [], "unresolved": [], "unresolved_keys": []}
 
-    ok = 0
+    aliases = _alias_load()
+    exact_plan: list[dict[str, Any]] = []
+    passthrough: list[Mapping[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
+    lookup_needed: list[dict[str, Any]] = []
+
+    for it in items_list:
+        plain_key = str(canonical_key(it) or "")
+        source_event_key, rec, miss_reason = _alias_lookup(aliases, it)
+        if not isinstance(rec, Mapping):
+            if not _requires_alias_removal(it):
+                passthrough.append(it)
+                continue
+            if _alias_rebuild_incomplete():
+                unresolved.append({"item": id_minimal(it), "hint": "trakt_history_alias_rebuild_pending", "key": plain_key})
+                continue
+            exact = _exact_destination_for_removal(it, adapter, timeout=timeout, retries=retries)
+            if exact is None:
+                unresolved.append({"item": id_minimal(it), "hint": miss_reason, "key": plain_key})
+                continue
+            lookup_needed.append({
+                "source_key": plain_key,
+                "source_event_key": "",
+                "destination_event_key": "",
+                "destination_key": exact.get("destination_key") or "",
+                "item": id_minimal(it),
+                "alias": exact,
+            })
+            continue
+        entry = {
+            "source_key": plain_key,
+            "source_event_key": source_event_key,
+            "destination_event_key": str(rec.get("destination_event_key") or ""),
+            "destination_key": str(rec.get("destination_key") or str(rec.get("destination_event_key") or "").split("@", 1)[0]),
+            "item": id_minimal(it),
+            "alias": dict(rec),
+        }
+        hid = _int_or_none(rec.get("history_id"))
+        if hid is not None:
+            entry["history_id"] = hid
+            exact_plan.append(entry)
+        else:
+            lookup_needed.append(entry)
+
+    for entry in lookup_needed:
+        hid, reason = _lookup_history_id(adapter, entry["alias"], timeout=timeout, retries=retries)
+        if hid is None:
+            unresolved.append({"item": entry["item"], "hint": reason, "key": entry["source_key"]})
+            continue
+        entry["history_id"] = hid
+        exact_plan.append(entry)
+
+    confirmed_keys: list[str] = []
+    removed_destination_keys: list[str] = []
+    if exact_plan:
+        ex_keys, ex_dest, ex_unresolved = _remove_exact(
+            adapter, exact_plan, timeout=timeout, retries=retries, chunk_size=chunk_size
+        )
+        confirmed_keys.extend(ex_keys)
+        removed_destination_keys.extend(ex_dest)
+        unresolved.extend(ex_unresolved)
+
+    exact_confirmed = len(confirmed_keys)
+    ok = exact_confirmed
+    passthrough_ok, passthrough_exact, passthrough_coordinate = _remove_by_coordinates(
+        adapter,
+        passthrough,
+        sess=sess,
+        headers=headers,
+        timeout=timeout,
+        retries=retries,
+        chunk_size=chunk_size,
+        unresolved=unresolved,
+        confirmed_keys=confirmed_keys,
+    )
+    ok += passthrough_ok
+
+    ukeys: list[str] = []
+    reason_counts: dict[str, int] = {}
+    for u in unresolved:
+        if not isinstance(u, Mapping):
+            continue
+        reason = str(u.get("hint") or "unknown")
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        k = str(u.get("key") or "")
+        if not k:
+            inner = u.get("item")
+            obj: Mapping[str, Any] = inner if isinstance(inner, Mapping) else u
+            try:
+                k = str(canonical_key(obj) or "")
+            except Exception:
+                k = ""
+        if k:
+            ukeys.append(k)
+    ukeys = list(dict.fromkeys(ukeys))
+    confirmed_keys = [k for k in dict.fromkeys(confirmed_keys) if k]
+
+    _info(
+        "write_done",
+        op="remove",
+        ok=not unresolved,
+        removed=len(confirmed_keys),
+        exact=exact_confirmed + passthrough_exact,
+        coordinate=passthrough_coordinate,
+        applied=len(confirmed_keys),
+        unresolved=len(unresolved),
+    )
+    return {
+        "ok": True,
+        "count": len(confirmed_keys),
+        "confirmed_keys": confirmed_keys,
+        "removed_destination_keys": list(dict.fromkeys(removed_destination_keys)),
+        "removed_exact": exact_confirmed + passthrough_exact,
+        "removed_coordinate": passthrough_coordinate,
+        "unresolved": unresolved,
+        "unresolved_keys": ukeys,
+        "reason_counts": reason_counts,
+    }
+
+
+def _remove_by_coordinates(
+    adapter: Any,
+    items_list: list[Mapping[str, Any]],
+    *,
+    sess: Any,
+    headers: Mapping[str, Any],
+    timeout: float,
+    retries: int,
+    chunk_size: int,
+    unresolved: list[dict[str, Any]],
+    confirmed_keys: list[str],
+) -> tuple[int, int, int]:
+    if not items_list:
+        return 0, 0, 0
+    ok = 0
+    exact_removed = 0
+    coordinate_removed = 0
+    confirmed_history_ids: set[int] = set()
+    confirmed_scope_events: list[tuple[str, str]] = []
     for part in _chunked_items(items_list, chunk_size):
         body, part_unresolved, accepted_keys, accepted_minimals, raw_id_map = _batch_remove(adapter, part)
         unresolved.extend(part_unresolved)
         if not body:
             continue
+        ids_body = {"ids": list(body.get("ids") or [])} if body.get("ids") else {}
+        coord_body = {k: v for k, v in body.items() if k != "ids"}
         _dbg(
             "write_prepare",
             op="remove",
             chunk_size=chunk_size,
             chunk_items=len(part),
-            movies=len(body.get("movies") or []),
-            shows=len(body.get("shows") or []),
-            seasons=len(body.get("seasons") or []),
-            episodes=len(body.get("episodes") or []),
-            ids=len(body.get("ids") or []),
+            movies=len(coord_body.get("movies") or []),
+            shows=len(coord_body.get("shows") or []),
+            seasons=len(coord_body.get("seasons") or []),
+            episodes=len(coord_body.get("episodes") or []),
+            ids=len(ids_body.get("ids") or []),
         )
-        r = request_with_retries(
-            sess,
-            "POST",
-            URL_REMOVE,
-            headers=headers,
-            json=body,
-            timeout=timeout,
-            max_retries=retries,
-        )
-        if r.status_code in (200, 201):
-            d = r.json() or {}
-            deleted = d.get("deleted") or d.get("removed") or {}
-            part_ok = (
-                int(deleted.get("movies") or 0)
-                + int(deleted.get("shows") or 0)
-                + int(deleted.get("seasons") or 0)
-                + int(deleted.get("episodes") or 0)
-                + int(deleted.get("ids") or 0)
-            )
-            nf = d.get("not_found") or {}
-            nf_unresolved = _unresolved_from_not_found(nf, raw_id_map)
-            for u in nf_unresolved:
-                unresolved.append(u)
+        raw_key_by_id: dict[int, str] = {}
+        raw_minimal_by_id: dict[int, Mapping[str, Any]] = {}
+        for hid, minimal in (raw_id_map or {}).items():
+            hid_i = _int_or_none(hid)
+            if hid_i is None or not isinstance(minimal, Mapping):
+                continue
+            raw_key_by_id[hid_i] = str(key_of(minimal) or "")
+            raw_minimal_by_id[hid_i] = minimal
+        raw_keys = {k for k in raw_key_by_id.values() if k}
 
-            if part_ok > 0:
-                ok += part_ok
-                _cache_remove_source_items(adapter, accepted_minimals)
-            elif not nf_unresolved:
-                _dbg("write_prepare", op="remove", reason="noop_response", chunk_items=len(part))
-        else:
-            _warn("write_failed", op="remove", status=r.status_code, body=((r.text or "")[:200]))
-            for m in accepted_minimals:
-                unresolved.append({"item": m, "hint": f"http:{r.status_code}"})
-    _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
-    return ok, unresolved
+        confirmed_ids: list[int] = []
+        if ids_body:
+            r_ids = request_with_retries(
+                sess, "POST", URL_REMOVE, headers=headers, json=ids_body,
+                timeout=timeout, max_retries=retries,
+            )
+            if r_ids.status_code in (200, 201):
+                try:
+                    d_ids = r_ids.json() or {}
+                except Exception:
+                    d_ids = {}
+                nf_id_set = _not_found_ids(d_ids.get("not_found") or {})
+                deleted_events = _deleted_event_count(d_ids.get("deleted") or d_ids.get("removed") or {})
+                submitted_ids = [i for i in (_int_or_none(x) for x in (ids_body.get("ids") or [])) if i is not None]
+                candidate_ids = [i for i in submitted_ids if i not in nf_id_set]
+
+                _dbg(
+                    "write_result",
+                    op="remove",
+                    mode="raw_ids",
+                    submitted_ids=len(submitted_ids),
+                    candidate_ids=len(candidate_ids),
+                    deleted_events=deleted_events,
+                    already_absent=len(nf_id_set),
+                )
+
+                if deleted_events == len(candidate_ids):
+                    confirmed_ids = list(candidate_ids) + sorted(nf_id_set)
+                else:
+                    _warn(
+                        "remove_unconfirmed",
+                        mode="raw_ids",
+                        submitted_ids=len(submitted_ids),
+                        candidate_ids=len(candidate_ids),
+                        deleted_events=deleted_events,
+                        already_absent=len(nf_id_set),
+                    )
+                    for hid in candidate_ids:
+                        unresolved.append({
+                            "item": dict(raw_minimal_by_id.get(hid) or {}),
+                            "hint": "trakt_history_remove_unconfirmed",
+                            "key": raw_key_by_id.get(hid, ""),
+                        })
+                    confirmed_ids = sorted(nf_id_set)
+            else:
+                _warn("write_failed", op="remove", mode="raw_ids", status=r_ids.status_code, body=((r_ids.text or "")[:200]))
+                for hid in raw_key_by_id:
+                    unresolved.append({
+                        "item": dict(raw_minimal_by_id.get(hid) or {}),
+                        "hint": f"http:{r_ids.status_code}",
+                        "key": raw_key_by_id.get(hid, ""),
+                    })
+
+        confirmed_scope_keys: list[str] = []
+        coordinate_candidates: list[str] = []
+        nf_unresolved: list[dict[str, Any]] = []
+        if coord_body:
+            r_coord = request_with_retries(
+                sess, "POST", URL_REMOVE, headers=headers, json=coord_body,
+                timeout=timeout, max_retries=retries,
+            )
+            if r_coord.status_code in (200, 201):
+                try:
+                    d_coord = r_coord.json() or {}
+                except Exception:
+                    d_coord = {}
+                nf_coord = d_coord.get("not_found") or {}
+                deleted_scope_events = _deleted_event_count(d_coord.get("deleted") or d_coord.get("removed") or {})
+                nf_unresolved = [u for u in _unresolved_from_not_found(nf_coord) if isinstance(u, Mapping)]
+
+                nf_scope_keys: set[str] = set()
+                for u in nf_unresolved:
+                    explicit = str(u.get("key") or "")
+                    if explicit:
+                        nf_scope_keys.add(explicit)
+                        continue
+                    inner = u.get("item")
+                    if isinstance(inner, Mapping):
+                        try:
+                            derived = str(canonical_key(inner) or "")
+                        except Exception:
+                            derived = ""
+                        if derived:
+                            nf_scope_keys.add(derived)
+
+                unresolved.extend(nf_unresolved)
+
+                coordinate_candidates = [
+                    k for k in accepted_keys
+                    if k and k not in raw_keys and k not in nf_scope_keys
+                ]
+
+                _dbg(
+                    "write_result",
+                    op="remove",
+                    mode="coordinates",
+                    candidate_ids=len(coordinate_candidates),
+                    deleted_events=deleted_scope_events,
+                    not_found_ids=len(nf_scope_keys),
+                )
+
+                if coordinate_candidates:
+                    if deleted_scope_events == len(coordinate_candidates):
+                        confirmed_scope_keys = list(coordinate_candidates)
+                    else:
+                        _warn(
+                            "remove_unconfirmed",
+                            mode="coordinates",
+                            candidate_ids=len(coordinate_candidates),
+                            deleted_events=deleted_scope_events,
+                            not_found_ids=len(nf_scope_keys),
+                        )
+                        candidate_set = set(coordinate_candidates)
+                        for m in accepted_minimals:
+                            if not isinstance(m, Mapping):
+                                continue
+                            mk = str(key_of(m) or "")
+                            if mk in candidate_set:
+                                unresolved.append({
+                                    "item": m,
+                                    "hint": "trakt_history_remove_unconfirmed",
+                                    "key": mk,
+                                })
+            else:
+                _warn("write_failed", op="remove", mode="coordinates", status=r_coord.status_code, body=((r_coord.text or "")[:200]))
+                for m in accepted_minimals:
+                    if not isinstance(m, Mapping):
+                        continue
+                    mk = str(key_of(m) or "")
+                    if mk and mk not in raw_keys:
+                        unresolved.append({"item": m, "hint": f"http:{r_coord.status_code}", "key": mk})
+
+        confirmed_raw_keys = [raw_key_by_id.get(hid, "") for hid in confirmed_ids]
+        confirmed_raw_keys = [k for k in confirmed_raw_keys if k]
+
+        if confirmed_ids:
+            _cache_remove_event_keys([], confirmed_ids)
+        if confirmed_scope_keys:
+            scope_set = set(confirmed_scope_keys)
+            scope_minimals = [
+                m for m in accepted_minimals
+                if isinstance(m, Mapping) and str(key_of(m) or "") in scope_set
+            ]
+            if scope_minimals:
+                _cache_remove_source_items(adapter, scope_minimals)
+            watched_by_key: dict[str, str] = {}
+            for it in part:
+                if not isinstance(it, Mapping):
+                    continue
+                ck = str(canonical_key(it) or "")
+                if ck in scope_set:
+                    watched_by_key[ck] = _iso8601(it.get("watched_at") or it.get("watchedAt")) or ""
+            for k in scope_set:
+                confirmed_scope_events.append((k, watched_by_key.get(k, "")))
+
+        part_confirmed_keys = confirmed_raw_keys + confirmed_scope_keys
+        if part_confirmed_keys:
+            confirmed_keys.extend(part_confirmed_keys)
+
+        confirmed_history_ids |= set(confirmed_ids)
+        exact_removed += len(confirmed_raw_keys)
+        coordinate_removed += len(confirmed_scope_keys)
+        ok += len(part_confirmed_keys)
+
+        if not part_confirmed_keys and not nf_unresolved and not coordinate_candidates and not ids_body:
+            _dbg("write_prepare", op="remove", reason="noop_response", chunk_items=len(part))
+
+    if confirmed_history_ids:
+        _alias_forget_by_history_ids(confirmed_history_ids)
+    if confirmed_scope_events:
+        _alias_forget_by_events(confirmed_scope_events)
+    return ok, exact_removed, coordinate_removed

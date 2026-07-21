@@ -153,6 +153,26 @@ def is_remove_retry_reason(reason) -> bool:
     return r.startswith("apply:remove") or r.startswith("two:apply:remove") or r.startswith("provider_down:remove")
 
 
+def resolve_baseline_writes(baseline_keys, key2item, result) -> list:
+    dest_map = (result or {}).get("confirmed_destinations")
+    dest_map = dest_map if isinstance(dest_map, Mapping) else {}
+    keys = [str(k) for k in (baseline_keys or []) if k]
+    if dest_map:
+        presence_raw = (result or {}).get("presence_confirmed_keys")
+        if isinstance(presence_raw, list) and presence_raw:
+            keys = [str(x) for x in presence_raw if x]
+    out: list = []
+    for k in keys:
+        mapped = dest_map.get(k) if dest_map else None
+        if isinstance(mapped, Mapping) and isinstance(mapped.get("item"), Mapping):
+            out.append((str(mapped.get("key") or "") or k, dict(mapped["item"])))
+            continue
+        v = (key2item or {}).get(k)
+        if v:
+            out.append((k, v))
+    return out
+
+
 def select_baseline_keys(success_keys, result) -> list:
     presence_raw = (result or {}).get("presence_confirmed_keys")
     if isinstance(presence_raw, list):
@@ -1025,7 +1045,18 @@ def run_one_way_feature(
             dbg("anime_mapping.rekeyed", feature=feature, src=src, dst=dst, src_items=len(src_idx), dst_items=len(dst_full))
 
     # Repair sparse destination snapshots using the source index.
+    dst_canonical: dict[str, Any] = dict(dst_full) if feature == "history" else {}
     if feature in ("history", "ratings", "progress"):
+        try:
+            _view_hook = getattr(dst_ops, "destination_comparison_view", None)
+            if callable(_view_hook):
+                _view = _view_hook(provider_cfg, feature=feature, index=dst_full)
+                if isinstance(_view, Mapping) and _view:
+                    if len(_view) != len(dst_full) or set(_view) != set(dst_full):
+                        dbg("destination_comparison_view", feature=feature, dst=dst, before=len(dst_full), after=len(_view))
+                    dst_full = dict(_view)
+        except Exception:
+            pass
         dst_full = _hydrate_missing_fields(dst_full, src_idx, feature)
         dst_full = _rekey_to_src_keyspace(dst_full, src_idx)
 
@@ -1607,11 +1638,12 @@ def run_one_way_feature(
             except Exception:
                 pass
             baseline_keys = select_baseline_keys(success_keys, add_res)
-            if baseline_keys and not dry_run_flag:
-                for k in baseline_keys:
-                    v = key2item.get(k)
-                    if v:
-                        dst_full[k] = v
+            baseline_writes = resolve_baseline_writes(baseline_keys, key2item, add_res)
+            if baseline_writes and not dry_run_flag:
+                for dk, item in baseline_writes:
+                    dst_full[dk] = item
+                    if feature == "history":
+                        dst_canonical[dk] = item
                 _bust_snapshot(dst)
             post_apply_add_res = add_res
 
@@ -1708,6 +1740,15 @@ def run_one_way_feature(
                 for k in rem_success_keys:
                     if k in dst_full:
                         dst_full.pop(k, None)
+                if feature == "history":
+                    dest_removed = [str(x) for x in ((rem_res or {}).get("removed_destination_keys") or []) if x]
+                    for dk in dest_removed:
+                        dst_canonical.pop(dk, None)
+                    if not dest_removed:
+                        base_removed = {str(k).split("@", 1)[0] for k in rem_success_keys}
+                        for ck0 in list(dst_canonical.keys()):
+                            if str(ck0).split("@", 1)[0] in base_removed:
+                                dst_canonical.pop(ck0, None)
                 _bust_snapshot(dst)
                 try:
                     clear_unresolved(dst, feature, rem_success_keys)
@@ -1743,6 +1784,8 @@ def run_one_way_feature(
                 if rk not in dst_full:
                     base_update += 1
                 dst_full[rk] = rv
+                if feature == "history":
+                    dst_canonical[rk] = rv
         tk = str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()
         contains_trace = bool(tk) and any(str(k).split("@", 1)[0].lower() == tk for k in (refreshed or {}))
         emit("post_apply_refresh:done", provider=dst, instance=dst_inst, feature=feature,
@@ -1834,11 +1877,16 @@ def run_one_way_feature(
                 merge_payload=_merge_payload,
             )
 
-        if feature in ("history", "ratings", "progress"):
+        if feature in ("ratings", "progress"):
             dst_full = _rekey_state_to_src_keyspace(dst_full, src_idx)
 
+        dst_commit = dst_canonical if feature == "history" else dst_full
+        if feature == "history" and len(dst_commit) != len(dst_full):
+            dbg("baseline.provider_native", feature=feature, dst=dst,
+                canonical=len(dst_commit), comparison=len(dst_full))
+
         _commit_baseline(provs_block, src, src_inst, feature, src_idx)
-        _commit_baseline(provs_block, dst, dst_inst, feature, dst_full)
+        _commit_baseline(provs_block, dst, dst_inst, feature, dst_commit)
         _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)
         _commit_checkpoint(provs_block, dst, dst_inst, feature, now_cp_dst)
 
