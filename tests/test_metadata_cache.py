@@ -19,14 +19,14 @@ def test_metadata_default_ttl_is_30_days() -> None:
 def test_shared_metadata_cache_round_trip_and_expiry(tmp_path, monkeypatch) -> None:
     path = metadata_cache_path(tmp_path, "movie", "123", "nl-NL")
     assert path == tmp_path / "movie" / "123.nl-NL.json"
-    assert write_metadata_cache(path, {"title": "Example", "year": 2026}) is True
-    assert read_metadata_cache(path, ttl_seconds=720 * 3600)["title"] == "Example"
+    assert write_metadata_cache(tmp_path, "movie", "123", "nl-NL", {"title": "Example", "year": 2026}) is True
+    assert read_metadata_cache(tmp_path, "movie", "123", "nl-NL", ttl_seconds=720 * 3600)["title"] == "Example"
 
     payload = json.loads(path.read_text("utf-8"))
     payload["fetched_at"] = 1
     path.write_text(json.dumps(payload), encoding="utf-8")
-    assert read_metadata_cache(path, ttl_seconds=720 * 3600) is None
-    assert read_metadata_cache(path, ttl_seconds=None)["title"] == "Example"
+    assert read_metadata_cache(tmp_path, "movie", "123", "nl-NL", ttl_seconds=720 * 3600) is None
+    assert read_metadata_cache(tmp_path, "movie", "123", "nl-NL", ttl_seconds=None)["title"] == "Example"
 
     monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
     monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
