@@ -55,23 +55,35 @@
   const buildTmdbUrl = (p) => {
     const id = tmdbIdOf(p);
     if (!id) return "";
-    const type = String(p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
+    const resolved = metaCache.get(metaKey(p))?.resolved_type;
+    const type = String(resolved || p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
     return `https://www.themoviedb.org/${type}/${encodeURIComponent(String(id))}`;
+  };
+
+  const artTypeOf = (p) => {
+    const type = p?.media_type || p?.type || "";
+    return String(type).toLowerCase() === "movie" ? "movie" : "tv";
+  };
+
+  const artEvidenceOf = (p) => {
+    const mt = String(p?.media_type || p?.type || "").toLowerCase();
+    if (mt === "episode" || p?.season != null || p?.episode != null) return "";
+    const t = p?.title ? `&title=${encodeURIComponent(String(p.title))}` : "";
+    const y = p?.year ? `&year=${encodeURIComponent(String(p.year))}` : "";
+    return t + y;
   };
 
   const buildArtUrl = (p) => {
     if (p?.cover) return p.cover;
     const id = tmdbIdOf(p);
     if (!id) return "/assets/img/placeholder_poster.svg";
-    const type = String(p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?size=w342`;
+    return `/art/tmdb/${artTypeOf(p)}/${encodeURIComponent(String(id))}?size=w342${artEvidenceOf(p)}`;
   };
 
   const buildBackdropUrl = (p) => {
     const id = tmdbIdOf(p);
     if (!id) return "";
-    const type = String(p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280`;
+    return `/art/tmdb/${artTypeOf(p)}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280${artEvidenceOf(p)}`;
   };
 
   const runtimeLabel = (mins) => {
@@ -170,7 +182,7 @@
   const backdropFromMeta = (meta) => {
     const id = meta?.ids?.tmdb;
     if (!id) return "";
-    const type = String(meta?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
+    const type = String(meta?.resolved_type || meta?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
     return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280`;
   };
 
@@ -188,6 +200,7 @@
     if (!tmdb) return null;
     const mt = String(p?.media_type || p?.type || "").toLowerCase();
     const type = mt === "movie" ? "movie" : "show";
+    const isEpisode = mt === "episode" || p?.season != null || p?.episode != null;
     const need = { overview: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1, certification: 1, score: 1, vote_count: 1, release: 1, backdrop: 1 };
     if (type === "show") need.series_info = 1;
 
@@ -197,7 +210,13 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: [{ type, tmdb }],
+          items: [{
+            type,
+            tmdb,
+            title: isEpisode ? "" : (p?.title || ""),
+            year: isEpisode ? "" : (p?.year || ""),
+            ids: { imdb: p?.ids?.imdb || "", tvdb: p?.ids?.tvdb || "" },
+          }],
           need,
           concurrency: 1
         })

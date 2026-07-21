@@ -254,6 +254,10 @@ const actionCss=`#page-watchlist .wl-action-head{justify-content:space-between}#
         inflightKey,
         tmdb,
         type: k.startsWith("movie:") ? "movie" : "show",
+        title: it?.title || "",
+        year: it?.year || "",
+        imdb: it?.ids?.imdb || "",
+        tvdb: it?.ids?.tvdb || "",
       });
     }
 
@@ -264,7 +268,13 @@ const actionCss=`#page-watchlist .wl-action-head{justify-content:space-between}#
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              items: missing.map((x) => ({ type: x.type, tmdb: x.tmdb })),
+              items: missing.map((x) => ({
+                type: x.type,
+                tmdb: x.tmdb,
+                title: x.title,
+                year: x.year,
+                ids: { imdb: x.imdb, tvdb: x.tvdb },
+              })),
               need,
               concurrency: Math.min(Math.max(missing.length, 1), 6),
             })
@@ -329,7 +339,9 @@ const actionCss=`#page-watchlist .wl-action-head{justify-content:space-between}#
   const cmp = (a, b) => a < b ? -1 : a > b ? 1 : 0;
   const cmpDir = v => (sortDir === "asc" ? v : -v);
   const normKey = it => it.key || it.guid || it.id || (it.ids?.tmdb && `tmdb:${it.ids.tmdb}`) || (it.ids?.imdb && `imdb:${it.ids.imdb}`) || (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
-  const artUrl=(it,size,kind="poster")=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv")}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}`;
+  const artType=it=>(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv");
+  const artEvidence=it=>{const t=it?.title?`&title=${encodeURIComponent(String(it.title))}`:"";const y=it?.year?`&year=${encodeURIComponent(String(it.year))}`:"";return t+y;};
+  const artUrl=(it,size,kind="poster")=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${artType(it)}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}${artEvidence(it)}`;
   const parseReleaseDate = s => { if (typeof s !== "string" || !(s = s.trim())) return null; let y, m, d; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) ([y, m, d] = s.split("-").map(Number)); else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const a = s.split("-").map(Number); d = a[0]; m = a[1]; y = a[2]; } else return null; const t = Date.UTC(y, (m || 1) - 1, d || 1), dt = new Date(t); return Number.isFinite(dt.getTime()) ? dt : null; };
   const fmtDateSmart = (raw, loc) => { const dt = parseReleaseDate(raw); if (!dt) return ""; try { return new Intl.DateTimeFormat(loc || toLocale(), { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"UTC" }).format(dt); } catch { return ""; } };
   const providersOf = it => Array.isArray(it.sources) ? it.sources.map(providerKey).filter(Boolean) : [];
@@ -346,16 +358,21 @@ const actionCss=`#page-watchlist .wl-action-head{justify-content:space-between}#
     return typeof iso === "string" ? iso.trim() : "";
   };
 
+  const resolvedTypeFor = it => String(metaCache.get(metaKey(it))?.resolved_type || "").toLowerCase();
   const typeLabelFor = it => {
+    const resolved = resolvedTypeFor(it);
+    if (resolved === "movie") return "Movie";
     const raw = String(it?.type || "").toLowerCase();
     if (raw === "movie") return "Movie";
-    if (raw === "anime") return "Anime";
+    if (raw === "anime") return resolved === "show" ? "Show" : "Anime";
     return "Show";
   };
   const posterTypeLabelFor = it => {
+    const resolved = resolvedTypeFor(it);
+    if (resolved === "movie") return "M";
     const raw = String(it?.type || "").toLowerCase();
     if (raw === "movie") return "M";
-    if (raw === "anime") return "A";
+    if (raw === "anime") return resolved === "show" ? "S" : "A";
     return "S";
   };
   const yearFromIso = iso => (typeof iso === "string" && /^\d{4}/.test(iso) ? iso.slice(0,4) : "");
@@ -880,8 +897,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   function backdropFromMeta(it, meta){
   const tmdb = it?.tmdb || it?.ids?.tmdb || meta?.ids?.tmdb;
   if (!tmdb) return "";
-  const type = (((it?.type||it?.media_type||meta?.type||"")+"").toLowerCase()==="movie"?"movie":"tv");
-  return `/art/tmdb/${type}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}`;
+  const type = artType(it);
+  return `/art/tmdb/${type}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}${artEvidence(it)}`;
 }
 
   function renderDetail(it, meta) {

@@ -480,6 +480,8 @@ def api_watchlist(
                 continue
 
             it["type"] = _norm_type(it.get("type") or it.get("entity") or it.get("media_type"))
+            raw_item_ids = it.get("ids")
+            item_ids: dict[str, Any] = raw_item_ids if isinstance(raw_item_ids, dict) else {}
             try:
                 meta = get_meta(
                     api_key,
@@ -488,7 +490,13 @@ def api_watchlist(
                     CACHE_DIR,
                     need={"overview": True, "tagline": True, "title": True, "year": True},
                     locale=eff_locale,
+                    title=it.get("title"),
+                    year=it.get("year"),
+                    imdb_id=item_ids.get("imdb"),
+                    tvdb_id=item_ids.get("tvdb"),
                 ) or {}
+                if meta.get("resolved_type"):
+                    it["resolved_type"] = meta["resolved_type"]
                 desc = meta.get("overview") or ""
                 if not desc:
                     continue

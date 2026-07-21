@@ -161,7 +161,8 @@
   function artUrl(item, size = "w342") {
     const tmdb = item?.tmdb;
     if (!tmdb) return null;
-    return `/art/tmdb/${isTV(item.type || item.entity || item.media_type) ? "tv" : "movie"}/${tmdb}?size=${encodeURIComponent(size)}`;
+    const kind = isTV(item.type || item.entity || item.media_type) ? "tv" : "movie";
+    return `/art/tmdb/${kind}/${tmdb}?size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
   }
 
   const providerLogoPath = (name) => window.CW?.ProviderMeta?.logoPath?.(name) || "";
@@ -194,14 +195,24 @@
     return raw === "movie" ? "movie" : "show";
   }
 
-  function artTypeOf(item) {
+  function artTypeOf(item, meta = null) {
+    const resolved = String(meta?.resolved_type || "").toLowerCase();
+    if (resolved) return resolved === "movie" ? "movie" : "tv";
     return mediaTypeOf(item) === "movie" ? "movie" : "tv";
   }
 
-  function mediaLabelOf(item) {
+  function artEvidenceOf(item) {
+    const title = item?.title ? `&title=${encodeURIComponent(String(item.title))}` : "";
+    const year = item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
+    return title + year;
+  }
+
+  function mediaLabelOf(item, meta = null) {
+    const resolved = String(meta?.resolved_type || "").toLowerCase();
+    if (resolved === "movie") return "Movie";
     const raw = String(item?.type || item?.entity || item?.media_type || "").toLowerCase();
     if (raw === "movie") return "Movie";
-    if (raw === "anime") return "Anime";
+    if (raw === "anime") return resolved === "show" ? "Show" : "Anime";
     return "Show";
   }
 
@@ -226,7 +237,7 @@
   function backdropUrl(item, meta = null) {
     const tmdb = tmdbIdOf(item, meta);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}`;
+    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
   }
 
   function runtimeLabel(mins) {
@@ -263,7 +274,7 @@
   function tmdbUrl(item, meta = null) {
     const tmdb = tmdbIdOf(item, meta);
     if (!tmdb) return "";
-    return `https://www.themoviedb.org/${mediaTypeOf(item) === "movie" ? "movie" : "tv"}/${encodeURIComponent(String(tmdb))}`;
+    return `https://www.themoviedb.org/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}`;
   }
 
   function imdbUrl(item, meta = null) {
@@ -287,7 +298,13 @@
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            items: [{ type, tmdb }],
+            items: [{
+              type,
+              tmdb,
+              title: item?.title || "",
+              year: item?.year || "",
+              ids: { imdb: imdbIdOf(item) || "", tvdb: item?.ids?.tvdb || "" },
+            }],
             need: { overview: 1, runtime_minutes: 1, ids: 1, videos: 1, genres: 1, certification: 1, score: 1, release: 1, backdrop: 1 },
             concurrency: 1,
           }),
@@ -565,7 +582,7 @@
     const year = String(item?.year || meta?.year || yearFromIso(releaseIso) || "").trim();
     const genres = (Array.isArray(meta?.genres) ? meta.genres : Array.isArray(meta?.detail?.genres) ? meta.detail.genres : Array.isArray(item?.genres) ? item.genres : []).slice(0, 3);
     const chips = [
-      mediaLabelOf(item),
+      mediaLabelOf(item, meta),
       year,
       runtimeLabel(meta?.runtime_minutes),
       dateLabel(releaseIso),
@@ -773,7 +790,7 @@
       itemMap.set(itemKey, item);
 
       link.className = "poster";
-      link.href = `https://www.themoviedb.org/${isTV(item.type) ? "tv" : "movie"}/${item.tmdb}`;
+      link.href = tmdbUrl(item, previewMetaCache.get(previewMetaKey(item))) || `https://www.themoviedb.org/${isTV(item.type) ? "tv" : "movie"}/${item.tmdb}`;
       link.target = "_blank";
       link.rel = "noopener";
       link.style.cursor = "pointer";

@@ -6,8 +6,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import random
 import re
 import time
+from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
@@ -30,7 +32,12 @@ from cw_platform.metadata_cache import (
     metadata_cache_path,
     prune_metadata_cache,
     read_metadata_cache,
+    read_resolution_cache,
+    read_resolution_index,
+    resolution_cache_key,
     write_metadata_cache,
+    write_resolution_cache,
+    write_resolution_index,
 )
 
 try:
@@ -211,17 +218,70 @@ def _tmdb_include_image_language(locale: str | None) -> str:
     return ",".join(parts)
 
 
+def _tmdb_retry_policy() -> tuple[int, float, float]:
+    try:
+        md = (load_config() or {}).get("metadata") or {}
+        max_retries = int(md.get("backoff_max_retries", 4))
+        base_s = int(md.get("backoff_base_ms", 500)) / 1000.0
+        max_s = int(md.get("backoff_max_ms", 4000)) / 1000.0
+    except Exception:
+        return 4, 0.5, 4.0
+    return max(0, max_retries), max(0.05, base_s), max(0.1, max_s)
+
+
+def _tmdb_retry_after_seconds(header: str | None) -> float | None:
+    text = str(header or "").strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return float(text)
+    try:
+        return max(0.0, parsedate_to_datetime(text).timestamp() - time.time())
+    except Exception:
+        return None
+
+
+def _tmdb_get_json(
+    url: str,
+    params: dict[str, Any] | None = None,
+    *,
+    timeout: float = 20.0,
+) -> Any | None:
+    max_retries, base_s, max_s = _tmdb_retry_policy()
+    attempt = 0
+    while True:
+        try:
+            r = requests.get(url, params=params or {}, timeout=timeout)
+            status = r.status_code
+            if status == 429 or 500 <= status < 600:
+                if attempt >= max_retries:
+                    return None
+                if status == 429:
+                    wait = _tmdb_retry_after_seconds(r.headers.get("Retry-After"))
+                else:
+                    wait = None
+                if wait is None:
+                    wait = min(max_s, base_s * (2**attempt)) + random.uniform(0.0, 0.25)
+                time.sleep(wait)
+                attempt += 1
+                continue
+            if not r.ok:
+                return None
+            return r.json()
+        except requests.exceptions.RequestException:
+            if attempt >= max_retries:
+                return None
+            time.sleep(min(max_s, base_s * (2**attempt)) + random.uniform(0.0, 0.25))
+            attempt += 1
+        except Exception:
+            return None
+
+
 def _tmdb_fetch_posters(api_key: str, typ: str, tmdb_id: str, locale: str | None) -> list[dict[str, Any]]:
     kind = "movie" if typ == "movie" else "tv"
     url = f"https://api.themoviedb.org/3/{kind}/{tmdb_id}/images"
     params = {"api_key": api_key, "include_image_language": _tmdb_include_image_language(locale)}
-    try:
-        r = requests.get(url, params=params, timeout=20)
-        if not r.ok:
-            return []
-        data = r.json()
-    except Exception:
-        return []
+    data = _tmdb_get_json(url, params)
     posters = data.get("posters") if isinstance(data, dict) else None
     if not isinstance(posters, list):
         return []
@@ -251,13 +311,7 @@ def _tmdb_fetch_episode_stills(
     episode: int,
 ) -> list[dict[str, Any]]:
     url = f"https://api.themoviedb.org/3/tv/{show_tmdb_id}/season/{season}/episode/{episode}/images"
-    try:
-        r = requests.get(url, params={"api_key": api_key}, timeout=20)
-        if not r.ok:
-            return []
-        data = r.json()
-    except Exception:
-        return []
+    data = _tmdb_get_json(url, {"api_key": api_key})
     stills = data.get("stills") if isinstance(data, dict) else None
     if not isinstance(stills, list):
         return []
@@ -485,6 +539,110 @@ def _ttl_bucket(seconds: int) -> int:
     return int(time.time() // max(1, seconds))
 
 
+def _tmdb_provider() -> Any | None:
+    _METADATA, _, _ = _env()
+    providers = getattr(_METADATA, "providers", None)
+    if not isinstance(providers, dict):
+        return None
+    for name, prov in providers.items():
+        if str(name).upper() == "TMDB" and hasattr(prov, "resolve_namespace"):
+            return prov
+    return None
+
+
+def _entity_from_kind(kind: Any) -> str:
+    return "movie" if str(kind or "").strip().lower() == "movie" else "show"
+
+
+def _resolve_entity(
+    entity: str,
+    tmdb_id: str | int,
+    *,
+    title: str | None = None,
+    year: int | str | None = None,
+    imdb_id: str | None = None,
+    tvdb_id: str | int | None = None,
+    locale: str | None = None,
+) -> str:
+    cache_dir = _meta_cache_dir()
+
+    if not str(title or "").strip():
+        indexed = read_resolution_index(cache_dir, entity, tmdb_id)
+        return indexed or entity
+
+    try:
+        key = resolution_cache_key(
+            tmdb_id,
+            imdb_id=imdb_id,
+            tvdb_id=tvdb_id,
+            title=title,
+            year=year,
+        )
+    except Exception:
+        return entity
+
+    record = read_resolution_cache(cache_dir, key)
+    if isinstance(record, dict):
+        if str(record.get("status") or "") == "resolved":
+            resolved = _entity_from_kind(record.get("resolved_type"))
+            _meta_debug(
+                "resolution_cache_hit",
+                tmdb_id=tmdb_id,
+                requested=entity,
+                resolved=resolved,
+                reason=record.get("reason"),
+            )
+            return resolved
+        return entity
+
+    provider = _tmdb_provider()
+    if provider is None:
+        return entity
+
+    try:
+        outcome = provider.resolve_namespace(
+            tmdb_id=tmdb_id,
+            requested_type=entity,
+            title=title,
+            year=year,
+            imdb_id=imdb_id,
+            tvdb_id=tvdb_id,
+            locale=locale,
+        )
+    except Exception:
+        return entity
+
+    if not isinstance(outcome, dict):
+        _meta_debug("resolution_transient_failure", tmdb_id=tmdb_id, requested=entity)
+        return entity
+
+    resolved = _entity_from_kind(outcome.get("resolved_type"))
+    status = str(outcome.get("status") or "unresolved")
+    write_resolution_cache(
+        cache_dir,
+        key,
+        {
+            "tmdb_id": str(tmdb_id),
+            "title": str(title or ""),
+            "year": year,
+            "resolved_type": resolved,
+            "status": status,
+            "reason": outcome.get("reason"),
+        },
+    )
+    if status == "resolved":
+        write_resolution_index(cache_dir, entity, tmdb_id, resolved)
+        if resolved != entity:
+            _meta_debug(
+                "resolution_namespace_corrected",
+                tmdb_id=tmdb_id,
+                requested=entity,
+                resolved=resolved,
+                reason=outcome.get("reason"),
+            )
+    return resolved if status == "resolved" else entity
+
+
 @lru_cache(maxsize=4096)
 def _resolve_tmdb_cached(
     ttl_key: int,
@@ -519,11 +677,25 @@ def get_meta(
     *,
     need: dict[str, Any] | None = None,
     locale: str | None = None,
+    title: str | None = None,
+    year: int | str | None = None,
+    imdb_id: str | None = None,
+    tvdb_id: str | int | None = None,
 ) -> dict[str, Any]:
-    entity = "movie" if str(typ).lower() == "movie" else "show"
+    requested_entity = "movie" if str(typ).lower() == "movie" else "show"
     eff_need = need or {"poster": True, "backdrop": True, "logo": False}
     need_key = tuple(sorted(k for k, v in eff_need.items() if v))
     eff_locale = locale or _cfg_ui_locale()
+    entity = _resolve_entity(
+        requested_entity,
+        tmdb_id,
+        title=title,
+        year=year,
+        imdb_id=imdb_id,
+        tvdb_id=tvdb_id,
+        locale=eff_locale,
+    )
+    cached = None
     if _meta_cache_enabled():
         cached = _read_meta_cache(entity, tmdb_id, eff_locale or "en-US")
         if cached and _need_satisfied(cached, eff_need):
@@ -533,6 +705,7 @@ def get_meta(
                 tmdb_id=tmdb_id,
                 locale=eff_locale or "en-US",
             )
+            cached["resolved_type"] = entity
             return cached
         _meta_debug(
             "meta_cache_miss",
@@ -560,6 +733,8 @@ def get_meta(
         except Exception:
             pass
 
+    if res:
+        res["resolved_type"] = entity
     return res or {}
 
 
@@ -634,12 +809,33 @@ def get_art_file(
     locale: str | None = None,
     *,
     kind: str = "poster",
+    title: str | None = None,
+    year: int | str | None = None,
 ) -> tuple[str, str]:
     cache_root = _cache_subdir(cache_dir, "art")
     cache_root.mkdir(parents=True, exist_ok=True)
 
     art_kind = "backdrop" if str(kind).strip().lower() == "backdrop" else "poster"
     eff_locale = locale or _cfg_ui_locale() or None
+
+    requested_entity = "movie" if str(typ).strip().lower() == "movie" else "show"
+    resolved_entity = _resolve_entity(
+        requested_entity,
+        tmdb_id,
+        title=title,
+        year=year,
+        locale=eff_locale,
+    )
+    if resolved_entity != requested_entity:
+        typ = "movie" if resolved_entity == "movie" else "tv"
+        _meta_debug(
+            "art_namespace_corrected",
+            tmdb_id=tmdb_id,
+            requested=requested_entity,
+            resolved=resolved_entity,
+            kind=art_kind,
+        )
+
     loc_tag = _safe_cache_part(_locale_tag(eff_locale), default="any")
     safe_typ = _safe_cache_part(typ, default="media")
     safe_tmdb_id = _safe_cache_part(tmdb_id)
@@ -667,7 +863,16 @@ def get_art_file(
         )
         return str(cached_art), mime
 
-    meta = get_meta(api_key, typ, str(tmdb_id), cache_dir=cache_dir, need={art_kind: True}, locale=eff_locale) or {}
+    meta = get_meta(
+        api_key,
+        typ,
+        str(tmdb_id),
+        cache_dir=cache_dir,
+        need={art_kind: True},
+        locale=eff_locale,
+        title=title,
+        year=year,
+    ) or {}
     eff_locale = eff_locale or meta.get("locale") or None
 
     art = _art_candidates(meta, art_kind)
@@ -838,9 +1043,9 @@ def _tmdb_external_ids(entity: str, tmdb_id: str | int) -> dict[str, str]:
         base = "movie" if str(entity).lower() == "movie" else "tv"
         url = f"https://api.themoviedb.org/3/{base}/{tmdb_id}/external_ids"
 
-        r = requests.get(url, params={"api_key": api_key}, timeout=8)
-        r.raise_for_status()
-        data = r.json() or {}
+        data = _tmdb_get_json(url, {"api_key": api_key}, timeout=8) or {}
+        if not isinstance(data, dict):
+            return {}
     except Exception:
         return {}
 
@@ -876,6 +1081,8 @@ def api_tmdb_art(
     season: int | None = Query(None, ge=0),
     episode: int | None = Query(None, ge=1),
     locale: str | None = Query(None),
+    title: str | None = Query(None),
+    year: int | None = Query(None),
 ):
     t = typ.lower()
     if t == "show":
@@ -925,6 +1132,8 @@ def api_tmdb_art(
                 base,
                 locale=eff_locale,
                 kind=kind,
+                title=title,
+                year=year,
             )
         return FileResponse(
             str(local_path),
@@ -978,12 +1187,9 @@ def api_metadata_search(
         else:
             params["first_air_date_year"] = year
 
-    try:
-        r = requests.get(url, params=params, timeout=8)
-        r.raise_for_status()
-        data = r.json() or {}
-    except Exception:
-        LOG.exception("TMDb search failed")
+    data = _tmdb_get_json(url, params, timeout=8)
+    if not isinstance(data, dict):
+        LOG.warning("TMDb search failed")
         return JSONResponse({"ok": False, "error": "search failed"}, status_code=200)
 
     out: list[dict[str, Any]] = []
@@ -1054,8 +1260,21 @@ def api_metadata_resolve(
         if not tmdb_id:
             tmdb_id = ids.get("tmdb")
 
+        resolved_entity = entity
+        if tmdb_id:
+            resolved_entity = _resolve_entity(
+                entity,
+                tmdb_id,
+                title=base_ids.get("title") if isinstance(base_ids, dict) else None,
+                year=base_ids.get("year") if isinstance(base_ids, dict) else None,
+                imdb_id=base_ids.get("imdb") if isinstance(base_ids, dict) else None,
+                tvdb_id=base_ids.get("tvdb") if isinstance(base_ids, dict) else None,
+                locale=payload.locale,
+            )
+        res["resolved_type"] = resolved_entity
+
         if tmdb_id and not ids.get("imdb"):
-            extra_ids = _tmdb_external_ids(entity, tmdb_id)
+            extra_ids = _tmdb_external_ids(resolved_entity, tmdb_id)
             imdb_id = extra_ids.get("imdb")
             if imdb_id:
                 ids["imdb"] = imdb_id
@@ -1150,6 +1369,8 @@ def api_metadata_bulk(
         if not tmdb_id:
             return key, {"ok": False, "error": "missing tmdb id"}
         item["type"] = typ
+        raw_item_ids = item.get("ids")
+        item_ids: dict[str, Any] = raw_item_ids if isinstance(raw_item_ids, dict) else {}
         try:
             meta = (
                 get_meta(
@@ -1159,6 +1380,10 @@ def api_metadata_bulk(
                     base_cache,
                     need=req_need,
                     locale=eff_locale,
+                    title=item.get("title") or item_ids.get("title"),
+                    year=item.get("year") or item_ids.get("year"),
+                    imdb_id=item.get("imdb") or item_ids.get("imdb"),
+                    tvdb_id=item.get("tvdb") or item_ids.get("tvdb"),
                 )
                 or {}
             )
@@ -1188,6 +1413,8 @@ def api_metadata_bulk(
         for k in keep:
             if k != "type" and k in meta:
                 out[k] = meta[k]
+        if meta.get("resolved_type"):
+            out["resolved_type"] = meta["resolved_type"]
         if overview == "short" and out.get("overview"):
             out["overview"] = _shorten(out["overview"], 280)
         if "score" not in out:

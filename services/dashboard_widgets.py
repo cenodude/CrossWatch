@@ -405,6 +405,27 @@ def _episode_still_url(item: Mapping[str, Any], *, size: str) -> str:
     return f"/art/tmdb/tv/{tmdb}?kind=still&season={season}&episode={episode}&size={size}&artv=2"
 
 
+def _resolved_art_type(item: Mapping[str, Any], tmdb: Any) -> str:
+    requested = _art_type(item)
+    if _media_type(item) == "episode":
+        return requested
+    try:
+        from api.metaAPI import _resolve_entity
+
+        ids = _ids(item)
+        resolved = _resolve_entity(
+            "movie" if requested == "movie" else "show",
+            tmdb,
+            title=_title(item),
+            year=_year(item),
+            imdb_id=ids.get("imdb"),
+            tvdb_id=ids.get("tvdb"),
+        )
+    except Exception:
+        return requested
+    return "movie" if resolved == "movie" else "tv"
+
+
 def _poster_url(item: Mapping[str, Any], *, size: str = "w342", episode_still: bool = False) -> str:
     if episode_still:
         still = _episode_still_url(item, size=size)
@@ -413,7 +434,7 @@ def _poster_url(item: Mapping[str, Any], *, size: str = "w342", episode_still: b
     tmdb = _tmdb_id(item)
     if tmdb in (None, "", 0, False):
         return ""
-    return f"/art/tmdb/{_art_type(item)}/{tmdb}?size={size}"
+    return f"/art/tmdb/{_resolved_art_type(item, tmdb)}/{tmdb}?size={size}"
 
 
 def _metadata_manager() -> Any | None:
@@ -613,7 +634,7 @@ def _rating_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, s
     return {
         "key": _canonical_key(raw_key, item),
         "type": typ,
-        "art_type": _art_type(item),
+        "art_type": _resolved_art_type(item, _tmdb_id(item)),
         "title": _title(item),
         "year": _year(item),
         "season": _season_number(item),
@@ -843,16 +864,61 @@ def _history_state_row(raw_key: str, item: Mapping[str, Any], sources: list[dict
     }
 
 
-def _history_aliases(row: Mapping[str, Any]) -> list[str]:
+def _history_alias_representatives() -> dict[str, str]:
+    try:
+        import json
+
+        from cw_platform.config_base import load_config
+        from services.analyzer import CWS_DIR, _alias_destination_key, _expected_alias_scopes
+    except Exception:
+        return {}
+    if not CWS_DIR.exists() or not CWS_DIR.is_dir():
+        return {}
+    try:
+        expected = _expected_alias_scopes(load_config() or {})
+    except Exception:
+        return {}
+    if not expected:
+        return {}
+
+    out: dict[str, str] = {}
+    for path in sorted(CWS_DIR.glob("*history.pair_alias*.json")):
+        try:
+            doc = json.loads(path.read_text("utf-8"))
+        except Exception:
+            continue
+        if not isinstance(doc, Mapping):
+            continue
+        if str(doc.get("scope") or "").strip() not in expected:
+            continue
+        items = doc.get("items")
+        if not isinstance(items, Mapping):
+            continue
+        for src_event_key, rec in items.items():
+            if not isinstance(rec, Mapping):
+                continue
+            dest = _alias_destination_key(rec)
+            src_base = str(src_event_key or "").split("@", 1)[0]
+            if not dest or not src_base or dest == src_base:
+                continue
+            out[src_base] = dest
+            out[dest] = dest
+    return out
+
+
+def _history_aliases(row: Mapping[str, Any], alias_map: Mapping[str, str] | None = None) -> list[str]:
+    rep = (alias_map or {}).get(str(row.get("id") or "").split("@", 1)[0])
     title = _norm_text(row.get("title"))
     if not title:
-        return []
+        return [f"history|xalias|{rep}"] if rep else []
     typ = str(row.get("type") or "").strip().lower() or "movie"
     bucket = _time_bucket(row.get("sort_epoch") or row.get("watched_at"))
     year = _as_int(row.get("year"))
     season = _as_int(row.get("season"))
     episode = _as_int(row.get("episode"))
     aliases: list[str] = []
+    if rep:
+        aliases.append(f"history|xalias|{rep}")
     if typ == "episode" and season is not None and episode is not None:
         aliases.append(f"history|episode|{title}|s{season}|e{episode}|b{bucket}")
         aliases.append(f"history|episode|{title}|s{season}|e{episode}")
@@ -903,7 +969,10 @@ def _latest_history_tracker_rows(items: Mapping[str, Any]) -> list[dict[str, Any
     return sorted(rows.values(), key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
 
 
-def _merge_history_rows(*groups: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _merge_history_rows(
+    *groups: Iterable[Mapping[str, Any]],
+    alias_map: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
     rows: dict[str, dict[str, Any]] = {}
     aliases: dict[str, str] = {}
     for group in groups:
@@ -913,7 +982,7 @@ def _merge_history_rows(*groups: Iterable[Mapping[str, Any]]) -> list[dict[str, 
             if not key:
                 continue
             match_key = key
-            for alias in _history_aliases(row):
+            for alias in _history_aliases(row, alias_map):
                 if alias in aliases:
                     match_key = aliases[alias]
                     break
@@ -922,8 +991,10 @@ def _merge_history_rows(*groups: Iterable[Mapping[str, Any]]) -> list[dict[str, 
                 rows[match_key] = row
             else:
                 rows[match_key] = _merge_media_row(prev, row, sort_key="sort_epoch")
-            for alias in _history_aliases(rows[match_key]):
+            for alias in _history_aliases(rows[match_key], alias_map):
                 aliases[alias] = match_key
+            for alias in _history_aliases(row, alias_map):
+                aliases.setdefault(alias, match_key)
     return sorted(rows.values(), key=lambda x: int(x.get("sort_epoch") or 0), reverse=True)
 
 
@@ -936,7 +1007,7 @@ def recent_history_widget(
     cap = max(1, min(int(limit or 8), 24))
     state_rows = _latest_history_state_rows(state or {})
     tracker_rows = _latest_history_tracker_rows(tracker_items or {})
-    rows = _merge_history_rows(state_rows, tracker_rows)
+    rows = _merge_history_rows(state_rows, tracker_rows, alias_map=_history_alias_representatives())
     selected = _resolve_missing_art_rows(rows[:cap], size="w300", episode_still=True)
     return {"ok": True, "items": selected, "total": len(rows)}
 
