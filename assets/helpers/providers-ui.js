@@ -682,6 +682,20 @@
     return connectionModalConfigured(info, cfg) || !!connectionModalStatusTarget(panel);
   }
 
+  function connectionModalProfileId(panel) {
+    return String(panel?.querySelector(".cw-profile-switcher select")?.value || "default");
+  }
+
+  function connectionModalProfileConfigured(panel, info, cfg = getCachedConfig()) {
+    if (!connectionModalSupportsProfiles(info)) return connectionModalConfigured(info, cfg);
+    const inst = connectionModalProfileId(panel);
+    return configuredProfileIds(cfg, info.provider).some((id) => String(id) === inst);
+  }
+
+  function connectionModalProfileConnected(panel, info, cfg = getCachedConfig()) {
+    return connectionModalProfileConfigured(panel, info, cfg) || !!connectionModalStatusTarget(panel);
+  }
+
   function ensureConnectionSuccessBurst(panel) {
     let burst = panel?.querySelector(":scope > .cw-connection-success-burst");
     if (!burst && panel) {
@@ -804,8 +818,13 @@
 
   function syncConnectionSuccessState(panel, info, cfg = getCachedConfig()) {
     if (!panel || !info) return;
-    const connected = connectionModalConnected(panel, info, cfg);
-    if (connected && panel.__cwConnectionWasConnected === false) playConnectionSuccess(panel, info);
+    const profile = connectionModalProfileId(panel);
+    const switched = panel.__cwConnectionProfileSeen !== profile;
+    const connected = switched
+      ? connectionModalProfileConfigured(panel, info, cfg)
+      : connectionModalProfileConnected(panel, info, cfg);
+    if (!switched && connected && panel.__cwConnectionWasConnected === false) playConnectionSuccess(panel, info);
+    panel.__cwConnectionProfileSeen = profile;
     panel.__cwConnectionWasConnected = connected;
     updateConnectionSaveEnabled(panel, info, cfg);
   }
@@ -1012,7 +1031,7 @@
   function connectionModalMaxHeight(info) {
     const viewport = Math.max(360, window.innerHeight || document.documentElement?.clientHeight || 720);
     if (info?.key === "ANIME_MAPPING") return Math.max(520, viewport - 32);
-    const cap = ["PLEX", "JELLYFIN", "EMBY"].includes(info?.key) ? 660 : 620;
+    const cap = (info?.size || "wide") === "wide" ? 660 : 620;
     return Math.max(360, Math.min(cap, viewport - 176));
   }
 
@@ -1192,11 +1211,24 @@
     return configuredProfileIds(getCachedConfig(), info.provider).some((id) => String(id).toLowerCase() !== "default");
   }
 
+  function setConnectionSaveBusy(btn, busy) {
+    if (!btn) return;
+    if (!btn.__cwSaveLabel) btn.__cwSaveLabel = btn.textContent;
+    btn.classList.toggle("is-saving", !!busy);
+    if (busy) {
+      btn.textContent = "Saving...";
+      btn.setAttribute("aria-busy", "true");
+    } else {
+      btn.removeAttribute("aria-busy");
+    }
+  }
+
   function flashConnectionResult(btn, ok) {
     if (!btn) return;
     if (!btn.__cwSaveLabel) btn.__cwSaveLabel = btn.textContent;
     if (btn.__cwSaveTimer) clearTimeout(btn.__cwSaveTimer);
-    btn.classList.remove("is-saved", "is-failed");
+    btn.classList.remove("is-saving", "is-saved", "is-failed");
+    btn.removeAttribute("aria-busy");
     btn.innerHTML = `<span class="material-symbols-rounded cw-save-result-icon">${ok ? "check" : "close"}</span>`;
     btn.classList.add(ok ? "is-saved" : "is-failed");
     btn.__cwSaveTimer = setTimeout(() => {
@@ -1256,16 +1288,20 @@
       footer.querySelector(".cw-connection-footer-save")?.addEventListener("click", async (ev) => {
         resetConnectionDeleteConfirm(footer.querySelector(".cw-connection-footer-delete"));
         const btn = ev.currentTarget;
+        if (btn.__cwSaving) return;
         const keepOpen = ["PLEX", "JELLYFIN", "EMBY"].includes(info.key);
+        btn.__cwSaving = true;
+        setConnectionSaveBusy(btn, true);
         try {
-          const ret = window.saveSettings?.(btn);
+          const ret = window.saveSettings?.();
           if (ret && typeof ret.then === "function") await ret;
-          const cfg = await loadConfig(true);
-          syncConnectionSuccessState(panel, info, cfg);
           flashConnectionResult(btn, true);
+          loadConfig(true).then((cfg) => syncConnectionSuccessState(panel, info, cfg)).catch(() => {});
           if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
         } catch {
           flashConnectionResult(btn, false);
+        } finally {
+          btn.__cwSaving = false;
         }
       });
     }
@@ -1297,7 +1333,8 @@
     ensureConnectionModalFooter(panel, info);
     if (["PLEX", "JELLYFIN", "EMBY"].includes(info.key)) selectConnectionModalSub(panel, info, "auth", overlay);
     syncConnectionModalCopy(panel, info, overlay);
-    panel.__cwConnectionWasConnected = connectionModalConnected(panel, info);
+    panel.__cwConnectionProfileSeen = connectionModalProfileId(panel);
+    panel.__cwConnectionWasConnected = connectionModalProfileConnected(panel, info);
     updateConnectionSaveEnabled(panel, info);
     ensureConnectionSuccessBurst(panel);
     scheduleConnectionModalSize(panel, info);
@@ -1765,6 +1802,7 @@
       .find((node) => key ? String(node.dataset.cwConnectionKey || "").toUpperCase() === key : (provider && String(node.dataset.cwConnectionProvider || "").toLowerCase() === provider)) || null;
     const info = connectionInfoForKey(panel?.dataset?.cwConnectionKey || key);
     if (!panel || !info) return;
+    panel.__cwConnectionProfileSeen = connectionModalProfileId(panel);
     panel.__cwConnectionWasConnected = true;
     playConnectionSuccess(panel, info);
   }, true);

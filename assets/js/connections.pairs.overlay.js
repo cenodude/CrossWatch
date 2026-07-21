@@ -514,6 +514,8 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
 
     const bead = (cls, tip, val) => `<span class="bead ${cls} ${truthy(val) ? "on" : ""}" data-tip="${tip}"></span>`;
     const inst = (v) => (String(v || "default").trim() || "default");
+    // TEMP Disabled due to playlists validation
+    const showPlaylistMappingButton = false;
     const pill = (provider, instance, role) => {
       const name = providerLabel(provider), full = String(instance || "default").toLowerCase() !== "default" ? `${name}:${instance}` : name, logo = providerLogo(provider), tip = `${role === "src" ? "Source" : "Target"}: ${full}`;
       return `<span class="pair-pill ${role}" data-tip="${esc(tip)}"><span class="pair-pill-text">${esc(full)}</span><span class="prov-watermark" aria-hidden="true" style="--wm:url('${esc(logo)}')"></span></span>`;
@@ -551,7 +553,7 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
                 ${bead("pl", "Playlists", f.playlists)}
               </div>
 
-              ${hasPlaylistMappings(f.playlists) ? `<button class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">
+              ${showPlaylistMappingButton && hasPlaylistMappings(f.playlists) ? `<button class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h11"></path><path d="M4 12h11"></path><path d="M4 18h7"></path><path d="M17 15l4 3-4 3"></path></svg>
               </button>` : ""}
 
