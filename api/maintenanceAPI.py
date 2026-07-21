@@ -10,6 +10,7 @@ import os
 import shutil
 import threading
 from datetime import datetime
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,20 @@ _LOG = logging.getLogger("crosswatch.api.maintenance")
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
+SYNC_STATE_PATTERNS = (
+    "*pair_alias*.json",
+    "*source_alias*.json",
+    "*anime_episode_alias*.json",
+    "*anime_episode_map*.json",
+    "*anime_resolve*.json",
+    "*.unresolved*.json",
+    "*history.cache*.json",
+    "*_history.index*.json",
+    "*watermark*.json",
+    "tombstones.json",
+    "*.tombstones.json",
+)
+
 CW_STATE_KEEP_DIRS = {"id"}
 CW_STATE_KEEP_FILES = {
     "activity_history.json",
@@ -27,6 +42,23 @@ CW_STATE_KEEP_FILES = {
     "auto_remove_seen.json",
     "watchlist_wl_autoremove.json",
 }
+
+
+def _is_sync_state_file(name: str) -> bool:
+    candidate = str(name or "")
+    return any(fnmatch(candidate, pattern) for pattern in SYNC_STATE_PATTERNS)
+
+
+def _sync_state_files() -> list[Path]:
+    _, _, CW_STATE_DIR, *_ = _cw()
+    if not CW_STATE_DIR.exists():
+        return []
+    found: dict[str, Path] = {}
+    for pattern in SYNC_STATE_PATTERNS:
+        for p in CW_STATE_DIR.glob(pattern):
+            if p.is_file() and p.name not in CW_STATE_KEEP_FILES:
+                found[p.name] = p
+    return [found[name] for name in sorted(found)]
 
 
 def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -59,7 +91,7 @@ def _clear_cw_state_files() -> list[str]:
                 continue
             continue
         if p.is_file():
-            if p.name in CW_STATE_KEEP_FILES:
+            if p.name in CW_STATE_KEEP_FILES or _is_sync_state_file(p.name):
                 continue
             try:
                 p.unlink(missing_ok=True)
@@ -247,13 +279,16 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         path = CONFIG_DIR / "state.json"
         usage = _path_usage(path)
         providers, baselines = _sync_state_inventory(path)
+        scoped = _sync_state_files()
+        scoped_usage = _paths_usage([path, *scoped])
         response.update(
             title="Rebuild sync state",
-            note="These provider baselines are removed; the next sync reads fresh provider data.",
+            note="These provider baselines are removed together with pair-scoped history aliases, mapping caches, watermarks and tombstones; the next sync reads fresh provider data and rebuilds translated aliases.",
             metrics=[
                 _metric("Providers", providers),
                 _metric("Feature baselines", baselines),
-                _metric("State storage", usage["bytes"], "bytes"),
+                _metric("Pair mapping files", len(scoped)),
+                _metric("State storage", scoped_usage["bytes"], "bytes"),
                 _metric("Last updated", usage["modified"], "datetime"),
             ],
         )
@@ -264,7 +299,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         retry_files = sum(1 for item in files if any(token in str(item.get("name") or "").lower() for token in retry_names))
         response.update(
             title="Retry provider items",
-            note="Clears provider runtime caches: retry guards, tombstones, phantom records, provider health, plus history, watermark and mapping index caches. Playback and activity files stay untouched.",
+            note="Clears provider runtime caches such as retry guards, phantom records and provider health. Sync aliases, mappings, history indexes, watermarks and tombstones stay untouched.",
             metrics=[
                 _metric("Runtime files", len(files)),
                 _metric("Retry / guard files", retry_files),
@@ -454,7 +489,7 @@ def _scan_provider_cache() -> dict[str, Any]:
     except Exception:
         candidates = []
     for p in candidates:
-        if p.name in CW_STATE_KEEP_FILES:
+        if p.name in CW_STATE_KEEP_FILES or _is_sync_state_file(p.name):
             continue
         if p.is_file():
             files.append(_file_meta(p))
@@ -603,14 +638,20 @@ def clear_state_minimal() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
     state_path = CONFIG_DIR / "state.json"
     existed = state_path.exists()
-    before_usage = _path_usage(state_path)
+    scoped = _sync_state_files()
+    before_usage = _paths_usage([state_path, *scoped])
     try:
         state_path.unlink(missing_ok=True)
-        after_usage = _path_usage(state_path)
+        removed_scoped: list[str] = []
+        for p in scoped:
+            if _safe_remove_path(p):
+                removed_scoped.append(p.name)
+        after_usage = _paths_usage([state_path, *_sync_state_files()])
         return {
             "ok": True,
             "path": str(state_path),
             "existed": bool(existed),
+            "removed_sync_state": removed_scoped,
             "summary": _cleanup_summary(before_usage, after_usage),
         }
     except Exception as e:

@@ -1244,13 +1244,6 @@ def _get_index_html_static() -> str:
                       <small>Create archives, validate backups, restore state, or manage schedules.</small>
                     </span>
                   </button>
-                  <button class="btn cw-maint-action archive" type="button" onclick="openMaintenanceModal({group:'archive'})">
-                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">inventory_2</span>
-                    <span class="cw-maint-action-copy">
-                      <strong>Archive & Recovery</strong>
-                      <small>Manage CW Tracker snapshots, ZIP exports, and imports.</small>
-                    </span>
-                  </button>
                   <button class="btn cw-maint-action tools" type="button" onclick="openMaintenanceModal()">
                     <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">tune</span>
                     <span class="cw-maint-action-copy">

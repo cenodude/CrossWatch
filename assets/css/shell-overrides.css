@@ -120,7 +120,6 @@ html[data-cw-theme=flat-light] :is(#cw-settings-menu.cw-menu,#cw-about-menu.cw-m
 #page-settings .cw-maint-action-copy strong{font-size:14px;line-height:1.15;color:var(--cw-ov-fg)!important}
 #page-settings .cw-maint-action-copy small{font-size:12px;line-height:1.35;color:var(--cw-ov-soft)!important;font-weight:700;white-space:normal}
 #page-settings .cw-maint-action.backup .cw-maint-action-icon{background:rgba(34,197,94,.11);border-color:rgba(34,197,94,.18);color:#d9fff0}
-#page-settings .cw-maint-action.archive .cw-maint-action-icon{background:rgba(58,165,185,.12);border-color:rgba(58,165,185,.22);color:#dffbff}
 #page-settings .cw-maint-action.tools .cw-maint-action-icon{background:rgba(125,134,201,.14);border-color:rgba(125,134,201,.22);color:#edf2ff}
 #page-settings .cw-maint-action.restart .cw-maint-action-icon{background:rgba(255,92,112,.10);border-color:rgba(255,120,138,.22);color:#ffdce2}
 #page-settings .cw-maint-action.restart{border-color:rgba(255,120,138,.18)!important}
