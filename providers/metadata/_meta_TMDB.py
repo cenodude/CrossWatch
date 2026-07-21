@@ -121,7 +121,7 @@ class TmdbProvider:
         msg = event if not suffix else f"{event} {suffix}"
         log(msg, level="debug", module="META", extra=clean or None)
 
-    def _get(self, url: str, params: dict[str, Any] | None = None) -> Any:
+    def _get(self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False) -> Any:
         q = dict(params or {})
         q["api_key"] = self._apikey()
         ck = url + "?" + "&".join(sorted(f"{k}={v}" for k, v in q.items()))
@@ -169,13 +169,14 @@ class TmdbProvider:
                 status = getattr(getattr(e, "response", None), "status_code", None)
                 retryable = (status == 429) or (status is None) or (500 <= int(status or 0) < 600)
                 if (not retryable) or (attempt >= max_retries):
-                    lvl = "INFO" if int(status or 0) == 404 else "WARNING"
-                    log(
-                        f"TMDb request failed ({status or 'n/a'}) at {url}",
-                        level=lvl,
-                        module="META",
-                        extra={"status": status, "url": url},
-                    )
+                    if not (quiet_404 and int(status or 0) == 404):
+                        lvl = "INFO" if int(status or 0) == 404 else "WARNING"
+                        log(
+                            f"TMDb request failed ({status or 'n/a'}) at {url}",
+                            level=lvl,
+                            module="META",
+                            extra={"status": status, "url": url},
+                        )
                     raise
                 time.sleep(self._retry_delay(attempt, base_s, max_s))
                 attempt += 1
@@ -251,7 +252,7 @@ class TmdbProvider:
     def _try_details(self, kind: str, tmdb_id: str, lang: str) -> tuple[dict[str, Any] | None, bool]:
         base = "https://api.themoviedb.org/3"
         try:
-            data = self._get(f"{base}/{kind}/{tmdb_id}", {"language": lang})
+            data = self._get(f"{base}/{kind}/{tmdb_id}", {"language": lang}, quiet_404=True)
             return (data if isinstance(data, dict) else None), True
         except requests.exceptions.RequestException as e:
             status = int(getattr(getattr(e, "response", None), "status_code", 0) or 0)
@@ -269,7 +270,7 @@ class TmdbProvider:
     ) -> tuple[str | None, bool]:
         base = "https://api.themoviedb.org/3"
         try:
-            data = self._get(f"{base}/find/{external_id}", {"external_source": source})
+            data = self._get(f"{base}/find/{external_id}", {"external_source": source}, quiet_404=True)
         except requests.exceptions.RequestException as e:
             status = int(getattr(getattr(e, "response", None), "status_code", 0) or 0)
             if status != 404:
@@ -298,7 +299,7 @@ class TmdbProvider:
         if year is not None:
             params["primary_release_year" if kind == "movie" else "first_air_date_year"] = year
         try:
-            data = self._get(f"{base}/search/{kind}", params)
+            data = self._get(f"{base}/search/{kind}", params, quiet_404=True)
         except requests.exceptions.RequestException as e:
             status = int(getattr(getattr(e, "response", None), "status_code", 0) or 0)
             if status != 404:

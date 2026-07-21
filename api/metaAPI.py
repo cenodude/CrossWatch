@@ -554,6 +554,9 @@ def _entity_from_kind(kind: Any) -> str:
     return "movie" if str(kind or "").strip().lower() == "movie" else "show"
 
 
+_RESOLVED_ENTITY_MEMO: dict[str, str] = {}
+
+
 def _resolve_entity(
     entity: str,
     tmdb_id: str | int,
@@ -581,10 +584,15 @@ def _resolve_entity(
     except Exception:
         return entity
 
+    memo = _RESOLVED_ENTITY_MEMO.get(key)
+    if memo is not None:
+        return memo
+
     record = read_resolution_cache(cache_dir, key)
     if isinstance(record, dict):
         if str(record.get("status") or "") == "resolved":
             resolved = _entity_from_kind(record.get("resolved_type"))
+            _RESOLVED_ENTITY_MEMO[key] = resolved
             _meta_debug(
                 "resolution_cache_hit",
                 tmdb_id=tmdb_id,
@@ -631,6 +639,7 @@ def _resolve_entity(
         },
     )
     if status == "resolved":
+        _RESOLVED_ENTITY_MEMO[key] = resolved
         write_resolution_index(cache_dir, entity, tmdb_id, resolved)
         if resolved != entity:
             _meta_debug(
