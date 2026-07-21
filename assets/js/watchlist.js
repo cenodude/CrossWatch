@@ -905,7 +905,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     if (viewMode !== "posters" && viewMode !== "list") { forceHideDetail(); return; }
     const backdrop = backdropFromMeta(it, meta);
     detailEl.style.setProperty("--wl-backdrop", backdrop ? `url("${backdrop}")` : "none");
-    const isMovie = String(it.type || "").toLowerCase() === "movie";
+    const resolvedType = String(meta?.resolved_type || resolvedTypeFor(it) || "").toLowerCase();
+    const isMovie = resolvedType ? resolvedType === "movie" : String(it.type || "").toLowerCase() === "movie";
     const poster = artUrl(it, "w154") || "/assets/img/placeholder_poster.svg";
     const title = it.title || meta?.title || "Unknown";
     const year = String(it.year || meta?.year || yearFromIso(meta?.detail?.release_date || meta?.detail?.first_air_date || "") || "").trim();
@@ -932,7 +933,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       <div class="inner" style="position:relative;z-index:1;max-width:unset;margin:0 auto;padding:12px 14px 14px;display:grid;grid-template-columns:112px minmax(0,1fr) 128px;gap:14px;align-items:start">
         <div class="poster-col">
           <img class="poster" src="${poster}" alt="" style="width:104px;border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.42)" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'" />
-          <div class="type-pill">${isMovie ? "Movie" : (String(it.type || "").toLowerCase() === "anime" ? "Anime" : "Show")}</div>
+          <div class="type-pill">${typeLabelFor(it)}</div>
         </div>
         <div>
           <div style="display:flex;align-items:flex-start;gap:10px">

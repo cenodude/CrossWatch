@@ -21,6 +21,7 @@ _INDEX_MEMO: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
 RESOLUTION_DIRNAME = "resolution"
 RESOLUTION_INDEX_NAME = "_index.json"
 UNRESOLVED_TTL_SECONDS = 7 * 24 * 3600
+RESOLVER_VERSION = 2
 
 _APOSTROPHES = dict.fromkeys(map(ord, "’ʼ‘`´"), "'")
 _DASHES = dict.fromkeys(map(ord, "‐‑‒–—―−"), "-")
@@ -207,6 +208,8 @@ def read_resolution_cache(
         data = json.loads(resolution_cache_path(cache_root, key).read_text("utf-8"))
         if not isinstance(data, dict):
             return None
+        if int(data.get("resolver_version") or 0) != RESOLVER_VERSION:
+            return None
         if str(data.get("status") or "") == "resolved":
             return data
         if unresolved_ttl_seconds is None:
@@ -228,6 +231,7 @@ def write_resolution_cache(
         target = resolution_cache_path(cache_root, key)
         data = dict(payload)
         data.setdefault("resolved_at", time.time())
+        data["resolver_version"] = RESOLVER_VERSION
         tmp = target.with_suffix(target.suffix + ".tmp")
         with _WRITE_LOCK:
             tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -262,6 +266,8 @@ def _load_resolution_index(cache_root: Path | str) -> dict[str, Any]:
     except Exception:
         data = {}
     if not isinstance(data, dict):
+        data = {}
+    if int(data.get("_version") or 0) != RESOLVER_VERSION:
         data = {}
 
     with _INDEX_LOCK:
@@ -301,8 +307,9 @@ def write_resolution_index(
                 data = json.loads(target.read_text("utf-8"))
             except Exception:
                 data = {}
-            if not isinstance(data, dict):
+            if not isinstance(data, dict) or int(data.get("_version") or 0) != RESOLVER_VERSION:
                 data = {}
+            data["_version"] = RESOLVER_VERSION
 
             entry = data.get(index_key)
             if isinstance(entry, dict):
