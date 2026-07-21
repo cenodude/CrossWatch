@@ -610,7 +610,7 @@ def build_index(adapter: Any, *, since_iso: str | None = None) -> dict[str, dict
                 m["type"] = "movie"
             elif kind == "anime":
                 raw = media0.get("anime") if isinstance(media0, Mapping) else None
-                at = (raw.get("anime_type") or raw.get("animeType")) if isinstance(raw, Mapping) else None
+                at = row.get("anime_type") or row.get("animeType") or ((raw.get("anime_type") or raw.get("animeType")) if isinstance(raw, Mapping) else None)
                 anime_type = at.strip().lower() if isinstance(at, str) and at.strip() else None
                 m["type"] = "movie" if anime_type == "movie" else "show"
                 if anime_type:
