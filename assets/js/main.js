@@ -22,6 +22,14 @@
     ["playlists", "queue_music"]
   ].map(([key, icon]) => ({ key, icon, label: featureLabel(key) }));
   const FEAT_KEYS = FEATS.map((f) => f.key);
+  const LAYOUT_KEY = "cw.syncHub.layout.v1";
+  const DEFAULT_LAYOUT = {
+    watchlist: { order: 0, size: "large", hidden: false },
+    ratings: { order: 1, size: "large", hidden: false },
+    history: { order: 2, size: "small", hidden: false },
+    progress: { order: 3, size: "small", hidden: false },
+    playlists: { order: 4, size: "small", hidden: false }
+  };
   const DEFAULT_ENABLED = { watchlist: true, ratings: true, history: true, progress: true, playlists: true };
   const EMPTY_ENABLED = () => Object.fromEntries(FEAT_KEYS.map((k) => [k, false]));
   const mkLane = () => ({ added: 0, removed: 0, updated: 0, spotAdd: [], spotRem: [], spotUpd: [] });
@@ -68,6 +76,8 @@
   let esSummary = null;
   let esLogs = null;
   let runButtonWired = false;
+  let hubLayoutHost = null;
+  let dragLaneKey = "";
   const hydratedLanes = Object.create(null);
   const lastCounts = Object.create(null);
   const lastLaneTs = Object.fromEntries(FEAT_KEYS.map((k) => [k, 0]));
@@ -75,7 +85,29 @@
   const runKeyOf = (s) => s?.run_id || s?.run_uuid || s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) : null);
   const defaultEnabledMap = () => ({ ...DEFAULT_ENABLED });
   const getEnabledMap = () => enabledFromPairs ?? (summary?.enabled || defaultEnabledMap());
+  const normalizeLayout = (raw) => Object.fromEntries(FEAT_KEYS
+    .map((key, idx) => {
+      const base = DEFAULT_LAYOUT[key];
+      const row = raw?.[key] && typeof raw[key] === "object" ? raw[key] : {};
+      const order = Number.isFinite(+row.order) ? +row.order : base.order;
+      return [key, { order, size: ["small", "large"].includes(row.size) ? row.size : base.size, hidden: row.hidden === true, _idx: idx }];
+    })
+    .sort((a, b) => a[1].order - b[1].order || a[1]._idx - b[1]._idx)
+    .map(([key, row], order) => [key, { order, size: row.size, hidden: row.hidden }]));
+  const readLayout = () => {
+    try { return normalizeLayout(JSON.parse(localStorage.getItem(LAYOUT_KEY) || "null")); }
+    catch { return normalizeLayout(null); }
+  };
+  let hubLayout = readLayout();
+  const persistLayout = () => {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(hubLayout)); } catch {}
+  };
+  const orderedFeats = (includeHidden = false) => FEATS
+    .map((feat) => ({ ...feat, layout: hubLayout[feat.key] || DEFAULT_LAYOUT[feat.key] }))
+    .filter((feat) => includeHidden || !feat.layout.hidden)
+    .sort((a, b) => a.layout.order - b.layout.order);
   const getDisplayFeats = () => FEATS;
+  const getVisibleFeats = () => orderedFeats(false);
   const fmtDelta = (a, r, u) => `+${a || 0} / -${r || 0} / ~${u || 0}`;
 
   const fetchJSON = async (url, fallback = null, signal) => {
@@ -239,14 +271,138 @@
     return row;
   };
 
+  const saveAndRenderLayout = (next = hubLayout) => {
+    hubLayout = normalizeLayout(next);
+    persistLayout();
+    renderLanes();
+    renderHubLayoutStrip();
+  };
+
+  const patchLayout = (key, patch) => hubLayout[key] && saveAndRenderLayout({ ...hubLayout, [key]: { ...hubLayout[key], ...patch } });
+
+  const moveLaneTo = (sourceKey, targetKey, after = false) => {
+    if (!sourceKey || !targetKey || sourceKey === targetKey || !hubLayout[sourceKey] || !hubLayout[targetKey]) return;
+    const keys = orderedFeats(true).map((feat) => feat.key).filter((key) => key !== sourceKey);
+    const targetIdx = keys.indexOf(targetKey);
+    keys.splice(targetIdx < 0 ? keys.length : targetIdx + (after ? 1 : 0), 0, sourceKey);
+    saveAndRenderLayout(Object.fromEntries(keys.map((key, order) => [key, { ...hubLayout[key], order }])));
+  };
+
+  const renderHubLayoutStrip = () => {
+    if (!hubLayoutHost) return;
+    const hiddenCount = orderedFeats(true).filter((feat) => feat.layout.hidden).length;
+    const unhideAll = hubLayoutHost.querySelector("[data-layout-action='show-all']");
+    if (unhideAll) {
+      unhideAll.disabled = hiddenCount === 0;
+      unhideAll.title = hiddenCount ? "Unhide all blocks" : "No hidden blocks";
+    }
+    hubLayoutHost.classList.toggle("has-hidden", hiddenCount > 0);
+  };
+
+  const ensureHubLayoutStrip = () => {
+    if (hubLayoutHost) return;
+    const actions = document.querySelector("#ops-card .cw-main-card-head-actions");
+    if (!actions) return;
+    const refreshBtn = document.getElementById("btn-status-refresh");
+    const wrap = Object.assign(document.createElement("div"), { className: "cw-hub-layout-strip" });
+    wrap.setAttribute("aria-label", "Hidden Sync Hub blocks");
+    wrap.innerHTML = `
+      <button type="button" class="iconbtn cw-hub-layout-toggle" title="Sync Hub tools" aria-label="Sync Hub tools" aria-expanded="false">
+        <span class="material-symbols-rounded" aria-hidden="true">dashboard_customize</span>
+      </button>
+      <div class="cw-hub-layout-actions" aria-label="Sync Hub tools actions">
+        <button type="button" class="iconbtn cw-hub-refresh-proxy" title="Re-check status" aria-label="Refresh status"></button>
+        <button type="button" class="iconbtn cw-hub-unhide-all" data-layout-action="show-all" title="No hidden blocks" aria-label="Unhide all blocks" disabled>
+          <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
+        </button>
+      </div>
+    `;
+    actions.insertBefore(wrap, refreshBtn || null);
+    hubLayoutHost = wrap;
+    hubLayoutHost.querySelector(".cw-hub-refresh-proxy").innerHTML = refreshBtn?.innerHTML || `<span class="material-symbols-rounded" aria-hidden="true">refresh</span>`;
+    const toggleTools = (open) => {
+      hubLayoutHost.classList.toggle("is-open", open);
+      hubLayoutHost.querySelector(".cw-hub-layout-toggle")?.setAttribute("aria-expanded", open ? "true" : "false");
+    };
+    hubLayoutHost.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("button");
+      if (!btn) return;
+      if (btn.classList.contains("cw-hub-layout-toggle")) {
+        ev.stopPropagation();
+        toggleTools(!hubLayoutHost.classList.contains("is-open"));
+      } else if (btn.dataset.layoutAction === "show-all") {
+        toggleTools(false);
+        saveAndRenderLayout(Object.fromEntries(FEAT_KEYS.map((key) => [key, { ...hubLayout[key], hidden: false }])));
+      } else if (btn.classList.contains("cw-hub-refresh-proxy")) {
+        toggleTools(false);
+        document.getElementById("btn-status-refresh")?.click();
+      }
+    });
+    document.addEventListener("click", (ev) => {
+      if (!hubLayoutHost?.contains(ev.target)) toggleTools(false);
+    });
+    renderHubLayoutStrip();
+  };
+
+  const createLaneControls = (feat) => {
+    const iconButton = (icon, title, cls = "") => {
+      const node = Object.assign(document.createElement("button"), { className: `lane-control ${cls}`.trim(), type: "button", title });
+      node.setAttribute("aria-label", title);
+      node.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${icon}</span>`;
+      return node;
+    };
+    const controls = Object.assign(document.createElement("div"), { className: "lane-controls" });
+    const drag = iconButton("drag_indicator", `Drag to reorder ${feat.label}`, "lane-drag");
+    drag.setAttribute("draggable", "true");
+    drag.addEventListener("dragstart", (ev) => {
+      dragLaneKey = feat.key;
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", feat.key);
+      ev.currentTarget.closest(".lane")?.classList.add("is-dragging");
+    });
+    drag.addEventListener("dragend", () => {
+      dragLaneKey = "";
+      document.querySelectorAll("#ux-lanes .lane").forEach((node) => node.classList.remove("is-dragging", "is-drop-target"));
+    });
+
+    const size = feat.layout.size === "large" ? "small" : "large";
+    const resize = iconButton(feat.layout.size === "large" ? "view_compact" : "view_agenda", `Make ${feat.label} ${size}`);
+    resize.addEventListener("click", (ev) => { ev.stopPropagation(); patchLayout(feat.key, { size }); });
+    const hide = iconButton("visibility_off", `Hide ${feat.label}`);
+    hide.addEventListener("click", (ev) => { ev.stopPropagation(); patchLayout(feat.key, { hidden: true }); });
+    controls.append(drag, resize, hide);
+    return controls;
+  };
+
+  const wireLaneDrop = (lane, key) => {
+    lane.addEventListener("dragover", (ev) => {
+      if (!dragLaneKey || dragLaneKey === key) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+      const r = lane.getBoundingClientRect();
+      lane.classList.toggle("drop-after", ev.clientX > r.left + r.width / 2 || ev.clientY > r.top + r.height * 0.62);
+      lane.classList.add("is-drop-target");
+    });
+    lane.addEventListener("dragleave", () => lane.classList.remove("is-drop-target", "drop-after"));
+    lane.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      const after = lane.classList.contains("drop-after");
+      lane.classList.remove("is-drop-target", "drop-after");
+      moveLaneTo(ev.dataTransfer.getData("text/plain") || dragLaneKey, key, after);
+    });
+  };
+
   function renderLanes() {
-    const displayFeats = getDisplayFeats();
+    ensureHubLayoutStrip();
+    const displayFeats = getVisibleFeats();
     const wrap = Object.assign(document.createElement("div"), { className: `lanes lanes-count-${displayFeats.length}` });
     const running = sync.isRunning();
     for (const feat of displayFeats) {
       const enabled = !!getEnabledMap()[feat.key];
       const { added, removed, updated, items, spotAdd, spotRem, spotUpd } = getLaneStats(summary || {}, feat.key);
-      const lane = Object.assign(document.createElement("div"), { className: `lane${enabled ? "" : " disabled"}` });
+      const lane = Object.assign(document.createElement("div"), { className: `lane lane-size-${feat.layout.size}${enabled ? "" : " disabled"}` });
+      lane.dataset.laneKey = feat.key;
+      wireLaneDrop(lane, feat.key);
       const total = (added || 0) + (removed || 0) + (updated || 0);
       if (running && enabled && total > (lastCounts[feat.key] ?? 0)) {
         lane.classList.add("shake");
@@ -257,6 +413,7 @@
       const chipState = laneState(feat.key);
       const header = Object.assign(document.createElement("div"), { className: "lane-h" });
       header.innerHTML = `<div class="lane-ico"><span class="material-symbols-outlined material-symbol material-icons">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
+      header.appendChild(createLaneControls(feat));
       lane.appendChild(header);
 
       const body = Object.assign(document.createElement("div"), { className: "lane-body" });
