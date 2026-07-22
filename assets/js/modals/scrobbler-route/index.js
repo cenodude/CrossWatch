@@ -373,12 +373,13 @@ function optionsPanel(r) {
     <section class="scrm-panel ${activeTab === "options" ? "active" : ""}" data-panel="options">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">tune</span>
-        <div><strong>Route-level behavior</strong><p>Leave a field empty to inherit the global Watcher default from Scrobbler settings.</p></div>
+        <div><strong>Route-level behavior</strong><p>These settings apply to this route and override the global defaults.<br><b>Leave them at their defaults unless you know what you are doing.</b></p></div>
       </div>
       <div class="scrm-fields three">
         ${field("Auto remove from Watchlists", `<select class="input" id="scr-auto"><option value="inherit" ${r.options.auto_remove_watchlist === "inherit" ? "selected" : ""}>Inherit</option><option value="on" ${r.options.auto_remove_watchlist === "on" ? "selected" : ""}>On</option><option value="off" ${r.options.auto_remove_watchlist === "off" ? "selected" : ""}>Off</option></select>`, "", "Override whether watched items are removed from watchlists for this route.")}
         ${field("Watched threshold (%)", `<input class="input" id="scr-watched" type="number" min="0" max="100" value="${esc(r.options.scrobble?.watched_at ?? "")}" placeholder="Global">`, "", "Progress percentage that counts an item as watched for this route.")}
         ${field("Final-stop trust (%)", `<input class="input" id="scr-force" type="number" min="0" max="100" value="${esc(r.options.scrobble?.force_stop_at ?? "")}" placeholder="Global">`, "", "At or above this progress, a final stop event is trusted for this route.")}
+        ${field("Progress step (%)", `<input class="input" id="scr-progress-step" type="number" min="1" max="25" value="${esc(r.options.scrobble?.progress_step ?? "")}" placeholder="Global">`, "", "Minimum progress change required before sending another watching update. Leave this at the default, as it significantly affects API usage.")}
         ${field("Pause debounce (s)", `<input class="input" id="scr-watch-pause" type="number" min="0" max="3600" value="${esc(r.options.watch?.pause_debounce_seconds ?? "")}" placeholder="Global">`, "", "Seconds to ignore tiny pause/start flaps just after playback starts for this route.")}
         ${field("Suppress start (%)", `<input class="input" id="scr-watch-suppress" type="number" min="0" max="100" value="${esc(r.options.watch?.suppress_start_at ?? "")}" placeholder="Global">`, "", "Ignore new start events at or above this progress for this route.")}
       </div>
@@ -522,8 +523,10 @@ function collect() {
   const scrobble = {};
   const watched = root.querySelector("#scr-watched")?.value;
   const force = root.querySelector("#scr-force")?.value;
+  const progressStep = root.querySelector("#scr-progress-step")?.value;
   if (watched !== "") scrobble.watched_at = Number(watched);
   if (force !== "") scrobble.force_stop_at = Number(force);
+  if (progressStep !== "") scrobble.progress_step = Number(progressStep);
   const watch = {};
   const pause = root.querySelector("#scr-watch-pause")?.value;
   const suppress = root.querySelector("#scr-watch-suppress")?.value;

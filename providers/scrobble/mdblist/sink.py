@@ -184,10 +184,10 @@ def _progress_step(cfg: dict[str, Any]) -> int:
         s = cfg.get("scrobble") or {}
         step = (s.get("mdblist") or {}).get("progress_step")
         if step is None:
-            step = (s.get("trakt") or {}).get("progress_step", 5)
+            step = (s.get("trakt") or {}).get("progress_step", 25)
         step_i = int(step)
     except Exception:
-        step_i = 5
+        step_i = 25
     return max(1, min(25, step_i))
 
 

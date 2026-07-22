@@ -12,7 +12,12 @@ ROUTE_PROVIDERS = {"plex", "emby", "jellyfin"}
 ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
-ROUTE_SCROBBLE_POLICY_KEYS = {"watched_at", "force_stop_at"}
+ROUTE_SCROBBLE_POLICY_RANGES = {
+    "watched_at": (0.0, 100.0),
+    "force_stop_at": (0.0, 100.0),
+    "progress_step": (1.0, 25.0),
+}
+ROUTE_SCROBBLE_POLICY_KEYS = set(ROUTE_SCROBBLE_POLICY_RANGES)
 ROUTE_WATCH_POLICY_RANGES = {
     "pause_debounce_seconds": (0, 3600),
     "suppress_start_at": (0, 100),
@@ -78,7 +83,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
     scrobble_raw = raw.get("scrobble")
     scrobble_src: dict[str, Any] = scrobble_raw if isinstance(scrobble_raw, dict) else {}
     scrobble: dict[str, float] = {}
-    for key in ROUTE_SCROBBLE_POLICY_KEYS:
+    for key, (min_val, max_val) in ROUTE_SCROBBLE_POLICY_RANGES.items():
         if key not in scrobble_src:
             continue
         src_val = scrobble_src.get(key)
@@ -88,7 +93,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
             val = float(src_val)
         except Exception:
             continue
-        if 0.0 <= val <= 100.0:
+        if min_val <= val <= max_val:
             scrobble[key] = val
 
     watch_raw = raw.get("watch")

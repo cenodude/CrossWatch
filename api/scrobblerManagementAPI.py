@@ -486,6 +486,7 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
         "watch_defaults": {
             "watched_at": trakt_policy.get("watched_at"),
             "force_stop_at": trakt_policy.get("force_stop_at"),
+            "progress_step": trakt_policy.get("progress_step"),
             "pause_debounce_seconds": watch.get("pause_debounce_seconds"),
             "suppress_start_at": watch.get("suppress_start_at"),
         },
@@ -865,7 +866,11 @@ def api_scrobbler_settings(request: Request, payload: dict[str, Any] = Body(...)
         for key in ("pause_debounce_seconds", "suppress_start_at"):
             src_key = f"watch_{key}"
             if src_key in payload:
-                watch[key] = _coerce_int(payload.get(src_key), src_key)
+                val = _coerce_int(payload.get(src_key), src_key)
+                max_val = 100 if key == "suppress_start_at" else 3600
+                if val < 0 or val > max_val:
+                    raise ValidationFailure([_err(src_key, "invalid_range", f"Value must be between 0 and {max_val}")])
+                watch[key] = val
         trakt_policy = sc.setdefault("trakt", {})
         if not isinstance(trakt_policy, dict):
             trakt_policy = {}
@@ -877,6 +882,11 @@ def api_scrobbler_settings(request: Request, payload: dict[str, Any] = Body(...)
                 if val < 0 or val > 100:
                     raise ValidationFailure([_err(src_key, "invalid_range", "Value must be between 0 and 100")])
                 trakt_policy[key] = val
+        if "watch_progress_step" in payload:
+            val = _coerce_int(payload.get("watch_progress_step"), "watch_progress_step")
+            if val < 1 or val > 25:
+                raise ValidationFailure([_err("watch_progress_step", "invalid_range", "Value must be between 1 and 25")])
+            trakt_policy["progress_step"] = val
         wh = sc.setdefault("webhook", {})
         if not isinstance(wh, dict):
             wh = {}
