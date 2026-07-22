@@ -298,10 +298,10 @@ def _trakt_progress_step(cfg: dict[str, Any]) -> int:
         s = (cfg.get("scrobble") or {}).get("trakt") or {}
         step = s.get("progress_step")
         if step is None:
-            step = (cfg.get("trakt") or {}).get("progress_step", 5)
+            step = (cfg.get("trakt") or {}).get("progress_step", 25)
         step = int(step)
     except Exception:
-        step = 5
+        step = 25
     return max(1, min(25, step))
 
 
