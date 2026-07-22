@@ -9,6 +9,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator, Mapping
 
+from _logging import log as _cw_log
 from cw_platform.playlists import BUILTIN_RULESETS, playlist_capabilities, supports_playlists, validate_ruleset
 from cw_platform.provider_instances import (
     build_provider_config_view,
@@ -22,6 +23,23 @@ _ORDER = {"ignore", "preserve"}
 _NAME_MAX = 10
 _PLAYLIST_NAME_MAX = 20
 _SAFE_NAME_CHARS = " _.'-&()"
+
+
+def _internal_playlist_error(action: str, exc: Exception, **extra: Any) -> dict[str, Any]:
+    try:
+        _cw_log(
+            f"playlist {action} failed",
+            level="ERROR",
+            module="PLAYLISTS",
+            extra={
+                "action": action,
+                "error_type": exc.__class__.__name__,
+                **{k: v for k, v in extra.items() if v not in (None, "", [], {})},
+            },
+        )
+    except Exception:
+        pass
+    return {"ok": False, "error": f"{action} failed"}
 
 
 def _safe_name_error(name: Any, label: str, max_len: int) -> str:
@@ -126,7 +144,9 @@ def list_resources(cfg: Mapping[str, Any], provider: str, instance: str | None =
         view = build_provider_config_view(cfg, name, inst)
         resources = ops.list_playlist_resources(view, instance=inst) or []
     except Exception as e:
-        return {"ok": False, "error": str(e), "resources": []}
+        res = _internal_playlist_error("resource listing", e, provider=name, instance=inst)
+        res["resources"] = []
+        return res
     return {"ok": True, "provider": name, "instance": inst, "resources": [r.to_dict() for r in resources]}
 
 
@@ -343,7 +363,13 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
             clean["playlist_id"] = res.id
             clean["playlist_name"] = clean["playlist_name"] or res.name
         except Exception as e:
-            return {"ok": False, "error": f"create failed: {e}"}
+            return _internal_playlist_error(
+                "create",
+                e,
+                provider=clean["provider"],
+                instance=clean["instance"],
+                media_type=media_type,
+            )
 
     if not clean["playlist_id"]:
         return {"ok": False, "error": "playlist required"}
@@ -870,9 +896,9 @@ def preview_mapping(cfg: Mapping[str, Any], mapping_id: str) -> dict[str, Any]:
         with _mapping_env(resolved):
             plan = runner.preview_mapping(cfg, resolved)
     except runner.PlaylistRunError as e:
-        return {"ok": False, "error": str(e)}
+        return _internal_playlist_error("preview", e, mapping_id=mapping_id)
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _internal_playlist_error("preview", e, mapping_id=mapping_id)
     return {"ok": True, "preview": plan}
 
 
@@ -884,9 +910,9 @@ def run_mapping(cfg: Mapping[str, Any], mapping_id: str, *, dry_run: bool = Fals
         with _mapping_env(resolved):
             result = runner.run_mapping(cfg, resolved, dry_run=dry_run)
     except runner.PlaylistRunError as e:
-        return {"ok": False, "error": str(e)}
+        return _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
     return {"ok": True, "result": result}
 
 

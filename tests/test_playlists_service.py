@@ -145,6 +145,29 @@ def test_created_playlist_name_is_limited_and_safe(config_base, fake_providers):
     assert ok["ok"] is True
 
 
+def test_playlist_resource_errors_do_not_expose_exception_text(config_base, fake_providers):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("token=secret-from-provider /srv/crosswatch/internal.py")
+
+    fake_providers["TRAKT"].list_playlist_resources = fail
+    res = svc.list_resources(_cfg(), "TRAKT", "default")
+
+    assert res == {"ok": False, "error": "resource listing failed", "resources": []}
+
+
+def test_playlist_create_errors_do_not_expose_exception_text(config_base, fake_providers):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("password=secret-from-provider /srv/crosswatch/internal.py")
+
+    fake_providers["TRAKT"].create_playlist = fail
+    res = svc.upsert_endpoint(
+        _cfg(),
+        {"name": "NewList", "provider": "TRAKT", "instance": "default", "create": True, "create_name": "Weekend Movies"},
+    )
+
+    assert res == {"ok": False, "error": "create failed"}
+
+
 def test_mapping_validation(config_base, fake_providers):
     cfg = _cfg()
     e1, e2 = _seed_endpoints(cfg)
@@ -194,6 +217,34 @@ def test_preview_performs_no_writes(config_base, fake_providers):
     prev = svc.preview_mapping(cfg, mid)
     assert prev["ok"] and prev["preview"]["planned_additions"] == 2
     assert fake_providers["PLEX"].calls == []
+
+
+def test_playlist_preview_errors_do_not_expose_exception_text(config_base, fake_providers, monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise runner.PlaylistRunError("token=secret-from-runner /srv/crosswatch/internal.py")
+
+    cfg = _cfg()
+    e1, e2 = _seed_endpoints(cfg)
+    mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": e1, "target_endpoints": [e2]})["mapping"]["id"]
+    monkeypatch.setattr(runner, "preview_mapping", fail)
+
+    res = svc.preview_mapping(cfg, mid)
+
+    assert res == {"ok": False, "error": "preview failed"}
+
+
+def test_playlist_run_errors_do_not_expose_exception_text(config_base, fake_providers, monkeypatch):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("api_key=secret-from-runner /srv/crosswatch/internal.py")
+
+    cfg = _cfg()
+    e1, e2 = _seed_endpoints(cfg)
+    mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": e1, "target_endpoints": [e2]})["mapping"]["id"]
+    monkeypatch.setattr(runner, "run_mapping", fail)
+
+    res = svc.run_mapping(cfg, mid)
+
+    assert res == {"ok": False, "error": "run failed"}
 
 
 def test_run_only_selected_mapping(config_base, fake_providers):
