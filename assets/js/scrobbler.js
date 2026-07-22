@@ -42,6 +42,11 @@
     return `<span class="sc2-logo brand-${esc(provider)}">${src ? `<img src="${esc(src)}" alt="">` : `<span>${esc(label(provider).slice(0, 1))}</span>`}</span>`;
   }
 
+  function fieldHelp(text) {
+    const tip = esc(text);
+    return `<span class="sc2-field-help material-symbols-rounded" tabindex="0" role="img" aria-label="Help: ${tip}" title="${tip}">help</span>`;
+  }
+
   function webhookState(x) {
     if (x.enabled && x.source_configured) return ["Connected", "ok"];
     if (x.enabled) return ["Needs setup", "warn"];
@@ -202,7 +207,7 @@
     const wd = st.watch_defaults || {};
     const open = state.panels.watcherDefaults;
     const autoOn = !!st.global_auto_remove_watchlist;
-    const summary = `Auto-remove ${autoOn ? "On" : "Off"} · Pause ${wd.pause_debounce_seconds ?? "default"} · Suppress ${wd.suppress_start_at ?? "default"}`;
+    const summary = `Auto-remove ${autoOn ? "On" : "Off"} · Watched ${wd.watched_at ?? "default"} · Final-stop ${wd.force_stop_at ?? "default"} · Pause ${wd.pause_debounce_seconds ?? "default"} · Suppress ${wd.suppress_start_at ?? "default"}`;
     return `
       <section class="sc2-section sc2-collapse ${open ? "is-open" : ""}" id="sc-sec-watch-defaults">
         <button type="button" class="sc2-collapse-head" data-collapse="watcherDefaults" aria-expanded="${open ? "true" : "false"}">
@@ -214,8 +219,10 @@
           <div class="sc2-inline-note"><span class="material-symbols-rounded">info</span><span>These apply to every route unless that route sets its own Options.</span></div>
           <button type="button" class="sc2-setting-row ${autoOn ? "is-on" : "is-off"}" data-setting-toggle="auto-remove" title="${autoOn ? "Disable auto-remove" : "Enable auto-remove"}" aria-pressed="${autoOn ? "true" : "false"}"><span class="sc2-setting-ico material-symbols-rounded">bookmark_remove</span><span class="sc2-setting-copy"><strong>Auto-remove from Watchlists</strong><small>Remove watched items from watchlists automatically.</small></span><span class="sc2-setting-state">${autoOn ? "On" : "Off"}</span></button>
           <div class="sc2-defaults-grid">
-            <label class="sc2-field"><span>Pause debounce (s)</span><input class="input" type="number" min="0" max="3600" data-setting-num="watch_pause_debounce_seconds" value="${esc(wd.pause_debounce_seconds ?? "")}" placeholder="Default"></label>
-            <label class="sc2-field"><span>Suppress start (%)</span><input class="input" type="number" min="0" max="3600" data-setting-num="watch_suppress_start_at" value="${esc(wd.suppress_start_at ?? "")}" placeholder="Default"></label>
+            <label class="sc2-field"><span class="sc2-label-text">Watched threshold (%)${fieldHelp("Progress percentage that counts an item as watched for completion and auto-remove. Route options can override it.")}</span><input class="input" type="number" min="0" max="100" data-setting-num="watch_watched_at" value="${esc(wd.watched_at ?? "")}" placeholder="Default"></label>
+            <label class="sc2-field"><span class="sc2-label-text">Final-stop trust (%)${fieldHelp("At or above this progress, a final stop event is trusted even if the source is noisy near the end. Route options can override it.")}</span><input class="input" type="number" min="0" max="100" data-setting-num="watch_force_stop_at" value="${esc(wd.force_stop_at ?? "")}" placeholder="Default"></label>
+            <label class="sc2-field"><span class="sc2-label-text">Pause debounce (s)${fieldHelp("Seconds to ignore tiny pause/start flaps just after playback starts.")}</span><input class="input" type="number" min="0" max="3600" data-setting-num="watch_pause_debounce_seconds" value="${esc(wd.pause_debounce_seconds ?? "")}" placeholder="Default"></label>
+            <label class="sc2-field"><span class="sc2-label-text">Suppress start (%)${fieldHelp("Ignore new start events at or above this progress to avoid credits and near-end restarts.")}</span><input class="input" type="number" min="0" max="3600" data-setting-num="watch_suppress_start_at" value="${esc(wd.suppress_start_at ?? "")}" placeholder="Default"></label>
           </div>
         </div>
       </section>

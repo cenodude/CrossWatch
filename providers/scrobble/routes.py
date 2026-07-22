@@ -13,6 +13,10 @@ ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_KEYS = {"watched_at", "force_stop_at"}
+ROUTE_WATCH_POLICY_RANGES = {
+    "pause_debounce_seconds": (0, 3600),
+    "suppress_start_at": (0, 100),
+}
 
 
 def _deep_clone(v: Any) -> Any:
@@ -87,6 +91,22 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
         if 0.0 <= val <= 100.0:
             scrobble[key] = val
 
+    watch_raw = raw.get("watch")
+    watch_src: dict[str, Any] = watch_raw if isinstance(watch_raw, dict) else {}
+    watch: dict[str, int] = {}
+    for key, (min_val, max_val) in ROUTE_WATCH_POLICY_RANGES.items():
+        if key not in watch_src:
+            continue
+        src_val = watch_src.get(key)
+        if src_val is None:
+            continue
+        try:
+            val = int(src_val)
+        except Exception:
+            continue
+        if min_val <= val <= max_val:
+            watch[key] = val
+
     return {
         "auto_remove_watchlist": auto_remove,
         "ratings": {
@@ -96,6 +116,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
             "webhook_token": webhook_token,
         },
         "scrobble": scrobble,
+        "watch": watch,
     }
 
 
@@ -192,6 +213,11 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
     w["route_sink"] = r["sink"]
     w["route_sink_instance"] = r["sink_instance"]
     w["route_options"] = _deep_clone(r.get("options") or {})
+    watch_policy = (w.get("route_options") or {}).get("watch")
+    if isinstance(watch_policy, dict):
+        for key in ROUTE_WATCH_POLICY_RANGES:
+            if key in watch_policy:
+                w[key] = watch_policy[key]
     if r["sink"] in ROUTE_SINKS:
         policy = (w.get("route_options") or {}).get("scrobble")
         if isinstance(policy, dict):
