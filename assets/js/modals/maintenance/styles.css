@@ -110,6 +110,7 @@
 .cw-maint .group-actions.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* Action cards and feedback */
 .cw-maint .action-row { --inspect-accent: var(--maint-accent); position: relative; overflow: hidden; min-width: 0; min-height: 92px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--maint-border); border-radius: 8px; background: var(--maint-card); box-shadow: none; cursor: pointer; transition: background .14s ease, border-color .14s ease, box-shadow .14s ease, transform .14s ease; }
+.cw-maint .action-row.has-side-actions { grid-template-columns: minmax(0, 1fr) auto auto; }
 .cw-maint .action-row[data-kind="tracker"] { --inspect-accent: var(--maint-good); }
 .cw-maint .action-row[data-kind="defaults"] { --inspect-accent: var(--maint-danger); }
 .cw-maint .action-row::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 0 999px 999px 0; background: var(--inspect-accent); opacity: 0; transform: scaleY(.35); transition: opacity .16s ease, transform .2s ease; }
@@ -123,8 +124,8 @@
 .cw-maint .action-copy { min-width: 0; }
 .cw-maint .action-title { color: var(--maint-text); font-size: 13px; font-weight: 820; line-height: 1.2; }
 .cw-maint .action-desc { margin-top: 4px; color: var(--maint-muted); font-size: 11.5px; line-height: 1.35; }
-.cw-maint .run-btn { position: relative; min-width: 66px; min-height: 38px; padding: 0 11px; border: 1px solid var(--maint-border); border-radius: 7px; color: var(--maint-text); background: var(--maint-panel); box-shadow: none; cursor: pointer; font-size: 12px; font-weight: 800; transition: background .14s ease, border-color .14s ease; }
-.cw-maint .run-btn:hover { border-color: color-mix(in srgb, var(--maint-accent) 42%, var(--maint-border)); background: var(--maint-hover); }
+.cw-maint .run-btn, .cw-maint .archive-btn { position: relative; min-width: 66px; min-height: 38px; padding: 0 11px; border: 1px solid var(--maint-border); border-radius: 7px; color: var(--maint-text); background: var(--maint-panel); box-shadow: none; cursor: pointer; font-size: 12px; font-weight: 800; transition: background .14s ease, border-color .14s ease; }
+.cw-maint .run-btn:hover, .cw-maint .archive-btn:hover { border-color: color-mix(in srgb, var(--maint-accent) 42%, var(--maint-border)); background: var(--maint-hover); }
 .cw-maint .run-btn.busy { color: transparent; }
 .cw-maint .run-btn.busy::after { content: ""; position: absolute; inset: 50% auto auto 50%; width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid color-mix(in srgb, var(--maint-accent) 25%, transparent); border-top-color: var(--maint-accent); border-radius: 50%; animation: cw-maint-spin .65s linear infinite; }
 .cw-maint .action-row.is-running { border-color: color-mix(in srgb, var(--maint-accent) 48%, var(--maint-border)); background: color-mix(in srgb, var(--maint-accent) 6%, var(--maint-card)); }
@@ -146,9 +147,10 @@
 .cw-maint .action-options { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 5px 10px; margin-top: 6px; color: var(--maint-muted); font-size: 10.5px; }
 .cw-maint .action-options label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
 .cw-maint .action-options input { width: 15px; height: 15px; margin: 0; accent-color: var(--maint-accent); }
-.cw-maint .archive-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
-.cw-maint .archive-actions .run-btn { min-height: 34px; min-width: 118px; }
-.cw-maint .archive-actions .run-btn.secondary { color: var(--maint-text); }
+.cw-maint .action-side-actions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; }
+.cw-maint .archive-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin: 0; }
+.cw-maint .archive-actions .archive-btn { min-height: 34px; min-width: 118px; }
+.cw-maint .archive-actions .archive-btn.secondary { color: var(--maint-text); }
 .cw-maint :is(.action-group.archive, .action-group.events, .action-group.captures) .group-icon, .cw-maint .action-row[data-op="tracker"] .action-icon { color: var(--maint-good); }
 .cw-maint :is(.action-group.archive, .action-group.events, .action-group.captures) { --group-accent: var(--maint-good); }
 .cw-maint :is(.action-group.playback, .action-group.reports) .group-icon { color: var(--maint-accent); }
@@ -165,10 +167,10 @@ html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .maint-main { 
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.action-row, .sidebar-status) { color: var(--maint-text) !important; -webkit-text-fill-color: currentColor !important; border-color: var(--maint-border) !important; background: var(--maint-card) !important; box-shadow: none !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-title, .group-title, .action-title) { color: var(--maint-text) !important; -webkit-text-fill-color: var(--maint-text) !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-sub, .group-desc, .action-desc, .status-line) { color: var(--maint-muted) !important; -webkit-text-fill-color: var(--maint-muted) !important; }
-html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-icon, .action-icon, .group-icon, .side-nav-btn, .header-action, .run-btn) { -webkit-text-fill-color: currentColor !important; }
+html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.head-icon, .action-icon, .group-icon, .side-nav-btn, .header-action, .run-btn, .archive-btn) { -webkit-text-fill-color: currentColor !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .category-run-btn { color: var(--nav-accent) !important; -webkit-text-fill-color: currentColor !important; border-color: color-mix(in srgb, var(--nav-accent) 38%, var(--maint-border)) !important; border-left: 0 !important; background: color-mix(in srgb, var(--nav-accent) 13%, var(--maint-card)) !important; box-shadow: none !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .category-run-btn.busy { color: transparent !important; -webkit-text-fill-color: transparent !important; }
-html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.header-action, .run-btn, .storage-details summary) { border-color: var(--maint-border) !important; background: var(--maint-card) !important; box-shadow: none !important; }
+html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint :is(.header-action, .run-btn, .archive-btn, .storage-details summary) { border-color: var(--maint-border) !important; background: var(--maint-card) !important; box-shadow: none !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .action-group.danger { border-color: color-mix(in srgb, var(--maint-danger) 38%, var(--maint-border)) !important; background: color-mix(in srgb, var(--maint-danger) 6%, var(--maint-panel)) !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .action-group.danger .action-row { border-color: color-mix(in srgb, var(--maint-danger) 30%, var(--maint-border)) !important; background: color-mix(in srgb, var(--maint-danger) 8%, var(--maint-card)) !important; }
 html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .action-group.danger .group-title, html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .action-row[data-op="defaults"] :is(.action-icon, .run-btn) { color: var(--maint-danger) !important; -webkit-text-fill-color: var(--maint-danger) !important; }
@@ -218,6 +220,7 @@ html[data-cw-theme] body .cx-modal-shell.cw-maint-shell .cw-maint .run-btn.resul
   .cw-maint .cx-head { padding: 8px !important; }
   .cw-maint .maint-main { padding: 7px; }
   .cw-maint .action-group { padding: 8px; }
-  .cw-maint .action-row { grid-template-columns: 1fr; }
-  .cw-maint .run-btn { width: 100%; }
+  .cw-maint .action-row, .cw-maint .action-row.has-side-actions { grid-template-columns: 1fr; }
+  .cw-maint .run-btn, .cw-maint .archive-btn { width: 100%; }
+  .cw-maint .action-side-actions, .cw-maint .archive-actions { width: 100%; justify-content: stretch; }
 }
