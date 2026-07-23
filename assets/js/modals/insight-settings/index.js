@@ -1,5 +1,4 @@
 /* assets/js/modals/insight-settings/index.js */
-/* refactor */
 /* Modal for configuring which features and provider instances contribute to the insights statistics. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
@@ -14,11 +13,11 @@ const FEAT_COPY = {
   playlists: "Show playlist sync tiles.",
 };
 const FEAT_UI = {
-  watchlist: "bookmark",
+  watchlist: "movie",
   ratings: "star",
-  history: "history",
-  progress: "trending_up",
-  playlists: "format_list_bulleted",
+  history: "play_arrow",
+  progress: "timelapse",
+  playlists: "queue_music",
 };
 const FEATS = FeatureMeta().order || ["watchlist", "ratings", "history", "progress", "playlists"];
 const $ = (s, r = document) => r.querySelector(s);
@@ -146,6 +145,35 @@ html[data-cw-theme="flat-light"] .cw-insight-set .prov-card:hover{background:rad
 html[data-cw-theme="flat-light"] .cw-insight-set .prov-card::before{content:""!important;display:block!important;mix-blend-mode:multiply;opacity:.24!important;filter:saturate(1.35) contrast(1.18) brightness(.9)!important}
 `;
 
+const SLICK_STYLE = `
+.cx-modal-shell.cw-insight-set{width:min(1180px,calc(100vw - 24px))!important;max-width:min(1180px,calc(100vw - 24px))!important;height:auto!important;max-height:min(720px,calc(100vh - 28px))!important;border-radius:16px}
+.cw-insight-set .cx-head{padding:18px 24px 14px!important}.cw-insight-set .head-copy{gap:4px}.cw-insight-set .head-title{font-size:28px;letter-spacing:0}.cw-insight-set .head-sub{font-size:14px}.cw-insight-set .head-actions{gap:12px}.cw-insight-set .head-chip,.cw-insight-set .close-btn{gap:8px;height:42px;padding:0 16px;border-radius:8px;font-size:13px;letter-spacing:.01em;box-shadow:none!important}.cw-insight-set .head-chip .material-symbols-rounded,.cw-insight-set .close-btn .material-symbols-rounded{font-size:19px;font-variation-settings:"FILL" 0,"wght" 650,"GRAD" 0,"opsz" 20}
+.cw-insight-set .body{padding:18px 24px 20px!important}.cw-insight-set .layout{grid-template-columns:minmax(290px,315px) minmax(0,1fr);gap:22px}.cw-insight-set .panel{border-radius:16px}.cw-insight-set .panel-head{align-items:center;padding:16px 18px 10px}.cw-insight-set .panel-title{font-size:16px;letter-spacing:.03em}.cw-insight-set .panel-chip{height:32px;padding:0 12px;border-radius:8px;font-size:11px;letter-spacing:.01em}.cw-insight-set .panel-body{padding:10px 14px 16px}
+.cw-insight-set .feature-list{gap:8px}.cw-insight-set .feature-row{grid-template-columns:34px minmax(0,1fr) auto;gap:12px;min-height:64px;padding:12px 14px;border-radius:12px}.cw-insight-set .feature-icon{width:30px;height:34px;display:grid;place-items:center;color:rgba(225,232,247,.9);-webkit-text-fill-color:currentColor!important}.cw-insight-set .feature-icon .material-symbols-rounded{font-size:25px;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 26}.cw-insight-set .feature-name{font-size:15px}.cw-insight-set .feature-copy{font-size:12px;line-height:1.28}.cw-insight-set .switch{--w:44px;--h:26px;--dot:20px;--pad:3px}
+.cw-insight-set .providers-shell{gap:0}.cw-insight-set .prov-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.cw-insight-set .prov-card{gap:12px;padding:16px;border-radius:11px}.cw-insight-set .prov-top,.cw-insight-set .prov-brand,.cw-insight-set .prov-tools{display:flex;align-items:center;gap:12px}.cw-insight-set .prov-top{min-width:0}.cw-insight-set .prov-brand{min-width:0}.cw-insight-set .prov-icon{display:grid;place-items:center;flex:0 0 auto;width:44px;height:44px;border-radius:10px;border:1px solid rgba(var(--provider-rgb),.42);background:linear-gradient(180deg,rgba(var(--provider-rgb),.46),rgba(var(--provider-rgb),.18));box-shadow:0 12px 22px rgba(0,0,0,.20),inset 0 1px 0 rgba(255,255,255,.14)}.cw-insight-set .prov-icon img{display:block;max-width:28px;max-height:28px;object-fit:contain;filter:drop-shadow(0 2px 4px rgba(0,0,0,.34))}.cw-insight-set .prov-icon-fallback{font-size:16px;font-weight:950;color:#fff}.cw-insight-set .prov-title{min-width:0;font-size:16px;letter-spacing:.025em;white-space:nowrap;overflow:visible;text-overflow:clip}.cw-insight-set .prov-badge,.cw-insight-set .mini{height:32px;padding:0 11px;border-radius:8px;font-size:11px;letter-spacing:.01em}.cw-insight-set [data-list]{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.cw-insight-set .prov-card [data-list],.cw-insight-set .pill{padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important}.cw-insight-set .pill{min-height:38px}.cw-insight-set .pill .lab{justify-content:space-between;gap:8px;padding:0 12px;border-radius:8px;font-size:13px}.cw-insight-set .pill .lab .material-symbols-rounded{font-size:18px;color:rgba(231,238,255,.92)}.cw-insight-set .pill input:not(:checked)+.lab .material-symbols-rounded{opacity:0}.cw-insight-set .prov-card[data-single="1"]{display:grid;grid-template-columns:minmax(0,1fr) minmax(128px,160px);align-items:center;min-height:94px}.cw-insight-set .prov-card[data-single="1"] .prov-top{min-width:0}.cw-insight-set .prov-card[data-single="1"] .prov-tools{display:none}.cw-insight-set .prov-card[data-single="1"] [data-list]{min-width:0;grid-template-columns:1fr}.cw-insight-set .prov-card[data-single="0"]{min-height:132px}.cw-insight-set .prov-card[data-single="0"] .prov-top{justify-content:space-between}
+.cw-insight-set .actions{padding:12px 24px 14px!important}.cw-insight-set .footer-note{display:flex;align-items:center;gap:10px;min-width:0}.cw-insight-set .footer-note>.material-symbols-rounded{font-size:22px;color:currentColor;opacity:.68}.cw-insight-set .toast{min-height:0;font-size:13px}.cw-insight-set .action-row{gap:12px}.cw-insight-set .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:112px;height:44px;border-radius:10px;font-size:12px;letter-spacing:.01em}.cw-insight-set .btn .material-symbols-rounded{font-size:19px}
+.cw-insight-set .prov-card{--provider-rgb:124,92,255;position:relative;isolation:isolate;overflow:hidden;background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.13),transparent 56%),linear-gradient(180deg,rgba(26,31,43,.94),rgba(16,21,31,.98))!important;border-color:rgba(255,255,255,.10)!important;box-shadow:0 20px 44px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.05)!important}
+.cw-insight-set .prov-card::before{content:""!important;display:block!important;position:absolute;z-index:0;pointer-events:none;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.055),transparent 44%),radial-gradient(80% 90% at 100% 100%,rgba(var(--provider-rgb),.09),transparent 64%)!important;opacity:1!important;filter:none!important;mix-blend-mode:normal;transform:none}
+.cw-insight-set .prov-card::after{content:"";position:absolute;z-index:0;left:0;right:0;bottom:0;height:2px;background:linear-gradient(90deg,rgba(var(--provider-rgb),.12),rgba(var(--provider-rgb),.82),rgba(var(--provider-rgb),.12));opacity:.82}
+.cw-insight-set .prov-card:hover{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.17),transparent 58%),linear-gradient(180deg,rgba(31,37,51,.98),rgba(19,25,36,.99))!important;border-color:rgba(var(--provider-rgb),.28)!important}
+.cw-insight-set .prov-card [data-list],.cw-insight-set .prov-card .pill,.cw-insight-set .prov-card .pill .lab{background:transparent!important;background-image:none!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+.cw-insight-set .prov-card .pill .lab{border-color:rgba(var(--provider-rgb),.48)!important;color:#f7f9ff!important}
+.cw-insight-set .prov-card .pill input:checked+.lab{background:rgba(var(--provider-rgb),.12)!important;background-image:none!important;border-color:rgba(var(--provider-rgb),.68)!important;box-shadow:none!important}
+.cw-insight-set .prov-card .pill:hover .lab{background:rgba(var(--provider-rgb),.08)!important;background-image:none!important}
+html[data-cw-theme="flat-dark"] .cw-insight-set .prov-card{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.12),transparent 56%),#171a22!important;border-color:rgba(255,255,255,.12)!important}
+html[data-cw-theme="flat-dark"] .cw-insight-set .prov-card:hover{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.16),transparent 58%),#20242d!important;border-color:rgba(var(--provider-rgb),.28)!important}
+html[data-cw-theme="flat-dark"] .cw-insight-set .prov-card::before{opacity:1!important;filter:none!important;mix-blend-mode:normal!important}
+html[data-cw-theme="flat-dark"] .cw-insight-set .prov-card .pill .lab{background:transparent!important;background-image:none!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+html[data-cw-theme="flat-dark"] .cw-insight-set .prov-card .pill input:checked+.lab{background:rgba(var(--provider-rgb),.12)!important;background-image:none!important;box-shadow:none!important}
+html[data-cw-theme="flat-light"] .cw-insight-set .prov-card{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.09),transparent 56%),linear-gradient(180deg,#fff,#f2f5fa)!important;border-color:rgba(var(--provider-rgb),.24)!important}
+html[data-cw-theme="flat-light"] .cw-insight-set .prov-card:hover{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.13),transparent 58%),linear-gradient(180deg,#fff,#eef3f8)!important}
+html[data-cw-theme="flat-light"] .cw-insight-set .prov-card::before{mix-blend-mode:normal;opacity:1!important;filter:none!important}
+html[data-cw-theme="flat-light"] .cw-insight-set .prov-card .pill .lab{background:transparent!important;background-image:none!important;box-shadow:none!important}
+html[data-cw-theme="flat-light"] .cw-insight-set .prov-card .pill input:checked+.lab{background:rgba(var(--provider-rgb),.08)!important;background-image:none!important;box-shadow:none!important}
+@media (max-width:1100px){.cw-insight-set .layout{grid-template-columns:1fr}.cw-insight-set .feature-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.cx-modal-shell.cw-insight-set{width:calc(100vw - 12px)!important;max-width:calc(100vw - 12px)!important;height:calc(100dvh - 12px)!important;max-height:calc(100dvh - 12px)!important;border-radius:14px}.cw-insight-set .cx-head{align-items:center;flex-direction:row;padding:12px 12px!important}.cw-insight-set .head-title{font-size:20px}.cw-insight-set .head-sub,.cw-insight-set .head-chip{display:none}.cw-insight-set .head-actions{width:auto}.cw-insight-set .close-btn{width:42px;min-width:42px;height:42px;padding:0;font-size:0}.cw-insight-set .body{padding:10px!important}.cw-insight-set .layout{gap:10px}.cw-insight-set .panel-head{padding:12px}.cw-insight-set .panel-body{padding:10px}.cw-insight-set .feature-list,.cw-insight-set .prov-grid{grid-template-columns:1fr}.cw-insight-set .feature-row{min-height:62px;padding:11px 12px}.cw-insight-set .feature-name{font-size:14px}.cw-insight-set .feature-copy{font-size:12px}.cw-insight-set .feature-icon .material-symbols-rounded{font-size:24px}.cw-insight-set .switch{--w:46px;--h:27px;--dot:21px}.cw-insight-set .prov-card{padding:13px}.cw-insight-set .prov-card[data-single="1"]{grid-template-columns:minmax(0,1fr) minmax(112px,136px);min-height:82px}.cw-insight-set .prov-card[data-single="0"]{min-height:0}.cw-insight-set .prov-icon{width:42px;height:42px}.cw-insight-set .prov-icon img{max-width:27px;max-height:27px}.cw-insight-set .prov-title{font-size:15px}.cw-insight-set .pill{min-height:42px}.cw-insight-set .pill .lab{font-size:13px}.cw-insight-set .actions{padding:9px 10px!important}.cw-insight-set .footer-note{display:none}.cw-insight-set .btn{min-height:44px;height:44px;min-width:0;flex:1 1 0}}
+`;
+
 const injectCSS = () => {
   let el = $("#cw-insight-set-css");
   if (!el) {
@@ -153,7 +181,7 @@ const injectCSS = () => {
     el.id = "cw-insight-set-css";
     document.head.appendChild(el);
   }
-  el.textContent = `${STYLE}\n${COMPACT_STYLE}`;
+  el.textContent = `${STYLE}\n${COMPACT_STYLE}\n${SLICK_STYLE}`;
 
   let themeEl = $("#cw-insight-set-theme-css");
   if (!themeEl) {
@@ -161,7 +189,7 @@ const injectCSS = () => {
     themeEl.id = "cw-insight-set-theme-css";
     document.head.appendChild(themeEl);
   }
-  themeEl.textContent = `${THEME_STYLE}\n${PROVIDER_STYLE}`;
+  themeEl.textContent = `${THEME_STYLE}\n${PROVIDER_STYLE}\n${SLICK_STYLE}`;
 };
 
 const parseInstanceList = (raw) => {
@@ -203,7 +231,9 @@ const renderFeatures = (prefs) => FEATS.map((key) => {
 
 const renderProviderCard = (provider, all, selected, labels) => {
   const key = String(provider || "").toLowerCase(), picked = new Set(selected), count = all.filter((id) => picked.has(id)).length;
-  return `<section class="prov-card" data-provider="${h(key)}" data-empty="${count ? 0 : 1}" data-single="${all.length === 1 ? 1 : 0}"><div class="prov-top"><div class="prov-brand"><div class="prov-title">${h(provLabel(key))}</div></div><div class="prov-tools"><span class="prov-badge" data-badge>${count}/${all.length}</span><button class="mini" type="button" data-all>All</button><button class="mini" type="button" data-none>None</button></div></div><div data-list>${all.map((id) => `<label class="pill" for="is-${esc(key)}-${esc(id)}"><input type="checkbox" id="is-${esc(key)}-${esc(id)}" data-inst="${h(id)}" ${picked.has(id) ? "checked" : ""}><span class="lab"><span>${h(labels?.[key]?.[id] || (id === "default" ? "Default" : id))}</span><span class="material-symbols-rounded" aria-hidden="true">check</span></span></label>`).join("")}</div></section>`;
+  const label = provLabel(key), logo = ProviderMeta().logoPath?.(key) || "";
+  const icon = logo ? `<span class="prov-icon"><img src="${h(logo)}" alt="${h(label)} logo" loading="lazy"></span>` : `<span class="prov-icon"><span class="prov-icon-fallback">${h((label || key || "?").slice(0, 2).toUpperCase())}</span></span>`;
+  return `<section class="prov-card" data-provider="${h(key)}" data-empty="${count ? 0 : 1}" data-single="${all.length === 1 ? 1 : 0}"><div class="prov-top"><div class="prov-brand">${icon}<div class="prov-title">${h(label)}</div></div><div class="prov-tools"><span class="prov-badge" data-badge>${count}/${all.length}</span><button class="mini" type="button" data-all>All</button><button class="mini" type="button" data-none>None</button></div></div><div data-list>${all.map((id) => `<label class="pill" for="is-${esc(key)}-${esc(id)}"><input type="checkbox" id="is-${esc(key)}-${esc(id)}" data-inst="${h(id)}" ${picked.has(id) ? "checked" : ""}><span class="lab"><span>${h(labels?.[key]?.[id] || (id === "default" ? "Default" : id))}</span><span class="material-symbols-rounded" aria-hidden="true">check</span></span></label>`).join("")}</div></section>`;
 };
 
 const decorateProviderCard = (card) => {
