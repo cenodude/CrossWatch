@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Mapping, cast
 from urllib.parse import urlencode
 
 import requests
@@ -240,6 +240,46 @@ def _norm_type(x: str | None) -> str:
     if t in {"movie", "movies", "film", "films"}:
         return "movie"
     return ""
+
+
+def _as_pos_int(value: Any) -> int | None:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _season_number(item: dict[str, Any]) -> int | None:
+    raw_episode = item.get("episode")
+    episode: Mapping[str, Any] = raw_episode if isinstance(raw_episode, dict) else {}
+    return (
+        _as_pos_int(item.get("season_number"))
+        or _as_pos_int(episode.get("season_number"))
+        or _as_pos_int(episode.get("season"))
+        or _as_pos_int(item.get("season"))
+    )
+
+
+def _episode_number(item: dict[str, Any]) -> int | None:
+    raw_episode = item.get("episode")
+    episode: Mapping[str, Any] = raw_episode if isinstance(raw_episode, dict) else {}
+    return (
+        _as_pos_int(item.get("episode_number"))
+        or _as_pos_int(episode.get("episode_number"))
+        or _as_pos_int(episode.get("number"))
+        or _as_pos_int(item.get("number"))
+        or _as_pos_int(item.get("episode"))
+    )
+
+
+def _episode_label(item: dict[str, Any]) -> str:
+    explicit = str(item.get("episode_label") or item.get("episodeLabel") or "").strip()
+    if explicit:
+        return explicit
+    season = _season_number(item)
+    episode = _episode_number(item)
+    return f"S{season:02d}E{episode:02d}" if season and episode else ""
 
 
 def _rich_ids_score(item: dict[str, Any] | None) -> int:
@@ -920,6 +960,9 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
         title = info.get("title") or info.get("name") or ""
         year = info.get("year") or info.get("release_year")
         tmdb_id = (info.get("ids") or {}).get("tmdb") or info.get("tmdb")
+        season = _season_number(info)
+        episode = _episode_number(info)
+        episode_label = _episode_label(info)
 
         if not added_epoch:
             added_when = _pick_added(info)
@@ -937,6 +980,9 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
                 "type": typ,
                 "title": title,
                 "year": year,
+                "season": season,
+                "episode": episode,
+                "episode_label": episode_label,
                 "tmdb": tmdb_value,
                 "status": status,
                 "sources": sources,

@@ -677,6 +677,8 @@ DEFAULT_CFG: dict[str, Any] = {
         "show_recent_history_widget": True,             # Show Recent History widget on Main tab
         "show_latest_ratings_widget": True,             # Show Latest Ratings widget on Main tab
         "show_recent_scrobble_widget": True,            # Show Recent Scrobble widget on Main tab
+        "show_recent_progress_widget": False,           # Show Recent Progress widget on Main tab
+        "show_recent_playlists_widget": False,          # Show Recent Playlists widget on Main tab
         "recent_activity_display": "count:3",           # "count:3|4|5" | "hours:24|48|72"
         "recent_activity_limit": 3,                     # Recent Scrobble rows on Main tab
         "recent_syncs_display": "count:3",              # "count:3|4|5" | "hours:24|48|72"
@@ -1468,6 +1470,8 @@ def _normalize_ui(cfg: dict[str, Any]) -> None:
     ui["show_recent_history_widget"] = bool(ui.get("show_recent_history_widget", True))
     ui["show_latest_ratings_widget"] = bool(ui.get("show_latest_ratings_widget", True))
     ui["show_recent_scrobble_widget"] = bool(ui.get("show_recent_scrobble_widget", True))
+    ui["show_recent_progress_widget"] = bool(ui.get("show_recent_progress_widget", False))
+    ui["show_recent_playlists_widget"] = bool(ui.get("show_recent_playlists_widget", False))
     ui["show_quick_add_desktop"] = bool(ui.get("show_quick_add_desktop", True))
     ui["show_quick_add_mobile"] = bool(ui.get("show_quick_add_mobile", True))
 

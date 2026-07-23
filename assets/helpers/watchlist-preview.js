@@ -118,6 +118,19 @@
     catch { return {}; }
   };
 
+  function relWallTime(value) {
+    let ts = Number(value || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return "";
+    if (ts > 100000000000) ts = Math.floor(ts / 1000);
+    if (typeof window.relTimeFromEpoch === "function") return window.relTimeFromEpoch(ts);
+    const delta = Math.max(1, Math.floor(Date.now() / 1000) - ts);
+    const units = [["y", 31536000], ["mo", 2592000], ["w", 604800], ["d", 86400], ["h", 3600], ["m", 60]];
+    for (const [name, seconds] of units) {
+      if (delta >= seconds) return `${Math.floor(delta / seconds)}${name} ago`;
+    }
+    return `${delta}s ago`;
+  }
+
   function updateEdges() {
     const row = document.getElementById("poster-row");
     const left = document.getElementById("edgeL");
@@ -163,6 +176,87 @@
     if (!tmdb) return null;
     const kind = isTV(item.type || item.entity || item.media_type) ? "tv" : "movie";
     return `/art/tmdb/${kind}/${tmdb}?size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
+  }
+
+  function asNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  function seasonNumber(item) {
+    return asNumber(item?.season_number ?? item?.episode?.season_number ?? item?.episode?.season ?? item?.season);
+  }
+
+  function episodeNumber(item) {
+    return asNumber(item?.episode_number ?? item?.episode?.episode_number ?? item?.episode?.number ?? item?.number ?? item?.episode);
+  }
+
+  function episodeLabel(item) {
+    const explicit = String(item?.episode_label || item?.episodeLabel || "").trim();
+    if (explicit) return explicit;
+    const season = seasonNumber(item);
+    const episode = episodeNumber(item);
+    return season && episode ? `S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
+  }
+
+  function episodeStillUrl(item, size = "w300") {
+    const tmdb = tmdbIdOf(item);
+    const season = seasonNumber(item);
+    const episode = episodeNumber(item);
+    if (!tmdb || !season || !episode || artTypeOf(item) !== "tv") return "";
+    return `/art/tmdb/tv/${encodeURIComponent(String(tmdb))}?kind=still&season=${encodeURIComponent(String(season))}&episode=${encodeURIComponent(String(episode))}&size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
+  }
+
+  function gridArtUrl(item, size = "w300") {
+    const still = episodeStillUrl(item, size);
+    if (still) return still;
+    const tmdb = tmdbIdOf(item);
+    if (!tmdb) return "";
+    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+  }
+
+  function applyWidgetView(view = "") {
+    const widgetCard = document.getElementById("placeholder-card");
+    const mode = view || widgetCard?.dataset?.widgetView || "icon";
+    document.querySelectorAll("#poster-row .poster img").forEach((img) => {
+      const next = (mode === "media" || mode === "grid") ? img.dataset.gridSrc : img.dataset.coverSrc;
+      if (next && img.getAttribute("src") !== next) img.src = next;
+    });
+  }
+
+  function prewarmWallImages(limit = 12) {
+    const urls = [];
+    document.querySelectorAll("#poster-row .poster img").forEach((img) => {
+      urls.push(img.dataset.coverSrc || "", img.dataset.gridSrc || "");
+    });
+    const list = [...new Set(urls.filter(Boolean))].slice(0, limit);
+    if (!list.length) return;
+    if (navigator.connection?.saveData) return;
+    const run = () => {
+      let index = 0;
+      const next = () => {
+        const url = list[index++];
+        if (!url) return;
+        let settled = false;
+        const preload = new Image();
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          window.setTimeout(next, 160);
+        };
+        preload.onload = done;
+        preload.onerror = done;
+        preload.decoding = "async";
+        preload.src = url;
+        window.setTimeout(done, 3500);
+      };
+      next();
+    };
+    const start = () => {
+      if ("requestIdleCallback" in window) window.requestIdleCallback(run, { timeout: 4000 });
+      else window.setTimeout(run, 800);
+    };
+    window.setTimeout(start, 900);
   }
 
   const providerLogoPath = (name) => window.CW?.ProviderMeta?.logoPath?.(name) || "";
@@ -400,9 +494,12 @@
     row.replaceChildren();
     row.classList.add("hidden");
     row.closest(".wall-wrap")?.classList.add("is-empty");
-    msg.textContent = text;
+    msg.innerHTML = `
+      <strong>${esc(text && text !== "No items to show yet." ? text : "No watchlist items yet")}</strong>
+      <small>Synced watchlist titles will appear here.</small>`;
     msg.classList.add("is-empty");
     msg.classList.remove("hidden");
+    window.dispatchEvent(new CustomEvent("cw:watchlist-widget-state", { detail: { empty: true, count: 0 } }));
   };
 
   function pillFor(status) {
@@ -535,7 +632,6 @@
       link.target = "_blank";
       link.rel = "noopener";
       link.style.cursor = "pointer";
-      link.title = `Show details for ${item.title || "this item"}`;
       link.setAttribute("aria-label", `Show details for ${item.title || "this item"}`);
       link.dataset.type = item.type || "";
       link.dataset.tmdb = String(item.tmdb);
@@ -547,41 +643,64 @@
       img.loading = renderedCount < 4 ? "eager" : "lazy";
       if (renderedCount < 4) img.fetchPriority = "high";
       img.alt = `${item.title || ""} (${item.year || ""})`;
-      img.src = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
+      const widgetCard = document.getElementById("placeholder-card");
+      const currentView = widgetCard?.dataset?.widgetView || "icon";
+      const horizontal = widgetCard?.dataset?.widgetSize === "large";
+      const coverSrc = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
+      const gridSrc = gridArtUrl(item, horizontal ? "w780" : "w300") || coverSrc;
+      img.src = (currentView === "media" || currentView === "grid") ? gridSrc : coverSrc;
+      img.dataset.coverSrc = coverSrc;
+      img.dataset.gridSrc = gridSrc;
       img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
       link.appendChild(img);
+
+      const timeLabel = relWallTime(getTs(item) || lastSyncEpoch);
+      if (timeLabel) {
+        const age = document.createElement("span");
+        age.className = "wl-age";
+        age.textContent = timeLabel;
+        link.appendChild(age);
+      }
+
+      const epLabel = episodeLabel(item);
+      if (epLabel) {
+        const ep = document.createElement("span");
+        ep.className = "cw-history-episode wl-episode";
+        ep.textContent = epLabel;
+        link.appendChild(ep);
+      }
 
       const overlay = document.createElement("div");
       const currentProviders = providersForItem(item).slice(0, 5);
       const routeTitle = sourceRouteTitle(item);
       const synced = String(source).toLowerCase() === "both";
-      overlay.className = "ovr";
+      overlay.className = `ovr wl-status ${synced ? "is-synced" : "is-provider"}`;
       if (routeTitle) {
-        overlay.title = routeTitle;
         overlay.setAttribute("aria-label", routeTitle);
       }
-      overlay.style.left = "8px";
-      overlay.style.right = synced ? "8px" : "auto";
-      overlay.style.justifyContent = synced ? "center" : "flex-start";
-      overlay.style.width = synced ? "calc(100% - 16px)" : "auto";
       overlay.innerHTML = synced
         ? `<div class="pill ${pill.cls}">${pill.text}</div>`
-        : currentProviders.map(providerIconMarkup).join("");
+        : currentProviders.length ? currentProviders.map(providerIconMarkup).join("") : `<div class="pill ${pill.cls}">${pill.text}</div>`;
       link.appendChild(overlay);
+
+      if (synced) {
+        const marker = document.createElement("span");
+        marker.className = "wl-bookmark material-symbols-rounded";
+        marker.setAttribute("aria-hidden", "true");
+        marker.textContent = "bookmark";
+        link.appendChild(marker);
+      }
 
       const cap = document.createElement("div");
       cap.className = "cap";
-      cap.textContent = `${item.title || ""}${item.year ? ` - ${item.year}` : ""}`;
+      const typeLabel = isTV(item.type || item.entity || item.media_type) ? (epLabel || "TV Series") : "Movie";
+      const compactMeta = [typeLabel, item.year || "", timeLabel ? `updated ${timeLabel}` : ""].filter(Boolean).join(" - ");
+      const horizontalMeta = [typeLabel, item.year || ""].filter(Boolean).join(" \u2022 ");
+      cap.innerHTML = `
+        <strong>${esc(item.title || "")}</strong>
+        <small class="wl-meta-compact">${esc(compactMeta)}</small>
+        <small class="wl-meta-horizontal">${esc(horizontalMeta)}</small>`;
       link.appendChild(cap);
-
-      const hover = document.createElement("div");
-      hover.className = "hover";
-      hover.innerHTML = `
-        <div class="titleline">${item.title || ""}</div>
-        <div class="meta">
-          <div class="chip time">${lastSyncEpoch ? `updated ${window.relTimeFromEpoch?.(lastSyncEpoch) || ""}` : ""}</div>
-        </div>`;
-      link.appendChild(hover);
 
       frag.appendChild(link);
       renderedCount++;
@@ -601,6 +720,9 @@
     msg.classList.add("hidden");
     window.__wallRenderSignature = wallSignature(wallItems, lastSyncEpoch);
     initWallInteractions();
+    applyWidgetView();
+    prewarmWallImages();
+    window.dispatchEvent(new CustomEvent("cw:watchlist-widget-state", { detail: { empty: false, count: renderedCount } }));
     return true;
   }
 
@@ -796,6 +918,8 @@
     scrollWall,
     initWallInteractions,
     artUrl,
+    applyWidgetView,
+    prewarmWallImages,
     loadWall,
     updateWatchlistPreview,
     hasTmdbKey,
