@@ -45,6 +45,8 @@ htmlcov/
 .hypothesis/
 
 # CrossWatch
+.cw_databases/
+**/.cw_databases/
 .cw_state/
 **/.cw_state/
 .cw_provider/
