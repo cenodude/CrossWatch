@@ -4,6 +4,8 @@ import importlib
 from typing import Any
 
 pl = importlib.import_module("providers.sync.publicmetadb._playlists")
+pmdb = importlib.import_module("providers.sync._mod_PUBLICMETADB")
+pmdb_auth = importlib.import_module("providers.auth._auth_PUBLICMETADB")
 
 
 class FakeResp:
@@ -126,7 +128,7 @@ def test_create_private_list_and_add_payloads_require_tmdb():
     res = pl.create(ad, "Private")
     assert res.id == "created-1"
     create_call = next(c for c in client.calls if c["method"] == "POST_JSON")
-    assert create_call["json"] == {"name": "Private", "description": "", "is_public": False, "type": "list"}
+    assert create_call["json"] == {"name": "Private", "description": "", "is_public": False, "type": "custom"}
 
     add = pl.add(ad, "created-1", [_movie(438631, "Dune"), _show(95396, "Severance"), {"type": "movie", "ids": {}}])
     assert add["count"] == 2
@@ -160,3 +162,14 @@ def test_remove_fetches_selected_list_item_ids():
 
 def test_reorder_is_unsupported():
     assert pl.reorder(FakeAdapter(FakeClient()), "list-a", ["tmdb:1"])["unsupported"] is True
+
+
+def test_publicmetadb_1_0_manifest_and_auth_capabilities_cover_supported_features():
+    assert pmdb.__VERSION__ == "1.0"
+    assert pmdb_auth.__VERSION__ == "1.0"
+
+    features = pmdb.get_manifest()["features"]
+    auth_caps = pmdb_auth.PROVIDER.capabilities()
+    for feature in ("watchlist", "ratings", "history", "progress", "playlists"):
+        assert features[feature] is True
+        assert auth_caps[feature] is True
