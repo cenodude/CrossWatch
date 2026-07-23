@@ -21,7 +21,7 @@ except ImportError:
 API_BASE = "https://publicmetadb.com"
 UA = "CrossWatch/1.0"
 HTTP_TIMEOUT = 10
-__VERSION__ = "0.0.1"
+__VERSION__ = "1.0"
 
 
 def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
@@ -104,7 +104,7 @@ class PublicMetaDBAuth(AuthProvider):
         )
 
     def capabilities(self) -> dict[str, Any]:
-        return {"watchlist": True, "ratings": True, "history": True}
+        return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
         return _status_from_key(cfg, instance_id)

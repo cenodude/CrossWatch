@@ -248,7 +248,7 @@ def create(
         )
     data = adapter.client.post_json(
         "/api/external/lists",
-        json={"name": nm, "description": "", "is_public": False, "type": "list"},
+        json={"name": nm, "description": "", "is_public": False, "type": "custom"},
     )
     item = data.get("item") if isinstance(data, Mapping) else None
     row = dict(item) if isinstance(item, Mapping) else dict(data) if isinstance(data, Mapping) else {}

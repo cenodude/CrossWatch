@@ -25,7 +25,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "0.3"
+__VERSION__ = "1.0"
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
