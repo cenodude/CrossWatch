@@ -52,8 +52,7 @@
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
     * Does not require any Plex Pass, Emby Premiere,etc.  
-  * **Webhooks** (Plex/Emby/Jellyfin to Trakt)
-  * **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
+  * **Webhooks** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
 * **Tools**
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
   * Playback Progress Manager: View and edit unfinished playback sessions across providers.
