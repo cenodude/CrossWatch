@@ -11,6 +11,7 @@ from providers.sync.publicmetadb._history import _payload_for_item, _to_minimal
 from providers.sync._mod_SIMKL import _confirmed_keys
 from providers.sync.simkl import _history as simkl_history
 from providers.sync.simkl._common import key_of as simkl_key_of
+from providers.sync.trakt import _history as trakt_history
 from providers.sync.trakt._history import _batch_add, _batch_remove
 from providers.sync.trakt._history import _correlate_not_found as th_correlate
 
@@ -108,6 +109,35 @@ def test_trakt_special_episode_add_and_remove_shapes() -> None:
     assert remove_season == {"number": 0, "episodes": [{"number": 1}, {"number": 2}]}
     assert add_unresolved == []
     assert remove_unresolved == []
+
+
+def test_trakt_history_index_keeps_epoch_zero_watched_at(monkeypatch) -> None:
+    item = {
+        "type": "movie",
+        "ids": {"tmdb": "11", "trakt": "22"},
+        "title": "Epoch",
+        "year": 1970,
+        "watched_at": "1970-01-01T00:00:00Z",
+    }
+    saved: dict[str, object] = {}
+
+    monkeypatch.setattr(trakt_history, "_load_cache_doc", lambda: {})
+    monkeypatch.setattr(trakt_history, "_save_cache_doc", lambda items, watched_at, validated_at=None: saved.update(items=items))
+    monkeypatch.setattr(trakt_history, "fetch_last_activities", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "update_watermarks_from_last_activities", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "_preflight_total", lambda *a, **k: None)
+    monkeypatch.setattr(trakt_history, "headers_for_adapter", lambda *a, **k: {})
+    monkeypatch.setattr(
+        trakt_history,
+        "_fetch_history",
+        lambda _sess, _headers, url, **_kwargs: [dict(item)] if url == trakt_history.URL_HIST_MOV else [],
+    )
+
+    idx = trakt_history.build_index(_trakt_adapter())
+
+    assert trakt_history._source_event_key(item).endswith("@0")
+    assert list(idx) == ["tmdb:11@0"]
+    assert list(saved["items"]) == ["tmdb:11@0"]
 
 
 def test_simkl_special_episode_is_available_as_history_source() -> None:
