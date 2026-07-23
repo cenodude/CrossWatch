@@ -1,5 +1,4 @@
 /* assets/js/insights.js */
-/* refactored */
 /* CrossWatch - Insight Module for watchlist, ratings, history, progress, playlists */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
@@ -8,6 +7,7 @@
   const featureMeta = w.CW?.FeatureMeta || {};
   const providerMeta = w.CW?.ProviderMeta || {};
   const FEAT_LABEL = featureMeta.labels || { watchlist:"Watchlist", ratings:"Ratings", history:"History", progress:"Progress", playlists:"Playlists" };
+const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", progress:"timelapse", playlists:"queue_music" };
   const FEATS = featureMeta.order || Object.keys(FEAT_LABEL);
   const DEFAULT_RECENT_SYNCS_LIMIT = 3;
   const PREF_KEY = "insights.settings.v1";
@@ -126,66 +126,109 @@
     s3.id = "insights-provider-styles-v8-segmented";
     s3.textContent = `
 #insights-switch{
-  grid-template-columns:minmax(0,1fr) 38px!important;
-  gap:10px!important;
+  display:grid!important;
+  grid-template-columns:minmax(0,1fr) 28px!important;
+  align-items:center!important;
+  gap:6px!important;
+  width:100%!important;
+  max-width:100%!important;
 }
 #insights-switch .seg{
   display:grid!important;
   grid-template-columns:repeat(var(--ins-feat-count,4),minmax(0,1fr))!important;
+  width:100%!important;
+  max-width:100%!important;
   gap:0!important;
   overflow:hidden!important;
-  border:1px solid rgba(255,255,255,.18)!important;
-  border-radius:12px!important;
-  background:#20242d!important;
+  border:1px solid rgba(255,255,255,.14)!important;
+  border-radius:14px!important;
+  background:linear-gradient(180deg,rgba(31,36,47,.78),rgba(25,29,39,.78))!important;
   box-shadow:none!important;
 }
 #insights-switch .seg-btn{
-  height:38px!important;
-  min-height:38px!important;
-  padding:0 14px!important;
+  min-width:0!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:5px!important;
+  height:34px!important;
+  min-height:34px!important;
+  padding:0 7px!important;
   border:0!important;
-  border-left:1px solid rgba(255,255,255,.18)!important;
+  border-left:1px solid rgba(255,255,255,.10)!important;
   border-radius:0!important;
   background:transparent!important;
   box-shadow:none!important;
-  color:#dce2ec!important;
+  color:rgba(216,224,239,.78)!important;
   transform:none!important;
-  font-size:13px!important;
-  font-weight:500!important;
+  font-size:12px!important;
+  font-weight:700!important;
   letter-spacing:0!important;
+}
+#insights-switch .seg-btn .material-symbols-rounded{
+  flex:0 0 auto!important;
+  font-size:17px!important;
+  line-height:1!important;
+  color:currentColor!important;
+  -webkit-text-fill-color:currentColor!important;
+  font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 18!important;
+}
+#insights-switch .seg-btn span:last-child{
+  min-width:0!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
 }
 #insights-switch .seg-btn:first-child{
   border-left:0!important;
 }
 #insights-switch .seg[data-count="5"] .seg-btn{
-  padding:0 8px!important;
-  font-size:12px!important;
+  padding:0 6px!important;
+  font-size:11px!important;
+}
+#insights-switch[data-labels="icon"] .seg-btn{
+  padding:0!important;
+  gap:0!important;
+}
+#insights-switch[data-labels="icon"] .seg-btn span:last-child{
+  display:none!important;
+}
+#insights-switch[data-labels="icon"] .seg-btn .material-symbols-rounded{
+  font-size:18px!important;
 }
 #insights-switch .seg-btn:hover{
-  background:#272c36!important;
+  background:rgba(53,61,77,.78)!important;
   color:#f5f7fb!important;
   box-shadow:none!important;
   transform:none!important;
 }
 #insights-switch .seg-btn.active{
-  background:#2b3141!important;
+  background:linear-gradient(180deg,rgba(79,95,154,.92),rgba(62,75,125,.92))!important;
   color:#ffffff!important;
-  border-color:rgba(255,255,255,.18)!important;
-  box-shadow:none!important;
+  border-color:rgba(132,150,230,.42)!important;
+  box-shadow:inset 0 0 0 1px rgba(151,166,242,.20),0 0 14px rgba(99,116,194,.22)!important;
 }
 #insights-switch .ins-gear{
-  width:38px!important;
-  height:38px!important;
-  border-radius:12px!important;
-  background:#20242d!important;
-  border-color:rgba(255,255,255,.18)!important;
+  width:28px!important;
+  height:28px!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:999px!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  transform:none!important;
+  color:rgba(226,233,246,.86)!important;
+}
+#insights-switch .ins-gear:hover{
+  background:transparent!important;
+  color:#ffffff!important;
   box-shadow:none!important;
   transform:none!important;
 }
-#insights-switch .ins-gear:hover{
-  background:#272c36!important;
-  box-shadow:none!important;
-  transform:none!important;
+#insights-switch .ins-gear .material-symbols-rounded{
+  font-size:21px!important;
+  color:currentColor!important;
+  -webkit-text-fill-color:currentColor!important;
 }
 html[data-cw-theme="flat-light"] #insights-switch .seg{
   background:#ffffff!important;
@@ -204,8 +247,8 @@ html[data-cw-theme="flat-light"] #insights-switch .seg-btn.active{
   color:#172033!important;
 }
 html[data-cw-theme="flat-light"] #insights-switch .ins-gear{
-  background:#ffffff!important;
-  border-color:rgba(21,31,48,.18)!important;
+  background:transparent!important;
+  border:0!important;
   color:#172033!important;
 }
 html[data-cw-theme="flat-light"] #insights-switch .ins-gear .material-symbols-rounded{
@@ -214,12 +257,18 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear .material-symbols-ro
   opacity:1!important;
 }
 html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
-  background:#eef2f7!important;
+  background:transparent!important;
 }
 @media(max-width:560px){
-  #insights-switch{grid-template-columns:minmax(0,1fr) 34px!important}
-  #insights-switch .seg-btn{height:34px!important;min-height:34px!important;padding:0 9px!important;font-size:12px!important}
-  #insights-switch .ins-gear{width:34px!important;height:34px!important}
+  #insights-switch{grid-template-columns:minmax(0,1fr) 26px!important;width:100%!important;gap:4px!important}
+  #insights-switch .seg{display:grid!important;grid-template-columns:repeat(var(--ins-feat-count,4),minmax(0,1fr))!important;width:100%!important}
+  #insights-switch .seg-btn{height:32px!important;min-height:32px!important;padding:0 4px!important;font-size:10px!important;gap:3px!important}
+  #insights-switch .seg-btn .material-symbols-rounded{font-size:15px!important}
+  #insights-switch .ins-gear{width:26px!important;height:26px!important}
+}
+@media(max-width:430px){
+  #insights-switch .seg-btn span:last-child{display:none!important}
+  #insights-switch .seg-btn{padding:0!important}
 }
 `;
     d.head.appendChild(s3);
@@ -432,10 +481,12 @@ html[data-cw-theme="flat-light"] #insights-switch .ins-gear:hover{
       host.dataset.bound = "1";
     }
     const seg = $(".seg", host), sig = _visibleFeats.join(",");
-    host.style.setProperty("--ins-feat-count", String(Math.max(1, _visibleFeats.length)));
-    if (seg) seg.dataset.count = String(Math.max(1, _visibleFeats.length));
+    const featCount = Math.max(1, _visibleFeats.length);
+    host.style.setProperty("--ins-feat-count", String(featCount));
+    host.dataset.labels = featCount >= 4 ? "icon" : "text";
+    if (seg) seg.dataset.count = String(featCount);
     if (host.dataset.feats !== sig || host.dataset.cur !== _feature) {
-      seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${_feature === f}">${featureLabel(f)}</button>`).join("");
+      seg.innerHTML = _visibleFeats.map(f => `<button class="seg-btn${_feature === f ? " active" : ""}" data-key="${f}" role="tab" aria-selected="${_feature === f}" title="${featureLabel(f)}" aria-label="${featureLabel(f)}"><span class="material-symbols-rounded" aria-hidden="true">${FEAT_ICON[lc(f)] || "insights"}</span><span>${featureLabel(f)}</span></button>`).join("");
       host.dataset.feats = sig;
       host.dataset.cur = _feature;
     }
