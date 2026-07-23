@@ -55,6 +55,21 @@ def _state_path(kind: Kind) -> Path:
     return _root_dir() / f"{kind}.json"
 
 
+def _write_json_atomic(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except Exception:
+            pass
+        raise
+
+
 def _validated_json_filename(name: str, *, label: str) -> str:
     raw = str(name or "").strip()
     if not raw or not raw.lower().endswith(_JSON_FILE_SUFFIX):
@@ -243,9 +258,8 @@ def save_state(kind: Kind | None, items: dict[str, Any]) -> dict[str, Any]:
         "ts": int(datetime.now(timezone.utc).timestamp()),
     }
     path = _state_path(kind_val)
-    path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        _write_json_atomic(path, state)
     except Exception:
         pass
     return state
@@ -374,7 +388,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     existed = dest.exists()
-    dest.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    _write_json_atomic(dest, state)
 
     if target == "snapshot" and kind is not None:
         _enforce_snapshot_retention(kind)

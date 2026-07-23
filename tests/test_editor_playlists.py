@@ -142,4 +142,5 @@ def test_editor_ui_exposes_playlist_source() -> None:
     assert "/api/editor/playlists/endpoints" in js
     assert "payload.endpoint = state.snapshot" in js
     assert "state.playlistOriginalKeys" in js
-    assert 'state.source !== "state" && state.source !== "playlist"' in js
+    assert 'const SOURCES = ["state", "tracker", "playlist"];' in js
+    assert "state.source = normalizeSource(state.source);" in js

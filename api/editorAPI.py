@@ -936,6 +936,211 @@ def api_editor_playlist_endpoint_save(endpoint_id: str, payload: dict[str, Any] 
     result["ok"] = result["unresolved_count"] == 0
     return result
 
+_TRACKER_PROVIDER = "CROSSWATCH"
+_TRACKER_FEATURES: tuple[str, ...] = ("watchlist", "history", "ratings", "progress")
+_TRACKER_RESERVED_SCOPES = frozenset({"unresolved", "restore_state", "tmp", "snapshots"})
+_TRACKER_DEFAULT_ROOT = Path("/config/.cw_provider")
+
+
+def _tracker_root() -> Path:
+    node: Any = {}
+    try:
+        cfg = load_config() or {}
+        node = cfg.get("CrossWatch") or cfg.get("crosswatch") or {}
+    except Exception:
+        node = {}
+    raw = ""
+    if isinstance(node, dict):
+        raw = str(node.get("root_dir") or "").strip()
+    try:
+        return Path(raw or _TRACKER_DEFAULT_ROOT).resolve()
+    except Exception:
+        return _TRACKER_DEFAULT_ROOT
+
+
+def _tracker_scan(root: Path) -> dict[str, dict[str, str]]:
+    found: dict[str, dict[str, str]] = {}
+    try:
+        entries = sorted(root.iterdir())
+    except Exception:
+        return found
+    for p in entries:
+        try:
+            if not p.is_file() or p.suffix != ".json":
+                continue
+        except Exception:
+            continue
+        parts = p.name.split(".")
+        if len(parts) == 2:
+            feat, scope = parts[0], ""
+        elif len(parts) == 3:
+            feat, scope = parts[0], parts[1]
+            if scope.lower() in _TRACKER_RESERVED_SCOPES:
+                continue
+        else:
+            continue
+        if feat not in _TRACKER_FEATURES:
+            continue
+        found.setdefault(scope, {})[feat] = p.name
+    return found
+
+
+def _tracker_provider_label(name: str) -> str:
+    n = str(name or "").strip().upper()
+    if not n:
+        return ""
+    if n == _TRACKER_PROVIDER:
+        return "Local Tracker"
+    try:
+        ops = load_sync_ops(n)
+        label = str((getattr(ops, "label", None) or (lambda: ""))() or "").strip()
+        if label:
+            return label
+    except Exception:
+        pass
+    return n.title()
+
+
+def _tracker_pair_labels() -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        from cw_platform.orchestrator._pairs import _pair_scope_key
+        from providers.sync.crosswatch._common import _safe_scope
+    except Exception:
+        return out
+    try:
+        pairs = (load_config() or {}).get("pairs") or []
+    except Exception:
+        return out
+    if not isinstance(pairs, list):
+        return out
+    for i, pair in enumerate(pairs):
+        if not isinstance(pair, dict):
+            continue
+        src = str(pair.get("source") or "").strip().upper()
+        dst = str(pair.get("target") or "").strip().upper()
+        if not src or not dst or _TRACKER_PROVIDER not in (src, dst):
+            continue
+        mode = str(pair.get("mode") or "one-way").strip().lower()
+        try:
+            scope = _safe_scope(_pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode))
+        except Exception:
+            continue
+        if scope and scope not in out:
+            out[scope] = f"{_tracker_provider_label(src)} → {_tracker_provider_label(dst)}"
+    return out
+
+
+def _tracker_workspace_index() -> dict[str, dict[str, Any]]:
+    root = _tracker_root()
+    found = _tracker_scan(root)
+    if not found:
+        return {}
+    pair_labels = _tracker_pair_labels()
+    out: dict[str, dict[str, Any]] = {}
+    fallback = 0
+    for scope in sorted(found.keys(), key=lambda s: (s != "", s)):
+        files = found[scope]
+        wid = "default" if not scope else scope
+        if wid in out:
+            n = 2
+            while f"{wid}-{n}" in out:
+                n += 1
+            wid = f"{wid}-{n}"
+        if not scope:
+            label = "Default"
+        else:
+            label = pair_labels.get(scope) or ""
+            if not label:
+                fallback += 1
+                label = "Local tracker" if fallback == 1 else f"Local tracker {fallback}"
+        out[wid] = {
+            "id": wid,
+            "label": label,
+            "features": {f: (f in files) for f in _TRACKER_FEATURES},
+            "files": files,
+            "root": root,
+        }
+    return out
+
+
+def _tracker_workspaces() -> list[dict[str, Any]]:
+    return [
+        {"id": w["id"], "label": w["label"], "features": w["features"]}
+        for w in _tracker_workspace_index().values()
+    ]
+
+
+def _tracker_workspace(workspace: Any) -> dict[str, Any]:
+    index = _tracker_workspace_index()
+    if not index:
+        raise HTTPException(status_code=404, detail="No Local Tracker data found")
+    wid = str(workspace or "").strip()
+    if not wid:
+        wid = next(iter(index))
+    node = index.get(wid)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Unknown Local Tracker workspace")
+    return node
+
+
+def _tracker_read(root: Path, filename: str) -> tuple[dict[str, Any], int | None]:
+    path = root / filename
+    try:
+        raw = json.loads(path.read_text("utf-8"))
+    except Exception:
+        return {}, None
+    if not isinstance(raw, dict):
+        return {}, None
+    items_raw = raw.get("items")
+    items: dict[str, Any] = {}
+    if isinstance(items_raw, dict):
+        for key, val in items_raw.items():
+            k = str(key or "").strip()
+            if k:
+                items[k] = dict(val) if isinstance(val, dict) else {}
+    ts: int | None = None
+    ts_raw = raw.get("ts")
+    if isinstance(ts_raw, (int, float, str)):
+        try:
+            ts = int(ts_raw)
+        except (TypeError, ValueError):
+            ts = None
+    if ts is None:
+        try:
+            ts = int(path.stat().st_mtime)
+        except OSError:
+            ts = None
+    return items, ts
+
+
+def _normalize_blocks(blocks_raw: Any) -> list[str]:
+    keys: Any
+    if isinstance(blocks_raw, dict):
+        keys = blocks_raw.keys()
+    elif isinstance(blocks_raw, (list, tuple, set)):
+        keys = blocks_raw
+    else:
+        return []
+    blocks: list[str] = []
+    seen: set[str] = set()
+    for x in keys:
+        s = str(x).strip()
+        if not s:
+            continue
+        sl = s.lower()
+        if sl in seen:
+            continue
+        seen.add(sl)
+        blocks.append(s)
+    return blocks
+
+
+@router.get("/tracker/workspaces")
+def api_editor_tracker_workspaces() -> dict[str, Any]:
+    return {"workspaces": _tracker_workspaces()}
+
+
 @router.get("/state/providers")
 def api_editor_state_providers() -> dict[str, Any]:
     raw_state = _load_current_state()
@@ -951,11 +1156,40 @@ def api_editor_get_state(
     provider: str | None = Query(None),
     provider_instance: str | None = Query(None),
     endpoint: str | None = Query(None),
+    workspace: str | None = Query(None),
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
     src = (source or "state").strip().lower()
     if src in ("playlist", "playlists", "playlist-endpoint"):
         return api_editor_playlist_endpoint((endpoint or snapshot or "").strip())
+
+    if src in ("tracker", "crosswatch"):
+        ws = _tracker_workspace(workspace or snapshot)
+        filename = (ws["files"] or {}).get(k)
+        items, ts = _tracker_read(ws["root"], filename) if filename else ({}, None)
+
+        pol_adds, pol_blocks = _load_policy_manual(k, _TRACKER_PROVIDER, "default")
+        st_adds, st_blocks = (
+            _load_state_manual(k, _TRACKER_PROVIDER, "default") if _STATE_PATH.exists() else ({}, [])
+        )
+        manual_adds = dict(st_adds or {})
+        manual_adds.update(dict(pol_adds or {}))
+        manual_blocks = _merge_blocks(st_blocks or [], pol_blocks or [])
+
+        return {
+            "kind": k,
+            "source": "tracker",
+            "workspace": ws["id"],
+            "label": ws["label"],
+            "features": ws["features"],
+            "provider": _TRACKER_PROVIDER,
+            "provider_instance": "default",
+            "ts": ts,
+            "count": len(items),
+            "items": items,
+            "manual_adds": manual_adds,
+            "manual_blocks": manual_blocks,
+        }
 
     if src in ("state", "current"):
         raw_state = _load_current_state()
@@ -1074,6 +1308,29 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
     if src in ("playlist", "playlists", "playlist-endpoint"):
         endpoint_id = str(payload.get("endpoint") or payload.get("snapshot") or "").strip()
         return api_editor_playlist_endpoint_save(endpoint_id, payload)
+
+    if src in ("tracker", "crosswatch"):
+        ws = _tracker_workspace(payload.get("workspace") or payload.get("snapshot"))
+        items = _canonicalize_manual_items(items)
+        blocks = _normalize_blocks(payload.get("blocks"))
+        _save_policy_manual(kind, _TRACKER_PROVIDER, items, blocks, "default")
+        ts = None
+        try:
+            ts = int(_POLICY_PATH.stat().st_mtime)
+        except Exception:
+            ts = None
+        return {
+            "ok": True,
+            "kind": kind,
+            "source": "tracker",
+            "workspace": ws["id"],
+            "provider": _TRACKER_PROVIDER,
+            "provider_instance": "default",
+            "count": len(items),
+            "blocks": len(blocks),
+            "ts": ts,
+        }
+
     if src in ("state", "current"):
         provider = str(payload.get("provider") or "").strip()
         if not provider:
@@ -1082,29 +1339,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
 
         inst = normalize_instance_id(payload.get("provider_instance"))
 
-        blocks_raw = payload.get("blocks") or []
-        blocks: list[str] = []
-        seen: set[str] = set()
-        if isinstance(blocks_raw, (list, tuple, set)):
-            for x in blocks_raw:
-                s = str(x).strip()
-                if not s:
-                    continue
-                sl = s.lower()
-                if sl in seen:
-                    continue
-                seen.add(sl)
-                blocks.append(s)
-        elif isinstance(blocks_raw, dict):
-            for k in blocks_raw.keys():
-                s = str(k).strip()
-                if not s:
-                    continue
-                sl = s.lower()
-                if sl in seen:
-                    continue
-                seen.add(sl)
-                blocks.append(s)
+        blocks = _normalize_blocks(payload.get("blocks"))
 
         _save_policy_manual(kind, provider, items, blocks, inst)
         if _STATE_PATH.exists():

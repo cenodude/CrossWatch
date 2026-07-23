@@ -7,6 +7,7 @@ from services.playback_progress.service import (
     _record_group_keys,
     PlaybackProgressService,
 )
+import services.playback_progress.service as playback_service
 from services.playback_progress.adapters.trakt import _trakt_image_url
 
 
@@ -187,3 +188,56 @@ def test_trakt_image_urls_are_absolute():
     assert _trakt_image_url(path) == f"https://{path}"
     assert _trakt_image_url(f"//{path}") == f"https://{path}"
     assert _trakt_image_url(f"https://{path}") == f"https://{path}"
+
+
+def test_playback_progress_save_settings_stores_selection_timeout_and_ignores_unknown(monkeypatch):
+    cfg = {
+        "trakt": {
+            "access_token": "default-token",
+            "client_id": "client-id",
+            "instances": {"TRAKT-P01": {"access_token": "second-token"}},
+        }
+    }
+    saved = {}
+
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+    monkeypatch.setattr(playback_service, "save_config", lambda next_cfg: saved.setdefault("cfg", next_cfg))
+
+    result = PlaybackProgressService().save_settings(
+        {
+            "provider_timeout_seconds": 19,
+            "profiles": [
+                {"provider": "trakt", "instance_id": "default", "included": True},
+                {"provider": "trakt", "instance_id": "TRAKT-P01", "included": False},
+                {"provider": "notaprovider", "instance_id": "default", "included": False},
+            ],
+        }
+    )
+
+    block = saved["cfg"]["playback_progress"]
+    assert result["ok"] is True
+    assert block["disabled_profiles"] == ["trakt:TRAKT-P01"]
+    assert block["provider_timeout_seconds"] == 19.0
+
+
+def test_playback_progress_settings_reports_disabled_profiles_and_clamped_timeout(monkeypatch):
+    cfg = {
+        "trakt": {
+            "access_token": "default-token",
+            "client_id": "client-id",
+            "instances": {"TRAKT-P01": {"access_token": "second-token"}},
+        },
+        "playback_progress": {
+            "disabled_profiles": ["trakt:TRAKT-P01"],
+            "provider_timeout_seconds": 999,
+        },
+    }
+
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    data = PlaybackProgressService().settings()
+    by_key = {row["key"]: row for row in data["profiles"]}
+
+    assert data["provider_timeout_seconds"] == 60.0
+    assert by_key["trakt:default"]["included"] is True
+    assert by_key["trakt:TRAKT-P01"]["included"] is False

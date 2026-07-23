@@ -489,24 +489,47 @@ def _load_manual_state() -> dict[str, Any]:
     except Exception:
         return {}
 
+def _block_keys(raw: Any) -> set[str]:
+    if isinstance(raw, dict):
+        return {str(x) for x in raw.keys() if x}
+    if isinstance(raw, (list, tuple, set)):
+        return {str(x) for x in raw if x}
+    return set()
+
+
 def _manual_add_blocks(manual: dict[str, Any]) -> dict[tuple[str, str], set[str]]:
     out: dict[tuple[str, str], set[str]] = {}
+
+    def collect(token: str, node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        for feat, feat_data in node.items():
+            if feat == "instances" or not isinstance(feat_data, dict):
+                continue
+            blocks = _block_keys(feat_data.get("blocks"))
+            if blocks:
+                out.setdefault((token, str(feat).lower()), set()).update(blocks)
+
     providers = manual.get("providers") if isinstance(manual, dict) else None
     if not isinstance(providers, dict):
         return out
     for prov, prov_data in providers.items():
         if not isinstance(prov_data, dict):
             continue
-        for feat, feat_data in prov_data.items():
-            if not isinstance(feat_data, dict):
-                continue
-            adds = feat_data.get("adds")
-            if not isinstance(adds, dict):
-                continue
-            blocks = adds.get("blocks")
-            if not isinstance(blocks, list) or not blocks:
-                continue
-            out[(str(prov).upper(), str(feat).lower())] = set(str(x) for x in blocks if x)
+        collect(_prov_token(prov), prov_data)
+        insts = prov_data.get("instances")
+        if isinstance(insts, dict):
+            for inst, inst_data in insts.items():
+                collect(_prov_token(prov, inst), inst_data)
+    return out
+
+
+def _manual_blocks_for(manual_blocks: dict[tuple[str, str], set[str]], prov: str, feat: str) -> set[str]:
+    out: set[str] = set()
+    for token in (prov, _provider_base(prov)):
+        found = manual_blocks.get((token, feat))
+        if found:
+            out |= found
     return out
 
 def _iter_items(s: dict[str, Any]) -> Iterable[tuple[str, str, str, dict[str, Any]]]:
@@ -3314,7 +3337,7 @@ def _problems(
             missing_targets = _missing_targets(analysis, prov, feat, k, v)
 
             if missing_targets:
-                blocks = manual_blocks.get((prov, feat))
+                blocks = _manual_blocks_for(manual_blocks, prov, feat)
                 blocked = False
                 if blocks:
                     for kk in [k, *alias_keys]:
@@ -3895,7 +3918,7 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     alias_keys = _alias_keys(vv)
 
     manual_blocks = _manual_add_blocks(_load_manual_state())
-    blocks = manual_blocks.get((prov_key, feat_key))
+    blocks = _manual_blocks_for(manual_blocks, prov_key, feat_key)
     blocked = bool(blocks and any(kk in blocks for kk in [key, *alias_keys]))
 
     hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked)
