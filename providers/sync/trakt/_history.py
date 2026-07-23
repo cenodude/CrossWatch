@@ -520,7 +520,7 @@ def _source_event_key(item: Mapping[str, Any]) -> str:
         return ""
     watched = _iso8601(item.get("watched_at"))
     ts = _as_epoch(watched) if watched else None
-    return f"{base}@{ts}" if ts else base
+    return f"{base}@{ts}" if ts is not None else base
 
 
 def _destination_event_key(item: Mapping[str, Any]) -> str:
@@ -1148,7 +1148,7 @@ def _cache_merge_from_source_items(adapter: Any, items: Iterable[Mapping[str, An
                 continue
             w = _iso8601(m.get("watched_at") or it.get("watched_at"))
             ts = _as_epoch(w) if w else None
-            if not ts:
+            if ts is None:
                 continue
 
             typ = str(m.get("type") or "").lower()
@@ -1503,7 +1503,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
                 for m in movies + episodes:
                     w = _iso8601(m.get("watched_at"))
                     ts = _as_epoch(w) if w else None
-                    if not ts:
+                    if ts is None:
                         continue
                     if (
                         m.get("type") == "episode"
@@ -1632,7 +1632,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 100000) -
     for m in movies + episodes:
         w = _iso8601(m.get("watched_at"))
         ts = _as_epoch(w) if w else None
-        if not ts:
+        if ts is None:
             continue
         if (
             m.get("type") == "episode"
