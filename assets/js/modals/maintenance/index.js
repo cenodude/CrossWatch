@@ -1,5 +1,4 @@
 ﻿/* assets/js/modals/maintenance/index.js */
-/* refactored */
 /* Modal for maintenance and troubleshooting operations like clearing state, cache, tracker data, and resetting stats. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
@@ -94,9 +93,11 @@ const OPS = [
         <label><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
         <label><input type="checkbox" id="cxm-cw-snaps"><span>All snapshots</span></label>
       </div>
+    `,
+    sideActions: `
       <div class="archive-actions">
-        <button type="button" class="run-btn secondary" id="cxm-cw-export" data-label="Download tracker archive">Download ZIP</button>
-        <button type="button" class="run-btn secondary" id="cxm-cw-import" data-label="Import tracker archive">Import file</button>
+        <button type="button" class="archive-btn secondary" id="cxm-cw-export" data-label="Download tracker archive">Download ZIP</button>
+        <button type="button" class="archive-btn secondary" id="cxm-cw-import" data-label="Import tracker archive">Import file</button>
         <input type="file" id="cxm-cw-import-file" accept=".zip,.json" hidden>
       </div>
     `,
@@ -224,8 +225,8 @@ const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
 
-const renderActionRow = ({ key, kind, icon, title, desc, extra = "" }) => `
-  <div class="action-row" data-op="${key}" data-kind="${kind}" tabindex="0" aria-label="Inspect ${title} status">
+const renderActionRow = ({ key, kind, icon, title, desc, extra = "", sideActions = "" }) => `
+  <div class="action-row${sideActions ? " has-side-actions" : ""}" data-op="${key}" data-kind="${kind}" tabindex="0" aria-label="Inspect ${title} status">
     <div class="action-main">
       <div class="action-icon">
         <span class="material-symbols-rounded" aria-hidden="true">${icon}</span>
@@ -236,7 +237,8 @@ const renderActionRow = ({ key, kind, icon, title, desc, extra = "" }) => `
         ${extra}
       </div>
     </div>
-    <button type="button" class="run-btn" data-label="${title}">Run</button>
+    ${sideActions ? `<div class="action-side-actions">${sideActions}</div>` : ""}
+    <button type="button" class="run-btn action-run-btn" data-label="${title}">Run</button>
   </div>
 `;
 
@@ -475,7 +477,7 @@ export default {
     function setOperationBusy(busy) {
       if (operationBusy === busy) return;
       operationBusy = busy;
-      const controls = root.querySelectorAll(".run-btn, .category-run-btn, #cxm-close");
+      const controls = root.querySelectorAll(".run-btn, .archive-btn, .category-run-btn, #cxm-close");
       controls.forEach((control) => {
         if (busy) {
           control.dataset.cwWasDisabled = control.disabled ? "1" : "0";
@@ -861,7 +863,7 @@ export default {
       try {
         for (const key of group.keys) {
           const op = OPS_BY_KEY[key];
-          const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .run-btn`);
+          const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .action-run-btn`);
           if (!op || !actionBtn) continue;
           const result = await runOp(op.kind, actionBtn, { manageLock: false });
           if (!result || !root.isConnected) return;
@@ -877,7 +879,7 @@ export default {
 
     OPS.forEach(({ key, kind }) => {
       const row = root.querySelector(`.action-row[data-op="${key}"]`);
-      const btn = row?.querySelector(".run-btn");
+      const btn = row?.querySelector(".action-run-btn");
       if (btn) btn.addEventListener("click", () => runOp(kind, btn));
       row?.addEventListener("click", (event) => {
         if (event.target.closest("button, input, label, a, summary")) return;
@@ -923,7 +925,7 @@ export default {
         try {
           for (const key of OVERVIEW_KEYS) {
             const op = OPS_BY_KEY[key];
-            const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .run-btn`);
+            const actionBtn = root.querySelector(`.action-row[data-op="${key}"] .action-run-btn`);
             if (!op || !actionBtn) continue;
             const result = await runOp(op.kind, actionBtn, {
               manageLock: false,
