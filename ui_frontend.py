@@ -439,31 +439,32 @@ def _get_index_html_static() -> str:
     </div>
   </section>
 
-  <section id="placeholder-card" class="card cw-main-card cw-main-card--wall hidden">
-    <div class="title">Watchlist</div>
-    <div class="cw-main-card-head cw-main-card-head--compact">
-      <div class="cw-main-card-head-copy">
-        <div class="cw-main-card-kicker">Watchlist</div>
-      </div>
-      <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-      <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" aria-label="Open Watchlist page">
-        <span class="material-symbols-rounded" aria-hidden="true">apps</span>
-      </button>
-    </div>
-    <div id="wall-msg" class="wall-msg">Loading...</div>
-    <div class="wall-wrap">
-      <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
-      <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
-      <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
-      <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
-    </div>
-  </section>
-
   <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
+    <article id="placeholder-card" class="card cw-main-card cw-main-card--wall cw-dash-widget cw-dash-widget--watchlist cw-dash-widget--wide hidden">
+      <div class="title">Watchlist</div>
+      <div class="cw-main-card-head cw-main-card-head--compact">
+        <div class="cw-main-card-head-copy">
+          <div class="cw-dash-title-row">
+            <span class="material-symbols-rounded" aria-hidden="true">movie</span>
+            <h3>Watchlist</h3>
+          </div>
+        </div>
+        <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+        <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" aria-label="Open Watchlist page">View all</button>
+      </div>
+      <div id="wall-msg" class="wall-msg">Loading...</div>
+      <div class="wall-wrap">
+        <div id="edgeL" class="edge left"></div><div id="edgeR" class="edge right"></div>
+        <div id="poster-row" class="row-scroll" aria-label="Watchlist"></div>
+        <button class="nav prev" type="button" onclick="scrollWall(-1)" aria-label="Scroll left"><</button>
+        <button class="nav next" type="button" onclick="scrollWall(1)" aria-label="Scroll right">></button>
+      </div>
+    </article>
+
     <article id="recent-history-widget" class="cw-dash-widget cw-dash-widget--history">
       <div class="cw-dash-widget-head">
         <div class="cw-dash-title-row">
-          <span class="material-symbols-rounded" aria-hidden="true">history</span>
+          <span class="material-symbols-rounded" aria-hidden="true">play_arrow</span>
           <h3>Recent History</h3>
         </div>
         <div class="cw-dash-head-actions">
@@ -500,6 +501,34 @@ def _get_index_html_static() -> str:
         </div>
       </div>
       <div id="recent-scrobble-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+
+    <article id="recent-progress-widget" class="cw-dash-widget cw-dash-widget--progress">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">timelapse</span>
+          <h3>Recent Progress</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-progress-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-progress-refresh" class="cw-dash-ghost" type="button" title="Refresh recent progress" aria-label="Refresh recent progress"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="recent-progress-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
+    </article>
+
+    <article id="recent-playlists-widget" class="cw-dash-widget cw-dash-widget--playlists">
+      <div class="cw-dash-widget-head">
+        <div class="cw-dash-title-row">
+          <span class="material-symbols-rounded" aria-hidden="true">queue_music</span>
+          <h3>Recent Playlists</h3>
+        </div>
+        <div class="cw-dash-head-actions">
+          <span id="recent-playlists-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
+          <button id="recent-playlists-refresh" class="cw-dash-ghost" type="button" title="Refresh recent playlists" aria-label="Refresh recent playlists"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
+        </div>
+      </div>
+      <div id="recent-playlists-list" class="cw-history-widget-list cw-widget-scrollbar" aria-live="polite"></div>
     </article>
   </section>
 
@@ -850,6 +879,28 @@ def _get_index_html_static() -> str:
                             <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble widget: Shows or hides the Main screen recent scrobble widget below Watchlist." aria-label="Recent Scrobble widget setting help">help</button>
                           </div>
                           <select id="ui_show_recent_scrobble_widget" name="ui_show_recent_scrobble_widget">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_recent_progress_widget">Recent Progress widget</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Progress widget: Shows or hides the Main screen recent progress sync activity widget." aria-label="Recent Progress widget setting help">help</button>
+                          </div>
+                          <select id="ui_show_recent_progress_widget" name="ui_show_recent_progress_widget">
+                            <option value="true">Show</option>
+                            <option value="false">Hide</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_show_recent_playlists_widget">Recent Playlists widget</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Playlists widget: Shows or hides the Main screen recent playlist sync activity widget." aria-label="Recent Playlists widget setting help">help</button>
+                          </div>
+                          <select id="ui_show_recent_playlists_widget" name="ui_show_recent_playlists_widget">
                             <option value="true">Show</option>
                             <option value="false">Hide</option>
                           </select>

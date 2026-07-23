@@ -193,6 +193,8 @@ function cwUiSettingsHubInit() {
     "ui_show_recent_history_widget",
     "ui_show_latest_ratings_widget",
     "ui_show_recent_scrobble_widget",
+    "ui_show_recent_progress_widget",
+    "ui_show_recent_playlists_widget",
     "ui_recent_activity_display",
     "ui_recent_syncs_display",
     "ui_show_quick_add_desktop",
@@ -1426,6 +1428,20 @@ async function loadConfig() {
         ? !!ui.show_recent_scrobble_widget
         : true;
       _setSelectValue("ui_show_recent_scrobble_widget", on ? "true" : "false");
+    }
+
+    {
+      const on = (typeof ui.show_recent_progress_widget === "boolean")
+        ? !!ui.show_recent_progress_widget
+        : false;
+      _setSelectValue("ui_show_recent_progress_widget", on ? "true" : "false");
+    }
+
+    {
+      const on = (typeof ui.show_recent_playlists_widget === "boolean")
+        ? !!ui.show_recent_playlists_widget
+        : false;
+      _setSelectValue("ui_show_recent_playlists_widget", on ? "true" : "false");
     }
 
     const normalizeDisplay = (value, fallbackLimit) => {

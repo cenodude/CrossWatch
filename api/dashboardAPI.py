@@ -16,6 +16,9 @@ def dashboard_widgets(
     history_limit: int = Query(8, ge=1, le=24),
     ratings_limit: int = Query(12, ge=1, le=24),
     scrobble_limit: int = Query(8, ge=1, le=24),
+    progress_limit: int = Query(8, ge=1, le=24),
+    playlists_limit: int = Query(8, ge=1, le=24),
+    include: str = Query("history,ratings,scrobble,progress,playlists"),
 ) -> JSONResponse:
     try:
         from .syncAPI import _load_state
@@ -26,6 +29,9 @@ def dashboard_widgets(
             history_limit=history_limit,
             ratings_limit=ratings_limit,
             scrobble_limit=scrobble_limit,
+            progress_limit=progress_limit,
+            playlists_limit=playlists_limit,
+            include={part.strip() for part in include.split(",") if part.strip()},
         )
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
     except Exception:

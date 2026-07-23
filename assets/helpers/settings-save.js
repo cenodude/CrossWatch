@@ -579,6 +579,8 @@ async function saveSettings() {
       show_recent_history_widget: typeof serverCfg?.ui?.show_recent_history_widget === "boolean" ? !!serverCfg.ui.show_recent_history_widget : true,
       show_latest_ratings_widget: typeof serverCfg?.ui?.show_latest_ratings_widget === "boolean" ? !!serverCfg.ui.show_latest_ratings_widget : true,
       show_recent_scrobble_widget: typeof serverCfg?.ui?.show_recent_scrobble_widget === "boolean" ? !!serverCfg.ui.show_recent_scrobble_widget : true,
+      show_recent_progress_widget: typeof serverCfg?.ui?.show_recent_progress_widget === "boolean" ? !!serverCfg.ui.show_recent_progress_widget : false,
+      show_recent_playlists_widget: typeof serverCfg?.ui?.show_recent_playlists_widget === "boolean" ? !!serverCfg.ui.show_recent_playlists_widget : false,
       recent_activity_display: normalizeUiDisplay(serverCfg?.ui?.recent_activity_display, Number(serverCfg?.ui?.recent_activity_limit)),
       recent_syncs_display: normalizeUiDisplay(serverCfg?.ui?.recent_syncs_display, Number(serverCfg?.ui?.recent_syncs_limit)),
       show_quick_add_desktop: typeof serverCfg?.ui?.show_quick_add_desktop === "boolean" ? !!serverCfg.ui.show_quick_add_desktop : true,
@@ -590,7 +592,7 @@ async function saveSettings() {
       protocol: _cwNorm(serverCfg?.ui?.protocol).toLowerCase() === "https" ? "https" : "http"
     };
 
-    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_recent_history_widget", "show_recent_history_widget"], ["ui_show_latest_ratings_widget", "show_latest_ratings_widget"], ["ui_show_recent_scrobble_widget", "show_recent_scrobble_widget"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
+    [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_recent_history_widget", "show_recent_history_widget"], ["ui_show_latest_ratings_widget", "show_latest_ratings_widget"], ["ui_show_recent_scrobble_widget", "show_recent_scrobble_widget"], ["ui_show_recent_progress_widget", "show_recent_progress_widget"], ["ui_show_recent_playlists_widget", "show_recent_playlists_widget"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
       const el = _cwEl(id);
       if (!el) return;
       const next = el.value !== "false";

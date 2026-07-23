@@ -290,7 +290,7 @@
 
   const renderHubLayoutStrip = () => {
     if (!hubLayoutHost) return;
-    const hiddenCount = orderedFeats(true).filter((feat) => feat.layout.hidden).length;
+    const hiddenCount = orderedFeats(true).filter((feat) => feat.layout.hidden).length + (window.CW?.DashboardWidgets?.hiddenCount?.() || 0);
     const unhideAll = hubLayoutHost.querySelector("[data-layout-action='show-all']");
     if (unhideAll) {
       unhideAll.disabled = hiddenCount === 0;
@@ -333,6 +333,7 @@
       } else if (btn.dataset.layoutAction === "show-all") {
         toggleTools(false);
         saveAndRenderLayout(Object.fromEntries(FEAT_KEYS.map((key) => [key, { ...hubLayout[key], hidden: false }])));
+        window.CW?.DashboardWidgets?.showAll?.();
       } else if (btn.classList.contains("cw-hub-refresh-proxy")) {
         toggleTools(false);
         document.getElementById("btn-status-refresh")?.click();
@@ -343,6 +344,7 @@
     });
     renderHubLayoutStrip();
   };
+  window.addEventListener("cw:dashboard-widgets-layout-changed", renderHubLayoutStrip);
 
   const createLaneControls = (feat) => {
     const iconButton = (icon, title, cls = "") => {
@@ -362,7 +364,10 @@
     });
     drag.addEventListener("dragend", () => {
       dragLaneKey = "";
-      document.querySelectorAll("#ux-lanes .lane").forEach((node) => node.classList.remove("is-dragging", "is-drop-target"));
+      document.querySelectorAll("#ux-lanes .lane").forEach((node) => {
+        node.classList.remove("is-dragging", "is-drop-target");
+        delete node.dataset.dropPosition;
+      });
     });
 
     const size = feat.layout.size === "large" ? "small" : "large";
@@ -380,14 +385,22 @@
       ev.preventDefault();
       ev.dataTransfer.dropEffect = "move";
       const r = lane.getBoundingClientRect();
-      lane.classList.toggle("drop-after", ev.clientX > r.left + r.width / 2 || ev.clientY > r.top + r.height * 0.62);
+      const horizontal = r.width >= r.height * 1.25;
+      const after = horizontal
+        ? ev.clientX > r.left + r.width / 2
+        : ev.clientY > r.top + r.height / 2;
+      lane.dataset.dropPosition = after ? "after" : "before";
       lane.classList.add("is-drop-target");
     });
-    lane.addEventListener("dragleave", () => lane.classList.remove("is-drop-target", "drop-after"));
+    lane.addEventListener("dragleave", () => {
+      lane.classList.remove("is-drop-target");
+      delete lane.dataset.dropPosition;
+    });
     lane.addEventListener("drop", (ev) => {
       ev.preventDefault();
-      const after = lane.classList.contains("drop-after");
-      lane.classList.remove("is-drop-target", "drop-after");
+      const after = lane.dataset.dropPosition === "after";
+      lane.classList.remove("is-drop-target");
+      delete lane.dataset.dropPosition;
       moveLaneTo(ev.dataTransfer.getData("text/plain") || dragLaneKey, key, after);
     });
   };
@@ -412,7 +425,7 @@
 
       const chipState = laneState(feat.key);
       const header = Object.assign(document.createElement("div"), { className: "lane-h" });
-      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-outlined material-symbol material-icons">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
+      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
       header.appendChild(createLaneControls(feat));
       lane.appendChild(header);
 

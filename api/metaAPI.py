@@ -877,7 +877,7 @@ def get_art_file(
         typ,
         str(tmdb_id),
         cache_dir=cache_dir,
-        need={art_kind: True},
+        need={"poster": True, "backdrop": True},
         locale=eff_locale,
         title=title,
         year=year,
