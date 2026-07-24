@@ -155,6 +155,8 @@ def _is_sensitive_path(path: tuple[str, ...]) -> bool:
         "token_hash", "salt", "hash",
         "device_code",
         "_pending_request_token",
+        "_pending_tv_login",
+        "_pending_tv_caller",
         "request_token",
         "token",
         "password",
@@ -321,7 +323,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "history_since": "1900-01-01T00:00:02Z"         # First-run baseline; watermark overrides after
     },
 
-    "publicmetadb": {
+        "publicmetadb": {
         "api_key": "",                                  # PublicMetaDB API key (pm-...)
         "base_url": "https://publicmetadb.com",         # External API base URL
         "timeout": 15.0,                                # HTTP timeout (seconds)
@@ -341,6 +343,15 @@ DEFAULT_CFG: dict[str, Any] = {
             "post_per_sec": 3,
             "get_per_sec": 20,
         },
+    },
+
+    "nuvio": {
+        "base_url": "https://api.nuvio.tv",
+        "access_token": "",
+        "refresh_token": "",
+        "expires_at": 0,
+        "profile_id": "",
+        "profile_name": "",
     },
 
     "playback_progress": {
@@ -732,6 +743,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
+        "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
@@ -1251,6 +1263,41 @@ def _normalize_publicmetadb(cfg: dict[str, Any]) -> None:
     rl["get_per_sec"] = int(get_rps) if float(get_rps).is_integer() else float(get_rps)
 
 
+def _normalize_nuvio(cfg: dict[str, Any]) -> None:
+    n0 = cfg.get("nuvio")
+    if isinstance(n0, dict):
+        n = n0
+    else:
+        n = {}
+        cfg["nuvio"] = n
+
+    def _block(block: dict[str, Any]) -> None:
+        block["base_url"] = str(block.get("base_url") or "https://api.nuvio.tv").strip().rstrip("/") or "https://api.nuvio.tv"
+        block.pop("public_client_key", None)
+        block["access_token"] = str(block.get("access_token") or "").strip()
+        block["refresh_token"] = str(block.get("refresh_token") or "").strip()
+        try:
+            block["expires_at"] = int(block.get("expires_at") or 0)
+        except Exception:
+            block["expires_at"] = 0
+        pid = block.get("profile_id")
+        if pid in (None, ""):
+            block["profile_id"] = ""
+        else:
+            try:
+                block["profile_id"] = int(pid)
+            except Exception:
+                block["profile_id"] = ""
+        block["profile_name"] = str(block.get("profile_name") or "").strip()
+
+    _block(n)
+    insts = n.get("instances")
+    if isinstance(insts, dict):
+        for inst in insts.values():
+            if isinstance(inst, dict):
+                _block(inst)
+
+
 def _is_hhmm(v: str) -> bool:
     s = (v or "").strip()
     if len(s) != 5 or s[2] != ":":
@@ -1662,6 +1709,7 @@ def load_config() -> dict[str, Any]:
     _normalize_simkl(cfg)
     _normalize_mdblist(cfg)
     _normalize_publicmetadb(cfg)
+    _normalize_nuvio(cfg)
     _normalize_anime_mapping(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
@@ -1713,6 +1761,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_simkl(data)
     _normalize_mdblist(data)
     _normalize_publicmetadb(data)
+    _normalize_nuvio(data)
     _normalize_anime_mapping(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)

@@ -48,6 +48,7 @@
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
     { id: "sec-auth-trackers", title: "Trackers", keys: ["TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST"] },
+    { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
   const AUTH_GROUP_BY_KEY = Object.freeze(Object.fromEntries(AUTH_GROUPS.flatMap((group) => group.keys.map((key) => [key, group.id]))));
@@ -155,6 +156,7 @@
     if (p === "trakt" || p === "simkl") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token);
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
+    if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
     if (p === "tautulli") return hasConfiguredValue((b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server_url || (b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server);
     if (p === "tmdb") return hasConfiguredValue(b.account_id) || (hasConfiguredValue(b.api_key) && hasConfiguredValue(b.session_id || b.session));
     return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.api_key) || hasConfiguredValue(b.token);
@@ -327,19 +329,21 @@
     const sectionCopy = {
       "sec-auth-media": "Manage your media server connections.",
       "sec-auth-trackers": "Configure and manage your tracker integrations.",
+      "sec-auth-clients": "Manage media client connections.",
       "sec-auth-metadata": "Manage metadata providers and mappings.",
     };
     const summaryIcon = {
       "sec-auth-media": "dns",
       "sec-auth-trackers": "radar",
+      "sec-auth-clients": "tv",
       "sec-auth-metadata": "database",
     };
     const groupData = AUTH_GROUPS.filter((group) => group.id !== "sec-auth-others").map((group) => {
       const supported = group.keys.filter((key) => !!authProviderInfo(key).sectionId);
-      const visible = supported.filter((key) => configured.has(key) || statusProviderData(key)?.connected === true);
+      const visible = supported.filter((key) => configured.has(key));
       const cards = visible.map((key) => {
         const info = authProviderInfo(key);
-        const status = authStatusFor(key, configured.has(key) || statusProviderData(key)?.connected === true);
+        const status = authStatusFor(key, configured.has(key));
         return { type: "provider", key: info.key, provider: String(info.key || "").toLowerCase(), label: info.label, status, logo: authProviderLogo(info.key) };
       });
       const okCount = cards.filter((card) => card.status.ok).length;
@@ -374,7 +378,7 @@
     };
     const renderAddCard = (section) => {
       const mode = section.id === META_GROUP.id ? "metadata" : "provider";
-      const label = section.id === META_GROUP.id ? "Add metadata" : section.id === "sec-auth-media" ? "Add media server" : "Add tracker";
+      const label = section.id === META_GROUP.id ? "Add metadata" : section.id === "sec-auth-media" ? "Add media server" : section.id === "sec-auth-clients" ? "Add media client" : "Add tracker";
       const copy = section.id === META_GROUP.id ? "Connect another metadata source." : "Connect another service.";
       return `<button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-auth-empty-add="${mode}">
         <span class="cw-auth-add-mark"><span class="material-symbols-rounded" aria-hidden="true">add</span></span>
@@ -513,6 +517,16 @@
       steps: [["1", "Create API key", "Generate a key in PublicMetaDB"], ["2", "Connect key", "Paste the key and connect"], ["3", "Validate access", "CrossWatch confirms the key works"]],
       order: [".grid2", ".publicmetadb-actions"],
       actions: [{ row: ".publicmetadb-actions", status: "#publicmetadb_msg", buttons: "#publicmetadb_save" }]
+    },
+    NUVIO: {
+      provider: "nuvio", logo: "NUVIO", help: window.CW.HelpLinks.url("nuvio"), deleteSelector: "#nuvio_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect with TV login"] },
+      copy: { auth: ["Nuvio Authentication", "Connect Nuvio with TV login and select a profile."] },
+      journey: ["Connect to Nuvio", "Use Nuvio TV login, approve the temporary code, then choose a profile. Nuvio API contracts may change.", "176,72,240", "64,208,232", "NUVIO"],
+      steps: [["1", "Start login", "Open the Nuvio approval URL"], ["2", "Approve code", "Approve the temporary TV login code"], ["3", "Select profile", "Choose the Nuvio profile for this instance"]],
+      order: [".nuvio-actions", "#nuvio_profile_state", "#nuvio_login_state"],
+      code: ["#nuvio_login_state"],
+      actions: [{ row: ".nuvio-actions", status: "#nuvio_msg", buttons: "#nuvio_connect" }]
     },
     ANILIST: {
       provider: "anilist", logo: "ANILIST", help: window.CW.HelpLinks.url("anilist"), deleteSelector: "#btn-delete-anilist",
@@ -1008,7 +1022,8 @@
     const logo = overlay.querySelector(".cw-auth-dialog-logo");
     if (logo) {
       logo.classList.remove("hidden");
-      setConnectionStyle(logo, "--cw-connection-logo", `url("/assets/img/${info.logo}.svg")`);
+      const mark = window.CW?.ProviderMeta?.logoPath?.(info.logo) || `/assets/img/${info.logo}.svg`;
+      setConnectionStyle(logo, "--cw-connection-logo", `url("${mark}")`);
     }
   }
 
@@ -1120,7 +1135,8 @@
       }
       setConnectionStyle(node, "--cw-auth-c1", data[2] || "72,92,255");
       setConnectionStyle(node, "--cw-auth-c2", data[3] || data[2] || "0,224,132");
-      setConnectionStyle(node, "--cw-auth-logo", `url("/assets/img/${data[4] || info.logo}.svg")`);
+      const logo = window.CW?.ProviderMeta?.logoPath?.(data[4] || info.logo) || `/assets/img/${data[4] || info.logo}.svg`;
+      setConnectionStyle(node, "--cw-auth-logo", `url("${logo}")`);
       node.innerHTML = `<span class="material-symbols-rounded cw-auth-journey-icon" aria-hidden="true">${icon}</span><div class="cw-auth-journey-text"><div class="cw-auth-journey-title">${data[0]}</div><div class="cw-auth-journey-copy">${data[1]}</div></div><a class="cw-auth-journey-help" href="${info.help}" target="_blank" rel="noopener noreferrer" aria-label="Open ${data[0]} guide" title="Open guide"><span class="material-symbols-rounded" aria-hidden="true">help</span></a>`;
     });
   }
@@ -1322,7 +1338,8 @@
     panel.dataset.cwConnectionKey = info.key;
     setConnectionStyle(panel, "--cw-connection-c1", info.journey?.[2] || "72,92,255");
     setConnectionStyle(panel, "--cw-connection-c2", info.journey?.[3] || info.journey?.[2] || "72,92,255");
-    setConnectionStyle(panel, "--cw-connection-watermark", `url("/assets/img/${info.logo}.svg")`);
+    const mark = window.CW?.ProviderMeta?.logoPath?.(info.logo) || `/assets/img/${info.logo}.svg`;
+    setConnectionStyle(panel, "--cw-connection-watermark", `url("${mark}")`);
     syncConnectionDialogHead(overlay, info);
     ensureConnectionModalNav(panel, info);
     ensureConnectionModalJourney(panel, info);
@@ -1566,6 +1583,7 @@
 
         window.initMDBListAuthUI?.();
         window.initPublicMetaDBAuthUI?.();
+        window.initNuvioAuthUI?.();
         window.initTautulliAuthUI?.();
         window.initAniListAuthUI?.();
 
@@ -1810,7 +1828,10 @@
   window.addEventListener("auth-changed", () => {
     const slot = document.getElementById("auth-providers");
     if (!slot) return;
-    refreshAuthPresentation(slot, true).catch(() => {});
+    (async () => {
+      try { await window.refreshStatus?.(true); } catch {}
+      await refreshAuthPresentation(slot, true);
+    })().catch(() => {});
   });
 
   document.addEventListener("cw-status-updated", () => {

@@ -139,6 +139,7 @@ def auth_providers_html() -> str:
     groups: list[tuple[str, str, list[str]]] = [
         ("sec-auth-media", "Media servers", ["plex", "jellyfin", "emby"]),
         ("sec-auth-trackers", "Trackers", ["trakt", "simkl", "tmdb", "mdblist", "publicmetadb", "anilist"]),
+        ("sec-auth-clients", "Media clients", ["nuvio"]),
         ("sec-auth-others", "Others", ["tautulli"]),
     ]
 

@@ -56,6 +56,7 @@ PROVIDERS: tuple[str, ...] = (
     "mdblist",
     "publicmetadb",
     "tautulli",
+    "nuvio",
 )
 
 # Caches
@@ -72,6 +73,23 @@ _CACHE_LOCK = threading.Lock()
 _BUST_SEEN: set[str] = set()
 
 _HTTP_TL = threading.local()
+
+
+def invalidate_provider_caches(provider_id: str) -> None:
+    p = str(provider_id or "").strip().lower()
+    if not p:
+        return
+    with _CACHE_LOCK:
+        if p in PROBE_CACHE:
+            PROBE_CACHE[p] = (0.0, False)
+        pref = f"{p}|"
+        for key in [key for key in PROBE_DETAIL_CACHE.keys() if str(key).startswith(pref)]:
+            PROBE_DETAIL_CACHE.pop(key, None)
+        for key in [key for key in _USERINFO_CACHE.keys() if str(key).startswith(pref)]:
+            _USERINFO_CACHE.pop(key, None)
+        _BUST_SEEN.discard(p)
+    STATUS_CACHE["ts"] = 0.0
+    STATUS_CACHE["data"] = None
 
 
 def _set_http_error(msg: str) -> None:
@@ -104,6 +122,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "MDBLIST": "mdblist",
     "PUBLICMETADB": "publicmetadb",
     "TAUTULLI": "tautulli",
+    "NUVIO": "nuvio",
 }
 
 _FALLBACK_KEYS: dict[str, tuple[str, ...]] = {
@@ -212,6 +231,20 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str(m.get("access_token") or "").strip()
         exp = str(m.get("expires_at") or "0")
         return f"mdblist|device:{_secret_cache_tag(tok)}|exp:{exp}" if tok else "mdblist|unconfigured"
+
+    if p == "publicmetadb":
+        m = cfg.get("publicmetadb") or {}
+        key = str((m.get("api_key") or m.get("key") or "")).strip()
+        return f"publicmetadb|api:{_secret_cache_tag(key)}" if key else "publicmetadb|unconfigured"
+
+    if p == "nuvio":
+        n = cfg.get("nuvio") or {}
+        if not _provider_auth().is_configured("nuvio", n):
+            return "nuvio|unconfigured"
+        base = _norm_url(n.get("base_url") or "https://api.nuvio.tv")
+        tok = str((n.get("access_token") or "")).strip()
+        profile = str((n.get("profile_id") or "")).strip()
+        return f"nuvio|base:{_secret_cache_tag(base)}|tok:{_secret_cache_tag(tok)}|profile:{profile}"
 
     if p == "tautulli":
         t = cfg.get("tautulli") or {}
@@ -878,6 +911,62 @@ def _probe_publicmetadb_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+def _probe_nuvio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("nuvio", cfg)
+    bust_ts = _consume_bust("nuvio")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth._auth_NUVIO import (
+        NuvioAuthError,
+        NuvioClient,
+        NuvioInvalidResponse,
+        NuvioServiceUnavailable,
+        NuvioTokenRefreshError,
+    )
+
+    n: Mapping[str, Any] = (cfg.get("nuvio") or {}) if isinstance(cfg.get("nuvio"), Mapping) else {}
+    status = _provider_auth().status_for_block("nuvio", n)
+    if not status.get("authenticated"):
+        rsn = "Nuvio: missing authentication"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+    pid = status.get("profile_id")
+    if pid is None:
+        rsn = "Nuvio: missing profile"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        profiles = NuvioClient(cfg, instance_id=inst).pull_profiles(cfg, refresh=True)
+        ok = any(int(p.get("profile_id") or 0) == pid for p in profiles if isinstance(p, Mapping))
+        rsn = "" if ok else "Nuvio: profile unavailable"
+    except NuvioTokenRefreshError:
+        ok = False
+        rsn = "Nuvio: token refresh failed"
+    except NuvioAuthError:
+        ok = False
+        rsn = "Nuvio: authentication failed"
+    except NuvioInvalidResponse:
+        ok = False
+        rsn = "Nuvio: invalid response"
+    except NuvioServiceUnavailable:
+        ok = False
+        rsn = "Nuvio: service unavailable"
+    except Exception:
+        ok = False
+        rsn = "Nuvio: service unavailable"
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
 def _probe_tautulli_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("tautulli", cfg)
     bust_ts = _consume_bust("tautulli")
@@ -1306,6 +1395,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "publicmetadb":
         return bool(str(blk.get("api_key") or blk.get("key") or "").strip())
 
+    if ck == "nuvio":
+        return _provider_auth().is_configured("nuvio", blk)
+
     if ck == "tmdb_sync":
         return bool(str(blk.get("api_key") or "").strip() and str(blk.get("session_id") or "").strip())
 
@@ -1378,6 +1470,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "MDBLIST": _probe_mdblist_detail,
     "PUBLICMETADB": _probe_publicmetadb_detail,
     "TAUTULLI": _probe_tautulli_detail,
+    "NUVIO": _probe_nuvio_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
@@ -1507,6 +1600,12 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     normalize_instance_id(inst)
                     for inst in list_instance_ids(cfg, ck)
                 }
+                if prov == "NUVIO":
+                    insts = {
+                        inst
+                        for inst in insts
+                        if _prov_configured(cfg, prov, inst)
+                    }
                 if insts:
                     configured_instances[prov] = insts
 
@@ -1612,6 +1711,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             tmdb_ok, tmdb_reason, cfg_tmdb = _provider_tuple("TMDB")
             mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
+            nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
@@ -1811,6 +1911,17 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
                 }
+            if "NUVIO" in active_providers:
+                inst_map, inst_sum = _instances_payload("NUVIO")
+                n_block = (cfg_nuvio.get("nuvio") or {}) if isinstance(cfg_nuvio.get("nuvio"), Mapping) else {}
+                providers_out["NUVIO"] = {
+                    "connected": nuvio_ok,
+                    **({} if nuvio_ok else {"reason": nuvio_reason}),
+                    **({"profile_name": str(n_block.get("profile_name") or "")} if str(n_block.get("profile_name") or "").strip() else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
 
 
 
@@ -1861,6 +1972,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "tmdb_connected": tmdb_ok,
                 "mdblist_connected": mdbl_ok,
                 "publicmetadb_connected": publicmetadb_ok,
+                "nuvio_connected": nuvio_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),

@@ -1748,6 +1748,154 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "PUBLICMETADB", f"[PUBLICMETADB] ERROR disconnect: {e}")
             return {"ok": False, "error": "internal"}
 
+    # NUVIO
+    def _nuvio_client(cfg: dict[str, Any], inst: str):
+        from providers.auth._auth_NUVIO import NuvioClient
+
+        return NuvioClient(cfg, instance_id=inst)
+
+    def _nuvio_error(e: Exception) -> str:
+        name = e.__class__.__name__
+        if name == "NuvioTokenRefreshError":
+            return "token_refresh_failed"
+        if name == "NuvioAuthError":
+            return "authentication_failed"
+        if name == "NuvioProfileUnavailable":
+            return "profile_unavailable"
+        if name == "NuvioInvalidResponse":
+            code = str(e or "").strip()
+            allowed = {
+                "anonymous_session_not_object",
+                "exchange_not_object",
+                "invalid_expiry",
+                "invalid_json",
+                "invalid_poll_interval",
+                "invalid_profile_id",
+                "invalid_response",
+                "missing_access_token",
+                "missing_code_or_qr_content",
+                "missing_refresh_token",
+                "poll_session_not_list_object",
+                "profile_not_object",
+                "profiles_not_list",
+                "start_session_not_list_object",
+            }
+            return code if code in allowed else "invalid_response"
+        if name == "NuvioServiceUnavailable":
+            return "service_unavailable"
+        return "internal"
+
+    def _nuvio_public_error() -> str:
+        return "nuvio_request_failed"
+
+    @app.post("/api/nuvio/device/start", tags=["auth"])
+    def api_nuvio_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            redirect = str((payload or {}).get("redirect_base_url") or "https://nuvio.tv/tv-login").strip() or "https://nuvio.tv/tv-login"
+            res = _provider_auth().start_device_code("nuvio", cfg, instance_id=inst, redirect_base_url=redirect)
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] device login started instance={inst}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] device start failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
+
+    @app.post("/api/nuvio/device/poll", tags=["auth"])
+    def api_nuvio_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().poll_device_code("nuvio", cfg, instance_id=inst)
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] device poll failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "status": _nuvio_public_error(), "instance": inst}
+
+    @app.post("/api/nuvio/device/finish", tags=["auth"])
+    def api_nuvio_device_finish(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _nuvio_client(cfg, inst).exchange_tv_login_session(cfg)
+            _probe_bust("nuvio")
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] device login completed instance={inst}")
+            return {"ok": True, "status": "ok", "instance": inst, "expires_at": res.get("expires_at"), "profiles": res.get("profiles") or []}
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] device finish failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "status": _nuvio_public_error(), "instance": inst}
+
+    @app.get("/api/nuvio/status", tags=["auth"])
+    def api_nuvio_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth._auth_NUVIO import provider_block
+
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        out = _provider_auth().status_for_block("nuvio", provider_block(cfg, inst))
+        out["instance"] = inst
+        return out
+
+    @app.get("/api/nuvio/profiles", tags=["auth"])
+    def api_nuvio_profiles(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            profiles = _nuvio_client(cfg, inst).pull_profiles(cfg, refresh=True)
+            return {"ok": True, "instance": inst, "profiles": profiles}
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] profiles failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst, "profiles": []}
+
+    @app.post("/api/nuvio/profile/select", tags=["auth"])
+    def api_nuvio_profile_select(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            selected = _nuvio_client(cfg, inst).select_profile(cfg, (payload or {}).get("profile_id"))
+            _probe_bust("nuvio")
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] profile selected instance={inst} profile_id={selected.get('profile_id')}")
+            return {
+                "ok": True,
+                "instance": inst,
+                "profile": selected,
+                "profile_id": selected.get("profile_id"),
+                "profile_name": selected.get("name") or "",
+            }
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] profile select failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
+
+    @app.post("/api/nuvio/refresh", tags=["auth"])
+    def api_nuvio_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("nuvio", cfg, instance_id=inst)
+            if res.get("ok"):
+                _probe_bust("nuvio")
+            return {k: v for k, v in res.items() if k not in {"access_token", "refresh_token"}}
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] refresh failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "status": _nuvio_public_error(), "instance": inst}
+
+    @app.post("/api/nuvio/disconnect", tags=["auth"])
+    def api_nuvio_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "nuvio", inst)
+            if conflict is not None:
+                return conflict
+            block = ensure_instance_block(cfg, "nuvio", inst)
+            _provider_auth().clear_oauth("nuvio", block)
+            save_config(cfg)
+            _probe_bust("nuvio")
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] disconnected instance={inst}")
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] disconnect failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
+
 
     # TAUTULLI
     @app.post("/api/tautulli/save", tags=["auth"])
