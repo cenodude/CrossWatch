@@ -106,6 +106,15 @@ def _provider_block(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
     return blk
 
 
+def _invalidate_provider_cache(provider: str) -> None:
+    try:
+        from api.probesAPI import invalidate_provider_caches
+
+        invalidate_provider_caches(_cfg_key(provider))
+    except Exception:
+        pass
+
+
 def _strip_instances(d: dict[str, Any]) -> dict[str, Any]:
     out = dict(d or {})
     out.pop("instances", None)
@@ -166,6 +175,7 @@ def api_provider_instances_create_next(provider: str, payload: dict[str, Any] = 
 
     _create_instance(insts, inst, payload or {})
     save_config(cfg)
+    _invalidate_provider_cache(provider)
     return {"ok": True, "id": inst}
 
 
@@ -191,6 +201,7 @@ def api_provider_instances_create(provider: str, instance_id: str, payload: dict
     _create_instance(insts, inst, payload or {})
 
     save_config(cfg)
+    _invalidate_provider_cache(provider)
     return {"ok": True, "id": inst}
 
 
@@ -212,4 +223,5 @@ def api_provider_instances_delete(provider: str, instance_id: str) -> Any:
 
     insts.pop(inst, None)
     save_config(cfg)
+    _invalidate_provider_cache(provider)
     return {"ok": True}

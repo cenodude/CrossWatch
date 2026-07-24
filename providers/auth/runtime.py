@@ -19,6 +19,10 @@ def _backend(provider: Any):
         from providers.sync.mdblist import _auth as mdblist_auth
 
         return mdblist_auth
+    if name == "nuvio":
+        from providers.auth import _auth_NUVIO as nuvio_auth
+
+        return nuvio_auth
     raise NotImplementedError(f"No runtime auth backend for provider: {provider}")
 
 

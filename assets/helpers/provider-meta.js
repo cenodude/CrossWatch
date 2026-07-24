@@ -13,9 +13,10 @@
     EMBY: { key: "EMBY", label: "Emby", shortLabel: "Emby", brandClass: "brand-emby", badgeId: "badge-emby", authSectionId: "sec-emby", authGroupId: "sec-auth-media", aliases: ["EMBY"], statusLegacy: ["emby_connected", "emby"], hasLogo: true, hasLogLogo: true, tone: { solid: "#3bb273", rgb: "59,178,115" }, watchlist: true },
     MDBLIST: { key: "MDBLIST", label: "MDBList", shortLabel: "MDBList", brandClass: "brand-mdblist", badgeId: "badge-mdblist", authSectionId: "sec-mdblist", authGroupId: "sec-auth-trackers", aliases: ["MDBLIST", "MDB LIST", "MDB-LIST"], statusLegacy: ["mdblist_connected", "mdblist"], hasLogo: true, hasLogLogo: true, tone: { solid: "#2d74da", rgb: "45,116,218" }, watchlist: true, scrobblerSink: true },
     PUBLICMETADB: { key: "PUBLICMETADB", label: "PublicMetaDB", shortLabel: "PMDB", brandClass: "brand-publicmetadb", badgeId: "badge-publicmetadb", authSectionId: "sec-publicmetadb", authGroupId: "sec-auth-trackers", aliases: ["PUBLICMETADB", "PUBLIC META DB", "PUBLIC-META-DB", "PMDB"], statusLegacy: ["publicmetadb_connected", "publicmetadb"], hasLogo: true, hasLogLogo: true, tone: { solid: "#f5f5f5", rgb: "245,245,245" }, watchlist: true, ratings: true, history: true, progress: true, playlists: true },
+    NUVIO: { key: "NUVIO", label: "Nuvio", shortLabel: "Nuvio", brandClass: "brand-nuvio", badgeId: "badge-nuvio", authSectionId: "sec-nuvio", authGroupId: "sec-auth-clients", aliases: ["NUVIO"], statusLegacy: ["nuvio_connected", "nuvio"], hasLogo: true, hasLogLogo: false, logoFile: "NUVIO.png", tone: { solid: "#b048f0", rgb: "176,72,240" } },
     TAUTULLI: { key: "TAUTULLI", label: "Tautulli", shortLabel: "Tautulli", brandClass: "brand-tautulli", badgeId: "badge-tautulli", authSectionId: "sec-tautulli", authGroupId: "sec-auth-others", aliases: ["TAUTULLI"], statusLegacy: ["tautulli_connected", "tautulli"], hasLogo: true, hasLogLogo: false, tone: { solid: "#f59e0b", rgb: "245,158,11" } },
   });
-  const order = Object.freeze(["CROSSWATCH","PLEX","SIMKL","TRAKT","ANILIST","TMDB","JELLYFIN","EMBY","MDBLIST","PUBLICMETADB","TAUTULLI"]);
+  const order = Object.freeze(["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","NUVIO","TAUTULLI"]);
   function normalizeToken(v){ return String(v || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, ""); }
   function aliasPool(key){
     const info = providers[key];
@@ -59,7 +60,7 @@
     const version = String(window.APP_VERSION || window.__CW_VERSION__ || "").trim();
     return version ? `${path}?v=${encodeURIComponent(version)}` : path;
   }
-  function logoPath(v){ const info = get(v); return info?.hasLogo ? assetPath(`/assets/img/${info.key}.svg`) : ""; }
+  function logoPath(v){ const info = get(v); if (!info?.hasLogo) return ""; const file = info.logoFile || `${info.key}.svg`; return assetPath(`/assets/img/${file}`); }
   function logLogoPath(v){ const info = get(v); return info?.hasLogLogo ? assetPath(`/assets/img/${info.key}-log.svg`) : ""; }
   function brandInfo(v){ const info = get(v); return { cls: info?.brandClass || "", icon: logoPath(v) || "" }; }
   function logoHtml(v, cls = "token-logo"){

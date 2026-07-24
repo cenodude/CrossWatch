@@ -14,6 +14,7 @@
     mdblist: "crosswatch/settings/connections/trackers/mdblist",
     publicmetadb: "crosswatch/settings/connections/trackers/publicmetadb",
     anilist: "crosswatch/settings/connections/trackers/anilist",
+    nuvio: "crosswatch/settings/connections/media-clients/nuvio",
     tautulli: "crosswatch/settings/connections/others/tautulli",
     "tmdb-metadata": "crosswatch/settings/connections/metadata/tmdb-metadata",
     "anime-mapping": "crosswatch/settings/connections/metadata/anime-id-mapping",
