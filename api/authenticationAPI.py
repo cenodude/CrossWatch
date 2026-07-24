@@ -1785,6 +1785,9 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return "service_unavailable"
         return "internal"
 
+    def _nuvio_public_error() -> str:
+        return "nuvio_request_failed"
+
     @app.post("/api/nuvio/device/start", tags=["auth"])
     def api_nuvio_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
@@ -1796,7 +1799,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return res
         except Exception as e:
             _safe_log(log_fn, "NUVIO", f"[NUVIO] device start failed reason={_nuvio_error(e)} instance={inst}")
-            return {"ok": False, "error": _nuvio_error(e), "instance": inst}
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
 
     @app.post("/api/nuvio/device/poll", tags=["auth"])
     def api_nuvio_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1806,7 +1809,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             res = _provider_auth().poll_device_code("nuvio", cfg, instance_id=inst)
             return res
         except Exception as e:
-            return {"ok": False, "status": _nuvio_error(e), "instance": inst}
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] device poll failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "status": _nuvio_public_error(), "instance": inst}
 
     @app.post("/api/nuvio/device/finish", tags=["auth"])
     def api_nuvio_device_finish(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1819,7 +1823,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "status": "ok", "instance": inst, "expires_at": res.get("expires_at"), "profiles": res.get("profiles") or []}
         except Exception as e:
             _safe_log(log_fn, "NUVIO", f"[NUVIO] device finish failed reason={_nuvio_error(e)} instance={inst}")
-            return {"ok": False, "status": _nuvio_error(e), "instance": inst}
+            return {"ok": False, "status": _nuvio_public_error(), "instance": inst}
 
     @app.get("/api/nuvio/status", tags=["auth"])
     def api_nuvio_status(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1839,7 +1843,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             profiles = _nuvio_client(cfg, inst).pull_profiles(cfg, refresh=True)
             return {"ok": True, "instance": inst, "profiles": profiles}
         except Exception as e:
-            return {"ok": False, "error": _nuvio_error(e), "instance": inst, "profiles": []}
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] profiles failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst, "profiles": []}
 
     @app.post("/api/nuvio/profile/select", tags=["auth"])
     def api_nuvio_profile_select(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1857,7 +1862,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 "profile_name": selected.get("name") or "",
             }
         except Exception as e:
-            return {"ok": False, "error": _nuvio_error(e), "instance": inst}
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] profile select failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
 
     @app.post("/api/nuvio/refresh", tags=["auth"])
     def api_nuvio_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
@@ -1869,7 +1875,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 _probe_bust("nuvio")
             return {k: v for k, v in res.items() if k not in {"access_token", "refresh_token"}}
         except Exception as e:
-            return {"ok": False, "status": _nuvio_error(e), "instance": inst}
+            _safe_log(log_fn, "NUVIO", f"[NUVIO] refresh failed reason={_nuvio_error(e)} instance={inst}")
+            return {"ok": False, "status": _nuvio_public_error(), "instance": inst}
 
     @app.post("/api/nuvio/disconnect", tags=["auth"])
     def api_nuvio_disconnect(instance: str | None = Query(None)) -> Any:
@@ -1887,7 +1894,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": True, "instance": inst}
         except Exception as e:
             _safe_log(log_fn, "NUVIO", f"[NUVIO] disconnect failed reason={_nuvio_error(e)} instance={inst}")
-            return {"ok": False, "error": _nuvio_error(e), "instance": inst}
+            return {"ok": False, "error": _nuvio_public_error(), "instance": inst}
 
 
     # TAUTULLI
