@@ -19,7 +19,7 @@ from providers.auth._auth_NUVIO import (
     provider_block,
 )
 
-from ._mod_common import build_op_result
+from ._mod_common import SimpleRateLimiter, build_op_result, build_session
 from .nuvio import _history as feat_history
 from .nuvio import _progress as feat_progress
 from .nuvio import _watchlist as feat_watchlist
@@ -28,9 +28,30 @@ from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_wat
 __VERSION__ = "0.2"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
+if "ctx" not in globals():
+    class _NullCtx:
+        def emit(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    ctx = _NullCtx()  # type: ignore[assignment]
+
 
 def _features_flags() -> dict[str, bool]:
     return {"watchlist": True, "ratings": False, "history": True, "progress": True, "playlists": False}
+
+
+def _rate_limit_settings(block: Mapping[str, Any]) -> dict[str, float]:
+    raw = block.get("rate_limit")
+    values = dict(raw) if isinstance(raw, Mapping) else {}
+
+    def _rate(key: str, default: float) -> float:
+        try:
+            rate = float(values.get(key, default))
+        except Exception:
+            rate = default
+        return max(0.0, rate)
+
+    return {"get_per_sec": _rate("get_per_sec", 100.0), "post_per_sec": _rate("post_per_sec", 100.0)}
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -80,7 +101,15 @@ class NUVIOModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
         self.instance_id = "default"
-        self.client = NuvioClient(self.config, instance_id=self.instance_id)
+        block = provider_block(self.config, self.instance_id)
+        rate = _rate_limit_settings(block)
+        session = build_session("NUVIO", ctx)
+        try:
+            session._rate_limiter = SimpleRateLimiter(rates_per_sec={"GET": rate["get_per_sec"], "POST": rate["post_per_sec"]})
+            session._rate_limiter_meta = rate
+        except Exception:
+            pass
+        self.client = NuvioClient(self.config, instance_id=self.instance_id, session=session)
 
     @staticmethod
     def supported_features() -> dict[str, bool]:
