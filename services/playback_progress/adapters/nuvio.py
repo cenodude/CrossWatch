@@ -109,22 +109,54 @@ def _progress_item_with_percent(record: Mapping[str, Any], progress_percent: flo
     return clean_mapping(item)
 
 
-def _metadata_title(provider: Any, *, media_type: str, ids: Mapping[str, Any], show_ids: Mapping[str, Any]) -> tuple[str, int | None]:
+def _image_url(meta: Mapping[str, Any], kind: str) -> str:
+    images_obj = meta.get("images")
+    images: Mapping[str, Any] = images_obj if isinstance(images_obj, Mapping) else {}
+    rows = images.get(kind)
+    if not isinstance(rows, list):
+        return ""
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        url = str(row.get("url") or "").strip()
+        if url:
+            return url
+    return ""
+
+
+def _metadata_detail(provider: Any, *, media_type: str, ids: Mapping[str, Any], show_ids: Mapping[str, Any]) -> dict[str, Any]:
     lookup_ids = show_ids if media_type == "episode" and show_ids else ids
-    tmdb = str(lookup_ids.get("tmdb") or "").strip()
-    if provider is None or not tmdb:
-        return "", None
+    fetch_ids = {
+        key: str(lookup_ids.get(key) or "").strip()
+        for key in ("tmdb", "imdb", "tvdb")
+        if str(lookup_ids.get(key) or "").strip()
+    }
+    if provider is None or not fetch_ids:
+        return {}
     try:
         detail = provider.fetch(
             entity="tv" if media_type == "episode" else "movie",
-            ids={"tmdb": tmdb},
-            need={"poster": False, "backdrop": False, "ids": False},
+            ids=fetch_ids,
+            need={"poster": True, "backdrop": True, "ids": False},
         )
     except Exception:
-        return "", None
+        return {}
     if not isinstance(detail, Mapping):
-        return "", None
-    return str(detail.get("title") or "").strip(), _num(detail.get("year"))
+        return {}
+    out: dict[str, Any] = {}
+    title = str(detail.get("title") or "").strip()
+    if title:
+        out["title"] = title
+    year = _num(detail.get("year"))
+    if year is not None:
+        out["year"] = year
+    poster = _image_url(detail, "poster")
+    if poster:
+        out["poster_url"] = poster
+    backdrop = _image_url(detail, "backdrop")
+    if backdrop:
+        out["backdrop_url"] = backdrop
+    return out
 
 
 def _is_placeholder_title(value: Any) -> bool:
@@ -198,15 +230,19 @@ class NuvioPlaybackAdapter(PlaybackProgressAdapter):
             title = ""
         if media_type == "episode" and _is_placeholder_title(series_title):
             series_title = ""
-        if not title or (media_type == "episode" and not series_title):
-            resolved_title, resolved_year = _metadata_title(metadata, media_type=media_type, ids=ids, show_ids=show_ids)
-            if resolved_title:
-                if media_type == "episode" and not series_title:
-                    series_title = resolved_title
-                if not title:
-                    title = resolved_title
-            if mini.get("year") in (None, "") and item.get("year") in (None, "") and resolved_year is not None:
-                mini["year"] = resolved_year
+        has_art = bool(str(item.get("poster") or item.get("poster_url") or "").strip()) and bool(
+            str(item.get("background") or item.get("backdrop") or item.get("backdrop_url") or "").strip()
+        )
+        needs_metadata = not title or (media_type == "episode" and not series_title) or not has_art
+        resolved = _metadata_detail(metadata, media_type=media_type, ids=ids, show_ids=show_ids) if needs_metadata else {}
+        resolved_title = str(resolved.get("title") or "").strip()
+        if resolved_title and (not title or (media_type == "episode" and not series_title)):
+            if media_type == "episode" and not series_title:
+                series_title = resolved_title
+            if not title:
+                title = resolved_title
+        if mini.get("year") in (None, "") and item.get("year") in (None, "") and resolved.get("year") is not None:
+            mini["year"] = resolved["year"]
         episode_title = title if media_type == "episode" and title != series_title else ""
         canonical = canonical_key(mini) or str(key or "")
         progress = _progress_percent(item)
@@ -236,6 +272,8 @@ class NuvioPlaybackAdapter(PlaybackProgressAdapter):
             can_mark_watched=caps.mark_watched,
             can_update_progress=bool(caps.update_progress and _duration_seconds(item)),
             capability_messages=[] if caps.configured else [caps.reason],
+            poster_url=str(item.get("poster") or item.get("poster_url") or resolved.get("poster_url") or "").strip(),
+            backdrop_url=str(item.get("background") or item.get("backdrop") or item.get("backdrop_url") or resolved.get("backdrop_url") or "").strip(),
             provider_metadata={"progress_item": clean_mapping(item), "show_ids": show_ids},
         )
 

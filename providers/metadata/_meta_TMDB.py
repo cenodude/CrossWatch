@@ -561,7 +561,8 @@ class TmdbProvider:
             return {}
 
         tmdb_id = str(ids.get("tmdb") or ids.get("id") or "").strip()
-        imdb_id = (ids.get("imdb") or "").strip()
+        imdb_id = str(ids.get("imdb") or "").strip()
+        tvdb_id = str(ids.get("tvdb") or ids.get("tvdb_id") or "").strip()
         title = (ids.get("title") or "").strip()
         year_in = (ids.get("year") or "").strip()
 
@@ -587,6 +588,25 @@ class TmdbProvider:
                         ent_in = "tv"
             except Exception as e:
                 self._log_exc("TMDb find by IMDb failed", e)
+
+        if not tmdb_id and tvdb_id:
+            try:
+                found = self._get(f"{base}/find/{tvdb_id}", {"external_source": "tvdb_id"})
+                if ent_in == "movie":
+                    hit = self._pick_first(found.get("movie_results") or [])
+                else:
+                    hit = self._pick_first(found.get("tv_results") or [])
+                tmdb_id = str(hit.get("id")) if hit else ""
+                if not tmdb_id:
+                    m = self._pick_first(found.get("movie_results") or [])
+                    t = self._pick_first(found.get("tv_results") or [])
+                    tmdb_id = str((m or t or {}).get("id") or "") if (m or t) else ""
+                    if m and not t:
+                        ent_in = "movie"
+                    if t and not m:
+                        ent_in = "tv"
+            except Exception as e:
+                self._log_exc("TMDb find by TVDB failed", e)
 
         if not tmdb_id and title:
             try:
