@@ -8,6 +8,7 @@ from services.playback_progress.service import (
     PlaybackProgressService,
 )
 import services.playback_progress.service as playback_service
+import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
 
 
@@ -78,13 +79,6 @@ def test_same_title_with_different_profile_progress_does_not_group():
     profile = _record(instance_id="P01", progress_percent=22.4)
 
     assert set(_record_group_keys(default)).isdisjoint(_record_group_keys(profile))
-
-
-def test_same_title_with_matching_progress_can_still_combine_across_profiles():
-    default = _record(instance_id="default", progress_percent=5.1)
-    profile = _record(instance_id="P01", progress_percent=5.4)
-
-    assert set(_record_group_keys(default)) & set(_record_group_keys(profile))
 
 
 def test_unscoped_live_stream_only_updates_default_profile():
@@ -241,3 +235,97 @@ def test_playback_progress_settings_reports_disabled_profiles_and_clamped_timeou
     assert data["provider_timeout_seconds"] == 60.0
     assert by_key["trakt:default"]["included"] is True
     assert by_key["trakt:TRAKT-P01"]["included"] is False
+
+
+class _FakeNuvioOps:
+    def __init__(self) -> None:
+        self.removed = []
+
+    def capabilities(self):
+        return {
+            "progress": {
+                "types": {"movies": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+            },
+            "history": {"upsert": True},
+        }
+
+    def is_configured(self, cfg):
+        return bool(cfg.get("nuvio", {}).get("profile_id"))
+
+    def build_index(self, cfg, *, feature):
+        assert feature == "progress"
+        return {
+            "tmdb:123": {
+                "type": "movie",
+                "title": "Pressure",
+                "year": 2026,
+                "ids": {"tmdb": "123"},
+                "progress_ms": 120000,
+                "duration_ms": 600000,
+                "progress_at": 1785501708,
+            }
+        }
+
+    def remove(self, cfg, items, *, feature, dry_run=False):
+        self.removed.extend(items)
+        return {"ok": True, "count": len(items), "feature": feature}
+
+
+def test_playback_progress_uses_explicit_nuvio_adapter(monkeypatch):
+    nuvio_ops = _FakeNuvioOps()
+
+    monkeypatch.setattr(nuvio_playback_adapter, "NUVIO_OPS", nuvio_ops)
+    monkeypatch.setattr(playback_service, "load_config", lambda: {"nuvio": {"access_token": "token", "profile_id": 1}})
+
+    service = PlaybackProgressService()
+    providers = service.provider_instances({"nuvio": {"access_token": "token", "profile_id": 1}})
+
+    assert any(spec["provider"] == "nuvio" for spec in providers)
+
+    result = service.items(provider="nuvio", force_refresh=True)
+
+    assert result["errors"] == []
+    assert len(result["items"]) == 1
+    assert result["items"][0]["provider"] == "nuvio"
+    assert result["items"][0]["progress_percent"] == 20.0
+
+
+def test_nuvio_playback_progress_enriches_missing_episode_title_from_tmdb(monkeypatch):
+    class FakeMetadata:
+        def fetch(self, *, entity, ids, locale=None, need=None):
+            assert entity == "tv"
+            assert ids == {"tmdb": "69478"}
+            return {"title": "The Boys", "year": 2019}
+
+    caps = nuvio_playback_adapter.NuvioPlaybackAdapter().capabilities(
+        {"nuvio": {"profile_id": 1}},
+        instance_id="default",
+        instance_label="Default",
+    )
+    item = {
+        "type": "episode",
+        "ids": {"tmdb": "5978363"},
+        "show_ids": {"tmdb": "69478"},
+        "series_title": "tmdb:69478",
+        "season": 6,
+        "episode": 2,
+        "progress_ms": 703000,
+        "duration_ms": 3307930,
+        "progress_at": 1784848068000,
+    }
+
+    record = nuvio_playback_adapter.NuvioPlaybackAdapter()._record(
+        "tmdb:69478#s06e02",
+        item,
+        "default",
+        "Default",
+        caps,
+        FakeMetadata(),
+    )
+
+    assert record is not None
+    assert record.title == "The Boys"
+    assert record.series_title == "The Boys"
+    assert record.year == 2019

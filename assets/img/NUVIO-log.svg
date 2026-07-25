@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="90" fill="#10121f"/>
+  <defs>
+    <linearGradient id="nuvioOuter" x1="116" y1="146" x2="416" y2="352" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#35d7ef"/>
+      <stop offset=".48" stop-color="#4968f4"/>
+      <stop offset="1" stop-color="#c347f1"/>
+    </linearGradient>
+    <linearGradient id="nuvioInner" x1="186" y1="196" x2="334" y2="318" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f1324"/>
+      <stop offset="1" stop-color="#070915"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#nuvioOuter)" d="M132 128c0-42 46-68 82-46l220 134c45 28 45 92 0 120L214 470c-36 22-82-4-82-46z"/>
+  <path fill="#653ad4" opacity=".45" d="M132 128c0-42 46-68 82-46l64 39c-65 32-106 97-106 169v144l-18 11c-11-10-22-25-22-47z"/>
+  <path fill="#36d7ef" opacity=".42" d="M154 93c16-18 42-24 65-10l219 134c14 8 24 20 30 34-116-33-234-60-336-49v-74c0-13 8-27 22-35z"/>
+  <path fill="url(#nuvioInner)" d="M216 178c0-24 27-39 48-26l126 76c25 16 25 52 0 68l-126 76c-21 13-48-2-48-26z"/>
+  <path fill="#ffffff" d="M258 216c0-14 16-23 28-15l70 43c13 8 13 27 0 35l-70 43c-12 8-28-1-28-15z"/>
+</svg>

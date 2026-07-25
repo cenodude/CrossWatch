@@ -16,12 +16,12 @@
   const providerMeta = () => window.CW?.ProviderMeta || {};
   const providerLabel = (provider) => providerMeta().label?.(provider) || String(provider || "").trim().toUpperCase() || "Provider";
   const providerLogo = (provider) => providerMeta().logoPath?.(provider) || providerMeta().logLogoPath?.(provider) || `/assets/img/${String(provider || "").toUpperCase()}.svg`;
-  const providerLogLogo = (provider) => providerMeta().logLogoPath?.(provider) || `/assets/img/${String(provider || "").toUpperCase()}-log.svg`;
+  const providerLogLogo = (provider) => providerMeta().logLogoPath?.(provider) || providerLogo(provider);
   const providerTone = (provider) => providerMeta().tone?.(provider)?.rgb || "124,92,255";
   const providerIcon = (provider) => {
     return `<img src="${esc(providerLogLogo(provider))}" alt="" onerror="this.remove()">`;
   };
-  const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin"];
+  const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio"];
   const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12;
   const state = {
     mounted: false,
@@ -70,7 +70,8 @@ html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-shape{background:#2a2f39}h
 #pp-settings-dialog .pp-settings-dialog .prov-card{grid-template-rows:auto 38px;align-content:center}#pp-settings-dialog .pp-settings-dialog .prov-top{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center!important;gap:14px!important}#pp-settings-dialog .pp-settings-dialog .prov-brand{display:grid!important;grid-template-columns:52px minmax(0,1fr);align-items:center!important;gap:14px!important}#pp-settings-dialog .pp-settings-dialog .prov-tools{display:grid!important;grid-auto-flow:column;grid-auto-columns:max-content;align-items:center!important;justify-content:end!important;gap:8px!important}#pp-settings-dialog .pp-settings-dialog .prov-badge,#pp-settings-dialog .pp-settings-dialog .mini{display:inline-grid!important;place-items:center!important;height:34px!important;min-width:58px!important;padding:0 12px!important;line-height:1!important}#pp-settings-dialog .pp-settings-dialog .prov-card[data-single="1"]{grid-template-columns:minmax(0,1fr) minmax(220px,240px)!important;grid-template-rows:auto!important;column-gap:18px!important}#pp-settings-dialog .pp-settings-dialog .prov-card[data-single="1"] .prov-top{display:block!important;min-width:0!important}#pp-settings-dialog .pp-settings-dialog .prov-card[data-single="1"] [data-list]{align-self:center!important}#pp-settings-dialog .pp-settings-dialog .prov-card:before{background-position:right 12px center!important;background-size:40% 78%!important;opacity:.09!important}
 .pp-settings-dialog .actions{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 24px 14px;border-top:1px solid var(--pp-border);background:rgba(255,255,255,.015)}.pp-settings-dialog .footer-note{display:flex;align-items:center;gap:10px;min-width:0;color:var(--pp-soft);font-size:13px}.pp-settings-dialog .footer-note .material-symbols-rounded{font-size:22px;opacity:.68}.pp-settings-dialog .action-row{display:flex;align-items:center;gap:12px}.pp-settings-dialog .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:112px;height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--pp-border);background:rgba(255,255,255,.035);color:var(--pp-fg);font-size:12px;font-weight:900;text-transform:uppercase;cursor:pointer}.pp-settings-dialog .btn.danger{border-color:rgba(255,138,160,.34);background:rgba(118,28,46,.22);color:#ffe7ee}.pp-settings-dialog .btn.good{border-color:rgba(83,217,139,.42);background:linear-gradient(180deg,rgba(50,176,103,.72),rgba(32,135,82,.78));color:#eafff2}.pp-settings-dialog .btn .material-symbols-rounded{font-size:19px}.pp-settings-dialog .pp-dialog-error{padding:0 24px;color:var(--pp-danger-fg)}
 html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171a22!important;box-shadow:none!important}html[data-cw-theme=flat-dark] .pp-settings-dialog .prov-card{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.12),transparent 56%),#171a22}html[data-cw-theme=flat-dark] .pp-settings-dialog .prov-card[data-connected="0"]{background:#171a22}html[data-cw-theme=flat-light] .pp-settings-dialog.cw-insight-set{background:#fff!important;box-shadow:none!important;color:#111827}html[data-cw-theme=flat-light] .pp-settings-dialog .prov-card{background:radial-gradient(100% 145% at 0% 0%,rgba(var(--provider-rgb),.09),transparent 56%),linear-gradient(180deg,#fff,#f2f5fa)}html[data-cw-theme=flat-light] .pp-settings-dialog .pill .lab{color:#172033}html[data-cw-theme=flat-light] .pp-settings-dialog .btn.good{color:#fff}
-@media(max-width:1100px){.pp-settings-dialog .layout{grid-template-columns:1fr}.pp-settings-dialog .prov-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.pp-settings-dialog.cw-insight-set{width:calc(100vw - 12px)!important;max-width:calc(100vw - 12px)!important;max-height:calc(100dvh - 12px)!important}.pp-settings-dialog.cw-insight-set .cx-head{padding:12px}.pp-settings-dialog .head-title{font-size:20px}.pp-settings-dialog .head-sub,.pp-settings-dialog .head-chip{display:none}.pp-settings-dialog .close-btn{width:42px;min-width:42px;padding:0;font-size:0}.pp-settings-dialog .body{padding:10px}.pp-settings-dialog .layout{gap:10px}.pp-settings-dialog .prov-grid{grid-template-columns:1fr}.pp-settings-dialog .prov-card[data-single="1"]{grid-template-columns:minmax(0,1fr) minmax(112px,136px)}.pp-settings-dialog .actions{padding:9px 10px}.pp-settings-dialog .footer-note{display:none}.pp-settings-dialog .btn{min-width:0;flex:1 1 0}}
+#pp-settings-dialog .pp-settings-dialog .prov-card:before{content:none!important;display:none!important;background:none!important}#pp-settings-dialog .pp-settings-dialog .prov-brand{grid-template-columns:52px!important}#pp-settings-dialog .pp-settings-dialog .prov-title{display:none!important}.pp-settings-dialog .prov-card[data-single="1"]{grid-template-columns:1fr!important;grid-template-rows:auto 38px!important;align-items:stretch!important;row-gap:12px!important}.pp-settings-dialog .prov-card[data-single="1"] .prov-top{display:grid!important;grid-template-columns:minmax(0,1fr)!important;min-width:0!important}.pp-settings-dialog .prov-card[data-single="1"] [data-list]{width:100%!important;align-self:stretch!important}
+@media(max-width:1100px){.pp-settings-dialog .layout{grid-template-columns:1fr}.pp-settings-dialog .prov-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.pp-settings-dialog.cw-insight-set{width:calc(100vw - 12px)!important;max-width:calc(100vw - 12px)!important;max-height:calc(100dvh - 12px)!important}.pp-settings-dialog.cw-insight-set .cx-head{padding:12px}.pp-settings-dialog .head-title{font-size:20px}.pp-settings-dialog .head-sub,.pp-settings-dialog .head-chip{display:none}.pp-settings-dialog .close-btn{width:42px;min-width:42px;padding:0;font-size:0}.pp-settings-dialog .body{padding:10px}.pp-settings-dialog .layout{gap:10px}.pp-settings-dialog .prov-grid{grid-template-columns:1fr}.pp-settings-dialog .prov-card[data-single="1"]{grid-template-columns:1fr!important}.pp-settings-dialog .actions{padding:9px 10px}.pp-settings-dialog .footer-note{display:none}.pp-settings-dialog .btn{min-width:0;flex:1 1 0}}
     `;
     document.head.appendChild(Object.assign(document.createElement("style"), { id: STYLE_ID, textContent: css }));
   }
@@ -234,7 +235,11 @@ html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171
     const providers = Array.isArray(it.providers) && it.providers.length
       ? it.providers
       : [{ provider: it.provider, provider_label: it.provider_label, instance_id: it.instance_id, instance_label: it.instance_label }];
-    return providers.map((p) => `<span class="pp-provider-pill">${providerIcon(p.provider)}${esc(profileLabel(p))}</span>`).join("");
+    return providers.map((p) => {
+      const label = compactProfileLabel(p);
+      const title = [providerLabel(p.provider), label].filter(Boolean).join(" ");
+      return `<span class="pp-provider-pill" title="${esc(title)}">${providerIcon(p.provider)}${label ? esc(label) : ""}</span>`;
+    }).join("");
   };
   const profileLabel = (p) => {
     const provider = String(p.provider || "");
@@ -246,6 +251,17 @@ html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171
       }
     }
     return label || (String(p.instance_id || "").trim() || "Default");
+  };
+  const compactProfileLabel = (p) => {
+    const id = String(p?.instance_id || "default").trim() || "default";
+    if (id.toLowerCase() === "default") return "";
+    const label = profileLabel(p);
+    for (const value of [label, id]) {
+      const match = String(value || "").trim().match(/^(?:profile[\s_-]*)?p?0*(\d{1,2})$/i)
+        || String(value || "").trim().match(/(?:^|[\s_-])(?:profile[\s_-]*)?p?0*(\d{1,2})$/i);
+      if (match) return `P${String(match[1]).padStart(2, "0")}`;
+    }
+    return label;
   };
   const settingsProviderOrder = (provider) => {
     const p = String(provider || "").toLowerCase();
@@ -464,10 +480,28 @@ html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171
   function providerOptions() {
     const readable = state.providers.filter((p) => p.read && p.configured && p.included !== false);
     const opts = ['<option value="">All Providers</option>'];
-    readable.forEach((p) => opts.push(`<option value="${esc(p.provider)}:${esc(p.instance_id)}">${esc(p.instance_label || p.provider_label)}</option>`));
-    document.getElementById("pp-provider").innerHTML = opts.join("");
+    readable.forEach((p) => {
+      const label = compactProfileLabel(p);
+      const provider = String(p.provider || "");
+      const instance = String(p.instance_id || "default");
+      opts.push(`<option value="${esc(provider)}:${esc(instance)}" data-provider="${esc(provider)}" data-profile-label="${esc(label)}">${esc(label || providerLabel(provider))}</option>`);
+    });
+    const select = document.getElementById("pp-provider");
+    select.innerHTML = opts.join("");
     const cur = state.filters.provider;
-    if ([...document.getElementById("pp-provider").options].some((o) => o.value === cur)) document.getElementById("pp-provider").value = cur;
+    if ([...select.options].some((o) => o.value === cur)) select.value = cur;
+    window.CW?.IconSelect?.enhance?.(select, {
+      className: "cw-plain-select",
+      getOptionData: (value, option) => {
+        if (!value) return { label: "All Providers" };
+        const provider = option?.dataset?.provider || String(value).split(":")[0];
+        const label = option?.dataset?.profileLabel || "";
+        return {
+          label: label || "Default",
+          icons: [{ src: providerLogLogo(provider), alt: providerLabel(provider) }]
+        };
+      }
+    });
   }
 
   function loadingCard() {
