@@ -152,6 +152,26 @@ def test_add_encodes_tmdb_and_verifies_exact_keys() -> None:
     assert push["p_entries"][0]["last_watched"] == 1_785_000_100_000
 
 
+def test_add_encodes_percent_progress_as_position() -> None:
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([])
+    item = {
+        "type": "movie",
+        "ids": {"tmdb": "550"},
+        "progress_percent": 25,
+        "duration_ms": 600_000,
+        "progress_at": 1_785_000_100_000,
+    }
+
+    result = _progress.add(adapter, [item])
+
+    assert result["ok"] is True
+    push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
+    assert push["p_entries"][0]["position"] == 150_000
+    assert push["p_entries"][0]["duration"] == 600_000
+
+
 def test_add_movie_progress_resolves_imdb_to_tmdb_content_id_when_tmdb_configured(monkeypatch: Any) -> None:
     from providers.metadata import _meta_TMDB
     from providers.sync.nuvio import _progress

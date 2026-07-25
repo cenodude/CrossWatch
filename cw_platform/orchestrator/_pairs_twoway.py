@@ -267,6 +267,14 @@ def _minimal_keep_progress(it: Mapping[str, Any]) -> dict[str, Any]:
             if k in it and it.get(k) is not None:
                 out["progress_ms"] = it.get(k)
                 break
+        for k in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+            value = it.get(k)
+            if value is not None:
+                try:
+                    out["progress_percent"] = round(max(0.0, min(100.0, float(value))), 3)
+                except Exception:
+                    out["progress_percent"] = value
+                break
         if "duration_ms" in it and it.get("duration_ms") is not None:
             out["duration_ms"] = it.get("duration_ms")
         pa = it.get("progress_at") or it.get("progressAt") or it.get("last_played") or it.get("lastViewedAt")
@@ -279,7 +287,7 @@ def _minimal_keep_progress(it: Mapping[str, Any]) -> dict[str, Any]:
 def _confirmed(res: dict) -> int:
     return int((res or {}).get("confirmed", (res or {}).get("count", 0)) or 0)
 
-def _two_way_sync(
+def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     ctx,
     a: str,
     b: str,
@@ -1008,6 +1016,21 @@ def _two_way_sync(
                         return max(0, int(v))
                 return 0
 
+            def _progress_percent(it: Mapping[str, Any] | None) -> float | None:
+                if not it:
+                    return None
+                for kk in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+                    try:
+                        v = it.get(kk)
+                        if v is None or isinstance(v, bool):
+                            continue
+                        p = float(v)
+                        if p == p:
+                            return max(0.0, min(100.0, p))
+                    except Exception:
+                        continue
+                return None
+
             def _dur(it: Mapping[str, Any] | None) -> int | None:
                 if not it:
                     return None
@@ -1038,12 +1061,16 @@ def _two_way_sync(
                         continue
 
                     pms = _pm(pit)
-                    if pms <= 0:
+                    pp_explicit = _progress_percent(pit)
+                    if pms <= 0 and (pp_explicit is None or pp_explicit <= 0):
                         continue
                     if min_ms and pms < min_ms and not clear_below_min:
-                        # Not synced then don't propagate the clear either (unless clear_below_min)
-                        continue
-                    pp = _pct(pms, _dur(pit))
+                        if pms <= 0 and pp_explicit is not None:
+                            pass
+                        else:
+                            # Not synced then don't propagate the clear either (unless clear_below_min)
+                            continue
+                    pp = _pct(pms, _dur(pit)) if pms > 0 else pp_explicit
                     if pp is not None and pp >= max_percent:
                         # Near completion then let history sync handle played state
                         continue
@@ -1090,11 +1117,15 @@ def _two_way_sync(
                         if not isinstance(pit, Mapping):
                             continue
                         pms = _pm(pit)
-                        if pms <= 0:
+                        pp_explicit = _progress_percent(pit)
+                        if pms <= 0 and (pp_explicit is None or pp_explicit <= 0):
                             continue
                         if min_ms and pms < min_ms and not clear_below_min:
-                            continue
-                        pp = _pct(pms, _dur(pit))
+                            if pms <= 0 and pp_explicit is not None:
+                                pass
+                            else:
+                                continue
+                        pp = _pct(pms, _dur(pit)) if pms > 0 else pp_explicit
                         if pp is not None and pp >= max_percent:
                             continue
                         base = _minimal(pit)
@@ -1121,6 +1152,34 @@ def _two_way_sync(
                 except Exception:
                     continue
             return 0
+
+        def _prog_percent(it: Mapping[str, Any]) -> float | None:
+            for kk in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+                try:
+                    v = it.get(kk)
+                    if v is None or isinstance(v, bool):
+                        continue
+                    p = float(v)
+                    if p == p:
+                        return max(0.0, min(100.0, p))
+                except Exception:
+                    continue
+            ms = _prog_ms(it)
+            dur = None
+            for kk in ("duration_ms", "durationMs", "duration"):
+                try:
+                    raw = it.get(kk)
+                    if raw is None or isinstance(raw, bool):
+                        continue
+                    val = int(float(raw))
+                    if val > 0:
+                        dur = val
+                        break
+                except Exception:
+                    continue
+            if ms > 0 and dur:
+                return (float(ms) / float(dur)) * 100.0
+            return None
 
         def _prog_epoch(it: Mapping[str, Any]) -> int | None:
             v = it.get("progress_at") or it.get("progressAt") or it.get("last_played") or it.get("lastPlayed") or it.get("lastViewedAt")
@@ -1166,10 +1225,17 @@ def _two_way_sync(
                 else:
                     msa = _prog_ms(a_it)
                     msb = _prog_ms(b_it)
-                    if msa != msb:
+                    if msa > 0 and msb > 0 and msa != msb:
                         win = a if msa > msb else b
                     else:
-                        win = prefer
+                        pca = _prog_percent(a_it)
+                        pcb = _prog_percent(b_it)
+                        if pca is not None and pcb is not None and abs(float(pca) - float(pcb)) > 0.1:
+                            win = a if float(pca) > float(pcb) else b
+                        elif msa != msb:
+                            win = a if msa > msb else b
+                        else:
+                            win = prefer
 
                 if win == a:
                     addB.append(_minimal_keep_progress(upB[k]))
