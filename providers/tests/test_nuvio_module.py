@@ -19,20 +19,26 @@ def _cfg(profile_id: int = 1) -> dict[str, Any]:
     }
 
 
-def test_nuvio_ops_and_manifest_keep_all_sync_features_disabled() -> None:
+def test_nuvio_ops_and_manifest_enable_supported_sync_features() -> None:
     import sync._mod_NUVIO as mod
 
     manifest = mod.get_manifest()
+    expected = {"watchlist": True, "ratings": False, "history": True, "progress": True, "playlists": False}
 
     assert manifest["name"] == "NUVIO"
     assert manifest["label"] == "Nuvio"
     assert manifest["type"] == "sync"
-    assert manifest["bidirectional"] is False
+    assert manifest["bidirectional"] is True
     assert manifest["experimental"] is True
-    assert manifest["features"] == {"watchlist": False, "ratings": False, "history": False, "progress": False, "playlists": False}
+    assert manifest["features"] == expected
     assert mod.OPS.features() == manifest["features"]
     assert mod.OPS.state_read_features() == manifest["features"]
-    assert mod.OPS.capabilities()["bidirectional"] is False
+    assert mod.OPS.capabilities()["bidirectional"] is True
+    assert mod.OPS.capabilities()["verify_after_write"] is True
+    assert mod.OPS.capabilities()["features"] == expected
+    assert mod.OPS.capabilities()["progress"]["types"] == {"movies": True, "shows": False, "seasons": False, "episodes": True}
+    assert mod.OPS.capabilities()["history"]["remove"] is True
+    assert mod.OPS.capabilities()["watchlist"]["types"] == {"movies": True, "shows": True, "seasons": False, "episodes": False}
 
 
 def test_nuvio_is_configured_requires_auth_and_profile() -> None:
@@ -50,12 +56,15 @@ def test_nuvio_health_success_and_no_write(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(common, "save_config", lambda _cfg: pytest.fail("health must not write config"))
     monkeypatch.setattr(mod.NuvioClient, "pull_profiles", lambda self, cfg, refresh=True: [{"profile_id": 1, "name": "Profile 1"}])
+    monkeypatch.setattr(mod, "pull_watch_progress_rows", lambda self, limit=1, max_pages=1: [])
+    monkeypatch.setattr(mod, "pull_watched_rows", lambda self, page_size=1, max_pages=1: [])
+    monkeypatch.setattr(mod, "pull_library_rows", lambda self, limit=1, max_pages=1: [])
 
     health = mod.NUVIOModule(_cfg()).health()
 
     assert health["ok"] is True
     assert health["status"] == "ok"
-    assert health["features"] == {"watchlist": False, "ratings": False, "history": False, "progress": False, "playlists": False}
+    assert health["features"] == {"watchlist": True, "ratings": False, "history": True, "progress": True, "playlists": False}
 
 
 def test_nuvio_health_reports_profile_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:

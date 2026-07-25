@@ -19,12 +19,18 @@ from providers.auth._auth_NUVIO import (
     provider_block,
 )
 
+from ._mod_common import build_op_result
+from .nuvio import _history as feat_history
+from .nuvio import _progress as feat_progress
+from .nuvio import _watchlist as feat_watchlist
+from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_watched_rows
+
 __VERSION__ = "0.1"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
 
 def _features_flags() -> dict[str, bool]:
-    return {"watchlist": False, "ratings": False, "history": False, "progress": False, "playlists": False}
+    return {"watchlist": True, "ratings": False, "history": True, "progress": True, "playlists": False}
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -33,11 +39,40 @@ def get_manifest() -> Mapping[str, Any]:
         "label": "Nuvio",
         "version": __VERSION__,
         "type": "sync",
-        "bidirectional": False,
+        "bidirectional": True,
         "experimental": True,
         "features": _features_flags(),
         "requires": [],
-        "capabilities": {"bidirectional": False, "experimental": True},
+        "capabilities": {
+            "bidirectional": True,
+            "experimental": True,
+            "verify_after_write": True,
+            "provides_ids": True,
+            "index_semantics": "present",
+            "features": _features_flags(),
+            "progress": {
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "upsert": True,
+                "remove": True,
+                "observed_deletes": True,
+                "requires_ids": ["imdb", "tmdb", "trakt"],
+                "requires_duration": True,
+            },
+            "history": {
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "upsert": True,
+                "remove": True,
+                "observed_deletes": True,
+                "requires_ids": ["imdb", "tmdb", "trakt"],
+            },
+            "watchlist": {
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
+                "upsert": True,
+                "remove": True,
+                "observed_deletes": True,
+                "requires_ids": ["imdb", "tmdb", "trakt"],
+            },
+        },
     }
 
 
@@ -76,6 +111,9 @@ class NUVIOModule:
                     status = "profile_unavailable"
                     reason = "profile_unavailable"
                 else:
+                    pull_watch_progress_rows(self, limit=1, max_pages=1)
+                    pull_watched_rows(self, page_size=1, max_pages=1)
+                    pull_library_rows(self, limit=1, max_pages=1)
                     ok = True
                     status = "ok"
         except NuvioTokenRefreshError:
@@ -103,8 +141,38 @@ class NUVIOModule:
             "latency_ms": latency_ms,
             "features": _features_flags(),
             "details": {"reason": reason} if reason else None,
-            "api": {"profiles": {"status": status}},
+            "api": {"profiles": {"status": status}, "progress": {"status": status}, "history": {"status": status}, "library": {"status": status}},
         }
+
+    def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
+        feature_name = str(feature or "").strip().lower()
+        if feature_name == "progress":
+            return feat_progress.build_index(self)
+        if feature_name == "history":
+            return feat_history.build_index(self)
+        if feature_name == "watchlist":
+            return feat_watchlist.build_index(self)
+        return {}
+
+    def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
+        feature_name = str(feature or "").strip().lower()
+        if feature_name == "progress":
+            return feat_progress.add(self, items, dry_run=dry_run)
+        if feature_name == "history":
+            return feat_history.add(self, items, dry_run=dry_run)
+        if feature_name == "watchlist":
+            return feat_watchlist.add(self, items, dry_run=dry_run)
+        return build_op_result(ok=True, count=0, unsupported=True)
+
+    def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
+        feature_name = str(feature or "").strip().lower()
+        if feature_name == "progress":
+            return feat_progress.remove(self, items, dry_run=dry_run)
+        if feature_name == "history":
+            return feat_history.remove(self, items, dry_run=dry_run)
+        if feature_name == "watchlist":
+            return feat_watchlist.remove(self, items, dry_run=dry_run)
+        return build_op_result(ok=True, count=0, unsupported=True)
 
 
 class _NUVIOOPS:
@@ -133,13 +201,13 @@ class _NUVIOOPS:
         return self._adapter(cfg).health()
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
-        return {}
+        return self._adapter(cfg).build_index(feature)
 
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
-        return {"ok": False, "count": 0, "unresolved": list(items or []), "unsupported": True}
+        return self._adapter(cfg).add(feature, items, dry_run=dry_run)
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
-        return {"ok": False, "count": 0, "unresolved": list(items or []), "unsupported": True}
+        return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
 
 
 OPS = _NUVIOOPS()
