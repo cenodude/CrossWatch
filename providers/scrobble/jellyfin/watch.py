@@ -562,8 +562,9 @@ class JellyfinWatchService:
         self._stop = threading.Event()
         self._bg: threading.Thread | None = None
         self._last: dict[str, dict[str, Any]] = {}
-        self._last_emit: dict[str, tuple[str, int]] = {}
+        self._last_emit: dict[str, tuple[str, float]] = {}
         self._allowed_sessions: set[str] = set()
+        self._scrobble_whitelist_sessions: set[str] = set()
         self._filtered_sessions: set[str] = set()
         self._route_filtered_ts: dict[str, float] = {}
         self._cw_last_heartbeat: dict[str, float] = {}
@@ -730,13 +731,24 @@ class JellyfinWatchService:
             # A whitelist must be validated per event
             view_id = self._session_view_id(ev.raw or {}, cfg)
             if not view_id or view_id not in libs:
+                raw = ev.raw or {}
+                is_synthetic_stop = (
+                    ev.action == "stop"
+                    and isinstance(raw, Mapping)
+                    and raw.get("_cw_stop_src") == "poll-disappear"
+                )
+                if sk and is_synthetic_stop and sk in self._scrobble_whitelist_sessions:
+                    return True
                 if sk:
                     self._allowed_sessions.discard(sk)
+                    self._scrobble_whitelist_sessions.discard(sk)
                 if _is_debug():
-                    item = ((ev.raw or {}).get("NowPlayingItem") or {}) if isinstance(ev.raw, Mapping) else {}
+                    item = (raw.get("NowPlayingItem") or {}) if isinstance(raw, Mapping) else {}
                     name = (item.get("Name") or item.get("SeriesName") or "?") if isinstance(item, Mapping) else "?"
                     self._dbg(f"event filtered by scrobble whitelist: view={view_id or 'none'} allowed={sorted(libs)} item={name}")
                 return False
+            if sk:
+                self._scrobble_whitelist_sessions.add(sk)
             return True
 
         if sk and sk in self._allowed_sessions:
@@ -1108,6 +1120,10 @@ class JellyfinWatchService:
                 except Exception:
                     pass
                 try:
+                    self._scrobble_whitelist_sessions.discard(sid)
+                except Exception:
+                    pass
+                try:
                     self._cw_last_heartbeat.pop(sid, None)
                 except Exception:
                     pass
@@ -1161,6 +1177,10 @@ class JellyfinWatchService:
                     pass
                 try:
                     self._allowed_sessions.discard(sid)
+                except Exception:
+                    pass
+                try:
+                    self._scrobble_whitelist_sessions.discard(sid)
                 except Exception:
                     pass
                 try:
