@@ -50,6 +50,19 @@ def test_nuvio_is_configured_requires_auth_and_profile() -> None:
     assert mod.OPS.is_configured({"nuvio": {"base_url": "https://api.nuvio.tv", "profile_id": 1}}) is False
 
 
+def test_nuvio_module_uses_shared_rate_limiter() -> None:
+    import sync._mod_NUVIO as mod
+
+    cfg = _cfg()
+    cfg["nuvio"]["rate_limit"] = {"get_per_sec": 12, "post_per_sec": 8}
+
+    module = mod.NUVIOModule(cfg)
+    session = module.client.session
+
+    assert session._rate_limiter is not None
+    assert session._rate_limiter_meta == {"get_per_sec": 12.0, "post_per_sec": 8.0}
+
+
 def test_nuvio_health_success_and_no_write(monkeypatch: pytest.MonkeyPatch) -> None:
     import sync._mod_NUVIO as mod
     from providers.auth import _auth_NUVIO as common
