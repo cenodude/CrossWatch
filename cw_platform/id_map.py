@@ -319,6 +319,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "episode",
         "series_title",
         "progress_ms",
+        "progress_percent",
         "duration_ms",
         "progress_at",
     ):
