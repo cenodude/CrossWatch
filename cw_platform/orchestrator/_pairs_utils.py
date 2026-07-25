@@ -163,8 +163,7 @@ def merge_manual_adds(idx: dict[str, Any], adds: _Mapping[str, Any] | None) -> d
         kk = str(k).strip()
         if not kk:
             continue
-        if kk not in out:
-            out[kk] = v
+        out[kk] = v
     return out
 
 

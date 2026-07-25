@@ -392,6 +392,129 @@
   ensureStyle("editor-scrollbars",".cw-table-scroll{scrollbar-width:thin;scrollbar-color:#8b5cf6 #10131a}.cw-table-scroll::-webkit-scrollbar{height:10px;width:10px}.cw-table-scroll::-webkit-scrollbar-track{background:rgba(255,255,255,.03);border-radius:12px}.cw-table-scroll::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#8b5cf6 0%,#3b82f6 100%);border-radius:12px;border:2px solid #11141c;box-shadow:inset 0 0 0 1px rgba(139,92,246,.35),0 0 10px rgba(139,92,246,.4)}.cw-table-wrap::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,#a78bfa 0%,#60a5fa 100%)}");
   ensureStyle("editor-icon-select-styles",".cw-editor-icon-select{min-width:200px;flex:1}.cw-editor-icon-select .cw-icon-select-btn{min-height:40px}.cw-editor-icon-select .cw-icon-select-icon{width:16px;height:16px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}.cw-editor-icon-select .cw-icon-select-label{font-size:13px}");
   ensureStyle("editor-import-styles",".cw-import-panel,.cw-policy-panel{width:100%}.cw-import-summary{display:flex!important;align-items:center;justify-content:space-between;gap:10px;padding:2px 0 4px;cursor:pointer;font-weight:800;user-select:none}.cw-import-title{min-width:0;color:var(--cw-fg);font-weight:900;letter-spacing:-.01em}.cw-import-help{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.04);color:rgba(220,228,246,.78);font-size:17px;line-height:1}.cw-import-help:hover{border-color:rgba(133,140,255,.24);background:rgba(133,140,255,.10);color:#fff}.cw-import-body,.cw-policy-body{display:grid!important;gap:12px!important;width:100%!important;margin-top:10px!important}.cw-import-fields{display:grid!important;grid-template-columns:1fr!important;gap:10px!important;align-items:stretch!important}.cw-import-field{display:grid!important;gap:6px!important;width:100%!important;margin:0!important;min-width:0!important}.cw-import-field-label{font-size:10px;font-weight:900;letter-spacing:.10em;text-transform:uppercase;color:rgba(204,213,229,.62)}.cw-import-field .cw-select,.cw-import-field .cw-icon-select{width:100%!important;min-width:0!important;flex:none!important}.cw-import-actions{display:grid!important;grid-template-columns:1fr!important;gap:10px!important;align-items:stretch!important}.cw-import-features{display:flex;flex-wrap:wrap;gap:8px}.cw-import-feature{display:inline-flex!important;align-items:center;gap:7px;min-height:34px;margin:0!important;padding:0 10px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);color:rgba(225,232,246,.78);font-size:12px;font-weight:800}.cw-import-feature input{flex:0 0 auto}.cw-import-run-row{display:flex!important;justify-content:flex-end!important;gap:8px!important}.cw-import-run-row .cw-btn{min-width:112px}.cw-import-progress-row{width:100%}.cw-policy-row{width:100%;padding-top:0!important}.cw-policy-copy{font-size:12px;line-height:1.45;color:rgba(204,213,229,.68)}.cw-policy-actions{display:grid;grid-template-columns:1fr;gap:8px}.cw-policy-actions .cw-btn{width:100%;justify-content:center}.cw-policy-action{display:grid;gap:5px;padding:10px;border-radius:18px;border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.025)}.cw-policy-action span{font-size:10px;font-weight:900;letter-spacing:.10em;text-transform:uppercase;color:rgba(204,213,229,.56)}@media(max-width:760px){.cw-import-run-row{justify-content:stretch!important}.cw-import-run-row .cw-btn{width:100%}}");
+  ensureStyle("editor-polish-styles",`
+    #page-editor .cw-btn .material-symbol,#page-editor .cw-btn .material-symbols-rounded,#page-editor .cw-type-chip .material-symbol{font-size:18px;line-height:1;font-variation-settings:"FILL" 0,"wght" 560,"GRAD" 0,"opsz" 20}
+
+    #page-editor .cw-controls>.cw-btn{min-height:44px;padding:0 18px;border-radius:13px;font-size:13px;font-weight:850;gap:9px;border-color:rgba(132,148,184,.18);background:rgba(12,18,30,.68);box-shadow:inset 0 1px 0 rgba(255,255,255,.045),0 10px 24px rgba(0,0,0,.18)}
+    #page-editor .cw-controls>.cw-btn.primary{border-color:rgba(124,97,255,.42);background:linear-gradient(135deg,#5b50ff 0%,#7d3dff 100%);box-shadow:0 12px 24px rgba(92,70,255,.30),inset 0 1px 0 rgba(255,255,255,.18)}
+    #page-editor .cw-controls>.cw-btn.primary:hover{background:linear-gradient(135deg,#695fff 0%,#884dff 100%)}
+    #page-editor .cw-controls>.cw-btn.is-busy{pointer-events:none;opacity:.78;transform:translateY(1px);box-shadow:inset 0 2px 8px rgba(0,0,0,.25)}
+    #page-editor .cw-controls>.cw-btn.is-busy .material-symbols-rounded{animation:cw-editor-spin .72s linear infinite}
+    @keyframes cw-editor-spin{to{transform:rotate(360deg)}}
+
+    #page-editor .cw-type-filter-shell{display:grid;gap:10px;width:100%;grid-column:1/-1;min-width:0}
+    #page-editor .cw-type-filter-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+    #page-editor .cw-type-filter{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%}
+    #page-editor .cw-type-filter-clear{border:0;background:transparent;color:#8b6dff;font:inherit;font-size:11px;font-weight:850;cursor:pointer;padding:2px 4px}
+    #page-editor .cw-type-filter-clear:hover{color:#b2a1ff}
+    #page-editor .cw-type-filter-clear .material-symbol{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:4px;border-radius:0;background:transparent;color:#8c73ff;vertical-align:middle;font-size:17px}
+
+    #page-editor .cw-type-chip{position:relative;justify-content:flex-start;min-width:0;min-height:48px;padding:0 42px 0 14px;gap:11px;border-radius:9px;color:rgba(239,245,255,.90);background:rgba(16,23,36,.66);border-color:rgba(128,145,178,.18);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+    #page-editor .cw-type-chip span:not(.cw-type-icon){min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    #page-editor .cw-type-chip .cw-type-icon{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:0;color:rgba(229,238,252,.84);background:transparent}
+    #page-editor .cw-type-chip.active{color:#f7fff9;border-color:rgba(35,197,132,.62);background:linear-gradient(180deg,rgba(18,67,57,.42),rgba(17,47,44,.38));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px rgba(35,197,132,.10)}
+    #page-editor .cw-type-chip.active::after{content:"check";position:absolute;right:12px;top:50%;width:18px;height:18px;display:grid;place-items:center;border-radius:0;background:transparent;color:#58e5a4;font-family:"Material Symbols Rounded","Material Symbols Outlined";font-size:18px;line-height:1;transform:translateY(-50%);font-variation-settings:"FILL" 0,"wght" 700,"GRAD" 0,"opsz" 18}
+    #page-editor .cw-type-chip#cw-blocked-only{background:rgba(36,39,64,.62);border-color:rgba(126,127,178,.28)}
+    #page-editor .cw-type-chip#cw-blocked-only .cw-type-icon{background:transparent;color:#ddd4ff}
+    #page-editor .cw-type-chip#cw-blocked-only.active{border-color:rgba(151,134,255,.58);background:linear-gradient(180deg,rgba(52,45,95,.62),rgba(39,38,73,.58))}
+
+    #page-editor .cw-type-display{justify-content:center;min-height:32px;padding:0 11px;border-radius:11px;width:auto;max-width:100%;gap:8px}
+    #page-editor .cw-type-display .cw-extra-display-label{font-size:10px;letter-spacing:.045em}
+    #page-editor .cw-type-display .cw-extra-display-icon{font-size:14px;opacity:.86}
+    #page-editor .cw-type-display.type-movie{color:#c3d5ff;border-color:rgba(79,132,255,.22);background:linear-gradient(180deg,rgba(23,49,88,.54),rgba(16,32,58,.42))}
+    #page-editor .cw-type-display.type-episode{color:#7fc7ff;border-color:rgba(70,166,255,.26);background:linear-gradient(180deg,rgba(16,47,76,.55),rgba(12,31,55,.44))}
+    #page-editor .cw-type-display.type-show,#page-editor .cw-type-display.type-season,#page-editor .cw-type-display.type-anime{color:#c9d4ea;border-color:rgba(145,163,190,.18);background:rgba(19,25,38,.70)}
+
+    html[data-cw-theme] #page-editor .cw-controls>.cw-btn,html[data-cw-theme="flat-light"] #page-editor .cw-controls>.cw-btn{border-radius:13px!important}
+    html[data-cw-theme] #page-editor .cw-controls>.cw-btn.primary,html[data-cw-theme="flat-light"] #page-editor .cw-controls>.cw-btn.primary{background:linear-gradient(135deg,#5b50ff 0%,#7d3dff 100%)!important;border-color:rgba(124,97,255,.42)!important;color:#fff!important}
+    html[data-cw-theme] #page-editor .cw-type-chip.active,html[data-cw-theme="flat-light"] #page-editor .cw-type-chip.active{border-color:rgba(35,197,132,.62)!important;background:linear-gradient(180deg,rgba(18,67,57,.42),rgba(17,47,44,.38))!important;color:#f7fff9!important}
+    html[data-cw-theme] #page-editor .cw-type-chip#cw-blocked-only.active,html[data-cw-theme="flat-light"] #page-editor .cw-type-chip#cw-blocked-only.active{border-color:rgba(151,134,255,.58)!important;background:linear-gradient(180deg,rgba(52,45,95,.62),rgba(39,38,73,.58))!important}
+    html[data-cw-theme] #page-editor .cw-type-display.type-movie,html[data-cw-theme="flat-light"] #page-editor .cw-type-display.type-movie{color:#c3d5ff!important;border-color:rgba(79,132,255,.30)!important;background:linear-gradient(180deg,rgba(23,49,88,.54),rgba(16,32,58,.42))!important}
+    html[data-cw-theme] #page-editor .cw-type-display.type-episode,html[data-cw-theme="flat-light"] #page-editor .cw-type-display.type-episode{color:#7fc7ff!important;border-color:rgba(70,166,255,.34)!important;background:linear-gradient(180deg,rgba(16,47,76,.58),rgba(12,31,55,.46))!important}
+  `);
+  ensureStyle("editor-action-column-styles",`
+    #page-editor .cw-action-head.cw-action-wide,
+    html[data-cw-theme] #page-editor .cw-action-head.cw-action-wide,
+    html[data-cw-theme="flat-light"] #page-editor .cw-action-head.cw-action-wide{
+      width:132px!important;
+      min-width:132px!important;
+    }
+    #page-editor .cw-action-cell.cw-action-wide,
+    html[data-cw-theme] #page-editor .cw-action-cell.cw-action-wide,
+    html[data-cw-theme="flat-light"] #page-editor .cw-action-cell.cw-action-wide{
+      width:132px!important;
+      min-width:132px!important;
+      padding-left:14px!important;
+      padding-right:14px!important;
+      white-space:nowrap!important;
+    }
+  `);
+  ensureStyle("editor-toolbar-compact-styles",`
+    #page-editor .cw-controls{
+      flex-wrap:nowrap!important;
+      align-items:center!important;
+      gap:10px!important;
+    }
+    #page-editor .cw-sub{
+      max-width:none!important;
+      white-space:nowrap!important;
+      overflow:hidden!important;
+      text-overflow:ellipsis!important;
+    }
+    #page-editor .cw-controls .cw-input{
+      flex:1 1 320px!important;
+      min-width:180px!important;
+    }
+    #page-editor .cw-controls-spacer{
+      flex:1 1 auto!important;
+      min-width:8px!important;
+    }
+    #page-editor #cw-status{
+      display:none!important;
+    }
+    #page-editor .cw-bulk{
+      flex:0 0 auto!important;
+      flex-wrap:nowrap!important;
+      min-height:44px!important;
+      padding:8px!important;
+      gap:8px!important;
+      border-radius:18px!important;
+      border-color:transparent!important;
+      background:transparent!important;
+      background-image:none!important;
+      box-shadow:none!important;
+    }
+    html[data-cw-theme] #page-editor .cw-bulk,
+    html[data-cw-theme="flat-light"] #page-editor .cw-bulk{
+      border-color:transparent!important;
+      background:transparent!important;
+      background-image:none!important;
+      box-shadow:none!important;
+    }
+    #page-editor .cw-bulk-count{
+      white-space:nowrap!important;
+      min-width:82px!important;
+      padding:0 6px!important;
+      text-align:left!important;
+    }
+    #page-editor .cw-bulk .cw-btn.cw-icon-only{
+      width:44px!important;
+      min-width:44px!important;
+      height:44px!important;
+      min-height:44px!important;
+      padding:0!important;
+      border-radius:13px!important;
+      gap:0!important;
+    }
+    #page-editor .cw-bulk .cw-btn.cw-icon-only .material-symbols-rounded{
+      font-size:21px!important;
+      line-height:1!important;
+    }
+    @media(max-width:980px){
+      #page-editor .cw-controls{flex-wrap:wrap!important}
+      #page-editor .cw-controls .cw-input{flex-basis:100%!important}
+    }
+  `);
 
   let cwEditorBooted = false;
   let cwEditorBootRetryWired = false;
@@ -513,7 +636,14 @@
   const sourceSelectBoot = document.getElementById("cw-source");
   if (sourceSelectBoot) {
     sourceSelectBoot.querySelector('option[value="pair"]')?.remove();
-    sourceSelectBoot.querySelector('option[value="tracker"]')?.remove();
+    if (!sourceSelectBoot.querySelector('option[value="tracker"]')) {
+      const trackerOpt = document.createElement("option");
+      trackerOpt.value = "tracker";
+      trackerOpt.textContent = "Local Tracker";
+      sourceSelectBoot.appendChild(trackerOpt);
+    } else {
+      sourceSelectBoot.querySelector('option[value="tracker"]').textContent = "Local Tracker";
+    }
     if (!sourceSelectBoot.querySelector('option[value="playlist"]')) {
       const opt = document.createElement("option");
       opt.value = "playlist";
@@ -745,6 +875,69 @@
   }
 
   decoratePolicyBackupPanel();
+
+  function decorateEditorChrome() {
+    const typeIcons = {
+      movie: "movie",
+      show: "tv",
+      anime: "theater_comedy",
+      season: "layers",
+      episode: "play_circle",
+      blocked: "block",
+    };
+    const setButtonIcon = (btn, icon, label) => {
+      if (!btn) return;
+      btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span>`;
+      btn.setAttribute("aria-label", label);
+    };
+
+    setButtonIcon(reloadBtn, "sync", "Reload");
+    setButtonIcon(addBtn, "add", "Add row");
+    setButtonIcon(saveBtn, "check", "Save changes");
+
+    if (typeFilterWrap && typeFilterWrap.dataset.decorated !== "1") {
+      typeFilterWrap.dataset.decorated = "1";
+      const field = typeFilterWrap.closest(".ins-kv");
+      const label = field?.querySelector(".field-label");
+      if (field && label) {
+        const shell = document.createElement("div");
+        shell.className = "cw-type-filter-shell";
+        const head = document.createElement("div");
+        head.className = "cw-type-filter-head";
+        const title = document.createElement("div");
+        title.className = "field-label";
+        title.textContent = label.textContent || "Types";
+        const clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "cw-type-filter-clear";
+        clear.innerHTML = 'Clear <span class="material-symbol" aria-hidden="true">filter_alt</span>';
+        clear.setAttribute("aria-label", "Clear type filters");
+        clear.addEventListener("click", () => {
+          ["movie", "show", "anime", "season", "episode"].forEach(t => {
+            state.typeFilter[t] = true;
+          });
+          state.blockedOnly = false;
+          syncTypeFilterUI();
+          state.page = 0;
+          persistUIState();
+          renderRows();
+        });
+        head.append(title, clear);
+        label.replaceWith(shell);
+        shell.append(head, typeFilterWrap);
+      }
+
+      typeFilterWrap.querySelectorAll("button").forEach(btn => {
+        const type = btn.dataset.type || (btn.id === "cw-blocked-only" ? "blocked" : "");
+        const text = (btn.textContent || "").trim();
+        btn.innerHTML =
+          `<span class="material-symbol cw-type-icon" aria-hidden="true">${typeIcons[type] || "category"}</span>` +
+          `<span>${_escapeHtml(text)}</span>`;
+      });
+    }
+  }
+
+  decorateEditorChrome();
   const sortHeaders = Array.from(host.querySelectorAll(".cw-table th[data-sort]"));
   const providerMeta = window.CW?.ProviderMeta || {};
   const providerKey = (name) => String(name || "").trim().toUpperCase();
@@ -798,17 +991,12 @@
   function normalizeSource(value) {
     const s = String(value || "").trim();
     if (!SOURCES.includes(s)) return "state";
-    if (s === "tracker" && !state.trackerAvailable) return "state";
     return s;
   }
 
   function ensureTrackerOption() {
     if (!sourceSel) return;
     const existing = sourceSel.querySelector('option[value="tracker"]');
-    if (!state.trackerAvailable) {
-      existing?.remove();
-      return;
-    }
     if (existing) {
       existing.textContent = "Local Tracker";
       return;
@@ -819,6 +1007,16 @@
     const playlistOpt = sourceSel.querySelector('option[value="playlist"]');
     if (playlistOpt) sourceSel.insertBefore(opt, playlistOpt);
     else sourceSel.appendChild(opt);
+  }
+
+  function formatEpisodeVisualTitle(row) {
+    const raw = row && row.raw ? row.raw : {};
+    const t = String(raw.type || row?.type || "").toLowerCase();
+    if (t !== "episode") return "";
+    const series = String(raw.series_title || "").trim();
+    const code = formatSxxEyy(raw.season, raw.episode);
+    if (!series || !code) return "";
+    return `${series} - ${code}`;
   }
 
   function currentTrackerWorkspace() {
@@ -855,7 +1053,9 @@
 
   function setRowsStatus(message) {
     if (Date.now() < statusStickyUntil) return;
-    setStatus(message);
+    if (!statusEl) return;
+    statusEl.title = message || "";
+    if (/rows visible/i.test(String(statusEl.textContent || ""))) statusEl.textContent = "";
   }
 
   if (filterInput && state.filter) filterInput.value = state.filter;
@@ -1203,13 +1403,20 @@
     bulkWrap.style.display = n ? "flex" : "none";
     if (!n) return;
     bulkCount.textContent = `${n} selected`;
+    const setIconOnly = (btn, icon, label) => {
+      btn.classList.add("cw-icon-only");
+      btn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${icon}</span>`;
+      btn.title = label;
+      btn.setAttribute("aria-label", label);
+    };
     if (isPolicySource()) {
-      bulkRemoveBtn.textContent = "Block selected";
-      bulkRestoreBtn.textContent = "Unblock selected";
+      setIconOnly(bulkRemoveBtn, "block", "Block selected");
+      setIconOnly(bulkRestoreBtn, "undo", "Unblock selected");
     } else {
-      bulkRemoveBtn.textContent = "Delete selected";
-      bulkRestoreBtn.textContent = "Restore selected";
+      setIconOnly(bulkRemoveBtn, "delete", "Delete selected");
+      setIconOnly(bulkRestoreBtn, "restore_from_trash", "Restore selected");
     }
+    setIconOnly(bulkClearBtn, "close", "Clear selection");
   }
 
   function clearSelection() {
@@ -1525,6 +1732,17 @@
     return isPolicySource() && !!row && row._origin === "baseline";
   }
 
+  function isExtraKindEditable() {
+    return state.kind === "ratings" || state.kind === "history" || state.kind === "progress";
+  }
+
+  function promoteBaselineEdit(row) {
+    if (!isPolicySource() || !row || row._origin !== "baseline") return false;
+    row._origin = "manual";
+    row.deleted = false;
+    return true;
+  }
+
   const REPLACEABLE_TYPES = ["movie", "show", "anime", "season", "episode"];
 
   function rowType(row) {
@@ -1532,7 +1750,7 @@
   }
 
   function canReplaceRow(row) {
-    if (!isTrackerSource()) return false;
+    if (!isPolicySource()) return false;
     return REPLACEABLE_TYPES.includes(rowType(row));
   }
 
@@ -1840,7 +2058,7 @@
   function renderLockedPopup(pop, close) {
     const status = document.createElement("div");
     status.className = "cw-search-status";
-    status.textContent = "Baseline rows are read-only. Block the row to exclude it.";
+    status.textContent = "Baseline title and ID fields are read-only. Use Extra for a local value correction, or block the row to exclude it.";
     pop.appendChild(status);
     appendPopupActions(pop, [{ label: "Close", kind: "primary", onClick: close }]);
   }
@@ -1867,9 +2085,12 @@
   }
 
   function finishExtraChange(row, displayEl, close) {
+    const promoted = promoteBaselineEdit(row);
     updateExtraDisplay(row, displayEl);
     markChanged();
+    if (promoted) setStatusSticky("A local correction was created for this row.", 4500);
     close();
+    if (promoted) renderRows();
   }
 
   function finishPopupChange(close, rerender = false) {
@@ -1946,10 +2167,12 @@
       icon = "layers";
     } else if (t === "episode") {
       label = "Episode";
-      icon = "live_tv";
+      icon = "open_in_new";
     }
 
     el.innerHTML = "";
+    ["type-movie", "type-show", "type-anime", "type-season", "type-episode"].forEach(cls => el.classList.remove(cls));
+    if (t) el.classList.add(`type-${t}`);
     const text = document.createElement("span");
     text.className = "cw-extra-display-label";
     if (label) {
@@ -2047,11 +2270,8 @@
   }
 
   function openHistoryEditor(row, anchor, displayEl) {
-    const locked = isRowLocked(row);
-
     openPopup(anchor, (pop, close) => {
       appendPopupTitle(pop, "Watched at");
-      if (locked) return renderLockedPopup(pop, close);
 
       const grid = document.createElement("div");
       grid.className = "cw-datetime-grid";
@@ -2081,11 +2301,8 @@
 
 
   function openProgressEditor(row, anchor, displayEl) {
-    const locked = isRowLocked(row);
-
     openPopup(anchor, (pop, close) => {
       appendPopupTitle(pop, "Progress");
-      if (locked) return renderLockedPopup(pop, close);
 
       const grid = document.createElement("div");
       grid.className = "cw-datetime-grid";
@@ -2158,11 +2375,8 @@
   }
 
   function openRatingEditor(row, anchor, displayEl) {
-    const locked = isRowLocked(row);
-
     openPopup(anchor, (pop, close) => {
       appendPopupTitle(pop, "Rating");
-      if (locked) return renderLockedPopup(pop, close);
 
       const grid = document.createElement("div");
       grid.className = "cw-rating-grid";
@@ -2383,7 +2597,7 @@
               const newTitle = picked.title || row.title || "";
               row.title = newTitle;
               row.raw.title = newTitle || null;
-              refs.titleIn.value = newTitle;
+              refs.titleIn.value = formatEpisodeVisualTitle(row) || newTitle;
 
               if (picked.year) {
                 row.year = String(picked.year);
@@ -2542,6 +2756,30 @@
     });
   }
 
+  async function openRawFieldsModal(row) {
+    if (!isPolicySource() || !row) return;
+    const props = {
+      source: state.source,
+      kind: state.kind,
+      key: row.key || "",
+      title: formatEpisodeVisualTitle(row) || row.title || row.key || "",
+      origin: row._origin || "",
+      item: JSON.parse(JSON.stringify(row.raw || {})),
+    };
+    try {
+      if (typeof window.openEditorRawModal === "function") {
+        await window.openEditorRawModal(props);
+        return;
+      }
+      const version = encodeURIComponent(String(window.__CW_VERSION__ || Date.now()));
+      const mod = await import(`/assets/js/modals.js?v=${version}`);
+      if (typeof mod.openModal === "function") await mod.openModal("editor-raw", props);
+    } catch (err) {
+      console.error("editor raw modal failed", err);
+      setStatusSticky("Could not open raw fields.", 3500);
+    }
+  }
+
   function compareValues(aVal, bVal) {
     if (typeof aVal === "number" && typeof bVal === "number") {
       if (aVal < bVal) return -1;
@@ -2631,8 +2869,10 @@
     if (tbody) tbody.innerHTML = "";
 
     const actionHead = host.querySelector(".cw-action-head");
+    const wideActions = isPolicySource();
     if (actionHead) {
-      actionHead.style.width = isTrackerSource() ? "84px" : "46px";
+      actionHead.classList.toggle("cw-action-wide", wideActions);
+      actionHead.style.width = wideActions ? "132px" : "46px";
     }
 
     if (!totalFiltered) {
@@ -2709,6 +2949,7 @@
       };
       const delTd = cell(delBtn);
       delTd.className = "cw-action-cell";
+      if (wideActions) delTd.classList.add("cw-action-wide");
       if (canReplaceRow(row)) {
         const t = rowType(row);
         const repBtn = document.createElement("button");
@@ -2719,6 +2960,17 @@
         repBtn.style.marginLeft = "4px";
         repBtn.onclick = () => openItemReplacer(row, repBtn);
         delTd.appendChild(repBtn);
+      }
+      if (isPolicySource()) {
+        const rawBtn = document.createElement("button");
+        rawBtn.type = "button";
+        rawBtn.className = "cw-btn cw-btn-del";
+        rawBtn.innerHTML = '<span class="material-symbol">data_object</span>';
+        rawBtn.title = "Advanced fields";
+        rawBtn.setAttribute("aria-label", "Advanced fields");
+        rawBtn.style.marginLeft = "4px";
+        rawBtn.onclick = () => openRawFieldsModal(row);
+        delTd.appendChild(rawBtn);
       }
       tr.appendChild(delTd);
 
@@ -2735,7 +2987,7 @@
 
       const typeBtn = document.createElement("button");
       typeBtn.type = "button";
-      typeBtn.className = "cw-extra-display";
+      typeBtn.className = "cw-extra-display cw-type-display";
       typeBtn.disabled = locked;
       if (locked) {
         typeBtn.style.opacity = "0.6";
@@ -2757,12 +3009,20 @@
 
       const titleIn = document.createElement("input");
       titleIn.name = fieldName("title");
-      titleIn.value = row.title || "";
+      titleIn.value = formatEpisodeVisualTitle(row) || row.title || "";
       titleIn.disabled = locked;
+      titleIn.onfocus = () => {
+        const visual = formatEpisodeVisualTitle(row);
+        if (visual) titleIn.value = row.title || "";
+      };
       titleIn.oninput = e => {
         row.title = e.target.value;
         row.raw.title = e.target.value || null;
         markChanged();
+      };
+      titleIn.onblur = () => {
+        const visual = formatEpisodeVisualTitle(row);
+        if (visual) titleIn.value = visual;
       };
       titleRow.appendChild(titleIn);
 
@@ -2833,14 +3093,21 @@
       searchBtn.type = "button";
       searchBtn.className = "cw-title-search-btn";
       searchBtn.innerHTML = '<span class="material-symbol">search</span>';
-      searchBtn.title = "Search and fill IDs";
-      searchBtn.disabled = locked;
-      if (locked) {
+      const searchUsesCorrection = locked && canReplaceRow(row);
+      searchBtn.title = searchUsesCorrection
+        ? (usesCoordinateReplacer(row) ? "Replace episode" : "Search and add correction")
+        : "Search and fill IDs";
+      searchBtn.disabled = locked && !searchUsesCorrection;
+      if (searchBtn.disabled) {
         searchBtn.style.opacity = "0.6";
         searchBtn.style.cursor = "not-allowed";
       }
       searchBtn.onclick = () => {
         if (searchBtn.disabled) return;
+        if (searchUsesCorrection) {
+          openItemReplacer(row, searchBtn);
+          return;
+        }
         openTitleSearchEditor(row, searchBtn, {
           keyIn,
           titleIn,
@@ -2854,7 +3121,7 @@
       titleRow.appendChild(searchBtn);
 
       const subType = (((row.raw && row.raw.type) || row.type || "") + "").toLowerCase();
-      if ((subType === "episode" || subType === "season") && row.raw && row.raw.series_title) {
+      if (subType === "season" && row.raw && row.raw.series_title) {
         const sub = document.createElement("div");
         sub.className = "cw-title-sub";
         let label = row.raw.series_title;
@@ -2881,11 +3148,11 @@
       extraBtn.className = "cw-extra-display";
       updateExtraDisplay(row, extraBtn);
 
-      const extraEditable = !locked && (state.kind === "ratings" || state.kind === "history" || state.kind === "progress");
+      const extraEditable = isExtraKindEditable();
       if (!extraEditable) {
         extraBtn.disabled = true;
         extraBtn.style.opacity = "0.6";
-        extraBtn.style.cursor = locked ? "not-allowed" : "default";
+        extraBtn.style.cursor = "default";
       } else if (state.kind === "ratings") {
         extraBtn.onclick = () => openRatingEditor(row, extraBtn, extraBtn);
       } else if (state.kind === "history") {
@@ -3250,8 +3517,14 @@ function bindFileImport(btn, input, url, done) {
         }
 
         const merged = Object.assign({}, state.baselineItems || {});
+        const manualKeys = new Set();
         for (const [k, v] of Object.entries(state.manualAdds || {})) {
-          if (!(k in merged)) merged[k] = v;
+          const key = String(k || "").trim();
+          if (!key) continue;
+          const existingKey = Object.keys(merged).find(x => String(x || "").toLowerCase() === key.toLowerCase());
+          const finalKey = existingKey || key;
+          merged[finalKey] = v;
+          manualKeys.add(finalKey.toLowerCase());
         }
 
         state.items = merged;
@@ -3266,7 +3539,8 @@ function bindFileImport(btn, input, url, done) {
         );
 
         for (const row of state.rows) {
-          row._origin = baselineKeys.has(row.key) ? "baseline" : "manual";
+          const rowKey = String(row.key || "").toLowerCase();
+          row._origin = manualKeys.has(rowKey) ? "manual" : baselineKeys.has(row.key) ? "baseline" : "manual";
           if (row._origin === "baseline") row.deleted = blocked.has(row.key);
         }
       }
@@ -3294,6 +3568,23 @@ function bindFileImport(btn, input, url, done) {
       const msg = String(e || "");
 
       if (
+        isTrackerSource() &&
+        (msg.includes("404") || /local tracker/i.test(msg) || /workspace/i.test(msg))
+      ) {
+        showStateHint("tracker");
+        state.baselineItems = {};
+        state.manualAdds = {};
+        state.manualBlocks = [];
+        state.items = {};
+        state.rows = [];
+        state.selected = new Set();
+        state.pageRids = [];
+        state.ridSeq = 1;
+        state.workspace = "";
+        renderRows();
+        setTag("warn", "No tracker data");
+        setStatus("");
+      } else if (
         state.source === "state" &&
         (msg.includes("404") || /state\.json/i.test(msg) || /missing state/i.test(msg))
       ) {
@@ -3669,15 +3960,64 @@ if (importProviderSel) {
     });
   }
 
+  function editorIsVisible() {
+    return !!host && !!document.getElementById("page-editor") && host.getClientRects().length > 0;
+  }
+
+  function syncSelectedScopeFromControls() {
+    if (isTrackerSource()) {
+      state.workspace = (snapSel && snapSel.value) ? snapSel.value : state.workspace || "";
+      state.snapshot = "";
+      state.instance = "default";
+      return;
+    }
+    if (state.source === "state") {
+      state.snapshot = (snapSel && snapSel.value) ? snapSel.value : state.snapshot || "";
+      state.instance = (instanceSel && instanceSel.value) ? instanceSel.value : state.instance || "default";
+      return;
+    }
+    if (state.source === "playlist") {
+      state.snapshot = (snapSel && snapSel.value) ? snapSel.value : state.snapshot || "";
+      state.instance = "default";
+    }
+  }
+
+  async function refreshEditor({ force = false } = {}) {
+    if (!force && (!editorIsVisible() || state.hasChanges || state.loading || state.saving)) return;
+    syncSelectedScopeFromControls();
+    state.page = 0;
+    await loadSnapshots();
+    await loadState();
+    await settleStateView();
+  }
+
   if (reloadBtn) {
     reloadBtn.addEventListener("click", async () => {
-      state.snapshot = (snapSel && snapSel.value) ? snapSel.value : "";
-      state.page = 0;
-      await loadSnapshots();
-      await loadState();
-      await settleStateView();
+      reloadBtn.classList.add("is-busy");
+      reloadBtn.setAttribute("aria-busy", "true");
+      try {
+        await refreshEditor({ force: true });
+      } finally {
+        reloadBtn.classList.remove("is-busy");
+        reloadBtn.removeAttribute("aria-busy");
+      }
     });
   }
+
+  let deferredRefreshTimer = null;
+  function queueEditorRefresh(delay = 250) {
+    if (deferredRefreshTimer) window.clearTimeout(deferredRefreshTimer);
+    deferredRefreshTimer = window.setTimeout(() => {
+      deferredRefreshTimer = null;
+      refreshEditor().catch(e => console.warn("[editor] refresh failed", e));
+    }, delay);
+  }
+
+  window.addEventListener("sync-complete", () => queueEditorRefresh(350));
+  window.addEventListener("focus", () => queueEditorRefresh(250));
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) queueEditorRefresh(250);
+  });
 
   if (selectPage) {
     selectPage.addEventListener("change", () => {
