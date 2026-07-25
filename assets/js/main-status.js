@@ -218,6 +218,12 @@
         };
       case "TRAKT":
         return { vip: !!data?.vip, detail: data?.vip ? "VIP status" : "Free account" };
+      case "SIMKL": {
+        const plan = txt(data?.account_type || data?.plan_type || data?.account?.type).toLowerCase();
+        const premium = plan === "pro" || plan === "vip";
+        const label = plan ? (plan === "vip" ? "VIP" : titleCase(plan)) : "";
+        return { vip: premium, detail: label ? `SIMKL plan: ${label}` : "" };
+      }
       case "EMBY":
         return { vip: !!data?.premiere, detail: data?.premiere ? "Premiere active" : "" };
       case "MDBLIST":
