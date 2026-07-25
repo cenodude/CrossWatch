@@ -42,6 +42,16 @@ def _as_int(v: Any) -> int | None:
         return None
 
 
+def _as_float(v: Any) -> float | None:
+    try:
+        if v is None or isinstance(v, bool):
+            return None
+        n = float(v)
+        return n if n == n else None
+    except Exception:
+        return None
+
+
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
     base = id_minimal(obj)
     out: dict[str, Any] = dict(base)
@@ -78,9 +88,17 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
         progress_ms = _as_int(obj.get(k))
         if progress_ms is not None:
             break
-    if progress_ms is None:
+    progress_percent = None
+    for k in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+        progress_percent = _as_float(obj.get(k))
+        if progress_percent is not None:
+            break
+    if progress_ms is None and progress_percent is None:
         raise ValueError("progress_ms_missing")
-    out["progress_ms"] = max(0, progress_ms)
+    if progress_ms is not None:
+        out["progress_ms"] = max(0, progress_ms)
+    if progress_percent is not None:
+        out["progress_percent"] = round(max(0.0, min(100.0, float(progress_percent))), 3)
 
     duration_ms = None
     for k in ("duration_ms", "durationMs", "duration"):
@@ -256,18 +274,19 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved_src.append(obj)
             continue
         new_ms = _as_int(accepted.get("progress_ms"))
-        if new_ms is None or new_ms <= 0:
+        new_percent = _as_float(accepted.get("progress_percent"))
+        if (new_ms is None or new_ms <= 0) and (new_percent is None or new_percent <= 0):
             unresolved_src.append(obj)
             continue
         existing = cur.get(key)
         old_ms = _as_int((existing or {}).get("progress_ms"))
+        old_percent = _as_float((existing or {}).get("progress_percent"))
         new_ts = str(accepted.get("progress_at") or "")
         old_ts = str((existing or {}).get("progress_at") or "")
         should_write = (
             existing is None
-            or old_ms is None
-            or new_ms > old_ms
-            or (new_ms == old_ms and new_ts and old_ts <= new_ts)
+            or (new_ms is not None and (old_ms is None or new_ms > old_ms or (new_ms == old_ms and new_ts and old_ts <= new_ts)))
+            or (new_ms is None and new_percent is not None and (old_percent is None or new_percent > old_percent or (abs(new_percent - old_percent) <= 0.001 and new_ts and old_ts <= new_ts)))
         )
         if should_write:
             cur[key] = accepted

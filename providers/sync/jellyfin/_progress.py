@@ -54,6 +54,47 @@ def _ms_to_ticks(v_ms: Any) -> int | None:
         return None
 
 
+def _to_int(v: Any) -> int | None:
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return int(float(str(v).strip()))
+    except Exception:
+        return None
+
+
+def _progress_percent_value(item: Mapping[str, Any]) -> float | None:
+    for key in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+        try:
+            value = item.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            percent = float(value)
+            if percent == percent:
+                return max(0.0, min(100.0, percent))
+        except Exception:
+            continue
+    return None
+
+
+def _direct_progress_ms(item: Mapping[str, Any]) -> int | None:
+    for key in ("progress_ms", "progressMs", "progress", "viewOffset"):
+        value = _to_int(item.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _progress_ms_for_write(item: Mapping[str, Any], duration_ms: int | None) -> int | None:
+    direct = _direct_progress_ms(item)
+    if direct is not None:
+        return direct
+    percent = _progress_percent_value(item)
+    if percent is None or duration_ms is None or duration_ms <= 0:
+        return None
+    return int(round((percent / 100.0) * float(duration_ms)))
+
+
 def _pick_user_data(row: Mapping[str, Any]) -> Mapping[str, Any]:
     ud = row.get("UserData")
     return ud if isinstance(ud, Mapping) else {}
@@ -300,28 +341,38 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             continue
         _dbg("resolve_hit", canonical_key=str(ck), type=str(it0.get("type") or ""), ids=ids, resolved=len(iids))
 
-        ms = it0.get("progress_ms") or it0.get("progress") or it0.get("viewOffset")
-        ticks = _ms_to_ticks(ms)
-        if ticks is None:
+        direct_ms = _direct_progress_ms(it0)
+        percent = _progress_percent_value(it0)
+        if direct_ms is None and percent is None:
             entry = {"status": "unresolved", "reason": "missing_progress", "item": it0}
             unresolved.append(entry)
             results.append(entry)
             continue
 
-        payload: dict[str, Any] = {"PlaybackPositionTicks": int(ticks)}
         pa = it0.get("progress_at")
-        if isinstance(pa, str) and pa.strip():
-            payload["LastPlayedDate"] = pa.strip()
 
         for iid in iids:
             try:
                 target = _target_state(http, str(uid), str(iid))
+                target_duration = target.get("duration_ms")
+                source_duration = it0.get("duration_ms") or target_duration
+                ms = _progress_ms_for_write(it0, target_duration if target_duration else _to_int(source_duration))
+                ticks = _ms_to_ticks(ms)
+                if ticks is None:
+                    reason = "missing_duration" if percent is not None and not target_duration and not _to_int(it0.get("duration_ms")) else "missing_progress"
+                    entry = {"status": "unresolved", "reason": reason, "item": it0, "remote_item_id": str(iid)}
+                    unresolved.append(entry)
+                    results.append(entry)
+                    continue
+                payload: dict[str, Any] = {"PlaybackPositionTicks": int(ticks)}
+                if isinstance(pa, str) and pa.strip():
+                    payload["LastPlayedDate"] = pa.strip()
                 decision = decide_progress_write(
                     active_session=str(iid) in active_items,
                     source_timestamp=pa,
                     target_timestamp=target.get("timestamp"),
                     source_progress_ms=ms,
-                    source_duration_ms=it0.get("duration_ms"),
+                    source_duration_ms=source_duration,
                     target_progress_ms=target.get("progress_ms"),
                     target_duration_ms=target.get("duration_ms"),
                     target_watched=bool(target.get("watched")),

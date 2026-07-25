@@ -51,6 +51,38 @@ def _to_int(v: Any) -> int | None:
         return None
 
 
+def _progress_percent_value(item: Mapping[str, Any]) -> float | None:
+    for key in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+        try:
+            value = item.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            percent = float(value)
+            if percent == percent:
+                return max(0.0, min(100.0, percent))
+        except Exception:
+            continue
+    return None
+
+
+def _direct_progress_ms(item: Mapping[str, Any]) -> int | None:
+    for key in ("progress_ms", "progressMs", "viewOffset", "progress"):
+        value = _to_int(item.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _progress_ms_for_write(item: Mapping[str, Any], duration_ms: int | None) -> int | None:
+    direct = _direct_progress_ms(item)
+    if direct is not None:
+        return direct
+    percent = _progress_percent_value(item)
+    if percent is None or duration_ms is None or duration_ms <= 0:
+        return None
+    return int(round((percent / 100.0) * float(duration_ms)))
+
+
 def _iso(v: Any) -> str | None:
     if v is None:
         return None
@@ -676,9 +708,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
         for it in items or []:
             it0 = dict(it or {})
-            ms = it0.get("progress_ms") or it0.get("viewOffset") or it0.get("progress")
-            ms_i = _to_int(ms)
-            if ms_i is None or ms_i <= 0:
+            direct_ms = _direct_progress_ms(it0)
+            percent = _progress_percent_value(it0)
+            if direct_ms is None and percent is None:
                 entry = {"status": "unresolved", "reason": "missing_progress", "item": it0}
                 unresolved.append(entry)
                 results.append(entry)
@@ -708,6 +740,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 target_timestamp = getattr(obj, "lastViewedAt", None) or getattr(obj, "viewedAt", None) or getattr(obj, "updatedAt", None)
                 target_progress = _to_int(getattr(obj, "viewOffset", None))
                 duration = _to_int(getattr(obj, "duration", None)) or _to_int(it0.get("duration_ms")) or 0
+                ms_i = _progress_ms_for_write(it0, duration)
+                if ms_i is None or ms_i <= 0:
+                    reason = "missing_duration" if percent is not None and duration <= 0 else "missing_progress"
+                    entry = {"status": "unresolved", "reason": reason, "item": it0}
+                    unresolved.append(entry)
+                    results.append(entry)
+                    if _mods_debug():
+                        _dbg("add.unresolved", hint=reason, canonical_key=str(canonical_key(id_minimal(it0)) or ""), ids=dict(ids_from(it0)))
+                    continue
                 decision = decide_progress_write(
                     active_session=_currently_playing(srv, rk, account_id=sel_aid, username=sel_uname),
                     source_timestamp=source_timestamp,
