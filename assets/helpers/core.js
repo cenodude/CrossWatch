@@ -77,6 +77,66 @@
   const STATUS_CACHE_KEY = "cw.status.v1";
   const DETAILS_MAX_LINES = 2500;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
+  const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
+  const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
+  let routeSyncing = false;
+
+  function routeSegment(value) {
+    try {
+      value = decodeURIComponent(String(value || ""));
+    } catch {
+      value = String(value || "");
+    }
+    return value.trim().toLowerCase().replace(/-/g, "_");
+  }
+
+  function normalizeRouteTab(value) {
+    const tab = routeSegment(value);
+    return ROUTE_TABS.has(tab) ? tab : "main";
+  }
+
+  function normalizeSettingsPane(value) {
+    const pane = routeSegment(value);
+    if (pane === "pairs") return "sync";
+    if (pane === "automation") return "scheduling";
+    if (pane === "ui" || pane === "security") return "app";
+    return SETTINGS_PANES.has(pane) ? pane : "overview";
+  }
+
+  function readRouteHash() {
+    const raw = String(window.location?.hash || "").replace(/^#\/?/, "");
+    if (!raw) return { tab: "main", pane: "overview" };
+    const [pathPart, queryPart = ""] = raw.split("?");
+    const parts = pathPart.split("/").filter(Boolean);
+    const tab = normalizeRouteTab(parts[0]);
+    let pane = "overview";
+    if (tab === "settings") {
+      const queryPane = new URLSearchParams(queryPart).get("pane");
+      pane = normalizeSettingsPane(parts[1] || queryPane || "");
+    }
+    return { tab, pane };
+  }
+
+  function routeHash(tab, pane) {
+    if (tab === "main") return "";
+    if (tab === "settings") {
+      const settingsPane = normalizeSettingsPane(pane || window.__cwSettingsPane || "overview");
+      return settingsPane === "overview" ? "#settings" : `#settings/${settingsPane}`;
+    }
+    return `#${tab}`;
+  }
+
+  function writeRouteHash(tab, pane) {
+    if (routeSyncing) return;
+    const nextHash = routeHash(normalizeRouteTab(tab), pane);
+    if (window.location.hash === nextHash) return;
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash}`;
+    try {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    } catch {
+      window.location.hash = nextHash;
+    }
+  }
 
   function pickCase(obj, key) {
     return obj?.[key] ?? obj?.[String(key).toLowerCase()] ?? obj?.[String(key).toUpperCase()];
@@ -893,7 +953,8 @@
   }
 
   async function showTab(name) {
-    const tab = String(name || "main").toLowerCase();
+    const tab = normalizeRouteTab(name);
+    writeRouteHash(tab);
     setTabHeaderState(tab);
     setPageVisibility(tab);
     document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab, tab } }));
@@ -986,11 +1047,34 @@
     if (tab === "settings") {
       await hydrateSettingsPage();
       state.currentTab = "settings";
+      const pane = normalizeSettingsPane(window.__cwSettingsPane || readRouteHash().pane || "overview");
+      window.__cwSettingsPane = pane;
+      setTimeout(() => window.cwSettingsSelect?.(pane), 0);
       return;
     }
 
     state.currentTab = tab;
   }
+
+  window.addEventListener("hashchange", () => {
+    const route = readRouteHash();
+    routeSyncing = true;
+    try {
+      if (route.tab === "settings") window.__cwSettingsPane = route.pane;
+      Promise.resolve(showTab(route.tab)).catch(() => {});
+      if (route.tab === "settings") setTimeout(() => window.cwSettingsSelect?.(route.pane), 0);
+    } finally {
+      routeSyncing = false;
+    }
+  });
+
+  document.addEventListener("cw-settings-pane-changed", (ev) => {
+    const currentTab = String(state.currentTab || document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main").toLowerCase();
+    if (currentTab !== "settings") return;
+    const pane = normalizeSettingsPane(ev?.detail?.pane || window.__cwSettingsPane || "overview");
+    window.__cwSettingsPane = pane;
+    writeRouteHash("settings", pane);
+  });
 
   document.addEventListener("tab-changed", (ev) => {
     const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();
@@ -1842,7 +1926,11 @@ CW.checkForUpdate = checkForUpdate;
     try { scheduleInsights(); } catch {}
     try { refreshInsights(); } catch {}
     try { _initStatsTooltip(); } catch {}
-    try { showTab("main"); } catch {}
+    try {
+      const route = readRouteHash();
+      if (route.tab === "settings") window.__cwSettingsPane = route.pane;
+      showTab(route.tab);
+    } catch {}
     try { loadPairs(false); } catch {}
     try { window.mountMetadataProviders?.(); } catch {}
     try { window.cwSchedProviderEnsure?.(); } catch {}
