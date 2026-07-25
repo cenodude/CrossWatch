@@ -259,6 +259,12 @@ const hasTmdbConfig = (root) => {
   const inst = root?.instances;
   return !!(inst && typeof inst === "object" && Object.values(inst).some(match));
 };
+const hasNuvioConfig = (root) => {
+  const match = (block) => !!(block && typeof block === "object" && hasValue(block.profile_id) && (hasValue(block.access_token) || hasValue(block.refresh_token)));
+  if (match(root)) return true;
+  const inst = root?.instances;
+  return !!(inst && typeof inst === "object" && Object.values(inst).some(match));
+};
 const getAllowedProviders = (cfg = window._cfgCache || {}) => {
   try {
     if (typeof window.getConfiguredProviders === "function") return new Set(Array.from(window.getConfiguredProviders(cfg) || []).map(canonProv).filter(Boolean));
@@ -274,6 +280,7 @@ const getAllowedProviders = (cfg = window._cfgCache || {}) => {
     { key: "PUBLICMETADB", paths: [["publicmetadb"], ["auth", "publicmetadb"]], keys: ["api_key"] },
   ];
   for (const def of checks) if (def.paths.some((path) => hasAnyConfigValue(pathGet(cfg, path), def.keys))) set.add(def.key);
+  if ([cfg?.nuvio, cfg?.auth?.nuvio].some(hasNuvioConfig)) set.add("NUVIO");
   if ([cfg?.tmdb_sync, cfg?.tmdb, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
   if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
   if ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false) set.add("CROSSWATCH");
@@ -282,7 +289,9 @@ const getAllowedProviders = (cfg = window._cfgCache || {}) => {
 
 const buildProviders = async () => {
   const labels = {}, byProvider = {}, [instApi, cfg] = await Promise.all([jget(`/api/provider-instances?cb=${Date.now()}`), jget(`/api/config?cb=${Date.now()}`)]);
-  const instMap = instApi || {}, allowed = getAllowedProviders(cfg || window._cfgCache || {}), relevant = new Set(["CROSSWATCH", "PLEX", "SIMKL", "TRAKT", "ANILIST", "MDBLIST", "PUBLICMETADB", "JELLYFIN", "EMBY", "TAUTULLI", "TMDB"]);
+  const metaOrder = ProviderMeta().order || [];
+  const relevant = new Set((Array.isArray(metaOrder) ? metaOrder : []).map(canonProv));
+  const instMap = instApi || {}, allowed = getAllowedProviders(cfg || window._cfgCache || {});
   const getRaw = async (key) => {
     const up = canonProv(key), candidates = [up, key, up.toLowerCase(), ...(up === "TMDB" ? ["TMDB_SYNC", "tmdb_sync"] : [])];
     for (const k of candidates) if (k && Object.prototype.hasOwnProperty.call(instMap, k)) return instMap[k];

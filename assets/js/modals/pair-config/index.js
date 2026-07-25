@@ -307,15 +307,8 @@ async function loadProviderInstances(state){
 
 async function loadProviders(state){
   const list=await getJSON("/api/sync/providers?cb="+Date.now());
-  state.providers=Array.isArray(list)?list:[
-    {name:"PLEX",label:"Plex",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"CROSSWATCH",label:"CW Tracker",features:{watchlist:true,ratings:true,history:true,progress:true,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"SIMKL",label:"Simkl",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:false},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"TRAKT",label:"Trakt",features:{watchlist:true,ratings:true,history:true,progress:false,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"},
-    {name:"ANILIST",label:"AniList",features:{watchlist:true,ratings:true,history:false,progress:false,playlists:false},capabilities:{bidirectional:true},version:"0.1"},
-    {name:"JELLYFIN",label:"Jellyfin",features:{watchlist:true,ratings:false,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.2.1"},
-    {name:"EMBY",label:"Emby",features:{watchlist:true,ratings:false,history:true,progress:true,playlists:true},capabilities:{bidirectional:true},version:"1.0.0"} 
-  ]
+  if(!Array.isArray(list)) throw new Error("Invalid sync providers response");
+  state.providers=list
 }
 
 async function loadConfigBits(state){

@@ -14,6 +14,8 @@ from typing import Any, Callable
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
+from cw_platform.modules_registry import sync_provider_names
+
 def _env() -> tuple[
     Any | None,
     Callable[[], dict[str, Any]],
@@ -38,6 +40,7 @@ _AUTH_KEYS = {
     "anilist": ("access_token", "token"),
     "mdblist": ("api_key", "access_token"),
     "publicmetadb": ("api_key",),
+    "nuvio": ("access_token", "refresh_token", "profile_id"),
 }
 _SETTINGS_PROVIDERS = [*_AUTH_KEYS, "tmdb", "tautulli"]
 
@@ -74,6 +77,9 @@ def _settings_auth_summary(cfg: dict[str, Any]) -> dict[str, Any]:
         if provider == "tautulli":
             tb = _dict(block) or _dict(cfg.get("tautulli")) or _dict(_dict(cfg.get("auth")).get("tautulli"))
             return bool(_txt(tb.get("server_url") or tb.get("server")))
+        if provider == "nuvio":
+            b = _dict(block)
+            return bool(_txt(b.get("profile_id"))) and _has(b, "access_token", "refresh_token")
         return _has(block, *_AUTH_KEYS.get(provider, ("access_token", "api_key", "token")))
 
     profiles: list[dict[str, Any]] = []
@@ -1717,8 +1723,7 @@ def register_insights(app: FastAPI) -> None:
                 state = None
 
         prov_block: dict[str, Any] = (state or {}).get("providers") or {}
-        _PROVIDER_ORDER = ("plex", "simkl", "trakt", "jellyfin", "emby", "mdblist", "publicmetadb", "tmdb", "crosswatch", "anilist")
-        providers_set: set[str] = set(_PROVIDER_ORDER)
+        providers_set: set[str] = set(sync_provider_names(upper=False))
         try:
             providers_set.update(
                 str(k).strip().lower()

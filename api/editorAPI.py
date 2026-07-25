@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from cw_platform.config_base import load_config
 from cw_platform.id_map import canonical_key, merge_ids, minimal
-from cw_platform.modules_registry import load_sync_ops, state_read_features
+from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.playlists import PlaylistSnapshot, supports_playlists
@@ -1471,10 +1471,9 @@ def api_editor_state_import_providers() -> dict[str, Any]:
         return {"enabled": False, "providers": []}
 
     cfg = load_config()
-    names = ["PLEX", "SIMKL", "TRAKT", "TMDB", "ANILIST", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB", "TAUTULLI"]
     out: list[dict[str, Any]] = []
 
-    for name in names:
+    for name in sync_provider_names(upper=True):
         ops = load_sync_ops(name)
         if not ops:
             continue
