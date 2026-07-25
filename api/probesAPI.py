@@ -9,6 +9,7 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Mapping
@@ -20,6 +21,7 @@ from fastapi.responses import JSONResponse
 from cw_platform.config_base import load_config as _load_config
 
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
+from providers.sync.simkl._common import simkl_api_params, simkl_user_agent
 
 
 def _provider_auth():
@@ -397,6 +399,22 @@ def _hdr_int(headers: Mapping[str, str], key: str) -> int | None:
         return None
 
 
+def _simkl_settings_post(client_id: str, token: str, timeout: int = HTTP_TIMEOUT) -> tuple[int, bytes]:
+    cid = str(client_id or "").strip()
+    tok = str(token or "").strip()
+    url = "https://api.simkl.com/users/settings"
+    if cid:
+        url = f"{url}?{urllib.parse.urlencode(simkl_api_params(cid))}"
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": simkl_user_agent(),
+        "Authorization": f"Bearer {tok}",
+        "simkl-api-key": cid,
+    }
+    return _http_post(url, headers=headers, data=b"{}", timeout=timeout)
+
+
 def _load_trakt_last_limit_error(
     path: str = "/config/.cw_state/trakt_last_limit_error.json",
 ) -> dict[str, Any]:
@@ -503,8 +521,7 @@ def probe_simkl(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
         PROBE_CACHE["simkl"] = (now, False)
         return False
 
-    headers = {**UA, "Authorization": f"Bearer {tok}", "simkl-api-key": cid}
-    code, _ = _http_get("https://api.simkl.com/users/settings", headers=headers)
+    code, _ = _simkl_settings_post(cid, tok)
     ok = code == 200
     PROBE_CACHE["simkl"] = (now, ok)
     return ok
@@ -656,7 +673,7 @@ def _probe_simkl_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
 
     s: Mapping[str, Any] = (cfg.get("simkl") or {}) if isinstance(cfg.get("simkl"), Mapping) else {}
     cid = str((s.get("client_id") or "")).strip()
-    tok = str((s.get("access_token") or "")).strip()
+    tok = str((s.get("access_token") or s.get("token") or "")).strip()
     if not cid:
         with _CACHE_LOCK:
             PROBE_DETAIL_CACHE[key] = (now, False, "SIMKL: missing client_id")
@@ -666,9 +683,7 @@ def _probe_simkl_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
             PROBE_DETAIL_CACHE[key] = (now, False, "SIMKL: missing access token")
         return False, "SIMKL: missing access token"
 
-    url = "https://api.simkl.com/users/settings"
-    headers = {**UA, "Authorization": f"Bearer {tok}", "simkl-api-key": cid}
-    code, _ = _http_get(url, headers=headers, timeout=HTTP_TIMEOUT)
+    code, _ = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT)
 
     ok = code == 200
     rsn = "" if ok else _reason_http(code, "SIMKL")
@@ -1182,6 +1197,47 @@ def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
         _USERINFO_CACHE[key] = (now, out)
     return out
 
+def simkl_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("simkl", cfg)
+    bust_ts = _consume_bust("simkl")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
+        return cached[1]
+
+    sk = (cfg.get("simkl") or cfg.get("SIMKL") or {}) or {}
+    cid = str((sk.get("client_id") or "")).strip()
+    tok = str((sk.get("access_token") or sk.get("token") or "")).strip()
+    if not cid or not tok:
+        with _CACHE_LOCK:
+            _USERINFO_CACHE[key] = (now, {})
+        return {}
+
+    code, body = _simkl_settings_post(cid, tok, timeout=HTTP_TIMEOUT)
+
+    out: dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+        account = j.get("account") if isinstance(j, dict) else {}
+        user = j.get("user") if isinstance(j, dict) else {}
+        if isinstance(account, Mapping):
+            account_type = str(account.get("type") or "").strip().lower()
+            if account_type:
+                out["account_type"] = account_type
+                out["plan_type"] = account_type
+                out["vip"] = account_type in ("pro", "vip")
+                out["vip_type"] = account_type if account_type in ("pro", "vip") else None
+            if account.get("id") is not None:
+                out["account_id"] = account.get("id")
+        if isinstance(user, Mapping):
+            username = str(user.get("name") or "").strip()
+            if username:
+                out["username"] = username
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, out)
+    return out
+
 def trakt_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("trakt", cfg)
     bust_ts = _consume_bust("trakt")
@@ -1474,6 +1530,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
+    "SIMKL": simkl_user_info,
     "TRAKT": trakt_user_info,
     "ANILIST": anilist_user_info,
     "EMBY": emby_user_info,
@@ -1718,6 +1775,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             userinfo_jobs: dict[str, tuple[Callable[..., dict[str, Any]], dict[str, Any]]] = {}
             if plex_ok:
                 userinfo_jobs["PLEX"] = (plex_user_info, cfg_plex)
+            if simkl_ok:
+                userinfo_jobs["SIMKL"] = (simkl_user_info, cfg_simkl)
             if trakt_ok:
                 userinfo_jobs["TRAKT"] = (trakt_user_info, cfg_trakt)
             if anilist_ok:
@@ -1742,6 +1801,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                             userinfo[prov] = {}
 
             info_plex = userinfo.get("PLEX", {})
+            info_simkl = userinfo.get("SIMKL", {})
             info_trakt = userinfo.get("TRAKT", {})
             info_anilist = userinfo.get("ANILIST", {})
             info_emby = userinfo.get("EMBY", {})
@@ -1821,6 +1881,18 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 providers_out["SIMKL"] = {
                     "connected": simkl_ok,
                     **({} if simkl_ok else {"reason": simkl_reason}),
+                    **(
+                        {}
+                        if not info_simkl
+                        else {
+                            "vip": bool(info_simkl.get("vip")),
+                            "vip_type": info_simkl.get("vip_type"),
+                            "account_type": info_simkl.get("account_type"),
+                            "plan_type": info_simkl.get("plan_type"),
+                            **({"account_id": info_simkl.get("account_id")} if info_simkl.get("account_id") is not None else {}),
+                            **({"username": info_simkl.get("username")} if info_simkl.get("username") else {}),
+                        }
+                    ),
                     "instances": inst_map,
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
