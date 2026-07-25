@@ -23,10 +23,17 @@ const Q = (s, r = document) => r.querySelector(s);
 const QA = (s, r = document) => Array.from(r.querySelectorAll(s));
 const esc = s =>
   (window.CSS?.escape ? CSS.escape(s) : String(s).replace(/[^\w-]/g, "\\$&"));
+const escHtml = s =>
+  String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 const tagOf = (p, f, k) => `${p}::${f}::${k}`;
 const chips = ids =>
   Object.entries(ids || {})
-    .map(([k, v]) => `<span class="chip mono">${k}:${v}</span>`)
+    .map(([k, v]) => `<span class="chip mono">${escHtml(k)}:${escHtml(v)}</span>`)
     .join("");
 
 const displayTitle = r => {
@@ -62,8 +69,8 @@ const renderCounts = c => {
       const label = meta.label?.(key) || key;
       const logo = meta.logLogoPath?.(key) || meta.logoPath?.(key) || "";
       const count = fmtCountNumber(total);
-      return `<span class="prov-stat" title="${label} ${count}">
-        <span class="prov-stat-brand">${logo ? `<img src="${logo}" alt="${label} logo" loading="lazy">` : `<span class="prov-stat-text">${label}</span>`}</span>
+      return `<span class="prov-stat" title="${escHtml(label)} ${escHtml(count)}">
+        <span class="prov-stat-brand">${logo ? `<img src="${escHtml(logo)}" alt="${escHtml(label)} logo" loading="lazy">` : `<span class="prov-stat-text">${escHtml(label)}</span>`}</span>
         <span class="prov-stat-count">${count}</span>
       </span>`;
     })
@@ -513,6 +520,7 @@ export default {
     if (!Array.isArray(COLS) || COLS.length !== 4) COLS = [110, 110, 360, 90];
     let ITEMS = [];
     let VIEW = [];
+    let VIEW_RENDER = [];
     let SORT_KEY = "title";
     let SORT_DIR = "asc";
     let SHOW_IDS = false;
@@ -718,9 +726,9 @@ export default {
           const blk = isBlocked(r.provider, r.feature, r.key);
           const uns = UNSYNCED.has(tag);
           const label = displayTitle(r);
-          return `<div class="row${SELECTED === tag ? " sel" : ""}" data-tag="${tag}">
-            <div class="prov">${r.provider}</div>
-            <div class="feat">${r.feature}</div>
+          return `<div class="row${SELECTED === tag ? " sel" : ""}">
+            <div class="prov">${escHtml(r.provider)}</div>
+            <div class="feat">${escHtml(r.feature)}</div>
             <div class="title-stack">
               <div class="title">${
                 blk
@@ -739,10 +747,10 @@ export default {
                       return `<span class="unsync-dot" title="${escHtml(tip)}"></span>`;
                     })()
                   : ""
-              }${label}</div>
+              }${escHtml(label)}</div>
               <div class="ids mono">${chips(r.ids)}</div>
             </div>
-            <div>${r.type || ""}</div>
+            <div>${escHtml(r.type || "")}</div>
           </div>`;
         })
         .join("");
@@ -768,7 +776,8 @@ export default {
     }
 
     function draw() {
-      grid.innerHTML = renderHeader() + renderBody(sortRows(VIEW.slice()));
+      VIEW_RENDER = sortRows(VIEW.slice());
+      grid.innerHTML = renderHeader() + renderBody(VIEW_RENDER);
       setCols();
       setSummary();
     }
@@ -803,9 +812,12 @@ export default {
       }
       const row = e.target.closest(".row:not(.head)");
       if (row) {
+        const idx = QA(".row:not(.head)", grid).indexOf(row);
+        const item = idx >= 0 ? VIEW_RENDER[idx] : null;
+        if (!item) return;
         DETAIL_VIEW = "issues";
         updateStatusActive();
-        select(row.getAttribute("data-tag"));
+        select(tagOf(item.provider, item.feature, item.key));
       }
     });
 
@@ -852,15 +864,6 @@ export default {
     pendingCount?.addEventListener("click", () => setDetailView("pending"));
     systemCount?.addEventListener("click", () => setDetailView("system"));
     blockedCount?.addEventListener("click", () => setDetailView("blocked"));
-
-    function escHtml(s) {
-      return String(s)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
-    }
 
     function dedupeInfoFindings(list, typeName) {
       if (!Array.isArray(list) || !list.length) return [];
@@ -954,7 +957,7 @@ export default {
       const ids = it.ids || {};
       const inputs = ID_FIELDS.map(name => {
         const val = ids[name] || "";
-        return `<label><span>${name}</span><input type="text" name="${name}" data-idfield="${name}" value="${String(
+        return `<label><span>${escHtml(name)}</span><input type="text" name="${escHtml(name)}" data-idfield="${escHtml(name)}" value="${escHtml(
           val
         )}"></label>`;
       }).join("");
@@ -1452,12 +1455,12 @@ export default {
         : "";
 
       const status = unsynced
-        ? `<span class="badge">${missingLabel}</span>${reasonBadge}${blockedBadge}`
+        ? `<span class="badge">${escHtml(missingLabel)}</span>${reasonBadge}${blockedBadge}`
         : `<span class="badge">No analyzer issues</span>${blockedBadge}`;
 
       const manual = manualIdsBlock(it);
       const header = `<div class="issue">
-        <div class="h">${heading}</div>
+        <div class="h">${escHtml(heading)}</div>
         <div>${status}</div>
         ${manual}
       </div>`;
