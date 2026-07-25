@@ -604,6 +604,35 @@ def _provider_timeout_seconds(cfg: Mapping[str, Any]) -> float:
     return max(3.0, min(raw, 60.0))
 
 
+def _capability_error(cap: PlaybackCapabilities) -> dict[str, Any]:
+    reason = str(cap.reason or "").strip()
+    error_code = "unsupported" if cap.configured else "not_configured"
+    message = reason or "Provider does not support playback listing."
+    if cap.configured and "unavailable" in message.lower():
+        error_code = "provider_unavailable"
+    return {
+        "ok": False,
+        "provider": cap.provider,
+        "provider_label": cap.provider_label,
+        "instance_id": cap.instance_id,
+        "instance_label": cap.instance_label,
+        "operation": "list_progress",
+        "error_code": error_code,
+        "message": message,
+        "retryable": False,
+        "remote_status": None,
+    }
+
+
+def _enrich_list_error(error: dict[str, Any], cap: PlaybackCapabilities | None) -> dict[str, Any]:
+    if cap is None:
+        return error
+    out = dict(error)
+    out.setdefault("provider_label", cap.provider_label)
+    out.setdefault("instance_label", cap.instance_label)
+    return out
+
+
 class PlaybackProgressService:
     def __init__(self) -> None:
         self.adapters: dict[str, PlaybackProgressAdapter] = {
@@ -787,12 +816,15 @@ class PlaybackProgressService:
             and (not instance_filter or spec["instance_id"] == instance_filter)
         ]
         readable_specs: list[dict[str, str]] = []
+        skipped_errors: list[dict[str, Any]] = []
         capabilities = self.capabilities(cfg)
         cap_by_key = {(cap.provider, cap.instance_id): cap for cap in capabilities}
         for spec in specs:
             cap = cap_by_key.get((spec["provider"], spec["instance_id"]))
             if cap and cap.read and cap.included:
                 readable_specs.append(dict(spec))
+            elif cap and cap.included and cap.configured:
+                skipped_errors.append(_capability_error(cap))
 
         LOG.info(
             f"list requested providers={len(readable_specs)} force_refresh={bool(force_refresh)} "
@@ -829,7 +861,11 @@ class PlaybackProgressService:
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
 
-        errors = [r.to_error() for r in results if not r.ok]
+        errors = skipped_errors + [
+            _enrich_list_error(r.to_error(), cap_by_key.get((r.provider, r.instance_id)))
+            for r in results
+            if not r.ok
+        ]
         items = [_with_remaining_fallback(item.to_dict()) for result in results if result.ok for item in result.items]
         _overlay_live_streams(items)
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)

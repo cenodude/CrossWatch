@@ -172,6 +172,19 @@ def _resolve_with_metadata(
     return out
 
 
+def _health_remote_status(health: Mapping[str, Any]) -> int | None:
+    api = health.get("api")
+    if not isinstance(api, Mapping):
+        return None
+    for value in api.values():
+        if not isinstance(value, Mapping):
+            continue
+        code = _int(value.get("status"))
+        if code:
+            return code
+    return None
+
+
 class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
     provider = ""
     provider_label = ""
@@ -181,20 +194,21 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
     def capabilities(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackCapabilities:
         configured = False
         reason = ""
-        if self.ops is None:
+        ops = self.ops
+        if ops is None:
             reason = f"{self.provider_label} playback support is unavailable in this installation."
         else:
             try:
-                configured = bool(self.ops.is_configured(config_view))
+                configured = bool(ops.is_configured(config_view))
             except Exception:
                 configured = False
             if not configured:
                 reason = f"{self.provider_label} is not connected for this instance."
-        can_use = bool(configured and self.ops is not None)
+        can_use = bool(configured and ops is not None)
         can_write = can_use
-        if can_use and self.provider == "jellyfin" and hasattr(self.ops, "progress_write_capability"):
+        if can_use and ops is not None and self.provider == "jellyfin" and hasattr(ops, "progress_write_capability"):
             try:
-                can_write, write_reason, _version = self.ops.progress_write_capability(config_view)
+                can_write, write_reason, _version = ops.progress_write_capability(config_view)
                 if not can_write:
                     reason = write_reason or "unsupported_server_version"
             except Exception:
@@ -220,11 +234,29 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
         )
 
     def list_progress(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str, force_refresh: bool = False) -> PlaybackListResult:
-        if self.ops is None:
+        ops = self.ops
+        if ops is None:
             return PlaybackListResult(ok=False, provider=self.provider, instance_id=instance_id, error_code="provider_unavailable", message=f"{self.provider_label} playback support is unavailable.", retryable=False)
         try:
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
-            rows = self.ops.build_index(config_view, feature="progress")
+            health_fn = getattr(ops, "health", None)
+            if callable(health_fn):
+                health = health_fn(config_view)
+                if isinstance(health, Mapping) and health.get("ok") is False:
+                    status = str(health.get("status") or "down").strip().lower()
+                    details_value = health.get("details")
+                    details = details_value if isinstance(details_value, Mapping) else {}
+                    reason = str(details.get("reason") or status or "server_unavailable").strip()
+                    return PlaybackListResult(
+                        ok=False,
+                        provider=self.provider,
+                        instance_id=instance_id,
+                        error_code="auth_failed" if status == "auth_failed" else "provider_unavailable",
+                        message=f"{self.provider_label} server is not reachable." if status == "down" else f"{self.provider_label} playback refresh failed: {reason}.",
+                        remote_status=_health_remote_status(health),
+                        retryable=status != "auth_failed",
+                    )
+            rows = ops.build_index(config_view, feature="progress")
             metadata_provider = _metadata_provider(config_view)
             items = [
                 record
