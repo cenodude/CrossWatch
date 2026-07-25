@@ -144,3 +144,38 @@ def test_editor_ui_exposes_playlist_source() -> None:
     assert "state.playlistOriginalKeys" in js
     assert 'const SOURCES = ["state", "tracker", "playlist"];' in js
     assert "state.source = normalizeSource(state.source);" in js
+
+
+def test_editor_ui_allows_extra_policy_corrections() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
+    assert "function promoteBaselineEdit(row)" in js
+    assert "const extraEditable = isExtraKindEditable();" in js
+    assert 'row._origin = manualKeys.has(rowKey) ? "manual"' in js
+
+
+def test_editor_ui_exposes_raw_fields_modal() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    js = (root / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
+    modals = (root / "assets" / "js" / "modals.js").read_text(encoding="utf-8")
+    raw_modal = root / "assets" / "js" / "modals" / "editor-raw" / "index.js"
+
+    assert raw_modal.exists()
+    assert "function openRawFieldsModal(row)" in js
+    assert "data_object" in js
+    assert "window.openEditorRawModal" in modals
+    assert "ModalRegistry.register('editor-raw'" in modals
+
+
+def test_editor_refresh_is_source_aware() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
+    assert "function syncSelectedScopeFromControls()" in js
+    assert "state.workspace = (snapSel && snapSel.value)" in js
+    assert 'state.snapshot = "";' in js
+    assert "await refreshEditor({ force: true });" in js
+    assert 'window.addEventListener("sync-complete"' in js

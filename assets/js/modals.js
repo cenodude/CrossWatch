@@ -32,6 +32,7 @@ ModalRegistry.register('upgrade-warning', () => import(_cwVer('./modals/upgrade-
 ModalRegistry.register('capture-compare', () => import(_cwVer('./modals/capture-compare/index.js')));
 ModalRegistry.register('scrobbler-webhook', () => import(_cwVer('./modals/scrobbler-webhook/index.js')));
 ModalRegistry.register('scrobbler-route', () => import(_cwVer('./modals/scrobbler-route/index.js')));
+ModalRegistry.register('editor-raw', () => import(_cwVer('./modals/editor-raw/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
@@ -69,3 +70,4 @@ window.openInsightSettingsModal = (props = {}) => ModalRegistry.open('insight-se
 window.openCaptureCompare = (props = {}) => ModalRegistry.open('capture-compare', props);
 window.openScrobblerWebhookModal = (props = {}) => ModalRegistry.open('scrobbler-webhook', props);
 window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-route', props);
+window.openEditorRawModal = (props = {}) => ModalRegistry.open('editor-raw', props);
