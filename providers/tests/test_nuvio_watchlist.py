@@ -85,6 +85,32 @@ def test_watchlist_add_uses_canonical_id_for_verification() -> None:
     assert push["p_items"][0]["content_id"] == "tmdb:550"
 
 
+def test_watchlist_add_resolves_imdb_to_tmdb_content_id_when_tmdb_configured(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _watchlist
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids == {"imdb": "tt0137523"}
+            return {"ids": {"tmdb": "550"}}
+
+    adapter = FakeAdapter([])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+    monkeypatch.setattr(_watchlist, "_tmdb_enrichment", lambda *_args, **_kwargs: {})
+
+    result = _watchlist.add(adapter, [{"type": "movie", "ids": {"imdb": "tt0137523"}, "title": "Fight Club"}])
+
+    assert result["ok"] is True
+    assert result["confirmed_keys"] == ["imdb:tt0137523"]
+    push = [body for name, body in adapter.client.calls if name == "sync_push_library"][0]
+    assert push["p_items"][0]["content_id"] == "tmdb:550"
+
+
 def test_watchlist_add_skips_tmdb_enrichment_without_metadata_config() -> None:
     from providers.sync.nuvio import _watchlist
 
@@ -129,6 +155,33 @@ def test_watchlist_add_enriches_nuvio_payload_from_configured_tmdb(monkeypatch: 
     assert row["genres"] == ["Drama"]
 
 
+def test_watchlist_add_resolves_tvdb_to_tmdb_content_id_when_tmdb_configured(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _watchlist
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "tv"
+            assert ids == {"tvdb": "355567"}
+            return {"ids": {"tmdb": "69478"}}
+
+    adapter = FakeAdapter([])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+    monkeypatch.setattr(_watchlist, "_tmdb_enrichment", lambda *_args, **_kwargs: {})
+
+    result = _watchlist.add(adapter, [{"type": "show", "ids": {"tvdb": "355567"}, "title": "The Boys"}])
+
+    assert result["ok"] is True
+    assert result["confirmed_keys"] == ["tvdb:355567"]
+    push = [body for name, body in adapter.client.calls if name == "sync_push_library"][0]
+    assert push["p_items"][0]["content_id"] == "tmdb:69478"
+    assert push["p_items"][0]["content_type"] == "series"
+
+
 def test_watchlist_remove_full_replaces_library_without_removed_item() -> None:
     from providers.sync.nuvio import _watchlist
 
@@ -153,7 +206,7 @@ def test_watchlist_failed_verification_reports_numeric_errors() -> None:
     adapter = FakeAdapter([])
     adapter.client = NonPersistingClient([])
 
-    result = _watchlist.add(adapter, [{"type": "movie", "ids": {"imdb": "tt0137523"}}])
+    result = _watchlist.add(adapter, [{"type": "movie", "ids": {"tmdb": "550"}}])
 
     assert result["ok"] is False
     assert result["errors"] == 1

@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -12,11 +13,13 @@ from providers.sync._log import log as cw_log
 
 from ._common import (
     canonical_item_key,
-    content_id_for_item,
     epoch_ms,
     make_item,
+    metadata_title_for_content_id,
+    payload_item_key,
     positive_int,
     pull_watched_rows,
+    resolve_content_id_for_item,
     resolve_episode,
     rpc,
     selected_profile_id,
@@ -31,13 +34,35 @@ def _warn(event: str, **fields: Any) -> None:
     cw_log("NUVIO", "history", "warn", event, **fields)
 
 
-def _item_from_row(row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] | None, str | None]:
+def _is_episode_code(value: Any) -> bool:
+    return bool(re.fullmatch(r"S\d{1,3}E\d{1,4}", str(value or "").strip(), re.I))
+
+
+def _series_title_from_episode_label(value: Any) -> str:
+    match = re.fullmatch(r"\s*(.+?)\s+-\s+S\d{1,3}E\d{1,4}\s*", str(value or "").strip(), re.I)
+    return match.group(1).strip() if match else str(value or "").strip()
+
+
+def _episode_title(item: Mapping[str, Any], season: Any, episode: Any) -> str:
+    code = f"S{int(season):02d}E{int(episode):02d}" if positive_int(season) and positive_int(episode) else ""
+    series = str(item.get("series_title") or item.get("show_title") or "").strip()
+    title = str(item.get("title") or "").strip()
+    if series:
+        return f"{series} - {code}" if code else series
+    return title or code
+
+
+def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    ctype = str(row.get("content_type") or "").strip().lower()
+    title = str(row.get("title") or row.get("name") or "").strip()
+    if ctype in {"series", "show"}:
+        title = metadata_title_for_content_id(adapter, row.get("content_id"), "tv") if not title or _is_episode_code(title) else _series_title_from_episode_label(title)
     item = make_item(
         content_id=row.get("content_id"),
-        content_type=row.get("content_type"),
+        content_type=ctype,
         season=row.get("season"),
         episode=row.get("episode"),
-        title=row.get("title") or row.get("name"),
+        title=title,
         year=row.get("year"),
     )
     watched_at = epoch_ms(row.get("watched_at"))
@@ -58,7 +83,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
     for row in rows:
-        key, item, reason = _item_from_row(row)
+        key, item, reason = _item_from_row(adapter, row)
         if not key or not item:
             if reason:
                 skipped += 1
@@ -75,7 +100,7 @@ def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any =
     it = dict(item or {})
     mini = id_minimal(it)
     typ = str(mini.get("type") or it.get("type") or "").strip().lower()
-    content_id = content_id_for_item(it)
+    content_id = resolve_content_id_for_item(adapter, it)
     watched_at = epoch_ms(mini.get("watched_at") if isinstance(mini, Mapping) else None)
     if watched_at is None:
         watched_at = epoch_ms(it.get("watched_at") or it.get("last_watched_at") or it.get("lastWatchedAt"))
@@ -84,7 +109,6 @@ def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any =
     if watched_at is None:
         return None, "nuvio_history_write_failed"
 
-    title = str(it.get("title") or it.get("series_title") or "").strip()
     if typ in {"episode", "episodes"}:
         resolved = resolve_episode(adapter, it, current_rows=current_rows)
         if not resolved.ok:
@@ -92,18 +116,19 @@ def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any =
         return {
             "content_id": resolved.content_id,
             "content_type": "series",
-            "title": title,
+            "title": _episode_title(it, resolved.destination_season, resolved.destination_episode),
             "season": resolved.destination_season,
             "episode": resolved.destination_episode,
             "watched_at": int(watched_at),
         }, None
     if typ not in {"movie", "movies"}:
         return None, "nuvio_id_missing"
+    title = str(it.get("title") or "").strip()
     return {"content_id": content_id, "content_type": "movie", "title": title, "watched_at": int(watched_at)}, None
 
 
-def _delete_key_for_item(item: Mapping[str, Any]) -> dict[str, Any] | None:
-    content_id = content_id_for_item(item)
+def _delete_key_for_item(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any] | None:
+    content_id = resolve_content_id_for_item(adapter, item)
     if not content_id:
         return None
     key: dict[str, Any] = {"content_id": content_id}
@@ -143,6 +168,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     results: list[dict[str, Any]] = []
     payloads: list[dict[str, Any]] = []
     keys: list[str] = []
+    verify_keys: list[str] = []
     pending_items: list[dict[str, Any]] = []
     skipped = 0
 
@@ -154,13 +180,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             unresolved.append(entry)
             results.append(entry)
             continue
-        target = current.get(key)
+        verify_key = payload_item_key(payload) or key
+        target = current.get(verify_key) or current.get(key)
         if target and (epoch_ms(target.get("watched_at")) or 0) >= int(payload.get("watched_at") or 0):
             skipped += 1
             results.append({"status": "skipped", "reason": "history_unchanged", "item": id_minimal(item), "canonical_key": key})
             continue
         payloads.append(payload)
         keys.append(key)
+        verify_keys.append(verify_key)
         pending_items.append(item)
         results.append({"status": "pending" if not dry_run else "dry_run", "item": id_minimal(item), "canonical_key": key})
 
@@ -178,8 +206,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
 
     after = build_index(adapter) if payloads and not failed else current
     confirmed: list[str] = []
-    for key in ([] if failed else keys):
-        if key in after:
+    for key, verify_key in ([] if failed else zip(keys, verify_keys)):
+        if verify_key in after:
             confirmed.append(key)
         else:
             unresolved.append({"status": "failed", "reason": "nuvio_history_verification_failed", "canonical_key": key})
@@ -196,23 +224,26 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     results: list[dict[str, Any]] = []
     keys_payload: list[dict[str, Any]] = []
     item_keys: list[str] = []
+    verify_keys: list[str] = []
     pending_items: list[dict[str, Any]] = []
     skipped = 0
 
     for item in src:
         item_key = canonical_item_key(item)
-        payload = _delete_key_for_item(current.get(item_key) or item)
+        payload = _delete_key_for_item(adapter, current.get(item_key) or item)
         if not payload:
             entry = _unresolved(item, "nuvio_id_missing")
             unresolved.append(entry)
             results.append(entry)
             continue
-        if item_key and item_key not in current:
+        verify_key = payload_item_key(payload) or item_key
+        if verify_key and verify_key not in current:
             skipped += 1
             results.append({"status": "skipped", "reason": "already_absent", "item": id_minimal(item), "canonical_key": item_key})
             continue
         keys_payload.append(payload)
         item_keys.append(item_key)
+        verify_keys.append(verify_key)
         pending_items.append(item)
         results.append({"status": "pending" if not dry_run else "dry_run", "item": id_minimal(item), "canonical_key": item_key})
 
@@ -230,8 +261,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
 
     after = build_index(adapter) if keys_payload and not failed else current
     confirmed: list[str] = []
-    for key in ([] if failed else item_keys):
-        if key and key not in after:
+    for key, verify_key in ([] if failed else zip(item_keys, verify_keys)):
+        if key and verify_key not in after:
             confirmed.append(key)
         elif key:
             unresolved.append({"status": "failed", "reason": "nuvio_history_verification_failed", "canonical_key": key})

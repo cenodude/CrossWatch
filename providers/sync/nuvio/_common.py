@@ -41,11 +41,14 @@ __all__ = [
     "is_configured",
     "library_lock",
     "make_item",
+    "metadata_title_for_content_id",
+    "payload_item_key",
     "positive_int",
     "progress_key",
     "pull_library_rows",
     "pull_watch_progress_rows",
     "pull_watched_rows",
+    "resolve_content_id_for_item",
     "resolve_episode",
     "rpc",
     "selected_profile_id",
@@ -131,10 +134,6 @@ def ids_for_content_id(content_id: Any) -> dict[str, str] | None:
         value = raw.split(":", 1)[1].strip()
         if value.isdigit():
             return {"tmdb": value}
-    if low.startswith("trakt:"):
-        value = raw.split(":", 1)[1].strip()
-        if value.isdigit():
-            return {"trakt": value}
     return None
 
 
@@ -159,10 +158,89 @@ def content_id_for_item(item: Mapping[str, Any]) -> str | None:
     imdb = str(raw_ids.get("imdb") or "").strip()
     if imdb.startswith("tt") and imdb[2:].isdigit():
         return imdb
-    trakt = str(raw_ids.get("trakt") or "").strip()
-    if trakt.isdigit():
-        return f"trakt:{trakt}"
     return None
+
+
+def _tmdb_metadata_provider(adapter: Any) -> Any | None:
+    cfg = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None) or {}
+    if not isinstance(cfg, Mapping):
+        return None
+    tmdb_obj = cfg.get("tmdb")
+    tmdb: Mapping[str, Any] = tmdb_obj if isinstance(tmdb_obj, Mapping) else {}
+    metadata_obj = cfg.get("metadata")
+    metadata: Mapping[str, Any] = metadata_obj if isinstance(metadata_obj, Mapping) else {}
+    if not str(tmdb.get("api_key") or metadata.get("tmdb_api_key") or "").strip():
+        return None
+    try:
+        from providers.metadata._meta_TMDB import TmdbProvider
+
+        return TmdbProvider(lambda: dict(cfg), lambda _cfg: None)
+    except Exception:
+        return None
+
+
+def _metadata_lookup_ids(item: Mapping[str, Any], item_type: str) -> dict[str, str]:
+    source: Mapping[str, Any] | None = None
+    show_ids = item.get("show_ids")
+    if item_type in {"episode", "episodes", "season", "seasons"} and isinstance(show_ids, Mapping):
+        source = show_ids
+    if source is None:
+        source = merge_ids(ids_from(item), ids_from(id_minimal(item)))
+        if isinstance(show_ids, Mapping):
+            source = merge_ids(source, {str(k): v for k, v in show_ids.items()})
+        content_ids = ids_for_content_id(item.get("content_id"))
+        if content_ids:
+            source = merge_ids(source, content_ids)
+    return {
+        key: str(source.get(key) or "").strip()
+        for key in ("tmdb", "imdb", "tvdb")
+        if str(source.get(key) or "").strip()
+    }
+
+
+def resolve_content_id_for_item(adapter: Any, item: Mapping[str, Any]) -> str | None:
+    remote_content_id = str(item.get("_nuvio_content_id") or "").strip()
+    if remote_content_id and ids_for_content_id(remote_content_id):
+        return remote_content_id
+    direct = content_id_for_item(item)
+    if direct and direct.lower().startswith("tmdb:"):
+        return direct
+    item_type = str(item.get("type") or id_minimal(item).get("type") or "").strip().lower()
+    lookup_ids = _metadata_lookup_ids(item, item_type)
+    if not lookup_ids:
+        return None
+    provider = _tmdb_metadata_provider(adapter)
+    if provider is None:
+        return None
+    try:
+        detail = provider.fetch(
+            entity="tv" if item_type in {"episode", "episodes", "season", "seasons", "show", "series", "tv"} else "movie",
+            ids=lookup_ids,
+            need={"poster": False, "backdrop": False, "ids": True},
+        )
+    except Exception:
+        return None
+    if not isinstance(detail, Mapping):
+        return None
+    ids = detail.get("ids")
+    if not isinstance(ids, Mapping):
+        return None
+    tmdb = str(ids.get("tmdb") or "").strip()
+    return f"tmdb:{tmdb}" if tmdb.isdigit() else None
+
+
+def metadata_title_for_content_id(adapter: Any, content_id: Any, entity: str) -> str:
+    ids = ids_for_content_id(content_id) or {}
+    if not ids:
+        return ""
+    provider = _tmdb_metadata_provider(adapter)
+    if provider is None:
+        return ""
+    try:
+        detail = provider.fetch(entity=entity, ids=ids, need={"poster": False, "backdrop": False, "ids": False})
+    except Exception:
+        return ""
+    return str(detail.get("title") or "").strip() if isinstance(detail, Mapping) else ""
 
 
 def make_item(
@@ -213,6 +291,20 @@ def canonical_item_key(item: Mapping[str, Any]) -> str:
     return canonical_key(id_minimal(item))
 
 
+def payload_item_key(payload: Mapping[str, Any]) -> str:
+    return canonical_item_key(
+        make_item(
+            content_id=payload.get("content_id"),
+            content_type=payload.get("content_type"),
+            season=payload.get("season"),
+            episode=payload.get("episode"),
+            title=payload.get("name"),
+            year=payload.get("release_info"),
+        )
+        or {}
+    )
+
+
 def content_id_key(item: Mapping[str, Any]) -> str:
     content_id = content_id_for_item(item)
     season = positive_int(item.get("season"))
@@ -237,7 +329,7 @@ def progress_key(item: Mapping[str, Any]) -> str | None:
 
 
 def resolve_episode(adapter: Any, item: Mapping[str, Any], *, current_rows: Any = None) -> EpisodeMapResult:
-    content_id = content_id_for_item(item)
+    content_id = resolve_content_id_for_item(adapter, item)
     season = positive_int(item.get("season"))
     episode = positive_int(item.get("episode"))
     if not content_id:
