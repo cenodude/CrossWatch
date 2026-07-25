@@ -255,6 +255,21 @@ def diff_progress(
                 return v
         return None
 
+    def _progress_percent(it: Mapping[str, Any] | None) -> float | None:
+        if not it:
+            return None
+        for k in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+            try:
+                v = it.get(k)
+                if v is None or isinstance(v, bool):
+                    continue
+                p = float(v)
+                if p == p:
+                    return max(0.0, min(100.0, p))
+            except Exception:
+                continue
+        return None
+
     def _epoch(v: Any) -> int | None:
         if v is None:
             return None
@@ -295,6 +310,9 @@ def diff_progress(
         pm = _progress_ms(it)
         if pm is not None:
             base["progress_ms"] = int(pm)
+        pp = _progress_percent(it)
+        if pp is not None:
+            base["progress_percent"] = round(float(pp), 3)
         dm = _duration_ms(it)
         if dm is not None:
             base["duration_ms"] = int(dm)
@@ -314,22 +332,37 @@ def diff_progress(
         if not isinstance(s_it, Mapping):
             continue
         s_ms = _progress_ms(s_it)
-        if s_ms is None or s_ms <= 0:
+        s_percent = _progress_percent(s_it)
+        if (s_ms is None or s_ms <= 0) and (s_percent is None or s_percent <= 0):
             continue
-        if min_ms and s_ms < min_ms:
+        if s_ms is not None and min_ms and s_ms < min_ms:
             continue
         s_dur = _duration_ms(s_it)
-        p = _pct(s_ms, s_dur)
+        p = _pct(s_ms, s_dur) if s_ms is not None else s_percent
         if p is not None and p >= max_percent:
             # Near completion: let history sync handle the played state.
             continue
 
         d_it = dst_idx.get(k)
         d_ms = _progress_ms(d_it) if isinstance(d_it, Mapping) else None
+        d_percent = _progress_percent(d_it) if isinstance(d_it, Mapping) else None
 
         # If destination has no progress, always upsert.
-        if d_ms is None:
+        if d_ms is None and d_percent is None:
             upserts.append(_pack_progress(s_it))
+            continue
+
+        if s_ms is None:
+            if s_percent is None:
+                continue
+            if d_percent is None or abs(float(s_percent) - float(d_percent)) >= 0.1:
+                upserts.append(_pack_progress(s_it))
+            continue
+
+        if d_ms is None:
+            s_pct = _pct(s_ms, s_dur) or s_percent
+            if s_pct is None or d_percent is None or abs(float(s_pct) - float(d_percent)) >= 0.1:
+                upserts.append(_pack_progress(s_it))
             continue
 
         if abs(s_ms - d_ms) < delta_ms:
@@ -366,14 +399,16 @@ def diff_progress(
         if not isinstance(s_it, Mapping):
             continue
         s_ms = _progress_ms(s_it)
-        if s_ms is None or s_ms > 0:
+        s_percent = _progress_percent(s_it)
+        if not ((s_ms is not None and s_ms <= 0) or (s_ms is None and s_percent is not None and s_percent <= 0)):
             continue
 
         d_it = (dst_idx or {}).get(k)
         if not isinstance(d_it, Mapping):
             continue
         d_ms = _progress_ms(d_it)
-        if d_ms is None or d_ms <= 0:
+        d_percent = _progress_percent(d_it)
+        if (d_ms is None or d_ms <= 0) and (d_percent is None or d_percent <= 0):
             continue
 
         base = minimal(s_it)

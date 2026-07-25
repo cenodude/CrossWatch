@@ -72,6 +72,10 @@ try:
 except Exception:
     feat_ratings = None
 try:
+    from .trakt import _progress as feat_progress
+except Exception:
+    feat_progress = None
+try:
     from .trakt import _playlists as feat_playlists
 except Exception:
     feat_playlists = None
@@ -139,6 +143,8 @@ if feat_history:
     _FEATURES["history"] = feat_history
 if feat_ratings:
     _FEATURES["ratings"] = feat_ratings
+if feat_progress:
+    _FEATURES["progress"] = feat_progress
 
 
 def _features_flags() -> dict[str, bool]:
@@ -146,6 +152,7 @@ def _features_flags() -> dict[str, bool]:
         "watchlist": "watchlist" in _FEATURES,
         "ratings": "ratings" in _FEATURES,
         "history": "history" in _FEATURES,
+        "progress": "progress" in _FEATURES,
         "playlists": feat_playlists is not None,
     }
 
@@ -168,6 +175,11 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "unrate": True,
                 "from_date": True,
+            },
+            "progress": {
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         },
@@ -407,6 +419,7 @@ class TRAKTModule:
             "watchlist": True,
             "ratings": True,
             "history": True,
+            "progress": True,
             "playlists": True,
         }
         present = _features_flags()
@@ -506,6 +519,7 @@ class TRAKTModule:
             "watchlist": (core_ok and wl_ok) if (need_wl and "watchlist" in _FEATURES) else False,
             "ratings": (core_ok if (enabled.get("ratings") and "ratings" in _FEATURES) else False),
             "history": (core_ok if (enabled.get("history") and "history" in _FEATURES) else False),
+            "progress": (core_ok if (enabled.get("progress") and "progress" in _FEATURES) else False),
             "playlists": (core_ok if enabled.get("playlists") else False),
         }
 
@@ -719,6 +733,11 @@ class _TraktOPS:
                 "upsert": True,
                 "unrate": True,
                 "from_date": True,
+            },
+            "progress": {
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         }
