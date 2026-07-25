@@ -39,7 +39,7 @@
 </p>
 
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, PublicMetaDB, Emby, SIMKL, Trakt, AniList, TMDb, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, PublicMetaDB, Emby, SIMKL, Trakt, AniList, TMDb, MDBList, Tautulli and Nuvio** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
@@ -47,7 +47,7 @@
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
   * Watchlists, ratings and History
-  * Progress sync your progress status between Plex, Emby, Jellyfin and PublicMetaDB.
+  * Progress sync your progress status between Plex, Emby, Jellyfin, PublicMetaDB and Nuvio.
   * Anime ID mapping (powered AniBridge) for better AniList matching across providers.
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
