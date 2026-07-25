@@ -25,7 +25,7 @@ from .nuvio import _progress as feat_progress
 from .nuvio import _watchlist as feat_watchlist
 from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_watched_rows
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
 
@@ -55,7 +55,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb", "tmdb", "trakt"],
+                "requires_ids": ["tmdb", "imdb", "tvdb"],
                 "requires_duration": True,
             },
             "history": {
@@ -63,14 +63,14 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb", "tmdb", "trakt"],
+                "requires_ids": ["tmdb", "imdb", "tvdb"],
             },
             "watchlist": {
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "upsert": True,
                 "remove": True,
                 "observed_deletes": True,
-                "requires_ids": ["imdb", "tmdb", "trakt"],
+                "requires_ids": ["tmdb", "imdb", "tvdb"],
             },
         },
     }

@@ -10,7 +10,7 @@ from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
 
 from providers.sync._log import log as cw_log
 
-from ._common import canonical_item_key, content_id_for_item, epoch_ms, library_lock, make_item, pull_library_rows, rpc, selected_profile_id
+from ._common import canonical_item_key, epoch_ms, library_lock, make_item, payload_item_key, pull_library_rows, resolve_content_id_for_item, rpc, selected_profile_id
 
 _METADATA_FIELDS = (
     "name",
@@ -174,7 +174,7 @@ def _tmdb_enrichment(adapter: Any, item: Mapping[str, Any], *, content_id: str, 
 
 
 def _remote_for_item(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    content_id = content_id_for_item(item)
+    content_id = resolve_content_id_for_item(adapter, item)
     if not content_id:
         return None, "nuvio_id_missing"
     typ = str(item.get("type") or "").strip().lower()
@@ -200,6 +200,15 @@ def _remote_for_item(adapter: Any, item: Mapping[str, Any]) -> tuple[dict[str, A
         if out.get(key) in (None, "", []) and value not in (None, "", []):
             out[key] = value
     return out, None
+
+
+def _verify_key_for_item(adapter: Any, item: Mapping[str, Any]) -> str:
+    content_id = resolve_content_id_for_item(adapter, item)
+    if not content_id:
+        return canonical_item_key(item)
+    typ = str(item.get("type") or "").strip().lower()
+    content_type = "series" if typ in {"show", "series", "tv"} else "movie"
+    return payload_item_key({"content_id": content_id, "content_type": content_type}) or canonical_item_key(item)
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
@@ -272,6 +281,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         changed = False
         attempted = 0
         pending_keys: list[str] = []
+        verify_keys: list[str] = []
         pending_items: list[dict[str, Any]] = []
 
         for item in src:
@@ -282,13 +292,16 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 unresolved.append(entry)
                 results.append(entry)
                 continue
+            verify_key = payload_item_key(payload) or key
             attempted += 1
-            existing = remote.get(key)
+            existing = remote.get(verify_key) or remote.get(key)
             merged = _merge_metadata(existing, payload)
             if existing != merged:
-                remote[key] = merged
+                remote.pop(key, None)
+                remote[verify_key] = merged
                 changed = True
             pending_keys.append(key)
+            verify_keys.append(verify_key)
             pending_items.append(item)
             results.append({"status": "pending" if not dry_run else "dry_run", "item": id_minimal(item), "canonical_key": key})
 
@@ -301,8 +314,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 return _result(False, 0, attempted, [], [{"status": "failed", "reason": "nuvio_library_replace_failed"}], results, 0)
 
         after = build_index(adapter)
-        confirmed = [key for key in pending_keys if key in after]
-        unresolved.extend({"status": "failed", "reason": "nuvio_library_verification_failed", "item": id_minimal(item), "canonical_key": key} for item, key in zip(pending_items, pending_keys) if key not in after)
+        confirmed = [key for key, verify_key in zip(pending_keys, verify_keys) if verify_key in after]
+        unresolved.extend({"status": "failed", "reason": "nuvio_library_verification_failed", "item": id_minimal(item), "canonical_key": key} for item, key, verify_key in zip(pending_items, pending_keys, verify_keys) if verify_key not in after)
         ok = len(unresolved) == 0
         _info("write_done", op="add", ok=ok, attempted=attempted, confirmed=len(confirmed), unresolved=len(unresolved))
         return _result(ok, len(confirmed), attempted, confirmed, unresolved, results, 0)
@@ -317,22 +330,25 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
         attempted = 0
         skipped = 0
         pending_keys: list[str] = []
+        verify_keys: list[str] = []
         pending_items: list[dict[str, Any]] = []
 
         for item in src:
             key = canonical_item_key(item)
+            verify_key = _verify_key_for_item(adapter, item)
             if not key or key == "unknown:":
                 entry = {"status": "unresolved", "reason": "nuvio_id_missing", "item": id_minimal(item)}
                 unresolved.append(entry)
                 results.append(entry)
                 continue
-            if key not in remote:
+            if verify_key not in remote:
                 skipped += 1
                 results.append({"status": "skipped", "reason": "already_absent", "item": id_minimal(item), "canonical_key": key})
                 continue
             attempted += 1
-            remote.pop(key, None)
+            remote.pop(verify_key, None)
             pending_keys.append(key)
+            verify_keys.append(verify_key)
             pending_items.append(item)
             results.append({"status": "pending" if not dry_run else "dry_run", "item": id_minimal(item), "canonical_key": key})
 
@@ -346,10 +362,10 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
 
         after = build_index(adapter)
         confirmed: list[str] = []
-        for item, key in zip(pending_items, pending_keys):
-            if key and key not in after:
+        for item, key, verify_key in zip(pending_items, pending_keys, verify_keys):
+            if key and verify_key not in after:
                 confirmed.append(key)
-            elif key in current:
+            elif verify_key in current:
                 unresolved.append({"status": "failed", "reason": "nuvio_library_verification_failed", "item": id_minimal(item), "canonical_key": key})
         ok = len(unresolved) == 0
         _info("write_done", op="remove", ok=ok, attempted=attempted, confirmed=len(confirmed), skipped=skipped, unresolved=len(unresolved))

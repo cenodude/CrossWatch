@@ -96,26 +96,86 @@ def test_build_index_merges_duplicate_movie_progress_by_newest_last_watched() ->
     assert index["tmdb:550"]["progress_at"] == 1_785_000_001_000
 
 
-def test_add_encodes_imdb_tmdb_trakt_and_verifies_exact_keys() -> None:
+def test_build_index_enriches_series_progress_title_from_tmdb(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _progress
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "tv"
+            assert ids == {"tmdb": "69478"}
+            return {"title": "The Boys"}
+
+    adapter = FakeAdapter(
+        [
+            {
+                "content_id": "tmdb:69478",
+                "content_type": "series",
+                "video_id": "tmdb:69478:6:2",
+                "season": 6,
+                "episode": 2,
+                "progress_key": "tmdb:69478_s6e2",
+                "position": 703_000,
+                "duration": 3_307_930,
+                "last_watched": 1_784_848_068_000,
+            }
+        ]
+    )
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+
+    item = _progress.build_index(adapter)["tmdb:69478#s06e02"]
+
+    assert item["series_title"] == "The Boys"
+
+
+def test_add_encodes_tmdb_and_verifies_exact_keys() -> None:
     from providers.sync.nuvio import _progress
 
     adapter = FakeAdapter([])
     items = [
-        {"type": "movie", "ids": {"imdb": "tt1234567"}, "progress_ms": 100_000, "duration_ms": 500_000, "progress_at": 1_785_000_000_000},
         {"type": "movie", "ids": {"tmdb": "550"}, "progress_ms": 200_000, "duration_ms": 600_000, "progress_at": 1_785_000_100_000},
-        {"type": "movie", "ids": {"trakt": "12"}, "progress_ms": 300_000, "duration_ms": 700_000, "progress_at": 1_785_000_200_000},
     ]
 
     result = _progress.add(adapter, items)
 
     assert result["ok"] is True
-    assert result["attempted"] == 3
-    assert set(result["confirmed_keys"]) == {"imdb:tt1234567", "tmdb:550", "trakt:12"}
+    assert result["attempted"] == 1
+    assert result["confirmed_keys"] == ["tmdb:550"]
     push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
     assert push["p_profile_id"] == 1
-    assert [entry["content_id"] for entry in push["p_entries"]] == ["tt1234567", "tmdb:550", "trakt:12"]
+    assert [entry["content_id"] for entry in push["p_entries"]] == ["tmdb:550"]
     assert all(entry["duration"] for entry in push["p_entries"])
-    assert push["p_entries"][0]["last_watched"] == 1_785_000_000_000
+    assert push["p_entries"][0]["last_watched"] == 1_785_000_100_000
+
+
+def test_add_movie_progress_resolves_imdb_to_tmdb_content_id_when_tmdb_configured(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _progress
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "movie"
+            assert ids == {"imdb": "tt0137523"}
+            return {"ids": {"tmdb": "550"}}
+
+    adapter = FakeAdapter([])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+    item = {"type": "movie", "ids": {"imdb": "tt0137523"}, "progress_ms": 100_000, "duration_ms": 500_000, "progress_at": 1_785_000_000_000}
+
+    result = _progress.add(adapter, [item])
+
+    assert result["ok"] is True
+    assert result["confirmed_keys"] == ["imdb:tt0137523"]
+    push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
+    assert push["p_entries"][0]["content_id"] == "tmdb:550"
 
 
 def test_add_returns_unresolved_for_unsupported_id_and_missing_duration() -> None:
@@ -126,6 +186,8 @@ def test_add_returns_unresolved_for_unsupported_id_and_missing_duration() -> Non
         adapter,
         [
             {"type": "movie", "ids": {"tvdb": "99"}, "progress_ms": 100_000, "duration_ms": 500_000, "progress_at": 1_785_000_000_000},
+            {"type": "movie", "ids": {"imdb": "tt0137523"}, "progress_ms": 100_000, "duration_ms": 500_000, "progress_at": 1_785_000_000_000},
+            {"type": "movie", "ids": {"trakt": "12"}, "progress_ms": 100_000, "duration_ms": 500_000, "progress_at": 1_785_000_000_000},
             {"type": "movie", "ids": {"tmdb": "550"}, "progress_ms": 100_000, "progress_at": 1_785_000_000_000},
         ],
         dry_run=True,
@@ -134,6 +196,28 @@ def test_add_returns_unresolved_for_unsupported_id_and_missing_duration() -> Non
     assert result["ok"] is False
     assert result["attempted"] == 0
     assert {row["reason"] for row in result["unresolved"]} == {"nuvio_id_missing", "nuvio_duration_missing"}
+    assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
+
+
+def test_add_does_not_write_title_only_unresolved_item() -> None:
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([])
+    item = {
+        "type": "movie",
+        "title": "Untold UK Liverpool's Miracle of Istanbul",
+        "year": 2026,
+        "ids": {"jellyfin": "26889526862003328"},
+        "progress_ms": 100_000,
+        "duration_ms": 500_000,
+        "progress_at": 1_785_000_000_000,
+    }
+
+    result = _progress.add(adapter, [item])
+
+    assert result["ok"] is False
+    assert result["attempted"] == 0
+    assert result["unresolved"][0]["reason"] == "nuvio_id_missing"
     assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
 
 
@@ -216,6 +300,42 @@ def test_add_episode_progress_prefers_show_tmdb_id_over_episode_tmdb_id() -> Non
 
     assert result["ok"] is True
     assert result["confirmed_keys"] == ["tmdb:69478#s06e02"]
+    push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
+    entry = push["p_entries"][0]
+    assert entry["content_id"] == "tmdb:69478"
+    assert entry["video_id"] == "tmdb:69478:6:2"
+
+
+def test_add_episode_progress_resolves_tvdb_to_tmdb_content_id_when_tmdb_configured(monkeypatch: Any) -> None:
+    from providers.metadata import _meta_TMDB
+    from providers.sync.nuvio import _progress
+
+    class FakeTmdb:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            pass
+
+        def fetch(self, *, entity: str, ids: dict[str, str], locale: str | None = None, need: dict[str, bool] | None = None) -> dict[str, Any]:
+            assert entity == "tv"
+            assert ids == {"tvdb": "355567"}
+            return {"ids": {"tmdb": "69478"}}
+
+    adapter = FakeAdapter([])
+    adapter.config["tmdb"] = {"api_key": "tmdb-key"}
+    monkeypatch.setattr(_meta_TMDB, "TmdbProvider", FakeTmdb)
+    item = {
+        "type": "episode",
+        "show_ids": {"tvdb": "355567"},
+        "season": 6,
+        "episode": 2,
+        "progress_ms": 703_000,
+        "duration_ms": 3_307_930,
+        "progress_at": 1_785_000_000_000,
+    }
+
+    result = _progress.add(adapter, [item])
+
+    assert result["ok"] is True
+    assert result["confirmed_keys"] == ["tvdb:355567#s06e02"]
     push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
     entry = push["p_entries"][0]
     assert entry["content_id"] == "tmdb:69478"

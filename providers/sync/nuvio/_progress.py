@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -13,12 +14,14 @@ from providers.sync._progress_policy import decide_progress_write, progress_mate
 
 from ._common import (
     canonical_item_key,
-    content_id_for_item,
     epoch_ms,
     make_item,
+    metadata_title_for_content_id,
+    payload_item_key,
     positive_int,
     progress_key,
     pull_watch_progress_rows,
+    resolve_content_id_for_item,
     resolve_episode,
     rpc,
     selected_profile_id,
@@ -56,13 +59,21 @@ def _duration_ms(item: Mapping[str, Any]) -> int | None:
     return None
 
 
-def _item_from_row(row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] | None, str | None]:
+def _is_episode_code(value: Any) -> bool:
+    return bool(re.fullmatch(r"S\d{1,3}E\d{1,4}", str(value or "").strip(), re.I))
+
+
+def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] | None, str | None]:
+    ctype = str(row.get("content_type") or "").strip().lower()
+    title = str(row.get("title") or row.get("name") or "").strip()
+    if ctype in {"series", "show"} and (not title or _is_episode_code(title)):
+        title = metadata_title_for_content_id(adapter, row.get("content_id"), "tv")
     base = make_item(
         content_id=row.get("content_id"),
-        content_type=row.get("content_type"),
+        content_type=ctype,
         season=row.get("season"),
         episode=row.get("episode"),
-        title=row.get("title") or row.get("name"),
+        title=title,
         year=row.get("year"),
     )
     position = to_int(row.get("position"))
@@ -98,7 +109,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
     for row in rows:
-        key, item, reason = _item_from_row(row)
+        key, item, reason = _item_from_row(adapter, row)
         if not key or not item:
             if reason:
                 skipped += 1
@@ -114,7 +125,7 @@ def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any =
     it = dict(item or {})
     mini = id_minimal(it)
     typ = str(mini.get("type") or it.get("type") or "").strip().lower()
-    content_id = content_id_for_item(it)
+    content_id = resolve_content_id_for_item(adapter, it)
     if not content_id:
         return None, "nuvio_id_missing"
 
@@ -200,7 +211,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     rows = pull_watch_progress_rows(adapter)
     current: dict[str, dict[str, Any]] = {}
     for row in rows:
-        key, item, _reason = _item_from_row(row)
+        key, item, _reason = _item_from_row(adapter, row)
         if key and item:
             current[key] = item
 
@@ -208,6 +219,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     results: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
     keys: list[str] = []
+    verify_keys: list[str] = []
     pending_items: list[dict[str, Any]] = []
     skipped = 0
 
@@ -219,7 +231,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             unresolved.append(entry)
             results.append(entry)
             continue
-        target = current.get(key)
+        verify_key = payload_item_key(payload) or key
+        target = current.get(verify_key) or current.get(key)
         decision = decide_progress_write(
             active_session=False,
             source_timestamp=payload.get("last_watched"),
@@ -238,6 +251,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         entries.append(payload)
         keys.append(key)
+        verify_keys.append(verify_key)
         pending_items.append(item)
         results.append({"status": "pending" if not dry_run else "dry_run", "item": id_minimal(item), "canonical_key": key})
 
@@ -255,26 +269,34 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
 
     after = build_index(adapter) if entries and not write_failed else current
     confirmed: list[str] = []
-    for key, payload in ([] if write_failed else zip(keys, entries)):
-        if _confirmed_after_write(after, key, payload):
+    for key, verify_key, payload in ([] if write_failed else zip(keys, verify_keys, entries)):
+        if _confirmed_after_write(after, verify_key, payload):
             confirmed.append(key)
         else:
-            unresolved.append({"status": "failed", "reason": "nuvio_progress_verification_failed", "canonical_key": key, "item": dict(after.get(key) or {})})
+            unresolved.append({"status": "failed", "reason": "nuvio_progress_verification_failed", "canonical_key": key, "item": dict(after.get(verify_key) or {})})
 
     ok = len(unresolved) == 0
     _info("write_done", op="add", ok=ok, attempted=len(entries), confirmed=len(confirmed), skipped=skipped, unresolved=len(unresolved))
     return _result(ok, len(confirmed), len(entries), confirmed, unresolved, results, skipped)
 
 
-def _remote_key_for_item(current: Mapping[str, Mapping[str, Any]], item: Mapping[str, Any]) -> tuple[str | None, str | None]:
+def _remote_key_for_item(adapter: Any, current: Mapping[str, Mapping[str, Any]], item: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
     item_key = canonical_item_key(item)
-    row = current.get(item_key)
+    content_id = resolve_content_id_for_item(adapter, item)
+    resolved_item = make_item(
+        content_id=content_id,
+        content_type="series" if str(item.get("type") or "").strip().lower() in {"episode", "episodes", "show", "series", "tv"} else "movie",
+        season=item.get("season"),
+        episode=item.get("episode"),
+    ) if content_id else None
+    verify_key = canonical_item_key(resolved_item or {}) or item_key
+    row = current.get(verify_key) or current.get(item_key)
     if isinstance(row, Mapping):
         remote = progress_key(row)
         if remote:
-            return remote, item_key
+            return remote, item_key, verify_key
     remote = progress_key(item)
-    return remote, item_key
+    return remote, item_key, verify_key
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
@@ -284,22 +306,24 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     results: list[dict[str, Any]] = []
     remote_keys: list[str] = []
     item_keys: list[str] = []
+    verify_keys: list[str] = []
     pending_items: list[dict[str, Any]] = []
     skipped = 0
 
     for item in src:
-        remote_key, item_key = _remote_key_for_item(current, item)
+        remote_key, item_key, verify_key = _remote_key_for_item(adapter, current, item)
         if not remote_key:
             entry = _unresolved(item, "nuvio_video_id_missing")
             unresolved.append(entry)
             results.append(entry)
             continue
-        if item_key and item_key not in current:
+        if verify_key and verify_key not in current:
             skipped += 1
             results.append({"status": "skipped", "reason": "already_absent", "item": id_minimal(item), "canonical_key": item_key})
             continue
         remote_keys.append(remote_key)
         item_keys.append(item_key or "")
+        verify_keys.append(verify_key or item_key or "")
         pending_items.append(item)
         results.append({"status": "pending" if not dry_run else "dry_run", "item": id_minimal(item), "canonical_key": item_key})
 
@@ -317,11 +341,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
 
     after = build_index(adapter) if remote_keys and not delete_failed else current
     confirmed: list[str] = []
-    for item_key in ([] if delete_failed else item_keys):
-        if item_key and item_key not in after:
+    for item_key, verify_key in ([] if delete_failed else zip(item_keys, verify_keys)):
+        if item_key and verify_key not in after:
             confirmed.append(item_key)
         elif item_key:
-            unresolved.append({"status": "failed", "reason": "nuvio_progress_verification_failed", "canonical_key": item_key, "item": dict(after.get(item_key) or {})})
+            unresolved.append({"status": "failed", "reason": "nuvio_progress_verification_failed", "canonical_key": item_key, "item": dict(after.get(verify_key) or {})})
 
     ok = len(unresolved) == 0
     _info("write_done", op="remove", ok=ok, attempted=len(remote_keys), confirmed=len(confirmed), skipped=skipped, unresolved=len(unresolved))
