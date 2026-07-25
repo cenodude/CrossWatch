@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import logging
 import time
 from collections import defaultdict
@@ -19,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_message
 
@@ -1537,11 +1539,19 @@ def _validate_manifest_shape(path: Path, module_name: str, manifest: Any, expect
 def _provider_module_diagnostics() -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     required_ops = ("name", "label", "features", "capabilities", "build_index", "add", "remove")
-    for path in sorted(PROVIDERS_SYNC_DIR.glob("_mod_*.py")):
-        if path.name == "_mod_common.py":
+    for expected_name in sync_provider_names(upper=True):
+        if expected_name == "BASE":
             continue
-        expected_name = path.stem.removeprefix("_mod_").upper()
-        module_name = f"providers.sync.{path.stem}"
+        module_name = get_sync_module_path_by_name(expected_name)
+        if not module_name:
+            continue
+        path = PROVIDERS_SYNC_DIR / f"_mod_{expected_name}.py"
+        try:
+            spec = importlib.util.find_spec(module_name)
+            if spec and spec.origin:
+                path = Path(spec.origin)
+        except Exception:
+            pass
         try:
             mod = importlib.import_module(module_name)
         except Exception as e:

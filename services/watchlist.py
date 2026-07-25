@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 import requests
 
 from cw_platform.config_base import CONFIG
-from cw_platform.modules_registry import MODULES as MR_MODULES, load_sync_ops
+from cw_platform.modules_registry import load_sync_ops, sync_provider_names
 from cw_platform.provider_instances import build_config_view, list_instance_ids, normalize_instance_id
 
 try:
@@ -69,26 +69,17 @@ def _save_state_dict(path: Path, state: dict[str, Any]) -> None:
 
 # Registry and provider helpers
 def _registry_sync_providers() -> list[str]:
-    return [
-        k.replace("_mod_", "").upper()
-        for k in (MR_MODULES.get("SYNC") or {}).keys()
-    ]
+    return sync_provider_names(upper=True)
 
 
 def _normalize_label(pid: str) -> str:
-    mapping = {
-        "PLEX": "Plex",
-        "SIMKL": "SIMKL",
-        "TRAKT": "Trakt",
-        "ANILIST": "AniList",
-        "JELLYFIN": "Jellyfin",
-        "EMBY": "Emby",
-        "MDBLIST": "MDBList",
-        "PUBLICMETADB": "PublicMetaDB",
-        "TMDB": "TMDb",
-        "CROSSWATCH": "CrossWatch",
-    }
-    return mapping.get(pid.upper(), pid.title())
+    key = str(pid or "").strip().upper()
+    ops = load_sync_ops(key)
+    if ops:
+        label = str(ops.label() or "").strip()
+        if label:
+            return label
+    return key.title()
 
 
 def _feat_enabled(fmap: dict[str, Any] | None, name: str) -> bool:
@@ -122,6 +113,19 @@ def _configured_via_registry(pid: str, cfg: dict[str, Any]) -> bool:
         return False
     except Exception:
         return False
+
+
+def _ops_supports_watchlist_remove(pid: str) -> bool:
+    ops = load_sync_ops(pid)
+    if not ops:
+        return False
+    feats = ops.features() or {}
+    if feats and not _feat_enabled(dict(feats), "watchlist"):
+        return False
+    caps = ops.capabilities() or {}
+    watchlist = caps.get("watchlist") if isinstance(caps, Mapping) else None
+    return isinstance(watchlist, Mapping) and bool(watchlist.get("remove"))
+
 
 _DEFAULT_INSTANCE = "default"
 
@@ -1461,6 +1465,35 @@ def _delete_on_publicmetadb_batch(
         raise RuntimeError(f"PUBLICMETADB delete unresolved: {res.get('unresolved')}")
 
 
+def _delete_on_ops_watchlist_batch(
+    provider: str,
+    items: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> None:
+    ops = load_sync_ops(provider)
+    if not ops:
+        raise RuntimeError(f"{provider} sync module unavailable")
+
+    payload: list[dict[str, Any]] = []
+    for it in items or []:
+        obj = dict(it.get("item") or {}) if isinstance(it.get("item"), dict) else {}
+        ids = _ids_from_key_or_item(str(it.get("key") or ""), obj)
+        if ids:
+            existing = obj.get("ids")
+            obj["ids"] = (dict(existing) | dict(ids)) if isinstance(existing, dict) else dict(ids)
+        typ = str(it.get("type") or obj.get("type") or "").strip().lower()
+        obj["type"] = "show" if typ in {"tv", "show", "series"} else "movie"
+        payload.append(obj)
+
+    if not payload:
+        raise RuntimeError(f"{provider} delete: no items")
+    res = ops.remove(cfg, payload, feature="watchlist", dry_run=False) or {}
+    if not isinstance(res, dict) or not bool(res.get("ok", True)):
+        raise RuntimeError(f"{provider} delete failed: {res}")
+    if int(res.get("count") or 0) <= 0 and res.get("unresolved"):
+        raise RuntimeError(f"{provider} delete unresolved: {res.get('unresolved')}")
+
+
 # Delete watchlist items
 def delete_watchlist_batch(
     keys: list[str],
@@ -1539,6 +1572,9 @@ def delete_watchlist_batch(
         if p == "CROSSWATCH":
             _delete_on_crosswatch_batch(items, cfg_view)
             return
+        if _ops_supports_watchlist_remove(p):
+            _delete_on_ops_watchlist_batch(p, items, cfg_view)
+            return
         raise RuntimeError(f"delete not supported: {p}")
 
     def _delete_for_provider(p: str) -> dict[str, Any]:
@@ -1556,17 +1592,12 @@ def delete_watchlist_batch(
                 per_instance[inst] = {"ok": False, "error": str(e)}
         return {"ok": any(v.get("ok") for v in per_instance.values()), "per_instance": per_instance, "removed": len(removed)}
 
-    supported = {"CROSSWATCH", "ANILIST", "PLEX", "SIMKL", "TRAKT", "TMDB", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB"}
-
     if prov == "ALL":
         details: dict[str, Any] = {}
         ok_any = False
         deleted_sum = 0
 
         for p in _registry_sync_providers():
-            if p not in supported:
-                details[p] = {"ok": False, "error": "delete not supported"}
-                continue
             res = _delete_for_provider(p)
             details[p] = res
             ok_any |= bool(res.get("ok"))
@@ -1577,7 +1608,7 @@ def delete_watchlist_batch(
 
         return {"ok": ok_any, "deleted": deleted_sum, "provider": "ALL", "details": details, "status": "ok" if ok_any else "error"}
 
-    if prov not in supported:
+    if prov not in set(_registry_sync_providers()):
         raise RuntimeError(f"unknown provider: {prov}")
 
     res = _delete_for_provider(prov)

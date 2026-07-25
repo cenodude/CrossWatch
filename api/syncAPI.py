@@ -9,12 +9,13 @@ from pathlib import Path
 from datetime import datetime, timezone, date
 from contextlib import contextmanager
 
-import dataclasses as _dc, importlib, inspect, json, os, pkgutil, re, shlex, shutil, threading, time, uuid
+import dataclasses as _dc, importlib, inspect, json, os, re, shlex, shutil, threading, time, uuid
 import asyncio
 
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
+from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
 from cw_platform.reason_labels import friendly_reason
 from cw_platform.value_coercion import coerce_bool
 
@@ -168,24 +169,18 @@ def _normalize_features(f: dict | None) -> dict:
             f[k]["anime_only_sync"] = coerce_bool(f[k].get("anime_only_sync", False)) if use_map else False
     return f
 
-_PROGRESS_ALLOWED = {"PLEX", "EMBY", "JELLYFIN", "PUBLICMETADB", "CROSSWATCH"}
-_RATINGS_ALLOWED = {"PLEX", "SIMKL", "TRAKT", "TMDB", "MDBLIST", "PUBLICMETADB", "CROSSWATCH", "ANILIST"}
-
 def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
-    try:
-        src = str(pair.get("source") or "").strip().upper()
-        dst = str(pair.get("target") or "").strip().upper()
-        feats = pair.get("features")
-        if not isinstance(feats, dict) or not feats:
-            return
-
-        # Progress is only supported between providers that currently expose progress sync.
-        if src not in _PROGRESS_ALLOWED or dst not in _PROGRESS_ALLOWED:
-            feats.pop("progress", None)
-        if src not in _RATINGS_ALLOWED or dst not in _RATINGS_ALLOWED:
-            feats.pop("ratings", None)
-    except Exception:
+    src = str(pair.get("source") or "").strip().upper()
+    dst = str(pair.get("target") or "").strip().upper()
+    feats = pair.get("features")
+    if not isinstance(feats, dict) or not feats:
         return
+
+    # Progress/ratings are only supported between providers that expose the feature via sync OPS.
+    if not sync_provider_supports_feature(src, "progress") or not sync_provider_supports_feature(dst, "progress"):
+        feats.pop("progress", None)
+    if not sync_provider_supports_feature(src, "ratings") or not sync_provider_supports_feature(dst, "ratings"):
+        feats.pop("ratings", None)
 
 def _normalize_pair_providers(p: Any) -> dict[str, Any]:
     if not isinstance(p, dict):
@@ -299,9 +294,9 @@ def _seed_summary_provider_counts(phase: str) -> None:
     if ph not in ("pre", "post"):
         return
     try:
-        counts = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
+        counts = _counts_from_state(_load_state()) or _provider_count_defaults()
     except Exception:
-        counts = {k: 0 for k in _PROVIDER_ORDER}
+        counts = _provider_count_defaults()
     if not isinstance(counts, dict):
         return
     _summary_set(f"provider_counts_{ph}", counts)
@@ -686,7 +681,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                     counts = _counts_from_state(state)
                     if counts is None:
                         _append_log("SYNC", "[!] Provider-counts: state malformed; keeping last known counts")
-                        counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or {k: 0 for k in _PROVIDER_ORDER})
+                        counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
                     if counts:
                         _PROVIDER_COUNTS_CACHE["ts"] = time.time()
                         _PROVIDER_COUNTS_CACHE["data"] = counts
@@ -733,7 +728,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             state2 = _load_state()
             counts2 = _counts_from_state(state2) if state2 else None
             if counts2 is None:
-                counts2 = dict(_PROVIDER_COUNTS_CACHE.get("data") or {k: 0 for k in _PROVIDER_ORDER})
+                counts2 = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
             if counts2:
                 _PROVIDER_COUNTS_CACHE["ts"] = time.time()
                 _PROVIDER_COUNTS_CACHE["data"] = counts2
@@ -1622,7 +1617,6 @@ def _is_sync_running() -> bool:
 @router.get("/sync/providers")
 def api_sync_providers() -> JSONResponse:
     HIDDEN = {"BASE"}
-    PKG_CANDIDATES = ("providers.sync",)
     FEATURE_KEYS = ("watchlist", "ratings", "history", "playlists", "progress")
     try:
         from cw_platform.config_base import load_config
@@ -1709,8 +1703,10 @@ def api_sync_providers() -> JSONResponse:
                     getattr(info, "hidden", False) or getattr(info, "is_template", False)
                 ):
                     return None
+                supported_features = getattr(cls, "supported_features", None)
                 try:
-                    feats = dict(cls.supported_features()) if hasattr(cls, "supported_features") else {}
+                    raw_feats = supported_features() if callable(supported_features) else {}
+                    feats = dict(raw_feats) if isinstance(raw_feats, Mapping) else {}
                 except Exception:
                     feats = {}
                 return {
@@ -1746,33 +1742,27 @@ def api_sync_providers() -> JSONResponse:
 
     items: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for pkg_name in PKG_CANDIDATES:
+    for prov_key in sync_provider_names(upper=True):
+        if prov_key in HIDDEN:
+            continue
+        module_path = get_sync_module_path_by_name(prov_key)
+        if not module_path:
+            continue
         try:
-            pkg = importlib.import_module(pkg_name)
+            mod = importlib.import_module(module_path)
         except Exception:
             continue
-        for pkg_path in getattr(pkg, "__path__", []):
-            for m in pkgutil.iter_modules([str(pkg_path)]):
-                if not m.name.startswith("_mod_"):
-                    continue
-                prov_key = m.name.replace("_mod_", "").upper()
-                if prov_key in HIDDEN:
-                    continue
-                try:
-                    mod = importlib.import_module(f"{pkg_name}.{m.name}")
-                except Exception:
-                    continue
-                mf = _manifest_from_module(mod)
-                if not mf:
-                    continue
-                mf["name"] = (mf["name"] or prov_key).upper()
-                mf["label"] = mf.get("label") or mf["name"].title()
-                mf["features"] = _norm_features(mf.get("features"))
-                mf["capabilities"] = _norm_caps(mf.get("capabilities"))
-                if mf["name"] in seen:
-                    continue
-                seen.add(mf["name"])
-                items.append(mf)
+        mf = _manifest_from_module(mod)
+        if not mf:
+            continue
+        mf["name"] = (mf["name"] or prov_key).upper()
+        mf["label"] = mf.get("label") or mf["name"].title()
+        mf["features"] = _norm_features(mf.get("features"))
+        mf["capabilities"] = _norm_caps(mf.get("capabilities"))
+        if mf["name"] in seen:
+            continue
+        seen.add(mf["name"])
+        items.append(mf)
     items.sort(key=lambda x: (x.get("label") or x.get("name") or "").lower())
     return JSONResponse(items)
 
@@ -2022,7 +2012,15 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True) -> dict[str, Any]:
 
 # Provider counts endpoint
 _PROVIDER_COUNTS_CACHE = {"ts": 0.0, "data": None}
-_PROVIDER_ORDER = ("PLEX", "SIMKL", "TRAKT", "JELLYFIN", "EMBY", "MDBLIST", "PUBLICMETADB", "TMDB", "CROSSWATCH", "ANILIST")
+
+def _provider_count_defaults(extra: Any = None) -> dict[str, int]:
+    names = sync_provider_names(upper=True)
+    if isinstance(extra, Mapping):
+        for name in extra.keys():
+            key = str(name or "").strip().upper()
+            if key and key not in names:
+                names.append(key)
+    return {name: 0 for name in names}
 
 def _counts_from_state(state: dict | None) -> dict | None:
     if not isinstance(state, dict):
@@ -2031,12 +2029,12 @@ def _counts_from_state(state: dict | None) -> dict | None:
     if not isinstance(provs, dict) or not provs:
         return None
 
-    out = {k: 0 for k in _PROVIDER_ORDER}
+    out = _provider_count_defaults(provs)
     _append_log = _rt()[8]
 
     for name, pdata in provs.items():
         key = str(name or "").upper()
-        if key not in out:
+        if not key:
             continue
 
         if not isinstance(pdata, dict):
@@ -2135,7 +2133,7 @@ def _provider_counts_fast(*, max_age: int = 30, force: bool = False) -> dict:
         return dict(_PROVIDER_COUNTS_CACHE["data"])
     counts = _counts_from_state(_load_state())
     if counts is None:
-        counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or {k: 0 for k in _PROVIDER_ORDER})
+        counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
     _PROVIDER_COUNTS_CACHE["ts"] = now
     _PROVIDER_COUNTS_CACHE["data"] = counts
     return counts
@@ -2148,7 +2146,7 @@ def api_provider_counts(
 ) -> dict:
     src = (source or "state").lower().strip()
     if src in ("state", "auto"):
-        return _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
+        return _counts_from_state(_load_state()) or _provider_count_defaults()
     return _provider_counts_fast(max_age=max_age, force=bool(force))
 
 # Trigger sync run endpoint
@@ -2211,9 +2209,9 @@ def api_run_summary() -> JSONResponse:
         snap["timeline"] = tl
 
     try:
-        snap["provider_counts"] = _counts_from_state(_load_state()) or {k: 0 for k in _PROVIDER_ORDER}
+        snap["provider_counts"] = _counts_from_state(_load_state()) or _provider_count_defaults()
     except Exception:
-        snap["provider_counts"] = {k: 0 for k in _PROVIDER_ORDER}
+        snap["provider_counts"] = _provider_count_defaults()
 
     try:
         _hydrate_summary_spotlights_from_log(snap)
@@ -2326,6 +2324,14 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             return tuple(sorted((str(k), coerce_bool(v)) for k, v in enabled.items()))
         except Exception:
             return ()
+
+    def _provider_counts_key(counts: Any) -> tuple[Any, ...]:
+        if not isinstance(counts, Mapping):
+            return ()
+        try:
+            return tuple(sorted((str(k).upper(), int(v or 0)) for k, v in counts.items()))
+        except Exception:
+            return ()
     async def agen():
         last_key = None
         last_idx = 0
@@ -2374,15 +2380,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             key = (
                 snap.get("running"),
                 snap.get("exit_code"),
-                snap.get("plex_post"),
-                snap.get("simkl_post"),
-                snap.get("trakt_post"),
-                snap.get("jellyfin_post"),
-                snap.get("emby_post"),
-                snap.get("mdblist_post"),
-                snap.get("publicmetadb_post"),
-                snap.get("tmdb_post"),
-                snap.get("crosswatch_post"),
+                _provider_counts_key(snap.get("provider_counts") or snap.get("provider_counts_post")),
                 snap.get("result"),
                 snap.get("duration_sec"),
                 (snap.get("timeline", {}) or {}).get("done"),

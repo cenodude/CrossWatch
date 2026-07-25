@@ -198,17 +198,23 @@ class _AuthProviderStub:
 
 
 def _ensure_auth_stubs() -> None:
-    for base in ("providers", "providers.auth", "providers.auth._auth_TRAKT"):
-        if base in sys.modules:
-            continue
-        _install_stub(base)
-    sys.modules["providers.auth._auth_TRAKT"].PROVIDER = _AuthProviderStub()  # type: ignore[attr-defined]
+    try:
+        import providers.auth._auth_TRAKT  # noqa: F401
+    except Exception:
+        for base in ("providers", "providers.auth", "providers.auth._auth_TRAKT"):
+            if base in sys.modules:
+                continue
+            _install_stub(base)
+        sys.modules["providers.auth._auth_TRAKT"].PROVIDER = _AuthProviderStub()  # type: ignore[attr-defined]
 
-    for base in ("auth", "auth._auth_TRAKT"):
-        if base in sys.modules:
-            continue
-        _install_stub(base)
-    sys.modules["auth._auth_TRAKT"].PROVIDER = _AuthProviderStub()  # type: ignore[attr-defined]
+    try:
+        import auth._auth_TRAKT  # noqa: F401
+    except Exception:
+        for base in ("auth", "auth._auth_TRAKT"):
+            if base in sys.modules:
+                continue
+            _install_stub(base)
+        sys.modules["auth._auth_TRAKT"].PROVIDER = _AuthProviderStub()  # type: ignore[attr-defined]
 
 
 @pytest.fixture(autouse=True, scope="session")

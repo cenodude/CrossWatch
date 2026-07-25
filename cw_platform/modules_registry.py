@@ -44,6 +44,20 @@ def get_sync_module_path_by_name(name: str) -> str | None:
     return MODULES["SYNC"].get(key)
 
 
+def sync_provider_names(*, upper: bool = True) -> list[str]:
+    names = [
+        str(key).replace("_mod_", "")
+        for key in (MODULES.get("SYNC") or {}).keys()
+        if str(key).startswith("_mod_")
+    ]
+    out: list[str] = []
+    for name in names:
+        value = name.upper() if upper else name.lower()
+        if value and value not in {"BASE", "base"} and value not in out:
+            out.append(value)
+    return out
+
+
 def load_sync_ops(name: str) -> Any | None:
     path = get_sync_module_path_by_name(name)
     if not path:
@@ -52,11 +66,23 @@ def load_sync_ops(name: str) -> Any | None:
     return getattr(mod, "OPS", None)
 
 
+def sync_provider_supports_feature(name: str, feature: str) -> bool:
+    provider = str(name or "").strip().lower()
+    feat = str(feature or "").strip().lower()
+    if not provider or not feat:
+        return False
+    ops = load_sync_ops(provider)
+    if not ops:
+        return False
+    features = ops.features() if callable(getattr(ops, "features", None)) else {}
+    if isinstance(features, Mapping) and features.get(feat) is not True:
+        return False
+    caps = ops.capabilities() if callable(getattr(ops, "capabilities", None)) else {}
+    cap = caps.get(feat) if isinstance(caps, Mapping) else None
+    return bool(cap) if isinstance(cap, Mapping) else bool(isinstance(features, Mapping) and features.get(feat))
+
+
 def state_read_features(ops: Any) -> dict[str, bool]:
-    """Return features that can provide a complete provider-state inventory.
-    Providers may still support writes for a feature that cannot be enumerated
-    completely. Captures and provider-state imports must only use the latter.
-    """
     fn = getattr(ops, "state_read_features", None)
     if not callable(fn):
         fn = getattr(ops, "features", None)

@@ -15,7 +15,7 @@ import re
 import uuid
 
 from cw_platform.config_base import CONFIG, load_config
-from cw_platform.modules_registry import MODULES as MR_MODULES, load_sync_ops, state_read_features
+from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
 Feature = Literal["watchlist", "ratings", "history", "progress"]
@@ -32,7 +32,7 @@ def _utc_now() -> datetime:
 
 
 def _registry_sync_providers() -> list[str]:
-    return [k.replace("_mod_", "").upper() for k in (MR_MODULES.get("SYNC") or {}).keys()]
+    return sync_provider_names(upper=True)
 
 
 def _safe_label(label: str) -> str:

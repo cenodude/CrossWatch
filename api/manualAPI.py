@@ -11,7 +11,7 @@ import requests
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
-from cw_platform.modules_registry import load_sync_ops
+from cw_platform.modules_registry import load_sync_ops, sync_provider_names
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
@@ -138,18 +138,7 @@ def _manual_external_ids(media_type: str, tmdb_id: Any) -> dict[str, Any]:
 def _manual_history_targets(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     merged: dict[tuple[str, str], dict[str, Any]] = {}
 
-    for provider in (
-        "PLEX",
-        "SIMKL",
-        "ANILIST",
-        "TRAKT",
-        "TMDB",
-        "JELLYFIN",
-        "EMBY",
-        "MDBLIST",
-        "PUBLICMETADB",
-        "CROSSWATCH",
-    ):
+    for provider in sync_provider_names(upper=True):
         ops = load_sync_ops(provider)
         if not ops:
             continue
