@@ -72,6 +72,30 @@ def _duration_ms(item: Mapping[str, Any]) -> int | None:
     return None
 
 
+def _progress_percent(item: Mapping[str, Any]) -> float | None:
+    for key in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+        try:
+            value = item.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            percent = float(value)
+            if percent == percent:
+                return max(0.0, min(100.0, percent))
+        except Exception:
+            continue
+    return None
+
+
+def _progress_ms_for_write(item: Mapping[str, Any], duration_ms: int | None) -> int | None:
+    pos_ms = _progress_ms(item) or as_int(item.get("progress"))
+    if pos_ms is not None:
+        return pos_ms
+    percent = _progress_percent(item)
+    if percent is None or duration_ms is None or duration_ms <= 0:
+        return None
+    return int(round((percent / 100.0) * float(duration_ms)))
+
+
 def _resume_id(item: Mapping[str, Any]) -> str | None:
     rid = str(item.get("_publicmetadb_resume_id") or item.get("resume_id") or item.get("id") or "").strip()
     return rid or None
@@ -185,10 +209,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
 def _payload_for_item(item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     mini = id_minimal(item)
-    pos_ms = _progress_ms(mini) or _progress_ms(item) or as_int(item.get("progress"))
     dur_ms = _duration_ms(mini) or _duration_ms(item)
+    pos_ms = _progress_ms_for_write(mini, dur_ms) or _progress_ms_for_write(item, dur_ms)
     if pos_ms is None:
-        return None, "missing_progress"
+        return None, "missing_duration" if (_progress_percent(mini) is not None or _progress_percent(item) is not None) else "missing_progress"
     if pos_ms <= 0:
         return None, "zero_progress"
     if dur_ms is None:
