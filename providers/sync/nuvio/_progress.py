@@ -59,6 +59,30 @@ def _duration_ms(item: Mapping[str, Any]) -> int | None:
     return None
 
 
+def _progress_percent_value(item: Mapping[str, Any]) -> float | None:
+    for key in ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"):
+        try:
+            value = item.get(key)
+            if value is None or isinstance(value, bool):
+                continue
+            percent = float(value)
+            if percent == percent:
+                return max(0.0, min(100.0, percent))
+        except Exception:
+            continue
+    return None
+
+
+def _progress_ms_for_write(item: Mapping[str, Any], duration_ms: int | None) -> int | None:
+    position = _progress_ms(item)
+    if position is not None:
+        return position
+    percent = _progress_percent_value(item)
+    if percent is None or duration_ms is None or duration_ms <= 0:
+        return None
+    return int(round((percent / 100.0) * float(duration_ms)))
+
+
 def _is_episode_code(value: Any) -> bool:
     return bool(re.fullmatch(r"S\d{1,3}E\d{1,4}", str(value or "").strip(), re.I))
 
@@ -129,17 +153,18 @@ def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any =
     if not content_id:
         return None, "nuvio_id_missing"
 
-    position = _progress_ms(mini) if isinstance(mini, Mapping) else None
-    if position is None:
-        position = _progress_ms(it)
-    if position is None or position < 0:
-        return None, "nuvio_progress_invalid"
-
     duration = _duration_ms(mini) if isinstance(mini, Mapping) else None
     if duration is None:
         duration = _duration_ms(it)
     if duration is None:
         return None, "nuvio_duration_missing"
+
+    position = _progress_ms_for_write(mini, duration) if isinstance(mini, Mapping) else None
+    if position is None:
+        position = _progress_ms_for_write(it, duration)
+    if position is None or position < 0:
+        mini_percent = _progress_percent_value(mini) if isinstance(mini, Mapping) else None
+        return None, "nuvio_duration_missing" if mini_percent is not None or _progress_percent_value(it) is not None else "nuvio_progress_invalid"
 
     last_watched = epoch_ms(mini.get("progress_at") if isinstance(mini, Mapping) else None)
     if last_watched is None:
