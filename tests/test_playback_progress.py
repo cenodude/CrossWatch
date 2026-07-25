@@ -7,8 +7,10 @@ from services.playback_progress.service import (
     _record_group_keys,
     PlaybackProgressService,
 )
+from services.playback_progress.models import PlaybackCapabilities
 import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
+from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
 
 
@@ -235,6 +237,101 @@ def test_playback_progress_settings_reports_disabled_profiles_and_clamped_timeou
     assert data["provider_timeout_seconds"] == 60.0
     assert by_key["trakt:default"]["included"] is True
     assert by_key["trakt:TRAKT-P01"]["included"] is False
+
+
+class _UnreadPlaybackAdapter:
+    provider = "trakt"
+    provider_label = "Trakt"
+
+    def __init__(self, *, configured=True):
+        self.configured = configured
+
+    def capabilities(self, config_view, *, instance_id, instance_label):
+        return PlaybackCapabilities(
+            provider=self.provider,
+            provider_label=self.provider_label,
+            instance_id=instance_id,
+            instance_label=instance_label,
+            configured=self.configured,
+            read=False,
+            reason="Trakt playback support is unavailable in this installation." if self.configured else "Trakt is not connected for this instance.",
+        )
+
+
+def test_playback_progress_items_reports_included_unreadable_provider(monkeypatch):
+    cfg = {"trakt": {"access_token": "default-token", "client_id": "client-id"}}
+
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    service.adapters["trakt"] = _UnreadPlaybackAdapter()
+    result = service.items(provider="trakt", force_refresh=True)
+
+    assert result["items"] == []
+    assert result["errors"] == [
+        {
+            "ok": False,
+            "provider": "trakt",
+            "provider_label": "Trakt",
+            "instance_id": "default",
+            "instance_label": "Trakt Default",
+            "operation": "list_progress",
+            "error_code": "provider_unavailable",
+            "message": "Trakt playback support is unavailable in this installation.",
+            "retryable": False,
+            "remote_status": None,
+        }
+    ]
+
+
+def test_playback_progress_items_ignores_included_unconfigured_provider(monkeypatch):
+    cfg = {"trakt": {"access_token": "default-token", "client_id": "client-id"}}
+
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    service.adapters["trakt"] = _UnreadPlaybackAdapter(configured=False)
+    result = service.items(provider="trakt", force_refresh=True)
+
+    assert result["items"] == []
+    assert result["errors"] == []
+
+
+class _DownJellyfinOps:
+    def is_configured(self, cfg):
+        return True
+
+    def progress_write_capability(self, cfg):
+        return True, "", "10.10.0"
+
+    def health(self, cfg):
+        return {
+            "ok": False,
+            "status": "down",
+            "details": {"reason": "server_unreachable"},
+            "api": {"user": {"status": None}},
+        }
+
+    def build_index(self, cfg, *, feature):
+        raise AssertionError("server-down health should stop before build_index")
+
+
+def test_media_server_playback_reports_configured_server_down():
+    adapter = JellyfinPlaybackAdapter()
+    adapter.ops = _DownJellyfinOps()
+
+    result = adapter.list_progress(
+        {"jellyfin": {"server": "http://jellyfin.local", "access_token": "token", "user_id": "u1"}},
+        instance_id="default",
+        instance_label="Jellyfin Default",
+        force_refresh=True,
+    )
+
+    assert result.ok is False
+    assert result.provider == "jellyfin"
+    assert result.error_code == "provider_unavailable"
+    assert result.message == "Jellyfin server is not reachable."
+    assert result.retryable is True
 
 
 class _FakeNuvioOps:

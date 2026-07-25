@@ -61,6 +61,7 @@ html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-da
 html[data-cw-theme=flat-light] #${ROOT_ID} .pp-toolbar,html[data-cw-theme=flat-light] #${ROOT_ID} .pp-pager{--pp-matrix-line:rgba(16,24,40,.065);--pp-matrix-glow:rgba(76,68,170,.050)}
 .pp-loading-grid{min-height:0}.pp-loading-card{cursor:default!important;pointer-events:none}.pp-loading-card:hover{border-color:var(--pp-border)!important;transform:none!important}.pp-loading-card .pp-body:before{opacity:.18!important}.pp-loading-shape{position:relative;display:block;overflow:hidden;background:color-mix(in srgb,var(--pp-soft) 12%,transparent)}.pp-loading-shape:after{content:"";position:absolute;inset:0;background:linear-gradient(110deg,transparent 0%,rgba(255,255,255,.035) 40%,rgba(255,255,255,.16) 50%,rgba(255,255,255,.035) 60%,transparent 100%);transform:translateX(-120%);animation:ppSkeletonShimmer 1.35s ease-in-out infinite}.pp-loading-art{height:100%;background:color-mix(in srgb,var(--pp-soft) 10%,var(--pp-panel-bg-strong))}.pp-loading-copy{display:grid;gap:8px;align-content:start}.pp-loading-line{height:12px;border-radius:999px}.pp-loading-line.title{width:min(62%,240px);height:16px}.pp-loading-line.meta{width:min(40%,150px);opacity:.76}.pp-loading-chip{width:58px;height:22px;border-radius:999px}.pp-loading-progress{gap:5px}.pp-loading-progress .pp-loading-line{width:30%;height:12px}.pp-loading-bar{height:8px;border-radius:999px}.pp-loading-actions{gap:6px;align-self:end}.pp-loading-action{width:58px;height:28px;border-radius:999px}.pp-loading-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.is-loading #pp-refresh .material-symbols-rounded{animation:ppLoadingSpin .8s linear infinite}.is-loading .pp-toolbar{pointer-events:none;transition:opacity .16s ease}.is-initial-loading .pp-toolbar{opacity:.72}.is-initial-loading .pp-status,.is-initial-loading .pp-pager{display:none!important}.cw-compact .pp-loading-card:nth-child(n+4){display:none}@keyframes ppSkeletonShimmer{to{transform:translateX(120%)}}@keyframes ppLoadingSpin{to{transform:rotate(360deg)}}@media(max-width:980px){.pp-loading-card:nth-child(n+4){display:none}}@media(prefers-reduced-motion:reduce){.pp-loading-shape:after,.is-loading #pp-refresh .material-symbols-rounded{animation:none!important}.pp-loading-shape:after{transform:none;opacity:.35}}
 html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-shape{background:#2a2f39}html[data-cw-theme=flat-dark] #${ROOT_ID} .pp-loading-art{background:#242a34}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-loading-shape{background:#e2e7ef}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-loading-art{background:#e9edf3}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-loading-shape:after{background:linear-gradient(110deg,transparent 0%,rgba(255,255,255,.16) 40%,rgba(255,255,255,.76) 50%,rgba(255,255,255,.16) 60%,transparent 100%)}
+.pp-errors{display:grid!important;gap:10px!important;padding:12px!important;background:linear-gradient(180deg,rgba(118,28,46,.20),rgba(10,12,18,.72))!important;border-color:rgba(255,138,160,.24)!important;color:var(--pp-danger-fg);font-size:13px}.pp-errors.hidden{display:none!important}.pp-error-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.pp-error-title{display:flex;align-items:center;gap:9px;font-weight:900}.pp-error-title .material-symbols-rounded{font-size:22px;color:#ff9aaa}.pp-error-copy{color:var(--pp-soft);font-size:12px}.pp-error-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}.pp-error-item{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;align-items:center;min-width:0;padding:10px;border-radius:12px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.035)}.pp-error-logo{display:grid;place-items:center;width:42px;height:42px;border-radius:11px;border:1px solid rgba(255,255,255,.11);background:rgba(255,255,255,.045)}.pp-error-logo img{max-width:30px;max-height:22px;object-fit:contain}.pp-error-main{min-width:0;display:grid;gap:4px}.pp-error-name{font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pp-error-message{color:var(--pp-soft);line-height:1.35}.pp-error-meta{display:flex;gap:6px;flex-wrap:wrap}.pp-error-chip{display:inline-flex;align-items:center;min-height:20px;padding:0 7px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.035);color:var(--pp-soft);font-size:11px;font-weight:800}.pp-error-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.pp-error-actions .pp-btn{min-height:30px;border-radius:999px;font-size:12px}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-errors{background:linear-gradient(180deg,#fff1f3,#fff)!important;border-color:rgba(169,63,77,.28)!important}html[data-cw-theme=flat-light] #${ROOT_ID} .pp-error-item{background:rgba(169,63,77,.035);border-color:rgba(169,63,77,.12)}@media(max-width:640px){.pp-error-head{display:grid}.pp-error-actions{justify-content:flex-start}.pp-error-list{grid-template-columns:1fr}}
 .pp-settings-dialog.cw-insight-set{width:min(1180px,calc(100vw - 24px))!important;max-width:min(1180px,calc(100vw - 24px))!important;max-height:min(720px,calc(100vh - 28px))!important;padding:0!important;gap:0!important;border-radius:16px;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:linear-gradient(180deg,rgba(17,21,31,.98),rgba(13,17,25,.99))!important;border:1px solid rgba(255,255,255,.11)!important;box-shadow:0 30px 90px rgba(0,0,0,.48)!important;color:var(--pp-fg)}
 .pp-settings-dialog.cw-insight-set .cx-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px 14px;border-bottom:1px solid var(--pp-border);background:rgba(255,255,255,.015)}.pp-settings-dialog .head-copy{display:grid;gap:4px;min-width:0}.pp-settings-dialog .head-title{font-size:28px;font-weight:900;line-height:1.05;letter-spacing:0}.pp-settings-dialog .head-sub{font-size:14px;color:var(--pp-soft);line-height:1.35}.pp-settings-dialog .head-actions{display:flex;align-items:center;gap:12px}.pp-settings-dialog .head-chip,.pp-settings-dialog .close-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:42px;padding:0 16px;border-radius:8px;border:1px solid var(--pp-border);background:rgba(255,255,255,.035);color:var(--pp-fg);font-size:13px;font-weight:850;text-transform:uppercase;cursor:pointer}.pp-settings-dialog .head-chip .material-symbols-rounded,.pp-settings-dialog .close-btn .material-symbols-rounded{font-size:19px}
 .pp-settings-dialog .body{overflow:auto;padding:18px 24px 20px}.pp-settings-dialog .layout{display:grid;grid-template-columns:minmax(290px,320px) minmax(0,1fr);gap:22px;align-items:start}.pp-settings-dialog .panel{border-radius:16px;border:1px solid var(--pp-border);background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.018));overflow:hidden}.pp-settings-dialog .panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px 10px;border-bottom:1px solid var(--pp-border-soft)}.pp-settings-dialog .panel-title{font-size:16px;font-weight:900;text-transform:uppercase;letter-spacing:.03em}.pp-settings-dialog .panel-sub{margin-top:4px;color:var(--pp-soft);font-size:12px}.pp-settings-dialog .panel-body{padding:14px}.pp-settings-dialog .settings-stack{display:grid;gap:10px}.pp-settings-dialog .setting-card{display:grid;grid-template-columns:38px minmax(0,1fr) 92px;align-items:center;gap:12px;min-height:66px;padding:12px;border-radius:12px;border:1px solid rgba(124,92,255,.28);background:linear-gradient(180deg,rgba(124,92,255,.12),rgba(124,92,255,.045))}.pp-settings-dialog .setting-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;color:#b69cff;background:rgba(124,92,255,.12)}.pp-settings-dialog .setting-icon .material-symbols-rounded{font-size:24px}.pp-settings-dialog .setting-name{font-size:13px;font-weight:900}.pp-settings-dialog .setting-copy{margin-top:3px;color:var(--pp-soft);font-size:12px}.pp-settings-dialog .setting-card input{width:100%;height:38px;border-radius:9px;border:1px solid var(--pp-border);background:var(--pp-input-bg);color:var(--pp-fg);padding:0 10px;font-weight:850}
@@ -558,10 +559,47 @@ html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171
     wrap.classList.remove("hidden");
   }
 
+  function errorProviderName(e) {
+    const provider = String(e.provider || "").trim();
+    const label = String(e.provider_label || providerLabel(provider)).trim();
+    const instance = String(e.instance_label || e.instance_id || "").trim();
+    if (!instance || instance.toLowerCase() === "default" || instance.toLowerCase() === label.toLowerCase()) return label || "Provider";
+    return `${label || "Provider"} - ${instance}`;
+  }
+
+  function errorTitle(e) {
+    const code = String(e.error_code || "").toLowerCase();
+    if (code === "provider_timeout") return "Provider timed out";
+    if (code === "provider_unavailable") return "Provider unavailable";
+    if (code === "not_configured") return "Connection needs attention";
+    if (code.startsWith("http:")) return `Remote service returned ${code.slice(5)}`;
+    if (e.retryable) return "Provider could not refresh";
+    return "Provider notice";
+  }
+
+  function errorItem(e) {
+    const provider = String(e.provider || "").trim();
+    const status = e.remote_status ? `HTTP ${e.remote_status}` : String(e.error_code || "").replace(/_/g, " ");
+    const retry = e.retryable ? `<span class="pp-error-chip">Retryable</span>` : "";
+    return `<article class="pp-error-item">
+      <span class="pp-error-logo">${provider ? `<img src="${esc(providerLogLogo(provider))}" alt="" onerror="this.remove()">` : icon("warning")}</span>
+      <span class="pp-error-main">
+        <span class="pp-error-name">${esc(errorProviderName(e))}</span>
+        <span class="pp-error-message"><strong>${esc(errorTitle(e))}.</strong> ${esc(e.message || e.error_code || "Playback progress could not be refreshed.")}</span>
+        <span class="pp-error-meta">${status ? `<span class="pp-error-chip">${esc(status)}</span>` : ""}${retry}</span>
+      </span>
+    </article>`;
+  }
+
   function renderErrors() {
     const el = document.getElementById("pp-errors");
     if (!state.errors.length) return el.classList.add("hidden");
-    el.innerHTML = state.errors.map((e) => `${esc(e.provider || "Provider")} ${esc(e.instance_id || "")}: ${esc(e.message || e.error_code || "failed")}`).join("<br>");
+    const count = state.errors.length;
+    const partial = state.items.length > 0;
+    el.innerHTML = `<div class="pp-error-head">
+      <div><div class="pp-error-title">${icon(partial ? "sync_problem" : "error")}<span>${partial ? "Some providers could not refresh" : "Playback Progress could not refresh"}</span></div><div class="pp-error-copy">${partial ? "Showing available records from the providers that responded." : "Check the provider connection or try again in a moment."}</div></div>
+      <div class="pp-error-actions"><button class="pp-btn" type="button" data-pp-error-action="settings">${icon("settings")}Settings</button><button class="pp-btn" type="button" data-pp-error-action="retry">${icon("refresh")}Retry</button></div>
+    </div><div class="pp-error-list">${state.errors.slice(0, 6).map(errorItem).join("")}</div>${count > 6 ? `<div class="pp-error-copy">${esc(count - 6)} more provider notice${count - 6 === 1 ? "" : "s"} hidden.</div>` : ""}`;
     el.classList.remove("hidden");
   }
 
@@ -672,6 +710,9 @@ html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171
       state.items = Array.isArray(data.items) ? data.items : [];
       state.providers = Array.isArray(data.providers) ? data.providers : [];
       state.errors = Array.isArray(data.errors) ? data.errors : [];
+      if (data.ok === false && !state.errors.length) {
+        state.errors = [{ provider: "playback_progress", provider_label: "Playback Progress", message: data.message || data.error || "Playback Progress request failed.", retryable: true }];
+      }
       state.total = Number(data.total || 0);
       state.page = Number(data.page || 1);
       providerOptions();
@@ -766,6 +807,8 @@ html[data-cw-theme=flat-dark] .pp-settings-dialog.cw-insight-set{background:#171
     r.addEventListener("click", async (e) => {
       const btn = e.target?.closest?.("button");
       if (btn) {
+        if (btn.dataset?.ppErrorAction === "retry") return load(true);
+        if (btn.dataset?.ppErrorAction === "settings") return openSettings();
         if (btn.id === "pp-settings") return openSettings();
         if (btn.id === "pp-settings-cancel") return closeSettings();
         if (btn.id === "pp-settings-reset") { resetSettingsDraft(); return; }
