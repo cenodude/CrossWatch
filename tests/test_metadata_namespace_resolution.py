@@ -63,6 +63,28 @@ def _install(monkeypatch, tmp_path, provider, resolve_result=None):
     metaAPI._RESOLVED_ENTITY_MEMO.clear()
 
 
+def test_fetch_resolves_tvdb_id_to_tv_details() -> None:
+    provider = _provider(
+        {
+            "/find/355567": {"tv_results": [{"id": 69478}], "movie_results": []},
+            "/tv/69478": {"id": 69478, "name": "The Boys", "first_air_date": "2019-07-25"},
+            "/tv/69478/images": {"posters": [{"file_path": "/poster.jpg"}], "backdrops": []},
+        }
+    )
+
+    out = provider.fetch(
+        entity="tv",
+        ids={"tvdb": "355567"},
+        need={"poster": True, "backdrop": False, "ids": False},
+    )
+
+    assert out["title"] == "The Boys"
+    assert out["year"] == 2019
+    assert out["ids"] == {"tmdb": "69478"}
+    assert out["images"]["poster"][0]["url"] == "https://image.tmdb.org/t/p/w780/poster.jpg"
+    assert provider.calls[:2] == ["/find/355567", "/tv/69478"]
+
+
 def test_wrong_tv_namespace_resolves_to_movie() -> None:
     provider = _provider({"/movie/8392": TOTORO, "/tv/8392": POPEYE})
     outcome = provider.resolve_namespace(

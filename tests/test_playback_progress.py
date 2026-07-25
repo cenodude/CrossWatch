@@ -292,12 +292,19 @@ def test_playback_progress_uses_explicit_nuvio_adapter(monkeypatch):
     assert result["items"][0]["progress_percent"] == 20.0
 
 
-def test_nuvio_playback_progress_enriches_missing_episode_title_from_tmdb(monkeypatch):
+def test_nuvio_playback_progress_enriches_missing_episode_metadata_from_content_id(monkeypatch):
     class FakeMetadata:
         def fetch(self, *, entity, ids, locale=None, need=None):
             assert entity == "tv"
             assert ids == {"tmdb": "69478"}
-            return {"title": "The Boys", "year": 2019}
+            return {
+                "title": "The Boys",
+                "year": 2019,
+                "images": {
+                    "poster": [{"url": "https://image.tmdb.org/t/p/w342/poster.jpg"}],
+                    "backdrop": [{"url": "https://image.tmdb.org/t/p/w780/backdrop.jpg"}],
+                },
+            }
 
     caps = nuvio_playback_adapter.NuvioPlaybackAdapter().capabilities(
         {"nuvio": {"profile_id": 1}},
@@ -329,3 +336,43 @@ def test_nuvio_playback_progress_enriches_missing_episode_title_from_tmdb(monkey
     assert record.title == "The Boys"
     assert record.series_title == "The Boys"
     assert record.year == 2019
+    assert record.poster_url == "https://image.tmdb.org/t/p/w342/poster.jpg"
+    assert record.backdrop_url == "https://image.tmdb.org/t/p/w780/backdrop.jpg"
+
+
+def test_nuvio_playback_progress_enriches_episode_metadata_from_tvdb_id(monkeypatch):
+    class FakeMetadata:
+        def fetch(self, *, entity, ids, locale=None, need=None):
+            assert entity == "tv"
+            assert ids == {"tvdb": "355567"}
+            return {"title": "The Boys", "year": 2019}
+
+    caps = nuvio_playback_adapter.NuvioPlaybackAdapter().capabilities(
+        {"nuvio": {"profile_id": 1}},
+        instance_id="default",
+        instance_label="Default",
+    )
+    item = {
+        "type": "episode",
+        "ids": {},
+        "show_ids": {"tvdb": "355567"},
+        "series_title": "Untitled",
+        "season": 6,
+        "episode": 2,
+        "progress_ms": 703000,
+        "duration_ms": 3307930,
+        "progress_at": 1784848068000,
+    }
+
+    record = nuvio_playback_adapter.NuvioPlaybackAdapter()._record(
+        "tvdb:355567#s06e02",
+        item,
+        "default",
+        "Default",
+        caps,
+        FakeMetadata(),
+    )
+
+    assert record is not None
+    assert record.title == "The Boys"
+    assert record.series_title == "The Boys"
