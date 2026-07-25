@@ -19,6 +19,7 @@ from cw_platform.provider_instances import build_provider_config_view, get_insta
 from .adapters.base import PlaybackProgressAdapter, configured_label
 from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter, PlexPlaybackAdapter
 from .adapters.mdblist import MDBListPlaybackAdapter
+from .adapters.nuvio import NuvioPlaybackAdapter
 from .adapters.publicmetadb import PublicMetaDBPlaybackAdapter
 from .adapters.simkl import SimklPlaybackAdapter
 from .adapters.trakt import TraktPlaybackAdapter
@@ -30,7 +31,7 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin")
+PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -574,6 +575,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
         ),
         "emby": ("access_token", "user_id"),
         "jellyfin": ("access_token", "user_id"),
+        "nuvio": ("access_token", "refresh_token", "profile_id"),
     }.get(str(provider or "").strip().lower(), ())
     return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
 
@@ -612,9 +614,14 @@ class PlaybackProgressService:
             "plex": PlexPlaybackAdapter(),
             "emby": EmbyPlaybackAdapter(),
             "jellyfin": JellyfinPlaybackAdapter(),
+            "nuvio": NuvioPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._lock = threading.RLock()
+
+    def _adapter(self, provider: str) -> PlaybackProgressAdapter | None:
+        provider_key = str(provider or "").strip().lower()
+        return self.adapters.get(provider_key)
 
     def provider_instances(self, cfg: Mapping[str, Any] | None = None) -> list[dict[str, str]]:
         config = cfg or load_config()
@@ -638,7 +645,7 @@ class PlaybackProgressService:
         out: list[PlaybackCapabilities] = []
         for spec in self.provider_instances(config):
             provider = spec["provider"]
-            adapter = self.adapters.get(provider)
+            adapter = self._adapter(provider)
             if not adapter:
                 continue
             config_view = build_provider_config_view(config, provider, spec["instance_id"])
@@ -699,7 +706,9 @@ class PlaybackProgressService:
     ) -> PlaybackListResult:
         provider = spec["provider"]
         instance_id = spec["instance_id"]
-        adapter = self.adapters[provider]
+        adapter = self._adapter(provider)
+        if adapter is None:
+            return PlaybackListResult(False, provider, instance_id, error_code="unknown_provider", message="Provider module unavailable.")
         config_view = build_provider_config_view(cfg, provider, instance_id)
         cap = adapter.capabilities(config_view, instance_id=instance_id, instance_label=spec["instance_label"])
         if not cap.read:
@@ -981,7 +990,7 @@ class PlaybackProgressService:
     def _adapter_for_action(self, cfg: Mapping[str, Any], provider: str, instance_id: str) -> tuple[PlaybackProgressAdapter | None, dict[str, Any], str]:
         provider_key = str(provider or "").strip().lower()
         inst = normalize_instance_id(instance_id)
-        adapter = self.adapters.get(provider_key)
+        adapter = self._adapter(provider_key)
         if not adapter:
             return None, {}, inst
         return adapter, build_provider_config_view(cfg, provider_key, inst), inst

@@ -214,7 +214,10 @@
     if (!btn || !labelHost) return;
     const option = select.options && select.selectedIndex >= 0 ? select.options[select.selectedIndex] : null;
     const data = dataForOption(select, option, cfg);
-    labelHost.replaceWith(rowMain(data));
+    const selectedData = Object.prototype.hasOwnProperty.call(data, "selectedLabel")
+      ? { ...data, label: String(data.selectedLabel || "") }
+      : data;
+    labelHost.replaceWith(rowMain(selectedData));
     btn.insertBefore(btn.querySelector(".cw-icon-select-main"), btn.querySelector(".cw-icon-select-caret"));
 
     const menu = wrap.__cwMenu;

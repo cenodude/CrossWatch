@@ -328,7 +328,7 @@
     const configured = configuredProviderKeys(cfg);
     const sectionCopy = {
       "sec-auth-media": "Manage your media server connections.",
-      "sec-auth-trackers": "Configure and manage your tracker integrations.",
+      "sec-auth-trackers": "Manage tracker connections.",
       "sec-auth-clients": "Manage media client connections.",
       "sec-auth-metadata": "Manage metadata providers and mappings.",
     };
