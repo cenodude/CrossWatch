@@ -892,7 +892,7 @@ def _create_single_snapshot(
 
     inst = normalize_instance_id(instance)
     rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, feat, label)}"
-    path = _snapshots_dir() / rel
+    rel, path = _resolve_snapshot_file(rel, must_exist=False)
 
     payload: dict[str, Any] = {
         "kind": SNAPSHOT_KIND,
