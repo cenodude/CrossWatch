@@ -50,3 +50,24 @@ def test_official_nuvio_png_asset_exists() -> None:
 
     assert logo.exists()
     assert logo.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_nuvio_modal_save_enables_for_selected_pending_profile() -> None:
+    ui = (ROOT / "assets" / "helpers" / "providers-ui.js").read_text(encoding="utf-8")
+    nuvio = (ROOT / "assets" / "auth" / "auth.nuvio.js").read_text(encoding="utf-8")
+
+    assert 'if (info.key === "NUVIO")' in ui
+    assert 'profileRow && !profileRow.classList.contains("hidden") && String(panel?.querySelector("#nuvio_profile_select")?.value || "").trim()' in ui
+    assert 'if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });' in ui
+    assert 'String(key || "").toUpperCase() === "NUVIO" && configured' in ui
+    main_status = (ROOT / "assets" / "js" / "main-status.js").read_text(encoding="utf-8")
+    assert "function providerProfileDetail" in main_status
+    assert "Nuvio profile:" in main_status
+    assert ".cw-connection-modal-panel[data-cw-connection-provider='nuvio']" in nuvio
+    assert "let profileSelectionReady = false;" in nuvio
+    assert "const showProfiles = !!(connected || authenticated || profileSelectionReady);" in nuvio
+    assert 'setStatus(false, "Choose a Nuvio profile to finish setup")' in nuvio
+    assert 'api("/api/nuvio/profile/select")' in nuvio
+    assert "saveSelectedProfile" in nuvio
+    assert "await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true)" in nuvio
+    assert 'sel.style.width = "320px";' in nuvio

@@ -62,6 +62,15 @@ def test_nuvio_manifest_has_tv_login_without_password_fields() -> None:
     assert manifest.fields == []
 
 
+def test_nuvio_profile_dropdown_custom_select_has_room() -> None:
+    from providers.auth import _auth_NUVIO as common
+
+    markup = common.html()
+
+    assert "#sec-nuvio .nuvio-profile-row>div{width:min(320px,100%)}" in markup
+    assert "#sec-nuvio .nuvio-profile-row .cw-icon-select{width:320px;min-width:280px;max-width:100%}" in markup
+
+
 def test_device_login_start_and_poll_parse_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.auth import _auth_NUVIO as common
 
