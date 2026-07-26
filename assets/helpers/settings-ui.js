@@ -89,7 +89,7 @@ async function loadCrossWatchSnapshots(cfg) {
 /*! Settings */
 
 
-/* Settings Hub: UI / Security / CW Tracker */
+/* Settings Hub: UI / Security / Local Tracker */
 
 const UI_SETTINGS_TAB_KEY = "cw.ui.settings.tab.v1";
 
@@ -105,6 +105,13 @@ function cwUiSettingsSelect(tab, opts = {}) {
     const k = String(p.dataset.tab || "").toLowerCase();
     p.classList.toggle("active", k === t);
   });
+  document.querySelectorAll(".cw-app-hero [data-target]").forEach((btn) => {
+    const on = String(btn.dataset.target || "").toLowerCase() === t;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-current", on ? "page" : "false");
+  });
+  document.querySelectorAll(".cw-app-hero-panel").forEach((hero) => hero.classList.toggle("active", String(hero.dataset.appHero || "").toLowerCase() === t));
+  document.querySelectorAll(".cw-app-hero-shape").forEach((shape) => shape.classList.toggle("active", String(shape.dataset.appHeroShape || "").toLowerCase() === t));
 
   if (persist) {
     try { localStorage.setItem(UI_SETTINGS_TAB_KEY, t); } catch {}
@@ -344,31 +351,16 @@ window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
 
 /* Settings Hub: Scheduling */
 const SCHED_SETTINGS_TAB_KEY = "cw.ui.scheduling.tab.v1";
-const SCHED_PROVIDER_OPEN_KEY = "cw.ui.scheduling.open.v1";
 
 let __cwSchedOpen = false;
 
-function cwSchedProviderSelect(open, opts = {}) {
-  const tilesHost = document.getElementById("sched_provider_tiles");
+function cwSchedProviderSelect(open) {
   const panelHost = document.getElementById("sched-provider-panel");
   if (!panelHost) return;
 
   const wantOpen = (open == null) ? !__cwSchedOpen : !!open;
   __cwSchedOpen = wantOpen;
-
-  if (tilesHost) {
-    const tile = tilesHost.querySelector('[data-provider="scheduler"]');
-    if (tile) {
-      tile.classList.toggle("active", wantOpen);
-      tile.setAttribute("aria-selected", wantOpen ? "true" : "false");
-    }
-  }
-
   panelHost.classList.toggle("hidden", !wantOpen);
-
-  if (opts.persist !== false) {
-    try { localStorage.setItem(SCHED_PROVIDER_OPEN_KEY, wantOpen ? "1" : "0"); } catch {}
-  }
 }
 
 function cwSchedSettingsSelect(tab, opts = {}) {
@@ -497,7 +489,6 @@ function cwBuildSchedulerPanel() {
 }
 
 function cwSchedProviderEnsure() {
-  const tilesHost = document.getElementById("sched_provider_tiles");
   const panelHost = document.getElementById("sched-provider-panel");
   if (!panelHost) return;
 
@@ -506,22 +497,7 @@ function cwSchedProviderEnsure() {
     panelHost.dataset.__cwSchedBuilt = "1";
   }
 
-  if (tilesHost) {
-    tilesHost.querySelectorAll("[data-provider]").forEach((btn) => {
-      if (btn.__cwSchedWired) return;
-      btn.addEventListener("click", () => {
-        const isOpen = !document.getElementById("sched-provider-panel")?.classList.contains("hidden");
-        cwSchedProviderSelect(!isOpen);
-      });
-      btn.__cwSchedWired = true;
-    });
-
-    let open = "0";
-    try { open = localStorage.getItem(SCHED_PROVIDER_OPEN_KEY) || "0"; } catch {}
-    cwSchedProviderSelect(open === "1", { persist: false });
-  } else {
-    cwSchedProviderSelect(true, { persist: false });
-  }
+  cwSchedProviderSelect(true);
 
   try { cwSchedSettingsHubUpdate(); } catch {}
 }

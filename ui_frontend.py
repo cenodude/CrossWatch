@@ -86,7 +86,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
+    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -353,6 +353,7 @@ def _get_index_html_static() -> str:
         <button class="btn cw-hub-action" onclick="openEvents()" title="View sync events" aria-label="View sync events"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">history</span><span>Events</span></button>
         <button class="btn cw-hub-action" onclick="openExporter()" title="Export your watchlist, history and ratings to a file" aria-label="Export your watchlist, history and ratings to a file"><span class="material-symbols-rounded cw-action-icon" aria-hidden="true">ios_share</span><span>Exporter</span></button>
       </div>
+      <div class="cw-status-dock"></div>
     </div>
 
     <div id="details" class="details hidden">
@@ -532,9 +533,7 @@ def _get_index_html_static() -> str:
     </article>
   </section>
 
-  <section id="page-watchlist" class="card hidden">
-    <div class="title">Watchlist</div><div id="watchlist-root"></div>
-  </section>
+  <section id="page-watchlist" class="card hidden tab-page"></section>
 
   <section id="page-playback_progress" class="card hidden tab-page">
     <div id="playback-progress-root">
@@ -542,11 +541,11 @@ def _get_index_html_static() -> str:
     </div>
   </section>
 
-  <section id="page-snapshots" class="card hidden"></section>
+  <section id="page-snapshots" class="card hidden tab-page"></section>
 
   <section id="page-playlists" class="card hidden tab-page"></section>
 
-  <section id="page-editor" class="card hidden"></section>
+  <section id="page-editor" class="card hidden tab-page"></section>
 
   <section id="page-settings" class="card hidden">
     <div id="cw-settings-shell">
@@ -702,7 +701,7 @@ def _get_index_html_static() -> str:
         </section>
 
         <section class="cw-settings-pane" data-pane="providers">
-          <div class="cw-settings-pane-head">
+          <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-connections">
             <div>
               <div class="cw-settings-pane-kicker">Connections</div>
               <h3>Providers and metadata</h3>
@@ -714,6 +713,7 @@ def _get_index_html_static() -> str:
                 <button type="button" class="cw-settings-jump" onclick="window.openAddConnection?.()"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add provider</button>
               </div>
             </div>
+            <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">hub</span>
           </div>
           <div class="cw-settings-pane-stack cw-settings-providers-stack">
             <div class="section open cw-settings-section cw-settings-provider-section" id="sec-auth" data-accordion="off">
@@ -730,12 +730,13 @@ def _get_index_html_static() -> str:
         </section>
 
         <section class="cw-settings-pane" data-pane="sync">
-          <div class="cw-settings-pane-head">
+          <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-sync">
             <div>
               <div class="cw-settings-pane-kicker">Synchronization</div>
               <h3>Sync pairs</h3>
               <p>Choose providers and manage how data syncs between them.</p>
             </div>
+            <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sync_alt</span>
           </div>
           <div class="cw-settings-pane-stack cw-settings-sync-stack">
             <div class="section open cw-settings-section" id="sec-sync" data-accordion="off">
@@ -753,7 +754,7 @@ def _get_index_html_static() -> str:
         </section>
 
         <section class="cw-settings-pane" data-pane="scheduling">
-          <div class="cw-settings-pane-head">
+          <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-scheduling">
             <div>
               <div class="cw-settings-pane-kicker">Scheduling</div>
               <h3>Run automation</h3>
@@ -765,9 +766,9 @@ def _get_index_html_static() -> str:
                 <button type="button" class="cw-settings-jump" data-sub="advanced">Advanced</button>
               </div>
             </div>
+            <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">event_repeat</span>
           </div>
-          <div class="section open cw-settings-section" id="sec-scheduling" data-accordion="off">
-            <div class="head"><span class="chev"></span><strong>Scheduling</strong></div>
+          <div class="section open cw-settings-section cw-scheduling-section" id="sec-scheduling" data-accordion="off">
             <div class="body">
               <div id="sched-provider-panel" class="cw-panel hidden"></div>
               <div id="sched-provider-raw" class="hidden">
@@ -789,12 +790,13 @@ def _get_index_html_static() -> str:
           <div id="sec-scrobbler" class="cw-settings-pane-stack cw-settings-scrobbler-stack" data-accordion="off">
             <div id="scrobble-mount" class="cw-settings-pane-stack cw-settings-scrobbler-stack-inner">
               <div class="sc2-page">
-                <div class="cw-settings-pane-head sc2-pane-head">
+                <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-scrobbler sc2-pane-head">
                   <div>
                     <div class="cw-settings-pane-kicker">Scrobbler</div>
                     <h3>Webhooks and Watcher</h3>
                     <p>Receive real time scrobbles via Watcher routes or webhooks. <b>Watcher is recommended</b> Only use both for specific use cases!</p>
                   </div>
+                  <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sensors</span>
                 </div>
                 <div class="sc2-empty">Loading Scrobbler...</div>
               </div>
@@ -802,43 +804,54 @@ def _get_index_html_static() -> str:
           </div>
         </section>
 
-        <section class="cw-settings-pane" data-pane="app">
-          <div class="cw-settings-pane-head">
-            <div>
-              <div class="cw-settings-pane-kicker">UI and Security</div>
-              <h3>Interface, authentication and CW Tracker</h3>
-              <p>Shape the experience, lock things down, and manage tracker behavior.</p>
+        <section class="cw-settings-pane cw-app-settings-pane" data-pane="app">
+          <div class="cw-settings-pane-head cw-app-hero">
+            <div class="cw-app-hero-copy">
+              <div class="cw-app-hero-panel active" data-app-hero="ui">
+                <div class="cw-settings-pane-kicker">UI and Security</div>
+                <h3>Interface, authentication and Local Tracker</h3>
+                <p>Shape the experience, lock things down, and manage tracker behavior.</p>
+              </div>
+              <div class="cw-app-hero-panel" data-app-hero="security">
+                <div class="cw-settings-pane-kicker">Security</div>
+                <h3>Authentication and access controls</h3>
+                <p>Manage sign-in, sessions, remembered browsers and trusted proxy access.</p>
+              </div>
+              <div class="cw-app-hero-panel" data-app-hero="tracker">
+                <div class="cw-settings-pane-kicker">Local Tracker</div>
+                <h3>Retention, capture and restore snapshots</h3>
+                <p>Control local provider snapshots and choose restore defaults per feature.</p>
+              </div>
             </div>
             <div class="cw-settings-jumpbar" aria-label="UI settings sections">
-              <button type="button" class="cw-settings-jump" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
+              <button type="button" class="cw-settings-jump active" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
               <button type="button" class="cw-settings-jump" data-target="security" onclick="cwUiSettingsJump?.('security')">Security</button>
-              <button type="button" class="cw-settings-jump" data-target="tracker" onclick="cwUiSettingsJump?.('tracker')">CW Tracker</button>
+              <button type="button" class="cw-settings-jump" data-target="tracker" onclick="cwUiSettingsJump?.('tracker')">Local Tracker</button>
             </div>
+            <span class="material-symbols-rounded cw-app-hero-shape active" data-app-hero-shape="ui" aria-hidden="true">desktop_windows</span>
+            <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="security" aria-hidden="true">shield</span>
+            <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="tracker" aria-hidden="true">database</span>
           </div>
-          <div class="section open cw-settings-section" id="sec-ui" data-accordion="off">
+          <div class="section open cw-settings-section cw-app-section" id="sec-ui" data-accordion="off">
             <div class="head" style="display:flex;align-items:center">
               <span class="chev"></span>
-              <strong>Settings (UI / Security / CW Tracker)</strong>
+              <strong>Settings (UI / Security / Local Tracker)</strong>
             </div>
             <div class="body">
 
               <div class="cw-settings-panels" id="ui_settings_panels">
 
                 <!-- Panel: User Interface -->
-                <div class="cw-settings-panel cw-settings-shell active" data-tab="ui">
-                  <div class="cw-panel-head cw-settings-head">
-                    <div>
-                      <div class="cw-panel-title-row">
-                        <div class="cw-panel-title">User Interface</div>
-                        <button type="button" class="cw-title-help material-symbols-rounded" title="User Interface: Choose dashboard widgets, quick-add controls, AI helper visibility, and the protocol used to serve the UI." aria-label="User Interface help">help</button>
+                <div class="cw-settings-panel cw-settings-shell cw-app-panel active" data-tab="ui">
+                  <div class="cw-settings-layout cw-app-ui-layout">
+                    <div class="cw-settings-block cw-app-card cw-app-card-widgets">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">dashboard_customize</span>
+                        <div>
+                          <div class="cw-settings-block-title">Dashboard widgets</div>
+                          <div class="sub">Control which widgets appear on the dashboard.</div>
+                        </div>
                       </div>
-                      <div class="sub cw-settings-copy">Choose which dashboard elements stay visible and how CrossWatch serves the UI.</div>
-                    </div>
-                  </div>
-
-                  <div class="cw-settings-layout">
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Dashboard widgets</div>
                       <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
@@ -908,8 +921,14 @@ def _get_index_html_static() -> str:
                       </div>
                     </div>
 
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Visibility</div>
+                    <div class="cw-settings-block cw-app-card cw-app-card-visibility">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">visibility</span>
+                        <div>
+                          <div class="cw-settings-block-title">Visibility</div>
+                          <div class="sub">Manage what information is displayed in the UI.</div>
+                        </div>
+                      </div>
                       <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
@@ -987,37 +1006,41 @@ def _get_index_html_static() -> str:
                       </div>
                     </div>
 
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Theme</div>
-                      <div>
-                        <div class="cw-field-label-row">
-                          <label for="ui_theme">Theme</label>
-                          <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light Experimental, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
+                    <div class="cw-settings-block cw-app-card cw-app-card-theme">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">palette</span>
+                        <div>
+                          <div class="cw-settings-block-title">Theme</div>
+                          <div class="sub">Customize the look, feel and browser protocol for CrossWatch.</div>
                         </div>
-                        <select id="ui_theme" name="ui_theme" style="min-width:220px;max-width:360px">
-                          <option value="flat-dark">Flat dark</option>
-                          <option value="flat-light">Flat light (Experimental)</option>
-                          <option value="original">Original</option>
-                        </select>
                       </div>
-                    </div>
-
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Protocol</div>
-                      <div>
-                        <div class="cw-field-label-row">
-                          <label for="ui_protocol">UI protocol</label>
-                          <button type="button" class="cw-field-help material-symbols-rounded" title="UI protocol: HTTP is simplest. HTTPS serves CrossWatch with a self-signed certificate for encrypted browser traffic." aria-label="UI protocol setting help">help</button>
-                        </div>
-                        <div class="cw-settings-inline-action">
-                          <select id="ui_protocol" name="ui_protocol" style="min-width:220px;flex:1">
-                            <option value="http">HTTP</option>
-                            <option value="https">HTTPS (self-signed)</option>
+                      <div class="cw-settings-2col">
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_theme">Theme</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light Experimental, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
+                          </div>
+                          <select id="ui_theme" name="ui_theme">
+                            <option value="flat-dark">Flat dark</option>
+                            <option value="flat-light">Flat light (Experimental)</option>
+                            <option value="original">Original</option>
                           </select>
-                          <button type="button" class="btn primary" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
                         </div>
-                        <div class="sub" style="margin-top:0.35rem">
-                          HTTPS uses a self-signed certificate, so your browser will warn unless you trust it.
+                        <div>
+                          <div class="cw-field-label-row">
+                            <label for="ui_protocol">UI protocol</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="UI protocol: HTTP is simplest. HTTPS serves CrossWatch with a self-signed certificate for encrypted browser traffic." aria-label="UI protocol setting help">help</button>
+                          </div>
+                          <div class="cw-settings-inline-action">
+                            <select id="ui_protocol" name="ui_protocol">
+                              <option value="http">HTTP</option>
+                              <option value="https">HTTPS (self-signed)</option>
+                            </select>
+                            <button type="button" class="btn primary" id="ui_tls_advanced" onclick="openTlsCertModal?.()">Advanced</button>
+                          </div>
+                          <div class="sub" style="margin-top:0.35rem">
+                            HTTPS uses a self-signed certificate, so your browser will warn unless you trust it.
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -1025,160 +1048,138 @@ def _get_index_html_static() -> str:
                 </div>
 
                 <!-- Panel: Security -->
-                <div class="cw-settings-panel cw-settings-shell" data-tab="security">
-                  <div class="cw-panel-head cw-settings-head">
-                    <div>
-                      <div class="cw-panel-title-row">
-                        <div class="cw-panel-title">Security</div>
-                        <button type="button" class="cw-title-help material-symbols-rounded" title="Security: Manage CrossWatch sign-in, optional Plex login, remembered sessions, active browser sessions, and trusted reverse proxies for rate limiting." aria-label="Security help">help</button>
-                      </div>
-                      <div class="sub cw-settings-copy">
-                        Manage your sign-in details, session persistence, and reverse-proxy trust settings from one place.
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="cw-settings-layout">
-                    <div id="app_auth_fields" class="cw-settings-block">
-                      <div class="cw-settings-block-title">Sign-in</div>
-                      <div class="cw-settings-stack">
+                <div class="cw-settings-panel cw-settings-shell cw-app-panel" data-tab="security">
+                  <div class="cw-settings-layout cw-app-security-layout">
+                    <div class="cw-settings-block cw-app-card" id="app_auth_fields">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">lock</span>
                         <div>
+                          <div class="cw-settings-block-title">Authentication</div>
+                          <div class="sub">Choose how CrossWatch is accessed and how long sessions stay valid.</div>
+                        </div>
+                      </div>
+                      <div class="cw-settings-2col">
+                        <div class="cw-auth-username-field">
                           <div class="cw-field-label-row">
                             <label for="app_auth_username">Username</label>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="Username: The local CrossWatch username used on the login screen." aria-label="Username setting help">help</button>
                           </div>
                           <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
                         </div>
-
-                        <div class="cw-settings-2col">
-                          <div>
-                            <div class="cw-field-label-row">
-                              <label for="app_auth_password">New password</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="New password: Enter a new local CrossWatch password. Leave it blank to keep the current password." aria-label="New password setting help">help</button>
-                            </div>
-                            <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
-                            <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
-                          </div>
-
-                          <div>
-                            <div class="cw-field-label-row">
-                              <label for="app_auth_password2">Confirm password</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Confirm password: Repeat the new password exactly so CrossWatch can verify it before saving." aria-label="Confirm password setting help">help</button>
-                            </div>
-                            <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
-                            <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div id="app_auth_session_fields" class="cw-settings-block">
-                      <div class="cw-settings-block-title">Session</div>
-                      <div class="cw-settings-split">
-                        <div>
+                        <div class="cw-auth-password-field">
                           <div class="cw-field-label-row">
-                            <label for="app_auth_remember_enabled">Session caching</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Session caching: Keeps you signed in across browser restarts. Browser session only signs out when the browser session ends." aria-label="Session caching setting help">help</button>
+                            <label for="app_auth_password">New password</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="New password: Enter a new local CrossWatch password. Leave it blank to keep the current password." aria-label="New password setting help">help</button>
                           </div>
-                          <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
-                            <option value="true">Enabled</option>
-                            <option value="false">Browser session only</option>
-                          </select>
-                          <div class="sub" style="margin-top:0.35rem">Browser session only means sign-in is required again after closing the browser.</div>
+                          <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
+                          <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
                         </div>
-
-                        <div id="app_auth_remember_days_wrap">
+                        <div class="cw-auth-confirm-field">
                           <div class="cw-field-label-row">
-                            <label for="app_auth_remember_days">Cached for days</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Cached for days: Number of days a remembered login remains valid when session caching is enabled." aria-label="Cached for days setting help">help</button>
+                            <label for="app_auth_password2">Confirm password</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Confirm password: Repeat the new password exactly so CrossWatch can verify it before saving." aria-label="Confirm password setting help">help</button>
                           </div>
-                          <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
-                          <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
-                          <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                          <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
+                          <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
                         </div>
-                      </div>
-                    </div>
-
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Plex sign-in</div>
-                      <div class="cw-settings-stack">
+                        <div class="cw-auth-session-row">
+                          <div id="app_auth_session_fields">
+                            <div class="cw-field-label-row">
+                              <label for="app_auth_remember_enabled">Session caching</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Session caching: Keeps you signed in across browser restarts. Browser session only signs out when the browser session ends." aria-label="Session caching setting help">help</button>
+                            </div>
+                            <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
+                              <option value="true">Enabled</option>
+                              <option value="false">Browser session only</option>
+                            </select>
+                            <div class="sub" style="margin-top:0.35rem">Browser session only means sign-in is required again after closing the browser.</div>
+                          </div>
+                          <div id="app_auth_remember_days_wrap">
+                            <div class="cw-field-label-row">
+                              <label for="app_auth_remember_days">Session timeout</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Session timeout: Number of days a remembered login remains valid when session caching is enabled." aria-label="Session timeout setting help">help</button>
+                            </div>
+                            <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
+                            <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
+                            <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                          </div>
+                        </div>
                         <div>
                           <div class="cw-field-label-row">
                             <strong>Linked Plex account</strong>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="Linked Plex account: Adds optional Sign in with Plex on the login screen while keeping the local password as fallback." aria-label="Linked Plex account help">help</button>
                           </div>
                           <div class="sub" id="app_auth_plex_state">Not linked</div>
-                        </div>
-                        <div class="cw-settings-inline-action">
-                          <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">Link Plex account</button>
-                          <button class="btn" type="button" id="btn-app-auth-plex-unlink" onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
-                        </div>
-                        <div class="sub" style="margin-top:0.35rem">
-                          Optional. This adds a <code>Sign in with Plex</code> button to the login screen while keeping local CrossWatch password sign-in as your fallback.
+                          <div class="cw-settings-inline-action" style="margin-top:0.75rem">
+                            <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">Link Plex account</button>
+                            <button class="btn" type="button" id="btn-app-auth-plex-unlink" onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    <div class="cw-settings-statusrow">
-                      <div class="cw-settings-status">
-                        <div class="cw-field-label-row">
-                          <strong>Current session</strong>
-                          <button type="button" class="cw-field-help material-symbols-rounded" title="Current session: Shows the browser session you are using now and lets you log it out." aria-label="Current session help">help</button>
+                    <div class="cw-settings-block cw-app-card">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">admin_panel_settings</span>
+                        <div>
+                          <div class="cw-settings-block-title">Access and Permissions</div>
+                          <div class="sub">Review active sessions and reverse proxy trust settings.</div>
                         </div>
-                        <div class="sub" id="app_auth_state">&mdash;</div>
                       </div>
-                      <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
-                    </div>
-
-                    <div class="cw-settings-statusrow">
-                      <div class="cw-settings-status">
-                        <div class="cw-field-label-row">
-                          <strong>Other browser sessions</strong>
-                          <button type="button" class="cw-field-help material-symbols-rounded" title="Other browser sessions: Shows remembered logins from other browsers or devices and lets you revoke them." aria-label="Other browser sessions help">help</button>
+                      <div class="cw-settings-2col">
+                        <div class="cw-settings-statusrow">
+                          <div class="cw-settings-status">
+                            <div class="cw-field-label-row">
+                              <strong>Current session</strong>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Current session: Shows the browser session you are using now and lets you log it out." aria-label="Current session help">help</button>
+                            </div>
+                            <div class="sub" id="app_auth_state">&mdash;</div>
+                          </div>
+                          <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
                         </div>
-                        <div class="sub" id="app_auth_other_sessions_state">Logged in from: 0 browser sessions</div>
-                        <div class="sub" id="app_auth_other_sessions_detail"></div>
-                      </div>
-                      <button class="btn" id="btn-auth-logout-others" onclick="cwAppLogoutOthers?.()">Log out other sessions</button>
-                    </div>
-
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Reverse proxy</div>
-                      <div class="cw-field-label-row">
-                        <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
-                        <button type="button" class="cw-field-help material-symbols-rounded" title="Trusted reverse proxies: Enter proxy IPs or CIDR ranges so CrossWatch can read the real client IP for login rate limiting." aria-label="Trusted reverse proxies setting help">help</button>
-                      </div>
-                      <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
-                      <div class="sub" style="margin-top:0.35rem">
-                        Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
-                        Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                        <div class="cw-settings-statusrow">
+                          <div class="cw-settings-status">
+                            <div class="cw-field-label-row">
+                              <strong>Other browser sessions</strong>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Other browser sessions: Shows remembered logins from other browsers or devices and lets you revoke them." aria-label="Other browser sessions help">help</button>
+                            </div>
+                            <div class="sub" id="app_auth_other_sessions_state">Logged in from: 0 browser sessions</div>
+                            <div class="sub" id="app_auth_other_sessions_detail"></div>
+                          </div>
+                          <button class="btn" id="btn-auth-logout-others" onclick="cwAppLogoutOthers?.()">Log out other sessions</button>
+                        </div>
+                        <div class="cw-auth-proxy-field">
+                          <div class="cw-field-label-row">
+                            <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Trusted reverse proxies: Enter proxy IPs or CIDR ranges so CrossWatch can read the real client IP for login rate limiting." aria-label="Trusted reverse proxies setting help">help</button>
+                          </div>
+                          <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
+                          <div class="sub" style="margin-top:0.35rem">
+                            Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
+                            Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- Panel: CW Tracker -->
-                <div class="cw-settings-panel cw-settings-shell" data-tab="tracker">
-                  <div class="cw-panel-head cw-settings-head">
-                    <div>
-                      <div class="cw-panel-title-row">
-                        <div class="cw-panel-title">CW Tracker</div>
-                        <button type="button" class="cw-title-help material-symbols-rounded" title="CW Tracker: Stores local snapshots of provider data before writes so you can inspect or restore Watchlist, Ratings, and History state." aria-label="CW Tracker help">help</button>
+                <!-- Panel: Local Tracker -->
+                <div class="cw-settings-panel cw-settings-shell cw-app-panel" data-tab="tracker">
+                  <div class="cw-settings-layout cw-app-tracker-layout">
+                    <div class="cw-settings-block cw-app-card">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">schedule</span>
+                        <div>
+                          <div class="cw-settings-block-title">Retention and Capture</div>
+                          <div class="sub">Control how snapshots are retained and created under <code class="cw-code-badge">/config/.cw_provider</code>.</div>
+                        </div>
                       </div>
-                      <div class="sub cw-settings-copy">
-                        Local backup tracker for Watchlist, Ratings and History snapshots stored under <code>/config/.cw_provider</code>.
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="cw-settings-layout">
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Retention and capture</div>
                       <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
                             <label for="cw_enabled">Enabled</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Enabled: Turns the local CW Tracker snapshot system on or off." aria-label="CW Tracker enabled setting help">help</button>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="Enabled: Turns the local tracker snapshot system on or off." aria-label="Local Tracker enabled setting help">help</button>
                           </div>
                           <select id="cw_enabled" name="cw_enabled">
                             <option value="true">Enabled</option>
@@ -1217,8 +1218,14 @@ def _get_index_html_static() -> str:
                       </div>
                     </div>
 
-                    <div class="cw-settings-block">
-                      <div class="cw-settings-block-title">Restore snapshots</div>
+                    <div class="cw-settings-block cw-app-card">
+                      <div class="cw-app-card-head">
+                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">restore_page</span>
+                        <div>
+                          <div class="cw-settings-block-title">Restore Snapshots</div>
+                          <div class="sub">Choose which snapshots to restore for each feature.</div>
+                        </div>
+                      </div>
                       <div class="cw-settings-2col" id="cw_restore_fields">
                         <div>
                           <div class="cw-field-label-row">
@@ -1257,12 +1264,13 @@ def _get_index_html_static() -> str:
         </section>
 
         <section class="cw-settings-pane" data-pane="maintenance">
-          <div class="cw-settings-pane-head">
+          <div class="cw-settings-pane-head cw-maint-hero">
             <div>
               <div class="cw-settings-pane-kicker">Maintenance</div>
               <h3>Maintenance zone, Debug and Restart</h3>
               <p>Use these actions to reset CrossWatch states. They are safe but cannot be undone.</p>
             </div>
+            <span class="material-symbols-rounded cw-maint-hero-gear" aria-hidden="true">settings</span>
           </div>
           <div class="section open cw-settings-section cw-maint-section" id="sec-troubleshoot" data-accordion="off">
             <div class="head"><span class="chev"></span><strong>Maintenance</strong></div>
@@ -1294,6 +1302,7 @@ def _get_index_html_static() -> str:
                       <strong>Backup & Restore</strong>
                       <small>Create archives, validate backups, restore state, or manage schedules.</small>
                     </span>
+                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
                   </button>
                   <button class="btn cw-maint-action tools" type="button" onclick="openMaintenanceModal()">
                     <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">tune</span>
@@ -1301,13 +1310,23 @@ def _get_index_html_static() -> str:
                       <strong>Maintenance Tools</strong>
                       <small>Clean local state, reset counters, and run recovery actions.</small>
                     </span>
+                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
+                  </button>
+                  <button class="btn cw-maint-action provider-cleanup" type="button" onclick="openProviderCleanupModal()">
+                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">cleaning_services</span>
+                    <span class="cw-maint-action-copy">
+                      <strong>Provider Cleanup</strong>
+                      <small>Clear provider watchlist, ratings, history, or progress data by profile.</small>
+                    </span>
+                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
                   </button>
                   <button class="btn cw-maint-action restart" type="button" onclick="restartCrossWatch()">
                     <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">restart_alt</span>
                     <span class="cw-maint-action-copy">
                       <strong>Restart CrossWatch</strong>
-                      <small>Restart CW contrainer.</small>
+                      <small>Restart CW container.</small>
                     </span>
+                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Restart</span><span class="material-symbols-rounded">arrow_forward</span></span>
                   </button>
                 </div>
 
@@ -1522,7 +1541,7 @@ __CW_ASSET_BLOCK__
   document.addEventListener("DOMContentLoaded", () => render({}), { once: true });
 })();
 </script>
-<script>(()=>{window.cwScrobblerJump=sectionId=>{window.cwSettingsSelect?.('scrobbler');let tries=0;const jump=()=>{const el=document.getElementById(sectionId);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});return}if(++tries<40)setTimeout(jump,50)};setTimeout(jump,0)};window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{const t=String(tab||'').trim().toLowerCase();window.cwUiSettingsSelect?.(t);document.querySelector(`#ui_settings_panels .cw-settings-panel[data-tab="${t}"]`)?.scrollIntoView({behavior:'smooth',block:'start'})},0))})();</script>
+<script>(()=>{window.cwScrobblerJump=sectionId=>{window.cwSettingsSelect?.('scrobbler');let tries=0;const jump=()=>{const el=document.getElementById(sectionId);if(el){el.scrollIntoView({behavior:'smooth',block:'start'});return}if(++tries<40)setTimeout(jump,50)};setTimeout(jump,0)};window.cwUiSettingsJump=tab=>(window.cwSettingsSelect?.('app'),setTimeout(()=>{const t=String(tab||'').trim().toLowerCase();window.cwUiSettingsSelect?.(t)},0))})();</script>
 
 <script>(()=>{const origFetch=window.fetch;if(typeof origFetch!=='function'||origFetch.__cwAuthPendingWrapped)return;const pending=()=>window.cwIsAuthSetupPending?.()===true,allowPath=p=>p.startsWith('/api/app-auth/')||p==='/api/config/meta'||p.startsWith('/api/config/meta?')||p.startsWith('/assets/')||p==='/favicon.svg';const emptyJson=(body='{}')=>new Response(body,{status:200,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});window.fetch=Object.assign(async function(resource,init){try{if(!pending())return await origFetch(resource,init);const url=typeof resource==='string'?resource:String(resource?.url||'');const u=new URL(url,location.origin);if(u.origin!==location.origin||!u.pathname.startsWith('/api/')||allowPath(u.pathname)||allowPath(u.pathname+u.search))return await origFetch(resource,init);const method=String(init?.method||resource?.method||'GET').toUpperCase();if(method!=='GET'&&method!=='HEAD')return await origFetch(resource,init);if(u.pathname.startsWith('/api/config'))return emptyJson('{}');if(u.pathname.startsWith('/api/status'))return emptyJson('{"providers":{}}');if(u.pathname.startsWith('/api/pairs'))return emptyJson('[]');if(u.pathname.startsWith('/api/scheduling'))return emptyJson('{}');if(u.pathname.startsWith('/api/insights'))return emptyJson('{}');if(u.pathname.startsWith('/api/watch/'))return emptyJson('{}');if(u.pathname.startsWith('/api/webhooks/'))return emptyJson('{}');return emptyJson('{}')}catch{return await origFetch(resource,init)}},{__cwAuthPendingWrapped:true})})();</script>
 

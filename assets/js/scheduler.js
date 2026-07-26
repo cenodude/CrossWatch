@@ -27,7 +27,7 @@
 
   // styles (once)
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css", textContent: `
-#sec-scheduling{--sch-shell-bg:#171a22;--sch-card-bg:#20242d;--sch-card-bg-soft:#242936;--sch-input-bg:#141821;--sch-border:rgba(255,255,255,.14);--sch-border-soft:rgba(255,255,255,.12);--sch-shadow:none;--sch-fg:#f3f7ff;--sch-fg-soft:rgba(215,222,235,.76)}
+#sec-scheduling{--sch-shell-bg:#171a22;--sch-card-bg:#20242d;--sch-card-bg-soft:#242936;--sch-input-bg:#252b36;--sch-input-bg-hover:#2a303d;--sch-border:rgba(255,255,255,.14);--sch-border-soft:rgba(255,255,255,.12);--sch-shadow:none;--sch-fg:#f3f7ff;--sch-fg-soft:rgba(215,222,235,.76)}
 #sec-scheduling .cw-subpanel[data-sub]{padding-top:6px}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#schAdv{position:relative;border:1px solid var(--sch-border);border-radius:22px;background:var(--sch-shell-bg);box-shadow:var(--sch-shadow);overflow:hidden}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card::before,#schAdv::before{content:none;display:none}
@@ -40,8 +40,8 @@
 #sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:18px;line-height:1}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(125,134,201,.16)}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-notes{margin-top:0;color:var(--sch-fg-soft);font-size:12px;line-height:1.45}
-#sec-scheduling .cw-subpanel[data-sub="basic"] select,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time],#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number],.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text]{width:100%;min-height:46px;padding:0 14px;border:1px solid rgba(255,255,255,.15);border-radius:12px;background:var(--sch-input-bg);color:var(--sch-fg);box-shadow:none;transition:border-color .14s ease,background .14s ease,box-shadow .14s ease}
-#sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover,.sch-adv input[type=number]:hover,.sch-adv input[type=text]:hover{border-color:rgba(255,255,255,.2);background:#171c25}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time],#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number],.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text]{width:100%;min-height:46px;padding:0 14px;border:1px solid rgba(136,151,190,.22);border-radius:12px;background:var(--sch-input-bg);color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:border-color .14s ease,background .14s ease,box-shadow .14s ease}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover,.sch-adv input[type=number]:hover,.sch-adv input[type=text]:hover{border-color:rgba(160,176,220,.30);background:var(--sch-input-bg-hover)}
 #sec-scheduling .cw-subpanel[data-sub="basic"] select:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:focus,.sch-adv select:focus,.sch-adv input[type=time]:focus,.sch-adv input[type=number]:focus,.sch-adv input[type=text]:focus{outline:none;border-color:rgba(125,134,201,.52);box-shadow:0 0 0 3px rgba(125,134,201,.16)}
 .sch-adv{padding:16px}
 .sch-adv .cw-panel-head{position:relative;z-index:1;display:flex;align-items:center;min-height:104px;margin:0 0 14px;padding:14px 16px;border:none;border-radius:0;background:transparent;box-shadow:none}
@@ -74,12 +74,18 @@
 .sch-adv .btn.ghost.capture-adv-toggle{display:inline-flex;align-items:center;justify-content:center;width:26px;min-width:26px;height:26px;min-height:26px;padding:0;border-radius:50%;aspect-ratio:1 / 1;border:1px solid rgba(255,255,255,.15);background:#2b313d;color:#d7deef;box-shadow:none}
 .sch-adv .btn.ghost.capture-adv-toggle:hover{border-color:rgba(255,255,255,.18);background:#343b49;color:#f2f6ff}
 .sch-adv .capture-adv-toggle .material-symbols-rounded{font-size:14px;line-height:1;font-variation-settings:"FILL" 0,"wght" 400,"GRAD" 0,"opsz" 20}
-.sch-adv .chipdays{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;align-items:center}
-.sch-adv .chipdays label{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:38px;padding:0 10px;border:1px solid var(--sch-border-soft);border-radius:999px;cursor:pointer;width:100%;background:var(--sch-card-bg-soft);color:rgba(236,241,251,.78);font-size:12px;font-weight:700;transition:border-color .18s ease,background .18s ease,transform .18s ease,color .18s ease}
+.sch-adv .chipdays{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;align-items:center;width:280px;max-width:100%;margin-inline:auto}
+.sch-adv .chipdays label{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:0;box-sizing:border-box;flex:0 0 64px;width:64px;min-height:38px;padding:0 8px;border:1px solid var(--sch-border-soft);border-radius:999px;cursor:pointer;background:var(--sch-card-bg-soft);color:rgba(236,241,251,.78);font-size:12px;font-weight:700;line-height:1;text-align:center;transition:border-color .18s ease,background .18s ease,transform .18s ease,color .18s ease}
+.sch-adv .chipdays label>span{display:block;flex:1 1 auto;min-width:0;text-align:center}
 .sch-adv .chipdays label:hover{transform:none;border-color:rgba(255,255,255,.18);background:#2b313d}
-.sch-adv .chipdays input{accent-color:#7c76ff;transform:translateY(1px)}
-.sch-adv .chipdays label:has(input:checked){color:#f7f9ff;border-color:rgba(125,134,201,.45);background:#252b3d}
-.sch-adv .chipdays .chipspacer{width:100%;height:1px;visibility:hidden;pointer-events:none}
+.sch-adv .chipdays input{position:absolute!important;inset:auto;width:1px!important;height:1px!important;min-width:0!important;margin:0!important;padding:0!important;border:0!important;opacity:0;pointer-events:none;clip-path:inset(50%)}
+.sch-adv .checkline input,.sch-adv input[id^="sched_cap_active_"],.sch-adv input[id^="sched_evt_active_"]{appearance:none;-webkit-appearance:none;display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;background:var(--sch-input-bg);border:1px solid rgba(148,162,200,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transform:translateY(1px)}
+.sch-adv .checkline input:checked,.sch-adv input[id^="sched_cap_active_"]:checked,.sch-adv input[id^="sched_evt_active_"]:checked{background:#858bd8;border-color:rgba(168,176,240,.70)}
+.sch-adv .checkline input:checked::after,.sch-adv input[id^="sched_cap_active_"]:checked::after,.sch-adv input[id^="sched_evt_active_"]:checked::after{content:"";width:8px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.sch-adv .chipdays label:focus-within{outline:2px solid rgba(142,164,255,.42);outline-offset:2px}
+.sch-adv .chipdays label:has(input:checked){color:#fff;border-color:rgba(158,169,255,.62);background:linear-gradient(135deg,rgba(96,103,214,.88),rgba(70,83,154,.74));box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.sch-adv .chipdays .chipspacer{display:none}
+.sch-adv input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.6);opacity:.95}
 .sch-adv .stack{display:grid;gap:8px}
 .sch-adv .stack.two{grid-template-columns:repeat(2,minmax(0,1fr))}
 .sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -151,13 +157,18 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 @media (max-width:760px){.sch-adv{padding:14px}.sch-adv .cw-panel-head{min-height:0;padding:14px}.sch-adv .cw-panel-head .cx-toggle{margin-top:18px}.sch-adv table,.sch-adv thead,.sch-adv tbody,.sch-adv tr,.sch-adv td,.sch-adv th{display:block}.sch-adv thead{display:none}.sch-adv tbody{display:grid;gap:10px}.sch-adv tbody tr{border:1px solid var(--sch-border-soft);border-radius:18px;overflow:hidden}.sch-adv tbody tr.capture-detail-row{border:none;border-radius:0;overflow:visible}.sch-adv tbody td{display:grid;gap:6px;border:none!important;border-radius:0!important;padding:10px 12px}.sch-adv tbody td[data-label]::before{content:attr(data-label);font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56)}.sch-adv .capture-detail-row td[data-label]::before{content:none}.sch-adv .capture-detail-card{margin-top:-10px;border-top:1px solid var(--sch-border-soft);border-radius:0 0 18px 18px}.sch-adv .capture-detail-grid{grid-template-columns:1fr}.sch-adv .chipdays{grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .stack.two,.sch-adv .stack.three,.sch-adv .event-filter-grid{grid-template-columns:1fr}}
 ` }));
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
-#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:0}
-#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 12px!important}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:10px;padding:0!important}
+#sec-scheduling #sched-provider-panel,#sec-scheduling #sched-provider-panel .cw-subpanels,#sec-scheduling #sched-provider-panel .cw-subpanel.active{width:100%;box-sizing:border-box}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#sec-scheduling #schAdv{width:100%;max-width:none;margin:0!important;box-sizing:border-box}
+#sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 8px!important}
 #sec-scheduling .sch-std-head-copy{display:grid;gap:6px}
+#sec-scheduling .sch-card-head{display:flex;align-items:flex-start;gap:14px;min-width:0}
+#sec-scheduling .sch-card-head-copy{display:grid;gap:6px;min-width:0}
+#sec-scheduling .sch-card-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:13px;border:1px solid rgba(94,126,255,.30);background:rgba(58,91,188,.18);color:#8ea4ff;font-size:24px!important;font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24}
 #sec-scheduling .sch-std-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
 #sec-scheduling .sch-std-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
 #sec-scheduling .sch-std-copy{max-width:64ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{padding-top:12px}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{display:none!important;padding:0!important}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field{min-width:0}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field select,
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field input[type=time],
@@ -165,16 +176,16 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{display:grid;grid-template-columns:minmax(0,1fr);align-content:start}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-enable-field{display:none}
 #sec-scheduling .sch-std-head .cx-toggle{margin-top:16px;justify-self:end}
-#sec-scheduling .sch-std-wizard{position:relative;z-index:1;display:grid;gap:18px;padding:0 18px 18px!important}
+#sec-scheduling .sch-std-wizard{position:relative;z-index:1;display:grid;gap:10px;padding:0!important}
 #sec-scheduling .sch-plan-summary,#sec-scheduling .sch-std-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;border:1px solid var(--sch-border-soft);border-radius:14px;background:var(--sch-card-bg);box-shadow:none}
-#sec-scheduling .sch-std-summary{margin-top:6px!important}
+#sec-scheduling .sch-std-summary{margin:0 18px 4px!important}
 #sec-scheduling .sch-plan-summary-copy,#sec-scheduling .sch-std-summary-copy{display:grid;gap:4px}
 #sec-scheduling .sch-plan-summary-kicker,#sec-scheduling .sch-std-summary-kicker{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.54)}
 #sec-scheduling .sch-plan-summary-text,#sec-scheduling .sch-std-summary-text{font-size:14px;font-weight:800;color:#f4f7ff}
 #sec-scheduling .sch-plan-summary-note,#sec-scheduling .sch-std-summary-note{font-size:12px;line-height:1.45;color:rgba(208,217,233,.7)}
 #sec-scheduling .sch-plan-summary-state,#sec-scheduling .sch-std-summary-state{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid rgba(125,134,201,.36);background:#252b3d;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#ebefff}
 #sec-scheduling .sch-plan-summary-state.attention,#sec-scheduling .sch-std-summary-state.attention{border-color:rgba(255,176,32,.26);background:rgba(77,49,0,.26);color:#ffe6b2}
-#sec-scheduling .sch-std-step{display:grid;gap:10px;padding:16px;border:1px solid var(--sch-border-soft);border-radius:14px;background:var(--sch-card-bg-soft);box-shadow:none}
+#sec-scheduling .sch-std-step{display:grid;gap:12px;margin-left:18px!important;margin-right:18px!important;padding:16px;border:1px solid var(--sch-border-soft);border-radius:14px;background:var(--sch-card-bg-soft);box-shadow:none}
 #sec-scheduling .sch-std-step-head{display:grid;gap:4px}
 #sec-scheduling .sch-std-step-kicker{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.54)}
 #sec-scheduling .sch-std-step-title{font-size:18px;font-weight:900;letter-spacing:-.01em;color:#f5f8ff}
@@ -184,19 +195,22 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field.sch-std-active{border-color:rgba(125,134,201,.5);box-shadow:none}
 #sec-scheduling .sch-std-inline{display:grid;grid-template-columns:minmax(0,.9fr) minmax(140px,.7fr);gap:10px}
 #sec-scheduling .sch-std-inline > *{min-width:0}
-#sec-scheduling .sch-std-warning{display:none;gap:8px;padding:14px 16px;border:1px solid rgba(230,177,80,.36);border-radius:14px;background:#332a19;box-shadow:none}
+#sec-scheduling .sch-std-step:last-of-type{margin-bottom:18px!important}
+#sec-scheduling .sch-std-warning{display:none;gap:8px;margin:0 18px 18px!important;padding:14px 16px;border:1px solid rgba(230,177,80,.36);border-radius:14px;background:#332a19;box-shadow:none}
 #sec-scheduling .sch-std-warning.is-visible{display:grid}
 #sec-scheduling .sch-std-warning-title{font-size:12px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#ffd780}
 #sec-scheduling .sch-std-warning-copy{font-size:12px;line-height:1.5;color:rgba(255,232,196,.84)}
-.sch-adv{display:grid;gap:10px}
-.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;padding:18px 18px 8px;border:none;border-radius:0;background:transparent;box-shadow:none}
+.sch-adv{display:grid;gap:10px;padding:0!important}
+.sch-adv .cw-panel-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;min-height:0;margin:0!important;padding:18px 18px 8px;border:none;border-radius:0;background:transparent;box-shadow:none}
 .sch-adv-head-copy{display:grid;gap:6px}
 .sch-adv-head-kicker{font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
 .sch-adv-head-title{font-size:26px;font-weight:900;letter-spacing:-.02em;color:#f3f7ff}
 .sch-adv-head-copy p{margin:0;max-width:64ch;font-size:13px;line-height:1.5;color:rgba(208,217,233,.72)}
 .sch-adv .cw-panel-head .cx-toggle{margin-top:16px;justify-self:end}
-.sch-adv-summary{margin:0 18px 4px}
-.sch-adv-section{gap:12px;padding:16px}
+.sch-adv-summary{margin:0 18px 4px!important}
+.sch-adv-section{gap:12px;margin-left:18px!important;margin-right:18px!important;padding:16px}
+.sch-adv-summary + .sch-adv-section{margin-top:0!important}
+.sch-adv-section:last-of-type{margin-bottom:18px!important}
 .sch-adv-section-head{align-items:center}
 .sch-adv-section-copy{font-size:12px;line-height:1.5}
 .sch-adv table{border-spacing:0 8px}
@@ -213,10 +227,11 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 .sch-adv .field-mini.control-align .subnote{visibility:hidden;user-select:none}
 .sch-adv .capture-detail-card .checkline{min-height:42px;padding:0 12px;border:1px solid rgba(255,255,255,.14);border-radius:12px;background:var(--sch-input-bg)}
 .sch-adv .capture-provider-stack{grid-template-columns:minmax(220px,1.45fr) minmax(160px,1fr)}
-.sch-adv .chipdays{gap:7px}
+.sch-adv .chipdays{gap:7px;justify-content:center;width:277px}
 .sch-adv .chipdays label{min-height:36px;padding:0 9px}
 .sch-adv-actions{gap:8px}
 .sch-adv .btn,.sch-adv .btn.ghost{min-height:38px;padding:0 13px}
+html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2ff;border-color:rgba(65,92,160,.22);color:#3157c8}
 @media (max-width:1180px){.sch-adv .stack.two{grid-template-columns:1fr}}
 @media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}#sec-scheduling .sch-std-inline{grid-template-columns:1fr}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
 @media (max-width:760px){#sec-scheduling .sch-std-title{font-size:22px}#sec-scheduling .sch-std-wizard{padding:0 16px 16px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}}
@@ -563,10 +578,12 @@ const ensureStdEnabledToggle = () => {
     if (!basic || basic.dataset.schDecorated === "1") return;
     const head = el("div", "sch-std-head");
     head.innerHTML = `
-      <div class="sch-std-head-copy">
-        <div class="sch-std-kicker">Standard plan</div>
-        <div class="sch-std-title">Scheduler setup wizard</div>
-        <div class="sch-std-copy">Pick a cadence, fill in the matching timing field, and leave the rest out of the way. Switch to Advanced for chained steps.</div>
+      <div class="sch-std-head-copy sch-card-head">
+        <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">edit_calendar</span>
+        <div class="sch-card-head-copy">
+          <div class="sch-std-title">Standard Scheduler</div>
+          <div class="sch-std-copy">Set up a frequency. Switch to Advanced for chained steps.</div>
+        </div>
       </div>
     `;
     basic.prepend(head);
@@ -1502,10 +1519,12 @@ const ensureStdEnabledToggle = () => {
     const adv = Object.assign(el("div", "sch-adv"), { id: "schAdv" });
     adv.innerHTML = `
 <div class="cw-panel-head">
-  <div class="sch-adv-head-copy">
-    <div class="sch-adv-head-kicker">Advanced plan</div>
-    <div class="sch-adv-head-title">Step and event scheduler</div>
-    <p>Set up a Time Plan, Captures, Event Triggers in one advanced schedule.</p>
+  <div class="sch-adv-head-copy sch-card-head">
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">account_tree</span>
+    <div class="sch-card-head-copy">
+      <div class="sch-adv-head-title">Advanced Scheduler</div>
+      <p>Set up a Time Plan, Captures, Event Triggers in one advanced schedule.</p>
+    </div>
   </div>
   <label class="cx-toggle">
     <input type="checkbox" id="schAdvEnabled">
