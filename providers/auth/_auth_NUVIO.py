@@ -21,7 +21,7 @@ try:
 except ImportError:
     _real_log = None
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 API_BASE = "https://api.nuvio.tv"
 TV_LOGIN_WEB_BASE_URL = "https://nuvio.tv/tv-login"
 SHARED_PUBLIC_CLIENT_KEY = (
@@ -826,7 +826,9 @@ def html() -> str:
     #sec-nuvio .nuvio-qc-line{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;margin-top:6px}
     #sec-nuvio .nuvio-qc-meta{display:flex;justify-content:space-between;gap:12px;margin-top:6px}
     #sec-nuvio .nuvio-profile-row{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px}
-    #sec-nuvio .nuvio-profile-row select{min-width:240px}
+    #sec-nuvio .nuvio-profile-row>div{width:min(320px,100%)}
+    #sec-nuvio .nuvio-profile-row select{width:320px;min-width:280px}
+    #sec-nuvio .nuvio-profile-row .cw-icon-select{width:320px;min-width:280px;max-width:100%}
     #sec-nuvio .msg{padding:8px 12px;border-radius:8px;border:1px solid rgba(0,255,170,.18);background:rgba(0,255,170,.08);color:#b9ffd7;font-weight:600}
     #sec-nuvio .msg.warn{border-color:rgba(255,210,0,.18);background:rgba(255,210,0,.08);color:#ffe9a6}
     #sec-nuvio #nuvio_connect{background:linear-gradient(135deg,#00e084,#2ea859);border-color:rgba(0,224,132,.45);box-shadow:0 0 14px rgba(0,224,132,.35);color:#fff}

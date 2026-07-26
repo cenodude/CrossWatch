@@ -21,6 +21,7 @@
 
   let connected = false;
   let authenticated = false;
+  let profileSelectionReady = false;
   let poller = null;
   let expiryTimer = null;
 
@@ -40,7 +41,7 @@
 
   function notifyModalState() {
     const panel = document.getElementById("sec-nuvio")?.closest?.(".cw-connection-modal-panel")
-      || document.querySelector?.(".cw-connection-modal-panel[data-provider='nuvio'], .cw-connection-modal-panel");
+      || document.querySelector?.(".cw-connection-modal-panel[data-cw-connection-provider='nuvio'], .cw-connection-modal-panel[data-provider='nuvio'], .cw-connection-modal-panel");
     const save = panel?.querySelector?.(".cw-connection-footer-save");
     if (!save) return;
     const canSave = connected || (authenticated && !!txt(el("nuvio_profile_select")?.value));
@@ -152,7 +153,10 @@
     if (!wrap || !sel) return;
     const rows = Array.isArray(profiles) ? profiles : [];
     const effectiveSelectedId = selectedId || (rows.length === 1 ? (rows[0].profile_id || rows[0].profile_index || "") : "");
-    wrap.classList.toggle("hidden", !(forceShow || rows.length || connected));
+    const showProfiles = !!(connected || profileSelectionReady || forceShow);
+    wrap.classList.toggle("hidden", !showProfiles);
+    sel.style.width = "320px";
+    sel.style.minWidth = "280px";
     sel.innerHTML = "";
     const hasSelected = !!(effectiveSelectedId && rows.some((row) => String(row.profile_id || row.profile_index || "") === String(effectiveSelectedId)));
     const placeholder = document.createElement("option");
@@ -172,6 +176,14 @@
     if (hasSelected) {
       sel.value = String(effectiveSelectedId);
     }
+    requestAnimationFrame(() => {
+      const iconSelect = sel.nextElementSibling;
+      if (iconSelect?.classList?.contains("cw-icon-select")) {
+        iconSelect.style.width = "320px";
+        iconSelect.style.minWidth = "280px";
+        iconSelect.style.maxWidth = "100%";
+      }
+    });
     if (!sel.__wiredNuvioProfileChange) {
       sel.addEventListener("change", notifyModalState);
       sel.__wiredNuvioProfileChange = true;
@@ -187,10 +199,11 @@
       return;
     }
     const r = await fetchJSON(api("/api/nuvio/profiles"), { cache: "no-store" });
+    const showProfiles = !!(connected || authenticated || profileSelectionReady);
     if (r.ok && r.data?.ok) {
-      renderProfiles(r.data.profiles || [], selectedId, selectedName, !!statusData?.authenticated);
+      renderProfiles(r.data.profiles || [], selectedId, selectedName, showProfiles);
     } else {
-      renderProfiles([], selectedId, selectedName, !!statusData?.authenticated);
+      renderProfiles([], selectedId, selectedName, showProfiles);
     }
   }
 
@@ -200,9 +213,10 @@
       const data = r.data || {};
       connected = !!(r.ok && data.connected);
       authenticated = !!(r.ok && data.authenticated);
+      profileSelectionReady = connected || authenticated || profileSelectionReady;
       syncConnectLocked();
       if (connected) setStatus(true, "Nuvio connected");
-      else if (data.authenticated) hideStatus();
+      else if (data.authenticated) setStatus(false, "Choose a Nuvio profile to finish setup");
       else hideStatus();
       await refreshProfiles(data);
     } catch {
@@ -221,6 +235,7 @@
     note("Nuvio login approved");
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     authenticated = true;
+    profileSelectionReady = true;
     renderProfiles(r.data.profiles || [], null, "", true);
     await refresh();
     return true;
@@ -282,6 +297,8 @@
 
   async function startLogin() {
     if (connected) return;
+    profileSelectionReady = false;
+    renderProfiles([], null, "", false);
     let win = null;
     try { win = window.open("about:blank", "_blank"); } catch {}
     try {
@@ -327,6 +344,7 @@
       if (!r.ok || r.data?.ok === false) throw new Error(String(r.data?.error || "disconnect_failed"));
     connected = false;
     authenticated = false;
+    profileSelectionReady = false;
     syncConnectLocked();
     stopPendingLogin(false);
     renderProfiles([], null, "", false);
@@ -336,6 +354,31 @@
     } catch {
       note("Nuvio disconnect failed");
     }
+  }
+
+  async function saveSelectedProfile(opts = {}) {
+    const select = el("nuvio_profile_select");
+    const profileId = txt(select?.value);
+    if (!profileId) return false;
+    const r = await fetchJSON(api("/api/nuvio/profile/select"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ profile_id: /^\d+$/.test(profileId) ? Number(profileId) : profileId }),
+    });
+    if (!r.ok || r.data?.ok === false) throw new Error(String(r.data?.error || r.data?.status || "profile_select_failed"));
+    connected = true;
+    authenticated = true;
+    profileSelectionReady = true;
+    setStatus(true, "Nuvio connected");
+    try { window.invalidateConfigCache?.(); } catch {}
+    try { window.CW?.Cache?.invalidate?.("config"); } catch {}
+    try { await window.refreshStatus?.(true); } catch {}
+    try { await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true); } catch {}
+    try { window.manualRefreshStatus?.(); } catch {}
+    try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
+    if (!opts.silent) note("Nuvio profile saved");
+    return true;
   }
 
   function ensureInstanceUI() {
@@ -418,6 +461,6 @@
 
   window.initNuvioAuthUI = boot;
   window.cwAuth = window.cwAuth || {};
-  window.cwAuth.nuvio = { init: boot, rehydrate: refresh };
+  window.cwAuth.nuvio = { init: boot, rehydrate: refresh, saveSelectedProfile };
   boot();
 })();

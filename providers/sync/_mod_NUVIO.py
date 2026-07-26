@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+import os
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -24,8 +25,9 @@ from .nuvio import _history as feat_history
 from .nuvio import _progress as feat_progress
 from .nuvio import _watchlist as feat_watchlist
 from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_watched_rows
+from cw_platform.provider_instances import normalize_instance_id
 
-__VERSION__ = "0.2"
+__VERSION__ = "0.3"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
 if "ctx" not in globals():
@@ -52,6 +54,17 @@ def _rate_limit_settings(block: Mapping[str, Any]) -> dict[str, float]:
         return max(0.0, rate)
 
     return {"get_per_sec": _rate("get_per_sec", 100.0), "post_per_sec": _rate("post_per_sec", 100.0)}
+
+
+def _current_instance_id() -> str:
+    probe = str(os.getenv("CW_PROBE_PROVIDER") or "").upper().strip()
+    if probe == "NUVIO":
+        return normalize_instance_id(os.getenv("CW_PROBE_INSTANCE"))
+    if str(os.getenv("CW_PAIR_SRC") or "").upper().strip() == "NUVIO":
+        return normalize_instance_id(os.getenv("CW_PAIR_SRC_INSTANCE"))
+    if str(os.getenv("CW_PAIR_DST") or "").upper().strip() == "NUVIO":
+        return normalize_instance_id(os.getenv("CW_PAIR_DST_INSTANCE"))
+    return "default"
 
 
 def get_manifest() -> Mapping[str, Any]:
@@ -100,7 +113,7 @@ def get_manifest() -> Mapping[str, Any]:
 class NUVIOModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
-        self.instance_id = "default"
+        self.instance_id = _current_instance_id()
         block = provider_block(self.config, self.instance_id)
         rate = _rate_limit_settings(block)
         session = build_session("NUVIO", ctx)

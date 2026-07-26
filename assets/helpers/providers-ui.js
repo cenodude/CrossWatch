@@ -114,6 +114,9 @@
   }
 
   function authStatusFor(key, configured) {
+    if (String(key || "").toUpperCase() === "NUVIO" && configured) {
+      return { text: "Connected", ok: true };
+    }
     const data = statusProviderData(key);
     if (data && typeof data.connected === "boolean") {
       return data.connected ? { text: "Connected", ok: true } : { text: "Check connection", ok: false };
@@ -815,6 +818,10 @@
 
   function connectionModalCurrentConnected(panel, info, cfg = getCachedConfig()) {
     if (!info || info.key === "TMDB_METADATA" || info.key === "ANIME_MAPPING") return true;
+    if (info.key === "NUVIO") {
+      const profileRow = panel?.querySelector("#nuvio_profile_state");
+      if (profileRow && !profileRow.classList.contains("hidden") && String(panel?.querySelector("#nuvio_profile_select")?.value || "").trim()) return true;
+    }
     if (connectionModalStatusTarget(panel)) return true;
     const inst = String(panel?.querySelector(".cw-profile-switcher select")?.value || "default");
     return configuredProfileIds(cfg, info.provider).some((id) => String(id) === inst);
@@ -1309,6 +1316,7 @@
         btn.__cwSaving = true;
         setConnectionSaveBusy(btn, true);
         try {
+          if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
           const ret = window.saveSettings?.();
           if (ret && typeof ret.then === "function") await ret;
           flashConnectionResult(btn, true);

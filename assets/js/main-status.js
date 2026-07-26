@@ -209,6 +209,16 @@
       : "";
   }
 
+  function providerProfileDetail(key, data) {
+    if (up(key) !== "NUVIO" || !data || typeof data !== "object") return "";
+    const name = txt(data.nuvio_profile_name || data.profile_name);
+    const id = txt(data.nuvio_profile_id || data.profile_id);
+    if (name && id) return `Nuvio profile: ${name} (#${id})`;
+    if (name) return `Nuvio profile: ${name}`;
+    if (id) return `Nuvio profile: #${id}`;
+    return "";
+  }
+
   function providerMeta(key, data) {
     switch (up(key)) {
       case "PLEX":
@@ -338,6 +348,7 @@
           `Provider: ${name}`,
           `Status: ${data?.connected ? "Connected" : "Not connected"}`,
           instancesDetail(data) || "Profiles: Not reported",
+          providerProfileDetail(key, data),
           meta.detail,
           usageDetail(data),
         ].filter(Boolean).join("\n");

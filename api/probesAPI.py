@@ -969,13 +969,13 @@ def _probe_nuvio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tu
         ok = False
         rsn = "Nuvio: authentication failed"
     except NuvioInvalidResponse:
-        ok = False
+        ok = bool(status.get("connected"))
         rsn = "Nuvio: invalid response"
     except NuvioServiceUnavailable:
-        ok = False
+        ok = bool(status.get("connected"))
         rsn = "Nuvio: service unavailable"
     except Exception:
-        ok = False
+        ok = bool(status.get("connected"))
         rsn = "Nuvio: service unavailable"
 
     with _CACHE_LOCK:
@@ -1986,10 +1986,15 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             if "NUVIO" in active_providers:
                 inst_map, inst_sum = _instances_payload("NUVIO")
                 n_block = (cfg_nuvio.get("nuvio") or {}) if isinstance(cfg_nuvio.get("nuvio"), Mapping) else {}
+                n_profile_name = str(n_block.get("profile_name") or "").strip()
+                n_profile_id = str(n_block.get("profile_id") or "").strip()
                 providers_out["NUVIO"] = {
                     "connected": nuvio_ok,
                     **({} if nuvio_ok else {"reason": nuvio_reason}),
-                    **({"profile_name": str(n_block.get("profile_name") or "")} if str(n_block.get("profile_name") or "").strip() else {}),
+                    **({"profile_name": n_profile_name} if n_profile_name else {}),
+                    **({"profile_id": n_profile_id} if n_profile_id else {}),
+                    **({"nuvio_profile_name": n_profile_name} if n_profile_name else {}),
+                    **({"nuvio_profile_id": n_profile_id} if n_profile_id else {}),
                     "instances": inst_map,
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),

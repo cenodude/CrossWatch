@@ -62,6 +62,23 @@ def test_nuvio_probe_reports_refresh_failure(monkeypatch) -> None:
     assert reason == "Nuvio: token refresh failed"
 
 
+def test_nuvio_probe_keeps_configured_connection_on_service_unavailable(monkeypatch) -> None:
+    from api import probesAPI as probes
+    from providers.auth import _auth_NUVIO as common
+
+    probes.invalidate_provider_caches("nuvio")
+
+    def service_down(self, cfg, refresh=True):
+        raise common.NuvioServiceUnavailable("service_unavailable")
+
+    monkeypatch.setattr(common.NuvioClient, "pull_profiles", service_down)
+
+    ok, reason = probes._probe_nuvio_detail(_configured(2), max_age_sec=0)
+
+    assert ok is True
+    assert reason == "Nuvio: service unavailable"
+
+
 def test_nuvio_probe_keys_are_profile_specific_and_redacted() -> None:
     from api import probesAPI as probes
 
@@ -101,6 +118,9 @@ def test_status_includes_nuvio_instance_payload_without_secrets(monkeypatch) -> 
     assert data["nuvio_connected"] is True
     assert data["providers"]["NUVIO"]["connected"] is True
     assert data["providers"]["NUVIO"]["profile_name"] == "Profile 1"
+    assert data["providers"]["NUVIO"]["profile_id"] == "1"
+    assert data["providers"]["NUVIO"]["nuvio_profile_name"] == "Profile 1"
+    assert data["providers"]["NUVIO"]["nuvio_profile_id"] == "1"
     assert data["providers"]["NUVIO"]["instances"]["default"]["configured"] is True
     assert data["providers"]["NUVIO"]["instances"]["default"]["probed"] is True
     assert "raw-status-token" not in body
