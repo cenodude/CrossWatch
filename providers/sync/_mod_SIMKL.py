@@ -75,7 +75,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.6"
+__VERSION__ = "1.7"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -110,6 +110,12 @@ try:
 except Exception as e:
     feat_ratings = None
     _log("feature_import_failed", level="warn", import_feature="ratings", error=str(e))
+
+try:
+    from .simkl import _progress as feat_progress
+except Exception as e:
+    feat_progress = None
+    _log("feature_import_failed", level="warn", import_feature="progress", error=str(e))
 
 try:
     from .simkl import _playlists as feat_playlists
@@ -172,6 +178,8 @@ if feat_history:
     _FEATURES["history"] = feat_history
 if feat_ratings:
     _FEATURES["ratings"] = feat_ratings
+if feat_progress:
+    _FEATURES["progress"] = feat_progress
 
 _PLAYLIST_CAPABILITIES = {
     "read": True,
@@ -195,6 +203,7 @@ def _features_flags() -> dict[str, bool]:
         "watchlist": "watchlist" in _FEATURES,
         "ratings": "ratings" in _FEATURES,
         "history": "history" in _FEATURES,
+        "progress": "progress" in _FEATURES,
         "playlists": feat_playlists is not None,
     }
 
@@ -204,6 +213,7 @@ def supported_features() -> dict[str, bool]:
         "watchlist": True,
         "ratings": True,
         "history": True,
+        "progress": True,
         "playlists": True,
     }
     present = _features_flags()
@@ -239,6 +249,13 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "unrate": True,
                 "from_date": True,
+            },
+            "progress": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True, "anime": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": dict(_PLAYLIST_CAPABILITIES),
         },
@@ -427,6 +444,7 @@ class SIMKLModule:
             "watchlist": bool(enabled.get("watchlist") and "watchlist" in _FEATURES and core_ok),
             "ratings": bool(enabled.get("ratings") and "ratings" in _FEATURES and core_ok),
             "history": bool(enabled.get("history") and "history" in _FEATURES and core_ok),
+            "progress": bool(enabled.get("progress") and "progress" in _FEATURES and core_ok),
             "playlists": bool(enabled.get("playlists") and feat_playlists and core_ok),
         }
 
@@ -600,7 +618,18 @@ class SIMKLModule:
         if not mod:
             _log("write_skipped", feature=feature, level="info", op="add", reason="module_missing")
             return {"ok": True, "count": 0, "unresolved": []}
-        count, unresolved = mod.add(self, lst)
+        raw = mod.add(self, lst)
+        if isinstance(raw, Mapping):
+            out = dict(raw)
+            out.setdefault("ok", True)
+            out.setdefault("unresolved", [])
+            out.setdefault("confirmed_keys", [])
+            if isinstance(out.get("confirmed_keys"), list):
+                out["count"] = len([x for x in out.get("confirmed_keys") or [] if x])
+            else:
+                out.setdefault("count", int(out.get("count", 0) or 0))
+            return out
+        count, unresolved = raw
         exact_confirmed = getattr(self, "_simkl_history_add_confirmed_keys", None) if feature == "history" else None
         exact_skipped = getattr(self, "_simkl_history_add_skipped_keys", None) if feature == "history" else None
         confirmed_keys = [str(k) for k in exact_confirmed if k] if isinstance(exact_confirmed, list) else _confirmed_keys(self.key_of, lst, unresolved)
@@ -631,7 +660,18 @@ class SIMKLModule:
         if feature == "history":
             setattr(self, "_simkl_history_remove_confirmed_keys", [])
             setattr(self, "_simkl_history_remove_skipped_keys", [])
-        count, unresolved = mod.remove(self, lst)
+        raw = mod.remove(self, lst)
+        if isinstance(raw, Mapping):
+            out = dict(raw)
+            out.setdefault("ok", True)
+            out.setdefault("unresolved", [])
+            out.setdefault("confirmed_keys", [])
+            if isinstance(out.get("confirmed_keys"), list):
+                out["count"] = len([x for x in out.get("confirmed_keys") or [] if x])
+            else:
+                out.setdefault("count", int(out.get("count", 0) or 0))
+            return out
+        count, unresolved = raw
         exact_confirmed = getattr(self, "_simkl_history_remove_confirmed_keys", None) if feature == "history" else None
         exact_skipped = getattr(self, "_simkl_history_remove_skipped_keys", None) if feature == "history" else None
         if isinstance(exact_confirmed, list):
@@ -700,6 +740,13 @@ class _SIMKLOPS:
             "ratings": {
                 "index_semantics": "present",
                 "observed_deletes": True,
+            },
+            "progress": {
+                "index_semantics": "present",
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": False, "seasons": False, "episodes": True, "anime": True},
+                "upsert": True,
+                "remove": True,
             },
             "playlists": dict(_PLAYLIST_CAPABILITIES),
         }
