@@ -5,7 +5,7 @@
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
   const logo = (v) => ({ plex: "/assets/img/PLEX.svg", jellyfin: "/assets/img/JELLYFIN.svg", emby: "/assets/img/EMBY.svg", trakt: "/assets/img/TRAKT.svg", simkl: "/assets/img/SIMKL.svg", mdblist: "/assets/img/MDBLIST.svg" }[String(v || "").toLowerCase()] || "");
-  const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0 };
+  const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0, hybridDismissed: false };
 
   async function j(url, options = {}) {
     if (w.cwIsAuthSetupPending?.() === true) throw new Error("auth setup pending");
@@ -75,7 +75,7 @@
 
   function renderHeader(o) {
     return `
-      <div class="cw-settings-pane-head sc2-pane-head">
+      <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-scrobbler sc2-pane-head">
         <div>
           <div class="cw-settings-pane-kicker">Scrobbler</div>
           <h3>Webhooks and Watcher</h3>
@@ -87,6 +87,7 @@
             <button type="button" class="cw-settings-jump" data-action="add-route"><span class="material-symbols-rounded" aria-hidden="true">add</span>Add watcher</button>
           </div>
         </div>
+        <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">sensors</span>
       </div>
     `;
   }
@@ -295,7 +296,7 @@
   function render() {
     const o = state.overview || {};
     const gate = renderProviderGate(o);
-    const hybrid = o.hybrid_warning ? `<div class="sc2-inline-note is-warn"><span class="material-symbols-rounded">warning</span><span>Webhook and Watcher are both enabled. Do not route the same tracker through both sources.</span></div>` : "";
+    const hybrid = o.hybrid_warning && !state.hybridDismissed ? `<div class="sc2-inline-note is-warn sc2-dismissible-note"><span class="material-symbols-rounded">warning</span><span>Webhook and Watcher are both enabled. Do not route the same tracker through both sources.</span><button type="button" class="sc2-note-dismiss" data-action="dismiss-hybrid-warning" aria-label="Dismiss Scrobbler notice"><span class="material-symbols-rounded">close</span></button></div>` : "";
     const legacyList = o.legacy_webhooks || [];
     const legacy = legacyList.length ? `<button type="button" class="sc2-inline-note is-warn sc2-legacy-note" data-legacy-cleanup><span class="material-symbols-rounded">mop</span><span>${state.legacyConfirm ? "Click again to remove the old webhook endpoints from your config." : `Legacy webhook endpoints found (${esc(legacyList.join(", "))}). Click to clean them up but only after switching your media server to the new webhook URLs.`}</span></button>` : "";
     const routes = o.routes || [];
@@ -586,6 +587,7 @@
       const btn = e.target.closest("[data-action]");
       if (!btn) return;
       const action = btn.getAttribute("data-action");
+      if (action === "dismiss-hybrid-warning") { state.hybridDismissed = true; btn.closest(".sc2-dismissible-note")?.remove(); return; }
       if (action === "open-connections") { try { w.cwSettingsSelect?.("providers"); } catch {} return; }
       if (action === "add-webhook") await openModal("webhook", { mode: "create", overview: state.overview, onSaved: applyMutation });
       if (action === "edit-webhook") await openModal("webhook", { mode: "edit", overview: state.overview, webhook: findWebhook(btn.dataset.provider, btn.dataset.instance, btn.dataset.sink), onSaved: applyMutation });

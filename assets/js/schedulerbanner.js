@@ -42,7 +42,8 @@
 #ops-card .cw-split-run .btn{min-height:44px!important;height:44px!important;}
 #ops-card .cw-split-run .cw-split-main{display:inline-flex!important;align-items:center!important;justify-content:center!important;gap:9px!important;min-width:146px!important;}
 #ops-card #run:is(.loading,.glass) .cw-sync-action-icon{animation:cwHubSyncSpin .8s linear infinite!important;}
-#ops-card .cw-status-dock{display:flex!important;flex:0 1 auto!important;width:100%!important;min-width:0!important;align-items:center!important;justify-content:flex-start!important;margin:0!important;padding-top:12px!important;border-top:1px solid var(--hub-card-border)!important;order:2!important;overflow:visible!important;}
+#ops-card .cw-status-dock{display:flex!important;flex:0 1 auto!important;box-sizing:border-box!important;width:100%!important;min-width:0!important;align-items:center!important;justify-content:flex-start!important;margin:0!important;padding-top:12px!important;border-top:1px solid var(--hub-card-border)!important;order:2!important;overflow:visible!important;}
+#ops-card .cw-status-dock:not(:has(.sched)){border-top-color:transparent!important;}
 #sched-inline-log{display:flex!important;width:100%!important;max-width:100%!important;align-items:flex-start!important;justify-content:flex-start!important;gap:18px!important;flex-wrap:nowrap!important;overflow:visible!important;}
 #ops-card #sched-inline-log .hub-status-group{position:relative;display:block;min-width:0;overflow:visible;}
 #ops-card #sched-inline-log .hub-status-group.is-hidden{display:none;}
