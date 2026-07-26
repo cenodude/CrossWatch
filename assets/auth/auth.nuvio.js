@@ -22,6 +22,8 @@
   let connected = false;
   let authenticated = false;
   let profileSelectionReady = false;
+  let savedProfileId = "";
+  let savedProfileName = "";
   let poller = null;
   let expiryTimer = null;
 
@@ -153,6 +155,8 @@
     if (!wrap || !sel) return;
     const rows = Array.isArray(profiles) ? profiles : [];
     const effectiveSelectedId = selectedId || (rows.length === 1 ? (rows[0].profile_id || rows[0].profile_index || "") : "");
+    savedProfileId = txt(selectedId || "");
+    savedProfileName = txt(selectedName || "");
     const showProfiles = !!(connected || profileSelectionReady || forceShow);
     wrap.classList.toggle("hidden", !showProfiles);
     sel.style.width = "320px";
@@ -213,6 +217,8 @@
       const data = r.data || {};
       connected = !!(r.ok && data.connected);
       authenticated = !!(r.ok && data.authenticated);
+      savedProfileId = txt(data.profile_id);
+      savedProfileName = txt(data.profile_name);
       profileSelectionReady = connected || authenticated || profileSelectionReady;
       syncConnectLocked();
       if (connected) setStatus(true, "Nuvio connected");
@@ -360,6 +366,12 @@
     const select = el("nuvio_profile_select");
     const profileId = txt(select?.value);
     if (!profileId) return false;
+    const profileName = txt(select?.selectedOptions?.[0]?.textContent);
+    if (connected && savedProfileId && String(savedProfileId) === String(profileId)) {
+      setStatus(true, "Nuvio connected");
+      if (!opts.silent) note("Nuvio profile saved");
+      return true;
+    }
     const r = await fetchJSON(api("/api/nuvio/profile/select"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -370,12 +382,16 @@
     connected = true;
     authenticated = true;
     profileSelectionReady = true;
+    savedProfileId = profileId;
+    savedProfileName = txt(r.data?.profile_name || profileName);
     setStatus(true, "Nuvio connected");
     try { window.invalidateConfigCache?.(); } catch {}
     try { window.CW?.Cache?.invalidate?.("config"); } catch {}
-    try { await window.refreshStatus?.(true); } catch {}
-    try { await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true); } catch {}
-    try { window.manualRefreshStatus?.(); } catch {}
+    setTimeout(() => {
+      try { window.refreshStatus?.(true); } catch {}
+      try { window.CW?.ProvidersUI?.refreshAuthPresentation?.(true); } catch {}
+      try { window.manualRefreshStatus?.(); } catch {}
+    }, 0);
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
     if (!opts.silent) note("Nuvio profile saved");
     return true;
