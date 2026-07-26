@@ -155,6 +155,18 @@ def test_editor_ui_allows_extra_policy_corrections() -> None:
     assert 'row._origin = manualKeys.has(rowKey) ? "manual"' in js
 
 
+def test_editor_ui_displays_percent_only_progress() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "editor.js").read_text(encoding="utf-8")
+    assert "function progressPercentValue(raw)" in js
+    assert '"progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"' in js
+    assert "if (percent != null) label = formatProgressPercent(percent);" in js
+    assert "row.raw.progress_percent = row.raw.progress_ms != null" in js
+    assert "cw-progress-edit-grid" in js
+    assert "cw-progress-percent-suffix" in js
+
+
 def test_editor_ui_exposes_raw_fields_modal() -> None:
     from pathlib import Path
 
