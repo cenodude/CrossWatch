@@ -7,11 +7,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterator, Literal
+from threading import Lock, Thread
+from typing import Any, Iterator, Literal, cast
 
 import json
 import os
 import re
+import time
 import uuid
 
 from cw_platform.config_base import CONFIG, load_config
@@ -25,6 +27,354 @@ RestoreMode = Literal["merge", "clear_restore"]
 SNAPSHOT_KIND = "snapshot"
 SNAPSHOT_BUNDLE_KIND = "snapshot_bundle"
 SNAPSHOT_FEATURES: tuple[Feature, ...] = ("watchlist", "ratings", "history", "progress")
+_CAPTURE_PROGRESS: dict[str, dict[str, Any]] = {}
+_CAPTURE_PROGRESS_LOCK = Lock()
+_CAPTURE_PROGRESS_TTL_SECONDS = 6 * 60 * 60
+
+
+def _progress_now() -> int:
+    return int(time.time())
+
+
+def _progress_percent(feature_index: int, feature_total: int, stage_fraction: float) -> int:
+    total = max(1, int(feature_total or 1))
+    idx = max(1, int(feature_index or 1))
+    frac = max(0.0, min(1.0, float(stage_fraction or 0.0)))
+    return max(4, min(99, int((((idx - 1) + frac) / total) * 92) + 4))
+
+
+def _capture_progress_update(progress_id: str | None, **updates: Any) -> None:
+    pid = str(progress_id or "").strip()
+    if not pid:
+        return
+    with _CAPTURE_PROGRESS_LOCK:
+        current = dict(_CAPTURE_PROGRESS.get(pid) or {})
+        current.update(updates)
+        current["id"] = pid
+        current["updated_at"] = _progress_now()
+        _CAPTURE_PROGRESS[pid] = current
+
+
+def record_capture_activity(
+    progress_id: str | None,
+    *,
+    provider: str = "",
+    feature: str = "",
+    event: str = "",
+    message: str = "",
+    fields: Mapping[str, Any] | None = None,
+) -> None:
+    pid = str(progress_id or "").strip()
+    if not pid:
+        return
+    detail = _capture_activity_text(provider=provider, feature=feature, event=event, message=message, fields=fields or {})
+    updates: dict[str, Any] = {
+        "activity_event": str(event or ""),
+        "activity_message": detail,
+        "message": detail,
+    }
+    field_map = fields if isinstance(fields, Mapping) else {}
+    if feature:
+        updates["current_feature"] = str(feature).strip().lower()
+    if event == "live_watched.section":
+        returned = _activity_int(field_map.get("rows_returned"))
+        seen = _activity_int(field_map.get("rows_seen"))
+        if returned is not None:
+            updates["feature_items"] = returned
+        if seen is not None:
+            updates["activity_seen"] = seen
+    elif event in ("plex.presence", "live_watched_summary"):
+        returned = _activity_int(field_map.get("watched_rows_returned"))
+        seen = _activity_int(field_map.get("watched_rows_seen"))
+        if returned is not None:
+            updates["feature_items"] = returned
+        if seen is not None:
+            updates["activity_seen"] = seen
+
+    with _CAPTURE_PROGRESS_LOCK:
+        current = dict(_CAPTURE_PROGRESS.get(pid) or {})
+        current.update(updates)
+        try:
+            current["activity_seq"] = int(current.get("activity_seq") or 0) + 1
+        except Exception:
+            current["activity_seq"] = 1
+        try:
+            percent = int(current.get("percent") or 0)
+            feature_index = int(current.get("feature_index") or 1)
+            feature_total = int(current.get("feature_total") or 1)
+            ceiling = _progress_percent(feature_index, feature_total, 0.58)
+            if str(current.get("stage") or "").lower() in ("reading", "queued", "starting"):
+                current["percent"] = max(percent, min(ceiling, percent + 1))
+        except Exception:
+            pass
+        current["id"] = pid
+        current["updated_at"] = _progress_now()
+        _CAPTURE_PROGRESS[pid] = current
+
+
+def _activity_int(value: Any) -> int | None:
+    try:
+        if value is None or isinstance(value, bool):
+            return None
+        return int(value)
+    except Exception:
+        return None
+
+
+def _capture_activity_text(
+    *,
+    provider: str,
+    feature: str,
+    event: str,
+    message: str,
+    fields: Mapping[str, Any],
+) -> str:
+    evt = str(event or message or "").strip()
+    prov = str(provider or "").strip().upper()
+    feat = str(feature or "").strip().lower()
+    if prov == "PLEX" and evt == "live_watched.section":
+        title = str(fields.get("section_title") or fields.get("section_id") or "library").strip()
+        returned = _activity_int(fields.get("rows_returned"))
+        seen = _activity_int(fields.get("rows_seen"))
+        total = _activity_int(fields.get("totalSize"))
+        bits = []
+        if returned is not None:
+            bits.append(f"{returned:,} returned")
+        if seen is not None:
+            bits.append(f"{seen:,} seen")
+        if total is not None:
+            bits.append(f"{total:,} total")
+        suffix = " / ".join(bits)
+        return f"Scanning {title}{': ' + suffix if suffix else ''}"
+    if prov == "PLEX" and evt in ("plex.presence", "live_watched_summary"):
+        rows = _activity_int(fields.get("watched_rows_returned"))
+        sections = _activity_int(fields.get("sections_scanned"))
+        if rows is not None and sections is not None:
+            return f"History scan: {sections:,} sections, {rows:,} watched rows"
+        if rows is not None:
+            return f"History scan: {rows:,} watched rows"
+    if evt == "api:hit":
+        api_feature = str(fields.get("api_feature") or feat or "provider").strip()
+        return f"Contacting {prov or 'provider'} for {api_feature}..."
+    if evt:
+        return f"{prov or 'Provider'} {feat or 'capture'}: {evt}"
+    return str(message or "Working...")
+
+
+def _capture_progress_cleanup() -> None:
+    cutoff = _progress_now() - _CAPTURE_PROGRESS_TTL_SECONDS
+    with _CAPTURE_PROGRESS_LOCK:
+        for key, row in list(_CAPTURE_PROGRESS.items()):
+            try:
+                updated = int(row.get("updated_at") or 0)
+            except Exception:
+                updated = 0
+            if updated and updated < cutoff:
+                _CAPTURE_PROGRESS.pop(key, None)
+
+
+def _capture_progress_start(
+    progress_id: str | None,
+    *,
+    provider: str,
+    instance: str,
+    feature: str,
+    feature_total: int,
+) -> None:
+    pid = str(progress_id or "").strip()
+    if not pid:
+        return
+    _capture_progress_update(
+        pid,
+        ok=True,
+        done=False,
+        stage="starting",
+        message="Preparing capture...",
+        provider=provider,
+        instance=instance,
+        feature=feature,
+        current_feature="",
+        feature_index=0,
+        feature_total=max(1, int(feature_total or 1)),
+        feature_items=0,
+        items_done=0,
+        total_items=0,
+        bytes_written=0,
+        percent=3,
+    )
+
+
+def _capture_progress_done(progress_id: str | None, *, result: Mapping[str, Any] | None = None) -> None:
+    total = 0
+    stats = result.get("stats") if isinstance(result, Mapping) else None
+    if isinstance(stats, Mapping):
+        try:
+            total = int(stats.get("count") or 0)
+        except Exception:
+            total = 0
+    _capture_progress_update(
+        progress_id,
+        ok=bool(result.get("ok", True)) if isinstance(result, Mapping) else True,
+        done=True,
+        stage="done",
+        message=str(result.get("message") or "Capture complete.") if isinstance(result, Mapping) else "Capture complete.",
+        percent=100,
+        total_items=total,
+        items_done=total,
+        result_path=str(result.get("path") or "") if isinstance(result, Mapping) else "",
+        cleanup_results=result.get("results") if isinstance(result, Mapping) else None,
+        result=dict(result) if isinstance(result, Mapping) else None,
+    )
+
+
+def _capture_progress_error(progress_id: str | None, error: Any) -> None:
+    _capture_progress_update(
+        progress_id,
+        ok=False,
+        done=True,
+        stage="error",
+        message=str(error or "Capture failed"),
+        error=str(error or "Capture failed"),
+        percent=100,
+    )
+
+
+def get_capture_progress(progress_id: str) -> dict[str, Any] | None:
+    pid = str(progress_id or "").strip()
+    if not pid:
+        return None
+    with _CAPTURE_PROGRESS_LOCK:
+        row = _CAPTURE_PROGRESS.get(pid)
+        return dict(row) if isinstance(row, Mapping) else None
+
+
+def start_capture_job(
+    provider: str,
+    feature: CreateFeature | str,
+    *,
+    label: str = "",
+    instance_id: Any | None = None,
+    progress_id: str | None = None,
+    cfg: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    _capture_progress_cleanup()
+    job_id = str(progress_id or "").strip() or uuid.uuid4().hex
+    pid = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance_id)
+    feat = str(feature or "").strip().lower()
+    _capture_progress_update(
+        job_id,
+        ok=True,
+        done=False,
+        stage="queued",
+        message="Capture queued...",
+        provider=pid,
+        instance=inst,
+        feature=feat,
+        current_feature="",
+        feature_index=0,
+        feature_total=1,
+        feature_items=0,
+        items_done=0,
+        total_items=0,
+        bytes_written=0,
+        percent=1,
+    )
+
+    def _run() -> None:
+        try:
+            create_snapshot(provider, feature, label=label, instance_id=instance_id, cfg=cfg, progress_id=job_id)
+        except Exception:
+            pass
+
+    thread = Thread(target=_run, name=f"cw-capture-{job_id[:8]}", daemon=True)
+    thread.start()
+    return {"ok": True, "job_id": job_id, "progress_id": job_id, "stage": "queued"}
+
+
+def start_provider_cleanup_job(
+    provider: str,
+    features: Iterable[Feature],
+    *,
+    instance_id: Any | None = None,
+    progress_id: str | None = None,
+    cfg: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    _capture_progress_cleanup()
+    job_id = str(progress_id or "").strip() or uuid.uuid4().hex
+    pid = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance_id)
+    feature_list: list[Feature] = [_norm_feature(str(f or "")) for f in features if str(f or "").strip()]
+    _capture_progress_update(
+        job_id,
+        ok=True,
+        done=False,
+        stage="queued",
+        message="Provider cleanup queued...",
+        provider=pid,
+        instance=inst,
+        feature="cleanup",
+        current_feature="",
+        feature_index=0,
+        feature_total=max(1, len(feature_list)),
+        feature_items=0,
+        items_done=0,
+        total_items=0,
+        bytes_written=0,
+        percent=1,
+    )
+
+    def _run() -> None:
+        try:
+            clear_provider_features(provider, feature_list, instance_id=instance_id, cfg=cfg, progress_id=job_id)
+        except Exception:
+            pass
+
+    thread = Thread(target=_run, name=f"cw-provider-cleanup-{job_id[:8]}", daemon=True)
+    thread.start()
+    return {"ok": True, "job_id": job_id, "progress_id": job_id, "stage": "queued"}
+
+
+def start_restore_job(
+    path: str,
+    *,
+    mode: RestoreMode = "merge",
+    instance_id: Any | None = None,
+    progress_id: str | None = None,
+    cfg: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    _capture_progress_cleanup()
+    job_id = str(progress_id or "").strip() or uuid.uuid4().hex
+    _capture_progress_update(
+        job_id,
+        ok=True,
+        done=False,
+        operation="restore",
+        stage="queued",
+        message="Restore queued...",
+        provider="",
+        instance=normalize_instance_id(instance_id),
+        feature="restore",
+        current_feature="",
+        feature_index=0,
+        feature_total=1,
+        feature_items=0,
+        items_done=0,
+        total_items=0,
+        added=0,
+        removed=0,
+        percent=1,
+    )
+
+    def _run() -> None:
+        try:
+            restore_snapshot(path, mode=mode, instance_id=instance_id, cfg=cfg, progress_id=job_id)
+        except Exception:
+            pass
+
+    thread = Thread(target=_run, name=f"cw-restore-{job_id[:8]}", daemon=True)
+    thread.start()
+    return {"ok": True, "job_id": job_id, "progress_id": job_id, "stage": "queued"}
 
 
 def _utc_now() -> datetime:
@@ -133,7 +483,7 @@ def _norm_feature(x: str) -> Feature:
     v = str(x or "").strip().lower()
     if v not in ("watchlist", "ratings", "history", "progress"):
         raise ValueError(f"Unsupported feature: {x}")
-    return v  # type: ignore[return-value]
+    return cast(Feature, v)
 
 
 
@@ -141,7 +491,7 @@ def _norm_create_feature(x: str) -> CreateFeature:
     v = str(x or "").strip().lower()
     if v == "all":
         return "all"
-    return _norm_feature(v)  # type: ignore[return-value]
+    return _norm_feature(v)
 
 
 def _norm_provider(x: str) -> str:
@@ -166,6 +516,7 @@ def _build_index_capture_mode(
     instance: str,
     feat: Feature,
     ts: datetime,
+    progress_id: str | None = None,
 ) -> Any:
     prev: dict[str, str | None] = {
         "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
@@ -173,15 +524,32 @@ def _build_index_capture_mode(
         "CW_CAPTURE_INSTANCE": os.environ.get("CW_CAPTURE_INSTANCE"),
         "CW_CAPTURE_FEATURE": os.environ.get("CW_CAPTURE_FEATURE"),
         "CW_CAPTURE_ID": os.environ.get("CW_CAPTURE_ID"),
+        "CW_CAPTURE_PROGRESS_ID": os.environ.get("CW_CAPTURE_PROGRESS_ID"),
     }
     os.environ["CW_CAPTURE_MODE"] = "1"
     os.environ["CW_CAPTURE_PROVIDER"] = str(pid or "").strip().upper()
     os.environ["CW_CAPTURE_INSTANCE"] = normalize_instance_id(instance)
     os.environ["CW_CAPTURE_FEATURE"] = str(feat or "").strip().lower()
     os.environ["CW_CAPTURE_ID"] = ts.strftime("%Y%m%dT%H%M%SZ")
+    if progress_id:
+        os.environ["CW_CAPTURE_PROGRESS_ID"] = str(progress_id)
+    else:
+        os.environ.pop("CW_CAPTURE_PROGRESS_ID", None)
+    log_progress_prev = ""
+    try:
+        from providers.sync import _log as provider_log
+
+        log_progress_prev = provider_log.set_capture_progress_id(str(progress_id or ""))
+    except Exception:
+        provider_log = None  # type: ignore[assignment]
     try:
         return ops.build_index(cfg_view, feature=feat) or {}
     finally:
+        try:
+            if provider_log is not None:  # type: ignore[name-defined]
+                provider_log.set_capture_progress_id(log_progress_prev)  # type: ignore[name-defined]
+        except Exception:
+            pass
         for key, value in prev.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -208,6 +576,29 @@ def _capture_mode_env(
     os.environ["CW_CAPTURE_INSTANCE"] = normalize_instance_id(instance)
     os.environ["CW_CAPTURE_FEATURE"] = str(feat or "").strip().lower()
     os.environ["CW_CAPTURE_ID"] = "tools-clear"
+    try:
+        yield
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+@contextmanager
+def _crosswatch_write_env() -> Iterator[None]:
+    keys = (
+        "CW_CAPTURE_MODE",
+        "CW_CAPTURE_PROVIDER",
+        "CW_CAPTURE_INSTANCE",
+        "CW_CAPTURE_FEATURE",
+        "CW_CAPTURE_ID",
+        "CW_CAPTURE_PROGRESS_ID",
+    )
+    prev = {key: os.environ.get(key) for key in keys}
+    for key in keys:
+        os.environ.pop(key, None)
     try:
         yield
     finally:
@@ -451,8 +842,23 @@ def _create_single_snapshot(
     feat: Feature,
     label: str,
     ts: datetime,
+    progress_id: str | None = None,
+    feature_index: int = 1,
+    feature_total: int = 1,
+    previous_items: int = 0,
 ) -> dict[str, Any]:
     cfg_view = build_provider_config_view(cfg, pid, instance)
+    _capture_progress_update(
+        progress_id,
+        stage="reading",
+        message=f"Reading {feat} from {pid}...",
+        current_feature=feat,
+        feature_index=feature_index,
+        feature_total=feature_total,
+        feature_items=0,
+        items_done=previous_items,
+        percent=_progress_percent(feature_index, feature_total, 0.12),
+    )
     idx_raw = _build_index_capture_mode(
         ops=ops,
         cfg_view=cfg_view,
@@ -460,14 +866,33 @@ def _create_single_snapshot(
         instance=instance,
         feat=feat,
         ts=ts,
+        progress_id=progress_id,
+    )
+    _capture_progress_update(
+        progress_id,
+        stage="normalizing",
+        message=f"Normalizing {feat} items...",
+        current_feature=feat,
+        percent=_progress_percent(feature_index, feature_total, 0.62),
     )
     idx = _index_dict(idx_raw)
     idx = _canonicalize_index(pid, feat, idx)
     stats = _stats_for(feat, idx)
+    count = int(stats.get("count") or 0)
+    _capture_progress_update(
+        progress_id,
+        stage="writing",
+        message=f"Writing {count:,} {feat} items...",
+        current_feature=feat,
+        feature_items=count,
+        items_done=previous_items + count,
+        total_items=previous_items + count,
+        percent=_progress_percent(feature_index, feature_total, 0.84),
+    )
 
     inst = normalize_instance_id(instance)
     rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, feat, label)}"
-    path = _snapshots_dir() / rel
+    rel, path = _resolve_snapshot_file(rel, must_exist=False)
 
     payload: dict[str, Any] = {
         "kind": SNAPSHOT_KIND,
@@ -481,6 +906,21 @@ def _create_single_snapshot(
         "app_version": str(cfg.get("version") or ""),
     }
     _write_json_atomic(path, payload)
+    try:
+        written = path.stat().st_size
+    except Exception:
+        written = 0
+    _capture_progress_update(
+        progress_id,
+        stage="feature_done",
+        message=f"Captured {count:,} {feat} items.",
+        current_feature=feat,
+        feature_items=count,
+        items_done=previous_items + count,
+        total_items=previous_items + count,
+        bytes_written=written,
+        percent=_progress_percent(feature_index, feature_total, 0.96),
+    )
 
     return {
         "ok": True,
@@ -502,65 +942,108 @@ def create_snapshot(
     label: str = "",
     instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
+    progress_id: str | None = None,
 ) -> dict[str, Any]:
-    cfg = cfg or load_config()
-    pid = _norm_provider(provider)
-    inst = normalize_instance_id(instance_id)
-    feat_any = _norm_create_feature(str(feature or ""))
-    ops = _ops_or_raise(pid)
+    try:
+        cfg = cfg or load_config()
+        pid = _norm_provider(provider)
+        inst = normalize_instance_id(instance_id)
+        feat_any = _norm_create_feature(str(feature or ""))
+        ops = _ops_or_raise(pid)
 
-    cfg_view = build_provider_config_view(cfg, pid, inst)
+        cfg_view = build_provider_config_view(cfg, pid, inst)
 
-    if not _configured(ops, cfg_view):
-        raise ValueError(f"Provider not configured: {pid}#{inst}")
+        if not _configured(ops, cfg_view):
+            raise ValueError(f"Provider not configured: {pid}#{inst}")
 
-    ts = _utc_now()
+        ts = _utc_now()
 
-    if feat_any == "all":
-        children: list[dict[str, Any]] = []
-        feats_total: dict[str, int] = {}
-        total = 0
+        if feat_any == "all":
+            enabled_features: list[Feature] = [f for f in SNAPSHOT_FEATURES if _state_read_feature_enabled(ops, f)]
+            _capture_progress_start(progress_id, provider=pid, instance=inst, feature="all", feature_total=len(enabled_features) or 1)
 
-        for f in SNAPSHOT_FEATURES:
-            feat = _norm_feature(f)
-            if not _state_read_feature_enabled(ops, feat):
-                continue
-            try:
-                child = _create_single_snapshot(ops=ops, cfg=cfg, pid=pid, instance=inst, feat=feat, label=label, ts=ts)
-                children.append({"feature": feat, "path": child["path"], "stats": child["stats"]})
-                n = int((child.get("stats") or {}).get("count") or 0)
-                feats_total[feat] = n
-                total += n
-            except Exception as e:
-                children.append({"feature": feat, "error": str(e)})
+            children: list[dict[str, Any]] = []
+            feats_total: dict[str, int] = {}
+            total = 0
 
-        if not children:
-            raise ValueError(f"No snapshot-capable features for provider: {pid}")
+            for i, feat in enumerate(enabled_features, start=1):
+                try:
+                    child = _create_single_snapshot(
+                        ops=ops,
+                        cfg=cfg,
+                        pid=pid,
+                        instance=inst,
+                        feat=feat,
+                        label=label,
+                        ts=ts,
+                        progress_id=progress_id,
+                        feature_index=i,
+                        feature_total=len(enabled_features),
+                        previous_items=total,
+                    )
+                    children.append({"feature": feat, "path": child["path"], "stats": child["stats"]})
+                    n = int((child.get("stats") or {}).get("count") or 0)
+                    feats_total[feat] = n
+                    total += n
+                except Exception as e:
+                    children.append({"feature": feat, "error": str(e)})
 
-        rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, 'all', label)}"
-        path = _snapshots_dir() / rel
-        stats = {"feature": "all", "count": total, "features": feats_total}
+            if not children:
+                raise ValueError(f"No snapshot-capable features for provider: {pid}")
 
-        payload: dict[str, Any] = {
-            "kind": SNAPSHOT_BUNDLE_KIND,
-            "created_at": ts.isoformat(),
-            "provider": pid,
-            "instance": inst,
-            "feature": "all",
-            "label": _safe_label(label),
-            "stats": stats,
-            "children": children,
-            "app_version": str(cfg.get("version") or ""),
-        }
-        _write_json_atomic(path, payload)
+            _capture_progress_update(
+                progress_id,
+                stage="bundling",
+                message="Writing full capture bundle...",
+                current_feature="all",
+                items_done=total,
+                total_items=total,
+                percent=96,
+            )
+            rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, 'all', label)}"
+            path = _snapshots_dir() / rel
+            stats = {"feature": "all", "count": total, "features": feats_total}
 
-        return {"ok": True, "path": rel, "provider": pid, "instance": inst, "feature": "all", "label": payload["label"], "created_at": payload["created_at"], "stats": stats, "children": children}
+            payload: dict[str, Any] = {
+                "kind": SNAPSHOT_BUNDLE_KIND,
+                "created_at": ts.isoformat(),
+                "provider": pid,
+                "instance": inst,
+                "feature": "all",
+                "label": _safe_label(label),
+                "stats": stats,
+                "children": children,
+                "app_version": str(cfg.get("version") or ""),
+            }
+            _write_json_atomic(path, payload)
 
-    feat = _norm_feature(str(feat_any))
-    if not _state_read_feature_enabled(ops, feat):
-        raise ValueError(f"Feature not enabled for provider: {pid} / {feat}")
+            result = {"ok": True, "path": rel, "provider": pid, "instance": inst, "feature": "all", "label": payload["label"], "created_at": payload["created_at"], "stats": stats, "children": children}
+            _capture_progress_done(progress_id, result=result)
+            return result
 
-    return _create_single_snapshot(ops=ops, cfg=cfg, pid=pid, instance=inst, feat=feat, label=label, ts=ts)
+        feat = _norm_feature(str(feat_any))
+        if not _state_read_feature_enabled(ops, feat):
+            raise ValueError(f"Feature not enabled for provider: {pid} / {feat}")
+
+        _capture_progress_start(progress_id, provider=pid, instance=inst, feature=feat, feature_total=1)
+        result = _create_single_snapshot(
+            ops=ops,
+            cfg=cfg,
+            pid=pid,
+            instance=inst,
+            feat=feat,
+            label=label,
+            ts=ts,
+            progress_id=progress_id,
+            feature_index=1,
+            feature_total=1,
+            previous_items=0,
+        )
+        _capture_progress_done(progress_id, result=result)
+        return result
+    except Exception as e:
+        _capture_progress_error(progress_id, e)
+        raise
 def list_snapshots() -> list[dict[str, Any]]:
     base = _snapshots_dir()
     out: list[dict[str, Any]] = []
@@ -730,6 +1213,9 @@ def _restore_single_snapshot(
     instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     chunk_size: int = 100,
+    progress_id: str | None = None,
+    feature_index: int = 1,
+    feature_total: int = 1,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     snap = read_snapshot(path)
@@ -745,6 +1231,22 @@ def _restore_single_snapshot(
         raise ValueError(f"Provider not configured: {pid}#{inst}")
     if not _state_read_feature_enabled(ops, feat):
         raise ValueError(f"Feature not enabled for provider: {pid} / {feat}")
+
+    _capture_progress_update(
+        progress_id,
+        ok=True,
+        done=False,
+        operation="restore",
+        stage="reading",
+        message=f"Reading current {feat} from {pid}...",
+        provider=pid,
+        instance=inst,
+        feature=str(snap.get("feature") or feat).strip().lower() or feat,
+        current_feature=feat,
+        feature_index=feature_index,
+        feature_total=max(1, int(feature_total or 1)),
+        percent=_progress_percent(feature_index, feature_total, 0.12),
+    )
 
     snap_items = snap.get("items") or {}
     if not isinstance(snap_items, Mapping):
@@ -772,29 +1274,127 @@ def _restore_single_snapshot(
 
     add_items = [dict(snap_items[k]) for k in to_add_keys if isinstance(snap_items.get(k), Mapping)]
     rem_items = [dict(cur[k]) for k in to_remove_keys if isinstance(cur.get(k), Mapping)]
+    planned_total = len(add_items) + len(rem_items)
+
+    _capture_progress_update(
+        progress_id,
+        ok=True,
+        done=False,
+        operation="restore",
+        stage="planning",
+        message=f"Planned {len(add_items):,} restore and {len(rem_items):,} remove actions for {feat}.",
+        current_feature=feat,
+        feature_index=feature_index,
+        feature_total=max(1, int(feature_total or 1)),
+        feature_items=len(snap_items),
+        total_items=planned_total,
+        items_done=0,
+        added=0,
+        removed=0,
+        percent=_progress_percent(feature_index, feature_total, 0.28),
+    )
 
     removed = 0
     added = 0
     errors: list[str] = []
 
     if rem_items:
+        remove_total = len(rem_items)
         for batch in _chunk(rem_items, chunk_size):
             try:
-                res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
+                if pid == "CROSSWATCH":
+                    with _crosswatch_write_env():
+                        res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
+                else:
+                    res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
                 removed += int(res.get("count") or len(batch))
+                frac = 0.30 + (min(1.0, removed / max(1, remove_total)) * 0.28)
+                _capture_progress_update(
+                    progress_id,
+                    ok=True,
+                    done=False,
+                    operation="restore",
+                    stage="clearing",
+                    message=f"Clearing {feat}: {removed:,} of {remove_total:,} removed.",
+                    current_feature=feat,
+                    feature_index=feature_index,
+                    feature_total=max(1, int(feature_total or 1)),
+                    feature_items=remove_total,
+                    total_items=planned_total,
+                    items_done=removed,
+                    removed=removed,
+                    added=added,
+                    percent=_progress_percent(feature_index, feature_total, frac),
+                )
             except Exception as e:
                 errors.append(f"remove_failed: {e}")
 
     if mode == "clear_restore" and errors:
+        _capture_progress_update(
+            progress_id,
+            ok=False,
+            done=False,
+            operation="restore",
+            stage="feature_done",
+            message=f"{feat} restore stopped after clear errors.",
+            current_feature=feat,
+            feature_index=feature_index,
+            feature_total=max(1, int(feature_total or 1)),
+            items_done=removed + added,
+            removed=removed,
+            added=added,
+            percent=_progress_percent(feature_index, feature_total, 0.96),
+        )
         return {"ok": False, "provider": pid, "feature": feat, "mode": mode, "removed": removed, "added": added, "errors": errors}
 
     if add_items:
+        add_total = len(add_items)
         for batch in _chunk(add_items, chunk_size):
             try:
-                res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
+                if pid == "CROSSWATCH":
+                    with _crosswatch_write_env():
+                        res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
+                else:
+                    res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
                 added += int(res.get("count") or len(batch))
+                frac = 0.60 + (min(1.0, added / max(1, add_total)) * 0.34)
+                _capture_progress_update(
+                    progress_id,
+                    ok=True,
+                    done=False,
+                    operation="restore",
+                    stage="restoring",
+                    message=f"Restoring {feat}: {added:,} of {add_total:,} added.",
+                    current_feature=feat,
+                    feature_index=feature_index,
+                    feature_total=max(1, int(feature_total or 1)),
+                    feature_items=add_total,
+                    total_items=planned_total,
+                    items_done=removed + added,
+                    removed=removed,
+                    added=added,
+                    percent=_progress_percent(feature_index, feature_total, frac),
+                )
             except Exception as e:
                 errors.append(f"add_failed: {e}")
+
+    _capture_progress_update(
+        progress_id,
+        ok=len(errors) == 0,
+        done=False,
+        operation="restore",
+        stage="feature_done",
+        message=f"{feat} restore complete: {added:,} added, {removed:,} removed.",
+        current_feature=feat,
+        feature_index=feature_index,
+        feature_total=max(1, int(feature_total or 1)),
+        feature_items=len(snap_items),
+        total_items=planned_total,
+        items_done=removed + added,
+        removed=removed,
+        added=added,
+        percent=_progress_percent(feature_index, feature_total, 0.96),
+    )
 
     return {
         "ok": len(errors) == 0,
@@ -911,40 +1511,68 @@ def restore_snapshot(
     instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     chunk_size: int = 100,
+    progress_id: str | None = None,
 ) -> dict[str, Any]:
-    cfg = cfg or load_config()
-    snap = read_snapshot(path)
-    kind = str(snap.get("kind") or "").strip().lower()
-    feat_raw = str(snap.get("feature") or "").strip().lower()
+    try:
+        cfg = cfg or load_config()
+        snap = read_snapshot(path)
+        kind = str(snap.get("kind") or "").strip().lower()
+        feat_raw = str(snap.get("feature") or "").strip().lower()
 
-    if kind == SNAPSHOT_BUNDLE_KIND or feat_raw == "all":
+        if kind == SNAPSHOT_BUNDLE_KIND or feat_raw == "all":
+            pid = _norm_provider(str(snap.get("provider") or ""))
+            snap_inst = normalize_instance_id(snap.get("instance") or snap.get("instance_id") or snap.get("profile"))
+            inst = normalize_instance_id(instance_id) if instance_id else snap_inst
+            ops = _ops_or_raise(pid)
+            if not _configured(ops, build_provider_config_view(cfg, pid, inst)):
+                raise ValueError(f"Provider not configured: {pid}#{inst}")
+
+            children = snap.get("children")
+            if not isinstance(children, list):
+                children = []
+            child_paths = [str(c.get("path") or "").strip() for c in children if isinstance(c, Mapping) and str(c.get("path") or "").strip()]
+            feature_total = max(1, len(child_paths))
+            _capture_progress_start(progress_id, provider=pid, instance=inst, feature="all", feature_total=feature_total)
+            _capture_progress_update(
+                progress_id,
+                operation="restore",
+                stage="starting",
+                message="Preparing full set restore...",
+                provider=pid,
+                instance=inst,
+                feature="all",
+                feature_total=feature_total,
+            )
+
+            results: list[dict[str, Any]] = []
+            errors: list[str] = []
+            for index, child_path in enumerate(child_paths, start=1):
+                try:
+                    results.append(_restore_single_snapshot(child_path, mode=mode, instance_id=inst, cfg=cfg, chunk_size=chunk_size, progress_id=progress_id, feature_index=index, feature_total=feature_total))
+                except Exception as e:
+                    errors.append(str(e))
+
+            added = sum(int(r.get("added") or 0) for r in results)
+            removed = sum(int(r.get("removed") or 0) for r in results)
+            result = {"ok": len(errors) == 0 and all(bool(r.get("ok")) for r in results), "provider": pid, "instance": inst, "feature": "all", "mode": mode, "children": results, "errors": errors, "added": added, "removed": removed, "message": f"Restore complete: {added:,} added, {removed:,} removed.", "stats": {"count": added + removed}}
+            _capture_progress_done(progress_id, result=result)
+            _capture_progress_update(progress_id, operation="restore", restore_result=result, added=added, removed=removed, total_items=added + removed, items_done=added + removed)
+            return result
+
         pid = _norm_provider(str(snap.get("provider") or ""))
         snap_inst = normalize_instance_id(snap.get("instance") or snap.get("instance_id") or snap.get("profile"))
         inst = normalize_instance_id(instance_id) if instance_id else snap_inst
-        ops = _ops_or_raise(pid)
-        if not _configured(ops, build_provider_config_view(cfg, pid, inst)):
-            raise ValueError(f"Provider not configured: {pid}#{inst}")
-
-        children = snap.get("children")
-        if not isinstance(children, list):
-            children = []
-
-        results: list[dict[str, Any]] = []
-        errors: list[str] = []
-        for c in children:
-            if not isinstance(c, Mapping):
-                continue
-            child_path = str(c.get("path") or "")
-            if not child_path:
-                continue
-            try:
-                results.append(_restore_single_snapshot(child_path, mode=mode, instance_id=inst, cfg=cfg, chunk_size=chunk_size))
-            except Exception as e:
-                errors.append(str(e))
-
-        return {"ok": len(errors) == 0 and all(bool(r.get("ok")) for r in results), "provider": pid, "instance": inst, "feature": "all", "mode": mode, "children": results, "errors": errors}
-
-    return _restore_single_snapshot(path, mode=mode, instance_id=instance_id, cfg=cfg, chunk_size=chunk_size)
+        _capture_progress_start(progress_id, provider=pid, instance=inst, feature=feat_raw or "restore", feature_total=1)
+        _capture_progress_update(progress_id, operation="restore", stage="starting", message="Preparing restore...", provider=pid, instance=inst, feature=feat_raw or "restore", feature_total=1)
+        result = _restore_single_snapshot(path, mode=mode, instance_id=instance_id, cfg=cfg, chunk_size=chunk_size, progress_id=progress_id, feature_index=1, feature_total=1)
+        result["message"] = f"Restore complete: {int(result.get('added') or 0):,} added, {int(result.get('removed') or 0):,} removed."
+        result["stats"] = {"count": int(result.get("added") or 0) + int(result.get("removed") or 0)}
+        _capture_progress_done(progress_id, result=result)
+        _capture_progress_update(progress_id, operation="restore", restore_result=result, added=int(result.get("added") or 0), removed=int(result.get("removed") or 0), total_items=int(result.get("stats", {}).get("count") or 0), items_done=int(result.get("stats", {}).get("count") or 0))
+        return result
+    except Exception as e:
+        _capture_progress_error(progress_id, e)
+        raise
 def clear_provider_features(
     provider: str,
     features: Iterable[Feature],
@@ -952,105 +1580,172 @@ def clear_provider_features(
     instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     chunk_size: int = 100,
+    progress_id: str | None = None,
 ) -> dict[str, Any]:
-    cfg = cfg or load_config()
-    pid = _norm_provider(provider)
-    inst = normalize_instance_id(instance_id)
-    ops = _ops_or_raise(pid)
-    cfg_view = build_provider_config_view(cfg, pid, inst)
-    if not _configured(ops, cfg_view):
-        raise ValueError(f"Provider not configured: {pid}#{inst}")
-
-    done: dict[str, Any] = {"ok": True, "provider": pid, "instance": inst, "results": {}}
-    adapter: Any | None = None
     try:
-        mk = getattr(ops, "_adapter", None)
-        if callable(mk):
-            adapter = mk(cfg_view)
-    except Exception:
-        adapter = None
+        cfg = cfg or load_config()
+        pid = _norm_provider(provider)
+        inst = normalize_instance_id(instance_id)
+        feature_list: list[Feature] = [_norm_feature(str(f)) for f in features]
+        _capture_progress_start(progress_id, provider=pid, instance=inst, feature="cleanup", feature_total=len(feature_list) or 1)
+        ops = _ops_or_raise(pid)
+        cfg_view = build_provider_config_view(cfg, pid, inst)
+        if not _configured(ops, cfg_view):
+            raise ValueError(f"Provider not configured: {pid}#{inst}")
 
-    def _load_current_items(feat: str) -> list[Mapping[str, Any]]:
-        with _capture_mode_env(pid=pid, instance=inst, feat=feat):
-            cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
-        cur_items: list[Mapping[str, Any]] = []
-        if isinstance(cur_raw, Mapping):
-            for v in cur_raw.values():
-                if isinstance(v, Mapping):
-                    cur_items.append(dict(v))
-        return cur_items
+        done: dict[str, Any] = {"ok": True, "provider": pid, "instance": inst, "results": {}}
+        adapter: Any | None = None
+        try:
+            mk = getattr(ops, "_adapter", None)
+            if callable(mk):
+                adapter = mk(cfg_view)
+        except Exception:
+            adapter = None
 
-    for f in features:
-        feat = _norm_feature(f)
-        if not _state_read_feature_enabled(ops, feat):
-            done["results"][feat] = {"ok": True, "skipped": True, "reason": "feature_disabled"}
-            continue
-        if pid == "PLEX" and feat == "progress":
-            done["results"][feat] = {"ok": True, "skipped": True, "reason": "unsupported_clear"}
-            continue
+        def _load_current_items(feat: Feature) -> list[Mapping[str, Any]]:
+            with _capture_mode_env(pid=pid, instance=inst, feat=feat):
+                cur_raw = (adapter.build_index(feat) if adapter else ops.build_index(cfg_view, feature=feat)) or {}
+            cur_items: list[Mapping[str, Any]] = []
+            if isinstance(cur_raw, Mapping):
+                for v in cur_raw.values():
+                    if isinstance(v, Mapping):
+                        cur_items.append(dict(v))
+            return cur_items
 
-        cur = _load_current_items(feat)
-        initial_count = len(cur)
-        removed = 0
-        unresolved: list[Any] = []
-        errors: list[str] = []
-        passes = 0
-        max_passes = 6 if feat == "history" else 1
-        prev_count: int | None = None
+        total_removed = 0
+        for index, feat in enumerate(feature_list, start=1):
+            _capture_progress_update(
+                progress_id,
+                stage="loading",
+                message=f"Loading current {feat} items...",
+                current_feature=feat,
+                feature_index=index,
+                feature_total=len(feature_list) or 1,
+                feature_items=0,
+                percent=_progress_percent(index, len(feature_list) or 1, 0.12),
+            )
+            if not _state_read_feature_enabled(ops, feat):
+                done["results"][feat] = {"ok": True, "skipped": True, "reason": "feature_disabled"}
+                continue
+            cur = _load_current_items(feat)
+            initial_count = len(cur)
+            _capture_progress_update(
+                progress_id,
+                stage="removing",
+                message=f"Removing {initial_count:,} {feat} items...",
+                current_feature=feat,
+                feature_items=initial_count,
+                percent=_progress_percent(index, len(feature_list) or 1, 0.34),
+            )
+            removed = 0
+            unresolved: list[Any] = []
+            errors: list[str] = []
+            passes = 0
+            max_passes = 6 if feat == "history" else 1
+            prev_count: int | None = None
 
-        while cur and passes < max_passes:
-            passes += 1
+            while cur and passes < max_passes:
+                passes += 1
+                _capture_progress_update(
+                    progress_id,
+                    stage="removing",
+                    message=f"Removing {feat} items, pass {passes}...",
+                    current_feature=feat,
+                    feature_items=len(cur),
+                    items_done=total_removed + removed,
+                    percent=_progress_percent(index, len(feature_list) or 1, 0.42 + min(0.38, passes * 0.08)),
+                )
 
-            if feat == "history":
-                for it in cur:
-                    if isinstance(it, dict):
-                        it.setdefault("_cw_tool_clear", True)
+                if feat == "history":
+                    for it in cur:
+                        if isinstance(it, dict):
+                            it.setdefault("_cw_tool_clear", True)
 
-            try:
-                with _capture_mode_env(pid=pid, instance=inst, feat=feat):
-                    res = (
-                        adapter.remove(feat, cur, dry_run=False)
-                        if adapter
-                        else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
-                    ) or {}
-                if isinstance(res, Mapping) and "count" in res:
-                    removed += int(res.get("count") or 0)
-                else:
-                    removed += len(cur)
-                if isinstance(res, Mapping) and isinstance(res.get("unresolved"), list):
-                    unresolved.extend(list(res.get("unresolved") or []))
-            except Exception as e:
-                errors.append(str(e))
-                break
+                try:
+                    def _remove_current_batch() -> Mapping[str, Any]:
+                        return (
+                            adapter.remove(feat, cur, dry_run=False)
+                            if adapter
+                            else ops.remove(cfg_view, cur, feature=feat, dry_run=False)
+                        ) or {}
 
-            if feat != "history":
-                break
+                    if pid == "CROSSWATCH":
+                        with _crosswatch_write_env():
+                            res = _remove_current_batch()
+                    else:
+                        with _capture_mode_env(pid=pid, instance=inst, feat=feat):
+                            res = _remove_current_batch()
+                    if isinstance(res, Mapping) and "count" in res:
+                        removed += int(res.get("count") or 0)
+                    else:
+                        removed += len(cur)
+                    if isinstance(res, Mapping) and isinstance(res.get("unresolved"), list):
+                        unresolved.extend(list(res.get("unresolved") or []))
+                except Exception as e:
+                    errors.append(str(e))
+                    break
 
-            remaining = _load_current_items(feat)
-            remaining_count = len(remaining)
-            if remaining_count <= 0:
-                cur = []
-                break
-            if prev_count is not None and remaining_count >= prev_count:
+                _capture_progress_update(
+                    progress_id,
+                    stage="verifying",
+                    message=f"Verifying {feat} cleanup...",
+                    current_feature=feat,
+                    items_done=total_removed + removed,
+                    percent=_progress_percent(index, len(feature_list) or 1, 0.82),
+                )
+
+                remaining = _load_current_items(feat)
+                remaining_count = len(remaining)
+                if remaining_count <= 0:
+                    cur = []
+                    break
+                if feat != "history":
+                    cur = remaining
+                    break
+                if prev_count is not None and remaining_count >= prev_count:
+                    cur = remaining
+                    break
+                prev_count = remaining_count
                 cur = remaining
-                break
-            prev_count = remaining_count
-            cur = remaining
 
-        ok = len(errors) == 0
-        done["ok"] = done["ok"] and ok
-        done["results"][feat] = {
-            "ok": ok,
-            "removed": removed,
-            "count": initial_count,
-            "remaining": len(cur),
-            "passes": passes,
-            "unresolved": unresolved,
-            "unresolved_count": len(unresolved),
-            "errors": errors,
-        }
+            total_removed += removed
+            ok = len(errors) == 0
+            done["ok"] = done["ok"] and ok
+            done["results"][feat] = {
+                "ok": ok,
+                "removed": removed,
+                "count": initial_count,
+                "remaining": len(cur),
+                "passes": passes,
+                "unresolved": unresolved,
+                "unresolved_count": len(unresolved),
+                "errors": errors,
+            }
+            _capture_progress_update(
+                progress_id,
+                stage="feature_done",
+                message=f"Cleared {removed:,} {feat} items.",
+                current_feature=feat,
+                items_done=total_removed,
+                total_items=total_removed,
+                feature_items=removed,
+                percent=_progress_percent(index, len(feature_list) or 1, 0.96),
+            )
 
-    return done
+        _capture_progress_done(
+            progress_id,
+            result={
+                "ok": bool(done.get("ok")),
+                "path": "",
+                "stats": {"count": total_removed},
+                "results": done.get("results"),
+                "message": f"Provider cleanup complete. Removed {total_removed:,} items.",
+            },
+        )
+        return done
+    except Exception as e:
+        _capture_progress_error(progress_id, e)
+        raise
 
 
 def _brief_item(x: Any) -> dict[str, Any]:
