@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import json
+import os
+import time
 
 import pytest
 
@@ -156,6 +159,50 @@ def test_restore_clear(tmp_path: Path, monkeypatch) -> None:
     assert restored["removed"] == 2
     assert restored["added"] == 2
     assert set(ops.current_by_feature["watchlist"]) == {"keep", "fresh"}
+
+
+def test_restore_background_job_tracks_progress(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ops = MutableSyncOps(
+        {
+            "watchlist": {
+                "keep": {"id": "keep", "type": "movie", "title": "Heat"},
+            }
+        }
+    )
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+
+    path = _snapshot_path(
+        tmp_path,
+        "20260316T122000Z",
+        "watchlist",
+        _feature_payload(
+            "watchlist",
+            {
+                "keep": {"id": "keep", "type": "movie", "title": "Heat"},
+                "add": {"id": "add", "type": "movie", "title": "Arrival"},
+            },
+        ),
+    )
+
+    job = snapshots.start_restore_job(path, mode="merge", cfg={"version": "test"}, progress_id="restore-job")
+
+    assert job["ok"] is True
+    progress = None
+    for _ in range(50):
+        progress = snapshots.get_capture_progress("restore-job")
+        if progress and progress.get("done"):
+            break
+        time.sleep(0.02)
+
+    assert progress is not None
+    assert progress["done"] is True
+    assert progress["operation"] == "restore"
+    assert progress["added"] == 1
+    assert progress["removed"] == 0
+    assert progress["restore_result"]["ok"] is True
+    assert set(ops.current_by_feature["watchlist"]) == {"keep", "add"}
 
 
 def test_compare_changes(tmp_path: Path) -> None:
@@ -356,7 +403,7 @@ def test_compare_history(tmp_path: Path) -> None:
     assert any(change["path"] == "watched_ats.added" for change in diff["updated"][0]["changes"])
 
 
-def test_tools_skip_plex_progress(tmp_path: Path, monkeypatch) -> None:
+def test_tools_clear_plex_progress(tmp_path: Path, monkeypatch) -> None:
     import services.snapshots as snapshots
 
     ops = MutableSyncOps(
@@ -371,5 +418,262 @@ def test_tools_skip_plex_progress(tmp_path: Path, monkeypatch) -> None:
     cleared = snapshots.clear_provider_features("PLEX", ["progress"], cfg={"version": "test"})
 
     assert cleared["ok"] is True
-    assert cleared["results"]["progress"] == {"ok": True, "skipped": True, "reason": "unsupported_clear"}
-    assert set(ops.current_by_feature["progress"]) == {"ep1"}
+    assert cleared["results"]["progress"]["removed"] == 1
+    assert ops.current_by_feature["progress"] == {}
+
+
+def test_provider_cleanup_crosswatch_progress_persists_empty_state(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+    from cw_platform.id_map import canonical_key, minimal as id_minimal
+
+    snapshots.CONFIG = tmp_path
+    root = tmp_path / "cw"
+    item = {"type": "movie", "title": "Heat", "ids": {"tmdb": 949}, "progress_ms": 120000, "duration_ms": 600000}
+    key = canonical_key(id_minimal(item))
+    assert key
+    root.mkdir(parents=True)
+    (root / "progress.json").write_text(json.dumps({"ts": 1, "items": {key: item}}), encoding="utf-8")
+    monkeypatch.setenv("CW_CAPTURE_MODE", "1")
+    monkeypatch.setenv("CW_CAPTURE_PROVIDER", "PLEX")
+
+    cleared = snapshots.clear_provider_features("CROSSWATCH", ["progress"], cfg={"version": "test", "crosswatch": {"root_dir": str(root)}})
+
+    assert cleared["ok"] is True
+    assert cleared["results"]["progress"]["removed"] == 1
+    assert cleared["results"]["progress"]["remaining"] == 0
+    assert os.environ.get("CW_CAPTURE_MODE") == "1"
+    saved = json.loads((root / "progress.json").read_text(encoding="utf-8"))
+    assert saved["items"] == {}
+
+
+def test_restore_crosswatch_progress_persists_state(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    snapshots.CONFIG = tmp_path
+    root = tmp_path / "cw"
+    root.mkdir(parents=True)
+    rel = "2026-03-16/20260316T180000Z__CROSSWATCH__default__progress__capture.json"
+    path = tmp_path / "snapshots" / rel
+    item = {"type": "movie", "title": "Arrival", "ids": {"tmdb": 329865}, "progress_ms": 300000, "duration_ms": 700000}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "kind": "snapshot",
+                "created_at": datetime(2026, 3, 16, 18, 0, 0, tzinfo=timezone.utc).isoformat(),
+                "provider": "CROSSWATCH",
+                "instance": "default",
+                "feature": "progress",
+                "label": "capture",
+                "stats": {"feature": "progress", "count": 1},
+                "items": {"arrival": item},
+                "app_version": "test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CW_CAPTURE_MODE", "1")
+    monkeypatch.setenv("CW_CAPTURE_PROVIDER", "PLEX")
+
+    restored = snapshots.restore_snapshot(rel, mode="merge", cfg={"version": "test", "crosswatch": {"root_dir": str(root)}})
+
+    assert restored["ok"] is True
+    assert restored["added"] == 1
+    assert os.environ.get("CW_CAPTURE_MODE") == "1"
+    saved = json.loads((root / "progress.json").read_text(encoding="utf-8"))
+    assert len(saved["items"]) == 1
+    assert next(iter(saved["items"].values()))["title"] == "Arrival"
+
+
+def test_provider_cleanup_background_job_tracks_progress(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ops = MutableSyncOps(
+        {
+            "watchlist": {
+                "one": {"id": "one", "type": "movie", "title": "Heat"},
+                "two": {"id": "two", "type": "movie", "title": "Alien"},
+            }
+        }
+    )
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+
+    job = snapshots.start_provider_cleanup_job("PLEX", ["watchlist"], cfg={"version": "test"}, progress_id="cleanup-job")
+
+    assert job["ok"] is True
+    progress = None
+    for _ in range(50):
+        progress = snapshots.get_capture_progress("cleanup-job")
+        if progress and progress.get("done"):
+            break
+        time.sleep(0.02)
+
+    assert progress is not None
+    assert progress["done"] is True
+    assert progress["total_items"] == 2
+    assert progress["cleanup_results"]["watchlist"]["removed"] == 2
+    assert ops.current_by_feature["watchlist"] == {}
+
+
+def test_provider_cleanup_modal_owns_provider_cleanup_ui() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    snapshots_js = (root / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    modal_js = (root / "assets" / "js" / "modals" / "provider-cleanup" / "index.js").read_text(encoding="utf-8")
+    modals_js = (root / "assets" / "js" / "modals.js").read_text(encoding="utf-8")
+    settings_py = (root / "ui_frontend.py").read_text(encoding="utf-8")
+    profile_select_js = (root / "assets" / "helpers" / "profile-select.js").read_text(encoding="utf-8")
+
+    assert "ss-tools-prov" not in snapshots_js
+    assert "ss-tools-inst" not in snapshots_js
+    assert "ss-clear-watchlist" not in snapshots_js
+    assert "ss-clear-progress" not in snapshots_js
+    assert "/api/snapshots/tools/clear" not in snapshots_js
+
+    assert "/api/snapshots/tools/clear" in modal_js
+    assert "/api/snapshots/manifest" in modal_js
+    assert '"progress"' in modal_js
+    assert "data-feature" in modal_js
+    assert "Provider Cleanup" in settings_py
+    assert "openProviderCleanupModal" in modals_js
+    assert "openProviderCleanupModal()" in settings_py
+    assert "profile-select.js" in settings_py
+    assert "CW.ProfileSelect" in profile_select_js
+    assert "enhancePair" in modal_js
+    assert "ccc-provider-btn" not in modal_js
+    assert "ccc-instance-btn" not in modal_js
+
+
+def test_snapshots_ui_retries_after_auth_setup() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+
+    assert "function retryInitAfterAuth()" in js
+    assert "page && !page.children.length ? init() : refresh(!!force)" in js
+
+
+def test_captures_ui_compare_selection_validation() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+
+    assert "function compareSelectionState()" in js
+    assert "selected.length !== 2" in js
+    assert "Selected captures use different providers." in js
+    assert "Selected captures use different profiles." in js
+    assert "Selected captures use different features." in js
+    assert "Comparison enabled" in js
+
+
+def test_captures_ui_compare_summary_uses_icons() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    summary_body = js[js.index('<div class="ss-diff-summary">') : js.index("async function onDiffRun()")]
+
+    assert "material-symbols-rounded" in summary_body
+    assert "justify-content:center" in js
+    assert ">added</span>" not in summary_body
+    assert ">deleted</span>" not in summary_body
+    assert ">updated</span>" not in summary_body
+    assert ">unchanged</span>" not in summary_body
+    assert 'aria-label="${sum.added ?? 0} added"' in summary_body
+
+
+def test_captures_ui_compare_opens_advanced_modal() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    compare_markup = js[js.index('<div class="ss-compare-panel">') : js.index('<div id="ss-diff-out"')]
+    run_body = js[js.index("async function onDiffRun()") : js.index("  function setBusy(")]
+
+    assert "Compare Captures" in compare_markup
+    assert "Compare selected captures" not in compare_markup
+    assert "Open advanced" not in compare_markup
+    assert "ss-diff-kind" not in js
+    assert "ss-diff-limit" not in js
+    assert "ss-diff-q" not in js
+    assert "ss-diff-list" not in js
+    assert "Filter compare results" not in js
+    assert "/api/snapshots/diff" not in run_body
+    assert "window.openCaptureCompare({ aPath: a, bPath: b });" in run_body
+
+
+def test_captures_ui_details_toggle_and_scrollbar() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    details_body = js[js.index("async function onViewDetails()") : js.index("  async function onRestore()")]
+
+    assert ".ss-detail-pre{scrollbar-width:thin" in js
+    assert ".ss-detail-pre::-webkit-scrollbar-thumb" in js
+    assert 'if (!out.classList.contains("hidden")) {' in details_body
+    assert 'out.classList.add("hidden");' in details_body
+    assert 'out.textContent = "";' in details_body
+
+
+def test_captures_ui_scheduler_queue_hides_when_empty() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    queue_body = js[js.index("function renderScheduleQueue()") : js.index("  function setScheduleQueueFeedback(")]
+
+    assert 'id="ss-schedule-queue-wrap" class="ss-queue hidden"' in js
+    assert 'wrap.classList.toggle("hidden", !items.length);' in queue_body
+    assert 'host.innerHTML = "";' in queue_body
+    assert '.join(" / ")' in queue_body
+    assert "Ã" not in queue_body
+
+
+def test_captures_ui_tools_use_flat_danger_and_cleanup_label() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+
+    assert "Cleanup Captures" in js
+    assert "Cleanup old captures" not in js
+    assert "#page-snapshots .ss-tool-btn.danger{background:#432630!important" in js
+    assert "color:#d99aa4" in js
+
+
+def test_captures_ui_restore_mode_handling() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+
+    assert 'data-restore-mode="merge"' in js
+    assert 'data-restore-mode="clear_restore"' in js
+    assert "Merge missing only" in js
+    assert "Replace exactly" in js
+    assert 'if (sel) sel.value = mode;' in js
+    assert 'mode !== "clear_restore"' in js
+    assert "Confirm restore" in js
+    assert 'background: true' in js
+
+
+def test_restore_progress_modal_requires_acknowledgement() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    restore_body = js[js.index("async function onRestore()") : js.index("  async function init()")]
+
+    assert 'id="ss-capture-ack"' in js
+    assert 'hideCaptureProgressModal(0);' in js
+    assert "window.setTimeout(() => refresh(true, false), 80);" in js
+    assert "hideCaptureProgressModal(" not in restore_body
+    assert "stopCaptureProgressPoll();" in restore_body
+
+
+def test_capture_progress_modal_requires_acknowledgement() -> None:
+    from pathlib import Path
+
+    js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "snapshots.js").read_text(encoding="utf-8")
+    create_body = js[js.index("async function onCreate()") : js.index("  async function onAddToScheduler()")]
+
+    assert 'actions.classList.toggle("show", !!data.done || failed);' in js
+    assert 'hideCaptureProgressModal(0);' in js
+    assert "window.setTimeout(() => refresh(true, false), 80);" in js
+    assert "hideCaptureProgressModal(" not in create_body
+    assert 'state.captureProgressId = "";' not in create_body

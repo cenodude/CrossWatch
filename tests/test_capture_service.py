@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 
 
 class FakeSyncOps:
@@ -65,6 +66,77 @@ def test_single_capture_name(tmp_path: Path, monkeypatch) -> None:
     assert loaded["stats"]["count"] == 2
 
 
+def test_single_capture_progress_tracks_items(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ts = datetime(2026, 3, 16, 9, 35, 0, tzinfo=timezone.utc)
+    ops = FakeSyncOps(
+        {
+            "watchlist": [
+                {"id": "m1", "type": "movie", "title": "Arrival"},
+                {"id": "s1", "type": "show", "title": "Dark"},
+            ]
+        }
+    )
+
+    _patch_snapshot_env(monkeypatch, snapshots, tmp_path, ops, ts)
+
+    created = snapshots.create_snapshot("PLEX", "watchlist", cfg={"version": "test"}, progress_id="test-progress-single")
+    progress = snapshots.get_capture_progress("test-progress-single")
+
+    assert created["ok"] is True
+    assert progress is not None
+    assert progress["done"] is True
+    assert progress["stage"] == "done"
+    assert progress["percent"] == 100
+    assert progress["current_feature"] == "watchlist"
+    assert progress["items_done"] == 2
+
+
+def test_capture_activity_updates_progress_message() -> None:
+    import services.snapshots as snapshots
+
+    snapshots._capture_progress_start("activity-test", provider="PLEX", instance="default", feature="history", feature_total=4)
+    snapshots.record_capture_activity(
+        "activity-test",
+        provider="PLEX",
+        feature="history",
+        event="live_watched.section",
+        fields={"section_title": "Kids", "rows_returned": 33, "rows_seen": 33, "totalSize": 33},
+    )
+    progress = snapshots.get_capture_progress("activity-test")
+
+    assert progress is not None
+    assert progress["activity_seq"] == 1
+    assert progress["current_feature"] == "history"
+    assert progress["feature_items"] == 33
+    assert progress["message"] == "Scanning Kids: 33 returned / 33 seen / 33 total"
+
+
+def test_background_capture_job_finishes_with_result_path(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ts = datetime(2026, 3, 16, 9, 40, 0, tzinfo=timezone.utc)
+    ops = FakeSyncOps({"watchlist": [{"id": "m1", "type": "movie", "title": "Arrival"}]})
+    _patch_snapshot_env(monkeypatch, snapshots, tmp_path, ops, ts)
+
+    job = snapshots.start_capture_job("PLEX", "watchlist", cfg={"version": "test"}, progress_id="test-job")
+
+    assert job["ok"] is True
+    assert job["progress_id"] == "test-job"
+    progress = None
+    for _ in range(50):
+        progress = snapshots.get_capture_progress("test-job")
+        if progress and progress.get("done"):
+            break
+        time.sleep(0.02)
+
+    assert progress is not None
+    assert progress["done"] is True
+    assert progress["ok"] is True
+    assert progress["result_path"].endswith("__watchlist__capture.json")
+
+
 def test_full_capture_bundle(tmp_path: Path, monkeypatch) -> None:
     import services.snapshots as snapshots
 
@@ -97,6 +169,30 @@ def test_full_capture_bundle(tmp_path: Path, monkeypatch) -> None:
     listed_paths = {row["path"] for row in snapshots.list_snapshots()}
     assert created["path"] in listed_paths
     assert set(child_paths.values()).issubset(listed_paths)
+
+
+def test_full_capture_progress_tracks_feature_total(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ts = datetime(2026, 3, 16, 10, 5, 0, tzinfo=timezone.utc)
+    ops = FakeSyncOps(
+        {
+            "watchlist": [{"id": "m1", "type": "movie", "title": "Heat"}],
+            "ratings": [{"id": "m1", "type": "movie", "title": "Heat", "rating": 9}],
+            "history": [{"id": "e1", "type": "episode", "title": "Pilot"}],
+        }
+    )
+
+    _patch_snapshot_env(monkeypatch, snapshots, tmp_path, ops, ts)
+
+    created = snapshots.create_snapshot("PLEX", "all", label="nightly", cfg={"version": "test"}, progress_id="test-progress-all")
+    progress = snapshots.get_capture_progress("test-progress-all")
+
+    assert created["ok"] is True
+    assert progress is not None
+    assert progress["done"] is True
+    assert progress["feature_total"] == 3
+    assert progress["total_items"] == 3
 
 
 def test_capture_retention_keeps_newest(tmp_path: Path, monkeypatch) -> None:

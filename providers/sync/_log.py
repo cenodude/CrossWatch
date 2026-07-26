@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,7 @@ RED = "\033[91m"
 GREEN = "\033[92m"
 YELLOW = "\033[33m"
 BLUE = "\033[94m"
+_CAPTURE_PROGRESS_LOCAL = threading.local()
 
 _LEVEL_COLOR: dict[str, str] = {
     "ERROR": RED,
@@ -110,6 +112,38 @@ def _append_ui_log(provider: str, line: str) -> None:
         pass
 
 
+def set_capture_progress_id(progress_id: str | None) -> str:
+    prev = str(getattr(_CAPTURE_PROGRESS_LOCAL, "progress_id", "") or "")
+    next_id = str(progress_id or "").strip()
+    if next_id:
+        _CAPTURE_PROGRESS_LOCAL.progress_id = next_id
+    elif hasattr(_CAPTURE_PROGRESS_LOCAL, "progress_id"):
+        try:
+            delattr(_CAPTURE_PROGRESS_LOCAL, "progress_id")
+        except Exception:
+            _CAPTURE_PROGRESS_LOCAL.progress_id = ""
+    return prev
+
+
+def _append_capture_progress(provider: str, feature: str, msg: str, fields: Mapping[str, Any]) -> None:
+    progress_id = str(getattr(_CAPTURE_PROGRESS_LOCAL, "progress_id", "") or os.getenv("CW_CAPTURE_PROGRESS_ID") or "").strip()
+    if not progress_id:
+        return
+    try:
+        from services.snapshots import record_capture_activity
+
+        record_capture_activity(
+            progress_id,
+            provider=provider,
+            feature=feature,
+            event=str(msg or ""),
+            message=str(msg or ""),
+            fields=fields,
+        )
+    except Exception:
+        pass
+
+
 def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:
     provider_s = str(provider).strip().upper()
     feature_s = str(feature).strip().lower()
@@ -135,6 +169,7 @@ def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> Non
         line = json.dumps(payload, ensure_ascii=False)
         print(line, flush=True)
         _append_ui_log(provider_s, line)
+        _append_capture_progress(provider_s, feature_s, base["msg"], fields)
         return
 
     head = _c(f"[{base['provider']}:{base['feature']}]", DIM, on=use_color)
@@ -146,3 +181,4 @@ def log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> Non
         line = f"{line} {tail}"
     print(line, flush=True)
     _append_ui_log(provider_s, line)
+    _append_capture_progress(provider_s, feature_s, base["msg"], fields)

@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from services.snapshots import (
     clear_provider_features,
     create_snapshot,
+    get_capture_progress,
     list_snapshots,
     read_snapshot,
     restore_snapshot,
@@ -19,6 +20,9 @@ from services.snapshots import (
     delete_all_snapshots,
     diff_snapshots,
     diff_snapshots_extended,
+    start_capture_job,
+    start_provider_cleanup_job,
+    start_restore_job,
 )
 
 router = APIRouter(prefix="/api/snapshots", tags=["snapshots"])
@@ -135,9 +139,25 @@ def api_snapshots_create(body: dict[str, Any] = Body(...)) -> JSONResponse:
     instance = str(body.get("instance") or body.get("instance_id") or body.get("profile") or "").strip()
     feature = str(body.get("feature") or "").strip().lower()
     label = str(body.get("label") or "").strip()
+    progress_id = str(body.get("progress_id") or body.get("progressId") or "").strip()
+    background = bool(body.get("background") or body.get("async") or body.get("async_job"))
     try:
-        res = create_snapshot(provider, feature, label=label, instance_id=instance)  # type: ignore[arg-type]
+        if background:
+            job = start_capture_job(provider, feature, label=label, instance_id=instance, progress_id=progress_id or None)  # type: ignore[arg-type]
+            return _ok({"job": job, "progress_id": job["progress_id"]}, status_code=202)
+        res = create_snapshot(provider, feature, label=label, instance_id=instance, progress_id=progress_id or None)  # type: ignore[arg-type]
         return _ok({"snapshot": res})
+    except Exception as e:
+        return _err(str(e))
+
+
+@router.get("/capture-progress/{progress_id}")
+def api_snapshots_capture_progress(progress_id: str) -> JSONResponse:
+    try:
+        progress = get_capture_progress(progress_id)
+        if not progress:
+            return _ok({"progress": {"ok": False, "done": False, "stage": "waiting", "message": "Waiting for capture to start.", "percent": 0}})
+        return _ok({"progress": progress})
     except Exception as e:
         return _err(str(e))
 
@@ -147,7 +167,12 @@ def api_snapshots_restore(body: dict[str, Any] = Body(...)) -> JSONResponse:
     path = str(body.get("path") or "").strip()
     mode = str(body.get("mode") or "merge").strip().lower()
     instance = str(body.get("instance") or body.get("instance_id") or body.get("profile") or "").strip()
+    progress_id = str(body.get("progress_id") or body.get("progressId") or "").strip()
+    background = bool(body.get("background") or body.get("async") or body.get("async_job"))
     try:
+        if background:
+            job = start_restore_job(path, mode=mode, instance_id=instance, progress_id=progress_id or None)  # type: ignore[arg-type]
+            return _ok({"job": job, "progress_id": job["progress_id"]}, status_code=202)
         res = restore_snapshot(path, mode=mode, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"result": res})
     except Exception as e:
@@ -180,6 +205,8 @@ def api_snapshots_clear() -> JSONResponse:
 def api_snapshots_tools_clear(body: dict[str, Any] = Body(...)) -> JSONResponse:
     provider = str(body.get("provider") or "").strip()
     instance = str(body.get("instance") or body.get("instance_id") or body.get("profile") or "").strip()
+    progress_id = str(body.get("progress_id") or body.get("progressId") or "").strip()
+    background = bool(body.get("background") or body.get("async") or body.get("async_job"))
     feats = body.get("features") or []
     features: list[str] = []
     if isinstance(feats, list):
@@ -188,6 +215,9 @@ def api_snapshots_tools_clear(body: dict[str, Any] = Body(...)) -> JSONResponse:
             if s:
                 features.append(s)
     try:
+        if background:
+            job = start_provider_cleanup_job(provider, features, instance_id=instance, progress_id=progress_id or None)  # type: ignore[arg-type]
+            return _ok({"job": job, "progress_id": job["progress_id"]}, status_code=202)
         res = clear_provider_features(provider, features, instance_id=instance)  # type: ignore[arg-type]
         return _ok({"result": res})
     except Exception as e:
