@@ -35,6 +35,7 @@
     error: { title: "Could not load this widget", copy: "Try refreshing again in a moment." },
   };
   const LAYOUT_KEY = "cw.dashboardWidgets.layout.v3";
+  const SETTINGS_KEY = "cw.dashboardWidgets.settings.v1";
   const WIDGETS = [
     { key: "watchlist", id: "placeholder-card", label: "Watchlist" },
     { key: "history", id: "recent-history-widget", label: "Recent History" },
@@ -98,6 +99,40 @@
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(widgetLayout)); } catch {}
     window.dispatchEvent(new CustomEvent("cw:dashboard-widgets-layout-changed"));
     applyVisibility(lastSettings || {});
+  }
+
+  function readCachedSettings() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+      const cached = raw && typeof raw === "object" ? raw.settings : null;
+      if (!cached || typeof cached !== "object") return null;
+      const settings = {};
+      for (const key of WIDGET_KEYS) {
+        if (typeof cached[key] !== "boolean") return null;
+        settings[key] = cached[key];
+      }
+      if (raw.tmdb === false || raw.wallEmpty === true) settings.watchlist = false;
+      return settings;
+    } catch { return null; }
+  }
+
+  function writeCachedSettings(settings, tmdb) {
+    try {
+      const prev = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+      const wallEmpty = prev && typeof prev === "object" ? prev.wallEmpty : null;
+      const next = { settings, tmdb: !!tmdb };
+      if (typeof wallEmpty === "boolean") next.wallEmpty = wallEmpty;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    } catch {}
+  }
+
+  function cacheWatchlistEmpty(empty) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null");
+      if (!raw || typeof raw !== "object") return;
+      raw.wallEmpty = !!empty;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(raw));
+    } catch {}
   }
 
   function resetLayout() {
@@ -235,6 +270,19 @@
 
   function revealCachedWidgets() {
     if (hasLoaded && lastSettings) applyVisibility(lastSettings);
+  }
+
+  function revealFromCache() {
+    if (hasLoaded || !isOnMain() || authSetupPending()) return;
+    const settings = readCachedSettings();
+    if (!settings) return;
+    applyVisibility(settings);
+    const active = activeWidgetSettings(settings);
+    if (active.history) setLoading($("#recent-history-list"));
+    if (active.ratings) setLoading($("#latest-ratings-grid"), "ratings");
+    if (active.scrobble) setLoading($("#recent-scrobble-list"));
+    if (active.progress) setLoading($("#recent-progress-list"));
+    if (active.playlists) setLoading($("#recent-playlists-list"));
   }
 
   function markWidgetsDirty(delay = 150, opts = {}) {
@@ -1364,6 +1412,7 @@
       ["history", "ratings", "scrobble", "progress", "playlists"].forEach(resetVisibleCount);
     }
     applyVisibility(settings);
+    writeCachedSettings(settings, hasTmdbKeyInConfig(cfg));
     const active = activeWidgetSettings(settings);
     if (active.watchlist) {
       Promise.resolve(window.updatePreviewVisibility?.()).catch(() => null);
@@ -1461,6 +1510,7 @@
   function initDashboardWidgets() {
     ensureLayoutToolbar();
     ensureWidgetControls();
+    revealFromCache();
     $("#recent-history-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
     $("#latest-ratings-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
     $("#recent-scrobble-refresh")?.addEventListener("click", (e) => refreshFromButton(e.currentTarget));
@@ -1569,6 +1619,7 @@
     window.addEventListener("watchlist:refresh", () => markWidgetsDirty(250));
     window.addEventListener("cw:watchlist-widget-state", (event) => {
       setWidgetEmpty("watchlist", !!event?.detail?.empty);
+      cacheWatchlistEmpty(!!event?.detail?.empty);
       applyVisibility(lastSettings || {});
     });
     window.addEventListener("resize", scheduleMasonry);

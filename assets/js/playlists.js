@@ -123,7 +123,7 @@
   const compactTime = (ts) => ts ? new Date(Number(ts) * 1000).toLocaleString() : "-";
 
   const CSS = `
-#page-playlists{--pl-bg:#111722;--pl-panel:rgba(18,24,36,.78);--pl-panel2:rgba(13,18,28,.82);--pl-line:rgba(255,255,255,.09);--pl-line2:rgba(255,255,255,.10);--pl-text:rgba(246,249,255,.96);--pl-soft:rgba(202,212,230,.72);--pl-softer:rgba(202,212,230,.52);--pl-shell-bg:radial-gradient(115% 120% at 0% 0%,rgba(78,68,170,.10),transparent 46%),radial-gradient(88% 100% at 100% 100%,rgba(34,46,108,.06),transparent 54%),linear-gradient(180deg,rgba(8,10,15,.985),rgba(2,3,7,.975));--pl-shell-shadow:0 20px 54px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.04);--pl-scroll-track:var(--cw-scrollbar-track,#151821);--pl-scroll-thumb:#3a414c;--pl-scroll-thumb-hover:#4b5564;--pl-select-active-bg:#263b31;--pl-select-active-text:#eafff4;--pl-blue:#3678d8;--pl-violet:#7d55f6;--pl-green:#68d99f;--pl-red:#ff7d7d;--pl-yellow:#ffca76;color:var(--pl-text)}
+#page-playlists{max-width:none;width:100%;grid-column:1/-1;padding:0!important;background:transparent!important;background-image:none!important;border:0!important;box-shadow:none!important;outline:0!important;overflow:visible!important;--pl-bg:#111722;--pl-panel:rgba(18,24,36,.78);--pl-panel2:rgba(13,18,28,.82);--pl-line:rgba(255,255,255,.09);--pl-line2:rgba(255,255,255,.10);--pl-text:rgba(246,249,255,.96);--pl-soft:rgba(202,212,230,.72);--pl-softer:rgba(202,212,230,.52);--pl-shell-bg:radial-gradient(115% 120% at 0% 0%,rgba(78,68,170,.10),transparent 46%),radial-gradient(88% 100% at 100% 100%,rgba(34,46,108,.06),transparent 54%),linear-gradient(180deg,rgba(8,10,15,.985),rgba(2,3,7,.975));--pl-shell-shadow:0 20px 54px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.04);--pl-scroll-track:var(--cw-scrollbar-track,#151821);--pl-scroll-thumb:#3a414c;--pl-scroll-thumb-hover:#4b5564;--pl-select-active-bg:#263b31;--pl-select-active-text:#eafff4;--pl-blue:#3678d8;--pl-violet:#7d55f6;--pl-green:#68d99f;--pl-red:#ff7d7d;--pl-yellow:#ffca76;color:var(--pl-text)}
 html[data-cw-theme="flat-dark"] #page-playlists{--pl-bg:var(--cw-flat-bg,#0d0f14);--pl-panel:var(--cw-flat-panel-2,#20242d);--pl-panel2:var(--cw-flat-panel-2,#20242d);--pl-line:var(--cw-flat-border,rgba(255,255,255,.13));--pl-line2:var(--cw-flat-border-strong,rgba(255,255,255,.19));--pl-text:var(--cw-flat-text,#eef1f6);--pl-soft:var(--cw-flat-muted,#a9b0bd);--pl-softer:color-mix(in srgb,var(--cw-flat-muted,#a9b0bd) 76%,transparent);--pl-shell-bg:#171d26;--pl-shell-shadow:none;--pl-select-active-bg:#263b31;--pl-select-active-text:#dcffe7}
 html[data-cw-theme="flat-light"] #page-playlists{--pl-bg:var(--cw-flat-bg,#e9edf5);--pl-panel:#f8fafc;--pl-panel2:#f8fafc;--pl-line:rgba(16,24,40,.18);--pl-line2:rgba(16,24,40,.22);--pl-text:#111827;--pl-soft:#475467;--pl-softer:#667085;--pl-shell-bg:#ffffff;--pl-shell-shadow:none;--pl-scroll-track:#eef2f7;--pl-scroll-thumb:#b5becb;--pl-scroll-thumb-hover:#98a4b5;--pl-select-active-bg:#d9f0e4;--pl-select-active-text:#125c38}
 #page-playlists *{box-sizing:border-box}
@@ -397,12 +397,13 @@ body.cx-modal-open{overflow:hidden}
     const mappingTitle = !state.loaded ? "Playlist data is still loading." : mappingDisabled ? "Create at least two endpoints before adding a mapping." : "Create playlist mapping";
     root.innerHTML = `
       <div class="pl-page">
-        <div class="pl-header">
-          <div>
-            <h2 class="pl-title">Playlists</h2>
-            <div class="pl-sub">Sync your playlists between services</div>
+        <div class="pl-header cw-page-hero cw-page-hero-playlists" data-hero-icon="queue_music">
+          <div class="cw-page-hero-copy">
+            <div class="cw-page-hero-kicker">PLAYLISTS</div>
+            <h2 class="pl-title cw-page-hero-title">Playlists</h2>
+            <div class="pl-sub cw-page-hero-sub">Sync your playlists between services</div>
           </div>
-          <div class="pl-header-actions">
+          <div class="pl-header-actions cw-page-hero-actions">
             <button class="pl-btn" id="pl-new-endpoint"><span class="material-symbols-rounded" aria-hidden="true">add</span>New endpoint</button>
             <button class="pl-btn" id="pl-new-mapping" ${mappingDisabled ? "disabled" : ""} title="${esc(mappingTitle)}"><span class="material-symbols-rounded" aria-hidden="true">add</span>New mapping</button>
           </div>
