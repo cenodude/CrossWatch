@@ -145,6 +145,7 @@ function _watchLogKnownTags() {
     "PLEX-WATCH",
     "JELLYFIN-WATCH",
     "EMBY-WATCH",
+    "KODI-WATCH",
     "TRAKT-SCROBBLE",
     "SIMKL-SCROBBLE",
     "MDBLIST-SCROBBLE",
@@ -157,6 +158,13 @@ function _watchLogTagsFromConfig(cfg) {
 
 function _isAppDebugMode(cfg) {
   return !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
+}
+
+function _isDetailsDebugExcluded(raw) {
+  const provider = String(_parseLogParts(raw).provider || "").toUpperCase();
+  if (["WATCH", "WATCHM", "WEBHOOK", "SCROBBLE"].includes(provider)) return true;
+  if (provider.endsWith("-WATCH") || provider.endsWith("-WATCHER") || provider.endsWith("-SCROBBLE")) return true;
+  return false;
 }
 
 function _decodeLogLine(line) {
@@ -697,6 +705,7 @@ function openDebugLog() {
       lastMsgAt = Date.now();
       const seq = Number(ev?.lastEventId || 0) || 0;
       if (seq > 0) window._debugLastSeq = seq;
+      if (_isDetailsDebugExcluded(ev.data)) return;
       _enqueueDetailsItem(window.debugBuf, ev.data, "debug");
       scheduleFlush();
     };

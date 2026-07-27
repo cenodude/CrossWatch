@@ -1318,13 +1318,37 @@ try {
 } catch {}
 
 async function loadConfig() {
-  const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
-  if (r.status === 401) {
-    location.href = "/login";
-    return;
+  const waitForAuthBootstrap = async () => {
+    try {
+      const pending = typeof window.cwIsAuthSetupPending === "function" && window.cwIsAuthSetupPending() === true;
+      const boot = window.__cwAuthBootstrapPromise;
+      if (!pending || !boot || typeof boot.then !== "function") return;
+      await Promise.race([
+        boot.catch(() => null),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]);
+    } catch {}
+  };
+  const fetchConfig = async () => {
+    const r = await fetch("/api/config", { cache: "no-store", credentials: "same-origin" });
+    if (r.status === 401) {
+      location.href = "/login";
+      return null;
+    }
+    if (!r.ok) throw new Error(`GET /api/config ${r.status}`);
+    return await r.json();
+  };
+
+  await waitForAuthBootstrap();
+  let cfg = await fetchConfig();
+  if (!cfg) return;
+  if (!Object.keys(cfg || {}).length) {
+    await waitForAuthBootstrap();
+    if (!(typeof window.cwIsAuthSetupPending === "function" && window.cwIsAuthSetupPending() === true)) {
+      cfg = await fetchConfig();
+      if (!cfg) return;
+    }
   }
-  if (!r.ok) throw new Error(`GET /api/config ${r.status}`);
-  const cfg = await r.json();
   window._cfgCache = cfg;
 
   const _refreshSelectUi = (el) => {
@@ -1351,7 +1375,9 @@ async function loadConfig() {
   (function(){
     const rt = cfg.runtime || {};
     let mode = 'off';
-    if (rt.debug) mode = (rt.debug_mods && rt.debug_http) ? 'full' : (rt.debug_mods ? 'mods' : 'on');
+    if (rt.debug_mods && rt.debug_http) mode = 'full';
+    else if (rt.debug_mods) mode = 'mods';
+    else if (rt.debug || rt.debug_http) mode = 'on';
     _setSelectValue("debug", mode);
   })();
   _setVal("metadata_locale", cfg.metadata?.locale || "");
