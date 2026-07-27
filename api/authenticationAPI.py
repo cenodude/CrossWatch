@@ -34,6 +34,11 @@ from providers.sync.jellyfin._utils import (
     inspect_and_persist as jf_inspect_and_persist,
 )
 from providers.sync.jellyfin._auth_http import JellyfinAuthError
+from providers.auth._auth_KODI import KodiAuthError
+from providers.sync.kodi._common import (
+    ensure_whitelist_defaults as kodi_ensure_whitelist_defaults,
+    fetch_libraries_from_cfg as kodi_fetch_libraries_from_cfg,
+)
 from providers.sync.plex._utils import (
     ensure_whitelist_defaults,
     fetch_libraries_from_cfg,
@@ -1136,6 +1141,131 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         em["access_token"] = ""
         save_config(cfg)
         _probe_bust("emby")
+        return {"ok": True, "instance": inst}
+
+    # KODI
+    @app.post("/api/kodi/connect", tags=["auth"])
+    def api_kodi_connect(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> JSONResponse:
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        ensure_provider_block(cfg, "kodi")
+        kodi = ensure_instance_block(cfg, "kodi", inst)
+
+        server = str(payload.get("server") or "").strip()
+        username = str(payload.get("username") or "").strip()
+        if server:
+            kodi["server"] = server
+        kodi["username"] = username
+
+        if "password" in payload:
+            password = str(payload.get("password") or "")
+            if not _looks_masked_secret(password):
+                kodi["password"] = password
+
+        if "verify_ssl" in payload:
+            kodi["verify_ssl"] = coerce_bool(payload.get("verify_ssl"))
+        if "timeout" in payload:
+            kodi["timeout"] = _to_int(payload.get("timeout"), 12)
+
+        try:
+            prov = _import_provider("providers.auth._auth_KODI")
+            if not prov:
+                return JSONResponse({"ok": False, "error": "Provider missing"}, 500)
+
+            res = prov.start(cfg, redirect_uri="", instance_id=inst)
+            kodi_ensure_whitelist_defaults(cfg, instance_id=inst)
+            save_config(cfg)
+            _probe_bust("kodi")
+
+            kodi2 = ensure_instance_block(cfg, "kodi", inst)
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "server": kodi2.get("server") or "",
+                    "username": kodi2.get("username") or "",
+                    "kodi_version": res.get("kodi_version") or kodi2.get("kodi_version") or "",
+                    "jsonrpc_version": res.get("jsonrpc_version") or kodi2.get("jsonrpc_version") or "",
+                    "auth_method": res.get("auth_method") or kodi2.get("auth_method") or "",
+                    "instance": inst,
+                },
+                200,
+            )
+        except KodiAuthError as exc:
+            reason = str(getattr(exc, "reason", "connect_failed"))
+            _safe_log(log_fn, "KODI", f"[KODI:{inst}] connect failed reason={reason}")
+            status_by_reason = {
+                "missing_server": 400,
+                "invalid_credentials": 401,
+                "unreachable": 502,
+                "not_kodi": 400,
+                "version_too_old": 400,
+                "jsonrpc_too_old": 400,
+                "invalid_response": 502,
+                "jsonrpc_error": 502,
+                "http_error": 502,
+            }
+            error_by_reason = {
+                "missing_server": "Enter a Kodi server URL",
+                "invalid_credentials": "Kodi rejected the credentials",
+                "unreachable": "Kodi server is unreachable",
+                "not_kodi": "That server is not Kodi",
+                "version_too_old": "Kodi 21.0 Omega or newer is required",
+                "jsonrpc_too_old": "Kodi JSON-RPC 13.5.0 or newer is required",
+                "invalid_response": "Kodi returned an unexpected response",
+                "jsonrpc_error": "Kodi JSON-RPC request failed",
+                "http_error": "Kodi JSON-RPC request failed",
+            }
+            return JSONResponse(
+                {"ok": False, "error": error_by_reason.get(reason, "Kodi connection failed"), "reason": reason, "instance": inst},
+                status_by_reason.get(reason, 500),
+            )
+        except Exception as exc:
+            _safe_log(log_fn, "KODI", f"[KODI:{inst}] connect failed error_type={type(exc).__name__}")
+            return JSONResponse({"ok": False, "error": "Kodi connection failed", "instance": inst}, 500)
+
+    @app.get("/api/kodi/status", tags=["auth"])
+    def api_kodi_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        kodi = ensure_instance_block(cfg, "kodi", inst)
+        return {
+            "connected": bool(kodi.get("server") and kodi.get("connection_verified") is True),
+            "server": kodi.get("server") or "",
+            "username": kodi.get("username") or "",
+            "has_password": bool(str(kodi.get("password") or "")),
+            "verify_ssl": coerce_bool(kodi.get("verify_ssl", False)),
+            "kodi_version": kodi.get("kodi_version") or "",
+            "jsonrpc_version": kodi.get("jsonrpc_version") or "",
+            "auth_method": kodi.get("auth_method") or "",
+            "instance": inst,
+        }
+
+    @app.get("/api/kodi/libraries", tags=["media providers"])
+    def api_kodi_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        _apply_media_overrides(cfg, "kodi", inst, server, verify_ssl)
+        kodi_ensure_whitelist_defaults(cfg, instance_id=inst)
+        return {"libraries": kodi_fetch_libraries_from_cfg(cfg, instance_id=inst), "instance": inst}
+
+    @app.post("/api/kodi/disconnect", tags=["auth"])
+    def api_kodi_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        conflict = usage_conflict_response(cfg, "kodi", inst)
+        if conflict is not None:
+            return conflict
+
+        prov = _import_provider("providers.auth._auth_KODI")
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing", "instance": inst}, 500)
+        prov.disconnect(cfg, instance_id=inst)
+        save_config(cfg)
+        _probe_bust("kodi")
+        _safe_log(log_fn, "KODI", f"[KODI:{inst}] disconnected")
         return {"ok": True, "instance": inst}
 
     @app.get("/api/emby/inspect", tags=["media providers"])

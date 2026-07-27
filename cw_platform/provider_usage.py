@@ -25,6 +25,7 @@ _PROVIDER_LABELS = {
     "plex": "Plex",
     "emby": "Emby",
     "jellyfin": "Jellyfin",
+    "kodi": "Kodi",
     "trakt": "Trakt",
     "simkl": "SIMKL",
     "mdblist": "MDBList",

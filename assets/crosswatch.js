@@ -409,6 +409,8 @@ function _cwHasConfiguredValue(v) {
       "emby.user_id",
       "emby.username",
       "emby.user",
+      "kodi.server",
+      "kodi.connection_verified",
       "app_auth.username",
       "app_auth.password.hash",
     ];

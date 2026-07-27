@@ -527,15 +527,27 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "kodi": {
+        "server": "",                                   # http(s)://host:port (required)
+        "username": "",                                 # Optional HTTP Basic Auth username
+        "password": "",                                 # Optional HTTP Basic Auth password
+        "verify_ssl": False,                            # Verify TLS certificates
+        "auth_method": "",                              # "basic" | "none" after connection verification
+        "kodi_version": "",                             # Detected during authentication; Kodi 21.0+ required
+        "jsonrpc_version": "",                          # Detected JSON-RPC version; 13.5.0+ required
+        "connection_verified": False,                   # True after JSON-RPC verification succeeds
+        "timeout": 12.0,                                # HTTP timeout (seconds)
+    },
+
     "crosswatch": {
-        "root_dir":         "/config/.cw_provider",    # Root folder for local provider state
-        "enabled":          True,                      # Enable/disable CrossWatch as sync provider
-        "retention_days":   30,                        # Snapshot retention in days; 0 = keep forever
-        "auto_snapshot":    True,                      # Take snapshot before mutating main JSONs
-        "max_snapshots":    64,                        # Max snapshots per feature; 0 = unlimited
-        "restore_watchlist": "latest",                 # "", "latest", or specific snapshot name/stem
-        "restore_history": "latest",                   # "", "latest", or specific snapshot name/stem
-        "restore_ratings": "latest"                    # "", "latest", or specific snapshot name/stem
+        "root_dir":         "/config/.cw_provider",     # Root folder for local provider state
+        "enabled":          True,                       # Enable/disable CrossWatch as sync provider
+        "retention_days":   30,                         # Snapshot retention in days; 0 = keep forever
+        "auto_snapshot":    True,                       # Take snapshot before mutating main JSONs
+        "max_snapshots":    64,                         # Max snapshots per feature; 0 = unlimited
+        "restore_watchlist": "latest",                  # "", "latest", or specific snapshot name/stem
+        "restore_history": "latest",                    # "", "latest", or specific snapshot name/stem
+        "restore_ratings": "latest"                     # "", "latest", or specific snapshot name/stem
     },
     
     # --- Meta Providers ------------------------------------------------------
@@ -748,6 +760,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
         "emby": {"access_token", "api_key", "password"},
+        "kodi": {"password"},
         "tmdb": {"api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token"},
     }

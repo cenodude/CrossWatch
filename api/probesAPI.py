@@ -59,6 +59,7 @@ PROVIDERS: tuple[str, ...] = (
     "publicmetadb",
     "tautulli",
     "nuvio",
+    "kodi",
 )
 
 # Caches
@@ -125,6 +126,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "PUBLICMETADB": "publicmetadb",
     "TAUTULLI": "tautulli",
     "NUVIO": "nuvio",
+    "KODI": "kodi",
 }
 
 _FALLBACK_KEYS: dict[str, tuple[str, ...]] = {
@@ -259,6 +261,14 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         server = _norm_url(jf.get("server"))
         tok = str((jf.get("access_token") or jf.get("token") or "")).strip()
         return f"jellyfin|srv:{_secret_cache_tag(server)}|tok:{_secret_cache_tag(tok)}" if (server and tok) else "jellyfin|unconfigured"
+
+    if p == "kodi":
+        kodi = cfg.get("kodi") or {}
+        server = _norm_url(kodi.get("server"))
+        user = str((kodi.get("username") or "")).strip()
+        pw = str((kodi.get("password") or "")).strip()
+        verified = "1" if kodi.get("connection_verified") is True else "0"
+        return f"kodi|srv:{_secret_cache_tag(server)}|user:{_secret_cache_tag(user)}|pw:{_secret_cache_tag(pw)}|verified:{verified}" if server else "kodi|unconfigured"
 
     if p == "emby":
         em = cfg.get("emby") or {}
@@ -630,6 +640,18 @@ def probe_emby(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
         and (em.get("access_token") or em.get("token") or em.get("api_key") or "").strip()
     )
     PROBE_CACHE["emby"] = (now, ok)
+    return ok
+
+
+def probe_kodi(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
+    ts, ok = PROBE_CACHE["kodi"]
+    now = time.time()
+    if now - ts < max_age_sec:
+        return ok
+
+    kodi = (cfg.get("kodi") or cfg.get("KODI") or {}) or {}
+    ok = bool((kodi.get("server") or "").strip() and kodi.get("connection_verified") is True)
+    PROBE_CACHE["kodi"] = (now, ok)
     return ok
 
 
@@ -1084,6 +1106,33 @@ def _probe_emby_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
     return ok, rsn
 
+
+def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("kodi", cfg)
+    bust_ts = _consume_bust("kodi")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    kodi = (cfg.get("kodi") or cfg.get("KODI") or {}) or {}
+    server = str(kodi.get("server") or "").strip()
+    verified = kodi.get("connection_verified") is True
+    if not server:
+        rsn = "Kodi: missing server URL"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+    if not verified:
+        rsn = "Kodi: connection not verified"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, True, "")
+    return True, ""
+
 def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("plex", cfg)
     bust_ts = _consume_bust("plex")
@@ -1445,6 +1494,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "emby":
         return bool(str(blk.get("server") or "").strip() and str(blk.get("access_token") or blk.get("token") or blk.get("api_key") or "").strip())
 
+    if ck == "kodi":
+        return bool(str(blk.get("server") or "").strip() and blk.get("connection_verified") is True)
+
     if ck == "mdblist":
         return _provider_auth().is_configured("mdblist", blk)
 
@@ -1522,6 +1574,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "ANILIST": _probe_anilist_detail,
     "JELLYFIN": _probe_jellyfin_detail,
     "EMBY": _probe_emby_detail,
+    "KODI": _probe_kodi_detail,
     "TMDB": _probe_tmdb_detail,
     "MDBLIST": _probe_mdblist_detail,
     "PUBLICMETADB": _probe_publicmetadb_detail,
@@ -1765,6 +1818,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             trakt_ok, trakt_reason, cfg_trakt = _provider_tuple("TRAKT")
             jelly_ok, jelly_reason, cfg_jelly = _provider_tuple("JELLYFIN")
             emby_ok, emby_reason, cfg_emby = _provider_tuple("EMBY")
+            kodi_ok, kodi_reason, cfg_kodi = _provider_tuple("KODI")
             tmdb_ok, tmdb_reason, cfg_tmdb = _provider_tuple("TMDB")
             mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
@@ -1934,6 +1988,18 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
                 }
+            if "KODI" in active_providers:
+                inst_map, inst_sum = _instances_payload("KODI")
+                k_block = (cfg_kodi.get("kodi") or {}) if isinstance(cfg_kodi.get("kodi"), Mapping) else {}
+                providers_out["KODI"] = {
+                    "connected": kodi_ok,
+                    **({} if kodi_ok else {"reason": kodi_reason}),
+                    **({"kodi_version": k_block.get("kodi_version")} if k_block.get("kodi_version") else {}),
+                    **({"jsonrpc_version": k_block.get("jsonrpc_version")} if k_block.get("jsonrpc_version") else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
             if "TMDB" in active_providers:
                 inst_map, inst_sum = _instances_payload("TMDB")
                 providers_out["TMDB"] = {
@@ -2046,6 +2112,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "anilist_connected": anilist_ok,
                 "jellyfin_connected": jelly_ok,
                 "emby_connected": emby_ok,
+                "kodi_connected": kodi_ok,
                 "tmdb_connected": tmdb_ok,
                 "mdblist_connected": mdbl_ok,
                 "publicmetadb_connected": publicmetadb_ok,
