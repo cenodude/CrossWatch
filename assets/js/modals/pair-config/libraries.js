@@ -7,6 +7,7 @@ export function createLibraryController({
   hasPlex,
   hasJelly,
   hasEmby,
+  hasKodi,
   getOpts,
   onLibrariesChanged,
 }) {
@@ -42,6 +43,7 @@ export function createLibraryController({
     if (kind === "PLEX") url = "/api/plex/libraries";
     else if (kind === "JELLYFIN") url = "/api/jellyfin/libraries";
     else if (kind === "EMBY") url = "/api/emby/libraries";
+    else if (kind === "KODI") url = "/api/kodi/libraries";
     if (!url) return Promise.resolve([]);
     return fetch(url + "?cb=" + Date.now(), { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
@@ -65,6 +67,7 @@ export function createLibraryController({
       if (kind === "PLEX") prov = "plex";
       else if (kind === "JELLYFIN") prov = "jellyfin";
       else if (kind === "EMBY") prov = "emby";
+      else if (kind === "KODI") prov = "kodi";
       if (!prov) return libs;
       const f = feature === "history" ? "history" : feature === "ratings" ? "ratings" : feature;
       const serverLibs = cfg?.[prov]?.[f]?.libraries;
@@ -94,6 +97,9 @@ export function createLibraryController({
     else if (kind === "EMBY" && feature === "history") hostId = "em-hist-libs";
     else if (kind === "EMBY" && feature === "ratings") hostId = "em-rate-libs";
     else if (kind === "EMBY" && feature === "progress") hostId = "em-prog-libs";
+    else if (kind === "KODI" && feature === "history") hostId = "kodi-hist-libs";
+    else if (kind === "KODI" && feature === "ratings") hostId = "kodi-rate-libs";
+    else if (kind === "KODI" && feature === "progress") hostId = "kodi-prog-libs";
     const host = ID(hostId);
     if (!host) return;
     const info = getFeatureLibraries(state, feature, kind);
@@ -128,7 +134,11 @@ export function createLibraryController({
   }
 
   function wireProviderLibraries(state, kind) {
-    const btnId = kind === "PLEX" ? "plx-libs-load" : kind === "JELLYFIN" ? "jf-libs-load" : "em-libs-load";
+    const btnId =
+      kind === "PLEX" ? "plx-libs-load" :
+      kind === "JELLYFIN" ? "jf-libs-load" :
+      kind === "EMBY" ? "em-libs-load" :
+      kind === "KODI" ? "kodi-libs-load" : "";
     const btn = ID(btnId);
     const load = () => {
       if (btn) {
@@ -168,12 +178,15 @@ export function createLibraryController({
     const hasPL = hasPlex(state);
     const hasJF = hasJelly(state);
     const hasEM = hasEmby(state);
+    const hasKO = hasKodi(state);
     const plBox = ID("plx-pair-libs");
     const jfBox = ID("jf-pair-libs");
     const emBox = ID("em-pair-libs");
+    const koBox = ID("kodi-pair-libs");
     if (plBox) plBox.style.display = hasPL ? "" : "none";
     if (jfBox) jfBox.style.display = hasJF ? "" : "none";
     if (emBox) emBox.style.display = hasEM ? "" : "none";
+    if (koBox) koBox.style.display = hasKO ? "" : "none";
 
     if (hasPL) wireProviderLibraries(state, "PLEX");
     else if (ID("plx-libs-load")) ID("plx-libs-load").disabled = true;
@@ -183,6 +196,9 @@ export function createLibraryController({
 
     if (hasEM) wireProviderLibraries(state, "EMBY");
     else if (ID("em-libs-load")) ID("em-libs-load").disabled = true;
+
+    if (hasKO) wireProviderLibraries(state, "KODI");
+    else if (ID("kodi-libs-load")) ID("kodi-libs-load").disabled = true;
   }
 
   return {

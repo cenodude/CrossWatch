@@ -30,8 +30,10 @@ const isTrakt=(v)=>same(v,"trakt");
 const isMDBList=(v)=>same(v,"mdblist");
 const isPublicMetaDB=(v)=>same(v,"publicmetadb");
 const isPlex = (v) => same(v, "plex");
+const isKodi = (v) => same(v, "kodi");
 const isCrossWatch = (v) => same(v, "crosswatch");
 function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
+function hasKodi(state){ return isKodi(state?.src) || isKodi(state?.dst) }
 const isMedia = (v) => isPlex(v) || isEmby(v) || isJelly(v);
 function providerSupportsProgress(state, name){ return !!(byName(state, name)?.features || {}).progress }
 function isProgressPair(state){ return providerSupportsProgress(state, state?.src) && providerSupportsProgress(state, state?.dst) }
@@ -516,6 +518,7 @@ const {
   hasPlex,
   hasJelly,
   hasEmby,
+  hasKodi,
   getOpts,
   onLibrariesChanged: (state) => refreshProviderCardSummaries(state),
 });
@@ -527,6 +530,7 @@ function renderProviderSelects(state){
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
   const providerKind=(name)=>{
     if(isMedia(name)) return "Media server";
+    if(isKodi(name)) return "Media client";
     if(isCrossWatch(name)) return "Tracker";
     if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"tautulli")) return "Tracker";
     if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
@@ -711,6 +715,9 @@ function getProviderOverrideCount(state, providerKey){
     if (checked("em-strict-ids", getPairProviderStrictValue(state, "emby")) !== strictDefault) count++;
     return count + countProviderLibraries(state, "EMBY");
   }
+  if (providerKey === "kodi") {
+    return countProviderLibraries(state, "KODI");
+  }
   return 0;
 }
 
@@ -722,7 +729,7 @@ function getProviderSummaryText(state, providerKey){
 }
 
 function refreshProviderCardSummaries(state){
-  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"]].forEach(([key, id]) => {
+  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"]].forEach(([key, id]) => {
     const el = ID(id);
     if (el) el.textContent = getProviderSummaryText(state, key);
   });
@@ -749,6 +756,7 @@ function renderFeaturePanel(state){
     const providerHintText = (providerKey) => {
       if (providerKey === "plex") return "Tune Plex matching, retries, workers, and pair library scope";
       if (providerKey === "jellyfin") return "Tune Jellyfin matching, longer timeouts and pair library scope.";
+      if (providerKey === "kodi") return "Tune Kodi pair library scope.";
       return "Tune Emby matching, longer timeouts and pair-level library scope.";
     };
 
@@ -878,7 +886,43 @@ function renderFeaturePanel(state){
         </div>
       </details>`);
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Media Servers</div>
+    if (hasKodi(state)) providerCards.push(`
+      <details class="mods fold provider-card provider-kodi" id="prov-kodi">
+        <summary class="fold-head provider-card-head">
+          <span class="provider-card-main">
+            <span class="provider-card-badge">Kodi</span>
+            <span class="provider-card-copy">
+              <span class="provider-card-title">Kodi</span>
+              <span class="provider-card-sub" id="prov-kodi-summary">${getProviderSummaryText(state, "kodi")}</span>
+            </span>
+          </span>
+          <span class="provider-card-meta">
+            <span class="provider-card-hint">${providerHintText("kodi")}</span>
+            <span class="chev">expand_more</span>
+          </span>
+        </summary>
+        <div class="fold-body provider-card-body">
+          <div class="prov-box" id="kodi-pair-libs">
+            <div class="panel-title small">Pair library whitelist</div>
+            <div class="muted">Empty = use connection-level whitelist.</div>
+            <div class="opt-row">
+              <div class="field-label">History</div>
+              <div class="chip-row" id="kodi-hist-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Ratings</div>
+              <div class="chip-row" id="kodi-rate-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Progress</div>
+              <div class="chip-row" id="kodi-prog-libs"></div>
+            </div>
+            <button type="button" class="cx-btn small" id="kodi-libs-load">Load libraries</button>
+          </div>
+        </div>
+      </details>`);
+
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Providers</div>
       <div class="providers-intro">
         <div class="providers-intro-copy">
           <div class="providers-intro-title">Advanced provider tuning</div>
@@ -886,10 +930,10 @@ function renderFeaturePanel(state){
         </div>
         <div class="providers-intro-badge">${providerCards.length} ${providerCards.length === 1 ? "provider" : "providers"} in this pair</div>
       </div>
-      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">This connection does not include a media server with provider-specific controls.</div>`}</div>
+      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">This connection does not include a provider with provider-specific controls.</div>`}</div>
       <div class="providers-note" role="note" aria-live="polite">
         <div class="providers-note-title"><span class="material-symbols-rounded">info</span>Optional advanced controls</div>
-        <div class="providers-note-body">Library whitelists only appear for media servers that are actually part of this pair.</div>
+        <div class="providers-note-body">Library whitelists only appear for providers that support pair-specific library scope and are actually part of this pair.</div>
       </div>`;
 
     right.innerHTML = "";
