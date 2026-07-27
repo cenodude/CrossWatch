@@ -1196,8 +1196,32 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         except KodiAuthError as exc:
             reason = str(getattr(exc, "reason", "connect_failed"))
             _safe_log(log_fn, "KODI", f"[KODI:{inst}] connect failed reason={reason}")
-            status = 401 if reason == "invalid_credentials" else _status_from_msg(str(exc))
-            return JSONResponse({"ok": False, "error": str(exc), "reason": reason, "instance": inst}, status)
+            status_by_reason = {
+                "missing_server": 400,
+                "invalid_credentials": 401,
+                "unreachable": 502,
+                "not_kodi": 400,
+                "version_too_old": 400,
+                "jsonrpc_too_old": 400,
+                "invalid_response": 502,
+                "jsonrpc_error": 502,
+                "http_error": 502,
+            }
+            error_by_reason = {
+                "missing_server": "Enter a Kodi server URL",
+                "invalid_credentials": "Kodi rejected the credentials",
+                "unreachable": "Kodi server is unreachable",
+                "not_kodi": "That server is not Kodi",
+                "version_too_old": "Kodi 21.0 Omega or newer is required",
+                "jsonrpc_too_old": "Kodi JSON-RPC 13.5.0 or newer is required",
+                "invalid_response": "Kodi returned an unexpected response",
+                "jsonrpc_error": "Kodi JSON-RPC request failed",
+                "http_error": "Kodi JSON-RPC request failed",
+            }
+            return JSONResponse(
+                {"ok": False, "error": error_by_reason.get(reason, "Kodi connection failed"), "reason": reason, "instance": inst},
+                status_by_reason.get(reason, 500),
+            )
         except Exception as exc:
             _safe_log(log_fn, "KODI", f"[KODI:{inst}] connect failed error_type={type(exc).__name__}")
             return JSONResponse({"ok": False, "error": "Kodi connection failed", "instance": inst}, 500)
