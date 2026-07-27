@@ -46,8 +46,7 @@
 * **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
-  * Watchlists, ratings and History
-  * Progress sync your progress status between Plex, Emby, Jellyfin, PublicMetaDB and Nuvio.
+  * Watchlists, ratings, History and Progress
   * Anime ID mapping (powered AniBridge) for better AniList matching across providers.
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
