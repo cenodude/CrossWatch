@@ -24,6 +24,33 @@
   let authRetry = 0;
   let dots = null;
 
+  function providerStatusInstance(data) {
+    const probe = data?._cw_probe && typeof data._cw_probe === "object" ? data._cw_probe : null;
+    const summary = data?.instances_summary && typeof data.instances_summary === "object" ? data.instances_summary : null;
+    return txt(probe?.instance || data?.instance || data?.instance_id || data?.rep_instance || summary?.rep || "default") || "default";
+  }
+
+  async function openProviderConnection(key, instance = "default") {
+    const prov = up(key);
+    if (!prov || prov === "CROSSWATCH") return;
+    if (typeof meta.sectionId === "function" && !meta.sectionId(prov)) return;
+    try { localStorage.setItem(`cw.ui.${prov.toLowerCase()}.auth.instance.v1`, txt(instance) || "default"); } catch {}
+    try {
+      window.__cwSettingsPane = "providers";
+      await window.showTab?.("settings");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      window.cwSettingsSelect?.("providers");
+      let opener = window.CW?.ProvidersUI?.openAuthProviderForm || window.openAuthProviderForm;
+      for (let i = 0; !opener && i < 20; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        opener = window.CW?.ProvidersUI?.openAuthProviderForm || window.openAuthProviderForm;
+      }
+      await opener?.(prov);
+    } catch (e) {
+      console.warn("open provider connection failed", e);
+    }
+  }
+
   function activeTab() {
     return String(
       document.documentElement?.dataset?.tab || document.body?.dataset?.tab || "main"
@@ -243,10 +270,11 @@
     }
   }
 
-  function updateConn(wrap, { name, connected, vip, detail, key }) {
+  function updateConn(wrap, { name, connected, vip, detail, key, instance }) {
     const pill = wrap?.querySelector?.(".conn-pill");
     if (!pill) return;
     const provKey = up(key || name);
+    const inst = txt(instance) || "default";
     const dot = pill.querySelector(".dot");
     const brand = pill.querySelector(".conn-brand");
     const hasSlot = !!pill.querySelector(".conn-slot");
@@ -262,11 +290,17 @@
     if (dot && dot.parentElement !== visual) visual.appendChild(dot);
 
     wrap.dataset.prov = provKey;
+    wrap.dataset.providerKey = provKey;
+    wrap.dataset.providerInstance = inst;
     pill.dataset.prov = provKey;
+    pill.dataset.providerKey = provKey;
+    pill.dataset.providerInstance = inst;
     pill.classList.toggle("ok", !!connected);
     pill.classList.toggle("no", !connected);
     pill.classList.toggle("has-vip", !!vip);
-    pill.ariaLabel = `${name} ${connected ? "connected" : "disconnected"}`;
+    pill.role = "button";
+    pill.tabIndex = 0;
+    pill.ariaLabel = `Open ${name} connection settings`;
     if (detail) pill.title = detail;
     else pill.removeAttribute("title");
     const logoSrc = providerLogo(provKey);
@@ -283,15 +317,22 @@
     }
   }
 
-  function makeConn({ name, connected, vip, detail, key }) {
+  function makeConn({ name, connected, vip, detail, key, instance }) {
     const wrap = document.createElement("div");
     const pill = document.createElement("div");
+    const provKey = up(key || name);
+    const inst = txt(instance) || "default";
     wrap.className = "conn-item";
-    wrap.dataset.prov = up(key || name);
+    wrap.dataset.prov = provKey;
+    wrap.dataset.providerKey = provKey;
+    wrap.dataset.providerInstance = inst;
     pill.className = `conn-pill ${connected ? "ok" : "no"}${vip ? " has-vip" : ""}`;
-    pill.dataset.prov = up(key || name);
-    pill.role = "status";
-    pill.ariaLabel = `${name} ${connected ? "connected" : "disconnected"}`;
+    pill.dataset.prov = provKey;
+    pill.dataset.providerKey = provKey;
+    pill.dataset.providerInstance = inst;
+    pill.role = "button";
+    pill.tabIndex = 0;
+    pill.ariaLabel = `Open ${name} connection settings`;
     if (detail) pill.title = detail;
     pill.innerHTML = `<div class="conn-brand">${
       vip ? `<span class="conn-slot">${CROWN}</span>` : ""
@@ -299,7 +340,7 @@
       connected ? "ok" : "no"
     }" aria-hidden="true"></span></span>`;
     wrap.appendChild(pill);
-    updateConn(wrap, { name, connected, vip, detail, key });
+    updateConn(wrap, { name, connected, vip, detail, key, instance: inst });
     return wrap;
   }
 
@@ -353,9 +394,10 @@
           usageDetail(data),
         ].filter(Boolean).join("\n");
         const provKey = up(key);
+        const instance = providerStatusInstance(data);
         const existing = existingByKey.get(provKey);
-        const item = existing || makeConn({ name, connected: !!data.connected, vip: meta.vip, detail, key });
-        updateConn(item, { name, connected: !!data.connected, vip: meta.vip, detail, key });
+        const item = existing || makeConn({ name, connected: !!data.connected, vip: meta.vip, detail, key, instance });
+        updateConn(item, { name, connected: !!data.connected, vip: meta.vip, detail, key, instance });
         return item;
       });
     placeConnItems(host, items);
@@ -381,6 +423,24 @@
     btn.addEventListener("click", (e) => window.manualRefreshStatus?.(e));
   }
 
+  function bindProviderOpeners() {
+    const host = $("conn-badges");
+    if (!host || host.dataset.boundProviderOpen === "1") return;
+    host.dataset.boundProviderOpen = "1";
+    const openFrom = (node) => openProviderConnection(node?.dataset?.providerKey || node?.dataset?.prov, node?.dataset?.providerInstance || "default");
+    host.addEventListener("click", (ev) => {
+      const node = ev.target?.closest?.(".conn-pill[data-provider-key],.conn-item[data-provider-key]");
+      if (node && host.contains(node)) openFrom(node);
+    });
+    host.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const node = ev.target?.closest?.(".conn-pill[data-provider-key],.conn-item[data-provider-key]");
+      if (!node || !host.contains(node)) return;
+      ev.preventDefault();
+      openFrom(node);
+    });
+  }
+
   function makeDotsController() {
     const create = window.CW?.createAuthDotsController;
     if (typeof create !== "function") return null;
@@ -396,6 +456,7 @@
 
   function init() {
     bindStatusButton();
+    bindProviderOpeners();
     dots = makeDotsController();
     dots?.syncObserver();
     observeMeta(syncMetadataProviderDot);
