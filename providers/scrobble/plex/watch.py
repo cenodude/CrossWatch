@@ -780,7 +780,7 @@ class WatchService:
             if isinstance(v, dict) and ("ratingKey" in v or "ratingkey" in v):
                 return _safe_int(v.get("ratingKey") or v.get("ratingkey"))
         return None
-    
+
     def _resolve_session_identity(self, session_key: str | None) -> dict[str, Any] | None:
         if not (self._plex and session_key):
             return None
@@ -1095,7 +1095,6 @@ class WatchService:
             # Ignore idle/incomplete Plex alerts with no user and no session.
             if not str(ev.account or "").strip() and not str(ev.session_key or "").strip():
                 return
-
             if not ev.account and ev.session_key:
                 prev_ev = self._last_event.get(str(ev.session_key))
                 prev_acc = str(getattr(prev_ev, "account", "") or "").strip() if prev_ev else ""
@@ -1117,7 +1116,6 @@ class WatchService:
 
             # Drop unresolved/no-user alerts before filter logging
             if not str(ev.account or "").strip():
-                self._dbg(f"drop alert without resolved user; inst={self._instance_id} sess={ev.session_key}")
                 return
 
             if not self._passes_filters(ev):
