@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from cw_platform.config_base import load_config as _load_config
 
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, provider_key
+from providers.auth._auth_KODI import KodiAuthError, verify_connection as verify_kodi_connection
 from providers.sync.simkl._common import simkl_api_params, simkl_user_agent
 
 
@@ -649,8 +650,7 @@ def probe_kodi(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> bool:
     if now - ts < max_age_sec:
         return ok
 
-    kodi = (cfg.get("kodi") or cfg.get("KODI") or {}) or {}
-    ok = bool((kodi.get("server") or "").strip() and kodi.get("connection_verified") is True)
+    ok, _ = _probe_kodi_detail(cfg, max_age_sec=max_age_sec)
     PROBE_CACHE["kodi"] = (now, ok)
     return ok
 
@@ -1125,6 +1125,38 @@ def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         return False, rsn
     if not verified:
         rsn = "Kodi: connection not verified"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        timeout = max(1.0, min(float(kodi.get("timeout", HTTP_TIMEOUT) or HTTP_TIMEOUT), float(HTTP_TIMEOUT)))
+    except Exception:
+        timeout = float(HTTP_TIMEOUT)
+
+    try:
+        verify_kodi_connection(
+            server,
+            username=str(kodi.get("username") or ""),
+            password=str(kodi.get("password") or ""),
+            verify_ssl=bool(kodi.get("verify_ssl", False)),
+            timeout=timeout,
+        )
+    except KodiAuthError as exc:
+        reason = str(exc.reason or "probe_failed")
+        rsn = {
+            "unreachable": "Kodi: server unreachable",
+            "invalid_credentials": "Kodi: invalid credentials",
+            "not_kodi": "Kodi: not a Kodi server",
+            "version_too_old": "Kodi: version too old",
+            "jsonrpc_too_old": "Kodi: JSON-RPC version too old",
+            "invalid_response": "Kodi: invalid JSON-RPC response",
+        }.get(reason, "Kodi: probe failed")
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+    except Exception:
+        rsn = "Kodi: probe failed"
         with _CACHE_LOCK:
             PROBE_DETAIL_CACHE[key] = (now, False, rsn)
         return False, rsn
