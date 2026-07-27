@@ -2,6 +2,7 @@
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sinks = ["trakt", "simkl", "mdblist"];
+const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -60,7 +61,11 @@ async function api(url, body) {
 }
 
 function allProfiles() {
-  return (props.overview?.eligible_sources || []).flatMap((group) => (group.profiles || []).filter((x) => x.eligible).map((x) => ({ ...x, provider: x.provider || group.provider })));
+  return (props.overview?.eligible_sources || []).flatMap((group) => {
+    const provider = String(group.provider || "").toLowerCase();
+    if (!webhookSources.has(provider)) return [];
+    return (group.profiles || []).filter((x) => x.eligible).map((x) => ({ ...x, provider: x.provider || provider }));
+  });
 }
 
 function sinkProfiles(sink) {
