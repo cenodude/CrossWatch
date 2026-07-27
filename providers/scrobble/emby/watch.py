@@ -23,6 +23,9 @@ _HTTP = requests.Session()
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
 _CFG_TTL_SEC = 2.0
+OFFLINE_INITIAL_RETRY_SECONDS = 30.0
+OFFLINE_MAX_RETRY_SECONDS = 300.0
+OFFLINE_TIMEOUT_SECONDS = 2.0
 
 _TRAKT_ID_CACHE: dict[tuple, Any] = {}
 _VIEW_CACHE_TTL_SECS = 60.0
@@ -168,13 +171,13 @@ def _hdr(tok: str, cfg: dict[str, Any]) -> dict[str, str]:
     }
 
 
-def _get_json(base: str, tok: str, path: str, cfg: dict[str, Any] | None = None) -> Any:
+def _get_json(base: str, tok: str, path: str, cfg: dict[str, Any] | None = None, timeout: float | None = None) -> Any:
     cfg2 = cfg or _cfg()
     e = cfg2.get("emby") or {}
     r = _HTTP.get(
         f"{base}{path}",
         headers=_hdr(tok, cfg2),
-        timeout=float(e.get("timeout", 6)),
+        timeout=float(timeout if timeout is not None else e.get("timeout", 6)),
         verify=bool(e.get("verify_ssl", True)),
     )
     r.raise_for_status()
@@ -574,6 +577,9 @@ class EmbyWatchService:
         self._last_seek_emit: dict[str, float] = {}
         self._view_roots_cache: dict[str, tuple[float, set[str]]] = {}
         self._item_root_cache: dict[str, str | None] = {}
+        self._offline = False
+        self._offline_failures = 0
+        self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
 
         lvl = "DEBUG" if self._quiet_startup else "INFO"
         self._log(f"Ensuring Watcher is running; inst={self._instance_id} | wired sinks: {self.sinks_count()}", lvl)
@@ -593,6 +599,31 @@ class EmbyWatchService:
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
+
+    def _request_timeout(self, cfg: dict[str, Any]) -> float:
+        try:
+            timeout = float(((cfg.get("emby") or {}).get("timeout") or 6))
+        except Exception:
+            timeout = 6.0
+        if self._offline or self._offline_failures:
+            return min(timeout, OFFLINE_TIMEOUT_SECONDS)
+        return timeout
+
+    def _mark_offline(self, exc: Exception) -> None:
+        self._offline_failures += 1
+        if not self._offline:
+            self._offline = True
+            self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
+            self._log(f"Emby watcher offline: {exc}; retrying with backoff", "WARNING")
+            return
+        self._offline_retry = min(OFFLINE_MAX_RETRY_SECONDS, max(OFFLINE_INITIAL_RETRY_SECONDS, self._offline_retry * 2.0))
+
+    def _mark_online(self) -> None:
+        if self._offline:
+            self._log("Emby watcher reconnected", "INFO")
+        self._offline = False
+        self._offline_failures = 0
+        self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
 
     def _update_best_offset(self, session_key: str, off_ms: int, dur_ms: int) -> None:
         if not session_key or dur_ms <= 0:
@@ -794,10 +825,11 @@ class EmbyWatchService:
             raw=sess,
         )
 
-    def _current_sessions(self, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    def _current_sessions(self, cfg: dict[str, Any]) -> list[dict[str, Any]] | None:
         try:
             q = "/Sessions?ActiveWithinSeconds=15"
-            all_sessions = _get_json(self._base, self._tok, q, cfg=cfg) or []
+            all_sessions = _get_json(self._base, self._tok, q, cfg=cfg, timeout=self._request_timeout(cfg)) or []
+            self._mark_online()
             playing: list[dict[str, Any]] = []
             for s in all_sessions:
                 if not (s.get("NowPlayingItem") or {}):
@@ -805,8 +837,8 @@ class EmbyWatchService:
                 playing.append(s)
             return playing
         except Exception as ex:
-            self._log(f"session poll failed: {ex}", "ERROR")
-            return []
+            self._mark_offline(ex)
+            return None
 
     def _meta_from_event(self, ev: ScrobbleEvent) -> dict[str, Any]:
         return {
@@ -964,6 +996,8 @@ class EmbyWatchService:
         now = time.time()
         cfg = self._active_cfg()
         cur = self._current_sessions(cfg)
+        if cur is None:
+            return False
         seen: set[str] = set()
 
         try:
@@ -1218,7 +1252,9 @@ class EmbyWatchService:
             else:
                 self._idle_steps = min(self._idle_steps + 1, 10)
                 sleep_for = min(self._poll * (1.0 + (0.5 * self._idle_steps)), self._max_idle_sleep)
-            time.sleep(sleep_for)
+            if self._offline:
+                sleep_for = self._offline_retry
+            self._stop.wait(sleep_for)
 
     def stop(self) -> None:
         self._stop.set()
