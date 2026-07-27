@@ -1,4 +1,19 @@
 # syntax=docker/dockerfile:1.7
+
+# --- app source: cleanup + normalize ownership/permissions ---
+FROM python:3.11-slim AS appsrc
+WORKDIR /src
+COPY . /src
+RUN rm -rf /src/.venv /src/.vscode /src/.idea || true \
+ && rm -rf /src/docker || true \
+ && find /src -type d -name "__pycache__" -prune -exec rm -rf {} + || true \
+ && find /src -type d -name "@eaDir" -prune -exec rm -rf {} + || true \
+ && find /src -type d -empty -delete || true \
+ && find /src -maxdepth 2 -type f -name "packaging.py" -delete || true \
+ && find /src -maxdepth 2 -type d -name "packaging" -exec rm -rf {} + || true \
+ && find /src -type d -exec chmod 0755 {} + \
+ && find /src -type f -exec chmod 0644 {} +
+
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.description="One brain for all your media syncs A single place to configure everything."
@@ -33,15 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 # --- app code ---
-COPY . /app
-
-# --- cleanup & avoid import shadows ---
-RUN rm -rf /app/.venv /app/.vscode /app/.idea || true \
- && rm -rf /app/docker || true \
- && find /app -type d -name "__pycache__" -prune -exec rm -rf {} + || true \
- && find /app -type d -empty -delete || true \
- && find /app -maxdepth 2 -type f -name "packaging.py" -delete || true \
- && find /app -maxdepth 2 -type d -name "packaging" -exec rm -rf {} + || true
+COPY --from=appsrc --chown=root:root /src /app
 
 # --- scripts ---
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
