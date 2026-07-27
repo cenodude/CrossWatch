@@ -54,6 +54,12 @@ CASES: tuple[ProviderCase, ...] = (
         empty_configured=False,
     ),
     ProviderCase(
+        module_path="sync._mod_KODI",
+        expected_name="KODI",
+        minimal_cfg={"kodi": {"server": "http://localhost:8080", "connection_verified": True}},
+        empty_configured=False,
+    ),
+    ProviderCase(
         module_path="sync._mod_JELLYFIN",
         expected_name="JELLYFIN",
         minimal_cfg={"jellyfin": {"server": "http://localhost", "access_token": "tok", "user_id": "u"}},

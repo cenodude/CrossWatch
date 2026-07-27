@@ -21,7 +21,7 @@
   const providerIcon = (provider) => {
     return `<img src="${esc(providerLogLogo(provider))}" alt="" onerror="this.remove()">`;
   };
-  const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio"];
+  const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi"];
   const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12;
   const state = {
     mounted: false,

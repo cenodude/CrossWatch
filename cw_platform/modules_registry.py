@@ -29,6 +29,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_TRAKT":      "providers.sync._mod_TRAKT",
         "_mod_JELLYFIN":   "providers.sync._mod_JELLYFIN",
         "_mod_EMBY":       "providers.sync._mod_EMBY",
+        "_mod_KODI":       "providers.sync._mod_KODI",
         "_mod_MDBLIST":    "providers.sync._mod_MDBLIST",
         "_mod_PUBLICMETADB": "providers.sync._mod_PUBLICMETADB",
         "_mod_NUVIO":      "providers.sync._mod_NUVIO",
