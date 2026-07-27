@@ -11,7 +11,7 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import list_instance_ids, normalize_instance_id
+from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id
 from cw_platform.provider_usage import WEBHOOK_SOURCE_PROVIDERS, provider_label, webhook_source_enabled
 from providers.scrobble.routes import (
     ROUTE_PROVIDERS,
@@ -36,6 +36,7 @@ from .scrobbleAPI import _ensure_media_profile_webhook_ids, _ensure_route_rating
 router = APIRouter(prefix="/api/scrobbler", tags=["scrobbler-management"])
 
 SOURCE_PROVIDERS = tuple(WEBHOOK_SOURCE_PROVIDERS)
+WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi")
 SINK_PROVIDERS = tuple(sorted(ROUTE_SINKS))
 ALLOWED_FILTER_KEYS = {
     "username_whitelist",
@@ -107,11 +108,19 @@ def _profile_exists(cfg: Mapping[str, Any], provider: str, instance: str) -> boo
     return normalize_instance_id(instance) in set(_instances(cfg, provider))
 
 
+def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: str) -> bool:
+    key = str(provider or "").strip().lower()
+    if key == "kodi":
+        block = get_provider_block(_dict(cfg), "kodi", normalize_instance_id(instance))
+        return bool(str(block.get("server") or "").strip() and block.get("connection_verified") is True)
+    return media_source_connected(cfg, key, instance)
+
+
 def _require_source_profile(cfg: Mapping[str, Any], provider: str, instance: str) -> None:
     errors: list[dict[str, str]] = []
     if not _profile_exists(cfg, provider, instance):
         errors.append(_err("provider_instance", "profile_not_found", "Source profile does not exist"))
-    elif not media_source_connected(cfg, provider, instance):
+    elif not _scrobble_source_connected(cfg, provider, instance):
         errors.append(_err("provider_instance", "profile_not_configured", "Source profile is not configured"))
     if errors:
         raise ValidationFailure(errors)
@@ -331,10 +340,10 @@ def _destination_availability(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 def _eligible_sources(cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for provider in SOURCE_PROVIDERS:
+    for provider in WATCHER_SOURCE_PROVIDERS:
         profiles: list[dict[str, Any]] = []
         for inst in _instances(cfg, provider):
-            configured = media_source_connected(cfg, provider, inst)
+            configured = _scrobble_source_connected(cfg, provider, inst)
             explicit = bool(_profile_override(cfg, provider, inst))
             profiles.append(
                 {
@@ -447,7 +456,7 @@ def _normalized_routes(cfg: dict[str, Any], request: Request) -> list[dict[str, 
 
 
 def _summary(cfg: dict[str, Any], request: Request, webhooks: list[dict[str, Any]], routes: list[dict[str, Any]], runtime: dict[str, Any]) -> dict[str, Any]:
-    eligible = sum(1 for p in SOURCE_PROVIDERS for i in _instances(cfg, p) if media_source_connected(cfg, p, i))
+    eligible = sum(1 for p in WATCHER_SOURCE_PROVIDERS for i in _instances(cfg, p) if _scrobble_source_connected(cfg, p, i))
     active_webhooks = sum(1 for w in webhooks if w.get("active"))
     enabled_routes = sum(1 for r in routes if r.get("enabled"))
     return {

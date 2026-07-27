@@ -8,7 +8,7 @@ from cw_platform.provider_instances import normalize_instance_id
 
 
 DEFAULT_INSTANCE_ID = "default"
-ROUTE_PROVIDERS = {"plex", "emby", "jellyfin"}
+ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
