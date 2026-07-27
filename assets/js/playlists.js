@@ -1,3 +1,7 @@
+/* assets/js/playlists.js */
+/* Playlists page shell and components */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
 (function () {
   "use strict";
 
@@ -132,7 +136,12 @@ html[data-cw-theme="flat-light"] #page-playlists{--pl-bg:var(--cw-flat-bg,#e9edf
 #page-playlists .pl-title{margin:0;font-size:28px;line-height:1.1;font-weight:850;color:var(--pl-text)}
 #page-playlists .pl-sub{margin-top:6px;color:var(--pl-soft);font-size:16px;line-height:1.35}
 #page-playlists .pl-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
-#page-playlists .pl-header .pl-btn{min-height:0;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:850;gap:8px}
+#page-playlists .pl-header .pl-btn{min-height:0;padding:10px 14px;border-radius:10px;font-size:14px;font-weight:850;gap:8px;background:rgba(255,255,255,.025)!important;background-image:none!important;border-color:rgba(218,227,245,.14)!important;box-shadow:none!important;color:rgba(244,247,255,.94)!important}
+#page-playlists .pl-header .pl-btn:hover{background:rgba(255,255,255,.055)!important;background-image:none!important;border-color:rgba(218,227,245,.24)!important;color:#fff!important}
+#page-playlists .pl-header .pl-btn .material-symbols-rounded{color:#aebdff!important;-webkit-text-fill-color:#aebdff!important}
+html[data-cw-theme="flat-light"] #page-playlists .pl-header .pl-btn{background:rgba(255,255,255,.28)!important;background-image:none!important;border-color:rgba(78,96,180,.20)!important;color:#172033!important}
+html[data-cw-theme="flat-light"] #page-playlists .pl-header .pl-btn:hover{background:rgba(255,255,255,.44)!important;border-color:rgba(78,96,180,.30)!important;color:#111827!important}
+html[data-cw-theme="flat-light"] #page-playlists .pl-header .pl-btn .material-symbols-rounded{color:#172033!important;-webkit-text-fill-color:#172033!important}
 #page-playlists .pl-header .material-symbols-rounded{font-size:19px;line-height:1;font-variation-settings:"FILL"0,"wght"500,"GRAD"0,"opsz"24}
 #page-playlists .pl-banners{display:grid;gap:10px}
 #page-playlists .pl-banner{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:12px 16px;border-radius:14px;border:1px solid rgba(218,227,245,.14);font-size:14px;line-height:1.45}

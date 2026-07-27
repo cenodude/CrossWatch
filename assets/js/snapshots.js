@@ -501,12 +501,63 @@ html[data-cw-theme="flat-light"] #page-snapshots .ss-top.cw-page-hero{border-col
 @media (max-width:1100px){#page-snapshots .ss-wrap{grid-template-columns:1fr}#page-snapshots .ss-topstats{grid-template-columns:repeat(2,minmax(150px,1fr))}#page-snapshots .ss-table-wrap{max-height:none}}
 @media (max-width:720px){#page-snapshots .ss-top{grid-template-columns:1fr}#page-snapshots .ss-topstats{grid-template-columns:1fr}#page-snapshots .ss-filterbar{grid-template-columns:1fr}#page-snapshots .ss-table{min-width:980px}}
   `;
+  const cssHeroControls = `
+#page-snapshots .ss-hero-summary{align-self:end!important;justify-self:end!important;display:inline-flex!important;align-items:stretch!important;min-height:58px!important;border-radius:14px!important;border:1px solid rgba(218,227,245,.13)!important;background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025))!important;box-shadow:none!important;overflow:hidden!important;backdrop-filter:blur(6px) saturate(120%)!important;-webkit-backdrop-filter:blur(6px) saturate(120%)!important;position:relative!important;z-index:1!important}
+#page-snapshots .ss-hero-seg{display:grid!important;place-items:center!important;align-content:center!important;gap:4px!important;min-width:112px!important;padding:9px 16px!important;border-left:1px solid rgba(218,227,245,.13)!important;color:var(--ss-muted-fg)!important;font-size:12px!important;font-weight:780!important;line-height:1.05!important;text-align:center!important;white-space:nowrap!important}
+#page-snapshots .ss-hero-seg:first-child{border-left:0!important}
+#page-snapshots .ss-hero-seg strong{display:block!important;color:var(--ss-fg)!important;font-size:18px!important;font-weight:900!important;line-height:1.05!important}
+#page-snapshots .ss-hero-seg span{display:block!important;color:var(--ss-muted-fg)!important;font-size:12px!important;font-weight:760!important;line-height:1.1!important}
+#page-snapshots #ss-refresh.ss-hero-refresh{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:58px!important;min-width:58px!important;height:auto!important;min-height:58px!important;margin:0!important;padding:0!important;border:0!important;border-left:1px solid rgba(218,227,245,.13)!important;border-radius:0!important;background:transparent!important;background-image:none!important;box-shadow:none!important;color:#aebdff!important}
+#page-snapshots #ss-refresh.ss-hero-refresh:hover{background:rgba(255,255,255,.055)!important;transform:none!important}
+#page-snapshots #ss-refresh.ss-hero-refresh[disabled]{opacity:.55!important;cursor:not-allowed!important}
+#page-snapshots #ss-refresh.ss-hero-refresh .material-symbol{font-size:23px!important;color:#aebdff!important;-webkit-text-fill-color:#aebdff!important}
+html[data-cw-theme=flat-light] #page-snapshots .ss-hero-summary{background:linear-gradient(180deg,rgba(255,255,255,.72),rgba(255,255,255,.38))!important;border-color:rgba(78,96,180,.20)!important}
+html[data-cw-theme=flat-light] #page-snapshots .ss-hero-seg,html[data-cw-theme=flat-light] #page-snapshots #ss-refresh.ss-hero-refresh{border-color:rgba(78,96,180,.18)!important;color:rgba(23,32,51,.68)!important}
+html[data-cw-theme=flat-light] #page-snapshots .ss-hero-seg strong,html[data-cw-theme=flat-light] #page-snapshots #ss-refresh.ss-hero-refresh .material-symbol{color:#172033!important;-webkit-text-fill-color:#172033!important}
+@media(max-width:760px){#page-snapshots .ss-hero-summary{justify-self:start!important;max-width:100%!important;min-height:50px!important;flex-wrap:wrap!important}#page-snapshots .ss-hero-seg{min-width:96px!important;padding:8px 12px!important}#page-snapshots .ss-hero-seg strong{font-size:16px!important}#page-snapshots #ss-refresh.ss-hero-refresh{width:52px!important;min-width:52px!important;min-height:50px!important}}
+  `;
+  const cssCapturePolish = `
+#page-snapshots .ss-topstats{gap:16px!important;margin:0 0 18px!important}
+#page-snapshots .ss-summary-card{--ss-stat-rgb:139,92,246;position:relative!important;isolation:isolate!important;overflow:hidden!important;display:flex!important;align-items:center!important;gap:18px!important;min-height:112px!important;padding:18px 20px!important;border-radius:8px!important;border:1px solid rgba(var(--ss-stat-rgb),.34)!important;background:radial-gradient(360px 180px at -10% 50%,rgba(var(--ss-stat-rgb),.28),rgba(var(--ss-stat-rgb),.10) 42%,transparent 76%),radial-gradient(220px 120px at 102% 0%,rgba(var(--ss-stat-rgb),.08),transparent 72%),linear-gradient(145deg,rgba(28,37,57,.94),rgba(12,18,30,.97))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 18px 42px rgba(0,0,0,.22)!important}
+#page-snapshots .ss-summary-card:before{content:""!important;display:block!important;position:absolute!important;inset:0!important;z-index:0!important;pointer-events:none!important;background:linear-gradient(135deg,rgba(255,255,255,.065),transparent 46%)!important}
+#page-snapshots .ss-summary-card:after{content:""!important;display:block!important;position:absolute!important;left:-28px!important;top:8px!important;bottom:8px!important;width:58%!important;z-index:0!important;pointer-events:none!important;background:radial-gradient(ellipse at left center,rgba(var(--ss-stat-rgb),.26),rgba(var(--ss-stat-rgb),.08) 48%,transparent 74%)!important;filter:blur(10px)!important;opacity:.95!important}
+#page-snapshots .ss-summary-card>*{position:relative!important;z-index:1!important}
+#page-snapshots .ss-summary-card[data-stat="providers"]{--ss-stat-rgb:59,130,246}
+#page-snapshots .ss-summary-card[data-stat="full-sets"]{--ss-stat-rgb:49,208,139}
+#page-snapshots .ss-summary-card[data-stat="latest"]{--ss-stat-rgb:245,158,66}
+#page-snapshots .ss-summary-card[data-stat="scheduled"]{--ss-stat-rgb:139,92,246}
+#page-snapshots .ss-summary-icon{width:64px!important;height:64px!important;flex:0 0 64px!important;display:grid!important;place-items:center!important;border-radius:14px!important;border:1px solid rgba(var(--ss-stat-rgb),.48)!important;background:radial-gradient(circle at 50% 42%,rgba(var(--ss-stat-rgb),.32),rgba(var(--ss-stat-rgb),.14) 58%,rgba(5,8,15,.26))!important;color:rgb(var(--ss-stat-rgb))!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 0 24px rgba(var(--ss-stat-rgb),.20)!important}
+#page-snapshots .ss-summary-icon .material-symbols-rounded{font-size:34px!important;line-height:1!important;color:inherit!important;-webkit-text-fill-color:currentColor!important}
+#page-snapshots .ss-summary-copy{display:grid!important;gap:5px!important;min-width:0!important;flex:1 1 auto!important;overflow:hidden!important}
+#page-snapshots .ss-summary-label{text-transform:none!important;letter-spacing:0!important;font-size:13px!important;font-weight:850!important;line-height:1.2!important;color:#b9c6da!important;-webkit-text-fill-color:#b9c6da!important}
+#page-snapshots .ss-summary-value{max-width:100%!important;font-size:28px!important;font-weight:950!important;line-height:1!important;color:#f7fbff!important;-webkit-text-fill-color:#f7fbff!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+#page-snapshots .ss-summary-value strong{font:inherit!important;color:inherit!important;-webkit-text-fill-color:inherit!important}
+#page-snapshots .ss-summary-card[data-stat="latest"] .ss-summary-value{font-size:clamp(17px,1.15vw,22px)!important;line-height:1.05!important}
+#page-snapshots .ss-summary-sub{font-size:13px!important;line-height:1.25!important;color:#aebbd0!important;-webkit-text-fill-color:#aebbd0!important}
+#page-snapshots .ss-empty.ss-empty-captures{width:100%!important;min-height:246px!important;display:grid!important;place-items:center!important;align-content:center!important;gap:12px!important;padding:42px 18px!important;border-radius:14px!important;border:1px dashed rgba(143,157,185,.22)!important;background:radial-gradient(360px 160px at 50% 0%,rgba(82,102,145,.10),transparent 70%),linear-gradient(180deg,rgba(22,30,45,.78),rgba(13,19,30,.92))!important;color:#aebbd0!important;text-align:center!important}
+#page-snapshots .ss-empty-icon{width:54px!important;height:54px!important;display:grid!important;place-items:center!important;border-radius:14px!important;color:#7f8da3!important;-webkit-text-fill-color:#7f8da3!important;font-size:42px!important;line-height:1!important}
+#page-snapshots .ss-empty-text{font-size:14px!important;font-weight:750!important;color:#aebbd0!important;-webkit-text-fill-color:#aebbd0!important}
+html[data-cw-theme="flat-dark"] #page-snapshots .ss-summary-card{background:radial-gradient(360px 180px at -10% 50%,rgba(var(--ss-stat-rgb),.22),rgba(var(--ss-stat-rgb),.08) 44%,transparent 76%),var(--cw-theme-surface-raised)!important;border-color:rgba(var(--ss-stat-rgb),.30)!important;box-shadow:none!important}
+html[data-cw-theme="flat-dark"] #page-snapshots .ss-summary-card:after{opacity:.82!important;background:radial-gradient(ellipse at left center,rgba(var(--ss-stat-rgb),.20),rgba(var(--ss-stat-rgb),.07) 50%,transparent 74%)!important}
+html[data-cw-theme="flat-dark"] #page-snapshots .ss-summary-icon{background:rgba(var(--ss-stat-rgb),.18)!important;border-color:rgba(var(--ss-stat-rgb),.42)!important;box-shadow:0 0 18px rgba(var(--ss-stat-rgb),.12)!important}
+html[data-cw-theme="flat-dark"] #page-snapshots .ss-empty.ss-empty-captures{background:var(--cw-theme-surface-raised)!important;border-color:rgba(218,226,242,.15)!important;color:var(--muted)!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-card{background:radial-gradient(360px 180px at -10% 50%,rgba(var(--ss-stat-rgb),.12),rgba(var(--ss-stat-rgb),.045) 44%,transparent 76%),#ffffff!important;border-color:rgba(var(--ss-stat-rgb),.24)!important;box-shadow:0 12px 30px rgba(16,24,40,.06)!important;color:#111827!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-card:before{background:linear-gradient(135deg,rgba(255,255,255,.70),transparent 46%)!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-card:after{opacity:.38!important;background:radial-gradient(ellipse at left center,rgba(var(--ss-stat-rgb),.14),rgba(var(--ss-stat-rgb),.045) 48%,transparent 74%)!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-icon{background:rgba(var(--ss-stat-rgb),.10)!important;border-color:rgba(var(--ss-stat-rgb),.30)!important;box-shadow:none!important;color:rgb(var(--ss-stat-rgb))!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-label,html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-sub{color:#475467!important;-webkit-text-fill-color:#475467!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-summary-value{color:#111827!important;-webkit-text-fill-color:#111827!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-empty.ss-empty-captures{background:linear-gradient(180deg,#ffffff,#f8fafc)!important;border-color:rgba(16,24,40,.14)!important;color:#475467!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-empty-icon{color:#667085!important;-webkit-text-fill-color:#667085!important}
+html[data-cw-theme="flat-light"] #page-snapshots .ss-empty-text{color:#475467!important;-webkit-text-fill-color:#475467!important}
+@media (max-width:720px){#page-snapshots .ss-summary-card{min-height:96px!important}#page-snapshots .ss-summary-icon{width:56px!important;height:56px!important;flex-basis:56px!important}#page-snapshots .ss-empty.ss-empty-captures{min-height:210px!important}}
+  `;
 
   function injectCss() {
     if (document.getElementById("cw-snapshots-css")) return;
     const s = document.createElement("style");
     s.id = "cw-snapshots-css";
-    s.textContent = css + cssTuning + cssCaptureLock + cssRedesign;
+    s.textContent = css + cssTuning + cssCaptureLock + cssRedesign + cssHeroControls + cssCapturePolish;
     document.head.appendChild(s);
   }
 
@@ -566,6 +617,7 @@ const toast = (msg, ok = true) => {
     busy: false, captureBusy: false, lastRefresh: 0,
     listLimit: 8, showAll: false, expandedBundles: {}, scheduleQueue: [], _spinUntil: 0,
     captureProgressId: "", captureProgressTimer: null, restoreConfirmUntil: 0, restoreConfirmTimer: null, restoreConfirmRaf: 0,
+    refreshBusy: false, lastSyncAt: null, lastRefreshFailed: false, syncClock: null,
   };
 
   const configuredProviderIds = () => new Set(
@@ -892,15 +944,16 @@ function bundleKey(s) {
           <div class="ss-title cw-page-hero-title">Captures</div>
           <div class="ss-sub cw-page-hero-sub">Point-in-time snapshots of provider data. Create, compare, and restore with confidence.</div>
         </div>
-        <div class="ss-actions cw-page-hero-actions">
-          <button id="ss-refresh" class="iconbtn ss-help-btn" title="Refresh captures" aria-label="Refresh captures"><span id="ss-refresh-icon" class="material-symbol ss-refresh-icon">sync</span></button>
+        <div class="ss-actions cw-page-hero-actions ss-hero-summary" id="ss-hero-summary" aria-label="Capture sync summary">
+          <div class="ss-hero-seg ss-hero-sync"><span>Synced</span><strong id="ss-sync-time">not yet</strong></div>
+          <button id="ss-refresh" class="ss-hero-refresh" title="Refresh captures" aria-label="Refresh captures"><span id="ss-refresh-icon" class="material-symbol ss-refresh-icon">refresh</span></button>
         </div>
       </div>
       <div class="ss-topstats">
         ${summaryCard("database", "Total captures", overview.total, "Across all providers", "captures")}
         ${summaryCard("groups", "Providers", overview.providers, "Active providers", "providers")}
         ${summaryCard("layers", "Full sets", overview.fullSets, "Complete snapshots", "full-sets")}
-        ${summaryCard("event", "Latest capture", latestMain, latestSub, "latest")}
+        ${summaryCard("calendar_month", "Latest capture", latestMain, latestSub, "latest")}
         ${summaryCard("schedule", "Scheduled jobs", overview.scheduledJobs, overview.scheduledJobs ? "Queued or drafted" : "No queued jobs", "scheduled")}
       </div>
       <div class="ss-wrap">
@@ -1052,6 +1105,7 @@ function bundleKey(s) {
     updateCaptureBusyUI();
 
     $("#ss-refresh", page)?.addEventListener("click", () => {
+      if (state.refreshBusy) return;
       state._spinUntil = Date.now() + 550;
       setRefreshSpinning(true);
       refresh(true, true);
@@ -1923,7 +1977,7 @@ repopDiffSelects();
     }
 
     if (rows.length === 0) {
-      list.innerHTML = `<div class="ss-empty">No captures found.</div>`;
+      list.innerHTML = `<div class="ss-empty ss-empty-captures" role="status"><span class="material-symbols-rounded ss-empty-icon" aria-hidden="true">inventory_2</span><div class="ss-empty-text">No captures found.</div></div>`;
       updateSelectionToolsAvailability();
       return;
     }
@@ -2080,10 +2134,43 @@ function renderSelected() {
     icon.classList.remove("ss-spin");
   }
 
+  function fmtSyncTime(value) {
+    if (!value) return "not yet";
+    const diff = Math.max(0, Date.now() - Number(value));
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
+  }
+
+  function updateSyncStatus() {
+    const page = document.getElementById("page-snapshots");
+    if (!page) return;
+    const wrap = $("#ss-hero-summary", page);
+    const time = $("#ss-sync-time", page);
+    const btn = $("#ss-refresh", page);
+    if (!wrap || !time) return;
+    const status = state.refreshBusy ? "refreshing" : state.lastRefreshFailed ? "failed" : "ready";
+    wrap.dataset.state = status;
+    time.textContent = fmtSyncTime(state.lastSyncAt);
+    time.title = state.lastSyncAt ? new Date(Number(state.lastSyncAt)).toLocaleString() : "";
+    wrap.title = status === "failed" ? "Latest refresh failed" : "";
+    if (btn) btn.disabled = state.refreshBusy;
+  }
+
+  function startSyncClock() {
+    if (state.syncClock) return;
+    state.syncClock = setInterval(updateSyncStatus, 30000);
+  }
+
   async function refresh(force = false, announce = true) {
     if (authSetupPending()) return;
     const page = document.getElementById("page-snapshots");
     if (!page) return;
+    if (state.refreshBusy) return;
 
     const now = Date.now();
     if (!force && now - state.lastRefresh < 2500) return;
@@ -2093,6 +2180,8 @@ function renderSelected() {
     const listUrl = `/api/snapshots/list?${bust}`;
 
     const wasBusy = !!state.busy;
+    state.refreshBusy = true;
+    updateSyncStatus();
     if (!wasBusy) setBusy(true);
     setRefreshSpinning(true);
     try {
@@ -2114,6 +2203,9 @@ function renderSelected() {
       repopProviders();
       renderList();
       try { repopDiffSelects(); } catch {}
+      state.lastRefreshFailed = false;
+      state.lastSyncAt = Date.now();
+      updateSyncStatus();
 
       // keep selection
       if (state.selectedPath) {
@@ -2127,10 +2219,14 @@ function renderSelected() {
         }
       }
     } catch (e) {
+      state.lastRefreshFailed = true;
+      updateSyncStatus();
       console.warn("[snapshots] refresh failed", e);
       console.warn("[snapshots]", `Refresh failed: ${e.message || e}`);
       toast(`Snapshots refresh failed: ${e.message || e}`, false);
     } finally {
+      state.refreshBusy = false;
+      updateSyncStatus();
       setRefreshSpinning(false);
       if (!wasBusy) setBusy(false);
     }
@@ -2628,6 +2724,8 @@ function renderSelected() {
     if (authSetupPending()) return retryInitAfterAuth();
     injectCss();
     render();
+    updateSyncStatus();
+    startSyncClock();
     await refresh(true, false);
   }
 
