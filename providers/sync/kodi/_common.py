@@ -3,12 +3,14 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from cw_platform.config_base import load_config, save_config
@@ -358,6 +360,67 @@ def progress_ms_for_write(item: Mapping[str, Any], target_duration_ms: int | Non
     return pos, duration
 
 
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _progress_signature(item: Mapping[str, Any]) -> tuple[int | None, int | None, float | None]:
+    pct = to_float(item.get("progress_percent") or item.get("percent"))
+    return (
+        to_int(item.get("progress_ms") or item.get("progress") or item.get("viewOffset")),
+        to_int(item.get("duration_ms")),
+        round(pct, 3) if pct is not None else None,
+    )
+
+
+def _load_kodi_progress_baseline(adapter: Any) -> Mapping[str, Mapping[str, Any]]:
+    injected = getattr(adapter, "_kodi_progress_baseline", None)
+    if isinstance(injected, Mapping):
+        return {str(k): dict(v) for k, v in injected.items() if isinstance(v, Mapping)}
+    try:
+        from cw_platform.config_base import CONFIG_BASE
+
+        path = Path(CONFIG_BASE()) / "state.json"
+        if not path.exists():
+            return {}
+        state = json.loads(path.read_text("utf-8"))
+        providers = state.get("providers") if isinstance(state, Mapping) else None
+        providers = providers if isinstance(providers, Mapping) else {}
+        kodi = providers.get("KODI") or providers.get("kodi")
+        if not isinstance(kodi, Mapping):
+            return {}
+        instance_id = normalize_instance_id(getattr(adapter, "instance_id", "default"))
+        nodes: list[Mapping[str, Any]] = []
+        instances = kodi.get("instances")
+        if isinstance(instances, Mapping):
+            inst_node = instances.get(instance_id) or instances.get(str(instance_id))
+            if isinstance(inst_node, Mapping):
+                nodes.append(inst_node)
+        nodes.append(kodi)
+        for node in nodes:
+            progress = node.get("progress")
+            progress = progress if isinstance(progress, Mapping) else {}
+            baseline = progress.get("baseline")
+            baseline = baseline if isinstance(baseline, Mapping) else {}
+            items = baseline.get("items")
+            if isinstance(items, Mapping):
+                return {str(k): dict(v) for k, v in items.items() if isinstance(v, Mapping)}
+    except Exception:
+        return {}
+    return {}
+
+
+def _managed_progress_metadata(prior: Mapping[str, Any] | None, item: Mapping[str, Any], now_iso: str) -> tuple[str, str]:
+    if isinstance(prior, Mapping):
+        previous = str(prior.get("progress_at") or prior.get("updated_at") or "").strip()
+        if previous and _progress_signature(prior) == _progress_signature(item):
+            source = str(prior.get("progress_at_source") or "kodi_first_observed").strip()
+            return previous, source
+        if previous:
+            return now_iso, "kodi_resume_changed"
+    return now_iso, "kodi_first_observed"
+
+
 def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
     cfg2 = cfg or load_config()
     ensure_whitelist_defaults(cfg2, instance_id=instance_id)
@@ -595,6 +658,8 @@ def library_index(adapter: Any, feature: str = "") -> LibraryIndex:
 def feature_index(adapter: Any, feature: str) -> dict[str, dict[str, Any]]:
     idx = library_index(adapter, feature)
     out: dict[str, dict[str, Any]] = {}
+    prior_progress = _load_kodi_progress_baseline(adapter) if feature == "progress" else {}
+    now_iso = _utc_now_iso() if feature == "progress" else ""
     for base in idx.items:
         item = dict(base)
         raw_obj = item.get("_kodi_raw")
@@ -621,7 +686,12 @@ def feature_index(adapter: Any, feature: str) -> dict[str, dict[str, Any]]:
                 item["progress_percent"] = pct
         else:
             continue
-        out[item_key(item)] = item
+        key = item_key(item)
+        if feature == "progress":
+            progress_at, progress_at_source = _managed_progress_metadata(prior_progress.get(key), item, now_iso)
+            item["progress_at"] = progress_at
+            item["progress_at_source"] = progress_at_source
+        out[key] = item
     log(feature, "info", "index_done", count=len(out))
     return out
 

@@ -322,6 +322,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "progress_percent",
         "duration_ms",
         "progress_at",
+        "progress_at_source",
     ):
         if opt in item:
             out[opt] = item.get(opt)

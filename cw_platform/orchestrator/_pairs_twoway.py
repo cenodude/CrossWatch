@@ -109,6 +109,7 @@ _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
+    "KODI": "kodi",
 }
 
 def _index_semantics(ops, feature: str, *, cfg: Mapping[str, Any] | None = None, provider: str = "") -> str:
@@ -280,6 +281,9 @@ def _minimal_keep_progress(it: Mapping[str, Any]) -> dict[str, Any]:
         pa = it.get("progress_at") or it.get("progressAt") or it.get("last_played") or it.get("lastViewedAt")
         if isinstance(pa, str) and pa.strip():
             out["progress_at"] = pa.strip()
+        pas = it.get("progress_at_source") or it.get("progressAtSource")
+        if isinstance(pas, str) and pas.strip():
+            out["progress_at_source"] = pas.strip()
     except Exception:
         pass
     return out
@@ -497,8 +501,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     libs_A = _effective_library_whitelist(cfg, a, feature, fcfg)
     libs_B = _effective_library_whitelist(cfg, b, feature, fcfg)
 
-    allow_unknown_A = (str(a).upper() == "PLEX" and feature == "history")
-    allow_unknown_B = (str(b).upper() == "PLEX" and feature == "history")
+    allow_unknown_A = (str(a).upper() == "PLEX" and feature == "history") or str(a).upper() == "KODI"
+    allow_unknown_B = (str(b).upper() == "PLEX" and feature == "history") or str(b).upper() == "KODI"
 
     if libs_A:
         prevA = _filter_index_by_libraries(prevA, libs_A, allow_unknown=allow_unknown_A)
@@ -1198,6 +1202,17 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             except Exception:
                 return None
 
+        def _kodi_first_observed(provider: str, it: Mapping[str, Any]) -> bool:
+            if str(provider or "").strip().upper() != "KODI":
+                return False
+            source = str(it.get("progress_at_source") or it.get("progressAtSource") or "").strip().lower()
+            return source == "kodi_first_observed"
+
+        def _real_prog_epoch(provider: str, it: Mapping[str, Any]) -> int | None:
+            if _kodi_first_observed(provider, it):
+                return None
+            return _prog_epoch(it)
+
         bi = sync_cfg.get("bidirectional") or {}
         sot = (bi.get("source_of_truth") or bi.get("sourceOfTruth") or "").strip().upper()
         prefer = sot if sot in (a, b) else a
@@ -1216,10 +1231,20 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             a_it = (A_eff.get(k) or upB.get(k) or clB.get(k) or {})
             b_it = (B_eff.get(k) or upA.get(k) or clA.get(k) or {})
 
+            if _kodi_first_observed(a, a_it) and _real_prog_epoch(b, b_it) is not None:
+                if _prog_ms(b_it) > 0 or _prog_percent(b_it) is not None:
+                    addA.append(_minimal_keep_progress(b_it))
+                continue
+
+            if _kodi_first_observed(b, b_it) and _real_prog_epoch(a, a_it) is not None:
+                if _prog_ms(a_it) > 0 or _prog_percent(a_it) is not None:
+                    addB.append(_minimal_keep_progress(a_it))
+                continue
+
             # Both want to set progress.
             if k in upA and k in upB:
-                ta = _prog_epoch(a_it)
-                tb = _prog_epoch(b_it)
+                ta = _real_prog_epoch(a, a_it)
+                tb = _real_prog_epoch(b, b_it)
                 if ta is not None and tb is not None and ta != tb:
                     win = a if ta > tb else b
                 else:
@@ -1246,8 +1271,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             # Clear vs set conflicts.
             if (k in clB) and (k in upA):
                 # A explicitly cleared; B has progress. Decide by timestamp, then prefer.
-                ta = _prog_epoch(clB[k])
-                tb = _prog_epoch(b_it)
+                ta = _real_prog_epoch(a, clB[k])
+                tb = _real_prog_epoch(b, b_it)
                 if ta is not None and tb is not None and ta != tb:
                     win = a if ta > tb else b
                 else:
@@ -1260,8 +1285,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 continue
 
             if (k in clA) and (k in upB):
-                tb = _prog_epoch(clA[k])
-                ta = _prog_epoch(a_it)
+                tb = _real_prog_epoch(b, clA[k])
+                ta = _real_prog_epoch(a, a_it)
                 if ta is not None and tb is not None and ta != tb:
                     win = a if ta > tb else b
                 else:
