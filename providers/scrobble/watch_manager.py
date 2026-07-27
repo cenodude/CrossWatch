@@ -192,6 +192,8 @@ def _make_watcher(provider: str, group_dispatcher: MultiDispatcher, cfg_provider
         from providers.scrobble.emby.watch import make_default_watch as make_watch
     elif prov == "jellyfin":
         from providers.scrobble.jellyfin.watch import make_default_watch as make_watch
+    elif prov == "kodi":
+        from providers.scrobble.kodi.watch import make_default_watch as make_watch
     else:
         from providers.scrobble.plex.watch import make_default_watch as make_watch
         prov = "plex"
