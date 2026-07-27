@@ -34,6 +34,8 @@ from providers.scrobble.sources import source_enabled
 
 _CFG_CACHE: dict[str, Any] = {"ts": 0.0, "cfg": {}}
 _CFG_TTL_SEC = 2.0
+OFFLINE_INITIAL_RETRY_SECONDS = 30.0
+OFFLINE_MAX_RETRY_SECONDS = 300.0
 
 
 def _cfg(ttl: float = _CFG_TTL_SEC) -> dict[str, Any]:
@@ -383,6 +385,9 @@ class WatchService:
         self._last_seek_emit: dict[str, float] = {}
         self._sess_user_cache: dict[str, tuple[str, float]] = {}
         self._sess_identity_cache: dict[str, dict[str, Any]] = {}
+        self._offline = False
+        self._offline_failures = 0
+        self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -399,6 +404,22 @@ class WatchService:
 
     def _dbg(self, msg: str) -> None:
         self._log(msg, "DEBUG")
+
+    def _mark_offline(self, exc: Exception) -> None:
+        self._offline_failures += 1
+        if not self._offline:
+            self._offline = True
+            self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
+            self._log(f"Plex watcher offline: {exc}; retrying with backoff", "WARNING")
+            return
+        self._offline_retry = min(OFFLINE_MAX_RETRY_SECONDS, max(OFFLINE_INITIAL_RETRY_SECONDS, self._offline_retry * 2.0))
+
+    def _mark_online(self) -> None:
+        if self._offline:
+            self._log("Plex watcher reconnected", "INFO")
+        self._offline = False
+        self._offline_failures = 0
+        self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
 
     def _active_cfg(self) -> dict[str, Any]:
         try:
@@ -1266,20 +1287,23 @@ class WatchService:
                 self._plex = PlexServer(base, token)
                 self._listener = self._plex.startAlertListener(
                     callback=self._handle_alert,
-                    callbackError=lambda e: self._log(f"Watcher error: {e}", "ERROR"),
+                    callbackError=lambda e: self._mark_offline(e if isinstance(e, Exception) else RuntimeError(str(e))),
                 )
                 self._attempt = 0
+                self._mark_online()
                 self._log(f"Watcher connected; inst={self._instance_id}", lvl)
                 while not self._stop.is_set() and self._listener and self._listener.is_alive():
                     time.sleep(0.5)
             except Exception as e:
-                self._log(f"alert loop error: {e}", "ERROR")
+                self._mark_offline(e)
             if self._stop.is_set():
                 break
             self._attempt += 1
-            delay = min(30, (2 ** min(self._attempt, 5))) + (time.time() % 1.5)
-            self._log(f"reconnecting after {delay:.1f}s", "DEBUG")
-            time.sleep(delay)
+            if not self._offline:
+                self._mark_offline(RuntimeError("watcher disconnected"))
+            delay = self._offline_retry
+            self._dbg(f"reconnecting after {delay:.1f}s")
+            self._stop.wait(delay)
 
     def stop(self) -> None:
         self._stop.set()

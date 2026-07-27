@@ -276,7 +276,7 @@ def _trakt_decision(action: str, progress: Any, cfg: dict[str, Any]) -> _TraktDe
     watched_at = _watched_at(cfg)
     force_stop_at = _force_stop_at(cfg)
     if action == "start":
-        return _TraktDecision("/scrobble/start", p, False, False)
+        return _TraktDecision("/scrobble/start", max(2.0, p), False, False)
     if action == "pause":
         if p < 1.0:
             return _TraktDecision(None, p, False, False)
