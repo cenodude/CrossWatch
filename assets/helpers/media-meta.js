@@ -25,10 +25,15 @@
     return raw === "movie" ? "movie" : "show";
   };
 
+  const tmdbFromCanonical = (item) => {
+    const match = String(item?.canonical_key || item?.key || "").trim().match(/^tmdb:(\d+)(?:#|$)/i);
+    return match ? match[1] : "";
+  };
+
   const tmdbOf = (item) => {
     const ids = item?.ids || {};
     const id = isEpisode(item)
-      ? (ids.tmdb_show || item?.tmdb_show || item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id)
+      ? (ids.tmdb_show || item?.tmdb_show || tmdbFromCanonical(item) || item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id)
       : (item?.tmdb || item?.tmdb_id || ids.tmdb || ids.tmdb_show || ids.id);
     return String(id || "").trim();
   };
