@@ -1413,6 +1413,7 @@
     section.classList.add("open");
     section.querySelector(":scope > .head")?.setAttribute("aria-expanded", "true");
     openAuthOverlay("form", info.key);
+    enhanceConnectionModal(section, overlay, info.key);
     try { await window.cwEnsureAuthSection?.(info.sectionId); } catch {}
     const providerId = connectionInfoForKey(info.key)?.provider || String(info.key || "").toLowerCase();
     try { window.cwAuth?.[providerId]?.init?.(); } catch {}
