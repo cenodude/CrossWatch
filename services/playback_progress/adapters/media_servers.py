@@ -22,6 +22,11 @@ except Exception:
     JELLYFIN_OPS = None  # type: ignore[assignment]
 
 try:
+    from providers.sync._mod_KODI import OPS as KODI_OPS
+except Exception:
+    KODI_OPS = None  # type: ignore[assignment]
+
+try:
     from providers.sync._mod_PLEX import OPS as PLEX_OPS, PLEXModule
 except Exception:
     PLEX_OPS = None  # type: ignore[assignment]
@@ -96,11 +101,14 @@ def _history_item(record: Mapping[str, Any], provider: str) -> dict[str, Any]:
                 ids = {}
                 out["ids"] = ids
             ids[provider] = remote_id
+            if provider == "kodi":
+                out["_kodi_id"] = _int(remote_id)
+                out["_kodi_type"] = "episode" if str(out.get("type") or "").lower() == "episode" else "movie"
         return clean_mapping(out)
     media_type = str(record.get("media_type") or "").lower()
     ids = clean_mapping(record.get("ids") if isinstance(record.get("ids"), Mapping) else {})
     remote_id = _first_str(record.get("remote_id"))
-    if remote_id and provider in {"plex", "emby", "jellyfin"}:
+    if remote_id and provider in {"plex", "emby", "jellyfin", "kodi"}:
         ids.setdefault(provider, remote_id)
     item: dict[str, Any] = {
         "type": "episode" if media_type in {"episode", "anime_episode"} else "movie",
@@ -114,6 +122,9 @@ def _history_item(record: Mapping[str, Any], provider: str) -> dict[str, Any]:
     show_ids = _as_mapping(meta.get("show_ids"))
     if show_ids:
         item["show_ids"] = clean_mapping(show_ids)
+    if provider == "kodi" and remote_id:
+        item["_kodi_id"] = _int(remote_id)
+        item["_kodi_type"] = item["type"]
     return clean_mapping(item)
 
 
@@ -279,7 +290,7 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
         caps: PlaybackCapabilities,
     ) -> PlaybackRecord | None:
         ids = clean_mapping(row.get("ids") if isinstance(row.get("ids"), Mapping) else {})
-        remote_id = _first_str(row.get(f"{self.provider}_item_id"), row.get("_item_id"), row.get("ratingKey"), ids.get(self.provider), row.get("id"))
+        remote_id = _first_str(row.get(f"{self.provider}_item_id"), row.get("_kodi_id"), row.get("_item_id"), row.get("ratingKey"), ids.get(self.provider), row.get("id"))
         if not remote_id:
             remote_id = key if key and not key.startswith("unknown:") else ""
         media_type = str(row.get("type") or "movie").strip().lower()
@@ -474,3 +485,9 @@ class JellyfinPlaybackAdapter(_MediaServerPlaybackAdapter):
     provider = "jellyfin"
     provider_label = "Jellyfin"
     ops = JELLYFIN_OPS
+
+
+class KodiPlaybackAdapter(_MediaServerPlaybackAdapter):
+    provider = "kodi"
+    provider_label = "Kodi"
+    ops = KODI_OPS

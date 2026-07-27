@@ -13,7 +13,7 @@ from services.playback_progress.service import (
 from services.playback_progress.models import PlaybackCapabilities
 import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
-from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter
+from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter, KodiPlaybackAdapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
 
 
@@ -60,6 +60,12 @@ def test_playback_bulk_footer_uses_wide_management_layout():
     assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-watch{background:linear-gradient(180deg,rgba(64,166,105,.48)" in js
     assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-remove{background:linear-gradient(180deg,rgba(181,48,68,.58)" in js
     assert "#${ROOT_ID} .pp-card.selected:before,#${ROOT_ID} .pp-card.selected:after{content:none!important;display:none!important}" in js
+
+
+def test_playback_progress_frontend_includes_kodi_provider_key():
+    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+
+    assert 'const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi"];' in js
 
 
 def test_combined_record_keeps_available_artwork_regardless_of_input_order():
@@ -402,6 +408,85 @@ def test_media_server_playback_reports_configured_server_down():
     assert result.error_code == "provider_unavailable"
     assert result.message == "Jellyfin server is not reachable."
     assert result.retryable is True
+
+
+class _FakeKodiOps:
+    def __init__(self) -> None:
+        self.added = []
+        self.removed = []
+
+    def is_configured(self, cfg):
+        return bool(cfg.get("kodi", {}).get("server"))
+
+    def health(self, cfg):
+        return {"ok": True, "status": "ok"}
+
+    def build_index(self, cfg, *, feature):
+        assert feature == "progress"
+        return {
+            "tmdb:1468683": {
+                "type": "movie",
+                "title": "Heartstopper Forever",
+                "year": 2026,
+                "ids": {"tmdb": "1468683"},
+                "_kodi_id": 134,
+                "_kodi_type": "movie",
+                "progress_ms": 120000,
+                "duration_ms": 6000000,
+            }
+        }
+
+    def remove(self, cfg, items, *, feature, dry_run=False):
+        self.removed.extend(items)
+        return {"ok": True, "count": len(items), "feature": feature, "unresolved": []}
+
+    def add(self, cfg, items, *, feature, dry_run=False):
+        self.added.extend(items)
+        return {"ok": True, "count": len(items), "feature": feature, "unresolved": []}
+
+
+def test_playback_progress_includes_kodi_provider(monkeypatch):
+    kodi_ops = _FakeKodiOps()
+    cfg = {"kodi": {"server": "http://kodi.local:8080", "connection_verified": True}}
+
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    service.adapters["kodi"].ops = kodi_ops
+    providers = service.provider_instances(cfg)
+    result = service.items(provider="kodi", force_refresh=True)
+    record = result["items"][0]
+
+    assert {"provider": "kodi", "instance_id": "default", "instance_label": "Kodi Default"} in providers
+    assert result["errors"] == []
+    assert record["provider"] == "kodi"
+    assert record["provider_label"] == "Kodi"
+    assert record["remote_id"] == "134"
+    assert record["progress_percent"] == 2.0
+
+    service.remove({"provider": "kodi", "instance_id": "default", "record": record})
+    service.update_progress({"provider": "kodi", "instance_id": "default", "record": record, "progress_percent": 25})
+
+    assert kodi_ops.removed[0]["_kodi_id"] == 134
+    assert kodi_ops.removed[0]["_kodi_type"] == "movie"
+    assert kodi_ops.added[0]["_kodi_id"] == 134
+    assert kodi_ops.added[0]["progress_ms"] == 1500000
+
+
+def test_kodi_playback_adapter_reports_connected_capabilities():
+    adapter = KodiPlaybackAdapter()
+    adapter.ops = _FakeKodiOps()
+
+    caps = adapter.capabilities(
+        {"kodi": {"server": "http://kodi.local:8080", "connection_verified": True}},
+        instance_id="default",
+        instance_label="Kodi Default",
+    )
+
+    assert caps.provider == "kodi"
+    assert caps.provider_label == "Kodi"
+    assert caps.read is True
+    assert caps.update_progress is True
 
 
 class _FakeNuvioOps:

@@ -18,7 +18,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
-from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter, PlexPlaybackAdapter
+from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter, KodiPlaybackAdapter, PlexPlaybackAdapter
 from .adapters.mdblist import MDBListPlaybackAdapter
 from .adapters.nuvio import NuvioPlaybackAdapter
 from .adapters.publicmetadb import PublicMetaDBPlaybackAdapter
@@ -32,9 +32,9 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio")
+PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
-LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin"}
+LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
 LIVE_MAX_AGE_SECONDS = 10 * 60
 CANONICAL_TMDB_RE = re.compile(r"^tmdb:(\d+)(?:#|$)", re.I)
@@ -608,6 +608,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "emby": "Emby",
         "jellyfin": "Jellyfin",
         "nuvio": "Nuvio",
+        "kodi": "Kodi",
     }.get(provider, provider)
     if label.lower() == "default":
         return f"{provider_label} Default"
@@ -658,6 +659,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
         "emby": ("access_token", "user_id"),
         "jellyfin": ("access_token", "user_id"),
         "nuvio": ("access_token", "refresh_token", "profile_id"),
+        "kodi": ("server", "server_url", "connection_verified", "username"),
     }.get(str(provider or "").strip().lower(), ())
     return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
 
@@ -726,6 +728,7 @@ class PlaybackProgressService:
             "emby": EmbyPlaybackAdapter(),
             "jellyfin": JellyfinPlaybackAdapter(),
             "nuvio": NuvioPlaybackAdapter(),
+            "kodi": KodiPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str], dict[str, Any]] = {}
         self._lock = threading.RLock()
