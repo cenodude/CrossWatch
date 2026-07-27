@@ -34,17 +34,19 @@ def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) 
             dst[kk] = v
 
 
-def _config_with_pair_progress_options(
+def _config_with_pair_feature_options(
     cfg: dict[str, Any],
     fcfg: Mapping[str, Any],
     providers: tuple[str, str],
+    feature: str,
 ) -> dict[str, Any]:
+    feature_key = str(feature or "").strip().lower()
     lib_cfg = fcfg.get("libraries")
     overrides: dict[str, list[str]] = {}
     provider_keys: list[str] = []
     for provider in providers:
         name = str(provider or "").upper().strip()
-        if name not in {"PLEX", "EMBY", "JELLYFIN"}:
+        if name not in {"PLEX", "EMBY", "JELLYFIN", "KODI"}:
             continue
         provider_key = name.lower()
         if provider_key not in provider_keys:
@@ -56,8 +58,8 @@ def _config_with_pair_progress_options(
                 if values:
                     overrides[provider_key] = values
 
-    has_replay = "replay_enabled" in fcfg
-    has_tolerance = "timestamp_tolerance_seconds" in fcfg
+    has_replay = feature_key == "progress" and "replay_enabled" in fcfg
+    has_tolerance = feature_key == "progress" and "timestamp_tolerance_seconds" in fcfg
     if not provider_keys or (not overrides and not has_replay and not has_tolerance):
         return cfg
 
@@ -67,22 +69,29 @@ def _config_with_pair_progress_options(
         if not isinstance(provider_cfg, dict):
             provider_cfg = {}
             out[provider_key] = provider_cfg
-        progress_cfg = provider_cfg.setdefault("progress", {})
-        if not isinstance(progress_cfg, dict):
-            progress_cfg = {}
-            provider_cfg["progress"] = progress_cfg
+        feature_cfg = provider_cfg.setdefault(feature_key, {})
+        if not isinstance(feature_cfg, dict):
+            feature_cfg = {}
+            provider_cfg[feature_key] = feature_cfg
         if provider_key in overrides:
-            progress_cfg["libraries"] = overrides[provider_key]
+            feature_cfg["libraries"] = overrides[provider_key]
         if has_replay:
-            progress_cfg["replay_enabled"] = coerce_bool(fcfg.get("replay_enabled", False))
+            feature_cfg["replay_enabled"] = coerce_bool(fcfg.get("replay_enabled", False))
         if has_tolerance:
             try:
                 tolerance = int(fcfg.get("timestamp_tolerance_seconds", 30))
             except (TypeError, ValueError):
                 tolerance = 30
-            progress_cfg["timestamp_tolerance_seconds"] = max(0, min(300, tolerance))
+            feature_cfg["timestamp_tolerance_seconds"] = max(0, min(300, tolerance))
     return out
 
+
+def _config_with_pair_progress_options(
+    cfg: dict[str, Any],
+    fcfg: Mapping[str, Any],
+    providers: tuple[str, str],
+) -> dict[str, Any]:
+    return _config_with_pair_feature_options(cfg, fcfg, providers, "progress")
 
 
 try:
@@ -410,11 +419,7 @@ def run_pairs(ctx) -> dict[str, Any]:
 
             with _pair_env(pair, i=i, src=src, dst=dst, mode=mode, feature=feature):
                 prev_cfg = ctx.config
-                ctx.config = (
-                    _config_with_pair_progress_options(pair_cfg_view, fcfg, (src, dst))
-                    if feature == "progress"
-                    else pair_cfg_view
-                )
+                ctx.config = _config_with_pair_feature_options(pair_cfg_view, fcfg, (src, dst), feature)
                 try:
                     if not injected:
                         inject_ctx_into_provider(sops, ctx)

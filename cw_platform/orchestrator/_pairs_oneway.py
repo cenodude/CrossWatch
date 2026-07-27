@@ -229,6 +229,7 @@ _PROVIDER_KEY_MAP = {
     "PLEX": "plex",
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
+    "KODI": "kodi",
 }
 
 
@@ -999,8 +1000,8 @@ def run_one_way_feature(
     libs_src: list[str] = _effective_library_whitelist(cfg, src, feature, fcfg)
     libs_dst: list[str] = _effective_library_whitelist(cfg, dst, feature, fcfg)
 
-    allow_unknown_src = (str(src).upper() == "PLEX" and feature == "history")
-    allow_unknown_dst = (str(dst).upper() == "PLEX" and feature == "history")
+    allow_unknown_src = (str(src).upper() == "PLEX" and feature == "history") or str(src).upper() == "KODI"
+    allow_unknown_dst = (str(dst).upper() == "PLEX" and feature == "history") or str(dst).upper() == "KODI"
 
     if libs_src:
         prev_src = _filter_index_by_libraries(prev_src, libs_src, allow_unknown=allow_unknown_src)
