@@ -1,5 +1,4 @@
 /* assets/helpers/settings-save.js */
-/* refactored */
 /* settings save logic */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
@@ -7,7 +6,8 @@ const _cwJSONHeaders = { "Content-Type": "application/json" };
 const _cwSecretIds = [
   "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
-  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key"
+  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key",
+  "kodi_password"
 ];
 
 function _cwEl(id) { return document.getElementById(id); }
@@ -532,29 +532,41 @@ async function saveSettings() {
     const prevDebugMods = !!serverCfg?.runtime?.debug_mods;
     const prevDebugHttp = !!serverCfg?.runtime?.debug_http;
 
-    const debugMode = _getVal("debug");
-    const [wantDebug, wantMods, wantHttp] =
-      debugMode === "full" ? [true, true, true] :
-      debugMode === "mods" ? [true, true, false] :
-      debugMode === "on" ? [true, false, false] : [false, false, false];
-
-    if (_getVal("mode") !== prevMode) { ensureObj(ensureObj(cfg, "sync"), "bidirectional").mode = _getVal("mode"); mark(); }
-    if (_getVal("source") !== prevSource) { ensureObj(ensureObj(cfg, "sync"), "bidirectional").source_of_truth = _getVal("source"); mark(); }
-    if (wantDebug !== prevDebug || wantMods !== prevDebugMods || wantHttp !== prevDebugHttp) {
-      Object.assign(ensureObj(cfg, "runtime"), { debug: wantDebug, debug_mods: wantMods, debug_http: wantHttp });
+    const modeEl = _cwEl("mode");
+    const sourceEl = _cwEl("source");
+    const debugEl = _cwEl("debug");
+    if (modeEl && _cwNorm(modeEl.value) && _cwNorm(modeEl.value) !== prevMode) {
+      ensureObj(ensureObj(cfg, "sync"), "bidirectional").mode = _cwNorm(modeEl.value);
       mark();
+    }
+    if (sourceEl && _cwNorm(sourceEl.value) && _cwNorm(sourceEl.value) !== prevSource) {
+      ensureObj(ensureObj(cfg, "sync"), "bidirectional").source_of_truth = _cwNorm(sourceEl.value);
+      mark();
+    }
+    if (debugEl) {
+      const debugMode = _cwNorm(debugEl.value);
+      const [wantDebug, wantMods, wantHttp] =
+        debugMode === "full" ? [true, true, true] :
+        debugMode === "mods" ? [true, true, false] :
+        debugMode === "on" ? [true, false, false] : [false, false, false];
+      if (wantDebug !== prevDebug || wantMods !== prevDebugMods || wantHttp !== prevDebugHttp) {
+        Object.assign(ensureObj(cfg, "runtime"), { debug: wantDebug, debug_mods: wantMods, debug_http: wantHttp });
+        mark();
+      }
     }
 
     const prevMetaLocale = _cwNorm(serverCfg?.metadata?.locale);
     const prevMetaTTL = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 720;
-    const uiMetaLocale = _getVal("metadata_locale");
-    const uiMetaTTL = _getVal("metadata_ttl_hours");
-    if (uiMetaLocale !== prevMetaLocale) {
+    const metaLocaleEl = _cwEl("metadata_locale");
+    const metaTtlEl = _cwEl("metadata_ttl_hours");
+    const uiMetaLocale = _cwNorm(metaLocaleEl?.value);
+    const uiMetaTTL = _cwNorm(metaTtlEl?.value);
+    if (metaLocaleEl && uiMetaLocale !== prevMetaLocale) {
       const meta = ensureObj(cfg, "metadata");
       uiMetaLocale ? (meta.locale = uiMetaLocale) : delete meta.locale;
       mark();
     }
-    if (uiMetaTTL !== "") {
+    if (metaTtlEl && uiMetaTTL !== "") {
       const ttl = parseInt(uiMetaTTL, 10);
       if (!Number.isNaN(ttl) && ttl !== prevMetaTTL) { ensureObj(cfg, "metadata").ttl_hours = Math.max(1, ttl); mark(); }
     }
@@ -671,7 +683,8 @@ async function saveSettings() {
         anilist: _cwInstBlock(serverCfg?.anilist, _cwSelectedInst("anilist")),
         mdblist: _cwInstBlock(serverCfg?.mdblist, _cwSelectedInst("mdblist")),
         publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb")),
-        tmdb_sync: _cwInstBlock(serverCfg?.tmdb_sync, _cwSelectedInst("tmdb_sync", "cw.ui.tmdb_sync.auth.instance.v1"))
+        tmdb_sync: _cwInstBlock(serverCfg?.tmdb_sync, _cwSelectedInst("tmdb_sync", "cw.ui.tmdb_sync.auth.instance.v1")),
+        kodi: _cwInstBlock(serverCfg?.kodi, _cwSelectedInst("kodi", "cw.ui.kodi.auth.instance.v1"))
       };
       const publicmetadbInst = _cwSelectedInst("publicmetadb");
       const publicmetadbKey = _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key));
@@ -791,6 +804,25 @@ async function saveSettings() {
     }
 
     try {
+      const inst = _cwNormInst(_cwEl("kodi_instance")?.value || localStorage.getItem("cw.ui.kodi.auth.instance.v1") || "");
+      const prev = _cwInstBlock(serverCfg?.kodi, inst);
+      cfg.kodi = cfg.kodi && typeof cfg.kodi === "object" ? cfg.kodi : {};
+      const next = _cwEnsureInstBlock(cfg.kodi, inst);
+      const server = _cwReadFirst("kodi_server");
+      const username = _cwReadFirst("kodi_username");
+      const pass = _cwReadSecret("kodi_password", _cwNorm(prev?.password));
+      const verifySsl = !!_cwEl("kodi_verify_ssl")?.checked;
+      if (server && server !== _cwNorm(prev?.server)) { next.server = server; mark(); }
+      if (username && username !== _cwNorm(prev?.username)) { next.username = username; mark(); }
+      if (pass.changed) { _cwApplySecret(next, "password", pass, ""); mark(); }
+      if (verifySsl !== !!prev?.verify_ssl) { next.verify_ssl = verifySsl; mark(); }
+      const src = _cwHydrated("kodi", "sec-kodi", window.__kodiHydrated === true) ? _cwReadLibrarySource("kodi") : null;
+      if (_cwApplyLibraryConfig(next, prev, src)) mark();
+    } catch (e) {
+      console.warn("saveSettings: kodi merge failed", e);
+    }
+
+    try {
       if (_cwFn("getScrobbleConfig", window)) {
         const prev = serverCfg?.scrobble || {};
         const next = window.getScrobbleConfig(prev) || {};
@@ -800,39 +832,50 @@ async function saveSettings() {
       console.warn("saveSettings: scrobbler merge failed", e);
     }
 
-    try {
-      let sched = {
-            enabled: readToggle("schEnabled"),
-            mode: _getVal("schMode"),
-            every_n_hours: parseInt(_getVal("schN") || "12", 10),
-            daily_time: _getVal("schTime") || "03:30",
-            custom_interval_minutes: Math.max(
-              15,
-              (_getVal("schCustomUnit") || "minutes") === "hours"
-                ? ((parseInt(_getVal("schCustomValue") || "1", 10) || 1) * 60)
-                : (parseInt(_getVal("schCustomValue") || "60", 10) || 60)
-            ),
-            advanced: { enabled: false, jobs: [] }
-          };
-      if (_cwFn("getSchedulingPatch", window)) {
-        const validation = _cwFn("getSchedulingValidation", window)?.() || {};
-        const issues = Array.isArray(validation.issues) ? validation.issues.filter(Boolean) : [];
-        if (issues.length) {
-          if (schedulingPaneActive()) schedulingSaveError(issues[0]);
-          console.warn("saveSettings: scheduling has validation issues; preserving existing scheduling config", issues[0]);
-          sched = serverCfg?.scheduling || sched;
-        } else {
-          sched = window.getSchedulingPatch({ strict: true }) || sched;
+    const hasSchedulingControls = !!(
+      _cwEl("schEnabled") ||
+      _cwEl("schMode") ||
+      _cwEl("schN") ||
+      _cwEl("schTime") ||
+      _cwEl("schCustomUnit") ||
+      _cwEl("schCustomValue") ||
+      _cwFn("getSchedulingPatch", window)
+    );
+    if (hasSchedulingControls) {
+      try {
+        let sched = {
+              enabled: readToggle("schEnabled"),
+              mode: _getVal("schMode"),
+              every_n_hours: parseInt(_getVal("schN") || "12", 10),
+              daily_time: _getVal("schTime") || "03:30",
+              custom_interval_minutes: Math.max(
+                15,
+                (_getVal("schCustomUnit") || "minutes") === "hours"
+                  ? ((parseInt(_getVal("schCustomValue") || "1", 10) || 1) * 60)
+                  : (parseInt(_getVal("schCustomValue") || "60", 10) || 60)
+              ),
+              advanced: { enabled: false, jobs: [] }
+            };
+        if (_cwFn("getSchedulingPatch", window)) {
+          const validation = _cwFn("getSchedulingValidation", window)?.() || {};
+          const issues = Array.isArray(validation.issues) ? validation.issues.filter(Boolean) : [];
+          if (issues.length) {
+            if (schedulingPaneActive()) schedulingSaveError(issues[0]);
+            console.warn("saveSettings: scheduling has validation issues; preserving existing scheduling config", issues[0]);
+            sched = serverCfg?.scheduling || sched;
+          } else {
+            sched = window.getSchedulingPatch({ strict: true }) || sched;
+          }
         }
+        if (!same(sched, serverCfg?.scheduling || {})) {
+          cfg.scheduling = sched;
+          schedChanged = true;
+          mark();
+        }
+      } catch (e) {
+        if (e?.__cwAbortSave) throw e;
+        console.warn("saveSettings: scheduling merge failed", e);
       }
-      if (!same(sched, serverCfg?.scheduling || {})) {
-        cfg.scheduling = sched;
-        schedChanged = true;
-        mark();
-      }
-    } catch (e) {
-      if (e?.__cwAbortSave) throw e;
-      console.warn("saveSettings: scheduling merge failed", e);
     }
 
     if (changed) {

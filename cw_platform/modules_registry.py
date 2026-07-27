@@ -15,6 +15,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_TRAKT":    "providers.auth._auth_TRAKT",
         "_auth_JELLYFIN": "providers.auth._auth_JELLYFIN",
         "_auth_EMBY":     "providers.auth._auth_EMBY",
+        "_auth_KODI":     "providers.auth._auth_KODI",
         "_auth_MDBLIST":  "providers.auth._auth_MDBLIST",
         "_auth_PUBLICMETADB": "providers.auth._auth_PUBLICMETADB",
         "_auth_TAUTULLI": "providers.auth._auth_TAUTULLI",

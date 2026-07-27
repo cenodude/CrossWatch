@@ -48,7 +48,7 @@
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
     { id: "sec-auth-trackers", title: "Trackers", keys: ["TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST"] },
-    { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO"] },
+    { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
   const AUTH_GROUP_BY_KEY = Object.freeze(Object.fromEntries(AUTH_GROUPS.flatMap((group) => group.keys.map((key) => [key, group.id]))));
@@ -160,6 +160,7 @@
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
+    if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
     if (p === "tautulli") return hasConfiguredValue((b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server_url || (b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server);
     if (p === "tmdb") return hasConfiguredValue(b.account_id) || (hasConfiguredValue(b.api_key) && hasConfiguredValue(b.session_id || b.session));
     return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.api_key) || hasConfiguredValue(b.token);
@@ -530,6 +531,15 @@
       order: [".nuvio-actions", "#nuvio_profile_state", "#nuvio_login_state"],
       code: ["#nuvio_login_state"],
       actions: [{ row: ".nuvio-actions", status: "#nuvio_msg", buttons: "#nuvio_connect" }]
+    },
+    KODI: {
+      provider: "kodi", logo: "KODI", help: window.CW.HelpLinks.url("kodi"), deleteSelector: "#kodi_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect over HTTP JSON-RPC"], whitelist: ["verified_user", "Whitelisting", "Choose libraries and content to sync"] },
+      copy: { auth: ["Kodi Authentication", "Connect a Kodi media client over HTTP JSON-RPC."], whitelist: ["Kodi Whitelisting", "Choose which Kodi video sources CrossWatch can use for history, ratings, progress and scrobbling."] },
+      journey: ["Connect to Kodi", "Enter your Kodi server URL and optional HTTP Basic Auth credentials. Make sure Kodi's web server and JSON RPC access are enabled before connecting.", "23,181,209", "20,150,200", "KODI"],
+      steps: [["1", "Enable JSON-RPC", "Allow control of Kodi via HTTP"], ["2", "Enter server", "Add the Kodi web server URL"], ["3", "Verify", "CrossWatch checks Kodi and JSON-RPC versions"]],
+      order: [".grid2", ".inline"],
+      actions: [{ row: ".inline", status: "#kodi_msg", buttons: "#kodi_connect" }]
     },
     ANILIST: {
       provider: "anilist", logo: "ANILIST", help: window.CW.HelpLinks.url("anilist"), deleteSelector: "#btn-delete-anilist",
@@ -1356,7 +1366,7 @@
     applyConnectionModalOrder(panel, info);
     normalizeConnectionModalActions(panel, info);
     ensureConnectionModalFooter(panel, info);
-    if (["PLEX", "JELLYFIN", "EMBY"].includes(info.key)) selectConnectionModalSub(panel, info, "auth", overlay);
+    if (["PLEX", "JELLYFIN", "EMBY", "KODI"].includes(info.key)) selectConnectionModalSub(panel, info, "auth", overlay);
     syncConnectionModalCopy(panel, info, overlay);
     panel.__cwConnectionProfileSeen = connectionModalProfileId(panel);
     panel.__cwConnectionWasConnected = connectionModalProfileConnected(panel, info);
