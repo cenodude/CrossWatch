@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from services.playback_progress.service import (
     _combine_records,
     _overlay_live_streams,
     _profile_has_explicit_identity,
     _record_group_keys,
+    _share_artwork_metadata,
     PlaybackProgressService,
 )
 from services.playback_progress.models import PlaybackCapabilities
@@ -12,6 +15,9 @@ import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
 from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _record(**overrides):
@@ -34,6 +40,26 @@ def _record(**overrides):
     }
     record.update(overrides)
     return record
+
+
+def test_playback_bulk_footer_uses_wide_management_layout():
+    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+    shell = js[js.index("function shell()") : js.index('      <div class="pp-modal hidden" id="pp-progress-dialog"')]
+
+    assert 'class="pp-bulk-summary"' in shell
+    assert 'id="pp-selected-count" class="pp-selected-number">0</span>' in shell
+    assert 'class="pp-selected-copy"><strong>selected</strong><span>Select items to manage</span>' in shell
+    assert 'class="pp-btn pp-bulk-choice" id="pp-select-visible">${icon("visibility")}<span>Select Visible</span>' in shell
+    assert 'class="pp-btn pp-bulk-choice" id="pp-select-all">${icon("format_list_bulleted")}<span>Select All Filtered Results</span>' in shell
+    assert 'class="pp-btn pp-bulk-choice pp-bulk-clear" id="pp-clear-selection">${icon("cancel")}<span>Clear Selection</span>' in shell
+    assert 'class="pp-selected-pill"' not in shell
+    assert 'class="pp-bulk-divider"' not in shell
+    assert "#${ROOT_ID} .pp-bulk{position:sticky;bottom:12px;z-index:20;display:grid;grid-template-columns:minmax(220px,1fr) auto minmax(170px,1fr)" in js
+    assert "#${ROOT_ID} .pp-bulk-actions .pp-bulk-icon{width:48px;min-width:48px;height:48px;min-height:48px" in js
+    assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-edit{background:linear-gradient(180deg,rgba(63,126,255,.56)" in js
+    assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-watch{background:linear-gradient(180deg,rgba(64,166,105,.48)" in js
+    assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-remove{background:linear-gradient(180deg,rgba(181,48,68,.58)" in js
+    assert "#${ROOT_ID} .pp-card.selected:before,#${ROOT_ID} .pp-card.selected:after{content:none!important;display:none!important}" in js
 
 
 def test_combined_record_keeps_available_artwork_regardless_of_input_order():
@@ -81,6 +107,50 @@ def test_same_title_with_different_profile_progress_does_not_group():
     profile = _record(instance_id="P01", progress_percent=22.4)
 
     assert set(_record_group_keys(default)).isdisjoint(_record_group_keys(profile))
+
+
+def test_same_episode_profiles_share_only_artwork_metadata():
+    donor = _record(
+        instance_id="default",
+        remote_id="default-1",
+        canonical_key="tmdb:69478#s06e02",
+        media_type="episode",
+        title="The Handmaid's Tale",
+        series_title="The Handmaid's Tale",
+        episode_title="Exile",
+        season=6,
+        episode=2,
+        ids={"tmdb": "5978363"},
+        provider_metadata={"show_ids": {"tmdb": "69478"}},
+        progress_percent=21.0,
+        poster_url="https://images.example/handmaid-poster.jpg",
+        backdrop_url="https://images.example/handmaid-bg.jpg",
+    )
+    profile = _record(
+        provider="simkl",
+        instance_id="SIMKL-P01",
+        remote_id="profile-1",
+        canonical_key="tvdb:10958852#s06e02",
+        media_type="episode",
+        title="The Handmaid's Tale",
+        series_title="The Handmaid's Tale",
+        episode_title="Exile",
+        season=6,
+        episode=2,
+        ids={"tvdb": "10958852"},
+        provider_metadata={},
+        progress_percent=33.0,
+    )
+
+    _share_artwork_metadata([donor, profile])
+
+    assert set(_record_group_keys(donor)).isdisjoint(_record_group_keys(profile))
+    assert profile["progress_percent"] == 33.0
+    assert profile["remote_id"] == "profile-1"
+    assert profile["provider_metadata"]["show_ids"] == {"tmdb": "69478"}
+    assert profile["ids"]["tmdb_show"] == "69478"
+    assert profile["poster_url"] == donor["poster_url"]
+    assert profile["backdrop_url"] == donor["backdrop_url"]
 
 
 def test_unscoped_live_stream_only_updates_default_profile():
@@ -337,6 +407,9 @@ def test_media_server_playback_reports_configured_server_down():
 class _FakeNuvioOps:
     def __init__(self) -> None:
         self.removed = []
+        self.index_profile_ids = []
+        self.remove_profile_ids = []
+        self.add_profile_ids = []
 
     def capabilities(self):
         return {
@@ -353,6 +426,7 @@ class _FakeNuvioOps:
 
     def build_index(self, cfg, *, feature):
         assert feature == "progress"
+        self.index_profile_ids.append(cfg.get("nuvio", {}).get("profile_id"))
         return {
             "tmdb:123": {
                 "type": "movie",
@@ -367,6 +441,11 @@ class _FakeNuvioOps:
 
     def remove(self, cfg, items, *, feature, dry_run=False):
         self.removed.extend(items)
+        self.remove_profile_ids.append(cfg.get("nuvio", {}).get("profile_id"))
+        return {"ok": True, "count": len(items), "feature": feature}
+
+    def add(self, cfg, items, *, feature, dry_run=False):
+        self.add_profile_ids.append(cfg.get("nuvio", {}).get("profile_id"))
         return {"ok": True, "count": len(items), "feature": feature}
 
 
@@ -374,10 +453,10 @@ def test_playback_progress_uses_explicit_nuvio_adapter(monkeypatch):
     nuvio_ops = _FakeNuvioOps()
 
     monkeypatch.setattr(nuvio_playback_adapter, "NUVIO_OPS", nuvio_ops)
-    monkeypatch.setattr(playback_service, "load_config", lambda: {"nuvio": {"access_token": "token", "profile_id": 1}})
+    monkeypatch.setattr(playback_service, "load_config", lambda: {"nuvio": {"access_token": "token", "profile_id": 2}})
 
     service = PlaybackProgressService()
-    providers = service.provider_instances({"nuvio": {"access_token": "token", "profile_id": 1}})
+    providers = service.provider_instances({"nuvio": {"access_token": "token", "profile_id": 2}})
 
     assert any(spec["provider"] == "nuvio" for spec in providers)
 
@@ -387,6 +466,50 @@ def test_playback_progress_uses_explicit_nuvio_adapter(monkeypatch):
     assert len(result["items"]) == 1
     assert result["items"][0]["provider"] == "nuvio"
     assert result["items"][0]["progress_percent"] == 20.0
+    assert nuvio_ops.index_profile_ids == [2]
+
+
+def test_playback_progress_uses_selected_nuvio_profile(monkeypatch):
+    nuvio_ops = _FakeNuvioOps()
+    cfg = {
+        "nuvio": {
+            "base_url": "https://api.nuvio.tv",
+            "access_token": "default-token",
+            "refresh_token": "default-refresh",
+            "profile_id": 1,
+            "profile_name": "Main",
+            "instances": {
+                "kid": {
+                    "profile_id": 2,
+                    "profile_name": "Kids",
+                }
+            },
+        }
+    }
+
+    monkeypatch.setattr(nuvio_playback_adapter, "NUVIO_OPS", nuvio_ops)
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    providers = [spec for spec in service.provider_instances(cfg) if spec["provider"] == "nuvio"]
+    result = service.items(provider="nuvio", instance_id="kid", force_refresh=True)
+    record = result["items"][0]
+
+    assert providers == [
+        {"provider": "nuvio", "instance_id": "default", "instance_label": "Nuvio Main"},
+        {"provider": "nuvio", "instance_id": "kid", "instance_label": "Nuvio Kids"},
+    ]
+    assert result["errors"] == []
+    assert record["instance_id"] == "kid"
+    assert record["instance_label"] == "Nuvio Kids"
+    assert nuvio_ops.index_profile_ids == [2]
+
+    service.remove({"provider": "nuvio", "instance_id": "kid", "record": record})
+    service.mark_watched({"provider": "nuvio", "instance_id": "kid", "record": record})
+    service.update_progress({"provider": "nuvio", "instance_id": "kid", "record": record, "progress_percent": 25})
+
+    assert nuvio_ops.remove_profile_ids == [2, 2]
+    assert nuvio_ops.add_profile_ids == [2, 2]
 
 
 def test_nuvio_playback_progress_enriches_missing_episode_metadata_from_content_id(monkeypatch):

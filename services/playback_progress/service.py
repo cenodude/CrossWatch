@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -36,6 +37,7 @@ SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time"
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
 LIVE_MAX_AGE_SECONDS = 10 * 60
+CANONICAL_TMDB_RE = re.compile(r"^tmdb:(\d+)(?:#|$)", re.I)
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -379,6 +381,83 @@ def _with_remaining_fallback(item: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def _artwork_identity_key(item: Mapping[str, Any]) -> str:
+    media_type = _group_text(item.get("media_type") or item.get("type"))
+    if media_type == "movie":
+        return f"movie:{_group_text(item.get('title'))}:{_group_number(item.get('year'))}"
+    if media_type in {"episode", "anime_episode"}:
+        series = _group_text(item.get("series_title") or item.get("title"))
+        return f"episode:{series}:{_group_number(item.get('season'))}:{_group_number(item.get('episode'))}"
+    return ""
+
+
+def _show_ids_for_artwork(item: Mapping[str, Any]) -> dict[str, Any]:
+    meta = _as_mapping(item.get("provider_metadata"))
+    show_ids = dict(_as_mapping(meta.get("show_ids")))
+    ids = _as_mapping(item.get("ids"))
+    for target, keys in {
+        "tmdb": ("tmdb_show", "show_tmdb", "series_tmdb"),
+        "imdb": ("imdb_show", "show_imdb", "series_imdb"),
+        "tvdb": ("tvdb_show", "show_tvdb", "series_tvdb"),
+    }.items():
+        if not _blank_scalar(show_ids.get(target)):
+            continue
+        for key in keys:
+            value = ids.get(key) or item.get(key)
+            if not _blank_scalar(value):
+                show_ids[target] = value
+                break
+    if _group_text(item.get("media_type") or item.get("type")) in {"episode", "anime_episode"}:
+        match = CANONICAL_TMDB_RE.match(str(item.get("canonical_key") or "").strip())
+        if match and _blank_scalar(show_ids.get("tmdb")):
+            show_ids["tmdb"] = match.group(1)
+    return clean_mapping(show_ids)
+
+
+def _share_artwork_metadata(items: list[dict[str, Any]]) -> None:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        key = _artwork_identity_key(item)
+        if key:
+            grouped.setdefault(key, []).append(item)
+
+    for records in grouped.values():
+        if len(records) < 2:
+            continue
+        shared_show_ids: dict[str, Any] = {}
+        poster = ""
+        backdrop = ""
+        for record in records:
+            for key, value in _show_ids_for_artwork(record).items():
+                if not _blank_scalar(value):
+                    shared_show_ids.setdefault(key, value)
+            if _blank_scalar(poster) and not _blank_scalar(record.get("poster_url")):
+                poster = str(record.get("poster_url") or "")
+            if _blank_scalar(backdrop) and not _blank_scalar(record.get("backdrop_url")):
+                backdrop = str(record.get("backdrop_url") or "")
+        for record in records:
+            if _blank_scalar(record.get("poster_url")) and poster:
+                record["poster_url"] = poster
+            if _blank_scalar(record.get("backdrop_url")) and backdrop:
+                record["backdrop_url"] = backdrop
+            if not shared_show_ids:
+                continue
+            meta = dict(_as_mapping(record.get("provider_metadata")))
+            existing_show_ids = dict(_as_mapping(meta.get("show_ids")))
+            merged_show_ids = clean_mapping({**shared_show_ids, **existing_show_ids})
+            if merged_show_ids:
+                meta["show_ids"] = merged_show_ids
+                record["provider_metadata"] = clean_mapping(meta)
+            ids = dict(_as_mapping(record.get("ids")))
+            if not _blank_scalar(shared_show_ids.get("tmdb")):
+                ids.setdefault("tmdb_show", shared_show_ids.get("tmdb"))
+            if not _blank_scalar(shared_show_ids.get("imdb")):
+                ids.setdefault("imdb_show", shared_show_ids.get("imdb"))
+            if not _blank_scalar(shared_show_ids.get("tvdb")):
+                ids.setdefault("tvdb_show", shared_show_ids.get("tvdb"))
+            record["ids"] = clean_mapping(ids)
+
+
 def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     ordered = sorted(records, key=_record_order_key)
     primary = dict(ordered[0])
@@ -518,6 +597,8 @@ def _validated_progress_percent(value: Any) -> tuple[float | None, str]:
 def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> str:
     block = get_provider_block(cfg, provider, instance_id)
     label = configured_label(block, "Default" if instance_id == "default" else instance_id)
+    if str(provider or "").strip().lower() == "nuvio":
+        label = str(block.get("profile_name") or "").strip() or label
     provider_label = {
         "trakt": "Trakt",
         "simkl": "SIMKL",
@@ -526,6 +607,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "plex": "Plex",
         "emby": "Emby",
         "jellyfin": "Jellyfin",
+        "nuvio": "Nuvio",
     }.get(provider, provider)
     if label.lower() == "default":
         return f"{provider_label} Default"
@@ -867,6 +949,7 @@ class PlaybackProgressService:
             if not r.ok
         ]
         items = [_with_remaining_fallback(item.to_dict()) for result in results if result.ok for item in result.items]
+        _share_artwork_metadata(items)
         _overlay_live_streams(items)
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)
         if not provider_filter:
