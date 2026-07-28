@@ -363,21 +363,12 @@
     return window.CW?.Meta?.get(item, "detail") || null;
   }
 
-  function ensurePosterCursorStyle() {
-    if (document.getElementById("cw-wall-preview-cursor-style")) return;
-    const style = document.createElement("style");
-    style.id = "cw-wall-preview-cursor-style";
-    style.textContent = "#placeholder-card .poster{cursor:pointer}";
-    document.head.appendChild(style);
-  }
-
   let previewCard = null;
   let previewItem = null;
   let previewMeta = null;
 
   function ensurePreviewCard() {
     if (previewCard) return previewCard;
-    ensurePosterCursorStyle();
     previewCard = window.CW.PlayingCard.mount({
       id: "cw-wall-preview-detail",
       variant: "watchlist",

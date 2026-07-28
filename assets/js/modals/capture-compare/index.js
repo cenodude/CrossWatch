@@ -8,7 +8,7 @@ const _cwV = (() => {
 const _cwVer = (u) => u + (u.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(String(_cwV));
 
 const { getJson } = await import(_cwVer("../core/net.js"));
-const { ROOT_HTML, CSS, THEME_CSS } = await import(_cwVer("./layout.js"));
+const { ROOT_HTML } = await import(_cwVer("./layout.js"));
 const Q = (s, r = document) => r.querySelector(s);
 const QA = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -18,16 +18,6 @@ const STATUS_ORDER = { added: 0, removed: 1, updated: 2, unchanged: 3 };
 const STATUS_CLASS = { added: "add", removed: "del", updated: "upd", unchanged: "unc" };
 const STATUS_LABEL = { added: "Added", removed: "Deleted", updated: "Updated", unchanged: "Unchanged" };
 const SPLIT = "10px";
-
-const css = () => {
-  let el = Q("#cc-css");
-  if (!el) {
-    el = document.createElement("style");
-    el.id = "cc-css";
-    document.head.appendChild(el);
-  }
-  el.textContent = CSS + (THEME_CSS || "");
-};
 
 async function injectCompareStyles() {
   if (document.querySelector('link[data-cw-compare-styles]')) return;
@@ -199,7 +189,6 @@ function initSplit({ handle, container, axis, getMin, getMax, onSet }) {
 export default {
   async mount(root, props = {}) {
     this._root = root;
-    css();
     await injectCompareStyles();
     Object.entries({ "--cxModalMaxW": "1180px", "--cxModalMaxH": "700px", "--ccSplitW": SPLIT }).forEach(([k, v]) => root.style.setProperty(k, v));
     root.classList.add("modal-root", "cc-modal");
@@ -459,6 +448,5 @@ export default {
     } catch {}
   },
 };
-
 
 

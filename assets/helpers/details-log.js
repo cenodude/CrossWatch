@@ -263,38 +263,7 @@ function _renderUnresolvedList(items) {
   return head + html;
 }
 
-function _ensureUnresolvedStyles() {
-  if (document.getElementById("cw-unres-css")) return;
-  const css = `
-  .cw-unres-modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center}
-  .cw-unres-modal.hidden{display:none}
-  .cw-unres-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
-  .cw-unres-card{position:relative;max-width:720px;width:calc(100% - 32px);max-height:80vh;display:flex;flex-direction:column;
-    background:var(--card,#1b1d22);color:var(--text,#e8eaed);border:1px solid rgba(255,255,255,.1);border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
-  .cw-unres-h{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)}
-  .cw-unres-title{font-weight:600}
-  .cw-unres-close{background:transparent;border:0;color:inherit;font-size:16px;cursor:pointer;opacity:.7}
-  .cw-unres-close:hover{opacity:1}
-  .cw-unres-body{padding:0 16px 16px;overflow:auto}
-  .cw-unres-summary{position:sticky;top:0;z-index:1;background:var(--card,#1b1d22);display:flex;flex-wrap:wrap;gap:6px;
-    padding:10px 0;border-bottom:1px solid rgba(255,255,255,.08)}
-  .cw-unres-chip{font-size:11px;background:rgba(255,255,255,.08);border-radius:10px;padding:2px 9px}
-  .cw-unres-chip b{font-weight:600}
-  .cw-unres-list{list-style:none;margin:0;padding:0}
-  .cw-unres-item{display:flex;align-items:center;gap:12px;padding:5px 0;font-size:13px;border-bottom:1px solid rgba(255,255,255,.05)}
-  .cw-unres-item-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .cw-unres-item-r{flex:0 0 auto;font-size:11px;opacity:.6;white-space:nowrap}
-  .cw-unres-loading,.cw-unres-empty,.cw-unres-error{padding:24px 0;text-align:center;opacity:.7}
-  .cw-unres-link{color:#8ea2ff;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
-  .cw-unres-link:hover{color:#b8c6ff}`;
-  const style = document.createElement("style");
-  style.id = "cw-unres-css";
-  style.textContent = css;
-  document.head.appendChild(style);
-}
-
 async function _showUnresolvedModal() {
-  _ensureUnresolvedStyles();
   let modal = document.getElementById("cw-unresolved-modal");
   if (!modal) {
     modal = document.createElement("div");

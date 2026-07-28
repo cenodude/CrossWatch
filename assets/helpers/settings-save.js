@@ -175,23 +175,12 @@ function _cwSelectNums(id) {
   return el?.selectedOptions ? Array.from(el.selectedOptions).map((o) => parseInt(String(o.value), 10)).filter(Number.isFinite) : null;
 }
 
-function _cwEnsureStyle(id, css) {
-  if (_cwEl(id)) return;
-  try {
-    const style = document.createElement("style");
-    style.id = id;
-    style.textContent = css;
-    document.head.appendChild(style);
-  } catch {}
-}
-
 function _cwEnsureSaveToast() {
   let el = document.querySelector(".save-toast");
   const inline = _cwEl("save_msg");
   if (!el && inline && !inline.closest("#save-fab")) el = inline;
   if (el) return el;
   try {
-    _cwEnsureStyle("cw-save-toast-style", ".save-toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;max-width:calc(100vw - 24px);padding:10px 14px;border-radius:999px;backdrop-filter:blur(10px);background:rgba(20,20,30,.82);border:1px solid rgba(255,255,255,.14);color:#fff;font-size:13px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.save-toast.ok{border-color:rgba(80,220,140,.35)}.save-toast.error{border-color:rgba(255,120,120,.35)}.save-toast.hide{display:none}");
     el = document.createElement("div");
     el.className = "save-toast hide";
     el.setAttribute("aria-live", "polite");
@@ -219,7 +208,6 @@ function _cwEnsureAuthErrorBox() {
   let el = _cwEl("app_auth_error");
   if (el) return el;
   try {
-    _cwEnsureStyle("cw-inline-error-style", ".cw-inline-error{margin-top:10px;padding:8px 10px;border-radius:12px;background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.18);color:rgba(255,220,220,.95);font-size:12px}.cw-inline-error.hidden{display:none}.cw-invalid{border-color:rgba(255,100,100,.55)!important;box-shadow:0 0 0 2px rgba(255,80,80,.12)!important}");
     el = document.createElement("div");
     el.id = "app_auth_error";
     el.className = "cw-inline-error hidden";

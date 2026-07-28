@@ -12,7 +12,6 @@ const _cwVer = (u) => u + (u.includes("?") ? "&" : "?") + "v=" + encodeURICompon
 const { getJson, postJson } = await import(_cwVer("../core/net.js"));
 const { renderNotesMarkup } = await import(_cwVer("./notes.js"));
 const {
-  appAuthFormCss,
   escapeHtml,
   fetchAppAuthStatus,
   hasEnabledAppAuth,
@@ -226,57 +225,7 @@ export default {
 
     function layout(body, foot) {
       return `
-        <style>
-          #upg-host{--w:820px;position:relative;overflow:hidden;min-width:min(var(--w),94vw);max-width:94vw;color:#eaf0ff;border-radius:18px;border:1px solid rgba(255,255,255,.08);background:radial-gradient(900px circle at 18% 18%, rgba(150,70,255,.22), transparent 55%),radial-gradient(900px circle at 92% 10%, rgba(60,140,255,.18), transparent 55%),radial-gradient(800px circle at 55% 110%, rgba(60,255,215,.08), transparent 60%),rgba(7,8,11,.92);box-shadow:0 30px 90px rgba(0,0,0,.70), inset 0 1px 0 rgba(255,255,255,.04);backdrop-filter:saturate(135%) blur(10px)}
-          #upg-host .head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))}
-          #upg-host .icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
-          #upg-host .icon span{font-size:26px}
-          #upg-host .t{font-weight:950;font-size:15px;line-height:1.1;text-transform:uppercase;opacity:.90}
-          #upg-host .sub{opacity:.72;font-size:12px;margin-top:2px}
-          #upg-host .pill{margin-left:auto;display:flex;gap:8px;align-items:center;font-weight:900;font-size:12px;opacity:.85}
-          #upg-host .pill .b{padding:6px 10px;border-radius:999px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
-          #upg-host .body{padding:16px 16px 8px 16px;max-height:72vh;overflow:auto}
-          #upg-host .card{display:block;padding:12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 30px rgba(0,0,0,.32);margin-bottom:10px}
-          #upg-host .card .h{font-weight:950}
-          #upg-host .card .p{opacity:.84;margin-top:6px;line-height:1.45}
-          #upg-host .warn{border-color:rgba(255,120,120,.22);background:linear-gradient(180deg,rgba(255,77,79,.12),rgba(255,77,79,.05))}
-          #upg-host .ok{border-color:rgba(80,210,170,.22);background:linear-gradient(180deg,rgba(40,180,140,.13),rgba(40,180,140,.05))}
-          #upg-host .notes{margin-top:8px;max-height:320px;overflow:auto;padding:16px 18px;border-radius:16px;background:linear-gradient(180deg,rgba(7,9,16,.72),rgba(4,6,10,.88));border:1px solid rgba(255,255,255,.08);font:14px/1.65 "Segoe UI Variable","Avenir Next","Trebuchet MS",sans-serif;color:rgba(236,241,255,.94)}
-          #upg-host .notes h2,#upg-host .notes h3,#upg-host .notes h4{margin:0 0 10px;line-height:1.15;letter-spacing:-.02em;color:#f5f7ff}
-          #upg-host .notes h2{font-size:24px;font-weight:950}
-          #upg-host .notes h3{margin-top:20px;font-size:18px;font-weight:900}
-          #upg-host .notes h4{margin-top:16px;font-size:15px;font-weight:900}
-          #upg-host .notes p{margin:0 0 12px;color:rgba(225,232,247,.82)}
-          #upg-host .notes .notes-list{margin:0 0 14px;padding-left:20px;display:grid;gap:8px}
-          #upg-host .notes li{color:rgba(231,237,250,.88)}
-          #upg-host .notes li.indent-1{margin-left:14px;opacity:.92}
-          #upg-host .notes li.indent-2{margin-left:28px;opacity:.88}
-          #upg-host .notes strong{color:#f7f9ff}
-          #upg-host .notes em{color:rgba(230,214,255,.92)}
-          #upg-host .notes code{padding:2px 6px;border-radius:8px;background:rgba(140,109,255,.14);border:1px solid rgba(140,109,255,.18);font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;color:#f6ebff}
-          #upg-host .notes pre.notes-code{margin:0 0 14px;padding:14px 16px;overflow:auto;border-radius:14px;background:rgba(4,6,10,.92);border:1px solid rgba(255,255,255,.08)}
-          #upg-host .notes pre.notes-code code{display:block;padding:0;border:0;background:none;color:#f3f6ff;white-space:pre}
-          #upg-host .notes blockquote.notes-quote{margin:0 0 14px;padding:10px 14px;border-left:3px solid rgba(160,120,255,.7);border-radius:0 12px 12px 0;background:rgba(120,90,255,.08)}
-          #upg-host .notes blockquote.notes-quote p{margin:0 0 8px}
-          #upg-host .notes blockquote.notes-quote p:last-child{margin-bottom:0}
-          #upg-host .notes a{color:#caa7ff;text-decoration:none;word-break:break-word}
-          #upg-host .notes a:hover{text-decoration:underline}
-          #upg-host .helpLink{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:10px;padding:14px 16px;border-radius:14px;text-decoration:none;color:#eef3ff;background:linear-gradient(135deg,rgba(150,70,255,.18),rgba(60,140,255,.14));border:1px solid rgba(150,70,255,.22);box-shadow:0 14px 34px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.04);transition:transform .16s ease, filter .16s ease, border-color .16s ease}
-          #upg-host .helpLink:hover{transform:translateY(-1px);filter:brightness(1.06);border-color:rgba(150,70,255,.32)}
-          #upg-host .helpCopy{display:grid;gap:4px}
-          #upg-host .helpEyebrow{font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;opacity:.72}
-          #upg-host .helpTitle{font-size:16px;font-weight:950;line-height:1.15}
-          #upg-host .helpSub{font-size:12.5px;line-height:1.4;opacity:.8}
-          #upg-host .helpIcon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
-          #upg-host .helpIcon .material-symbols-rounded{font-size:22px}
-          ${appAuthFormCss("#upg-host")}
-          #upg-host .foot{display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))}
-          #upg-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;background:rgba(255,255,255,.04);color:#eaf0ff}
-          #upg-host .btn:hover{filter:brightness(1.06)}
-          #upg-host .btn[disabled]{opacity:.62;cursor:progress}
-          #upg-host .btn.primary{border-color:rgba(150,70,255,.35);background:linear-gradient(135deg,rgba(150,70,255,.92),rgba(60,140,255,.82))}
-          #upg-host .btn.danger{border-color:rgba(255,120,120,.28);background:linear-gradient(135deg,rgba(255,77,79,.92),rgba(255,122,122,.82))}
-        </style>
+
         <div id="upg-host">
           <div class="head">
             <div class="icon" aria-hidden="true"><span class="material-symbols-rounded">system_update</span></div>
