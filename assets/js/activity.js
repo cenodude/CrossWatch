@@ -251,7 +251,7 @@
       .activity-item.ok{border-color:rgba(34,197,94,.14)}
       .activity-item.err{border-color:rgba(239,68,68,.18)}
       .activity-main{min-width:0;display:grid;gap:4px}
-      .activity-title{min-width:0;color:rgba(238,243,255,.92);font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .activity-title{min-width:0;color:rgba(238,243,255,.92);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .activity-flow-line{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
       .activity-route{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
       .activity-route-arrow{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:14px;flex:0 0 auto;opacity:.72}
