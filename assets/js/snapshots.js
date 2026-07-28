@@ -942,7 +942,7 @@ function bundleKey(s) {
         <div class="ss-top-copy cw-page-hero-copy">
           <div class="cw-page-hero-kicker">CAPTURES</div>
           <div class="ss-title cw-page-hero-title">Captures</div>
-          <div class="ss-sub cw-page-hero-sub">Point-in-time snapshots of provider data. Create, compare, and restore with confidence.</div>
+          <div class="ss-sub cw-page-hero-sub">Save snapshots of your provider data, compare changes, and restore whenever needed.</div>
         </div>
         <div class="ss-actions cw-page-hero-actions ss-hero-summary" id="ss-hero-summary" aria-label="Capture sync summary">
           <div class="ss-hero-seg ss-hero-sync"><span>Synced</span><strong id="ss-sync-time">not yet</strong></div>
@@ -1063,7 +1063,7 @@ function bundleKey(s) {
             <div class="ss-card-head">
               <div class="ss-headcopy">
                 <h3>Tools</h3>
-                <div class="ss-headsub">Secondary actions for selected captures and stored capture cleanup.</div>
+                <div class="ss-headsub">Secondary actions for selected captures.</div>
               </div>
             </div>
             <div class="ss-tools-list">
