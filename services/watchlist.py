@@ -976,6 +976,18 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
 
         tmdb_str = str(tmdb_id)
         tmdb_value = int(tmdb_str) if tmdb_str.isdigit() else tmdb_id
+        extra_meta = {
+            k: info.get(k)
+            for k in (
+                "genres",
+                "genre",
+                "release_date",
+                "first_air_date",
+                "released",
+                "release",
+            )
+            if info.get(k) not in (None, "", [], {})
+        }
 
         out.append(
             {
@@ -997,6 +1009,7 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
                 "added_instance": added_instance,
                 "categories": [],
                 "ids": _ids_from_key_or_item(key, info),
+                **extra_meta,
             }
         )
 
