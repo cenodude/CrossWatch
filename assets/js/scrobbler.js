@@ -95,18 +95,21 @@
   function renderSummary(o) {
     const s = o.summary || {};
     const r = o.watcher_runtime || {};
+    const webhooksOn = Number(s.active_webhooks || 0) > 0;
+    const routesOn = Number(s.enabled_routes || 0) > 0;
     const cards = [
-      ["Webhooks", `${s.active_webhooks || 0}/${s.eligible_profiles || 0}`, "webhook"],
-      ["Watcher routes", `${s.enabled_routes || 0}/${s.total_routes || 0}`, "bolt"],
-      ["Watcher status", r.running ? "Running" : "Stopped", "monitor_heart"],
+      ["Webhooks", `${s.active_webhooks || 0}/${s.eligible_profiles || 0}`, "webhook", "webhooks", webhooksOn ? "" : "is-empty"],
+      ["Watcher routes", `${s.enabled_routes || 0}/${s.total_routes || 0}`, "bolt", "watcher-routes", routesOn ? "" : "is-empty"],
+      ["Watcher status", r.running ? "Running" : "Stopped", "monitor_heart", "watcher-status", r.running ? "" : "is-stopped"],
     ];
-    return `<section class="sc2-summary">${cards.map(([a, b, icon, c]) => `<article class="sc2-summary-card"><span class="material-symbols-rounded sc2-summary-icon">${esc(icon)}</span><div><div class="sc2-k">${esc(a)}</div><div class="sc2-v">${esc(b)}</div><div class="sc2-muted">${esc(c)}</div></div></article>`).join("")}</section>`;
+    return `<section class="sc2-summary">${cards.map(([a, b, icon, stat, state]) => `<article class="sc2-summary-card ${state}" data-stat="${esc(stat)}"><span class="material-symbols-rounded sc2-summary-icon">${esc(icon)}</span><div><div class="sc2-k">${esc(a)}</div><div class="sc2-v">${esc(b)}</div><div class="sc2-muted"></div></div></article>`).join("")}</section>`;
   }
 
   function renderWebhooks(o) {
     const rows = o.webhooks || [];
+    const sectionState = rows.some((x) => x.enabled) ? "" : " is-empty";
     return `
-      <section class="sc2-section" id="sc-sec-webhook">
+      <section class="sc2-section${sectionState}" id="sc-sec-webhook">
         <div class="sc2-section-head"><div><h4>Webhooks</h4><p>Manage media-server profile endpoints.</p></div></div>
         <div class="sc2-route-card-grid">
           ${rows.map((x) => {
@@ -144,8 +147,9 @@
 
   function renderRoutes(o) {
     const rows = o.routes || [];
+    const sectionState = rows.some((r) => r.enabled) ? "" : " is-empty";
     return `
-      <section class="sc2-section" id="sc-sec-watch">
+      <section class="sc2-section${sectionState}" id="sc-sec-watch">
         <div class="sc2-section-head"><div><h4>Watcher routes</h4><p>Configure routes that send play events from media servers to trackers.</p></div></div>
         <div class="sc2-route-card-grid">
           ${rows.length ? rows.map((r) => `
@@ -182,10 +186,11 @@
 
   function renderRuntime(o) {
     const r = o.watcher_runtime || {};
+    const sectionState = r.running ? "" : " is-stopped";
     const routes = r.routes || [];
     const runningRoutes = routes.filter((x) => x.running).map((x) => x.id).join(", ") || "None";
     return `
-      <section class="sc2-section sc2-runtime" id="sc-sec-runtime">
+      <section class="sc2-section sc2-runtime${sectionState}" id="sc-sec-runtime">
         <div class="sc2-section-head"><div><h4>Watcher status</h4><p>Control and monitor the Scrobbler watcher.</p></div></div>
         <div class="sc2-runtime-grid sc2-runtime-dashboard">
           <article class="sc2-runtime-tile is-groups"><span class="material-symbols-rounded">alt_route</span><div><small>Running routes</small><strong>${esc(runningRoutes)}</strong></div></article>

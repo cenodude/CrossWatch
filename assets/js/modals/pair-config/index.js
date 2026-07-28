@@ -100,7 +100,8 @@ function applyRatingsTypeRules(state){
 }
 
 // Inline footer
-function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)||modal;let bar=card.querySelector(":scope > .cx-actions");if(!bar){bar=document.createElement("div");bar.className="cx-actions";const cancel=document.createElement("button");cancel.className="cx-btn";cancel.textContent="Cancel";cancel.addEventListener("click",()=>G.cxCloseModal?.());const save=document.createElement("button");save.className="cx-btn primary";save.id="cx-inline-save";save.textContent="Save";save.addEventListener("click",async()=>{const b=ID("cx-inline-save");if(!b)return;const old=b.textContent;b.disabled=true;b.textContent="Saving…";try{await modal.__doSave?.()}finally{b.disabled=false;b.textContent=old}});bar.append(cancel,save);card.appendChild(bar)}}
+function closePairConfigModal(modal){try{G.cxCloseModal?.()}catch{}if(modal?.isConnected)modal.dispatchEvent(new CustomEvent("cw-modal-close",{bubbles:true}))}
+function ensureInlineFoot(modal){if(!modal)return;const card=Q(".cx-card",modal)||modal;let bar=card.querySelector(":scope > .cx-actions");if(!bar){bar=document.createElement("div");bar.className="cx-actions";const cancel=document.createElement("button");cancel.type="button";cancel.className="cx-btn";cancel.textContent="Cancel";cancel.addEventListener("click",(e)=>{e.preventDefault();closePairConfigModal(modal)});const save=document.createElement("button");save.type="button";save.className="cx-btn primary";save.id="cx-inline-save";save.textContent="Save";save.addEventListener("click",async(e)=>{e.preventDefault();const run=modal.__doSave;if(typeof run!=="function")return;const b=ID("cx-inline-save");if(!b)return;const old=b.textContent;b.disabled=true;b.textContent="Saving...";try{await run()}finally{b.disabled=false;b.textContent=old}});bar.append(cancel,save);card.appendChild(bar)}}
 
 // Ratings summary
 function updateRtSummary(){
@@ -1567,7 +1568,7 @@ left.innerHTML = `
       const choices=all.filter(m=>m.valid!==false&&compat(m)&&avail(m));
       if(!choices.length){ host.innerHTML=`<div class="muted">No compatible mapping profiles. On the Playlists page, create endpoints for ${e(state.src)} and ${e(state.dst)}, then a MAP-xx linking them.</div>`; return; }
       host.innerHTML=choices.map(m=>`<label class="opt-row" style="justify-content:flex-start;gap:10px;cursor:pointer">
-        <input type="checkbox" class="cx-plmap" value="${e(m.id)}" ${sel.has(String(m.id))?"checked":""}>
+        <input type="checkbox" class="cx-plmap" name="cx-plmap" value="${e(m.id)}" ${sel.has(String(m.id))?"checked":""}>
         <span><b>${e(m.id)}</b> ${e(m.name||"")} <span class="muted">(${e((m.source||{}).label)} → ${e((m.target||{}).label)}, ${e(m.membership)})</span></span>
       </label>`).join("");
       host.querySelectorAll(".cx-plmap").forEach(cb=>cb.addEventListener("change",()=>{
@@ -2331,11 +2332,18 @@ async function savePair(payload){
 
 export default{
   async mount(hostEl,props){
-    ensurePairConfigStyles();
     hostEl.classList.add("pair-config-modal");
     hostEl.style.setProperty("--cxModalMaxW", "1280px");
     hostEl.style.setProperty("--cxModalMaxH", "92vh");
     hostEl.style.setProperty("--cxModalW", "min(var(--cxModalMaxW,1280px),calc(100vw - 64px))");
+    hostEl.style.setProperty("--cx-actions-position", "relative");
+    hostEl.style.setProperty("--cx-actions-z", "30");
+    hostEl.style.setProperty("--cx-actions-pointer", "auto");
+    hostEl.style.setProperty("--cx-tab-active-bg", "var(--pc-panel)");
+    hostEl.style.setProperty("--cx-tab-active-border", "var(--pc-border-soft)");
+    hostEl.style.setProperty("--cx-tab-active-shadow", "none");
+    hostEl.style.setProperty("--cx-tab-active-before-opacity", ".7");
+    await ensurePairConfigStyles();
     hostEl.innerHTML=tpl();
     const wrap=ID("cx-modal",hostEl);
     const state=defaultState();
@@ -2412,7 +2420,7 @@ export default{
         window.dispatchEvent?.(new CustomEvent("cx:pairs:changed",{detail:payload}));
         window.cxAfterPairSave?.(payload);
       }catch(e){console.warn("[pair save] refresh failed",e)}
-      window.cxCloseModal?.();
+      closePairConfigModal(hostEl);
     };
   },
   unmount(){}
