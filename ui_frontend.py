@@ -210,10 +210,14 @@ def _get_index_html_static() -> str:
 </script>
 
 <link rel="stylesheet" href="/assets/themes/tokens.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/base.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/providers.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/whitelist.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/auth-providers.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/layout.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/shell-overrides.css?v=__CW_VERSION__">
 <script>
 (() => {
   try {
@@ -719,13 +723,10 @@ def _get_index_html_static() -> str:
             <div class="section open cw-settings-section cw-settings-provider-section" id="sec-auth" data-accordion="off">
               <div class="body"><div id="auth-providers"></div></div>
             </div>
-
-            <div class="section cw-settings-section cw-settings-provider-section cw-connections-source" id="sec-meta"><div class="head" data-toggle-section="sec-meta"><span class="chev"></span><strong>Metadata / ID Mapping</strong></div><div class="body">
-<div id="metadata-providers">
-  <div id="meta-provider-panel" class="cw-meta-provider-stack"></div>
-  <div id="meta-provider-raw" class="hidden"></div>
-</div>
-</div></div>
+            <div id="metadata-providers" class="hidden" aria-hidden="true">
+              <div id="meta-provider-panel" class="cw-meta-provider-stack"></div>
+              <div id="meta-provider-raw" class="hidden"></div>
+            </div>
           </div>
         </section>
 
@@ -740,7 +741,6 @@ def _get_index_html_static() -> str:
           </div>
           <div class="cw-settings-pane-stack cw-settings-sync-stack">
             <div class="section open cw-settings-section" id="sec-sync" data-accordion="off">
-              <div class="head"><strong>Providers</strong></div>
               <div class="body">
                 <div id="providers_list" class="grid2"></div>
                 <div class="sep"></div><h4 class="cw-sync-subhead">Pairs</h4><div id="pairs_list"></div>
@@ -1050,7 +1050,7 @@ def _get_index_html_static() -> str:
                 <!-- Panel: Security -->
                 <div class="cw-settings-panel cw-settings-shell cw-app-panel" data-tab="security">
                   <div class="cw-settings-layout cw-app-security-layout">
-                    <div class="cw-settings-block cw-app-card" id="app_auth_fields">
+                    <form class="cw-settings-block cw-app-card cw-password-form-scope" id="app_auth_fields" autocomplete="off" onsubmit="return false">
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">lock</span>
                         <div>
@@ -1116,7 +1116,7 @@ def _get_index_html_static() -> str:
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </form>
 
                     <div class="cw-settings-block cw-app-card">
                       <div class="cw-app-card-head">
@@ -1388,10 +1388,11 @@ __CW_ASSET_BLOCK__
     if (key === "meta") {
       if (typeof window.openMetadataProviderForm === "function") {
         window.cwSettingsSelect?.("providers");
-        setTimeout(() => window.openMetadataProviderForm?.("TMDB_METADATA")?.catch?.(() => window.cwOverviewJump?.("sec-meta")), 0);
+        setTimeout(() => window.openMetadataProviderForm?.("TMDB_METADATA")?.catch?.(() => window.openAddMetadata?.()), 0);
         return;
       }
-      return window.cwOverviewJump?.("sec-meta");
+      window.cwSettingsSelect?.("providers");
+      return window.openAddMetadata?.();
     }
     if (key === "sync") return window.cwSyncJump?.();
     if (key === "scheduling" || key === "automation") return window.cwSettingsSelect?.("scheduling");
