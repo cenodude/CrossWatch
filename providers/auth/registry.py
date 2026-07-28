@@ -174,7 +174,7 @@ def auth_providers_html() -> str:
         return (
             f'<div class="section open" id="{gid}">'
             f'  <div class="head" data-toggle-section="{gid}"><span class="chev"></span><strong>{title}</strong></div>'
-            f'  <div class="body">{body}</div>'
+            f'  <div class="body"><form class="cw-password-form-scope" autocomplete="off" onsubmit="return false">{body}</form></div>'
             f'</div>'
         )
 
