@@ -91,6 +91,10 @@
     return Shared.setStatus("mdblist_msg", ok, msg);
   }
 
+  function emitConnected() {
+    try { document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "mdblist", key: "MDBLIST" } })); } catch {}
+  }
+
   function maskInput(i, has) {
     return Shared.maskSecret(i, has, { mask: MASK });
   }
@@ -285,6 +289,7 @@
       setApiHintVisible(false);
       note("MDBList API key saved");
       await refresh(true);
+      emitConnected();
     } catch (e) {
       const msg = e && e.message ? e.message : "Saving MDBList key failed";
       setConn(false, msg);
@@ -303,6 +308,7 @@
         try { mdblQcStop(); } catch (_) {}
         note("MDBList connected");
         await hydrate();
+        emitConnected();
       },
       onExpired: () => mdblQcTimeout(),
       onTimeout: () => mdblQcTimeout(),
