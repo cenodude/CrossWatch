@@ -202,7 +202,6 @@
   }
 
   async function refreshRecentActivity() {
-    injectCSS();
     bindViewAllButton();
 
     const block = $("#recent-activity-block");
@@ -240,58 +239,6 @@
     }
   }
 
-  function injectCSS() {
-    if ($("#activity-css")) return;
-    const el = document.createElement("style");
-    el.id = "activity-css";
-    el.textContent = `
-      #recent-activity-block.hidden{display:none!important}
-      #recent-activity{display:grid;gap:8px}
-      .activity-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.018));border:1px solid rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
-      .activity-item.ok{border-color:rgba(34,197,94,.14)}
-      .activity-item.err{border-color:rgba(239,68,68,.18)}
-      .activity-main{min-width:0;display:grid;gap:4px}
-      .activity-title{min-width:0;color:rgba(238,243,255,.92);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .activity-flow-line{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
-      .activity-route{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap}
-      .activity-route-arrow{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:14px;flex:0 0 auto;opacity:.72}
-      .activity-route-arrow::before{content:"";width:14px;height:1px;border-radius:999px;background:linear-gradient(90deg,rgba(130,149,210,.18),rgba(130,149,210,.72))}
-      .activity-route-arrow::after{content:"";position:absolute;right:1px;width:6px;height:6px;border-right:2px solid rgba(174,194,232,.70);border-top:2px solid rgba(174,194,232,.70);transform:rotate(45deg)}
-      .activity-targets{display:inline-flex;align-items:center;gap:5px;min-width:0;flex-wrap:wrap}
-      .activity-endpoint{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:28px;height:24px;border-radius:999px;border:1px solid rgba(130,149,210,.14);background:rgba(255,255,255,.035);color:rgba(229,235,248,.86)}
-      .activity-provider-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:16px;height:16px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.06);font-size:8px;font-weight:900;color:rgba(238,243,255,.82)}
-      .activity-provider-icon img{display:block;width:13px;height:13px;object-fit:contain}
-      .activity-meta-line{min-width:0;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
-      .activity-metric{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:22px;padding:0 8px;border-radius:999px;border:1px solid rgba(255,255,255,.075);background:rgba(255,255,255,.032);color:rgba(188,198,215,.76);font-size:10.5px;font-weight:800;line-height:1;text-transform:uppercase;white-space:nowrap}
-      .activity-metric.progress{color:rgba(218,227,255,.86);text-transform:none}
-      .activity-progress-bar{position:relative;width:24px;height:5px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08)}
-      .activity-progress-bar span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#6d76ff,#50a2ff)}
-      .activity-metric.time{text-transform:none;color:rgba(174,182,194,.70)}
-      .activity-badges{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;flex:0 0 auto}
-      .activity-badge{display:inline-flex;align-items:center;justify-content:center;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.10);background:rgba(8,10,18,.46);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:rgba(224,230,246,.74)}
-      .activity-badge.ok{background:rgba(25,195,125,.075);border-color:rgba(25,195,125,.22);color:rgba(205,255,230,.90);box-shadow:0 0 14px rgba(25,195,125,.10)}
-      .activity-badge.err{background:rgba(255,77,79,.12);border-color:rgba(255,77,79,.30);color:#ffd2d2}
-      .activity-empty{padding:11px 12px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.018));border:1px solid rgba(255,255,255,.06);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);font:inherit;font-size:12px;font-weight:400;line-height:1.5;color:var(--muted);opacity:.6}
-      .activity-modal{position:fixed;inset:0;z-index:1300;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(4,8,16,.54);backdrop-filter:blur(10px) saturate(116%);-webkit-backdrop-filter:blur(10px) saturate(116%)}
-      .activity-modal.hidden{display:none!important}
-      .activity-dialog{width:min(860px,calc(100vw - 28px));max-height:min(82vh,760px);display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:12px;padding:16px;border-radius:22px;background:linear-gradient(180deg,rgba(10,13,22,.96),rgba(6,9,18,.96));border:1px solid rgba(255,255,255,.09);box-shadow:0 28px 64px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.04)}
-      .activity-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-      .activity-head-title{font-size:16px;font-weight:900;color:#f4f7ff}
-      .activity-head-sub{margin-top:3px;font-size:12px;color:rgba(197,205,220,.72)}
-      .activity-close{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.04);color:#eef3ff;border-radius:999px;padding:7px 12px;cursor:pointer;font-weight:800}
-      .activity-filters{display:grid;grid-template-columns:1fr 150px 150px;gap:8px}
-      .activity-filters input,.activity-filters select{min-width:0;background:rgba(4,6,10,.94);border:1px solid rgba(255,255,255,.08);border-radius:12px;color:#eef3ff;padding:9px 10px}
-      .activity-list{display:grid;gap:8px;overflow:auto;min-height:160px;max-height:min(62vh,650px);padding-right:2px}
-      .activity-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
-      .activity-foot .activity-count{font-size:12px;color:rgba(197,205,220,.72)}
-      .activity-load{border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.05);color:#fff;border-radius:999px;padding:8px 14px;cursor:pointer;font-weight:800}
-      .activity-load[disabled]{opacity:.5;cursor:default}
-      #sync-history .history-meta.muted{font-size:12px;font-weight:400;color:var(--muted);opacity:.6}
-      @media(max-width:620px){.activity-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;padding:10px 12px}.activity-title{font-size:13px}.activity-flow-line{gap:6px}.activity-route{gap:5px}.activity-targets{gap:4px}.activity-endpoint{width:25px;height:22px}.activity-provider-icon{width:14px;height:14px}.activity-provider-icon img{width:11px;height:11px}.activity-metric{min-height:20px;padding:0 7px;font-size:10px}.activity-progress-bar{width:20px}.activity-badges{justify-content:flex-end;align-self:center}.activity-badge{padding:3px 7px;font-size:10px;letter-spacing:.02em}.activity-filters{grid-template-columns:1fr}.activity-dialog{max-height:86vh}}
-      @media(max-width:380px){.activity-item{grid-template-columns:minmax(0,1fr)}.activity-badges{justify-content:flex-start}}
-    `;
-    document.head.appendChild(el);
-  }
 
   function ensureModal() {
     if (state.modal) return state.modal;
@@ -398,7 +345,6 @@
   function init() {
     if (initialized) return;
     initialized = true;
-    injectCSS();
     bindViewAllButton();
     refreshRecentActivity();
     if (!refreshTimer) refreshTimer = setInterval(refreshRecentActivity, 60000);

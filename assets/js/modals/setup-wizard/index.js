@@ -11,7 +11,6 @@ const _cwV = (() => {
 const _cwVer = (u) => u + (u.includes("?") ? "&" : "?") + "v=" + encodeURIComponent(String(_cwV));
 
 const {
-  appAuthFormCss,
   escapeHtml,
   saveRequiredAppAuth,
   setModalDismissible,
@@ -27,7 +26,7 @@ function _norm(v) {
 }
 
 function _collapseByDefault() {
-  const ids = ["sec-auth", "sec-meta", "sec-scrobbler", "sc-sec-webhook", "sc-sec-watch"];
+  const ids = ["sec-auth", "sec-scrobbler", "sc-sec-webhook", "sc-sec-watch"];
   for (const id of ids) {
     try { document.getElementById(id)?.classList.remove("open"); } catch {}
   }
@@ -43,80 +42,7 @@ function _chrome(ver, logo, body, foot, chrome = {}) {
   const subtitle = escapeHtml(chrome.subtitle || "First run setup");
   const ariaLabel = escapeHtml(chrome.ariaLabel || "CrossWatch setup");
   return `
-    <style>
-      #setup-host{--w:900px;position:relative;overflow:hidden;min-width:min(var(--w),94vw);max-width:94vw;color:#eaf0ff;border-radius:18px;
-        border:1px solid rgba(255,255,255,.08);
-        background:
-          radial-gradient(900px circle at 18% 18%, rgba(150,70,255,.22), transparent 55%),
-          radial-gradient(900px circle at 92% 10%, rgba(60,140,255,.18), transparent 55%),
-          radial-gradient(800px circle at 55% 110%, rgba(60,255,215,.08), transparent 60%),
-          rgba(7,8,11,.92);
-        box-shadow:0 30px 90px rgba(0,0,0,.70), inset 0 1px 0 rgba(255,255,255,.04);
-        backdrop-filter:saturate(135%) blur(10px)
-      }
-      #setup-host:before{content:"";position:absolute;inset:-120px;pointer-events:none;
-        background:conic-gradient(from 180deg at 50% 50%, rgba(150,70,255,.0), rgba(150,70,255,.30), rgba(60,140,255,.24), rgba(60,255,215,.10), rgba(150,70,255,.0));
-        filter:blur(90px);opacity:.35;transform:translate3d(0,0,0);
-        animation:setupGlow 16s ease-in-out infinite alternate
-      }
-      @keyframes setupGlow{from{transform:translate(-16px,-10px) scale(1)}to{transform:translate(16px,12px) scale(1.03)}}
-      @media (prefers-reduced-motion: reduce){#setup-host:before{animation:none}}
 
-      #setup-host .head{position:relative;display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08);
-        background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01))
-      }
-      #setup-host .logoWrap{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;
-        background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
-        box-shadow:0 12px 30px rgba(0,0,0,.40), inset 0 1px 0 rgba(255,255,255,.04)
-      }
-      #setup-host .logo{width:30px;height:30px;opacity:.95;filter:drop-shadow(0 10px 16px rgba(0,0,0,.45))}
-      #setup-host .title{font-weight:950;letter-spacing:.2px;font-size:15px;line-height:1.1;text-transform:uppercase;opacity:.90}
-      #setup-host .sub{opacity:.72;font-size:12px;margin-top:2px}
-      #setup-host .v{margin-left:auto;opacity:.85;font-weight:900;font-size:12px;padding:6px 10px;border-radius:999px;
-        background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)
-      }
-      #setup-host .body{position:relative;padding:16px 16px 8px 16px;max-height:72vh;overflow:auto}
-      #setup-host .badge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;
-        background:rgba(0,0,0,.24);border:1px solid rgba(255,255,255,.08)}
-      #setup-host .badge .dot{width:8px;height:8px;border-radius:999px;background:rgba(150,70,255,.90);box-shadow:0 0 0 4px rgba(150,70,255,.18)}
-      #setup-host .headline{font-weight:950;font-size:20px;line-height:1.15;margin:10px 0 8px 0}
-      #setup-host .lede{opacity:.84;max-width:72ch}
-      #setup-host .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0 10px 0}
-      @media (max-width:780px){#setup-host .grid{grid-template-columns:1fr}}
-      #setup-host .card{display:flex;gap:10px;align-items:flex-start;padding:12px 12px;border-radius:14px;
-        background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);box-shadow:0 10px 30px rgba(0,0,0,.32)}
-      #setup-host .ico{width:34px;height:34px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;
-        background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)}
-      #setup-host .card b{font-weight:950}
-      #setup-host .muted{opacity:.78;font-size:12.5px;margin-top:2px}
-      #setup-host .tip{margin:10px 0 10px 0;font-size:12.5px;opacity:.84}
-      #setup-host code{opacity:.95}
-      #setup-host details.disc{margin-top:10px;border-radius:14px;border:1px solid rgba(255,255,255,.08);
-        background:rgba(255,255,255,.02);box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-      #setup-host details.disc>summary{cursor:pointer;list-style:none;padding:10px 12px;font-weight:950;display:flex;align-items:center;gap:8px}
-      #setup-host details.disc>summary::-webkit-details-marker{display:none}
-      #setup-host .discBody{padding:0 12px 12px 12px;opacity:.82;font-size:12.5px;line-height:1.38}
-      #setup-host .discBody p{margin:8px 0 0 0}
-      #setup-host .helpLink{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:14px 16px;border-radius:14px;text-decoration:none;color:#eef3ff;background:linear-gradient(135deg,rgba(150,70,255,.18),rgba(60,140,255,.14));border:1px solid rgba(150,70,255,.22);box-shadow:0 14px 34px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.04);transition:transform .16s ease, filter .16s ease, border-color .16s ease}
-      #setup-host .helpLink:hover{transform:translateY(-1px);filter:brightness(1.06);border-color:rgba(150,70,255,.32)}
-      #setup-host .helpCopy{display:grid;gap:4px}
-      #setup-host .helpEyebrow{font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;opacity:.72}
-      #setup-host .helpTitle{font-size:16px;font-weight:950;line-height:1.15}
-      #setup-host .helpSub{font-size:12.5px;line-height:1.4;opacity:.8}
-      #setup-host .helpIcon{width:42px;height:42px;border-radius:12px;display:grid;place-items:center;flex:0 0 auto;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.08)}
-      #setup-host .helpIcon .material-symbols-rounded{font-size:22px}
-      ${appAuthFormCss("#setup-host")}
-      #setup-host .foot{position:relative;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;
-        border-top:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.01))}
-      #setup-host .mini{opacity:.68;font-size:12px}
-      #setup-host .btns{display:flex;gap:10px;align-items:center}
-      #setup-host .btn{appearance:none;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 14px;font-weight:950;cursor:pointer;
-        background:rgba(255,255,255,.04);color:#eaf0ff}
-      #setup-host .btn:hover{filter:brightness(1.06)}
-      #setup-host .btn[disabled]{opacity:.62;cursor:progress}
-      #setup-host .btn.primary{border-color:rgba(150,70,255,.35);
-        background:linear-gradient(135deg,rgba(150,70,255,.92),rgba(60,140,255,.82));box-shadow:0 16px 50px rgba(0,0,0,.48)}
-    </style>
     <div id="setup-host" role="dialog" aria-label="${ariaLabel}">
       <div class="head">
         <div class="logoWrap" aria-hidden="true"><img class="logo" src="${logo}" alt="" /></div>

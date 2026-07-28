@@ -2,59 +2,15 @@
 /* Shared trailer modal used by the playing card variants */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
-  const STYLE_ID = "cw-trailer-styles";
   const MODAL_ID = "cw-trailer";
-
-  const css = `
-  #cw-trailer{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:10050;background:radial-gradient(120% 120% at 12% 0%,rgba(96,88,214,.22),transparent 40%),radial-gradient(120% 120% at 100% 100%,rgba(34,118,215,.18),transparent 44%),rgba(3,5,10,.78);backdrop-filter:blur(8px) saturate(120%);-webkit-backdrop-filter:blur(8px) saturate(120%)}
-  #cw-trailer.show{display:flex}
-  #cw-trailer .cw-trailer-box{position:relative;width:min(94vw,1120px);border-radius:24px;overflow:hidden;background:linear-gradient(180deg,rgba(10,12,20,.985),rgba(4,6,12,.99));box-shadow:0 32px 80px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.05)}
-  #cw-trailer .cw-trailer-shell{position:relative;display:grid;grid-template-rows:auto minmax(0,1fr);min-height:min(82vh,760px)}
-  #cw-trailer .cw-trailer-shell::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(90% 120% at 0% 0%,rgba(98,92,182,.16),transparent 42%),linear-gradient(180deg,rgba(255,255,255,.04),transparent 28%)}
-  #cw-trailer .cw-trailer-head{position:relative;z-index:1;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:16px 18px 14px;border-bottom:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.01))}
-  #cw-trailer .cw-trailer-meta{min-width:0;display:grid;gap:4px}
-  #cw-trailer .cw-trailer-kicker{font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:rgba(206,216,236,.66)}
-  #cw-trailer .cw-trailer-title{font-size:20px;font-weight:800;line-height:1.15;color:#f7f9ff;letter-spacing:-.02em}
-  #cw-trailer .cw-trailer-close{display:inline-flex;align-items:center;justify-content:center;min-width:42px;min-height:42px;padding:0 12px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.03));color:#f7f9ff;cursor:pointer;line-height:1;transition:background .16s ease,border-color .16s ease,transform .16s ease}
-  #cw-trailer .cw-trailer-close:hover{transform:translateY(-1px);border-color:rgba(255,255,255,.20);background:linear-gradient(180deg,rgba(255,255,255,.12),rgba(255,255,255,.05))}
-  #cw-trailer .cw-trailer-close .material-symbol,#cw-trailer .cw-trailer-close .material-symbols-rounded{font-size:20px;line-height:1;color:currentColor}
-  #cw-trailer .cw-trailer-stage{position:relative;z-index:1;margin:14px;border-radius:20px;overflow:hidden;min-height:min(68vh,640px);background:linear-gradient(180deg,rgba(7,9,15,.98),rgba(2,3,7,.99));border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
-  #cw-trailer .cw-trailer-stage::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(80% 80% at 50% 0%,rgba(98,92,182,.12),transparent 38%)}
-  #cw-trailer .cw-trailer-stage iframe{width:100%;height:100%;min-height:min(68vh,640px);display:block;border:0;position:relative;z-index:1}
-  html[data-cw-theme="flat-light"] #cw-trailer{background:rgba(15,23,42,.52)}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-box{background:#f8fafc;box-shadow:0 24px 60px rgba(15,23,42,.22)}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-shell::before{background:none}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-head{border-bottom-color:rgba(16,24,40,.14);background:#ffffff}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-kicker{color:#475467}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-title{color:#111827}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-close{border-color:rgba(16,24,40,.16);background:#ffffff;color:#172033}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-close:hover{background:#eef2f7}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-stage{border-color:rgba(16,24,40,.14);background:#0b0f17}
-  html[data-cw-theme="flat-light"] #cw-trailer .cw-trailer-stage::before{background:none}
-  @media (max-width:760px){
-    #cw-trailer .cw-trailer-head{padding:14px 14px 12px}
-    #cw-trailer .cw-trailer-title{font-size:17px}
-    #cw-trailer .cw-trailer-stage{margin:10px;min-height:min(60vh,420px)}
-    #cw-trailer .cw-trailer-stage iframe{min-height:min(60vh,420px)}
-  }
-  `;
 
   let modal = null;
   let titleEl = null;
   let stageEl = null;
   let closeBtn = null;
 
-  function ensureStyles() {
-    if (document.getElementById(STYLE_ID)) return;
-    const style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent = css;
-    document.head.appendChild(style);
-  }
-
   function ensureModal() {
     if (modal?.isConnected) return modal;
-    ensureStyles();
     modal = document.createElement("div");
     modal.id = MODAL_ID;
     modal.setAttribute("role", "dialog");
