@@ -23,321 +23,6 @@
   const playlistMappingIds = (v) => Array.isArray(v?.mappings) ? v.mappings.map((x) => String(x || "").trim()).filter(Boolean) : [];
   const hasPlaylistMappings = (v) => truthy(v) && playlistMappingIds(v).length > 0;
 
-  function ensureStyles() {
-    const css = `
-#pairs_list{scrollbar-gutter:stable;overscroll-behavior:contain}
-#pairs_list .pairs-board{display:grid!important;grid-template-columns:1fr!important;gap:14px!important;align-items:start!important;padding:8px 2px 14px!important;overflow:visible!important}
-#pairs_list .pair-card{width:100%!important;margin:0!important;display:block!important}
-#pairs_list .pair-card{--accent:#7c5cff;--accent-rgb:124,92,255;--src-solid:#7c5cff;--src-rgb:124,92,255;--dst-solid:#7c5cff;--dst-rgb:124,92,255}
-#pairs_list .pair-card{
-  --chip-w:184px;--btn:34px;--btn-gap:10px;
-  position:relative;overflow:hidden;isolation:isolate;
-  border-radius:18px;padding:12px 14px;
-  background:
-    radial-gradient(120% 140% at 0% 50%, rgba(var(--src-rgb),.14) 0%, rgba(var(--src-rgb),0) 48%),
-    radial-gradient(110% 140% at 100% 50%, rgba(var(--dst-rgb),.12) 0%, rgba(var(--dst-rgb),0) 44%),
-    linear-gradient(180deg, rgba(10,12,20,.98), rgba(5,7,14,.96));
-  border:1px solid rgba(255,255,255,.08);
-  box-shadow:0 14px 34px rgba(0,0,0,.34);
-  backdrop-filter:blur(16px);
-  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease;
-  cursor:default!important; user-select:none
-}
-#pairs_list .pair-card::before{
-  content:"";position:absolute;inset:1px;border-radius:17px;pointer-events:none;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,0) 30%),
-    radial-gradient(70% 130% at 100% 50%, rgba(255,255,255,.05) 0%, rgba(255,255,255,0) 60%);
-  opacity:.95;z-index:-1
-}
-#pairs_list .pair-card::after{content:none}
-#pairs_list .pair-card:hover{
-  transform:translateY(-2px);
-  border-color:rgba(255,255,255,.12);
-  box-shadow:0 18px 40px rgba(0,0,0,.44)
-}
-#pairs_list .pair-row{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-#pairs_list .pair-left{display:flex;align-items:center;gap:10px;min-width:0;flex:1 1 580px}
-#pairs_list .ord-badge{
-  min-width:34px;height:34px;border-radius:999px;background:#7c5cff;color:#fff;font-size:15px;font-weight:900;
-  display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.18);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);letter-spacing:.01em
-}
-#pairs_list .pair-pill{
-  position:relative;display:inline-flex;align-items:center;justify-content:flex-start;gap:10px;
-  width:var(--chip-w);min-height:40px;padding:8px 18px;border-radius:999px;
-  font-weight:850;font-size:.93rem;letter-spacing:.02em;color:#f5f7ff;text-align:center;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:1px solid rgba(255,255,255,.12);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.10)
-}
-#pairs_list .pair-pill.src,#pairs_list .pair-pill.dst{color:#fff}
-#pairs_list .pair-pill.src{
-  background:
-    radial-gradient(120% 170% at 0% 50%, rgba(var(--src-rgb),.34) 0%, rgba(var(--src-rgb),.14) 42%, rgba(var(--src-rgb),0) 72%),
-    linear-gradient(180deg, rgba(8,10,18,.96), rgba(5,7,14,.94));
-  border-color:rgba(var(--src-rgb),.54)
-}
-#pairs_list .pair-pill.dst{
-  background:
-    radial-gradient(120% 170% at 0% 50%, rgba(var(--dst-rgb),.34) 0%, rgba(var(--dst-rgb),.14) 42%, rgba(var(--dst-rgb),0) 72%),
-    linear-gradient(180deg, rgba(8,10,18,.96), rgba(5,7,14,.94));
-  border-color:rgba(var(--dst-rgb),.54)
-}
-#pairs_list .pair-pill.mode{
-  width:auto;min-width:126px;justify-content:center;color:rgba(255,255,255,.9);background:rgba(255,255,255,.05)
-}
-#pairs_list .pair-pill::before{
-  content:"";position:absolute;inset:1px;border-radius:999px;pointer-events:none;
-  background:linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,0) 36%);
-  opacity:.8
-}
-#pairs_list .pair-pill .prov-watermark{
-  position:absolute;inset:0;pointer-events:none;opacity:.28
-}
-#pairs_list .pair-pill .prov-watermark::after{
-  content:"";position:absolute;right:0;top:50%;width:72px;height:72px;transform:translateY(-50%);
-  background-image:var(--wm);background-repeat:no-repeat;background-position:100% 50%;background-size:contain;
-  filter:grayscale(.08) brightness(1.05)
-}
-#pairs_list .pair-pill-text{position:relative;z-index:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-#pairs_list .arrow{
-  color:rgba(235,240,255,.86);font-size:18px;line-height:1;width:26px;height:26px;border-radius:999px;text-align:center;
-  display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10)
-}
-#pairs_list .pair-actions{
-  display:flex;align-items:center;gap:var(--btn-gap);justify-content:flex-end;margin-left:auto;
-  padding:6px;border-radius:16px;background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.025));
-  border:1px solid rgba(255,255,255,.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)
-}
-#pairs_list .feat-beads{
-  display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
-  background:rgba(6,10,18,.58);border:1px solid rgba(255,255,255,.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)
-}
-#pairs_list .feat-beads .bead{
-  width:13px;height:13px;border-radius:50%;border:2px solid rgba(255,255,255,.24);
-  background:transparent;display:inline-block;transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease
-}
-#pairs_list .feat-beads .bead:hover{transform:translateY(-1px) scale(1.05)}
-#pairs_list .bead.on{border-color:transparent!important}
-#pairs_list .bead.wl.on{background:#00ffa3!important;box-shadow:0 0 8px #00ffa3,0 0 18px #00ffa3aa}
-#pairs_list .bead.rt.on{background:#ffc400!important;box-shadow:0 0 8px #ffc400,0 0 18px #ffc40099}
-#pairs_list .bead.hi.on{background:#2de2ff!important;box-shadow:0 0 8px #2de2ff,0 0 18px #2de2ffaa}
-#pairs_list .bead.pr.on{background:#a78bfa!important;box-shadow:0 0 8px #a78bfa,0 0 18px #a78bfaaa}
-#pairs_list .bead.pl.on{background:#ff00e5!important;box-shadow:0 0 8px #ff00e5,0 0 18px #ff00e599}
-#pairs_list .icon-btn{
-  width:var(--btn);height:var(--btn);border-radius:12px;background:rgba(255,255,255,.04);
-  border:1px solid rgba(255,255,255,.12);color:#e9edf7;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
-  transition:transform .12s, box-shadow .12s, background .12s, border-color .12s, color .12s
-}
-#pairs_list .icon-btn:hover{
-  background:rgba(255,255,255,.08);transform:translateY(-1px);border-color:rgba(var(--accent-rgb),.28);
-  box-shadow:0 10px 24px rgba(0,0,0,.28), 0 0 18px rgba(var(--accent-rgb),.10)
-}
-#pairs_list .icon-btn .ico{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-#pairs_list .icon-btn.danger:hover{color:#ff6b72;border-color:rgba(255,107,114,.30);box-shadow:0 10px 24px rgba(0,0,0,.28),0 0 18px rgba(255,107,114,.16)}
-#pairs_list .sr-only{
-  position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;border:0!important;white-space:nowrap!important
-}
-#pairs_list [draggable]{user-drag:none;-webkit-user-drag:none}
-#pairs_list .pair-card.dragging,#pairs_list .drag-placeholder{display:none!important}
-#pairs_list .pair-card.removing{opacity:0;transform:translateY(8px) scale(.985);transition:opacity .18s ease,transform .18s ease}
-#pairs_list .cx-tip{
-  position:fixed;z-index:99999;pointer-events:none;background:rgba(10,12,18,.96);color:#fff;border:1px solid rgba(255,255,255,.12);
-  padding:7px 9px;border-radius:10px;font-size:12px;line-height:1.2;white-space:nowrap;
-  box-shadow:0 12px 26px rgba(0,0,0,.34);opacity:0;transform:translateY(6px);transition:opacity .10s ease, transform .10s ease
-}
-#pairs_list .cx-tip.on{opacity:1;transform:none}
-#pairs_list .pair-card,
-#pairs_list .ord-badge,
-#pairs_list .pair-pill,
-#pairs_list .pair-actions,
-#pairs_list .feat-beads,
-#pairs_list .icon-btn,
-#pairs_list .cx-tip{
-  background:#20242d!important;
-  border-color:rgba(255,255,255,.14)!important;
-  box-shadow:none!important;
-  text-shadow:none!important;
-  filter:none!important;
-}
-#pairs_list .pair-card::before,
-#pairs_list .pair-pill::before{
-  content:none!important;
-  display:none!important;
-  background:none!important;
-  box-shadow:none!important;
-}
-#pairs_list .prov-watermark::after{
-  filter:none!important;
-  mix-blend-mode:normal!important;
-  opacity:.12!important;
-}
-#pairs_list .pair-card:hover,
-#pairs_list .icon-btn:hover{
-  background:#2b313d!important;
-  border-color:rgba(255,255,255,.19)!important;
-  box-shadow:none!important;
-  filter:none!important;
-  transform:none!important;
-}
-#pairs_list .bead,
-#pairs_list .bead.on{
-  box-shadow:none!important;
-  filter:none!important;
-  text-shadow:none!important;
-}
-#pairs_list .pair-card.pair-disabled{
-  background:#1a1e26!important;
-  border-color:rgba(148,163,184,.12)!important;
-}
-#pairs_list .pair-card.pair-disabled .pair-left,
-#pairs_list .pair-card.pair-disabled .feat-beads{
-  opacity:.52!important;
-  filter:grayscale(.45)!important;
-}
-#pairs_list .pair-card.pair-disabled .icon-btn:not(.power):not(.danger){
-  opacity:.62!important;
-}
-#pairs_list .icon-btn.power:not(.off){
-  color:#dfffee!important;
-  background:#1f4f3a!important;
-  border-color:rgba(87,181,138,.58)!important;
-}
-#pairs_list .icon-btn.power:not(.off):hover{
-  background:#256244!important;
-  border-color:rgba(103,206,156,.72)!important;
-}
-#pairs_list .icon-btn.power.off{
-  color:#ffe8ec!important;
-  background:#5a2630!important;
-  border-color:rgba(216,102,114,.58)!important;
-}
-#pairs_list .icon-btn.power.off:hover{
-  background:#6a2b37!important;
-  border-color:rgba(232,126,139,.72)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-card,
-html[data-cw-theme="flat-light"] #pairs_list .ord-badge,
-html[data-cw-theme="flat-light"] #pairs_list .pair-pill,
-html[data-cw-theme="flat-light"] #pairs_list .pair-actions,
-html[data-cw-theme="flat-light"] #pairs_list .feat-beads,
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn,
-html[data-cw-theme="flat-light"] #pairs_list .cx-tip{
-  background:#ffffff!important;
-  border-color:rgba(21,31,48,.18)!important;
-  color:#172033!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-card{
-  background:
-    radial-gradient(110% 160% at 0% 50%,rgba(var(--src-rgb),.19),transparent 52%),
-    radial-gradient(110% 160% at 100% 50%,rgba(var(--dst-rgb),.18),transparent 56%),
-    linear-gradient(180deg,#ffffff,#e9eef6)!important;
-  border-color:rgba(16,24,40,.22)!important;
-  box-shadow:0 10px 26px rgba(15,23,42,.08)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .ord-badge{
-  background:#ffffff!important;
-  border-color:rgba(16,24,40,.20)!important;
-  color:#111827!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-pill.src{
-  background:
-    radial-gradient(120% 170% at 0% 50%,rgba(var(--src-rgb),.20),rgba(var(--src-rgb),.08) 45%,transparent 78%),
-    linear-gradient(180deg,#ffffff,#eef3f8)!important;
-  border-color:rgba(var(--src-rgb),.36)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-pill.dst{
-  background:
-    radial-gradient(120% 170% at 100% 50%,rgba(var(--dst-rgb),.20),rgba(var(--dst-rgb),.08) 45%,transparent 78%),
-    linear-gradient(180deg,#ffffff,#eef3f8)!important;
-  border-color:rgba(var(--dst-rgb),.36)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-pill.mode{
-  background:linear-gradient(180deg,#ffffff,#eef3f8)!important;
-  border-color:rgba(16,24,40,.20)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-pill-text{
-  color:#111827!important;
-  text-shadow:none!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .prov-watermark::after{
-  opacity:.24!important;
-  filter:saturate(1.35) contrast(1.16) brightness(.88)!important;
-  mix-blend-mode:multiply!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-actions,
-html[data-cw-theme="flat-light"] #pairs_list .feat-beads{
-  background:rgba(255,255,255,.76)!important;
-  border-color:rgba(16,24,40,.18)!important;
-  box-shadow:none!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn{
-  background:#ffffff!important;
-  border-color:rgba(16,24,40,.18)!important;
-  color:#172033!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .arrow{
-  background:#ffffff!important;
-  border-color:rgba(70,86,166,.22)!important;
-  color:#4656a6!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-card:hover{
-  background:
-    radial-gradient(110% 160% at 0% 50%,rgba(var(--src-rgb),.24),transparent 52%),
-    radial-gradient(110% 160% at 100% 50%,rgba(var(--dst-rgb),.22),transparent 56%),
-    linear-gradient(180deg,#ffffff,#dfe7f1)!important;
-  border-color:rgba(21,31,48,.28)!important;
-  box-shadow:0 14px 32px rgba(15,23,42,.12)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn:hover{
-  background:#edf3fa!important;
-  border-color:rgba(21,31,48,.26)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .pair-card.pair-disabled{
-  background:#e6ecf4!important;
-  border-color:rgba(16,24,40,.14)!important;
-  filter:saturate(.82)!important;
-  opacity:.74!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power:not(.off){
-  color:#ffffff!important;
-  background:#177245!important;
-  border-color:rgba(23,114,69,.42)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power:not(.off):hover{
-  background:#125c38!important;
-  border-color:rgba(23,114,69,.56)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off{
-  color:#ffffff!important;
-  background:#a93f4d!important;
-  border-color:rgba(169,63,77,.42)!important;
-}
-html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
-  background:#842936!important;
-  border-color:rgba(169,63,77,.56)!important;
-}
-@media (max-width:1280px){
-  #pairs_list .pair-left{flex-basis:100%}
-  #pairs_list .pair-actions{width:100%;justify-content:flex-end}
-}
-@media (max-width:920px){
-  #pairs_list .pair-card{--chip-w:160px}
-  #pairs_list .pair-left{gap:8px}
-}
-@media (max-width:720px){
-  #pairs_list .pair-card{padding:12px}
-  #pairs_list .pair-left{flex-basis:100%}
-  #pairs_list .pair-actions{width:100%;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 10px}
-  #pairs_list .feat-beads{order:1}
-  #pairs_list .icon-btn{order:2}
-  #pairs_list .pair-pill.src,#pairs_list .pair-pill.dst{width:calc(50% - 22px);min-width:136px}
-  #pairs_list .pair-pill.mode{min-width:110px}
-}`;
-    let s = document.getElementById("cx-pairs-style");
-    if (!s) { s = document.createElement("style"); s.id = "cx-pairs-style"; document.head.appendChild(s); }
-    s.textContent = css;
-  }
 
   function scheduleViewportLimit(delay = 0) {
     clearTimeout(_limitTimer);
@@ -501,7 +186,6 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
   window.cxOpenPlaylistMappingsForPair = openPlaylistMappingsForPair;
 
   function renderPairsOverlay() {
-    ensureStyles();
     const containers = ensureHost(); if (!containers) return;
     const { host, board } = containers;
 
@@ -553,7 +237,7 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
                 ${bead("pl", "Playlists", f.playlists)}
               </div>
 
-              ${showPlaylistMappingButton && hasPlaylistMappings(f.playlists) ? `<button class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">
+              ${showPlaylistMappingButton && hasPlaylistMappings(f.playlists) ? `<button type="button" class="icon-btn" data-tip="Manage playlist mappings" onclick="window.cxOpenPlaylistMappingsForPair && window.cxOpenPlaylistMappingsForPair(this.closest('.pair-card')?.dataset?.id, this)" aria-label="Manage playlist mappings">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h11"></path><path d="M4 12h11"></path><path d="M4 18h7"></path><path d="M17 15l4 3-4 3"></path></svg>
               </button>` : ""}
 
@@ -563,16 +247,16 @@ html[data-cw-theme="flat-light"] #pairs_list .icon-btn.power.off:hover{
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg>
               </label>
 
-              <button class="icon-btn" data-tip="Move left" onclick="window.movePair && window.movePair('${pr.id}','prev')" aria-label="Move left">
+              <button type="button" class="icon-btn" data-tip="Move left" onclick="window.movePair && window.movePair('${pr.id}','prev')" aria-label="Move left">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
               </button>
-              <button class="icon-btn" data-tip="Move right" onclick="window.movePair && window.movePair('${pr.id}','next')" aria-label="Move right">
+              <button type="button" class="icon-btn" data-tip="Move right" onclick="window.movePair && window.movePair('${pr.id}','next')" aria-label="Move right">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
               </button>
-              <button class="icon-btn" data-tip="Edit" onclick="window.cxPairsEditClick(this)" aria-label="Edit">
+              <button type="button" class="icon-btn" data-tip="Edit" onclick="window.cxPairsEditClick(this)" aria-label="Edit">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg>
               </button>
-              <button class="icon-btn danger" data-tip="Delete" onclick="window.deletePairCard('${pr.id}')" aria-label="Delete">
+              <button type="button" class="icon-btn danger" data-tip="Delete" onclick="window.deletePairCard('${pr.id}')" aria-label="Delete">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg>
               </button>
             </div>

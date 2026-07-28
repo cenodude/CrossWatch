@@ -7,7 +7,7 @@
   const key = cfg?.tmdb?.api_key;
   const hasTmdb = typeof key === "string" ? key.trim().length > 0 : !!key;
   if (cfg && (cfg.ui?.show_playingcard === false || !hasTmdb)) {
-    document.head.insertAdjacentHTML("beforeend", `<style>#playing-card{display:none!important}</style>`);
+    document.documentElement.classList.add("cw-playing-card-disabled");
   }
 })();
 
@@ -803,9 +803,6 @@
 })();
 
 (() => {
-  document.getElementById("preview-guard-css")?.remove();
-  document.head.appendChild(Object.assign(document.createElement("style"), { id: "preview-guard-css", textContent: `html:not([data-tab="main"]) #placeholder-card{display:none!important;}` }));
-
   const DOC = document.documentElement;
   DOC.dataset.tab ||= "main";
   const isMain = () => DOC.dataset.tab === "main";
@@ -835,7 +832,6 @@
 
 (() => {
   const ROOT_ID = "cw-quick-add";
-  const STYLE_ID = "cw-quick-add-style";
   const SESSION_KEY = "cw.quick_add.desktop_peek.v1";
   const DESKTOP_POS_KEY = "cw.quick_add.desktop_top.v1";
   const MOBILE_POS_KEY = "cw.quick_add.mobile_bottom.v1";
@@ -883,37 +879,8 @@
     return false;
   };
 
-  const ensureStyle = () => {
-    if (document.getElementById(STYLE_ID)) return;
-    const style = document.createElement("style");
-    style.id = STYLE_ID;
-    style.textContent = `
-#${ROOT_ID}{position:fixed;z-index:70;pointer-events:none}
-#${ROOT_ID}.hidden{display:none!important}
-#${ROOT_ID} .cw-qa-shell{pointer-events:auto}
-#${ROOT_ID} .cw-qa-desktop{position:fixed;right:0;top:var(--cw-qa-desktop-top,66%);transform:translateY(-50%);display:flex;align-items:center;justify-content:flex-end;filter:drop-shadow(0 14px 26px rgba(0,0,0,.28))}
-#${ROOT_ID} .cw-qa-tab{width:28px;height:60px;padding:0 14px;border-radius:18px 0 0 18px;border:1px solid rgba(255,255,255,.08);border-right:0;background:linear-gradient(180deg,rgba(20,24,34,.98),rgba(7,9,14,.99));color:#eef2ff;display:flex;align-items:center;justify-content:flex-end;gap:12px;cursor:pointer;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 20px rgba(0,0,0,.16);transition:width .2s ease,background .18s ease,box-shadow .18s ease,border-color .18s ease}
-#${ROOT_ID} .cw-qa-tab:hover,#${ROOT_ID} .cw-qa-tab:focus-visible{background:linear-gradient(180deg,rgba(24,28,40,.985),rgba(10,12,18,.995));border-color:rgba(255,255,255,.12);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 10px 24px rgba(0,0,0,.2);outline:none}
-#${ROOT_ID} .cw-qa-tab .cw-qa-grip{font-size:17px;opacity:.38;margin-left:2px;color:rgba(214,221,240,.72)}
-#${ROOT_ID} .cw-qa-tab-text{font-size:14px;font-weight:850;letter-spacing:.015em;white-space:nowrap;color:rgba(241,244,252,.94);opacity:0;transform:translateX(-6px);transition:opacity .16s ease,transform .18s ease}
-#${ROOT_ID}.is-open .cw-qa-tab,#${ROOT_ID}.is-peek .cw-qa-tab{width:156px}
-#${ROOT_ID}.is-open .cw-qa-tab-text,#${ROOT_ID}.is-peek .cw-qa-tab-text{opacity:1;transform:translateX(0)}
-#${ROOT_ID} .cw-qa-fab{position:fixed;right:18px;bottom:var(--cw-qa-mobile-bottom,22px);min-width:0;height:50px;padding:0 16px;border-radius:999px;border:1px solid rgba(255,255,255,.08);background:linear-gradient(180deg,rgba(18,22,30,.98),rgba(8,10,16,.995));color:#f3f6ff;display:inline-flex;align-items:center;gap:9px;font-size:14px;font-weight:850;box-shadow:0 14px 28px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.07);cursor:pointer;pointer-events:auto}
-#${ROOT_ID} .cw-qa-fab:hover,#${ROOT_ID} .cw-qa-fab:focus-visible{background:linear-gradient(180deg,rgba(22,26,36,.99),rgba(9,11,17,.998));border-color:rgba(255,255,255,.12);outline:none}
-#${ROOT_ID} .cw-qa-fab .material-symbols-rounded{font-size:20px;line-height:1;color:rgba(226,232,246,.9)}
-#${ROOT_ID}:not(.is-desktop) .cw-qa-desktop{display:none}
-#${ROOT_ID}:not(.is-mobile) .cw-qa-fab{display:none}
-#${ROOT_ID}.is-dragging .cw-qa-tab,#${ROOT_ID}.is-dragging .cw-qa-fab{cursor:grabbing;transition:none}
-@media (prefers-reduced-motion:reduce){
-  #${ROOT_ID} .cw-qa-tab,#${ROOT_ID} .cw-qa-tab-text{transition:none}
-}
-    `;
-    document.head.appendChild(style);
-  };
-
   const ensureRoot = () => {
     if (root && root.isConnected) return root;
-    ensureStyle();
     root = document.createElement("div");
     root.id = ROOT_ID;
     root.className = "hidden";
