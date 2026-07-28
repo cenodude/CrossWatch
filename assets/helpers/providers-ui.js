@@ -262,7 +262,7 @@
           <button type="button" class="cw-auth-icon-btn material-symbols-rounded" data-cw-auth-close aria-label="Close">close</button>
         </div>
         <div class="cw-auth-provider-picker" id="cw-auth-provider-picker"></div>
-        <div class="cw-auth-provider-form hidden" id="cw-auth-provider-form"></div>
+        <form class="cw-auth-provider-form hidden" id="cw-auth-provider-form" autocomplete="off" onsubmit="return false"></form>
       </div>`;
     slot.appendChild(overlay);
     return overlay;
@@ -363,7 +363,7 @@
       ...groupData,
       { ...META_GROUP, cards: metadataCards, okCount: metadataCards.filter((card) => card.status.ok).length, total: META_GROUP.keys.length, copy: sectionCopy[META_GROUP.id] },
     ];
-    const summaryCards = sections.map((section) => `<div class="cw-auth-summary-card" data-cw-auth-summary="${section.id}">
+    const summaryCards = sections.map((section) => `<div class="cw-auth-summary-card ${section.okCount ? "" : "is-empty"}" data-cw-auth-summary="${section.id}">
       <span class="cw-auth-summary-icon material-symbols-rounded" aria-hidden="true">${summaryIcon[section.id] || "hub"}</span>
       <span><strong>${section.title}</strong><small>${section.okCount}/${section.total}</small></span>
     </div>`).join("");
@@ -621,6 +621,10 @@
     return !!info && !["TMDB_METADATA", "ANIME_MAPPING"].includes(info.key);
   }
 
+  function connectionModalAllowsCelebration(info) {
+    return connectionModalSupportsProfiles(info);
+  }
+
   function connectionModalConfigured(info, cfg = getCachedConfig()) {
     if (!info) return false;
     if (info.key === "TMDB_METADATA" || info.key === "ANIME_MAPPING") return metadataConfigured(info.key, cfg);
@@ -634,6 +638,18 @@
       const text = String(node?.textContent || "").trim().toLowerCase();
       return /\bconnected\b/.test(text) && !/\bnot\s+connected\b/.test(text) && !node.classList?.contains("hidden") && node.getAttribute?.("aria-hidden") !== "true";
     }) || null;
+  }
+
+  function connectionModalCelebrationTarget(panel) {
+    if (!panel) return null;
+    const statuses = Array.from(panel.querySelectorAll("#plex_msg, #jfy_msg, #emby_msg, .cw-connection-status-pill"));
+    const status = statuses.find((node) => {
+      const text = String(node?.textContent || "").trim().toLowerCase();
+      return /\bconnected\b/.test(text) && !/\bnot\s+connected\b/.test(text) && !node.classList?.contains("hidden") && node.getAttribute?.("aria-hidden") !== "true" && node.getBoundingClientRect?.().width > 0;
+    });
+    if (status) return status;
+    const actions = Array.from(panel.querySelectorAll(".cw-connection-primary-action.cw-auth-connect-locked, .cw-connection-primary-action[aria-disabled='true'], .cw-connection-primary-action:disabled"));
+    return actions.find((node) => !node.classList?.contains("hidden") && node.getAttribute?.("aria-hidden") !== "true" && node.getBoundingClientRect?.().width > 0) || connectionModalStatusTarget(panel);
   }
 
   function connectionStatusText(node) {
@@ -739,7 +755,7 @@
   }
 
   function queueConnectionSuccess(panel, info) {
-    if (!panel || !info) return;
+    if (!panel || !connectionModalAllowsCelebration(info)) return;
     panel.__cwConnectionSuccessPending = {
       key: info.key,
       queuedAt: Date.now(),
@@ -761,13 +777,13 @@
   }
 
   function playConnectionSuccess(panel, info, opts = {}) {
-    if (!panel || panel.__cwConnectionSuccessTimer) return;
+    if (!panel || !connectionModalAllowsCelebration(info) || panel.__cwConnectionSuccessTimer) return;
     if (opts.defer !== false && !connectionWindowReadyForCelebration()) {
       queueConnectionSuccess(panel, info);
       return;
     }
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const target = connectionModalStatusTarget(panel);
+    const target = connectionModalCelebrationTarget(panel);
     panel.classList.remove("cw-connection-success-pulse");
     void panel.offsetWidth;
     panel.classList.add("cw-connection-success-pulse");
@@ -800,7 +816,7 @@
       bit.style.setProperty("--h", `${height}px`);
       bit.style.setProperty("--r", `${Math.floor(Math.random() * 180)}deg`);
       bit.style.setProperty("--spin", `${180 + Math.floor(Math.random() * 360)}deg`);
-      bit.style.setProperty("--d", `${Math.random() * 120}ms`);
+      bit.style.setProperty("--d", `${Math.random() * 55}ms`);
       bit.style.setProperty("--c", colors[i % colors.length]);
       burst.appendChild(bit);
     }
@@ -812,7 +828,7 @@
       burst.replaceChildren();
       panel.classList.remove("cw-connection-success-pulse");
       panel.__cwConnectionSuccessTimer = 0;
-    }, 1900);
+    }, 1100);
   }
 
   function showConnectionDisconnected(panel) {
@@ -851,10 +867,8 @@
     if (!panel || !info) return;
     const profile = connectionModalProfileId(panel);
     const switched = panel.__cwConnectionProfileSeen !== profile;
-    const connected = switched
-      ? connectionModalProfileConfigured(panel, info, cfg)
-      : connectionModalProfileConnected(panel, info, cfg);
-    if (!switched && connected && panel.__cwConnectionWasConnected === false) playConnectionSuccess(panel, info);
+    const connected = connectionModalProfileConnected(panel, info, cfg);
+    if (connectionModalAllowsCelebration(info) && !switched && connected && panel.__cwConnectionWasConnected === false) playConnectionSuccess(panel, info);
     panel.__cwConnectionProfileSeen = profile;
     panel.__cwConnectionWasConnected = connected;
     updateConnectionSaveEnabled(panel, info, cfg);
@@ -1099,6 +1113,16 @@
     if (!scroller) return;
     const footerHeight = Math.ceil(footer?.offsetHeight || 0);
     const navHeight = connectionModalNavHeight(nav);
+    if (info?.key === "ANIME_MAPPING") {
+      const formHeight = Math.floor(panel.closest(".cw-auth-provider-form")?.clientHeight || 0);
+      const panelHeight = Math.max(360, Math.min(maxHeight, formHeight || maxHeight));
+      const next = `${panelHeight}px`;
+      const nextContent = `${Math.max(220, panelHeight - footerHeight)}px`;
+      const readStyle = (name) => typeof panel.style?.getPropertyValue === "function" ? panel.style.getPropertyValue(name) : panel.style?.[name];
+      if (readStyle("--cw-connection-panel-height") !== next) setConnectionStyle(panel, "--cw-connection-panel-height", next);
+      if (readStyle("--cw-connection-content-height") !== nextContent) setConnectionStyle(panel, "--cw-connection-content-height", nextContent);
+      return;
+    }
     const contentHeight = connectionModalContentHeight(scroller);
     const FIT_ALLOWANCE = 8;
     const wanted = Math.max(navHeight, contentHeight) + footerHeight + FIT_ALLOWANCE;
@@ -1371,7 +1395,7 @@
     panel.__cwConnectionProfileSeen = connectionModalProfileId(panel);
     panel.__cwConnectionWasConnected = connectionModalProfileConnected(panel, info);
     updateConnectionSaveEnabled(panel, info);
-    ensureConnectionSuccessBurst(panel);
+    if (connectionModalAllowsCelebration(info)) ensureConnectionSuccessBurst(panel);
     scheduleConnectionModalSize(panel, info);
     resetConnectionModalScroll(panel);
     requestAnimationFrame(() => {
@@ -1650,8 +1674,6 @@
           try { window.cwMetaProviderEnsure?.(); } catch {}
           try { window.updateTmdbHint?.(); } catch {}
           try { window.cwMetaProviderUpdateChips?.(); } catch {}
-          document.getElementById("sec-meta")?.classList.add("cw-meta-integrated-source");
-          document.querySelector('[data-target="sec-meta"]')?.classList.add("cw-meta-integrated-source");
           const authSlot = document.getElementById("auth-providers");
           if (authSlot) refreshAuthPresentation(authSlot, false).catch(() => {});
           return;
@@ -1671,8 +1693,6 @@
         try { window.cwMetaProviderEnsure?.(); } catch {}
         try { window.updateTmdbHint?.(); } catch {}
         try { window.cwMetaProviderUpdateChips?.(); } catch {}
-        document.getElementById("sec-meta")?.classList.add("cw-meta-integrated-source");
-        document.querySelector('[data-target="sec-meta"]')?.classList.add("cw-meta-integrated-source");
         const authSlot = document.getElementById("auth-providers");
         if (authSlot) refreshAuthPresentation(authSlot, false).catch(() => {});
       } catch (e) {
