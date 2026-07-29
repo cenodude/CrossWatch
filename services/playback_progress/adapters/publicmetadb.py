@@ -200,6 +200,7 @@ def _progress_payload_from_record(record: Mapping[str, Any], progress_percent: f
 class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
     provider = "publicmetadb"
     provider_label = "PublicMetaDB"
+    ops = PUBLICMETADB_OPS
 
     def capabilities(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackCapabilities:
         configured = False

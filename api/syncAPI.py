@@ -1645,9 +1645,35 @@ def api_sync_providers() -> JSONResponse:
             for k in FEATURE_KEYS
         }
 
+    def _norm_progress_caps(caps: Any) -> dict:
+        if not isinstance(caps, Mapping):
+            return {}
+
+        out: dict[str, Any] = {}
+        for key in ("server_completion_percent", "requires_duration"):
+            if key in caps:
+                out[key] = caps.get(key)
+
+        policy = caps.get("completion_policy")
+        if isinstance(policy, Mapping):
+            write = policy.get("progress_write")
+            if isinstance(write, Mapping):
+                clean_write: dict[str, Any] = {}
+                for key in ("mode", "percent", "auto_completes_at_percent", "default_percent", "min_duration_seconds", "setting"):
+                    if key in write:
+                        clean_write[key] = write.get(key)
+                if clean_write:
+                    out["completion_policy"] = {"progress_write": clean_write}
+
+        return out
+
     def _norm_caps(caps: dict | None) -> dict:
         caps = dict(caps or {})
-        return {"bidirectional": bool(caps.get("bidirectional", False))}
+        out: dict[str, Any] = {"bidirectional": bool(caps.get("bidirectional", False))}
+        progress = _norm_progress_caps(caps.get("progress"))
+        if progress:
+            out["progress"] = progress
+        return out
 
     def _configured_state(mod, provider_name: str) -> bool:
         ops = getattr(mod, "OPS", None)

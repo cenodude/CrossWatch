@@ -172,6 +172,7 @@ def _progress_body_from_record(record: Mapping[str, Any], progress_percent: floa
 class MDBListPlaybackAdapter(PlaybackProgressAdapter):
     provider = "mdblist"
     provider_label = "MDBList"
+    ops = MDBLIST_OPS
 
     def capabilities(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackCapabilities:
         configured = False
