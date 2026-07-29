@@ -315,29 +315,78 @@ def resolution_keys(item: Mapping[str, Any]) -> set[str]:
     return {k for k in keys if "|title:" in k} or keys
 
 
-def watched_at_to_kodi(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+def _offset_label(dt: datetime) -> str:
+    offset = dt.utcoffset()
+    if offset is None:
+        return "local"
+    total = int(offset.total_seconds())
+    sign = "+" if total >= 0 else "-"
+    total = abs(total)
+    hours, rem = divmod(total, 3600)
+    minutes = rem // 60
+    return f"UTC{sign}{hours:02d}:{minutes:02d}"
+
+
+def _local_datetime(value: Any) -> datetime:
+    raw = str(value or "").strip()
+    dt = datetime.fromisoformat(raw.replace("Z", "+00:00")) if raw else datetime.now(timezone.utc)
+    return dt.astimezone() if dt.tzinfo is None else dt.astimezone()
+
+
+def _timezone_label_used(value: Any) -> str:
     try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return _offset_label(_local_datetime(value))
+    except Exception:
+        return "local"
+
+
+def _minimal_log_fields(item: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    if not isinstance(item, Mapping):
+        return {}
+    return {
+        "media_type": str(item.get("_kodi_type") or item.get("type") or ""),
+        "kodi_id": item.get("_kodi_id"),
+        "title": str(item.get("title") or item.get("series_title") or "")[:120],
+        "year": item.get("year"),
+        "season": item.get("season"),
+        "episode": item.get("episode"),
+    }
+
+
+def watched_at_to_kodi(value: Any, *, item: Mapping[str, Any] | None = None) -> str:
+    text = str(value or "").strip()
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00")) if text else datetime.now(timezone.utc)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
+        return dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception as exc:
+        log(
+            "history",
+            "warning",
+            "timestamp_write_normalize_failed",
+            raw_watched_at=text[:80],
+            error_type=type(exc).__name__,
+            **_minimal_log_fields(item),
+        )
         return text
 
 
-def kodi_lastplayed_to_iso(value: Any) -> str | None:
+def kodi_lastplayed_to_iso(value: Any, *, item: Mapping[str, Any] | None = None) -> str | None:
     text = str(value or "").strip()
     if not text or text.startswith("0000-00-00"):
         return None
     try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
+        return _local_datetime(text).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception as exc:
+        log(
+            "history",
+            "warning",
+            "timestamp_normalize_failed",
+            raw_lastplayed=text[:80],
+            error_type=type(exc).__name__,
+            **_minimal_log_fields(item),
+        )
         return text if "T" in text else None
 
 
@@ -373,8 +422,9 @@ def _progress_signature(item: Mapping[str, Any]) -> tuple[int | None, int | None
     )
 
 
-def _load_kodi_progress_baseline(adapter: Any) -> Mapping[str, Mapping[str, Any]]:
-    injected = getattr(adapter, "_kodi_progress_baseline", None)
+def _load_kodi_feature_baseline(adapter: Any, feature: str) -> Mapping[str, Mapping[str, Any]]:
+    name = str(feature or "").strip().lower()
+    injected = getattr(adapter, f"_kodi_{name}_baseline", None)
     if isinstance(injected, Mapping):
         return {str(k): dict(v) for k, v in injected.items() if isinstance(v, Mapping)}
     try:
@@ -398,9 +448,9 @@ def _load_kodi_progress_baseline(adapter: Any) -> Mapping[str, Mapping[str, Any]
                 nodes.append(inst_node)
         nodes.append(kodi)
         for node in nodes:
-            progress = node.get("progress")
-            progress = progress if isinstance(progress, Mapping) else {}
-            baseline = progress.get("baseline")
+            block = node.get(name)
+            block = block if isinstance(block, Mapping) else {}
+            baseline = block.get("baseline")
             baseline = baseline if isinstance(baseline, Mapping) else {}
             items = baseline.get("items")
             if isinstance(items, Mapping):
@@ -408,6 +458,26 @@ def _load_kodi_progress_baseline(adapter: Any) -> Mapping[str, Mapping[str, Any]
     except Exception:
         return {}
     return {}
+
+
+def _load_kodi_progress_baseline(adapter: Any) -> Mapping[str, Mapping[str, Any]]:
+    return _load_kodi_feature_baseline(adapter, "progress")
+
+
+def _load_kodi_ratings_baseline(adapter: Any) -> Mapping[str, Mapping[str, Any]]:
+    return _load_kodi_feature_baseline(adapter, "ratings")
+
+
+def _managed_rating_metadata(prior: Mapping[str, Any] | None, rating: int, now_iso: str) -> tuple[str, str]:
+    if isinstance(prior, Mapping):
+        previous = str(prior.get("rated_at") or prior.get("updated_at") or "").strip()
+        previous_rating = rating_for_write(prior)
+        if previous and previous_rating == rating:
+            source = str(prior.get("rated_at_source") or "kodi_first_observed").strip()
+            return previous, source
+        if previous:
+            return now_iso, "kodi_rating_changed"
+    return now_iso, "kodi_first_observed"
 
 
 def _managed_progress_metadata(prior: Mapping[str, Any] | None, item: Mapping[str, Any], now_iso: str) -> tuple[str, str]:
@@ -658,8 +728,9 @@ def library_index(adapter: Any, feature: str = "") -> LibraryIndex:
 def feature_index(adapter: Any, feature: str) -> dict[str, dict[str, Any]]:
     idx = library_index(adapter, feature)
     out: dict[str, dict[str, Any]] = {}
+    prior_ratings = _load_kodi_ratings_baseline(adapter) if feature == "ratings" else {}
     prior_progress = _load_kodi_progress_baseline(adapter) if feature == "progress" else {}
-    now_iso = _utc_now_iso() if feature == "progress" else ""
+    now_iso = _utc_now_iso() if feature in {"ratings", "progress"} else ""
     for base in idx.items:
         item = dict(base)
         raw_obj = item.get("_kodi_raw")
@@ -669,7 +740,18 @@ def feature_index(adapter: Any, feature: str) -> dict[str, dict[str, Any]]:
             if playcount <= 0:
                 continue
             item["watched"] = True
-            item["watched_at"] = kodi_lastplayed_to_iso(raw.get("lastplayed"))
+            item["watched_at"] = kodi_lastplayed_to_iso(raw.get("lastplayed"), item=item)
+            if not item.get("watched_at"):
+                log(
+                    "history",
+                    "warning",
+                    "timestamp_missing_after_normalize",
+                    raw_lastplayed=str(raw.get("lastplayed") or "")[:80],
+                    **_minimal_log_fields(item),
+                )
+            item["kodi_lastplayed_raw"] = str(raw.get("lastplayed") or "").strip()
+            item["kodi_timezone"] = _timezone_label_used(raw.get("lastplayed"))
+            item["watched_at_source"] = "kodi_lastplayed"
             item["playcount"] = playcount
         elif feature == "ratings":
             rating = rating_for_write(raw)
@@ -687,6 +769,10 @@ def feature_index(adapter: Any, feature: str) -> dict[str, dict[str, Any]]:
         else:
             continue
         key = item_key(item)
+        if feature == "ratings":
+            rated_at, rated_at_source = _managed_rating_metadata(prior_ratings.get(key), int(item["rating"]), now_iso)
+            item["rated_at"] = rated_at
+            item["rated_at_source"] = rated_at_source
         if feature == "progress":
             progress_at, progress_at_source = _managed_progress_metadata(prior_progress.get(key), item, now_iso)
             item["progress_at"] = progress_at
