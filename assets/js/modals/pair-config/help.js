@@ -40,7 +40,7 @@ export const HELP_TEXT = {
   "cx-pr-remove": "Progress: Remove\nClear resume position on the target (rare; Plex may not support).",
   "cx-pr-min": "Progress: Minimum seconds\nIgnore tiny offsets (scrubbing).",
   "cx-pr-delta": "Progress: Change threshold\nOnly write when the difference is large enough.",
-  "cx-pr-maxp": "Progress: Ignore near complete (%)\nWhen near completion, history sync should handle watched state.",
+  "cx-pr-maxp": "Progress: Ignore near complete (%)\nOne-way defaults to the target recommendation. Two-way keeps one shared limit and shows per-target recommendations below.",
   "cx-pr-replay": "Replay watched items\nUnwatch the target, then apply resume progress.",
   "cx-pr-tolerance": "Timestamp tolerance\nProtect targets newer by more than this many seconds.",
 
@@ -112,6 +112,21 @@ export function injectHelpIcons(root, { QA } = {}) {
 
     wrap.insertBefore(btn, sw);
   }
+
+  (QA ? QA("label[data-tip-id]", root) : Array.from(root.querySelectorAll("label[data-tip-id]"))).forEach(label => {
+    const key = label.dataset.tipId;
+    if (!key || !HELP_TEXT[key] || label.querySelector(".cx-help")) return;
+    const inputId = label.getAttribute("for") || "";
+    const input = inputId ? root.querySelector(`#${CSS.escape(inputId)}`) : null;
+    if (input?.closest("label.switch")) return;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cx-help material-symbols-rounded";
+    btn.textContent = "help";
+    btn.dataset.tipId = key;
+    label.appendChild(btn);
+  });
 
   (QA ? QA(".cx-help[data-tip-id]", root) : Array.from(root.querySelectorAll(".cx-help[data-tip-id]"))).forEach(btn => {
     if (btn.__wired) return;
