@@ -9,6 +9,8 @@ import os
 import re
 import datetime as _dt
 
+from ._progress_completion import fcfg_for_progress_target
+
 
 def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -> None:
     try:
@@ -1097,7 +1099,8 @@ def run_one_way_feature(
         except Exception:
             dst_for_src = dict(dst_full or {})
 
-        adds, mirror_removes = diff_progress(src_idx, dst_for_src, fcfg=fcfg)
+        dst_progress_fcfg = fcfg_for_progress_target(fcfg, dst_ops)
+        adds, mirror_removes = diff_progress(src_idx, dst_for_src, fcfg=dst_progress_fcfg)
         
         # Mirror-mode clears for progress:
         if (
