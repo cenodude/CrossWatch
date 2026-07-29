@@ -40,7 +40,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "2.1"
+__VERSION__ = "2.2"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -127,6 +127,22 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "endpoint_types": ["playlist", "collection"],
     "ordered_endpoint_types": ["playlist"],
     "unordered_endpoint_types": ["watchlist", "collection"],
+}
+
+_PROGRESS_CAPABILITIES: dict[str, Any] = {
+    "index_semantics": "present",
+    "observed_deletes": True,
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "upsert": True,
+    "remove": True,
+    "requires_duration": True,
+    "completion_policy": {
+        "progress_write": {
+            "mode": "server_configurable",
+            "default_percent": 90,
+            "setting": "Video played threshold",
+        },
+    },
 }
 
 
@@ -502,6 +518,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": _PROGRESS_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -1432,6 +1449,7 @@ class _PlexOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": _PROGRESS_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         }
 
