@@ -155,6 +155,11 @@ _dbg, _info, _warn, _error, _log = make_logger("history")
 _GUID_INDEX_MOVIE: dict[str, str] = {}
 _GUID_INDEX_SHOW: dict[str, str] = {}
 _GUID_INDEX_KEY: str | None = None
+_ALLOWED_HISTORY_TYPES = frozenset({"movie", "episode"})
+
+
+def _allowed_history_type(row: Any) -> bool:
+    return str(getattr(row, "type", "") or "").strip().lower() in _ALLOWED_HISTORY_TYPES
 
 
 def _guid_index_key(srv: Any, allow: set[str]) -> str:
@@ -1315,6 +1320,9 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
 
         out: dict[str, dict[str, Any]] = {}
         def _process_history_row(raw: Any) -> tuple[str, dict[str, Any]] | None:
+            if not _allowed_history_type(raw):
+                return None
+
             ts = _epoch_from_history_entry(raw)
             if not ts:
                 return None
