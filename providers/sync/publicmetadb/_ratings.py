@@ -131,14 +131,36 @@ def _rating_from_score(value: Any) -> int | None:
     return max(1, min(10, int(round(score / 10.0))))
 
 
+def _response_rating(item: Mapping[str, Any] | None, fallback: Any) -> int | None:
+    if isinstance(item, Mapping):
+        for key in ("score", "rating"):
+            if item.get(key) is not None:
+                rating = _rating_from_score(item.get(key))
+                if rating is not None:
+                    return rating
+    return _valid_rating(fallback)
+
+
 def _rating_id(item: Mapping[str, Any]) -> str | None:
     rid = str(item.get("_publicmetadb_rating_id") or item.get("rating_id") or "").strip()
     return rid or None
 
 
+def _rows(data: Any) -> list[Any]:
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, Mapping):
+        return []
+    for key in ("items", "results", "data"):
+        val = data.get(key)
+        if isinstance(val, list):
+            return val
+    return []
+
+
 def _to_minimal(row: Mapping[str, Any], *, episode_rating: bool) -> dict[str, Any] | None:
     tmdb = tmdb_id_for_item(row)
-    rating = _rating_from_score(row.get("score") or row.get("rating"))
+    rating = _response_rating(row, None)
     if tmdb is None or rating is None:
         return None
     label = str(row.get("label") or "Overall").strip() or "Overall"
@@ -173,6 +195,73 @@ def _to_minimal(row: Mapping[str, Any], *, episode_rating: bool) -> dict[str, An
     return mini
 
 
+def _remote_lookup_params(item: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    mini = id_minimal(item)
+    typ = str(mini.get("type") or item.get("type") or "").strip().lower()
+    label = str(mini.get("label") or item.get("label") or "Overall").strip() or "Overall"
+    if typ == "episode":
+        tmdb = _show_tmdb_for_item(mini) or _show_tmdb_for_item(item)
+        season = as_int(mini.get("season") or item.get("season"))
+        episode = as_int(mini.get("episode") or item.get("episode"))
+        if tmdb is None or season is None or episode is None:
+            return None, None
+        return (
+            "/api/external/episode-ratings",
+            {
+                "tmdb_id": int(tmdb),
+                "media_type": "tv",
+                "season": int(season),
+                "episode": int(episode),
+                "label": label,
+            },
+        )
+
+    tmdb = tmdb_id_for_item(mini) or tmdb_id_for_item(item)
+    if tmdb is None:
+        return None, None
+    media = media_type_for_item(mini)
+    if media not in ("movie", "tv"):
+        media = "movie"
+    return (
+        "/api/external/ratings",
+        {"tmdb_id": int(tmdb), "media_type": media, "label": label},
+    )
+
+
+def _refresh_shadow_entry(adapter: Any, entry: Mapping[str, Any]) -> dict[str, Any] | None:
+    item_obj = entry.get("item")
+    item: Mapping[str, Any] = item_obj if isinstance(item_obj, Mapping) else entry
+    rid = str(entry.get("id") or item.get("_publicmetadb_rating_id") or item.get("rating_id") or "").strip()
+    if not rid:
+        return None
+    path, params = _remote_lookup_params(item)
+    if not path or not params:
+        return None
+
+    try:
+        data = adapter.client.get_json(path, params=params)
+    except Exception as e:
+        _dbg("shadow_refresh_failed", error=f"{type(e).__name__}: {e}")
+        return None
+
+    episode_rating = path.endswith("/episode-ratings")
+    for row in _rows(data):
+        if not isinstance(row, Mapping):
+            continue
+        remote_id = str(row.get("id") or row.get("rating_id") or "").strip()
+        if remote_id != rid:
+            continue
+        mini = _to_minimal(row, episode_rating=episode_rating)
+        if not mini:
+            return None
+        label = str(mini.get("label") or item.get("label") or entry.get("label") or "Overall").strip() or "Overall"
+        mini["label"] = label
+        mini["rating_id"] = rid
+        mini["_publicmetadb_rating_id"] = rid
+        return {"id": rid, "label": label, "item": mini}
+    return None
+
+
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     shadow = _shadow_load()
     raw: dict[str, Any] = dict(shadow.get("items") or {})
@@ -180,6 +269,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     remote_ids: dict[str, Any] = {}
     for key, entry in raw.items():
         if isinstance(entry, Mapping):
+            refreshed = _refresh_shadow_entry(adapter, entry)
+            if isinstance(refreshed, Mapping):
+                entry = refreshed
             item_obj = entry.get("item")
             item: Mapping[str, Any] = item_obj if isinstance(item_obj, Mapping) else entry
             mini = id_minimal(item)
@@ -264,6 +356,18 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not _quota_take(adapter, quota_bucket):
             unresolved.append({"item": mini, "hint": f"publicmetadb_hourly_rating_{quota_bucket}_limit"})
             continue
+        if prior_id:
+            old_path = (
+                "/api/external/episode-ratings"
+                if str(mini.get("type") or "").lower() == "episode"
+                else "/api/external/ratings"
+            )
+            old = cast(_ResponseLike, adapter.client.delete(f"{old_path}/{prior_id}"))
+            if not (200 <= old.status_code < 300) and old.status_code != 404:
+                _warn("write_failed", op="replace_delete_old", status=old.status_code, body=(old.text or "")[:200])
+                unresolved.append({"item": mini, "hint": f"http:{old.status_code}:replace_delete_old"})
+                continue
+            remote_ids.pop(key, None)
         post = getattr(adapter.client, "post_once", None)
         r = cast(_ResponseLike, post(path, json=payload) if callable(post) else adapter.client.post(path, json=payload))
         if 200 <= r.status_code < 300:
@@ -271,17 +375,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             item = data.get("item") if isinstance(data, Mapping) else None
             rid = str(item.get("id") or "").strip() if isinstance(item, Mapping) else ""
             accepted = dict(mini)
-            accepted["rating"] = _valid_rating(mini.get("rating") or it.get("rating"))
+            accepted["rating"] = _response_rating(
+                item,
+                mini.get("rating") if "rating" in mini else it.get("rating"),
+            )
             accepted["label"] = label or "Overall"
             if rid:
                 accepted["rating_id"] = rid
                 accepted["_publicmetadb_rating_id"] = rid
             remote_ids[key] = {"id": rid, "label": label or "Overall", "item": accepted}
-            if prior_id and prior_id != rid:
-                old_path = "/api/external/episode-ratings" if str(mini.get("type") or "").lower() == "episode" else "/api/external/ratings"
-                old = cast(_ResponseLike, adapter.client.delete(f"{old_path}/{prior_id}"))
-                if not (200 <= old.status_code < 300):
-                    _warn("write_failed", op="replace_delete_old", status=old.status_code, body=(old.text or "")[:200])
             ok += 1
         else:
             _warn("write_failed", op="add", status=r.status_code, body=(r.text or "")[:200])
