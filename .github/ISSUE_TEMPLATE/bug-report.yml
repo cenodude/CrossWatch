@@ -44,6 +44,8 @@ body:
         - label: Jellyfin
         - label: MDBList
         - label: PublicMetaDB
+        - label: Nuvio
+        - label: Kodi
         - label: Tautulli
         - label: AniList
         - label: Trakt
@@ -62,6 +64,8 @@ body:
         - label: Scrobble or webhook
         - label: Scheduler
         - label: Analyzer or item matching
+        - label: Events
+        - label: Exporter
         - label: Metadata or IDs
         - label: Library selection or duplicate items
         - label: Web UI

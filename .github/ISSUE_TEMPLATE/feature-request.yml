@@ -25,6 +25,8 @@ body:
         - label: History
         - label: Playlists
         - label: Scrobble watcher
+        - label: Scrobble webhook
         - label: Scheduler
+        - label: Analyzer, Events, Exporter
         - label: Web UI
         - label: Config/API
