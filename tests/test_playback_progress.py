@@ -5,9 +5,11 @@ from pathlib import Path
 from services.playback_progress.service import (
     _combine_records,
     _overlay_live_streams,
+    _progress_edit_max_exclusive,
     _profile_has_explicit_identity,
     _record_group_keys,
     _share_artwork_metadata,
+    _validated_progress_percent,
     PlaybackProgressService,
 )
 from services.playback_progress.models import PlaybackCapabilities
@@ -44,6 +46,7 @@ def _record(**overrides):
 
 def test_playback_bulk_footer_uses_wide_management_layout():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+    css = (ROOT / "assets" / "css" / "pages.css").read_text(encoding="utf-8")
     shell = js[js.index("function shell()") : js.index('      <div class="pp-modal hidden" id="pp-progress-dialog"')]
 
     assert 'class="pp-bulk-summary"' in shell
@@ -54,18 +57,72 @@ def test_playback_bulk_footer_uses_wide_management_layout():
     assert 'class="pp-btn pp-bulk-choice pp-bulk-clear" id="pp-clear-selection">${icon("cancel")}<span>Clear Selection</span>' in shell
     assert 'class="pp-selected-pill"' not in shell
     assert 'class="pp-bulk-divider"' not in shell
-    assert "#${ROOT_ID} .pp-bulk{position:sticky;bottom:12px;z-index:20;display:grid;grid-template-columns:minmax(220px,1fr) auto minmax(170px,1fr)" in js
-    assert "#${ROOT_ID} .pp-bulk-actions .pp-bulk-icon{width:48px;min-width:48px;height:48px;min-height:48px" in js
-    assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-edit{background:linear-gradient(180deg,rgba(63,126,255,.56)" in js
-    assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-watch{background:linear-gradient(180deg,rgba(64,166,105,.48)" in js
-    assert "#${ROOT_ID} .pp-bulk-actions #pp-bulk-remove{background:linear-gradient(180deg,rgba(181,48,68,.58)" in js
-    assert "#${ROOT_ID} .pp-card.selected:before,#${ROOT_ID} .pp-card.selected:after{content:none!important;display:none!important}" in js
+    assert "#playback-progress-root .pp-bulk{position:sticky;bottom:12px;z-index:20;display:grid;grid-template-columns:minmax(220px,1fr)auto minmax(170px,1fr)" in css
+    assert "#playback-progress-root .pp-bulk-actions .pp-bulk-icon{width:48px;min-width:48px;height:48px;min-height:48px" in css
+    assert "#playback-progress-root .pp-bulk-actions #pp-bulk-edit{background:linear-gradient(180deg,rgba(63,126,255,0.56)" in css
+    assert "#playback-progress-root .pp-bulk-actions #pp-bulk-watch{background:linear-gradient(180deg,rgba(64,166,105,0.48)" in css
+    assert "#playback-progress-root .pp-bulk-actions #pp-bulk-remove{background:linear-gradient(180deg,rgba(181,48,68,0.58)" in css
+    assert "#playback-progress-root .pp-card.selected:before,#playback-progress-root .pp-card.selected:after{content:none !important;display:none !important}" in css
 
 
 def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
     assert 'const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi"];' in js
+
+
+class _PolicyOps:
+    def __init__(self, progress_caps):
+        self._progress_caps = progress_caps
+
+    def capabilities(self):
+        return {"progress": self._progress_caps}
+
+
+class _PolicyAdapter:
+    def __init__(self, progress_caps):
+        self.ops = _PolicyOps(progress_caps)
+
+
+def test_playback_progress_edit_validation_uses_progress_write_cutoff():
+    adapter = _PolicyAdapter({"completion_policy": {"progress_write": {"mode": "auto_complete", "percent": 80}}})
+    record = _record(duration_seconds=3600)
+    max_exclusive = _progress_edit_max_exclusive(adapter, record)
+
+    assert max_exclusive == 80
+    assert _validated_progress_percent(79.5, max_exclusive=max_exclusive) == (79.5, "")
+    progress, reason = _validated_progress_percent(80, max_exclusive=max_exclusive)
+    assert progress is None
+    assert "below 80 percent" in reason
+
+
+def test_playback_progress_edit_validation_ignores_stop_only_cutoff():
+    adapter = _PolicyAdapter({
+        "completion_policy": {
+            "progress_write": {"mode": "none"},
+            "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
+        }
+    })
+
+    max_exclusive = _progress_edit_max_exclusive(adapter, _record(duration_seconds=3600))
+
+    assert max_exclusive == 100
+    assert _validated_progress_percent(95, max_exclusive=max_exclusive) == (95, "")
+
+
+def test_playback_progress_edit_validation_honors_duration_floor():
+    adapter = _PolicyAdapter({
+        "completion_policy": {
+            "progress_write": {
+                "mode": "auto_complete",
+                "percent": 90,
+                "min_duration_seconds": 60,
+            }
+        }
+    })
+
+    assert _progress_edit_max_exclusive(adapter, _record(duration_seconds=3600)) == 90
+    assert _progress_edit_max_exclusive(adapter, _record(duration_seconds=30)) == 100
 
 
 def test_combined_record_keeps_available_artwork_regardless_of_input_order():

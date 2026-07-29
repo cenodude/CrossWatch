@@ -15,6 +15,7 @@ from typing import Any, Mapping, cast
 from _logging import log as BASE_LOG
 from cw_platform.config_base import load_config, save_config
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.orchestrator._progress_completion import progress_caps_from_ops, progress_write_completion_policy
 from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
@@ -38,6 +39,8 @@ LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
 LIVE_MAX_AGE_SECONDS = 10 * 60
 CANONICAL_TMDB_RE = re.compile(r"^tmdb:(\d+)(?:#|$)", re.I)
+EDITABLE_PROGRESS_MIN_PERCENT = 2.0
+EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE = 100.0
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -582,15 +585,76 @@ def _group_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _validated_progress_percent(value: Any) -> tuple[float | None, str]:
+def _duration_seconds_from_record(record: Mapping[str, Any]) -> int | None:
+    try:
+        duration = record.get("duration_seconds")
+        if duration not in (None, ""):
+            value = int(float(duration))
+            return value if value > 0 else None
+    except Exception:
+        pass
+    meta = _as_mapping(record.get("provider_metadata"))
+    for key in ("progress_item", "resume_item"):
+        item = _as_mapping(meta.get(key))
+        for field in ("duration_ms", "duration"):
+            try:
+                raw = item.get(field)
+                if raw in (None, ""):
+                    continue
+                value = int(float(raw))
+                if value > 0:
+                    return max(1, round(value / 1000))
+            except Exception:
+                continue
+    return None
+
+
+def _progress_edit_max_exclusive(adapter: PlaybackProgressAdapter | None, record: Mapping[str, Any]) -> float:
+    ops = getattr(adapter, "ops", None)
+    policy = progress_write_completion_policy(progress_caps_from_ops(ops))
+    raw_percent = policy.get("percent")
+    if raw_percent is None:
+        cutoff = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE
+    else:
+        try:
+            cutoff = float(raw_percent)
+        except Exception:
+            cutoff = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE
+    if not math.isfinite(cutoff) or cutoff <= EDITABLE_PROGRESS_MIN_PERCENT or cutoff > EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE:
+        cutoff = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE
+    try:
+        min_duration = int(policy.get("min_duration_seconds") or 0)
+    except Exception:
+        min_duration = 0
+    if min_duration > 0:
+        duration = _duration_seconds_from_record(record)
+        if duration is not None and duration < min_duration:
+            cutoff = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE
+    return round(float(cutoff), 3)
+
+
+def _apply_progress_edit_policy(result: PlaybackListResult, adapter: PlaybackProgressAdapter | None) -> PlaybackListResult:
+    for record in result.items:
+        record.editable_progress_min_percent = EDITABLE_PROGRESS_MIN_PERCENT
+        record.editable_progress_max_exclusive = _progress_edit_max_exclusive(adapter, record.to_dict())
+    return result
+
+
+def _validated_progress_percent(value: Any, *, max_exclusive: float = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE) -> tuple[float | None, str]:
     try:
         progress = float(value)
     except Exception:
         return None, "Progress must be a number."
     if not math.isfinite(progress):
         return None, "Progress must be a finite number."
-    if progress < 2 or progress >= 80:
-        return None, "Progress must be between 2 and 79 percent. Use Mark as Watched for completed items."
+    try:
+        upper = float(max_exclusive)
+    except Exception:
+        upper = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE
+    if not math.isfinite(upper) or upper <= EDITABLE_PROGRESS_MIN_PERCENT or upper > EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE:
+        upper = EDITABLE_PROGRESS_DEFAULT_MAX_EXCLUSIVE
+    if progress < EDITABLE_PROGRESS_MIN_PERCENT or progress >= upper:
+        return None, f"Progress must be at least {EDITABLE_PROGRESS_MIN_PERCENT:g} and below {upper:g} percent. Use Mark as Watched for completed items."
     return round(progress, 2), ""
 
 
@@ -865,6 +929,8 @@ class PlaybackProgressService:
             instance_label=spec["instance_label"],
             force_refresh=force_refresh,
         )
+        if result.ok:
+            result = _apply_progress_edit_policy(result, adapter)
         elapsed_ms = int((time.monotonic() - started) * 1000)
         with self._lock:
             if result.ok:
@@ -1196,15 +1262,11 @@ class PlaybackProgressService:
                     continue
                 results.append(self.mark_watched(item))
             elif action == "update_progress":
-                progress, reason = _validated_progress_percent(payload.get("progress_percent"))
-                if progress is None:
-                    results.append({"ok": False, "provider": item.get("provider"), "instance_id": item.get("instance_id"), "operation": action, "remote_id": item.get("remote_id"), "canonical_key": item.get("canonical_key"), "error_code": "invalid_progress", "message": reason})
-                    continue
                 if not record.get("can_update_progress"):
                     results.append({"ok": False, "provider": item.get("provider"), "instance_id": item.get("instance_id"), "operation": action, "remote_id": item.get("remote_id"), "canonical_key": item.get("canonical_key"), "error_code": "unsupported", "message": "Edit Progress is unsupported for this record."})
                     continue
                 update_item = dict(item)
-                update_item["progress_percent"] = progress
+                update_item["progress_percent"] = payload.get("progress_percent")
                 results.append(self.update_progress(update_item))
             else:
                 results.append({"ok": False, "operation": action, "error_code": "unsupported_action", "message": "Unsupported bulk action."})
@@ -1221,12 +1283,8 @@ class PlaybackProgressService:
         }
 
     def update_progress(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        progress, reason = _validated_progress_percent(payload.get("progress_percent"))
         provider = str(payload.get("provider") or "").lower()
         instance_id = normalize_instance_id(payload.get("instance_id"))
-        if progress is None:
-            LOG.warn(f"update progress rejected provider={provider} instance={instance_id} reason={reason}")
-            return PlaybackActionResult(False, provider, instance_id, "update_progress", error_code="invalid_progress", message=reason).to_dict()
         cfg = load_config()
         record_value = payload.get("record")
         record = _as_mapping(record_value) if isinstance(record_value, Mapping) else payload
@@ -1234,6 +1292,10 @@ class PlaybackProgressService:
         if adapter is None:
             LOG.warn(f"update progress requested unknown provider={provider} instance={inst}")
             return PlaybackActionResult(False, provider, inst, "update_progress", error_code="unknown_provider", message="Unknown provider.").to_dict()
+        progress, reason = _validated_progress_percent(payload.get("progress_percent"), max_exclusive=_progress_edit_max_exclusive(adapter, record))
+        if progress is None:
+            LOG.warn(f"update progress rejected provider={provider} instance={instance_id} reason={reason}")
+            return PlaybackActionResult(False, provider, instance_id, "update_progress", error_code="invalid_progress", message=reason).to_dict()
         if not record.get("can_update_progress"):
             LOG.warn(f"update progress unsupported provider={provider} instance={inst} remote_id={record.get('remote_id') or ''}")
             return PlaybackActionResult(False, provider, inst, "update_progress", remote_id=str(record.get("remote_id") or ""), canonical_key=str(record.get("canonical_key") or ""), error_code="unsupported", message="Edit Progress is unsupported for this record.").to_dict()

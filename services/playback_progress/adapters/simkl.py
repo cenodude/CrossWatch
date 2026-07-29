@@ -217,6 +217,7 @@ def _metadata_rating_duration(
 class SimklPlaybackAdapter(PlaybackProgressAdapter):
     provider = "simkl"
     provider_label = "SIMKL"
+    ops = SIMKL_OPS
 
     def capabilities(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackCapabilities:
         configured = False

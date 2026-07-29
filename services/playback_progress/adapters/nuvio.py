@@ -169,6 +169,7 @@ def _is_placeholder_title(value: Any) -> bool:
 class NuvioPlaybackAdapter(PlaybackProgressAdapter):
     provider = "nuvio"
     provider_label = "Nuvio"
+    ops = NUVIO_OPS
 
     def capabilities(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackCapabilities:
         try:

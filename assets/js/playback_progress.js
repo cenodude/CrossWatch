@@ -73,7 +73,7 @@
       <div class="pp-modal hidden" id="pp-progress-dialog" role="dialog" aria-modal="true" aria-labelledby="pp-progress-dialog-title">
         <div class="pp-dialog">
           <div><div class="pp-dialog-title" id="pp-progress-dialog-title">Edit Progress</div><div class="pp-dialog-sub" id="pp-progress-dialog-sub"></div></div>
-          <div class="pp-progress-edit"><input id="pp-progress-range" type="range" min="2" max="79" step="1"><input id="pp-progress-value" type="number" min="2" max="79" step="1"></div>
+          <div class="pp-progress-edit"><input id="pp-progress-range" type="range" min="2" max="99" step="1"><input id="pp-progress-value" type="number" min="2" max="99" step="0.01"></div>
           <div class="pp-dialog-error" id="pp-progress-error"></div>
           <div class="pp-dialog-actions"><button class="pp-btn" id="pp-progress-cancel">Cancel</button><button class="pp-btn" id="pp-progress-apply">Apply</button></div>
         </div>
@@ -328,10 +328,20 @@
     canonical_key: record.canonical_key,
     record
   })));
-  const avgProgress = (items) => {
+  const editableMaxExclusive = (records) => {
+    const values = records.map((it) => Number(it.editable_progress_max_exclusive || 100)).filter((v) => Number.isFinite(v) && v > 2);
+    return values.length ? Math.min(...values, 100) : 100;
+  };
+  const progressSliderMax = (maxExclusive) => Math.max(2, Math.ceil(Math.min(Number(maxExclusive) || 100, 100)) - 1);
+  const progressMaxLabel = (maxExclusive) => {
+    const n = Number(maxExclusive);
+    return Number.isFinite(n) ? String(Math.round(n * 100) / 100) : "100";
+  };
+  const avgProgress = (items, maxExclusive = 100) => {
     const values = items.flatMap((it) => recordsOf(it)).map((it) => Number(it.progress_percent)).filter(Number.isFinite);
-    if (!values.length) return 25;
-    return Math.max(2, Math.min(79, Math.round(values.reduce((a, b) => a + b, 0) / values.length)));
+    const sliderMax = progressSliderMax(maxExclusive);
+    if (!values.length) return Math.min(25, sliderMax);
+    return Math.max(2, Math.min(sliderMax, Math.round(values.reduce((a, b) => a + b, 0) / values.length)));
   };
   const actionTitle = (action) => action === "mark_watched" ? "Mark as Watched" : action === "update_progress" ? "Edit Progress" : "Remove Progress";
 
@@ -344,7 +354,7 @@
     toast._t = setTimeout(() => el.classList.add("hidden"), 2400);
   }
 
-  function askProgress(defaultValue, count) {
+  function askProgress(defaultValue, count, maxExclusive = 100) {
     return new Promise((resolve) => {
       const dlg = document.getElementById("pp-progress-dialog");
       const range = document.getElementById("pp-progress-range");
@@ -354,7 +364,11 @@
       const apply = document.getElementById("pp-progress-apply");
       const cancel = document.getElementById("pp-progress-cancel");
       if (!dlg || !range || !value || !sub || !err || !apply || !cancel) return resolve(null);
-      const initial = Math.max(2, Math.min(79, Math.round(Number(defaultValue) || 25)));
+      const upper = Math.max(3, Math.min(Number(maxExclusive) || 100, 100));
+      const sliderMax = progressSliderMax(upper);
+      const initial = Math.max(2, Math.min(sliderMax, Math.round(Number(defaultValue) || 25)));
+      range.max = String(sliderMax);
+      value.max = String(Math.round((upper - 0.01) * 100) / 100);
       range.value = String(initial);
       value.value = String(initial);
       sub.textContent = `${count || 1} provider record${count === 1 ? "" : "s"}`;
@@ -363,7 +377,7 @@
       value.focus();
       value.select?.();
       const syncFromRange = () => { value.value = range.value; err.textContent = ""; };
-      const syncFromValue = () => { range.value = String(Math.max(2, Math.min(79, Math.round(Number(value.value) || initial)))); err.textContent = ""; };
+      const syncFromValue = () => { range.value = String(Math.max(2, Math.min(sliderMax, Math.round(Number(value.value) || initial)))); err.textContent = ""; };
       const done = (result) => {
         dlg.classList.add("hidden");
         range.removeEventListener("input", syncFromRange);
@@ -376,8 +390,8 @@
       };
       const onApply = () => {
         const n = Number(value.value);
-        if (!Number.isFinite(n) || n < 2 || n >= 80) {
-          err.textContent = "Use 2-79%. Use Watched for completed items.";
+        if (!Number.isFinite(n) || n < 2 || n >= upper) {
+          err.textContent = `Use at least 2% and below ${progressMaxLabel(upper)}%. Use Watched for completed items.`;
           return;
         }
         done(Math.round(n * 100) / 100);
@@ -745,7 +759,9 @@
     let progressPercent = null;
     if (bulkAction === "update_progress") {
       if (!payloads.length) return toast("Edit Progress is unsupported for this record.");
-      progressPercent = await askProgress(avgProgress([item]), payloads.length);
+      const editableRecords = payloads.map((payload) => payload.record);
+      const maxExclusive = editableMaxExclusive(editableRecords);
+      progressPercent = await askProgress(avgProgress(editableRecords, maxExclusive), payloads.length, maxExclusive);
       if (progressPercent == null) return;
     }
     if (payloads.length > 1 || item.is_combined) {
@@ -778,7 +794,9 @@
     if (!payloads.length) return toast(`${actionTitle(action)} is unsupported for the selected records.`);
     let progressPercent = null;
     if (action === "update_progress") {
-      progressPercent = await askProgress(avgProgress(selected), payloads.length);
+      const editableRecords = payloads.map((payload) => payload.record);
+      const maxExclusive = editableMaxExclusive(editableRecords);
+      progressPercent = await askProgress(avgProgress(editableRecords, maxExclusive), payloads.length, maxExclusive);
       if (progressPercent == null) return;
     } else if (!confirm(`${actionTitle(action)} for ${payloads.length} eligible provider record(s)? ${unsupported ? `${unsupported} unsupported provider record(s) will be skipped.` : ""}`)) return;
     const res = await api("/api/playback_progress/actions/bulk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, progress_percent: progressPercent, items: payloads }) });

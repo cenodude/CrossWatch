@@ -146,6 +146,7 @@ def _module(config_view: Mapping[str, Any]) -> TRAKTModule:
 class TraktPlaybackAdapter(PlaybackProgressAdapter):
     provider = "trakt"
     provider_label = "Trakt"
+    ops = TRAKT_OPS
 
     def capabilities(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str) -> PlaybackCapabilities:
         configured = False

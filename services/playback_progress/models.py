@@ -102,6 +102,8 @@ class PlaybackRecord:
     can_remove_progress: bool = False
     can_mark_watched: bool = False
     can_update_progress: bool = False
+    editable_progress_min_percent: float = 2.0
+    editable_progress_max_exclusive: float = 100.0
     capability_messages: list[str] = field(default_factory=list)
     provider_metadata: dict[str, Any] = field(default_factory=dict)
 
