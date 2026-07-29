@@ -48,9 +48,9 @@
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
   * Watchlists, ratings, History and Progress
-  * Anime ID mapping (powered AniBridge) for better AniList matching across providers.
+  * Anime ID mapping (powered AniBridge) for AniList matching across providers.
 * **Scrobble (tracks your activity)**
-  * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
+  * **Watcher** (Plex/Emby/Jellyfin/Kodi to Trakt/SIMKL/MDBList)
     * Does not require any Plex Pass, Emby Premiere,etc.  
   * **Webhooks** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
 * **Tools**
