@@ -18,6 +18,8 @@ const Q=(s,r=document)=>r.querySelector(s);
 const QA=(s,r=document)=>Array.from(r.querySelectorAll(s));
 const G=typeof window!=="undefined"?window:globalThis;
 const jclone=(o)=>JSON.parse(JSON.stringify(o||{}));
+const escHTML=(s)=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const PROGRESS_LEGACY_MAX_PERCENT = 95;
 
 const isEmby = v => same(v, "emby");
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
@@ -207,7 +209,7 @@ function defaultState(){
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
       history:{enable:false,add:false,remove:false},
       playlists:{enable:false,add:true,remove:false},
-      progress:{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}
+      progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}
     },
     pairProviders:{},
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -352,6 +354,63 @@ async function loadConfigBits(state){
 
 // UI utils
 const byName=(state,n)=>state.providers.find(p=>p.name===n);
+function progressCapsForProvider(state, providerName){
+  return byName(state, providerName)?.capabilities?.progress || {};
+}
+function progressCompletionPercentFromCaps(caps){
+  const progress = (caps && typeof caps === "object") ? caps : {};
+  const policy = (progress.completion_policy && typeof progress.completion_policy === "object") ? progress.completion_policy : {};
+  const write = (policy.progress_write && typeof policy.progress_write === "object") ? policy.progress_write : {};
+  const mode = String(write.mode || "").trim().toLowerCase();
+  if(mode === "none" || mode === "stop_only" || mode === "stop_scrobble") return null;
+  const raw = write.percent ?? write.auto_completes_at_percent ?? write.default_percent ?? progress.server_completion_percent;
+  const percent = Number(raw);
+  return Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : null;
+}
+function progressRecommendationEntries(state){
+  const targets = isTwoWayMode(state) ? [state?.src, state?.dst] : [state?.dst];
+  const seen = new Set();
+  return targets.map(name => {
+    const key = String(name || "").trim().toUpperCase();
+    if(!key || seen.has(key)) return null;
+    seen.add(key);
+    const percent = progressCompletionPercentFromCaps(progressCapsForProvider(state, key));
+    if(!Number.isFinite(percent)) return null;
+    return {name: key, label: byName(state, key)?.label || key, percent};
+  }).filter(Boolean);
+}
+function formatProgressPercent(value){
+  const n = Number(value);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0+$/,"").replace(/\.$/,"");
+}
+function recommendedProgressMaxPercent(state){
+  const values = progressRecommendationEntries(state).map(entry => Number(entry.percent)).filter(v => Number.isFinite(v));
+  return values.length ? Math.min(...values) : PROGRESS_LEGACY_MAX_PERCENT;
+}
+function progressRecommendationText(state){
+  if(!isTwoWayMode(state)) return "";
+  const entries = progressRecommendationEntries(state);
+  if(entries.length < 2) return "";
+  return "Recommended targets: " + entries.map(entry => `${entry.label} ${formatProgressPercent(entry.percent)}%`).join(" / ");
+}
+function applyProgressMaxRecommendation(state, progress){
+  const pr = progress || {};
+  const recommended = recommendedProgressMaxPercent(state);
+  const autoValue = isTwoWayMode(state) ? PROGRESS_LEGACY_MAX_PERCENT : recommended;
+  const current = Number(pr.max_percent);
+  const previous = Number(state?._progressMaxRecommended);
+  const useRecommended = !state?._progressMaxPercentEdited && (
+    !Number.isFinite(current) ||
+    current === PROGRESS_LEGACY_MAX_PERCENT ||
+    (Number.isFinite(previous) && current === previous)
+  );
+  const maxPercent = useRecommended ? autoValue : Math.max(0, Math.min(100, current));
+  if(state){
+    state._progressMaxRecommended = autoValue;
+    state.options.progress = Object.assign({}, pr, {max_percent: maxPercent});
+  }
+  return {maxPercent, recommended, usingRecommendation: useRecommended};
+}
 const commonFeatures=(state)=>{
   if(!state.src||!state.dst) return [];
   const a=byName(state,state.src)?.features||{};
@@ -365,12 +424,12 @@ const commonFeatures=(state)=>{
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
   k==="playlists"?{enable:false,add:true,remove:false}:
-  k==="progress"?{enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}:
+  k==="progress"?{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}:
   {enable:false,add:false,remove:false};
 function getOpts(state,key){
   if(!state.visited.has(key)){
     if(key==="ratings") state.options.ratings=Object.assign({enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},state.options.ratings||{});
-    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:true,remove:false,min_seconds:60,delta_seconds:30,max_percent:95,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false},state.options.progress||{});
+    else if(key==="progress") state.options.progress=Object.assign({enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false},state.options.progress||{});
     else state.options[key]=state.options[key]??defaultFor(key);
     state.visited.add(key);
   }
@@ -610,6 +669,11 @@ function renderInstanceSelects(state){
 
   srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value)};
   dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value)};
+
+  try{
+    G.CW?.ProfileSelect?.enhanceProfile?.(srcInstSel,{className:"cx-profile-select-glass"});
+    G.CW?.ProfileSelect?.enhanceProfile?.(dstInstSel,{className:"cx-profile-select-glass"});
+  }catch{}
 }
 
 // Fold toggles (works with draggable modals)
@@ -1585,16 +1649,20 @@ left.innerHTML = `
     const pr = getOpts(state, "progress") || {};
     const minS = Number.isFinite(pr.min_seconds) ? pr.min_seconds : 60;
     const deltaS = Number.isFinite(pr.delta_seconds) ? pr.delta_seconds : 30;
-    const maxP = Number.isFinite(pr.max_percent) ? pr.max_percent : 80;
+    const { maxPercent: maxP } = applyProgressMaxRecommendation(state, pr);
+    const progressRecommendation = progressRecommendationText(state);
+    const progressEnabled = !!pr.enable;
+    const progressAdd = progressEnabled && !!pr.add;
+    if(!progressEnabled && pr.add) state.options.progress = Object.assign({}, state.options.progress || pr, {add:false});
     const replayEnabled = pr.replay_enabled === true || ["1", "true", "yes", "on"].includes(String(pr.replay_enabled ?? "").trim().toLowerCase());
     const timestampTolerance = Number.isFinite(Number(pr.timestamp_tolerance_seconds)) ? Math.max(0, Math.min(300, Math.round(Number(pr.timestamp_tolerance_seconds)))) : 30;
 
     left.innerHTML = `<div class="panel-title">Progress | Basics</div>
       <div class="grid2">
         <div class="opt-row"><label for="cx-pr-enable" data-tip-id="cx-pr-enable">Enable</label>
-          <label class="switch"><input id="cx-pr-enable" type="checkbox" ${pr.enable ? "checked" : ""}><span class="slider"></span></label></div>
+          <label class="switch"><input id="cx-pr-enable" type="checkbox" ${progressEnabled ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-pr-add" data-tip-id="cx-pr-add">Add / Update</label>
-          <label class="switch"><input id="cx-pr-add" type="checkbox" ${pr.add ? "checked" : ""}><span class="slider"></span></label></div>
+          <label class="switch"><input id="cx-pr-add" type="checkbox" ${progressAdd ? "checked" : ""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-pr-remove" data-tip-id="cx-pr-remove">Remove</label>
           <label class="switch"><input id="cx-pr-remove" type="checkbox" ${pr.remove ? "checked" : ""}><span class="slider"></span></label></div>
       </div>`;
@@ -1612,6 +1680,7 @@ left.innerHTML = `
         <div class="opt-row"><label for="cx-pr-tolerance" data-tip-id="cx-pr-tolerance">Timestamp tolerance (s)</label>
           <input id="cx-pr-tolerance" class="input small" type="number" min="0" max="300" step="1" value="${timestampTolerance}"></div>
       </div>
+      ${progressRecommendation ? `<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
       <div class="muted" style="margin-top:10px;color:#f0b35a">Warning: replay progress marks watched targets unwatched before writing the resume position.</div>
       <div class="muted" style="margin-top:10px">Tip: Progress does not infer clears from absence. It only syncs resume positions.</div>`;
 
@@ -1813,10 +1882,9 @@ function bindChangeHandlers(state,root){
     }
 
     if (id === "cx-pr-enable") {
-      if (!!ID("cx-pr-enable")?.checked) {
-        const add = ID("cx-pr-add");
-        if (add) add.checked = true;
-      }
+      const enabled = !!ID("cx-pr-enable")?.checked;
+      const add = ID("cx-pr-add");
+      if (add) add.checked = enabled;
       applySubDisable("progress");
     }
 
@@ -1898,9 +1966,10 @@ function bindChangeHandlers(state,root){
 
     if(id.startsWith("cx-pr-")){
       const prev=state.options.progress||{};
+      if(id==="cx-pr-maxp") state._progressMaxPercentEdited = true;
       const minS=parseInt(ID("cx-pr-min")?.value||"60",10);
       const delS=parseInt(ID("cx-pr-delta")?.value||"30",10);
-      const maxP=parseFloat(ID("cx-pr-maxp")?.value||"95");
+      const maxP=parseFloat(ID("cx-pr-maxp")?.value||String(PROGRESS_LEGACY_MAX_PERCENT));
       const tolerance=parseInt(ID("cx-pr-tolerance")?.value||"30",10);
       state.options.progress=Object.assign({},prev,{
         enable:!!ID("cx-pr-enable")?.checked,
@@ -2270,6 +2339,7 @@ function buildPayload(state,wrap){
   normalizeAnimePairBlock(watchlist);
   normalizeAnimePairBlock(ratings);
   const progress=get("progress");
+  progress.max_percent = applyProgressMaxRecommendation(state, progress).maxPercent;
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),progress,playlists:get("playlists")}};
