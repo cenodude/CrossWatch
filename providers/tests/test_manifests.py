@@ -81,6 +81,27 @@ CASES: tuple[ProviderCase, ...] = (
     ),
 )
 
+MEDIA_SERVER_PROGRESS_CASES: tuple[ProviderCase, ...] = (
+    ProviderCase(
+        module_path="sync._mod_PLEX",
+        expected_name="PLEX",
+        minimal_cfg={"plex": {"token": "tok", "baseurl": "http://localhost"}},
+        empty_configured=False,
+    ),
+    ProviderCase(
+        module_path="sync._mod_EMBY",
+        expected_name="EMBY",
+        minimal_cfg={"emby": {"server": "http://localhost", "access_token": "tok", "user_id": "u"}},
+        empty_configured=False,
+    ),
+    ProviderCase(
+        module_path="sync._mod_JELLYFIN",
+        expected_name="JELLYFIN",
+        minimal_cfg={"jellyfin": {"server": "http://localhost", "access_token": "tok", "user_id": "u"}},
+        empty_configured=False,
+    ),
+)
+
 
 def _import_provider(case: ProviderCase):
     if case.expected_name == "PLEX":
@@ -150,3 +171,24 @@ def test_module_requires_config(case: ProviderCase, monkeypatch: pytest.MonkeyPa
     else:
         manifest = mod.get_manifest()
     assert manifest.get("name") == case.expected_name
+
+
+@pytest.mark.parametrize("case", MEDIA_SERVER_PROGRESS_CASES)
+def test_media_server_progress_capabilities(case: ProviderCase):
+    mod = _import_provider(case)
+    expected_types = {"movies": True, "shows": False, "seasons": False, "episodes": True}
+
+    for caps in (mod.get_manifest()["capabilities"], mod.OPS.capabilities()):
+        progress = caps.get("progress")
+        assert isinstance(progress, Mapping)
+        assert progress.get("index_semantics") == "present"
+        assert progress.get("observed_deletes") is True
+        assert progress.get("types") == expected_types
+        assert progress.get("upsert") is True
+        assert progress.get("remove") is True
+        assert progress.get("requires_duration") is True
+        policy = progress.get("completion_policy")
+        assert isinstance(policy, Mapping)
+        write_policy = policy.get("progress_write")
+        assert isinstance(write_policy, Mapping)
+        assert write_policy.get("mode") == "server_configurable"

@@ -111,7 +111,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.0"
+__VERSION__ = "2.1"
 os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
 os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
@@ -192,6 +192,21 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "unordered_endpoint_types": ["collection"],
 }
 
+_PROGRESS_CAPABILITIES: dict[str, Any] = {
+    "index_semantics": "present",
+    "observed_deletes": True,
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "upsert": True,
+    "remove": True,
+    "requires_duration": True,
+    "completion_policy": {
+        "progress_write": {
+            "mode": "server_configurable",
+            "setting": "LibraryOptions.MaxResumePct",
+        },
+    },
+}
+
 _HEALTH_SHADOW_NAME = "emby.health.shadow.json"
 
 
@@ -238,6 +253,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": _PROGRESS_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -699,6 +715,7 @@ class _EmbyOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": _PROGRESS_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         }
 

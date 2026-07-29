@@ -164,12 +164,14 @@ def test_reorder_is_unsupported():
     assert pl.reorder(FakeAdapter(FakeClient()), "list-a", ["tmdb:1"])["unsupported"] is True
 
 
-def test_publicmetadb_1_0_manifest_and_auth_capabilities_cover_supported_features():
-    assert pmdb.__VERSION__ == "1.0"
+def test_publicmetadb_manifest_and_auth_capabilities_cover_supported_features():
+    assert pmdb.__VERSION__ == "1.1"
     assert pmdb_auth.__VERSION__ == "1.0"
 
     features = pmdb.get_manifest()["features"]
+    progress = pmdb.get_manifest()["capabilities"]["progress"]
     auth_caps = pmdb_auth.PROVIDER.capabilities()
     for feature in ("watchlist", "ratings", "history", "progress", "playlists"):
         assert features[feature] is True
         assert auth_caps[feature] is True
+    assert progress["completion_policy"]["progress_write"] == {"mode": "auto_complete", "percent": 80}

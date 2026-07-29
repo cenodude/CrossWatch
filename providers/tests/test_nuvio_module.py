@@ -37,6 +37,8 @@ def test_nuvio_ops_and_manifest_enable_supported_sync_features() -> None:
     assert mod.OPS.capabilities()["verify_after_write"] is True
     assert mod.OPS.capabilities()["features"] == expected
     assert mod.OPS.capabilities()["progress"]["types"] == {"movies": True, "shows": False, "seasons": False, "episodes": True}
+    assert mod.OPS.capabilities()["progress"]["completion_policy"]["progress_write"]["percent"] == 90
+    assert mod.OPS.capabilities()["progress"]["completion_policy"]["progress_write"]["min_duration_seconds"] == 60
     assert mod.OPS.capabilities()["history"]["remove"] is True
     assert mod.OPS.capabilities()["watchlist"]["types"] == {"movies": True, "shows": True, "seasons": False, "episodes": False}
 

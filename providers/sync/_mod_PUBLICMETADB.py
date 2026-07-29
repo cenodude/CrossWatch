@@ -25,7 +25,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
@@ -120,6 +120,9 @@ def get_manifest() -> Mapping[str, Any]:
                 "requires_ids": ["tmdb"],
                 "requires_duration": True,
                 "server_completion_percent": 80,
+                "completion_policy": {
+                    "progress_write": {"mode": "auto_complete", "percent": 80},
+                },
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         },

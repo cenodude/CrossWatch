@@ -188,3 +188,5 @@ def test_mdblist_module_exposes_progress_feature() -> None:
     assert mdblist_mod.OPS.features()["progress"] is True
     assert mdblist_mod.OPS.capabilities()["progress"]["upsert"] is True
     assert mdblist_mod.OPS.capabilities()["progress"]["remove"] is True
+    assert mdblist_mod.OPS.capabilities()["progress"]["completion_policy"]["progress_write"]["mode"] == "none"
+    assert mdblist_mod.OPS.capabilities()["progress"]["completion_policy"]["stop_scrobble"]["marks_watched_percent"] == 80

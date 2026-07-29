@@ -27,7 +27,7 @@ from .nuvio import _watchlist as feat_watchlist
 from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_watched_rows
 from cw_platform.provider_instances import normalize_instance_id
 
-__VERSION__ = "0.3"
+__VERSION__ = "0.4"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
 if "ctx" not in globals():
@@ -91,6 +91,13 @@ def get_manifest() -> Mapping[str, Any]:
                 "observed_deletes": True,
                 "requires_ids": ["tmdb", "imdb", "tvdb"],
                 "requires_duration": True,
+                "completion_policy": {
+                    "progress_write": {
+                        "mode": "auto_complete",
+                        "percent": 90,
+                        "min_duration_seconds": 60,
+                    },
+                },
             },
             "history": {
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
