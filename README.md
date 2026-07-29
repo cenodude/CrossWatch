@@ -47,11 +47,11 @@
 * **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
-  * Watchlists, ratings, History and Progress
+  * Watchlists, Ratings, History and Progress
   * Anime ID mapping (powered AniBridge) for AniList matching across providers.
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin/Kodi to Trakt/SIMKL/MDBList)
-    * Does not require any Plex Pass, Emby Premiere,etc.  
+    * Does not require Plex Pass or Emby Premiere.  
   * **Webhooks** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
 * **Tools**
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
@@ -59,7 +59,6 @@
   * Editor: Inspect and adjust your items and add or block items.
   * Events Viewer: Search and inspect sync runs.
   * Captures: Rollback tool for provider watchlist, ratings, and history.
-  * Backup & Restore: Create, validate, import and restore configuration.
 
 And much more...such as:
 * Simple and advanced scheduling: From standard to more detailed pair schedules
