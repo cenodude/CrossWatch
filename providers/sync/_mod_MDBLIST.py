@@ -101,7 +101,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.3"
+__VERSION__ = "1.4"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -228,6 +228,10 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                 "upsert": True,
                 "remove": True,
+                "completion_policy": {
+                    "progress_write": {"mode": "none"},
+                    "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
+                },
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         },
@@ -796,6 +800,10 @@ class _MDBLISTOPS:
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                 "upsert": True,
                 "remove": True,
+                "completion_policy": {
+                    "progress_write": {"mode": "none"},
+                    "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
+                },
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         }

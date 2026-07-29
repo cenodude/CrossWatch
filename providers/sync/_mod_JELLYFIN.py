@@ -107,7 +107,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.0"
+__VERSION__ = "2.1"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -184,6 +184,22 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "unordered_endpoint_types": ["collection"],
 }
 
+_PROGRESS_CAPABILITIES: dict[str, Any] = {
+    "index_semantics": "present",
+    "observed_deletes": True,
+    "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+    "upsert": True,
+    "remove": True,
+    "requires_duration": True,
+    "completion_policy": {
+        "progress_write": {
+            "mode": "server_configurable",
+            "default_percent": 90,
+            "setting": "MaxResumePct",
+        },
+    },
+}
+
 _HEALTH_SHADOW_NAME = "jellyfin.health.shadow.json"
 
 
@@ -247,6 +263,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": _PROGRESS_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
@@ -724,6 +741,7 @@ class _JellyfinOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "progress": _PROGRESS_CAPABILITIES,
             "playlists": _PLAYLIST_CAPABILITIES,
         }
 

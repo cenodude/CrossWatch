@@ -256,6 +256,10 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True, "anime": True},
                 "upsert": True,
                 "remove": True,
+                "completion_policy": {
+                    "progress_write": {"mode": "none"},
+                    "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
+                },
             },
             "playlists": dict(_PLAYLIST_CAPABILITIES),
         },
@@ -747,6 +751,10 @@ class _SIMKLOPS:
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True, "anime": True},
                 "upsert": True,
                 "remove": True,
+                "completion_policy": {
+                    "progress_write": {"mode": "none"},
+                    "stop_scrobble": {"marks_watched_percent": 80, "comparison": "gte"},
+                },
             },
             "playlists": dict(_PLAYLIST_CAPABILITIES),
         }
