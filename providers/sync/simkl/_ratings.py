@@ -33,6 +33,7 @@ BASE = "https://api.simkl.com"
 URL_INDEX = f"{BASE}/sync/ratings"
 URL_ADD = f"{BASE}/sync/ratings"
 URL_REMOVE = f"{BASE}/sync/ratings/remove"
+RATING_BUCKETS = "1,2,3,4,5,6,7,8,9,10"
 
 
 def _shadow_path() -> str:
@@ -82,6 +83,16 @@ def _info(event: str, **fields: Any) -> None:
 
 def _warn(event: str, **fields: Any) -> None:
     _log(event, level="warn", **fields)
+
+
+def _json_shape(value: Any) -> str:
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if value is None:
+        return "null"
+    return type(value).__name__
 
 
 def _headers(adapter: Any, *, force_refresh: bool = False) -> dict[str, str]:
@@ -458,28 +469,49 @@ def _fetch_current(
     timeout: float,
 ) -> tuple[dict[str, list[Mapping[str, Any]]], bool]:
     empty = {"movies": [], "shows": [], "anime": []}
+    out: dict[str, list[Mapping[str, Any]]] = {"movies": [], "shows": [], "anime": []}
     try:
-        resp = sess.get(
-            URL_INDEX,
-            headers=dict(hdrs),
-            params=simkl_api_params_from_headers(hdrs),
-            timeout=timeout,
-        )
-        if resp.status_code != 200:
-            _warn("http_failed", op="index", status=resp.status_code, body=(resp.text or "")[:200])
-            return empty, False
-        data = resp.json()
-        if not isinstance(data, Mapping):
-            _warn("http_failed", op="index", reason="invalid_response_shape")
-            return empty, False
-        out: dict[str, list[Mapping[str, Any]]] = {}
         for kind in ("movies", "shows", "anime"):
-            rows_any = data.get(kind)
+            resp = sess.get(
+                f"{URL_INDEX}/{kind}/{RATING_BUCKETS}",
+                headers=dict(hdrs),
+                params=simkl_api_params_from_headers(hdrs),
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                _warn("http_failed", op="index", kind=kind, status=resp.status_code, body=(resp.text or "")[:200])
+                return empty, False
+            data = resp.json()
+            rows_any: Any
+            if isinstance(data, Mapping):
+                rows_any = data.get(kind)
+            elif isinstance(data, list):
+                rows_any = data
+            elif data is None:
+                _dbg("index_empty_response", kind=kind, compatibility="null_payload")
+                rows_any = []
+            else:
+                _warn(
+                    "http_failed",
+                    op="index",
+                    kind=kind,
+                    reason="invalid_response_shape",
+                    json_type=_json_shape(data),
+                    body=(resp.text or "")[:200],
+                )
+                return empty, False
             if rows_any is None:
                 out[kind] = []
                 continue
             if not isinstance(rows_any, list):
-                _warn("http_failed", op="index", kind=kind, reason="invalid_bucket_shape")
+                _warn(
+                    "http_failed",
+                    op="index",
+                    kind=kind,
+                    reason="invalid_bucket_shape",
+                    json_type=_json_shape(rows_any),
+                    body=(resp.text or "")[:200],
+                )
                 return empty, False
             out[kind] = [row for row in rows_any if isinstance(row, Mapping)]
         cache_anime_mappings(out["anime"])
