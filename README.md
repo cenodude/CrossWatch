@@ -1,4 +1,5 @@
-<img width="1410" height="717" alt="CrossWatch" src="https://github.com/user-attachments/assets/bd977f1b-2cbc-425a-80f5-f6551ce145fd" />
+<img width="1672" height="941" alt="CW-image (1)" src="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" />
+
 
 </center>
 
