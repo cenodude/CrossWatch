@@ -60,6 +60,7 @@ except Exception:  # pragma: no cover
 
 from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating
+from ._progress_completion import fcfg_for_progress_target
 try:
     from ._pairs_oneway import _ratings_filter_index as _rate_filter
 except Exception:
@@ -992,14 +993,15 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             B_for_A = dict(B_eff or {})
             A_for_B = dict(A_eff or {})
 
-        up_B, clr_B = diff_progress(A_eff, B_for_A, fcfg=fcfg, propagate_timestamp_updates=False)
-        up_A, clr_A = diff_progress(B_eff, A_for_B, fcfg=fcfg, propagate_timestamp_updates=False)
+        fcfg_to_B = fcfg_for_progress_target(fcfg, bops)
+        fcfg_to_A = fcfg_for_progress_target(fcfg, aops)
+        up_B, clr_B = diff_progress(A_eff, B_for_A, fcfg=fcfg_to_B, propagate_timestamp_updates=False)
+        up_A, clr_A = diff_progress(B_eff, A_for_B, fcfg=fcfg_to_A, propagate_timestamp_updates=False)
 
         # progress clears from missing items
         try:
             cfgp = dict(fcfg or {})
             min_seconds = int(cfgp.get("min_seconds") or cfgp.get("minSeconds") or 60)
-            max_percent = float(cfgp.get("max_percent") or cfgp.get("maxPercent") or 95)
             clear_below_min = bool(cfgp.get("clear_below_min") or cfgp.get("clearBelowMin") or False)
             min_ms = max(0, min_seconds) * 1000
 
@@ -1052,11 +1054,33 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 except Exception:
                     return None
 
+            def _max_percent_for(direction_fcfg: Mapping[str, Any]) -> float:
+                return float(direction_fcfg.get("max_percent") or direction_fcfg.get("maxPercent") or 95)
+
+            def _max_percent_min_duration_seconds_for(direction_fcfg: Mapping[str, Any]) -> int:
+                return int(
+                    direction_fcfg.get("max_percent_min_duration_seconds")
+                    or direction_fcfg.get("maxPercentMinDurationSeconds")
+                    or 0
+                )
+
+            def _at_completion_cutoff(pp: float | None, pit: Mapping[str, Any], direction_fcfg: Mapping[str, Any]) -> bool:
+                if pp is None or pp < _max_percent_for(direction_fcfg):
+                    return False
+                min_duration_seconds = _max_percent_min_duration_seconds_for(direction_fcfg)
+                if min_duration_seconds <= 0:
+                    return True
+                dur = _dur(pit)
+                if dur is None:
+                    return True
+                return dur >= min_duration_seconds * 1000
+
             def _infer_clears(
                 missing: set[str],
                 prev_idx: dict[str, Any],
                 other_eff: dict[str, Any],
                 other_alias: dict[str, str],
+                direction_fcfg: Mapping[str, Any],
             ) -> list[dict[str, Any]]:
                 out: list[dict[str, Any]] = []
                 for ck0 in (missing or set()):
@@ -1075,7 +1099,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                             # Not synced then don't propagate the clear either (unless clear_below_min)
                             continue
                     pp = _pct(pms, _dur(pit)) if pms > 0 else pp_explicit
-                    if pp is not None and pp >= max_percent:
+                    if _at_completion_cutoff(pp, pit, direction_fcfg):
                         # Near completion then let history sync handle played state
                         continue
 
@@ -1095,8 +1119,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 # A missing => clear on B, B missing => clear on A
                 clr_B = list(clr_B or [])
                 clr_A = list(clr_A or [])
-                clr_B += _infer_clears(obsA, prevA, B_eff, B_alias_tmp)
-                clr_A += _infer_clears(obsB, prevB, A_eff, A_alias_tmp)
+                clr_B += _infer_clears(obsA, prevA, B_eff, B_alias_tmp, fcfg_to_B)
+                clr_A += _infer_clears(obsB, prevB, A_eff, A_alias_tmp, fcfg_to_A)
 
                 # Tomb-based shit:
                 tck: set[str] = set()
@@ -1114,7 +1138,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 miss_on_B = {k for k in tck if k in (A_eff or {}) and k not in (B_eff or {})}
                 miss_on_A = {k for k in tck if k in (B_eff or {}) and k not in (A_eff or {})}
 
-                def _infer_from_present(present_keys: set[str], present_eff: dict[str, Any]) -> list[dict[str, Any]]:
+                def _infer_from_present(
+                    present_keys: set[str],
+                    present_eff: dict[str, Any],
+                    direction_fcfg: Mapping[str, Any],
+                ) -> list[dict[str, Any]]:
                     out: list[dict[str, Any]] = []
                     for ck0 in (present_keys or set()):
                         pit = present_eff.get(ck0)
@@ -1130,7 +1158,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                             else:
                                 continue
                         pp = _pct(pms, _dur(pit)) if pms > 0 else pp_explicit
-                        if pp is not None and pp >= max_percent:
+                        if _at_completion_cutoff(pp, pit, direction_fcfg):
                             continue
                         base = _minimal(pit)
                         base["progress_ms"] = 0
@@ -1138,8 +1166,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         out.append(base)
                     return out
 
-                clr_A += _infer_from_present(miss_on_B, A_eff)
-                clr_B += _infer_from_present(miss_on_A, B_eff)
+                clr_A += _infer_from_present(miss_on_B, A_eff, fcfg_to_A)
+                clr_B += _infer_from_present(miss_on_A, B_eff, fcfg_to_B)
 
                 emit("debug", msg="progress.infer_clears", obsA=len(obsA), obsB=len(obsB), tomb=len(tomb or set()),
                      tomb_missing_on_A=len(miss_on_A), tomb_missing_on_B=len(miss_on_B), clear_below_min=bool(clear_below_min))
