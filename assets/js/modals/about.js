@@ -135,14 +135,14 @@ function view(info, mods, logo) {
           </section>
         ` : ""}
         <section class="card">
-          <div class="lede">CrossWatch syncs Plex, Jellyfin, Emby, MDBList, AniList, Tautulli, TMDb, SIMKL, PublicMetaDB and Trakt. Keep it behind your network edge and avoid exposing it directly to the internet.</div>
+          <div class="lede">CrossWatch syncs Plex, Jellyfin, Emby, Nuvio, Kodi, MDBList, AniList, Tautulli, TMDb, SIMKL, PublicMetaDB and Trakt. Keep it behind your network edge and avoid exposing it directly to the internet.</div>
         </section>
         ${_fold("Authentication providers", _providerRows(mods.groups?.AUTH))}
         ${_fold("Synchronization providers", _providerRows(mods.groups?.SYNC))}
         <section class="card">
           <div class="eyebrow">Disclaimer</div>
           <div class="discBody">
-            <div>Independent community project. Not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Trakt, SIMKL, TMDb, Tautulli, AniList, PublicMetaDB, or MDBList. CrossWatch uses the AniBridge mappings dataset to translate media identifiers between AniList and providers such as TMDB, TVDB, IMDb, MyAnimeList and AniDB.</div>
+            <div>Independent community project. Not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Nuvio, Kodi, Trakt, SIMKL, TMDb, Tautulli, AniList, PublicMetaDB, or MDBList. CrossWatch uses the AniBridge mappings dataset to translate media identifiers between AniList and providers such as TMDB, TVDB, IMDb, MyAnimeList and AniDB.</div>
             <ul>
               <li>Names, logos, and brands belong to their owners and are used for identification only.</li>
               <li>Third-party APIs have their own rules. Use them without getting yourself banned.</li>
