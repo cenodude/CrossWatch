@@ -608,13 +608,16 @@ def _get_index_html_static() -> str:
 
       <div id="cw-settings-left">
         <section id="cw-settings-overview" class="cw-settings-pane active" data-pane="overview">
+          <div class="cw-settings-pane-head cw-settings-hero cw-settings-hero-overview">
+            <div>
+              <div class="cw-settings-pane-kicker">Setup</div>
+              <h3>Progress, status and next steps</h3>
+              <p>Track your setup progress and configure core areas.</p>
+            </div>
+            <span class="material-symbols-rounded cw-settings-hero-shape" aria-hidden="true">grid_view</span>
+          </div>
           <div id="cw-settings-overview-grid">
             <div class="cw-settings-overview-main">
-              <div class="cw-settings-overview-title">
-                <h3>Setup</h3>
-                <p>Track your setup progress and configure core areas.</p>
-              </div>
-
               <section class="cw-settings-overview-card cw-settings-progress-card">
                 <div class="cw-settings-progress-summary">
                   <div class="cw-settings-progress-ring" id="cw-settings-progress-ring">
