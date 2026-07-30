@@ -1,5 +1,5 @@
 <section class="cw-hero">
-  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" data-cw-gallery="crosswatch" aria-label="Open CrossWatch interface preview">
+  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" aria-label="Open CrossWatch interface preview">
     <img width="1672" height="941" alt="CrossWatch interface preview" src="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e">
   </a>
   <div class="cw-hero-shade"></div>
@@ -10,6 +10,7 @@
     <p class="cw-lede">Keep Plex, Jellyfin, Emby, Kodi and your trackers moving together from one local web UI.</p>
     <div class="cw-actions" aria-label="CrossWatch links">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
+      <a class="cw-button" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" data-cw-gallery="crosswatch">View screenshot</a>
       <a class="cw-button" href="https://github.com/cenodude/CrossWatch">View on GitHub</a>
       <a class="cw-button" href="https://wiki.crosswatch.app/">Open Wiki</a>
     </div>
@@ -40,18 +41,78 @@
 </section>
 
 <section class="cw-provider-wall" aria-label="Supported services">
-  <span>Plex</span>
-  <span>Jellyfin</span>
-  <span>Emby</span>
-  <span>Kodi</span>
-  <span>Trakt</span>
-  <span>SIMKL</span>
-  <span>MDBList</span>
-  <span>TMDb</span>
-  <span>AniList</span>
-  <span>PublicMetaDB</span>
-  <span>Tautulli</span>
-  <span>Nuvio</span>
+  <article class="cw-provider-card is-plex">
+    <img class="cw-provider-mark" src="images/providers/PLEX.svg" alt="" aria-hidden="true">
+    <strong>Plex</strong>
+    <span>Media server</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-jellyfin">
+    <img class="cw-provider-mark" src="images/providers/JELLYFIN.svg" alt="" aria-hidden="true">
+    <strong>Jellyfin</strong>
+    <span>Media server</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-emby">
+    <img class="cw-provider-mark" src="images/providers/EMBY.svg" alt="" aria-hidden="true">
+    <strong>Emby</strong>
+    <span>Media server</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-kodi">
+    <img class="cw-provider-mark" src="images/providers/KODI.png" alt="" aria-hidden="true">
+    <strong>Kodi</strong>
+    <span>Media client</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-trakt">
+    <img class="cw-provider-mark" src="images/providers/TRAKT.svg" alt="" aria-hidden="true">
+    <strong>Trakt</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-simkl">
+    <img class="cw-provider-mark" src="images/providers/SIMKL.svg" alt="" aria-hidden="true">
+    <strong>SIMKL</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-mdblist">
+    <img class="cw-provider-mark" src="images/providers/MDBLIST.svg" alt="" aria-hidden="true">
+    <strong>MDBList</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-tmdb">
+    <img class="cw-provider-mark" src="images/providers/TMDB.svg" alt="" aria-hidden="true">
+    <strong>TMDb</strong>
+    <span>Metadata</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-anilist">
+    <img class="cw-provider-mark" src="images/providers/ANILIST.svg" alt="" aria-hidden="true">
+    <strong>AniList</strong>
+    <span>Anime tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-publicmetadb">
+    <img class="cw-provider-mark" src="images/providers/PUBLICMETADB.svg" alt="" aria-hidden="true">
+    <strong>PublicMetaDB</strong>
+    <span>Ratings and metadata</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-tautulli">
+    <img class="cw-provider-mark" src="images/providers/TAUTULLI.svg" alt="" aria-hidden="true">
+    <strong>Tautulli</strong>
+    <span>Plex activity</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-nuvio">
+    <img class="cw-provider-mark" src="images/providers/NUVIO.png" alt="" aria-hidden="true">
+    <strong>Nuvio</strong>
+    <span>Media app</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
 </section>
 
 <section class="cw-feature-grid">
