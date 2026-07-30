@@ -34,9 +34,9 @@
           <button class="cw-lb__close" type="button" aria-label="Close">Close</button>
         </div>
         <div class="cw-lb__stage">
-          <button class="cw-lb__nav prev" type="button" aria-label="Previous">‹</button>
+          <button class="cw-lb__nav prev" type="button" aria-label="Previous">&lsaquo;</button>
           <img class="cw-lb__img" alt="" />
-          <button class="cw-lb__nav next" type="button" aria-label="Next">›</button>
+          <button class="cw-lb__nav next" type="button" aria-label="Next">&rsaquo;</button>
         </div>
         <div class="cw-lb__thumbs" aria-label="Thumbnails"></div>
       </div>
@@ -118,7 +118,7 @@
 
       imgEl.src = it.href;
       imgEl.alt = it.alt;
-      counter.textContent = `${activeIndex + 1} / ${items.length} — ${it.alt}`;
+      counter.textContent = `${activeIndex + 1} / ${items.length} - ${it.alt}`;
 
       btnPrev.disabled = items.length <= 1;
       btnNext.disabled = items.length <= 1;

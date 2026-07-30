@@ -1,18 +1,27 @@
-<div align="center"><img src="images/CrossWatch.png" alt="CrossWatch" width="480"></div>
-
-<p align="center">
-  <a class="cw-cta" href="https://github.com/cenodude/CrossWatch">
-    <span class="cw-cta-icon" aria-hidden="true"></span>
-    Join us on GitHub
+<section class="cw-hero">
+  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" data-cw-gallery="crosswatch" aria-label="Open CrossWatch interface preview">
+    <img width="1672" height="941" alt="CrossWatch interface preview" src="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e">
   </a>
-</p>
+  <div class="cw-hero-shade"></div>
+  <div class="cw-hero-inner">
+    <img class="cw-logo" src="images/CrossWatch.png" alt="CrossWatch">
+    <p class="cw-kicker">Media sync hub</p>
+    <h1>CrossWatch</h1>
+    <p class="cw-lede">Keep Plex, Jellyfin, Emby, Kodi and your trackers moving together from one local web UI.</p>
+    <div class="cw-actions" aria-label="CrossWatch links">
+      <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
+      <a class="cw-button" href="https://github.com/cenodude/CrossWatch">View on GitHub</a>
+      <a class="cw-button" href="https://wiki.crosswatch.app/">Open Wiki</a>
+    </div>
+  </div>
+</section>
 
-
-<img src="https://github.com/user-attachments/assets/d4afb18c-b655-4aa7-ba2b-da10f3cef89a" />
-<img alt="provider" src="https://github.com/user-attachments/assets/fa833ac6-ff96-440d-bfc0-5f749120af8c" />
-<p align="center">
+<section class="cw-proof" aria-label="Project links and status">
   <a href="https://github.com/cenodude/CrossWatch/releases/latest">
     <img src="https://img.shields.io/github/v/release/cenodude/CrossWatch?display_name=release&amp;sort=semver&amp;logo=github&amp;label=Latest%20Release&amp;style=for-the-badge" alt="Latest Release">
+  </a>
+  <a href="https://hub.docker.com/r/cenodude/crosswatch">
+    <img src="https://img.shields.io/docker/pulls/cenodude/crosswatch?style=for-the-badge&amp;logo=docker&amp;label=Docker%20Pulls" alt="Docker Pulls">
   </a>
   <a href="https://github.com/cenodude/CrossWatch/pkgs/container/crosswatch">
     <img src="https://img.shields.io/badge/dynamic/json?url=https://ghcr-badge.elias.eu.org/api/cenodude/CrossWatch/crosswatch&amp;query=%24.downloadCount&amp;style=for-the-badge&amp;logo=github&amp;label=GHCR%20Pulls" alt="GHCR Pulls">
@@ -20,61 +29,118 @@
   <a href="https://wiki.crosswatch.app/getting-started/first-time-setup">
     <img src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&amp;logo=gitbook" alt="Must-read: Quick Start">
   </a>
-  <br>
-  <a href="https://hub.docker.com/r/cenodude/crosswatch">
-    <img src="https://img.shields.io/docker/pulls/cenodude/crosswatch?style=for-the-badge&amp;logo=docker&amp;label=Docker%20Pulls" alt="Docker Pulls">
-  </a>
-  <a href="https://hub.docker.com/r/cenodude/crosswatch">
-    <img src="https://img.shields.io/docker/image-size/cenodude/crosswatch/latest?style=for-the-badge&amp;logo=docker&amp;label=Image%20Size" alt="Image Size">
-  </a>
-  <a href="https://hub.docker.com/r/cenodude/crosswatch/tags">
-    <img src="https://img.shields.io/docker/v/cenodude/crosswatch?sort=semver&amp;style=for-the-badge&amp;logo=docker&amp;label=Docker%20Version" alt="Docker Version">
-  </a>
-</p>
-<p align="center">
+</section>
 
-  <a href="https://www.crosswatch.app/" style="margin: 0 6px;">
-    <img alt="Website" src="https://img.shields.io/badge/Website-crosswatch.app-B026FF?style=for-the-badge">
-  </a>
-  <a href="https://wiki.crosswatch.app/" style="margin: 0 6px;">
-    <img alt="Wiki" src="https://img.shields.io/badge/Wiki-wiki.crosswatch.app-B026FF?style=for-the-badge">
-  </a>
-</p>
-<img
-  align="right"
-  src="https://github.com/user-attachments/assets/f219a392-839f-4ced-a263-1c745fbdf999"
-  alt="CrossWatch mobile"
-  width="170"
-  style="max-width:170px; height:auto; margin:0 0 12px 16px;"
-/>
+<section class="cw-section cw-intro">
+  <div>
+    <p class="cw-kicker">One control room</p>
+    <h2>Your media state, kept in sync.</h2>
+  </div>
+  <p>CrossWatch/CW links accounts, profiles, sync pairs, schedules, snapshots, scrobbling routes and repair tools into one local dashboard. Run it for yourself, then create separate profiles for family, friends, servers or tracker setups.</p>
+</section>
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Trakt, AniList, TMDb, MDBList and Tautulli** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+<section class="cw-provider-wall" aria-label="Supported services">
+  <span>Plex</span>
+  <span>Jellyfin</span>
+  <span>Emby</span>
+  <span>Kodi</span>
+  <span>Trakt</span>
+  <span>SIMKL</span>
+  <span>MDBList</span>
+  <span>TMDb</span>
+  <span>AniList</span>
+  <span>PublicMetaDB</span>
+  <span>Tautulli</span>
+  <span>Nuvio</span>
+</section>
 
-### CW in a nutshell:
-* **One brain for all your media syncs** A single place to configure everything.
-* **Be your own Sync Hub** Create profiles for seperate media servers/users/trackers.
-* **Multi media-server** and **multi tracker** support with profiles.
-* **Synchronization**
-  * Watchlists, ratings and History
-  * Progress sync your progress status between Plex, Emby and Jellyfin.
-* **Scrobble (tracks your activity)**
-  * **Watcher** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
-    * Does not require any Plex Pass, Emby Premiere,etc.  
-  * **Webhooks** (Plex/Emby/Jellyfin to Trakt)
-  * **Watchlist Auto-Remove** Clears items from your Watchlist after a verified finish.
-* **Tools**
-  * Analyzer: Finds items that are **stuck** or inconsistent between providers.
-  * Editor: Inspect and adjust your items and add or block items.
-  * Captures: Rollback tool for provider watchlist, ratings, and history.
+<section class="cw-feature-grid">
+  <article>
+    <span class="cw-token">SYNC</span>
+    <h3>Watchlists, ratings, history and progress</h3>
+    <p>Keep core media state aligned across media servers and trackers, including unfinished playback records where supported.</p>
+  </article>
+  <article>
+    <span class="cw-token">HUB</span>
+    <h3>Profiles for real setups</h3>
+    <p>Build separate sync setups for different users, servers and trackers without mixing everyone into one account.</p>
+  </article>
+  <article>
+    <span class="cw-token">LIVE</span>
+    <h3>Watcher and webhooks</h3>
+    <p>Route play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL or MDBList without needing Plex Pass or Emby Premiere.</p>
+  </article>
+  <article>
+    <span class="cw-token">SAFE</span>
+    <h3>Snapshots and captures</h3>
+    <p>Keep provider snapshots, compare changes and restore watchlist, ratings and history data when you need to recover.</p>
+  </article>
+  <article>
+    <span class="cw-token">TOOLS</span>
+    <h3>Analyzer, editor and events</h3>
+    <p>Find stuck items, inspect sync runs, adjust records, block noisy matches and clean up provider state from the UI.</p>
+  </article>
+  <article>
+    <span class="cw-token">ANIME</span>
+    <h3>AniList matching support</h3>
+    <p>Anime ID mapping powered by AniBridge helps CrossWatch match anime cleanly across supported providers.</p>
+  </article>
+</section>
 
-And much more...such as:
-* Simple and advanced scheduling: From standard to more detailed pair schedules
-* CW Tracker Keeps snapshots/backups from your media servers and trackers.
-* Unified Watchlist: View all watchlist items in one place.
-* Player card: Shows what you are currently watching in real time.
-* Fallback GUID: Revives old items from  your Plex library.
+<section class="cw-flow">
+  <div>
+    <span>01</span>
+    <strong>Connect</strong>
+    <p>Add servers, trackers and metadata.</p>
+  </div>
+  <div>
+    <span>02</span>
+    <strong>Pair</strong>
+    <p>Choose what moves between providers.</p>
+  </div>
+  <div>
+    <span>03</span>
+    <strong>Automate</strong>
+    <p>Run manually, schedule jobs or listen live.</p>
+  </div>
+  <div>
+    <span>04</span>
+    <strong>Review</strong>
+    <p>Use stats, events, captures and tools.</p>
+  </div>
+</section>
 
+<section class="cw-install">
+  <div>
+    <p class="cw-kicker">Docker first</p>
+    <h2>Start local. Stay in control.</h2>
+    <p>The web UI is exposed at <code>http://localhost:8787</code>. Keep your config in a Docker volume and update with the latest image when you are ready.</p>
+    <div class="cw-actions">
+      <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Installation guide</a>
+      <a class="cw-button" href="https://hub.docker.com/r/cenodude/crosswatch">Docker Hub</a>
+    </div>
+  </div>
+  <div class="cw-code-panel">
+    <pre><code>docker run -d \
+  --name crosswatch \
+  -p 8787:8787 \
+  -v crosswatch_config:/config \
+  -e TZ=Europe/Amsterdam \
+  --restart unless-stopped \
+  ghcr.io/cenodude/crosswatch:latest</code></pre>
+  </div>
+</section>
 
-### Download
-[![Guide: Container Installation](https://img.shields.io/badge/Guide-Container%20Installation-2ea44f?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/container-installation)
-[![Guide: Docker Setup](https://img.shields.io/badge/Guide-Docker%20Setup-0d6efd?style=for-the-badge)](https://wiki.crosswatch.app/getting-started/docker-setup)
+<section class="cw-sponsor">
+  <p class="cw-kicker">Support</p>
+  <h2>Thanks for keeping CrossWatch moving.</h2>
+  <p>Every cent from Buy Me a Coffee goes to the ALS Foundation in the Netherlands.</p>
+  <div class="cw-proof">
+    <a href="https://www.buymeacoffee.com/cenodude">
+      <img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-ffdd00?style=for-the-badge&amp;logo=buy-me-a-coffee&amp;logoColor=000000">
+    </a>
+    <a href="https://www.gitbook.com/">
+      <img alt="GitBook" src="https://img.shields.io/badge/GitBook-sponsored-3884ff?style=for-the-badge&amp;logo=gitbook&amp;logoColor=white">
+    </a>
+  </div>
+</section>
