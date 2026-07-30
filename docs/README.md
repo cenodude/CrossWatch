@@ -1,5 +1,5 @@
 <section class="cw-hero">
-  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" data-cw-gallery="crosswatch" aria-label="Open CrossWatch interface preview">
+  <a class="cw-hero-media" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" aria-label="Open CrossWatch interface preview">
     <img width="1672" height="941" alt="CrossWatch interface preview" src="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e">
   </a>
   <div class="cw-hero-shade"></div>
@@ -10,6 +10,7 @@
     <p class="cw-lede">Keep Plex, Jellyfin, Emby, Kodi and your trackers moving together from one local web UI.</p>
     <div class="cw-actions" aria-label="CrossWatch links">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
+      <a class="cw-button" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" data-cw-gallery="crosswatch">View screenshot</a>
       <a class="cw-button" href="https://github.com/cenodude/CrossWatch">View on GitHub</a>
       <a class="cw-button" href="https://wiki.crosswatch.app/">Open Wiki</a>
     </div>
