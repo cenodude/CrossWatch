@@ -159,6 +159,8 @@ def _is_sensitive_path(path: tuple[str, ...]) -> bool:
         "_pending_tv_caller",
         "request_token",
         "token",
+        "auth_key",
+        "authkey",
         "password",
         "secret",
         "webhook_secret",
@@ -352,6 +354,10 @@ DEFAULT_CFG: dict[str, Any] = {
         "expires_at": 0,
         "profile_id": "",
         "profile_name": "",
+    },
+
+    "stremio": {
+        "auth_key": "",
     },
 
     "playback_progress": {
@@ -603,7 +609,8 @@ DEFAULT_CFG: dict[str, Any] = {
         "apply_chunk_size_by_provider": {               # SIMKL/TRAKT/MDBLIST/PUBLICMETADB/ANILIST/TMDB/TAUTULLI/PLEX/JELLYFIN/EMBY overrides
             "SIMKL": 500,
             "MDBLIST": 500,
-            "PUBLICMETADB": 500
+            "PUBLICMETADB": 500,
+            "STREMIO": 1000
         },
         
         # suspect guard (shrinking inventories protection)
@@ -756,6 +763,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
+        "stremio": {"auth_key", "authKey"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},
@@ -1311,6 +1319,28 @@ def _normalize_nuvio(cfg: dict[str, Any]) -> None:
                 _block(inst)
 
 
+def _normalize_stremio(cfg: dict[str, Any]) -> None:
+    s0 = cfg.get("stremio")
+    if isinstance(s0, dict):
+        s = s0
+    else:
+        s = {}
+        cfg["stremio"] = s
+    insts = s.get("instances") if isinstance(s.get("instances"), dict) else None
+
+    def _block(block: dict[str, Any]) -> None:
+        key = str(block.get("auth_key") or block.get("authKey") or "").strip()
+        block.clear()
+        block["auth_key"] = key
+
+    _block(s)
+    if isinstance(insts, dict):
+        s["instances"] = insts
+        for inst in insts.values():
+            if isinstance(inst, dict):
+                _block(inst)
+
+
 def _is_hhmm(v: str) -> bool:
     s = (v or "").strip()
     if len(s) != 5 or s[2] != ":":
@@ -1723,6 +1753,7 @@ def load_config() -> dict[str, Any]:
     _normalize_mdblist(cfg)
     _normalize_publicmetadb(cfg)
     _normalize_nuvio(cfg)
+    _normalize_stremio(cfg)
     _normalize_anime_mapping(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
@@ -1775,6 +1806,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_mdblist(data)
     _normalize_publicmetadb(data)
     _normalize_nuvio(data)
+    _normalize_stremio(data)
     _normalize_anime_mapping(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)

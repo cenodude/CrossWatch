@@ -411,6 +411,7 @@ function _cwHasConfiguredValue(v) {
       "emby.user",
       "kodi.server",
       "kodi.connection_verified",
+      "stremio.auth_key",
       "app_auth.username",
       "app_auth.password.hash",
     ];

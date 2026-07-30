@@ -48,7 +48,7 @@
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
     { id: "sec-auth-trackers", title: "Trackers", keys: ["TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST"] },
-    { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI"] },
+    { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
   const AUTH_GROUP_BY_KEY = Object.freeze(Object.fromEntries(AUTH_GROUPS.flatMap((group) => group.keys.map((key) => [key, group.id]))));
@@ -161,6 +161,7 @@
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
     if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
+    if (p === "stremio") return hasConfiguredValue(b.auth_key) || hasConfiguredValue(b.authKey);
     if (p === "tautulli") return hasConfiguredValue((b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server_url || (b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server);
     if (p === "tmdb") return hasConfiguredValue(b.account_id) || (hasConfiguredValue(b.api_key) && hasConfiguredValue(b.session_id || b.session));
     return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.api_key) || hasConfiguredValue(b.token);
@@ -540,6 +541,15 @@
       steps: [["1", "Enable JSON-RPC", "Allow control of Kodi via HTTP"], ["2", "Enter server", "Add the Kodi web server URL"], ["3", "Verify", "CrossWatch checks Kodi and JSON-RPC versions"]],
       order: [".grid2", ".inline"],
       actions: [{ row: ".inline", status: "#kodi_msg", buttons: "#kodi_connect" }]
+    },
+    STREMIO: {
+      provider: "stremio", logo: "STREMIO", help: window.CW.HelpLinks.url("stremio"), deleteSelector: "#stremio_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect with Stremio account"] },
+      copy: { auth: ["Stremio Authentication", "Connect with your Stremio account. CrossWatch stores only the returned auth key."] },
+      journey: ["Connect to Stremio", "Enter your Stremio email and password once. CrossWatch exchanges them for an auth key and does not retain the password.", "114,44,254", "22,182,255", "STREMIO"],
+      steps: [["1", "Enter account", "Use your Stremio email and password"], ["2", "Exchange key", "CrossWatch requests an auth key"], ["3", "Store key", "Only the auth key is saved"]],
+      order: [".grid2", ".inline"],
+      actions: [{ row: ".inline", status: "#stremio_msg", buttons: "#stremio_connect" }]
     },
     ANILIST: {
       provider: "anilist", logo: "ANILIST", help: window.CW.HelpLinks.url("anilist"), deleteSelector: "#btn-delete-anilist",

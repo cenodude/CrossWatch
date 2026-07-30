@@ -23,6 +23,10 @@ def _backend(provider: Any):
         from providers.auth import _auth_NUVIO as nuvio_auth
 
         return nuvio_auth
+    if name == "stremio":
+        from providers.auth import _auth_STREMIO as stremio_auth
+
+        return stremio_auth
     raise NotImplementedError(f"No runtime auth backend for provider: {provider}")
 
 

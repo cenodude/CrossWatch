@@ -61,6 +61,7 @@ PROVIDERS: tuple[str, ...] = (
     "tautulli",
     "nuvio",
     "kodi",
+    "stremio",
 )
 
 # Caches
@@ -128,6 +129,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "TAUTULLI": "tautulli",
     "NUVIO": "nuvio",
     "KODI": "kodi",
+    "STREMIO": "stremio",
 }
 
 _FALLBACK_KEYS: dict[str, tuple[str, ...]] = {
@@ -250,6 +252,12 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str((n.get("access_token") or "")).strip()
         profile = str((n.get("profile_id") or "")).strip()
         return f"nuvio|base:{_secret_cache_tag(base)}|tok:{_secret_cache_tag(tok)}|profile:{profile}"
+
+    if p == "stremio":
+        s = cfg.get("stremio") or {}
+        key = str((s.get("auth_key") or s.get("authKey") or "")).strip()
+        profile = str(s.get("stremio_profile_id") or "default").strip() or "default"
+        return f"stremio|auth:{_secret_cache_tag(key)}|profile:{profile}" if key else "stremio|unconfigured"
 
     if p == "tautulli":
         t = cfg.get("tautulli") or {}
@@ -1107,6 +1115,48 @@ def _probe_emby_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
     return ok, rsn
 
 
+def _probe_stremio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("stremio", cfg)
+    bust_ts = _consume_bust("stremio")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth._auth_STREMIO import StremioAuthError, StremioClient
+
+    s: Mapping[str, Any] = (cfg.get("stremio") or {}) if isinstance(cfg.get("stremio"), Mapping) else {}
+    if not _provider_auth().is_configured("stremio", s):
+        rsn = "Stremio: missing auth key"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        ok = bool(StremioClient(cfg, instance_id=inst).validate())
+        rsn = "" if ok else "Stremio: invalid response"
+    except StremioAuthError as exc:
+        reason = str(getattr(exc, "reason", "error"))
+        if reason in {"missing_auth_key", "invalid_credentials"}:
+            rsn = "Stremio: authentication failed"
+        elif reason == "unreachable":
+            rsn = "Stremio: API unreachable"
+        elif reason == "service_unavailable":
+            rsn = "Stremio: API unavailable"
+        else:
+            rsn = "Stremio: probe failed"
+        ok = False
+    except Exception:
+        ok = False
+        rsn = "Stremio: probe failed"
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("kodi", cfg)
     bust_ts = _consume_bust("kodi")
@@ -1538,6 +1588,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "nuvio":
         return _provider_auth().is_configured("nuvio", blk)
 
+    if ck == "stremio":
+        return _provider_auth().is_configured("stremio", blk)
+
     if ck == "tmdb_sync":
         return bool(str(blk.get("api_key") or "").strip() and str(blk.get("session_id") or "").strip())
 
@@ -1612,6 +1665,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "PUBLICMETADB": _probe_publicmetadb_detail,
     "TAUTULLI": _probe_tautulli_detail,
     "NUVIO": _probe_nuvio_detail,
+    "STREMIO": _probe_stremio_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
@@ -1855,6 +1909,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
+            stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
@@ -2098,6 +2153,17 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "STREMIO" in active_providers:
+                inst_map, inst_sum = _instances_payload("STREMIO")
+                providers_out["STREMIO"] = {
+                    "connected": stremio_ok,
+                    **({} if stremio_ok else {"reason": stremio_reason}),
+                    "experimental": True,
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
 
 
             def _scope_for(prov: str) -> str:
@@ -2149,6 +2215,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "mdblist_connected": mdbl_ok,
                 "publicmetadb_connected": publicmetadb_ok,
                 "nuvio_connected": nuvio_ok,
+                "stremio_connected": stremio_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),

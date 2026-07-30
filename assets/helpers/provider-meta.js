@@ -1,5 +1,5 @@
 /* assets/helpers/provider-meta.js */
-/* Refactored and expanded provider metadata helper with labels, logos, and branding info */
+/* Expanded provider metadata helper with labels, logos, and branding info */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function(){
   const providers = Object.freeze({
@@ -15,9 +15,10 @@
     PUBLICMETADB: { key: "PUBLICMETADB", label: "PublicMetaDB", shortLabel: "PMDB", brandClass: "brand-publicmetadb", badgeId: "badge-publicmetadb", authSectionId: "sec-publicmetadb", authGroupId: "sec-auth-trackers", aliases: ["PUBLICMETADB", "PUBLIC META DB", "PUBLIC-META-DB", "PMDB"], statusLegacy: ["publicmetadb_connected", "publicmetadb"], hasLogo: true, hasLogLogo: true, tone: { solid: "#f5f5f5", rgb: "245,245,245" }, watchlist: true, ratings: true, history: true, progress: true, playlists: true },
     NUVIO: { key: "NUVIO", label: "Nuvio", shortLabel: "Nuvio", brandClass: "brand-nuvio", badgeId: "badge-nuvio", authSectionId: "sec-nuvio", authGroupId: "sec-auth-clients", aliases: ["NUVIO"], statusLegacy: ["nuvio_connected", "nuvio"], hasLogo: true, hasLogLogo: true, logoFile: "NUVIO.png", tone: { solid: "#b048f0", rgb: "176,72,240" }, watchlist: true, ratings: false, history: true, progress: true, playlists: false },
     KODI: { key: "KODI", label: "Kodi", shortLabel: "Kodi", brandClass: "brand-kodi", badgeId: "badge-kodi", authSectionId: "sec-kodi", authGroupId: "sec-auth-clients", aliases: ["KODI", "XBMC"], statusLegacy: ["kodi_connected", "kodi"], hasLogo: true, hasLogLogo: false, logoFile: "KODI.png", tone: { solid: "#17b5d1", rgb: "23,181,209" }, ratings: true, history: true, progress: true, playlists: false },
+    STREMIO: { key: "STREMIO", label: "Stremio", shortLabel: "Stremio", brandClass: "brand-stremio", badgeId: "badge-stremio", authSectionId: "sec-stremio", authGroupId: "sec-auth-clients", aliases: ["STREMIO"], statusLegacy: ["stremio_connected", "stremio"], hasLogo: true, hasLogLogo: false, logoFile: "STREMIO.png", tone: { solid: "#722cfe", rgb: "114,44,254" }, watchlist: true, ratings: true, history: true, progress: true, playlists: false },
     TAUTULLI: { key: "TAUTULLI", label: "Tautulli", shortLabel: "Tautulli", brandClass: "brand-tautulli", badgeId: "badge-tautulli", authSectionId: "sec-tautulli", authGroupId: "sec-auth-others", aliases: ["TAUTULLI"], statusLegacy: ["tautulli_connected", "tautulli"], hasLogo: true, hasLogLogo: false, tone: { solid: "#f59e0b", rgb: "245,158,11" } },
   });
-  const order = Object.freeze(["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","NUVIO","KODI","TAUTULLI"]);
+  const order = Object.freeze(["CROSSWATCH","PLEX","JELLYFIN","EMBY","SIMKL","TRAKT","ANILIST","TMDB","MDBLIST","PUBLICMETADB","NUVIO","KODI","STREMIO","TAUTULLI"]);
   function normalizeToken(v){ return String(v || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, ""); }
   function aliasPool(key){
     const info = providers[key];

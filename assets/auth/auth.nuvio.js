@@ -387,9 +387,9 @@
     setStatus(true, "Nuvio connected");
     try { window.invalidateConfigCache?.(); } catch {}
     try { window.CW?.Cache?.invalidate?.("config"); } catch {}
-    setTimeout(() => {
+    setTimeout(async () => {
       try { window.refreshStatus?.(true); } catch {}
-      try { window.CW?.ProvidersUI?.refreshAuthPresentation?.(true); } catch {}
+      try { await window.CW?.ProvidersUI?.refreshAuthPresentation?.(true); } catch {}
       try { window.manualRefreshStatus?.(); } catch {}
     }, 0);
     try { window.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
