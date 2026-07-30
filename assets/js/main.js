@@ -423,6 +423,11 @@
       }
       lastCounts[feat.key] = total;
 
+      const watermark = Object.assign(document.createElement("div"), { className: "lane-watermark" });
+      watermark.setAttribute("aria-hidden", "true");
+      watermark.innerHTML = `<span class="material-symbols-rounded">${feat.icon}</span>`;
+      lane.appendChild(watermark);
+
       const chipState = laneState(feat.key);
       const header = Object.assign(document.createElement("div"), { className: "lane-h" });
       header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;

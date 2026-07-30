@@ -455,7 +455,7 @@ def _get_index_html_static() -> str:
           </div>
         </div>
         <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-        <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" aria-label="Open Watchlist page">View all</button>
+        <button class="cw-watchlist-see-all" type="button" onclick="showTab('watchlist')" title="View all" aria-label="Open Watchlist page"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
       </div>
       <div id="wall-msg" class="wall-msg">Loading...</div>
       <div class="wall-wrap">
