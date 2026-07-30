@@ -20,6 +20,8 @@
   const MEDIA_PAGE_STEP = 4;
   const GRID_PAGE_STEP = 6;
   const MAX_WIDGET_ITEMS = 24;
+  const UNITS = 2;
+  const WIDE_UNITS = 3;
   const WIDGET_REFRESH_TTL_MS = 60 * 1000;
   const WIDGET_FETCH_RETRY_DELAYS = [350, 900, 1800];
   const IMAGE_PREWARM_MAX = 12;
@@ -46,12 +48,12 @@
   ];
   const WIDGET_KEYS = WIDGETS.map((widget) => widget.key);
   const DEFAULT_LAYOUT = {
-    watchlist: { order: 0, size: "large", view: "icon", horizontalView: "media", hidden: false },
-    history: { order: 1, size: "small", view: "grid", horizontalView: "media", hidden: false },
-    ratings: { order: 2, size: "small", view: "icon", horizontalView: "media", hidden: false },
-    scrobble: { order: 3, size: "small", view: "grid", horizontalView: "media", hidden: false },
-    playlists: { order: 4, size: "small", view: "grid", horizontalView: "poster", hidden: false },
-    progress: { order: 5, size: "small", view: "grid", horizontalView: "media", hidden: false },
+    watchlist: { order: 0, size: "large", span: 1, view: "icon", horizontalView: "media", hidden: false },
+    history: { order: 1, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
+    ratings: { order: 2, size: "small", span: 1, view: "icon", horizontalView: "media", hidden: false },
+    scrobble: { order: 3, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
+    playlists: { order: 4, size: "small", span: 1, view: "grid", horizontalView: "poster", hidden: false },
+    progress: { order: 5, size: "small", span: 1, view: "grid", horizontalView: "media", hidden: false },
   };
   let widgetLayout = readLayout();
   let customizeOpen = false;
@@ -77,6 +79,7 @@
       out[widget.key] = {
         order: Number.isFinite(+row.order) ? +row.order : base.order,
         size: allowedSizes.includes(row.size) ? row.size : base.size,
+        span: +row.span === 2 ? 2 : 1,
         view: ["grid", "icon"].includes(row.view) ? row.view : base.view,
         horizontalView: ["media", "poster"].includes(row.horizontalView) ? row.horizontalView : base.horizontalView,
         hidden: row.hidden === true,
@@ -180,6 +183,11 @@
     return size === "large" ? "large" : "small";
   }
 
+  function effectiveSpan(key) {
+    if (effectiveSize(key) === "large") return 1;
+    return widgetLayout[key]?.span === 2 ? 2 : 1;
+  }
+
   function widgetView(key) {
     if (effectiveSize(key) === "large") {
       if (key === "playlists") return "icon";
@@ -192,7 +200,8 @@
 
   function widgetPageStep(key) {
     if (effectiveSize(key) === "large") return widgetView(key) === "media" ? MEDIA_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
-    return widgetView(key) === "grid" ? GRID_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
+    const step = widgetView(key) === "grid" ? GRID_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
+    return effectiveSpan(key) === 2 ? step * 2 : step;
   }
 
   function resetVisibleCount(key) {
@@ -223,14 +232,35 @@
     scheduleMasonry();
   }
 
+  function inlineWidgetSpans() {
+    const spans = [];
+    for (const widget of WIDGETS) {
+      const node = widgetNode(widget.key);
+      if (!node || node.classList.contains("hidden")) continue;
+      if (node.dataset.widgetSize === "large") continue;
+      spans.push(node.dataset.widgetSpan === "2" ? WIDE_UNITS : UNITS);
+    }
+    return spans;
+  }
+
+  function widgetColumnCount(maxColumns) {
+    const spans = inlineWidgetSpans();
+    if (!spans.length) return 1;
+    const total = spans.reduce((sum, span) => sum + span, 0);
+    const widest = Math.max(...spans);
+    return Math.max(1, Math.min(total, Math.max(maxColumns * UNITS, widest * 2)));
+  }
+
   function updateMasonry() {
     masonryFrame = 0;
     const card = $("#dashboard-widgets-card");
     if (!card || card.classList.contains("hidden")) return;
+    const singleColumn = window.matchMedia?.("(max-width: 1180px)")?.matches;
+    const maxColumns = singleColumn ? 1 : window.matchMedia?.("(max-width: 1280px)")?.matches ? 2 : 3;
+    card.style.setProperty("--cw-widget-cols", String(widgetColumnCount(maxColumns)));
     const styles = getComputedStyle(card);
     const row = Number.parseFloat(styles.getPropertyValue("--cw-widget-masonry-row")) || 8;
     const gap = Number.parseFloat(styles.rowGap || styles.gap) || 14;
-    const singleColumn = window.matchMedia?.("(max-width: 1180px)")?.matches;
     for (const widget of WIDGETS) {
       const node = widgetNode(widget.key);
       if (!node) continue;
@@ -409,6 +439,9 @@
       <button type="button" class="cw-dash-layout-control cw-dash-widget-view-toggle" data-cw-widget-action="view" data-cw-widget-key="${esc(key)}" title="Toggle ${esc(label)} view" aria-label="Toggle ${esc(label)} view">
         <span class="material-symbols-rounded" aria-hidden="true">grid_view</span>
       </button>
+      <button type="button" class="cw-dash-layout-control cw-dash-widget-span-toggle" data-cw-widget-action="span" data-cw-widget-key="${esc(key)}" title="Enlarge ${esc(label)}" aria-label="Enlarge ${esc(label)}">
+        <span class="material-symbols-rounded" aria-hidden="true">open_in_full</span>
+      </button>
       <button type="button" class="cw-dash-layout-control" data-cw-widget-action="hide" data-cw-widget-key="${esc(key)}" title="Hide ${esc(label)}" aria-label="Hide ${esc(label)}">
         <span class="material-symbols-rounded" aria-hidden="true">visibility_off</span>
       </button>`;
@@ -568,7 +601,16 @@
       const viewIcon = viewBtn?.querySelector(".material-symbols-rounded");
       const hideBtn = node?.querySelector("[data-cw-widget-action='hide']");
       const hideIcon = hideBtn?.querySelector(".material-symbols-rounded");
+      const spanBtn = node?.querySelector("[data-cw-widget-action='span']");
+      const spanIcon = spanBtn?.querySelector(".material-symbols-rounded");
       const size = effectiveSize(widget.key);
+      if (spanBtn && spanIcon) {
+        spanBtn.hidden = size === "large";
+        const wide = effectiveSpan(widget.key) === 2;
+        spanIcon.textContent = wide ? "close_fullscreen" : "open_in_full";
+        spanBtn.title = `${wide ? "Shrink" : "Enlarge"} ${widget.label}`;
+        spanBtn.setAttribute("aria-label", spanBtn.title);
+      }
       if (sizeBtn) {
         sizeBtn.textContent = size === "large" ? "view_compact" : "view_agenda";
         const sizeButton = sizeBtn.closest("button");
@@ -1333,7 +1375,7 @@
     renderPagedList(
       def.host,
       latestItems[kind] || [],
-      visibleCounts[kind] || widgetPageStep(kind),
+      Math.max(visibleCounts[kind] || 0, widgetPageStep(kind)),
       cardFn,
       "",
       kind,
@@ -1362,6 +1404,7 @@
       node.classList.toggle("cw-dash-widget--compact", size === "small");
       node.classList.toggle("is-layout-hidden", !!layout.hidden);
       node.dataset.widgetSize = size;
+      node.dataset.widgetSpan = String(effectiveSpan(widget.key));
       node.dataset.widgetView = widgetView(widget.key);
       if (widget.key === "watchlist") window.CW?.WatchlistPreview?.applyWidgetView?.(node.dataset.widgetView);
       node.style.order = String(layout.order);
@@ -1546,6 +1589,11 @@
         } else if (action === "size") {
           const current = effectiveSize(key);
           patchLayout(key, { size: current === "large" ? "small" : "large" });
+          resetVisibleCount(key);
+          if (key !== "watchlist") renderWidget(key);
+        } else if (action === "span") {
+          if (effectiveSize(key) === "large") return;
+          patchLayout(key, { span: effectiveSpan(key) === 2 ? 1 : 2 });
           resetVisibleCount(key);
           if (key !== "watchlist") renderWidget(key);
         } else if (action === "view") {
