@@ -519,7 +519,7 @@
       copy: { auth: ["PublicMetaDB Authentication", "Connect PublicMetaDB with an API key."] },
       journey: ["Connect to PublicMetaDB", "Paste your PublicMetaDB API key and click Connect PublicMetaDB. CrossWatch uses the key for metadata-backed matching and provider lookups.", "155,155,155", "155,155,155", "PUBLICMETADB"],
       steps: [["1", "Create API key", "Generate a key in PublicMetaDB"], ["2", "Connect key", "Paste the key and connect"], ["3", "Validate access", "CrossWatch confirms the key works"]],
-      order: [".grid2", ".publicmetadb-actions"],
+      order: [".grid2", "#publicmetadb_hint", ".publicmetadb-actions"],
       actions: [{ row: ".publicmetadb-actions", status: "#publicmetadb_msg", buttons: "#publicmetadb_save" }]
     },
     NUVIO: {
