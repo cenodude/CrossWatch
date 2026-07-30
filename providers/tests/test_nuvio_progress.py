@@ -80,7 +80,7 @@ def test_build_index_maps_movies_and_skips_malformed_rows() -> None:
     assert item["ids"] == {"imdb": "tt1234567"}
     assert item["progress_ms"] == 120_000
     assert item["duration_ms"] == 600_000
-    assert item["progress_at"] == 1_785_000_000_000
+    assert item["progress_at"] == "2026-07-25T17:20:00Z"
     assert item["_nuvio_video_id"] == "tt1234567"
     assert item["progress_key"] == "tt1234567"
 
@@ -93,7 +93,7 @@ def test_build_index_merges_duplicate_movie_progress_by_newest_last_watched() ->
     index = _progress.build_index(adapter)
 
     assert index["tmdb:550"]["progress_ms"] == 20_000
-    assert index["tmdb:550"]["progress_at"] == 1_785_000_001_000
+    assert index["tmdb:550"]["progress_at"] == "2026-07-25T17:20:01Z"
 
 
 def test_build_index_enriches_series_progress_title_from_tmdb(monkeypatch: Any) -> None:
@@ -255,6 +255,32 @@ def test_add_is_idempotent_for_unchanged_progress_and_allows_newer_rewind() -> N
     assert rewind["attempted"] == 1
     assert rewind["confirmed_keys"] == ["tmdb:550"]
     assert _progress.build_index(adapter)["tmdb:550"]["progress_ms"] == 60_000
+
+
+def test_progress_write_payload_sends_epoch_ms_for_iso_source_item() -> None:
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([])
+    item = {"type": "movie", "ids": {"tmdb": "550"}, "progress_ms": 200_000, "duration_ms": 600_000, "progress_at": "2026-07-25T17:20:00Z"}
+
+    result = _progress.add(adapter, [item])
+
+    assert result["ok"] is True
+    push = [body for name, body in adapter.client.calls if name == "sync_push_watch_progress"][0]
+    assert push["p_entries"][0]["last_watched"] == 1_785_000_000_000
+
+
+def test_progress_skips_unchanged_when_index_is_iso_and_source_is_epoch_ms() -> None:
+    from providers.sync.nuvio import _progress
+
+    adapter = FakeAdapter([_row("tmdb:550", position=120_000, duration=600_000, last_watched=1_785_000_000_000)])
+    item = {"type": "movie", "ids": {"tmdb": "550"}, "progress_ms": 120_000, "duration_ms": 600_000, "progress_at": 1_785_000_000_000}
+
+    result = _progress.add(adapter, [item])
+
+    assert result["attempted"] == 0
+    assert result["skipped"] == 1
+    assert not any(name == "sync_push_watch_progress" for name, _body in adapter.client.calls)
 
 
 def test_remove_deletes_by_progress_key_and_treats_missing_as_idempotent() -> None:
