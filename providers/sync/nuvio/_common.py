@@ -39,6 +39,7 @@ __all__ = [
     "epoch_ms",
     "ids_for_content_id",
     "is_configured",
+    "iso_from_epoch_ms",
     "library_lock",
     "make_item",
     "metadata_title_for_content_id",
@@ -121,6 +122,18 @@ def epoch_ms(value: Any) -> int | None:
 
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         return int(parsed.timestamp() * 1000)
+    except Exception:
+        return None
+
+
+def iso_from_epoch_ms(value: Any) -> str | None:
+    ms = epoch_ms(value)
+    if ms is None:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     except Exception:
         return None
 

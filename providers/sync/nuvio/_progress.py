@@ -15,6 +15,7 @@ from providers.sync._progress_policy import decide_progress_write, progress_mate
 from ._common import (
     canonical_item_key,
     epoch_ms,
+    iso_from_epoch_ms,
     make_item,
     metadata_title_for_content_id,
     payload_item_key,
@@ -103,9 +104,10 @@ def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, di
     position = to_int(row.get("position"))
     duration = positive_int(row.get("duration"))
     last_watched = epoch_ms(row.get("last_watched"))
+    progress_at = iso_from_epoch_ms(last_watched)
     video_id = str(row.get("video_id") or "").strip()
     content_id = str(row.get("content_id") or "").strip()
-    if not base or position is None or position < 0 or duration is None or last_watched is None or not video_id:
+    if not base or position is None or position < 0 or duration is None or last_watched is None or progress_at is None or not video_id:
         return None, None, "nuvio_progress_invalid"
 
     item = dict(base)
@@ -113,7 +115,7 @@ def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, di
         {
             "progress_ms": int(position),
             "duration_ms": int(duration),
-            "progress_at": int(last_watched),
+            "progress_at": progress_at,
             "progress_percent": _progress_percent(int(position), int(duration)),
             "progress_key": str(row.get("progress_key") or progress_key(item) or "").strip(),
             "_nuvio_content_id": content_id,

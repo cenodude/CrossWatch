@@ -78,6 +78,58 @@ def test_history_reads_and_deletes_episode_with_official_key_shape() -> None:
     assert delete["p_keys"] == [{"content_id": "tmdb:1396", "season": 1, "episode": 1}]
 
 
+def test_history_index_exposes_watched_at_as_iso8601() -> None:
+    from providers.sync.nuvio import _history
+
+    adapter = FakeAdapter(
+        [
+            {
+                "content_id": "tmdb:1396",
+                "content_type": "series",
+                "title": "Breaking Bad",
+                "season": 1,
+                "episode": 1,
+                "watched_at": 1_785_000_000_000,
+            }
+        ]
+    )
+
+    item = _history.build_index(adapter)["tmdb:1396#s01e01"]
+
+    assert item["watched_at"] == "2026-07-25T17:20:00Z"
+
+
+def test_history_write_payload_sends_epoch_ms_for_iso_source_item() -> None:
+    from providers.sync.nuvio import _history
+
+    adapter = FakeAdapter([])
+    result = _history.add(adapter, [{"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "watched_at": "2026-07-25T17:20:00Z"}])
+
+    assert result["ok"] is True
+    push = [body for name, body in adapter.client.calls if name == "sync_push_watched_items"][0]
+    assert push["p_items"][0]["watched_at"] == 1_785_000_000_000
+
+
+def test_history_skips_unchanged_when_index_is_iso_and_source_is_epoch_ms() -> None:
+    from providers.sync.nuvio import _history
+
+    adapter = FakeAdapter(
+        [
+            {
+                "content_id": "tmdb:550",
+                "content_type": "movie",
+                "title": "Fight Club",
+                "watched_at": 1_785_000_000_000,
+            }
+        ]
+    )
+
+    result = _history.add(adapter, [{"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "watched_at": 1_785_000_000_000}])
+
+    assert result["skipped"] == 1
+    assert [name for name, _ in adapter.client.calls if name == "sync_push_watched_items"] == []
+
+
 def test_history_read_enriches_episode_code_title_from_tmdb(monkeypatch: Any) -> None:
     from providers.metadata import _meta_TMDB
     from providers.sync.nuvio import _history

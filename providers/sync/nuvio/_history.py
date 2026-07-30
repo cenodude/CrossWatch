@@ -14,6 +14,7 @@ from providers.sync._log import log as cw_log
 from ._common import (
     canonical_item_key,
     epoch_ms,
+    iso_from_epoch_ms,
     make_item,
     metadata_title_for_content_id,
     payload_item_key,
@@ -65,11 +66,11 @@ def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, di
         title=title,
         year=row.get("year"),
     )
-    watched_at = epoch_ms(row.get("watched_at"))
+    watched_at = iso_from_epoch_ms(row.get("watched_at"))
     if not item or watched_at is None:
         return None, None, "nuvio_history_invalid"
     item["watched"] = True
-    item["watched_at"] = int(watched_at)
+    item["watched_at"] = watched_at
     item["_nuvio_content_id"] = str(row.get("content_id") or "").strip()
     item["_nuvio_profile_id"] = row.get("profile_id")
     key = canonical_item_key(item)
