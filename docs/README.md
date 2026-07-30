@@ -115,7 +115,7 @@
   </article>
 </section>
 
-<section class="cw-gallery-strip" aria-label="CrossWatch screenshots">
+<section class="cw-gallery-strip" aria-label="CrossWatch screenshots" hidden>
   <a href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">
     <img src="images/screenshots/cw1.png" alt="CrossWatch watchlist">
   </a>
