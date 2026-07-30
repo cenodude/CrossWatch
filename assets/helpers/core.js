@@ -55,6 +55,7 @@
     { key: "MDBLIST", paths: [["mdblist"], ["auth", "mdblist"]], keys: ["api_key", "access_token"] },
     { key: "PUBLICMETADB", paths: [["publicmetadb"], ["auth", "publicmetadb"]], keys: ["api_key"] },
     { key: "NUVIO", paths: [["nuvio"], ["auth", "nuvio"]], keys: ["access_token", "refresh_token"] },
+    { key: "STREMIO", paths: [["stremio"], ["auth", "stremio"]], keys: ["auth_key", "authKey"] },
   ];
 
   const UI = (window._ui ||= { status: null, summary: null, pairedProviders: null });

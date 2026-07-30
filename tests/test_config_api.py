@@ -45,6 +45,34 @@ def test_config_migrate_clears_pending_upgrade_marker(monkeypatch) -> None:
     assert "_pending_upgrade_from_version" not in (saved.get("ui") or {})
 
 
+def test_config_save_preserves_blank_stremio_auth_key(monkeypatch) -> None:
+    from api import configAPI as cfg_api
+
+    saved: dict = {}
+
+    monkeypatch.setattr(
+        cfg_api,
+        "_env",
+        lambda: {
+            "CW": None,
+            "cfg_base": object(),
+            "load": lambda: {"stremio": {"auth_key": "real-key"}, "scrobble": {}},
+            "save": lambda cfg: saved.update(cfg),
+            "prune": lambda *_: None,
+            "ensure": lambda *_: None,
+            "norm_pair": lambda *_: None,
+            "probes_cache": None,
+            "probes_status_cache": None,
+            "scheduler": None,
+        },
+    )
+
+    res = cfg_api.api_config_save(SimpleNamespace(app=SimpleNamespace()), {"stremio": {"auth_key": ""}})
+
+    assert res["ok"] is True
+    assert saved["stremio"]["auth_key"] == "real-key"
+
+
 def test_sync_providers_exposes_progress_completion_policy(monkeypatch) -> None:
     from api import syncAPI as sync_api
     from cw_platform import config_base, provider_instances

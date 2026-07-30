@@ -35,6 +35,7 @@ from providers.sync.jellyfin._utils import (
 )
 from providers.sync.jellyfin._auth_http import JellyfinAuthError
 from providers.auth._auth_KODI import KodiAuthError
+from providers.auth._auth_STREMIO import StremioAuthError, StremioClient
 from providers.sync.kodi._common import (
     ensure_whitelist_defaults as kodi_ensure_whitelist_defaults,
     fetch_libraries_from_cfg as kodi_fetch_libraries_from_cfg,
@@ -1266,6 +1267,92 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         save_config(cfg)
         _probe_bust("kodi")
         _safe_log(log_fn, "KODI", f"[KODI:{inst}] disconnected")
+        return {"ok": True, "instance": inst}
+
+    @app.post("/api/stremio/connect", tags=["auth"])
+    def api_stremio_connect(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> JSONResponse:
+        if not isinstance(payload, dict):
+            return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+
+        inst = normalize_instance_id(instance)
+        email = str(payload.get("email") or "").strip()
+        password = str(payload.get("password") or "")
+        try:
+            prov = _import_provider("providers.auth._auth_STREMIO")
+            if not prov:
+                return JSONResponse({"ok": False, "error": "Provider missing", "instance": inst}, 500)
+
+            cfg = load_config()
+            ensure_provider_block(cfg, "stremio")
+            prov.connect(cfg, email=email, password=password, instance_id=inst)
+            StremioClient(cfg, instance_id=inst).validate()
+            save_config(cfg)
+            _probe_bust("stremio")
+            _safe_log(log_fn, "STREMIO", f"[STREMIO:{inst}] connected")
+            return JSONResponse({"ok": True, "instance": inst}, 200)
+        except StremioAuthError as exc:
+            reason = str(getattr(exc, "reason", "connect_failed"))
+            _safe_log(log_fn, "STREMIO", f"[STREMIO:{inst}] connect failed reason={reason}")
+            status_by_reason = {
+                "missing_credentials": 400,
+                "invalid_credentials": 401,
+                "unreachable": 502,
+                "service_unavailable": 502,
+                "request_failed": 502,
+                "invalid_response": 502,
+            }
+            error_by_reason = {
+                "missing_credentials": "Enter your Stremio email and password",
+                "invalid_credentials": "Stremio rejected the credentials",
+                "unreachable": "Stremio API is unreachable",
+                "service_unavailable": "Stremio API is unavailable",
+                "request_failed": "Stremio request failed",
+                "invalid_response": "Stremio returned an unexpected response",
+            }
+            http_status = 200 if reason in {"missing_credentials", "invalid_credentials"} else status_by_reason.get(reason, 500)
+            return JSONResponse(
+                {"ok": False, "error": error_by_reason.get(reason, "Stremio connection failed"), "reason": reason, "instance": inst},
+                http_status,
+            )
+        except Exception as exc:
+            _safe_log(log_fn, "STREMIO", f"[STREMIO:{inst}] connect failed error_type={type(exc).__name__}")
+            return JSONResponse({"ok": False, "error": "Stremio connection failed", "instance": inst}, 500)
+
+    @app.get("/api/stremio/status", tags=["auth"])
+    def api_stremio_status(instance: str | None = Query(None), verify: int | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        block = ensure_instance_block(cfg, "stremio", inst)
+        out = _provider_auth().status_for_block("stremio", block)
+        if verify and out.get("connected"):
+            try:
+                out["connected"] = bool(StremioClient(cfg, instance_id=inst).validate())
+            except StremioAuthError as exc:
+                out["connected"] = False
+                out["authenticated"] = False
+                out["reason"] = str(getattr(exc, "reason", "auth_failed") or "auth_failed")
+            except Exception:
+                out["connected"] = False
+                out["authenticated"] = False
+                out["reason"] = "service_unavailable"
+        out["instance"] = inst
+        return out
+
+    @app.post("/api/stremio/disconnect", tags=["auth"])
+    def api_stremio_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        conflict = usage_conflict_response(cfg, "stremio", inst)
+        if conflict is not None:
+            return conflict
+
+        prov = _import_provider("providers.auth._auth_STREMIO")
+        if not prov:
+            return JSONResponse({"ok": False, "error": "Provider missing", "instance": inst}, 500)
+        prov.disconnect(cfg, instance_id=inst)
+        save_config(cfg)
+        _probe_bust("stremio")
+        _safe_log(log_fn, "STREMIO", f"[STREMIO:{inst}] disconnected")
         return {"ok": True, "instance": inst}
 
     @app.get("/api/emby/inspect", tags=["media providers"])
