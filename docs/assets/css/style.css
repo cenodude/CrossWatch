@@ -389,6 +389,67 @@ a[href="#content"],
   opacity: .18;
 }
 
+.cw-gallery-strip {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 1fr;
+  gap: 12px;
+  margin: 34px 0;
+}
+
+.cw-gallery-strip a {
+  position: relative;
+  display: block;
+  min-height: 160px;
+  overflow: hidden;
+  border: 1px solid var(--cw-line);
+  border-radius: 8px;
+  background: rgba(15, 21, 32, .86);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .26);
+}
+
+.cw-gallery-strip a:first-child {
+  grid-row: span 2;
+  min-height: 336px;
+}
+
+.cw-gallery-strip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  object-fit: cover;
+  object-position: top center;
+  opacity: .9;
+  transition: transform .16s ease, opacity .16s ease;
+}
+
+.cw-gallery-strip a::after {
+  content: "Open";
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 8px;
+  color: var(--cw-text);
+  background: rgba(7, 10, 16, .72);
+  font-size: 12px;
+  font-weight: 850;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.cw-gallery-strip a:hover img {
+  transform: scale(1.025);
+  opacity: 1;
+}
+
+.cw-gallery-strip a:hover::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .cw-feature-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -462,6 +523,8 @@ a[href="#content"],
 }
 
 .cw-flow div {
+  position: relative;
+  isolation: isolate;
   min-height: 172px;
   padding: 22px;
   background:
@@ -470,15 +533,24 @@ a[href="#content"],
 }
 
 .cw-flow span {
-  display: block;
-  margin-bottom: 34px;
-  color: var(--cw-teal);
-  font-size: 13px;
-  font-weight: 900;
+  position: absolute;
+  right: 18px;
+  top: 8px;
+  z-index: -1;
+  color: transparent;
+  background: linear-gradient(135deg, rgba(98, 220, 198, .5), rgba(141, 124, 255, .16));
+  background-clip: text;
+  -webkit-background-clip: text;
+  font-size: 112px;
+  font-weight: 950;
+  line-height: .8;
+  opacity: .7;
+  pointer-events: none;
 }
 
 .cw-flow strong {
   display: block;
+  margin-top: 54px;
   color: var(--cw-text);
   font-size: 22px;
   line-height: 1.1;
@@ -709,6 +781,15 @@ a[href="#content"],
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .cw-gallery-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cw-gallery-strip a:first-child {
+    grid-row: auto;
+    min-height: 190px;
+  }
+
   .cw-flow {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -761,6 +842,7 @@ a[href="#content"],
   }
 
   .cw-provider-wall,
+  .cw-gallery-strip,
   .cw-feature-grid,
   .cw-flow {
     grid-template-columns: 1fr;

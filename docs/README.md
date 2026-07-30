@@ -10,7 +10,7 @@
     <p class="cw-lede">Keep Plex, Jellyfin, Emby, Kodi and your trackers moving together from one local web UI.</p>
     <div class="cw-actions" aria-label="CrossWatch links">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
-      <a class="cw-button" href="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" data-cw-gallery="crosswatch">View screenshot</a>
+      <a class="cw-button" href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">View screenshots</a>
       <a class="cw-button" href="https://github.com/cenodude/CrossWatch">View on GitHub</a>
       <a class="cw-button" href="https://wiki.crosswatch.app/">Open Wiki</a>
     </div>
@@ -113,6 +113,36 @@
     <span>Media app</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+</section>
+
+<section class="cw-gallery-strip" aria-label="CrossWatch screenshots">
+  <a href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw1.png" alt="CrossWatch watchlist">
+  </a>
+  <a href="images/screenshots/cw2.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw2.png" alt="CrossWatch playback progress">
+  </a>
+  <a href="images/screenshots/cw3.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw3.png" alt="CrossWatch captures">
+  </a>
+  <a href="images/screenshots/cw4.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw4.png" alt="CrossWatch editor">
+  </a>
+  <a href="images/screenshots/cw5.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw5.png" alt="CrossWatch scrobbler settings">
+  </a>
+  <a href="images/screenshots/cw6.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw6.png" alt="CrossWatch setup settings">
+  </a>
+  <a href="images/screenshots/cw7.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw7.png" alt="CrossWatch connections settings">
+  </a>
+  <a href="images/screenshots/cw8.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw8.png" alt="CrossWatch sync hub">
+  </a>
+  <a href="images/screenshots/cw9.png" data-cw-gallery="crosswatch">
+    <img src="images/screenshots/cw9.png" alt="CrossWatch dashboard widgets">
+  </a>
 </section>
 
 <section class="cw-feature-grid">

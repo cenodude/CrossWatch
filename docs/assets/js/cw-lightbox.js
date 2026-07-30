@@ -17,7 +17,12 @@
 
       if (!groups.has(name)) groups.set(name, { items: [], anchors: [] });
       const g = groups.get(name);
-      g.items.push({ href, alt, thumb });
+      let itemIndex = g.items.findIndex((it) => it.href === href);
+      if (itemIndex < 0) {
+        itemIndex = g.items.length;
+        g.items.push({ href, alt, thumb });
+      }
+      a.dataset.cwGalleryIndex = String(itemIndex);
       g.anchors.push(a);
     }
   }
@@ -190,10 +195,10 @@
     });
 
     for (const [name, g] of groups.entries()) {
-      g.anchors.forEach((a, idx) => {
+      g.anchors.forEach((a) => {
         a.addEventListener("click", (e) => {
           e.preventDefault();
-          open(name, idx);
+          open(name, Number(a.dataset.cwGalleryIndex || 0));
         });
       });
     }
