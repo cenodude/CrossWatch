@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-labelledby="title desc">
+  <title id="title">PublicMetaDB</title>
+  <desc id="desc">A black and white PMDB mark for PublicMetaDB.</desc>
+  <rect width="200" height="200" fill="#050505"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="24" y="18" width="62" height="112" rx="24" stroke="#ffffff" stroke-width="16"/>
+    <path d="M116 18v112" stroke="#9b9b9b" stroke-width="16"/>
+    <path d="M152 18v112" stroke="#9b9b9b" stroke-width="16"/>
+    <path d="M188 18v112" stroke="#9b9b9b" stroke-width="16"/>
+  </g>
+  <text x="100" y="188" text-anchor="middle" fill="#ffffff" font-family="Inter, Arial, Helvetica, sans-serif" font-size="44" font-weight="900" letter-spacing="1">PMDB</text>
+</svg>

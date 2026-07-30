@@ -49,8 +49,15 @@ a:hover {
   display: none !important;
 }
 
+.skip-to-content,
+a[href="#content"],
+.site-footer {
+  display: none !important;
+}
+
 .main-content {
   max-width: 1180px;
+  margin: 0 auto;
   padding: 0 20px 54px;
   color: var(--cw-text);
   background: transparent;
@@ -252,37 +259,134 @@ a:hover {
 
 .cw-provider-wall {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
   margin: 28px 0 34px;
 }
 
-.cw-provider-wall span {
-  display: grid;
-  place-items: center;
-  min-height: 58px;
-  padding: 10px;
-  border: 1px solid var(--cw-line);
+.cw-provider-card {
+  position: relative;
+  isolation: isolate;
+  min-height: 138px;
+  overflow: hidden;
+  padding: 22px;
+  border: 1px solid rgba(105, 185, 255, .22);
   border-radius: 8px;
-  color: #edf3fb;
+  color: var(--cw-text);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .02)),
-    rgba(17, 23, 34, .78);
+    linear-gradient(135deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .025)),
+    radial-gradient(circle at 18% 18%, rgba(105, 185, 255, .12), transparent 34%),
+    rgba(17, 23, 34, .82);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .25);
+}
+
+.cw-provider-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(rgba(255, 255, 255, .028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .022) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: linear-gradient(90deg, transparent, #000 28%, #000 100%);
+  opacity: .75;
+}
+
+.cw-provider-card strong {
+  position: relative;
+  z-index: 1;
+  display: block;
+  color: var(--cw-text);
+  font-size: 24px;
+  line-height: 1.05;
+  font-weight: 950;
+}
+
+.cw-provider-card span {
+  position: relative;
+  z-index: 1;
+  display: block;
+  margin-top: 7px;
+  color: var(--cw-muted);
   font-size: 14px;
-  font-weight: 850;
-  text-align: center;
+  font-weight: 750;
 }
 
-.cw-provider-wall span:nth-child(3n + 1) {
-  border-color: rgba(105, 185, 255, .25);
+.cw-provider-mark {
+  position: absolute;
+  right: -24px;
+  bottom: -38px;
+  z-index: 0;
+  width: 170px;
+  height: 170px;
+  object-fit: contain;
+  opacity: .14;
+  filter: grayscale(.1) saturate(1.15);
+  transform: rotate(-4deg);
 }
 
-.cw-provider-wall span:nth-child(3n + 2) {
-  border-color: rgba(98, 220, 198, .25);
+.cw-provider-dots {
+  position: absolute;
+  left: 22px;
+  bottom: 20px;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
 }
 
-.cw-provider-wall span:nth-child(3n) {
+.cw-provider-dots i {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--cw-teal);
+  box-shadow: 0 0 18px rgba(98, 220, 198, .55);
+}
+
+.cw-provider-dots i:nth-child(2) {
+  background: var(--cw-amber);
+}
+
+.cw-provider-dots i:nth-child(3) {
+  background: var(--cw-blue);
+}
+
+.cw-provider-dots i:nth-child(4) {
+  background: var(--cw-violet);
+}
+
+.cw-provider-card.is-plex,
+.cw-provider-card.is-mdblist,
+.cw-provider-card.is-tmdb {
+  border-color: rgba(105, 185, 255, .28);
+}
+
+.cw-provider-card.is-jellyfin,
+.cw-provider-card.is-publicmetadb,
+.cw-provider-card.is-tautulli {
+  border-color: rgba(98, 220, 198, .28);
+}
+
+.cw-provider-card.is-emby,
+.cw-provider-card.is-trakt,
+.cw-provider-card.is-simkl,
+.cw-provider-card.is-anilist,
+.cw-provider-card.is-nuvio {
   border-color: rgba(239, 111, 214, .24);
+}
+
+.cw-provider-card.is-plex .cw-provider-mark {
+  opacity: .21;
+}
+
+.cw-provider-card.is-publicmetadb .cw-provider-mark,
+.cw-provider-card.is-simkl .cw-provider-mark {
+  width: 210px;
+  height: 210px;
+  right: -44px;
+  bottom: -62px;
+  opacity: .18;
 }
 
 .cw-feature-grid {
