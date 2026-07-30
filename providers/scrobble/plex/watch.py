@@ -298,6 +298,9 @@ def _is_live_tv_dvr_event(ev: ScrobbleEvent) -> bool:
         return False
 
 
+_ALLOWED_WATCH_TYPES = frozenset({"movie", "episode"})
+
+
 def _media_name(ev: ScrobbleEvent) -> str:
     if (ev.media_type or "").lower() == "episode":
         s = ev.season if isinstance(ev.season, int) else None
@@ -898,7 +901,7 @@ class WatchService:
         name = str(ident.get("name") or "").strip()
         return name or None
 
-    def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent:
+    def _enrich_event_with_plex(self, ev: ScrobbleEvent) -> ScrobbleEvent | None:
         try:
             if not self._plex:
                 return ev
@@ -917,7 +920,10 @@ class WatchService:
             if not it:
                 return ev
 
-            media_type = getattr(it, "type", "") or ev.media_type
+            media_type = str(getattr(it, "type", "") or ev.media_type).strip().lower()
+            if media_type not in _ALLOWED_WATCH_TYPES:
+                self._dbg(f"drop unsupported plex media type '{media_type}' rk={rk} sess={ev.session_key}")
+                return None
             title = getattr(it, "title", None)
             year = getattr(it, "year", None)
             ids_raw: dict[str, Any] = dict(ev.ids or {}, plex=int(rk))
@@ -1143,7 +1149,10 @@ class WatchService:
                 self._throttled_filtered_log(ev)
                 return
 
-            ev = self._enrich_event_with_plex(ev)
+            enriched = self._enrich_event_with_plex(ev)
+            if enriched is None:
+                return
+            ev = enriched
             sk = str(ev.session_key) if ev.session_key else None
             vo = None
             dur = None
