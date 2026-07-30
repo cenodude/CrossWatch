@@ -80,7 +80,7 @@ const toast = (msg, ok = true) => {
   }
 
   function _enhanceProviderIconSelect(sel) {
-    const helper = window.CW?.IconSelect?.enhance;
+    const helper = window.CW?.ProfileSelect?.enhanceProvider;
     if (!sel || typeof helper !== "function") return;
     helper(sel, {
       className: "ss-icon-select",
@@ -93,6 +93,12 @@ const toast = (msg, ok = true) => {
         };
       },
     });
+  }
+
+  function _enhanceProfileIconSelect(sel) {
+    const helper = window.CW?.ProfileSelect?.enhanceProfile;
+    if (!sel || typeof helper !== "function") return;
+    helper(sel, { className: "ss-icon-select" });
   }
 
   function fmtTsFromStamp(stamp) {
@@ -448,7 +454,7 @@ function bundleKey(s) {
             <div class="ss-card-head ss-list-head">
               <div class="ss-headcopy">
                 <h3>Capture browser</h3>
-                <div class="ss-headsub">Select rows with checkboxes for compare and tools. Click a row to load it for restore.</div>
+                <div class="ss-headsub">Tick a row to load it for restore and select it for compare and tools. Clicking a row loads it too.</div>
               </div>
             </div>
             <div class="ss-toolbar">
@@ -1241,6 +1247,7 @@ repopDiffSelects();
     }
 
     sel.disabled = sel.options.length <= 1;
+    _enhanceProfileIconSelect(sel);
   }
 
   function repopInstances(fromSel, toSel) {
@@ -1266,6 +1273,7 @@ repopDiffSelects();
       o.disabled = true;
       sel.appendChild(o);
       sel.value = inst;
+      _enhanceProfileIconSelect(sel);
     }
   }
 
@@ -1448,6 +1456,25 @@ repopDiffSelects();
     const pathToSnap = new Map();
     (all || []).forEach((s) => { if (s && s.path) pathToSnap.set(String(s.path), s); });
 
+    const clearRestorePick = () => {
+      state.selectedPath = "";
+      state.selectedSnap = null;
+      renderList();
+      renderSelected();
+      updateRestoreAvailability();
+    };
+
+    const syncRestorePick = (path, on) => {
+      if (on) {
+        if (state.selectedPath !== path) selectSnapshot(path);
+        return;
+      }
+      if (state.selectedPath !== path) return;
+      const rest = (Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : []).filter((p) => p !== path);
+      if (rest.length) selectSnapshot(rest[rest.length - 1]);
+      else clearRestorePick();
+    };
+
     const renderRow = (s, opts = {}) => {
       const child = !!opts.child;
       const childCount = Number(opts.childCount || 0);
@@ -1468,7 +1495,7 @@ repopDiffSelects();
       item.dataset.path = path;
       item.innerHTML = `
         <td class="ss-col-check"><span class="ss-pickcell">${abTag ? `<span class="ss-ab ${abTag === "A" ? "a" : "b"}" data-act="diffremove" title="Unselect capture">${abTag}</span>` : ""}<input class="ss-chk" type="checkbox" name="ss-diffpick" title="Select capture" data-act="diffpick" ${checked ? "checked" : ""} /></span></td>
-        <td class="ss-col-provider"><span class="ss-badge ok">${escapeHtml((s.provider || "-").toUpperCase())}</span></td>
+        <td class="ss-col-provider"><span class="ss-badge ok" data-provider="${escapeHtml(String(s.provider || "").toLowerCase())}">${escapeHtml((s.provider || "-").toUpperCase())}</span></td>
         <td class="ss-col-feature" title="${escapeHtml(featureLabel)}"><span class="ss-feature-cell"><span class="ss-feature-label">${escapeHtml(featureLabel)}</span>${extra}</span></td>
         <td class="ss-col-type">${escapeHtml(snapTypeLabel(s))}</td>
         <td class="ss-col-label ${s.label ? "" : "ss-row-muted"}">${escapeHtml(String(label).slice(0, 60))}</td>
@@ -1479,11 +1506,16 @@ repopDiffSelects();
 
       const pick = item.querySelector('input[data-act="diffpick"]');
       pick?.addEventListener("click", (ev) => { ev.stopPropagation(); });
-      pick?.addEventListener("change", (ev) => toggleDiffPick(path, !!ev.currentTarget.checked));
+      pick?.addEventListener("change", (ev) => {
+        const on = !!ev.currentTarget.checked;
+        toggleDiffPick(path, on);
+        syncRestorePick(path, on);
+      });
       item.querySelector('[data-act="diffremove"]')?.addEventListener("click", (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
         toggleDiffPick(path, false);
+        syncRestorePick(path, false);
       });
       item.querySelector('[data-act="toggle"]')?.addEventListener("click", (ev) => {
         ev.preventDefault();
@@ -1554,7 +1586,7 @@ function renderSelected() {
     host.innerHTML = `
       <div class="ss-selected-summary">
         <div class="ss-item-meta">
-          <span class="ss-badge ok">${String(s.provider || "").toUpperCase()}</span>
+          <span class="ss-badge ok" data-provider="${escapeHtml(String(s.provider || "").toLowerCase())}">${String(s.provider || "").toUpperCase()}</span>
           ${showInst ? `<span class="ss-badge">${escapeHtml(inst)}</span>` : ``}
           <span class="ss-badge">${String(s.feature || "").toLowerCase()}</span>
           ${s.label ? `<span class="ss-badge warn">${escapeHtml(_uiCaptureLabel(s.label)).slice(0, 40)}</span>` : ``}
