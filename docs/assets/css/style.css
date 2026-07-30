@@ -396,6 +396,10 @@ a[href="#content"],
   margin: 34px 0;
 }
 
+.cw-gallery-strip[hidden] {
+  display: none !important;
+}
+
 .cw-gallery-strip a {
   position: relative;
   display: block;
