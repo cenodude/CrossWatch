@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator import _applier, _unresolved
+from cw_platform.orchestrator._pairs_oneway import compute_effective_add
 from providers.sync.mdblist._history import _bucketize
 from providers.sync.publicmetadb._history import _payload_for_item, _to_minimal
 from providers.sync._mod_SIMKL import _confirmed_keys
@@ -632,6 +633,49 @@ def test_applier_prefers_provider_unresolved_keys(monkeypatch) -> None:
     assert sorted(norm["unresolved_keys"]) == sorted(keys[1:])
     assert norm["confirmed"] == 1
     assert norm["skipped"] == 0
+
+
+def test_applier_exact_skipped_adds_do_not_become_unresolved(monkeypatch) -> None:
+    monkeypatch.setattr(_applier, "record_unresolved", lambda *a, **k: {"ok": True})
+    items = [{"type": "movie", "ids": {"tmdb": str(i)}} for i in range(3)]
+    keys = [canonical_key(it) for it in items]
+    res = {
+        "ok": True,
+        "count": 0,
+        "confirmed_keys": [],
+        "skipped": 3,
+        "skipped_keys": keys,
+        "unresolved": [],
+        "unresolved_keys": [],
+    }
+
+    norm = _applier._normalize(res, items, "apply:add", dst="STREMIO", feature="ratings", emit=lambda *a, **k: None)
+
+    assert norm["confirmed"] == 0
+    assert norm["skipped"] == 3
+    assert norm["skipped_exact"] == 3
+    assert norm["unresolved"] == 0
+    assert norm["unresolved_keys"] == []
+
+
+def test_exact_skipped_add_keys_count_as_success_without_added_count() -> None:
+    keys = ["tmdb:1", "tmdb:2"]
+
+    decision = compute_effective_add(
+        attempted_keys=keys,
+        prov_confirmed=0,
+        confirmed_keys=[],
+        still_unresolved=set(),
+        skipped_keys=set(keys),
+        have_exact_keys=True,
+        verify_after_write=False,
+        provider_skipped=True,
+    )
+
+    assert decision["effective"] == 0
+    assert decision["prov_confirmed"] == 0
+    assert decision["success_keys"] == keys
+    assert decision["failed_keys"] == []
 
 
 def test_unresolved_reports_simkl_source_and_cache_gets_trakt_item(monkeypatch) -> None:

@@ -8,6 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
+import { commonFeaturesForPair, ratingsDisabledForPair, sanitizeFeaturesForPair } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
   "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
@@ -31,6 +32,7 @@ const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
 const isMDBList=(v)=>same(v,"mdblist");
 const isPublicMetaDB=(v)=>same(v,"publicmetadb");
+const isStremio=(v)=>same(v,"stremio");
 const isPlex = (v) => same(v, "plex");
 const isKodi = (v) => same(v, "kodi");
 const isCrossWatch = (v) => same(v, "crosswatch");
@@ -44,6 +46,7 @@ function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
+function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
 const isAniList=(v)=>same(v,"anilist");
 function hasAniList(state){return isAniList(state?.src)||isAniList(state?.dst)}
 function hasOwn(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,key)}
@@ -73,12 +76,8 @@ function normalizeAnimeFeatureOptions(state, feature){
   return opts;
 }
 
-const RATINGS_TYPE_RULES={SIMKL:{disable:["seasons","episodes"]},TMDB:{disable:["seasons"]},ANILIST:{disable:["seasons","episodes"]}};
 function ratingsDisabledFor(state){
-  const names=[state?.src,state?.dst].map(x=>String(x||"").trim().toUpperCase());
-  const out=new Set();
-  names.forEach(n=>{const r=RATINGS_TYPE_RULES[n];if(r&&Array.isArray(r.disable))r.disable.forEach(t=>out.add(t))});
-  return out;
+  return ratingsDisabledForPair(Object.assign({}, state || {}, {twoWay:isTwoWayMode(state)}));
 }
 function applyRatingsTypeRules(state){
   const rt=state.options?.ratings||{};
@@ -412,14 +411,8 @@ function applyProgressMaxRecommendation(state, progress){
   return {maxPercent, recommended, usingRecommendation: useRecommended};
 }
 const commonFeatures=(state)=>{
-  if(!state.src||!state.dst) return [];
-  const a=byName(state,state.src)?.features||{};
-  const b=byName(state,state.dst)?.features||{};
-  const keys=["watchlist","ratings","history","progress","playlists"];
-  return keys.filter(k=>{
-    if(k==="progress") return isProgressPair(state) && !!a.progress && !!b.progress;
-    return !!a[k] && !!b[k];
-  });
+  const ruleState=Object.assign({}, state || {}, {twoWay:isTwoWayMode(state)});
+  return commonFeaturesForPair(ruleState, name => byName(state, name)?.features || {}, isProgressPair);
 };
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
@@ -1362,6 +1355,27 @@ function renderFeaturePanel(state){
       `);
     }
 
+    if (hasStremio(state)) {
+      const sr = ((state.cfgRaw?.stremio) || {}).ratings || {};
+      parts.push(`
+        <div class="panel-title small" style="margin-top:6px">Stremio</div>
+        <details id="cx-st-rt">
+          <summary class="muted" style="margin-bottom:10px;">Stremio ratings controls</summary>
+          <div class="grid2 compact">
+            <div class="opt-row">
+              <label for="st-rt-liked-min">Liked from</label>
+              <input id="st-rt-liked-min" class="input small" type="number" min="0" max="10" step="0.1" value="${sr.liked_min ?? 6.0}">
+            </div>
+            <div class="opt-row">
+              <label for="st-rt-loved-min">Loved from</label>
+              <input id="st-rt-loved-min" class="input small" type="number" min="0" max="10" step="0.1" value="${sr.loved_min ?? 8.0}">
+            </div>
+          </div>
+          <div class="hint">Ratings below Liked from are not sent to Stremio.</div>
+        </details>
+      `);
+    }
+
     if (hasMDBList(state)) {
       const md = (state.cfgRaw?.mdblist) || {};
       parts.push(`
@@ -2270,6 +2284,25 @@ async function saveConfigBits(state){
       cfg.simkl = sm;
     }
 
+    const hasST = String(state.src||"").toUpperCase()==="STREMIO" || String(state.dst||"").toUpperCase()==="STREMIO";
+    if(hasST){
+      const st = Object.assign({}, cfg.stremio||{});
+      const ratings = Object.assign({}, st.ratings||{});
+      const likedEl = ID("st-rt-liked-min");
+      const lovedEl = ID("st-rt-loved-min");
+      const clampFloat = (value, fallback) => {
+        const n = Number.parseFloat(String(value ?? "").trim());
+        return Number.isFinite(n) ? Math.min(10, Math.max(0, Math.round(n * 10) / 10)) : fallback;
+      };
+      if(likedEl || lovedEl){
+        ratings.liked_min = clampFloat(likedEl?.value, 6.0);
+        ratings.loved_min = clampFloat(lovedEl?.value, 8.0);
+        if(ratings.loved_min < ratings.liked_min) ratings.loved_min = ratings.liked_min;
+        st.ratings = ratings;
+        cfg.stremio = st;
+      }
+    }
+
     const hasMD = String(state.src||"").toUpperCase()==="MDBLIST" || String(state.dst||"").toUpperCase()==="MDBLIST";
     if(hasMD){
       const md = Object.assign({}, cfg.mdblist||{});
@@ -2342,7 +2375,8 @@ function buildPayload(state,wrap){
   progress.max_percent = applyProgressMaxRecommendation(state, progress).maxPercent;
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
-  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features:{watchlist,ratings,history:get("history"),progress,playlists:get("playlists")}};
+  const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history:get("history"),progress,playlists:get("playlists")});
+  const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   const prov={};
   const pp=state.pairProviders||{};
   const usePlex=(String(src).toUpperCase()==="PLEX"||String(dst).toUpperCase()==="PLEX");
@@ -2457,7 +2491,7 @@ export default{
     restartFlowAnimation(ID("cx-mode-two")?.checked ? "two" : "one");
 
     ID("cx-enabled").addEventListener("change",()=>updateFlow(state,true));
-    QA('input[name="cx-mode"]').forEach(el=>el.addEventListener("change",()=>{state.mode=ID("cx-mode-two")?.checked?"two-way":"one-way";updateFlow(state,true);renderFeaturePanel(state)}));
+    QA('input[name="cx-mode"]').forEach(el=>el.addEventListener("change",()=>{state.mode=ID("cx-mode-two")?.checked?"two-way":"one-way";sanitizeFeaturesForPair(state,state.options);updateFlow(state,true);refreshTabs(state);renderFeaturePanel(state)}));
     bindChangeHandlers(state,wrap);
     queueMicrotask(() => applyHelpIcons(wrap, { QA }));
     ensureInlineFoot(hostEl);

@@ -358,6 +358,10 @@ DEFAULT_CFG: dict[str, Any] = {
 
     "stremio": {
         "auth_key": "",
+        "ratings": {
+            "liked_min": 6.0,                           # Numeric ratings from this value up to loved_min become Liked
+            "loved_min": 8.0,                           # Numeric ratings from this value up to 10 become Loved
+        },
     },
 
     "playback_progress": {
@@ -606,11 +610,16 @@ DEFAULT_CFG: dict[str, Any] = {
         "snapshot_ttl_sec": 300,                        # Reuse snapshots within 5 min
         "apply_chunk_size": 100,                        # Sweet spot for apply chunking
         "apply_chunk_pause_ms": 50,                     # Small pause between chunks
-        "apply_chunk_size_by_provider": {               # SIMKL/TRAKT/MDBLIST/PUBLICMETADB/ANILIST/TMDB/TAUTULLI/PLEX/JELLYFIN/EMBY overrides
+        "apply_chunk_size_by_provider": {               # Provider-specific apply chunk overrides
             "SIMKL": 500,
             "MDBLIST": 500,
             "PUBLICMETADB": 500,
-            "STREMIO": 1000
+            "PLEX": 500,
+            "JELLYFIN": 500,
+            "EMBY": 500,
+            "STREMIO": 500,
+            "NUVIO": 500,
+            "KODI": 500
         },
         
         # suspect guard (shrinking inventories protection)
@@ -1330,8 +1339,23 @@ def _normalize_stremio(cfg: dict[str, Any]) -> None:
 
     def _block(block: dict[str, Any]) -> None:
         key = str(block.get("auth_key") or block.get("authKey") or "").strip()
+        raw_ratings = block.get("ratings") if isinstance(block.get("ratings"), dict) else {}
+        ratings = cast(dict[str, Any], raw_ratings)
+
+        def _rating_float(name: str, default: float) -> float:
+            try:
+                value = float(str(ratings.get(name, default)).strip())
+            except Exception:
+                value = default
+            return value if 0 <= value <= 10 else default
+
+        liked_min = _rating_float("liked_min", 6.0)
+        loved_min = _rating_float("loved_min", 8.0)
+        if loved_min < liked_min:
+            loved_min = liked_min
         block.clear()
         block["auth_key"] = key
+        block["ratings"] = {"liked_min": liked_min, "loved_min": loved_min}
 
     _block(s)
     if isinstance(insts, dict):
