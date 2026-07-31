@@ -1887,7 +1887,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
             skipped_keys_A: set[str] = set(prov_skipped_keys_A)
 
-            have_exact_keys_A = bool(prov_confirmed_keys_A)
+            have_exact_keys_A = bool(prov_confirmed_keys_A or prov_skipped_keys_A)
             if have_exact_keys_A:
                 attempted_set_A = set(attempted_A)
                 confirmed_A = [k for k in prov_confirmed_keys_A if k in attempted_set_A]
@@ -1940,6 +1940,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 if success_A:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
                     clear_unresolved(a, feature, success_A)
+                    unresolved_new_A_total = max(0, unresolved_new_A_total - len(set(success_A) & set(still_unresolved_A)))
                     resolved_A = [k for k in success_A if k in unresolved_before_A]
                     if resolved_A:
                         _emit_item_resolutions(emit, a, feature, pair_key, resolved_A, k2i_A)
@@ -2019,7 +2020,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
             skipped_keys_B: set[str] = set(prov_skipped_keys_B)
 
-            have_exact_keys_B = bool(prov_confirmed_keys_B)
+            have_exact_keys_B = bool(prov_confirmed_keys_B or prov_skipped_keys_B)
             if have_exact_keys_B:
                 attempted_set_B = set(attempted_B)
                 confirmed_B = [k for k in prov_confirmed_keys_B if k in attempted_set_B]
@@ -2072,6 +2073,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 if success_B:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
                     clear_unresolved(b, feature, success_B)
+                    unresolved_new_B_total = max(0, unresolved_new_B_total - len(set(success_B) & set(still_unresolved_B)))
                     resolved_B = [k for k in success_B if k in unresolved_before_B]
                     if resolved_B:
                         _emit_item_resolutions(emit, b, feature, pair_key, resolved_B, k2i_B)
