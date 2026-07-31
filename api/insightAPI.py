@@ -15,6 +15,13 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.modules_registry import sync_provider_names
+from cw_platform.provider_instances import (
+    ensure_instance_block,
+    get_provider_block,
+    list_instance_ids,
+    normalize_instance_id,
+    sanitize_instance_label,
+)
 
 def _env() -> tuple[
     Any | None,
@@ -274,23 +281,25 @@ def register_insights(app: FastAPI) -> None:
     def api_select_snapshot(
         feature: str = Query(..., pattern="^(watchlist|history|ratings|progress)$"),
         snapshot: str = Query(...),
+        provider_instance: str = Query("default"),
     ) -> dict[str, Any]:
         _, load_config, save_config, _ = _env()
         try:
             cfg = load_config() or {}
         except Exception:
             cfg = {}
-        cw = (cfg.get("crosswatch") or cfg.get("CrossWatch") or {}) or {}
+
+        inst = normalize_instance_id(provider_instance)
         key = f"restore_{feature}"
-        cw[key] = snapshot
-        cfg["crosswatch"] = cw
+        block = ensure_instance_block(cfg, "crosswatch", inst)
+        block[key] = snapshot
 
         try:
             save_config(cfg)
         except Exception:
             return {"ok": False, "error": "save_config_failed"}
 
-        return {"ok": True, "feature": feature, "snapshot": snapshot}
+        return {"ok": True, "feature": feature, "snapshot": snapshot, "provider_instance": inst}
 
     @app.get("/api/insights", tags=["insight"])
     def api_insights(
@@ -1454,8 +1463,11 @@ def register_insights(app: FastAPI) -> None:
 
                 samples: list[dict[str, Any]] = [r for r in samples_raw if isinstance(r, dict)]
                 samples.sort(key=lambda r: int(r.get("ts") or 0))
-                if int(limit_samples) > 0:
-                    samples = samples[-int(limit_samples):]
+                sample_limit = max(0, int(limit_samples))
+                if sample_limit > 0:
+                    samples = samples[-sample_limit:]
+                else:
+                    samples = []
                 series = [
                     {"ts": int(r.get("ts") or 0), "count": int(r.get("count") or 0)}
                     for r in samples
@@ -1472,11 +1484,12 @@ def register_insights(app: FastAPI) -> None:
             files: list[Path] = []
             if REPORT_DIR is not None:
                 try:
+                    history_limit = max(0, int(history))
                     files = sorted(
                         REPORT_DIR.glob("sync-*.json"),
                         key=lambda p: p.stat().st_mtime,
                         reverse=True,
-                    )[: max(1, int(history))]
+                    )[:history_limit] if history_limit > 0 else []
                 except Exception as e:
                     _append_log("INSIGHTS", f"[!] report glob failed: {e}")
                     files = []
@@ -1602,59 +1615,82 @@ def register_insights(app: FastAPI) -> None:
         def _build_crosswatch_snapshot_info() -> dict[str, Any]:
             info: dict[str, Any] = {}
             try:
-                cw_cfg = (cfg.get("crosswatch") or cfg.get("CrossWatch") or {}) or {}
-                root_dir = str(cw_cfg.get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
-                snap_dir = Path(root_dir).joinpath("snapshots")
+                def _label(inst: str, block: dict[str, Any]) -> str:
+                    if inst == "default":
+                        return "Default"
+                    label = sanitize_instance_label(block.get("label") if isinstance(block, dict) else "")
+                    return f"{inst} - {label}" if label else inst
 
-                selected: dict[str, str] = {
-                    "watchlist": str(cw_cfg.get("restore_watchlist") or "latest").strip() or "latest",
-                    "history": str(cw_cfg.get("restore_history") or "latest").strip() or "latest",
-                    "ratings": str(cw_cfg.get("restore_ratings") or "latest").strip() or "latest",
-                }
-
-                files: list[Path] = []
-                if snap_dir.is_dir():
-                    files = list(snap_dir.glob("*.json"))
-
-                by_feat: dict[str, list[str]] = {"watchlist": [], "history": [], "ratings": [], "progress": [], "playlists": []}
-                for p in files:
-                    name = p.name
-                    for feat in by_feat.keys():
-                        if name.endswith(f"-{feat}.json"):
-                            by_feat[feat].append(name)
-
-                for feat, arr in by_feat.items():
-                    arr.sort()
-                    sel = selected.get(feat, "latest")
-                    actual: str | None = None
-                    if arr:
-                        if sel == "latest":
-                            actual = arr[-1]
-                        elif sel in arr:
-                            actual = sel
-                        else:
-                            actual = arr[-1]
-
-                    human: str | None = None
-                    iso_ts: str | None = None
-                    if actual:
-                        try:
-                            stem = actual.split("-", 1)[0]
-                            dt = _dt.datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(
-                                tzinfo=_dt.timezone.utc
-                            )
-                            iso_ts = dt.isoformat()
-                            human = dt.strftime("%d-%b-%y")
-                        except Exception:
-                            pass
-
-                    info[feat] = {
-                        "selected": sel,
-                        "actual": actual,
-                        "human": human,
-                        "ts": iso_ts,
-                        "has_snapshots": bool(arr),
+                def _profile_snapshot_info(inst: str, block: dict[str, Any]) -> dict[str, Any]:
+                    root_dir = str((block or {}).get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
+                    snap_dir = Path(root_dir).joinpath("snapshots")
+                    selected: dict[str, str] = {
+                        feat: str((block or {}).get(f"restore_{feat}") or "latest").strip() or "latest"
+                        for feat in ("watchlist", "history", "ratings", "progress")
                     }
+
+                    files: list[Path] = []
+                    if snap_dir.is_dir():
+                        files = list(snap_dir.glob("*.json"))
+
+                    by_feat: dict[str, list[str]] = {"watchlist": [], "history": [], "ratings": [], "progress": [], "playlists": []}
+                    for p in files:
+                        name = p.name
+                        for feat in by_feat.keys():
+                            if name.endswith(f"-{feat}.json"):
+                                by_feat[feat].append(name)
+
+                    profile_info: dict[str, Any] = {}
+                    for feat, arr in by_feat.items():
+                        arr.sort()
+                        sel = selected.get(feat, "latest")
+                        actual: str | None = None
+                        if arr:
+                            if sel == "latest":
+                                actual = arr[-1]
+                            elif sel in arr:
+                                actual = sel
+                            else:
+                                actual = arr[-1]
+
+                        human: str | None = None
+                        iso_ts: str | None = None
+                        if actual:
+                            try:
+                                stem = actual.split("-", 1)[0]
+                                dt = _dt.datetime.strptime(stem, "%Y%m%dT%H%M%SZ").replace(
+                                    tzinfo=_dt.timezone.utc
+                                )
+                                iso_ts = dt.isoformat()
+                                human = dt.strftime("%d-%b-%y")
+                            except Exception:
+                                pass
+
+                        profile_info[feat] = {
+                            "selected": sel,
+                            "actual": actual,
+                            "human": human,
+                            "ts": iso_ts,
+                            "has_snapshots": bool(arr),
+                            "root_dir": root_dir,
+                            "provider_instance": inst,
+                        }
+                    return profile_info
+
+                by_profile: dict[str, Any] = {}
+                profiles: list[dict[str, str]] = []
+                for inst in list_instance_ids(cfg, "crosswatch"):
+                    norm = normalize_instance_id(inst)
+                    block = get_provider_block(cfg, "crosswatch", norm)
+                    if not block and norm != "default":
+                        continue
+                    root_dir = str((block or {}).get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
+                    profiles.append({"id": norm, "label": _label(norm, block), "root_dir": root_dir})
+                    by_profile[norm] = _profile_snapshot_info(norm, block)
+
+                info["_profiles"] = profiles
+                info["_by_profile"] = by_profile
+                info.update(by_profile.get("default") or {})
             except Exception:
                 pass
             return info

@@ -50,8 +50,33 @@ const instLabel = (prov, inst) => {
   const p = String(prov || "").toUpperCase();
   if (!p) return "";
   const i = String(inst || "").trim();
-  return i ? `${p} ${i}` : `${p} default`;
+  if (!i || i.toLowerCase() === "default") return `${p} default`;
+  const label = (PROFILE_LABELS[p] && PROFILE_LABELS[p][i]) || i;
+  return `${p} ${label}`;
 };
+
+let PROFILE_LABELS = {};
+
+async function loadProfileLabels() {
+  try {
+    const j = await fjson("/api/provider-instances", { cache: "no-store" });
+    const map = j && typeof j === "object" ? j : {};
+    const out = {};
+    for (const [prov, raw] of Object.entries(map)) {
+      const labels = {};
+      for (const row of (Array.isArray(raw) ? raw : [])) {
+        const id = String(typeof row === "string" ? row : row?.id || "").trim();
+        if (!id || id.toLowerCase() === "default") continue;
+        const label = row && typeof row === "object" ? String(row.label || "").trim() : "";
+        labels[id] = label && label !== id ? label : id;
+      }
+      out[String(prov || "").toUpperCase()] = labels;
+    }
+    PROFILE_LABELS = out;
+  } catch {
+    PROFILE_LABELS = {};
+  }
+}
 
 const routeOf = (e) => {
   const a = instLabel(e.source_provider, e.source_instance);
@@ -1658,6 +1683,7 @@ export default {
       const btn = Q("#ev-refresh", root);
       btn?.classList.add("busy");
       try {
+        await loadProfileLabels();
         await populateFilters();
         if (!alive) return;
         await load(state.page);
@@ -1708,6 +1734,7 @@ export default {
     };
 
     syncRangeUI();
+    await loadProfileLabels();
     await populateFilters();
     applyView();
     if (view !== "statistics") await load(0);

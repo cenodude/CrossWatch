@@ -17,7 +17,9 @@
   const providerKey = (value) => providerMeta().keyOf?.(value) || String(value || "").trim().toUpperCase();
   const providerLabel = (value) => providerMeta().label?.(value) || providerKey(value) || String(value || "");
   const providerShortLabel = (value) => providerMeta().shortLabel?.(value) || providerLabel(value);
+  const escOpt = s => String(s == null ? "" : s).replace(/[&<>"]/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[m]));
   let activeProviders = new Set();
+  let crosswatchProfiles = [{ id: "default", label: "Default" }];
   const watchlistProviderKeys = () => {
     const keys = providerMeta().watchlistProviders?.();
     return Array.isArray(keys) && keys.length
@@ -28,6 +30,7 @@
   const visibleProviders = () => PROVIDERS.filter((p) => p !== "CROSSWATCH" || activeProviders.has("CROSSWATCH"));
   const providerOptions=(empty="All")=>`<option value="">${empty}</option>${visibleProviders().map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
   const deleteProviderOptions=pick=>`<option value="ALL">ALL (default)</option>${(pick ? PROVIDERS.filter(p=>pick.has(p)) : visibleProviders()).map(p=>`<option value="${p}">${providerLabel(p)}</option>`).join("")}`;
+  const cwProfileOptions=()=>crosswatchProfiles.map(p=>`<option value="${escOpt(p.id)}">${escOpt(p.label || p.id)}</option>`).join("");
   host.innerHTML=`<div class="wl-topline cw-page-hero cw-page-hero-watchlist" data-hero-icon="bookmark_added"><div class="wl-title-stack cw-page-hero-copy"><div class="cw-page-hero-kicker">WATCHLIST</div><div class="wl-title cw-page-hero-title">Watchlist</div><div class="wl-sub cw-page-hero-sub">Browse and manage your unified watchlist</div></div><div class="wl-hero-summary cw-page-hero-actions" id="wl-hero-summary" aria-label="Watchlist summary"><div class="wl-hero-seg"><strong id="wl-stat-total">0</strong><span>items</span></div><div class="wl-hero-seg"><strong id="wl-stat-visible">0</strong><span>visible</span></div><div class="wl-hero-seg wl-hero-sync"><span>Synced</span><strong id="wl-stat-sync">never</strong></div><button id="wl-refresh" class="wl-hero-refresh" title="Sync watchlist" aria-label="Sync watchlist"><span class="material-symbol ss-refresh-icon">refresh</span></button></div></div><div class="wl-wrap" id="watchlist-root"><div class="wl-main-shell"><div class="wl-toolbar"><div class="wl-toolbar-left"><label class="wl-chip wl-selectall"><input id="wl-select-all" type="checkbox"><span>Select all</span></label><span id="wl-count" class="wl-chip is-filter">0 selected</span></div><div class="wl-toolbar-right"><span id="wl-filter-state" class="wl-chip is-filter">All items</span></div></div><div id="wl-posters" class="wl-grid" style="display:none"></div><div id="wl-list" class="wl-table-wrap" style="display:none"><table class="wl-table"><colgroup><col class="c-sel"><col class="c-poster"><col class="c-title"><col class="c-rel"><col class="c-genre"><col class="c-type"><col class="c-sync"></colgroup><thead><tr><th style="text-align:center"><input id="wl-list-select-all" type="checkbox"></th><th class="sortable" data-sort="poster" data-col="poster" style="position:relative">Poster<span class="wl-resize"></span></th><th class="sortable" data-sort="title" data-col="title" style="position:relative">Title<span class="wl-resize"></span></th><th class="sortable" data-sort="release" data-col="rel" style="position:relative">Release<span class="wl-resize"></span></th><th class="sortable" data-sort="genre" data-col="genre" style="position:relative">Genre<span class="wl-resize"></span></th><th class="sortable" data-sort="type" data-col="type" style="position:relative">Type<span class="wl-resize"></span></th><th class="sortable" data-sort="sync" data-col="sync" style="position:relative">Sync<span class="wl-resize"></span></th></tr></thead><tbody id="wl-tbody"></tbody></table></div><div id="wl-pagination" class="wl-pagination" style="display:none"><button id="wl-page-prev" class="wl-btn">Previous</button><span id="wl-page-label" class="wl-muted">Page 1 of 1 • Rows 0–0 of 0</span><button id="wl-page-next" class="wl-btn">Next</button></div><div id="wl-empty" class="wl-empty wl-muted" style="display:none">No items match the current filters.</div></div><aside class="wl-side"><div class="ins-card"><div class="ins-row wl-ref-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title" style="margin-right:auto">Filters</div></div><div class="ins-row"><div class="ins-kv"><label for="wl-view">View</label><select id="wl-view" name="wl-view" class="wl-input" style="width:auto;padding:6px 10px"><option value="posters">Posters</option><option value="list">List</option></select><label for="wl-q">Search</label><input id="wl-q" name="wl-q" class="wl-input" placeholder="Search title..."><label for="wl-type">Type</label><select id="wl-type" name="wl-type" class="wl-input"><option value="">All types</option><option value="movie">Movies</option><option value="tv">Shows</option><option value="anime">Anime</option></select><label for="wl-provider">Provider</label><select id="wl-provider" name="wl-provider" class="wl-input">${providerOptions()}</select><label id="wl-size-label" for="wl-size">Size</label><input id="wl-size" name="wl-size" type="range" min="120" max="320" step="10" class="wl-input" style="padding:0"></div></div><div class="ins-row" id="wl-more-panel" style="display:none"><div class="ins-kv"><label for="wl-released">Released</label><select id="wl-released" name="wl-released" class="wl-input"><option value="both">Both</option><option value="released">Released</option><option value="unreleased">Upcoming</option></select><label id="wl-overlays-label" for="wl-overlays">Overlays</label><select id="wl-overlays" name="wl-overlays" class="wl-input"><option value="yes">On</option><option value="no">Off</option></select><label for="wl-genre">Genre</label><select id="wl-genre" name="wl-genre" class="wl-input"><option value="">All</option></select><label for="wl-show-hidden">Hidden</label><label class="wl-chip" style="justify-content:flex-start"><input id="wl-show-hidden" type="checkbox"><span>Include local hidden</span></label><div id="wl-cols-label" class="field-label">Columns</div><div id="wl-cols" class="wl-cols"><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="poster">Poster</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="rel">Release</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="genre">Genre</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="type">Type</label><label class="wl-colchip"><input type="checkbox" name="wl-col" data-col="sync">Sync</label></div></div></div><div class="ins-row" style="justify-content:flex-end;gap:8px"><button id="wl-more" class="wl-btn" aria-expanded="false">More</button><button id="wl-clear" class="wl-btn">Reset</button></div></div><div class="ins-card"><div class="ins-row wl-action-head"><div class="wl-action-title"><div class="ins-icon"><span class="material-symbol">flash_on</span></div><div class="ins-title">Actions</div></div><button type="button" class="wl-action-help" aria-label="Watchlist actions help" title="Delete selected items from the chosen provider, or from all providers. Hide local only removes selected items from the local CrossWatch view. Unhide all restores locally hidden items."><span class="material-symbol">help</span></button></div><div class="ins-row"><div class="wl-actions-panel"><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Delete from</div><div class="wl-action-hint">Selected items only</div></div><div class="wl-action-control is-select"><select id="wl-delete-provider" name="wl-delete-provider" class="wl-input">${deleteProviderOptions()}</select><button id="wl-delete" class="wl-btn danger" disabled>Delete</button></div></div><div class="wl-action-row"><div class="wl-action-copy"><div class="wl-action-label">Visibility</div><div class="wl-action-hint">Local view only</div></div><div class="wl-action-control"><button id="wl-hide" class="wl-btn" disabled>Hide local</button><button id="wl-unhide" class="wl-btn">Unhide all</button></div></div></div></div></div><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">monitoring</span></div><div class="ins-title">Coverage Pulse</div></div><div class="ins-row"><div id="wl-metrics" class="ins-metrics"></div></div></div></aside></div><div id="wl-snack" class="wl-snack wl-hidden" role="status" aria-live="polite"></div>`;
 
   /* References to elements */
@@ -68,6 +71,9 @@
   const topSyncEl   = $("wl-stat-sync");
   const filterStateEl = $("wl-filter-state");
   const showHiddenChk = $("wl-show-hidden");
+  let cwProfileLabel = null;
+  let cwProfileSel = null;
+  let delProfile = null;
   const enhancedControlWrap = el => {
     const wrap = el?.nextElementSibling;
     return wrap?.classList?.contains("cw-icon-select") && wrap.__cwNativeSelect === el ? wrap : null;
@@ -78,6 +84,39 @@
     const wrap = enhancedControlWrap(el);
     if (wrap) wrap.style.display = on ? "" : "none";
   };
+  const syncProfileSelectOptions = (selectEl, current = "default") => {
+    if (!selectEl) return "default";
+    const opts = cwProfileOptions();
+    selectEl.innerHTML = opts || '<option value="default">Default</option>';
+    const values = Array.from(selectEl.options).map(o => o.value);
+    const next = values.includes(current) ? current : "default";
+    selectEl.value = next;
+    return next;
+  };
+  function ensureCrosswatchProfileControls() {
+    if (providerSel && !cwProfileSel) {
+      cwProfileLabel = document.createElement("label");
+      cwProfileLabel.id = "wl-cw-profile-label";
+      cwProfileLabel.setAttribute("for", "wl-cw-profile");
+      cwProfileLabel.textContent = "Profile";
+      cwProfileSel = document.createElement("select");
+      cwProfileSel.id = "wl-cw-profile";
+      cwProfileSel.name = "wl-cw-profile";
+      cwProfileSel.className = "wl-input";
+      providerSel.insertAdjacentElement("afterend", cwProfileSel);
+      providerSel.insertAdjacentElement("afterend", cwProfileLabel);
+      syncProfileSelectOptions(cwProfileSel, "default");
+    }
+    if (delProv && !delProfile) {
+      delProfile = document.createElement("select");
+      delProfile.id = "wl-delete-profile";
+      delProfile.name = "wl-delete-profile";
+      delProfile.className = "wl-input";
+      delProv.insertAdjacentElement("afterend", delProfile);
+      syncProfileSelectOptions(delProfile, "default");
+    }
+  }
+  ensureCrosswatchProfileControls();
 
   /* Column sizing */
   const colSel = { title: ".c-title", rel: ".c-rel", genre: ".c-genre", type: ".c-type", sync: ".c-sync", poster: ".c-poster" };
@@ -183,6 +222,11 @@
     if (!TMDB_OK) return null;
     return (await sharedMeta()?.get(it, profile)) || null;
   };
+  const instancesOfProvider = (it, p) => {
+    const sbp = it?.sources_by_provider || it?.sourcesByProvider || {};
+    const arr = sbp?.[String(p || "").toLowerCase()] || sbp?.[String(p || "").toUpperCase()];
+    return Array.isArray(arr) ? arr.map(x => String(x || "").trim()).filter(Boolean) : [];
+  };
 
   function rebuildProviderOptions() {
     if (providerSel) {
@@ -197,6 +241,34 @@
       delProv.value = Array.from(delProv.options).some((o) => o.value === current) ? current : "ALL";
       enhanceDeleteProviderSelect();
     }
+    syncCrosswatchProfileControls();
+  }
+
+  function syncCrosswatchProfileControls() {
+    ensureCrosswatchProfileControls();
+    const filterOn = String(providerSel?.value || "").toUpperCase() === "CROSSWATCH";
+    const deleteOn = String(delProv?.value || "").toUpperCase() === "CROSSWATCH";
+    const currentFilter = cwProfileSel?.value || "default";
+    const currentDelete = delProfile?.value || currentFilter || "default";
+    syncProfileSelectOptions(cwProfileSel, currentFilter);
+    syncProfileSelectOptions(delProfile, currentDelete);
+    setControlVisible(cwProfileLabel, filterOn);
+    setControlVisible(cwProfileSel, filterOn);
+    setControlVisible(delProfile, deleteOn);
+  }
+
+  async function loadCrosswatchProfiles() {
+    try {
+      const data = await fetch("/api/provider-instances/CROSSWATCH", { cache: "no-store" }).then(r => r.ok ? r.json() : []);
+      const list = Array.isArray(data) ? data : [];
+      const norm = list
+        .map(x => ({ id: String(x?.id || "").trim(), label: String(x?.label || x?.id || "").trim() }))
+        .filter(x => x.id);
+      crosswatchProfiles = norm.length ? norm : [{ id: "default", label: "Default" }];
+    } catch (_) {
+      crosswatchProfiles = [{ id: "default", label: "Default" }];
+    }
+    syncCrosswatchProfileControls();
   }
 
   let TMDB_OK = true;
@@ -268,6 +340,10 @@
     if (q) bits.push(`Search: ${q}`);
     if (ty) bits.push(typeLabelFor({ type: ty }));
     if (provider) bits.push(providerLabel(provider));
+    if (provider.toUpperCase() === "CROSSWATCH" && cwProfileSel?.value) {
+      const row = crosswatchProfiles.find(p => p.id === cwProfileSel.value);
+      bits.push(row?.label || cwProfileSel.value);
+    }
     if (rel === "released") bits.push("Released only");
     if (rel === "unreleased") bits.push("Upcoming only");
     if (genre) bits.push(genre);
@@ -702,6 +778,11 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       if (q && !title.includes(q)) return false;
       if (ty && t !== ty) return false;
       if (provider && !providersOf(it).includes(provider)) return false;
+      if (provider === "CROSSWATCH") {
+        const inst = String(cwProfileSel?.value || "default").trim() || "default";
+        const insts = instancesOfProvider(it, "CROSSWATCH");
+        if (insts.length ? !insts.includes(inst) : inst !== "default") return false;
+      }
 
       if (releasedPref !== "both") {
         const dt = parseReleaseDate(getReleaseIso(it));
@@ -1001,11 +1082,13 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       : { key };
   });
 
-  async function postDelete(keys, provider){
+  async function postDelete(keys, provider, providerInstance){
     const send = async prov => {
+      const body = { keys: deleteSpecsForKeys(keys), provider: prov };
+      if (providerInstance) body.provider_instance = providerInstance;
       const r = await fetch("/api/watchlist/delete", {
         method:"POST", headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ keys: deleteSpecsForKeys(keys), provider: prov })
+        body: JSON.stringify(body)
       });
       const txt = await r.text(); let j=null; try{ j = txt ? JSON.parse(txt) : null }catch{}
       const okCount =
@@ -1026,6 +1109,9 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     if (!selected.size) return snackbar("Nothing selected");
     const provider = (delProv?.value || "ALL");
     const PROV_UP = provider.toUpperCase();
+    const providerInstance = PROV_UP === "CROSSWATCH"
+      ? String(delProfile?.value || cwProfileSel?.value || "default").trim() || "default"
+      : "";
     const keys = [...selected];
     const total = keys.length, CHUNK = 50;
 
@@ -1045,7 +1131,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
     let done = 0, ok = 0;
     for (let i = 0; i < keys.length; i += CHUNK) {
-      const res = await postDelete(keys.slice(i, i + CHUNK), provider);
+      const res = await postDelete(keys.slice(i, i + CHUNK), provider, providerInstance);
       ok += res.okCount || 0; done = Math.min(total, i + CHUNK); progress(done);
     }
     snack.classList.add("wl-hidden");
@@ -1085,7 +1171,11 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   );
 
   qEl.addEventListener("input", applyFilters, true);
-  on([tEl, providerSel], ["change","input"], applyFilters);
+  on([tEl], ["change","input"], applyFilters);
+  on([providerSel], ["change","input"], () => { syncCrosswatchProfileControls(); applyFilters(); });
+  cwProfileSel?.addEventListener("change", applyFilters, true);
+  cwProfileSel?.addEventListener("input", applyFilters, true);
+  delProfile?.addEventListener("change", updateSelCount, true);
 
   moreBtn.addEventListener("click", () => {
     const open = morePanel.style.display !== "none";
@@ -1105,13 +1195,14 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
 
   clearBtn.addEventListener("click", () => {
     qEl.value = ""; tEl.value = ""; providerSel.value = "";
+    if (cwProfileSel) cwProfileSel.value = "default";
     releasedSel.value = "both"; overlaysSel.value = "yes"; genreSel.value = "";
     if (showHiddenChk) showHiddenChk.checked = false;
     Object.assign(prefs, { released:"both", overlays:"yes", genre:"", showHidden:false }); writePrefs(prefs);
     applyOverlayPrefUI(); applyFilters();
   }, true);
 
-  delProv.addEventListener("change", updateSelCount, true);
+  delProv.addEventListener("change", () => { syncCrosswatchProfileControls(); updateSelCount(); }, true);
 
   sizeInput.addEventListener("input", () => {
     const px = Math.max(120, Math.min(320, Number(sizeInput.value) || 150));
@@ -1186,6 +1277,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     } catch {}
 
     activeProviders = active;
+    await loadCrosswatchProfiles();
     rebuildProviderOptions();
     items = await fetchWatchlist();
     populateGenreOptions(buildGenreIndex(items));

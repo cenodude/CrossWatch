@@ -11,7 +11,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const FEATS = featureMeta.order || Object.keys(FEAT_LABEL);
   const DEFAULT_RECENT_SYNCS_LIMIT = 3;
   const PREF_KEY = "insights.settings.v1";
+  const CW_SNAPSHOT_PROFILE_KEY = "insights.crosswatch.snapshotProfile";
   const $ = (s, r = d) => r.querySelector(s), $$ = (s, r = d) => [...r.querySelectorAll(s)], lc = s => String(s || "").toLowerCase();
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
   const featureLabel = v => featureMeta.label?.(v) || FEAT_LABEL[lc(v)] || String(v || "");
   const providerLabel = v => providerMeta.label?.(v) || String(v || "");
   const providerLogo = v => providerMeta.logoPath?.(v) || "";
@@ -97,7 +99,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   let _prefs = loadPrefs(), _visibleFeats = visibleFeatures(_prefs);
   const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
-  let _lastStatsFetch = 0, _cwSnapModal = null;
+  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null;
 
   function syncPrefs(instancesByProvider = {}) {
     const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
@@ -134,12 +136,32 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
         } catch {}
       }
       const out = typeof w.getConfiguredProviders === "function" ? await w.getConfiguredProviders(cfg || {}) : ["crosswatch"];
-      return out instanceof Set ? out : new Set([...(out || [])]);
+      const set = out instanceof Set ? out : new Set([...(out || [])]);
+      _configuredProvidersCache = new Set([...set]);
+      return set;
     } catch (e) {
       console.error("[Insights] Failed to resolve configured providers", e);
       return new Set(["crosswatch"]);
     }
   };
+
+  function configuredProvidersSnapshot(active = {}) {
+    if (_configuredProvidersCache?.size) return new Set([..._configuredProvidersCache]);
+    try {
+      if (typeof w.getConfiguredProviders === "function") {
+        const cfg = w._cfgCache;
+        if (cfg && typeof cfg === "object" && Object.keys(cfg).length) {
+          const out = w.getConfiguredProviders(cfg);
+          const set = out instanceof Set ? out : new Set([...(out || [])]);
+          if (set.size) {
+            _configuredProvidersCache = new Set([...set]);
+            return set;
+          }
+        }
+      }
+    } catch {}
+    return new Set(Object.entries(active || {}).filter(([, live]) => !!live).map(([key]) => key));
+  }
 
   function filterProviderTotals(block, instancesByProvider = {}) {
     const raw = block?.raw || {}, instCounts = raw.providers_instances, instMse = raw.providers_instances_mse;
@@ -296,7 +318,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     _feature = want;
     localStorage.setItem("insights.feature", want);
     markActiveSwitcher();
-    refreshInsights(true);
+    refreshInsightsFastThenFull(true);
   }
 
   function ensureSwitch() {
@@ -422,16 +444,41 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     placeSwitchBeforeTiles();
   }
 
+  function crosswatchSnapshotProfiles(cwSnapshots) {
+    const profiles = Array.isArray(cwSnapshots?._profiles) ? cwSnapshots._profiles : [];
+    return profiles.length ? profiles : [{ id: "default", label: "Default", root_dir: "/config/.cw_provider" }];
+  }
+
+  function crosswatchSnapshotProfileId(cwSnapshots, preferred = "") {
+    const profiles = crosswatchSnapshotProfiles(cwSnapshots);
+    const ids = new Set(profiles.map(p => String(p.id || "default")));
+    const wanted = String(preferred || localStorage.getItem(CW_SNAPSHOT_PROFILE_KEY) || "default");
+    if (ids.has(wanted)) return wanted;
+    return ids.has("default") ? "default" : String(profiles[0]?.id || "default");
+  }
+
+  function crosswatchSnapshotProfileInfo(cwSnapshots, profileId, feature) {
+    const inst = crosswatchSnapshotProfileId(cwSnapshots, profileId);
+    return cwSnapshots?._by_profile?.[inst]?.[feature] || (inst === "default" ? cwSnapshots?.[feature] : null) || null;
+  }
+
+  function crosswatchSnapshotProfileLabel(cwSnapshots, profileId) {
+    const inst = crosswatchSnapshotProfileId(cwSnapshots, profileId);
+    return crosswatchSnapshotProfiles(cwSnapshots).find(p => String(p.id || "default") === inst)?.label || inst;
+  }
+
   function renderCrossWatchSnapshotHint(cwSnapshots) {
     const tile = d.querySelector('#stat-providers [data-provider="crosswatch"]');
     if (!tile) return;
     const old = $(".cw-snapshot", tile);
     if (_feature === "playlists") return void old?.remove();
-    const info = cwSnapshots?.[_feature];
+    const inst = crosswatchSnapshotProfileId(cwSnapshots);
+    const info = crosswatchSnapshotProfileInfo(cwSnapshots, inst, _feature);
     if (!info?.has_snapshots || !info?.actual) return void old?.remove();
     const label = old || (() => { const el = d.createElement("div"); el.className = "cw-snapshot"; tile.appendChild(el); return el; })();
-    label.textContent = String(info.selected || "latest") === "latest" ? "Latest" : (info.human || info.actual);
-    label.title = info.actual;
+    const selected = String(info.selected || "latest") === "latest" ? "Latest" : (info.human || info.actual);
+    label.textContent = inst === "default" ? selected : `${inst}: ${selected}`;
+    label.title = `${crosswatchSnapshotProfileLabel(cwSnapshots, inst)} - ${info.actual}`;
   }
 
   function renderHistoryTabs(hist) {
@@ -482,6 +529,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   async function renderFromData(data, statsOnly = false, forceConfigured = false) {
+    _lastInsightsData = data || {};
     const blk = hydrateBlock(data);
     footWrap();
     ensureSwitch();
@@ -491,9 +539,15 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       if (data?.watchtime) renderWatchtime(data.watchtime);
     }
     renderTopStats(blk);
-    const configured = await getConfiguredProviders(forceConfigured);
-    renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
+    const optimisticConfigured = configuredProvidersSnapshot(blk.active);
+    renderProviderStats(blk.providers, blk.active, optimisticConfigured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
     renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
+    getConfiguredProviders(forceConfigured)
+      .then((configured) => {
+        renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
+        renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
+      })
+      .catch((e) => console.error("[Insights] Failed to resolve configured providers", e));
   }
 
   async function refreshInsights(force = false) {
@@ -510,18 +564,28 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const now = Date.now();
     if (!force && now - _lastStatsFetch < 900) return;
     _lastStatsFetch = now;
-    try { await renderFromData(await fetchJSON("/api/insights?limit_samples=0&history=60"), true, force); }
+    try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=0&history=0${force ? `&t=${Date.now()}` : ""}`), true, force); }
     catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights (stats)", e);
     }
   }
 
-  w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsights(true); });
+  function refreshInsightsFastThenFull(force = false) {
+    if (authSetupPending()) return;
+    try { refreshStats(force); } catch {}
+    clearTimeout(_fullInsightsTimer);
+    _fullInsightsTimer = setTimeout(() => {
+      _fullInsightsTimer = 0;
+      refreshInsights(force);
+    }, 180);
+  }
+
+  w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsightsFastThenFull(true); });
 
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,
-    switchFeature, get feature() { return _feature; }
+    switchFeature, refreshInsightsFastThenFull, get feature() { return _feature; }
   });
   w.renderSparkline = renderSparkline;
   w.refreshInsights = refreshInsights;
@@ -535,7 +599,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     let tries = 0, limit = max || 20;
     (function tick() {
       if (authSetupPending()) return;
-      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) return refreshInsights();
+      if ($("#sync-history") || $("#stat-now") || $("#sparkline")) return refreshInsightsFastThenFull();
       if (++tries < limit) setTimeout(tick, 250);
     })();
   };
@@ -544,7 +608,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   d.addEventListener("tab-changed", ev => {
     if (authSetupPending()) return;
     const tab = String(ev?.detail?.id || ev?.detail?.tab || "").toLowerCase();
-    if (tab === "main") refreshInsights(true);
+    if (tab === "main") refreshInsightsFastThenFull(true);
   });
 
   const snapLabel = name => {
@@ -562,35 +626,59 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       if (close) modal.classList.add("cw-snap-hidden");
       const btn = ev.target.closest(".snap-btn");
       if (!btn) return;
-      const feature = modal.dataset.feature, name = btn.dataset.name;
-      try { await postOK(`/api/crosswatch/select-snapshot?feature=${feature}&snapshot=${encodeURIComponent(name)}`); }
+      const feature = modal.dataset.feature, name = btn.dataset.name, profile = btn.dataset.profile || modal.dataset.providerInstance || "default";
+      try { await postOK(`/api/crosswatch/select-snapshot?feature=${encodeURIComponent(feature)}&snapshot=${encodeURIComponent(name)}&provider_instance=${encodeURIComponent(profile)}`); }
       catch (err) {
         console.error("[Insights] Failed to select snapshot", err);
         return void w.cxToast?.("Failed to set snapshot. Check server logs.");
       }
+      try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, profile); } catch {}
       modal.classList.add("cw-snap-hidden");
-      w.cxToast?.(`Snapshot set: ${name === "latest" ? "latest" : snapLabel(name)}`);
+      w.cxToast?.(`Snapshot set for ${profile}: ${name === "latest" ? "latest" : snapLabel(name)}`);
       refreshInsights(true);
+    });
+    modal.addEventListener("change", ev => {
+      const sel = ev.target.closest(".cw-snap-profile-select");
+      if (sel) loadCrosswatchSnapshotChoices(modal, modal.dataset.feature, sel.value);
     });
     d.body.appendChild(modal);
     _cwSnapModal = modal;
     return modal;
   }
 
-  async function openCrosswatchSnapshotPicker(feature) {
-    const modal = ensureCrosswatchSnapshotModal(), body = $(".cw-snap-body", modal), head = $(".cw-snap-head .hl", modal);
-    modal.dataset.feature = feature;
-    if (head) head.textContent = featureLabel(feature);
+  async function loadCrosswatchSnapshotChoices(modal, feature, profileId) {
+    const body = $(".cw-snap-body", modal);
+    const cwSnapshots = _lastInsightsData?.crosswatch_snapshots || {};
+    const profiles = crosswatchSnapshotProfiles(cwSnapshots);
+    const inst = crosswatchSnapshotProfileId(cwSnapshots, profileId);
+    const profile = profiles.find(p => String(p.id || "default") === inst) || profiles[0] || { id: "default", label: "Default", root_dir: "/config/.cw_provider" };
+    const info = crosswatchSnapshotProfileInfo(cwSnapshots, inst, feature);
+    const rootDir = String(info?.root_dir || profile.root_dir || "/config/.cw_provider").replace(/[\\/]+$/, "");
+    const selected = String(info?.selected || "latest");
+    modal.dataset.providerInstance = inst;
+    try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, inst); } catch {}
+
+    body.innerHTML = `${profiles.length > 1
+      ? `<label class="cw-snap-profile"><span>Profile</span><select class="cw-snap-profile-select">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || "Default")}</option>`).join("")}</select></label>`
+      : `<div class="cw-snap-profile is-single"><span>Profile</span><strong>${esc(profile.label || inst)}</strong></div>`}<div class="cw-snap-list"><div class="cw-snap-empty muted">Loading snapshots...</div></div>`;
+    const list = $(".cw-snap-list", body);
 
     try {
-      const data = await fetchJSON(`/api/files?path=${encodeURIComponent("/config/.cw_provider/snapshots")}`);
+      const data = await fetchJSON(`/api/files?path=${encodeURIComponent(`${rootDir}/snapshots`)}`);
       const files = (Array.isArray(data?.files) ? data.files : data || []).filter(f => !f.is_dir && f.name?.endsWith(`-${feature}.json`)).sort((a, b) => a.name.localeCompare(b.name)).slice(-10).reverse();
-      if (!files.length) body.innerHTML = '<div class="cw-snap-empty muted">No snapshots found for this feature yet.</div>';
-      else body.innerHTML = [{ name: "latest", label: "Latest snapshot", meta: "Live" }, ...files.map(f => ({ name: f.name, label: snapLabel(f.name), meta: "Saved" }))].map(o => `<button class="snap-btn${o.name === "latest" ? " is-latest" : ""}" data-name="${o.name}" type="button"><span class="snap-name">${o.label}</span><span class="snap-meta">${o.meta}</span></button>`).join("");
+      if (!files.length) list.innerHTML = '<div class="cw-snap-empty muted">No snapshots found for this feature yet.</div>';
+      else list.innerHTML = [{ name: "latest", label: "Latest snapshot", meta: selected === "latest" ? "Active" : "Live" }, ...files.map(f => ({ name: f.name, label: snapLabel(f.name), meta: f.name === selected ? "Active" : "Saved" }))].map(o => `<button class="snap-btn${o.name === "latest" ? " is-latest" : ""}${o.meta === "Active" ? " is-active" : ""}" data-name="${esc(o.name)}" data-profile="${esc(inst)}" type="button"><span class="snap-name">${esc(o.label)}</span><span class="snap-meta">${esc(o.meta)}</span></button>`).join("");
     } catch (e) {
       console.error("[Insights] Failed to load snapshot files", e);
-      body.innerHTML = '<div class="cw-snap-empty muted">Failed to load snapshots. Check server logs or configuration.</div>';
+      list.innerHTML = '<div class="cw-snap-empty muted">Failed to load snapshots. Check server logs or configuration.</div>';
     }
+  }
+
+  async function openCrosswatchSnapshotPicker(feature, profileId = "") {
+    const modal = ensureCrosswatchSnapshotModal(), head = $(".cw-snap-head .hl", modal);
+    modal.dataset.feature = feature;
+    if (head) head.textContent = featureLabel(feature);
+    await loadCrosswatchSnapshotChoices(modal, feature, profileId);
     modal.classList.remove("cw-snap-hidden");
   }
 })(window, document);
