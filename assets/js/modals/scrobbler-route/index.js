@@ -1,8 +1,8 @@
 /* CrossWatch - Scrobbler Route Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi"];
-const sinks = ["trakt", "simkl", "mdblist"];
+const sinks = ["crosswatch", "trakt", "simkl", "mdblist"];
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -180,6 +180,7 @@ function logo(provider) {
     trakt: "/assets/img/TRAKT.svg",
     simkl: "/assets/img/SIMKL.svg",
     mdblist: "/assets/img/MDBLIST.svg",
+    crosswatch: "/assets/img/CROSSWATCH.svg",
   }[String(provider || "").toLowerCase()] || "");
 }
 
