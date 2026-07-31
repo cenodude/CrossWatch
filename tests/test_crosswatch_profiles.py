@@ -98,6 +98,22 @@ def test_editor_tracker_workspaces_select_crosswatch_profile_root(tmp_path: Path
     assert set(loaded["items"].keys()) == {"movie:p01"}
 
 
+def test_editor_tracker_root_keeps_profile_under_profiles_dir(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "cw_provider"
+    monkeypatch.setattr(editor_api, "load_config", lambda: {
+        "crosswatch": {
+            "root_dir": str(root),
+            "instances": {"CW-P01": {"root_dir": str(tmp_path / "outside")}},
+        }
+    })
+
+    configured = editor_api._tracker_root("CW-P01")
+    rejected = editor_api._tracker_root("../outside")
+
+    assert configured == root.resolve(strict=False) / "profiles" / "CW-P01"
+    assert rejected == root.resolve(strict=False)
+
+
 def test_editor_hides_local_tracker_workspace_selector() -> None:
     editor_js = Path("assets/js/editor.js").read_text("utf-8")
 

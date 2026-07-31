@@ -44,7 +44,7 @@ _SYSTEM_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT_LOCKS: dict[tuple[Any, ...], threading.Lock] = {}
 _LOG = logging.getLogger("crosswatch.analyzer")
-_TRACKER_PROVIDER_BASES = {"TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
+_TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST"}
 _MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
 
 

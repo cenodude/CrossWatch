@@ -1426,7 +1426,11 @@ function profileLabel(provider, instance) {
             if (norm && norm.toLowerCase() !== "default") ids.push(norm);
           }
           const labels = {};
-          ids.forEach((id, i) => { labels[id] = `P${String(i + 1).padStart(2, "0")}`; });
+          ids.forEach((id, i) => {
+            const row = (Array.isArray(raw) ? raw : []).find(x => String(typeof x === "string" ? x : x?.id || "").trim() === id);
+            const label = row && typeof row === "object" ? String(row.label || "").trim() : "";
+            labels[id] = label && label !== id ? label : `P${String(i + 1).padStart(2, "0")}`;
+          });
           out[String(prov || "").toUpperCase()] = labels;
         }
         PROFILE_LABELS = out;

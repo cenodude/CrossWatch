@@ -484,6 +484,18 @@
     if (nextWrap) nextWrap.style.display = "";
   }
 
+  function syncSnapshotControlVisibility() {
+    const show = !isTrackerSource();
+    if (snapLabel) snapLabel.style.display = show ? "" : "none";
+    if (snapSel) {
+      snapSel.style.display = show ? "" : "none";
+      const wrap = snapSel.nextElementSibling && snapSel.nextElementSibling.classList?.contains("cw-icon-select")
+        ? snapSel.nextElementSibling
+        : null;
+      if (wrap) wrap.style.display = show ? "" : "none";
+    }
+  }
+
   let statusStickyUntil = 0;
 
   const SOURCES = ["state", "tracker", "playlist"];
@@ -1030,10 +1042,11 @@
     if (sourceSel) sourceSel.value = state.source;
     if (pairLabel) pairLabel.style.display = "none";
     if (pairSel) pairSel.style.display = "none";
-    if (snapLabel) snapLabel.textContent = isState ? "Provider" : isTracker ? "Workspace" : "Endpoint";
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Endpoint";
+    syncSnapshotControlVisibility();
     if (kindSel) kindSel.disabled = isPlaylist;
-    if (instanceLabel) instanceLabel.style.display = isState ? "" : "none";
-    if (instanceSel) instanceSel.style.display = isState ? "" : "none";
+    if (instanceLabel) instanceLabel.style.display = (isState || isTracker) ? "" : "none";
+    if (instanceSel) instanceSel.style.display = (isState || isTracker) ? "" : "none";
     if (backupCard) backupCard.style.display = "none";
     if (stateBackupCard) stateBackupCard.style.display = policy ? "" : "none";
     if (blockedOnlyBtn) blockedOnlyBtn.style.display = policy ? "" : "none";
@@ -1050,7 +1063,6 @@
       state.kind = "watchlist";
       state.instance = "default";
     }
-    if (isTracker) state.instance = "default";
     syncKindUI();
 
     if (!policy && state.blockedOnly) {
@@ -2797,10 +2809,11 @@
     const isState = state.source === "state";
     const isTracker = isTrackerSource();
     const isPlaylist = state.source === "playlist";
-    if (snapLabel) snapLabel.textContent = isState ? "Provider" : isTracker ? "Workspace" : "Endpoint";
-    if (instanceLabel) instanceLabel.style.display = isState ? "" : "none";
-    if (instanceSel) instanceSel.style.display = isState ? "" : "none";
-    syncProfileIconSelect(instanceSel, isState);
+    if (snapLabel) snapLabel.textContent = isState ? "Provider" : "Endpoint";
+    syncSnapshotControlVisibility();
+    if (instanceLabel) instanceLabel.style.display = (isState || isTracker) ? "" : "none";
+    if (instanceSel) instanceSel.style.display = (isState || isTracker) ? "" : "none";
+    syncProfileIconSelect(instanceSel, isState || isTracker);
 
     if (isTracker) {
       const list = Array.isArray(state.trackerWorkspaces) ? state.trackerWorkspaces : [];
@@ -2813,6 +2826,7 @@
       if (next !== state.workspace) state.workspace = next;
       snapSel.value = state.workspace || "";
       syncProviderIconSelect(snapSel, false);
+      syncSnapshotControlVisibility();
       return;
     }
 
@@ -2827,6 +2841,7 @@
       if (next !== state.snapshot) state.snapshot = next;
       snapSel.value = state.snapshot || "";
       syncProviderIconSelect(snapSel, false);
+      syncSnapshotControlVisibility();
       return;
     }
 
@@ -2839,6 +2854,7 @@
       if (next !== state.snapshot) state.snapshot = next;
       snapSel.value = state.snapshot || "";
       syncProviderIconSelect(snapSel, isState);
+      syncSnapshotControlVisibility();
       return;
     }
   }
@@ -2928,10 +2944,22 @@ function bindFileImport(btn, input, url, done) {
 
   async function loadTrackerWorkspaces() {
     try {
-      const data = await fetchJSON("/api/editor/tracker/workspaces");
+      if (instanceSel) {
+        const nextInst = await loadInstanceOptions("CROSSWATCH", instanceSel, state.instance || "default");
+        if (nextInst !== state.instance) {
+          state.instance = nextInst;
+          persistUIState();
+        }
+      }
+      const params = new URLSearchParams({ provider_instance: state.instance || "default" });
+      const data = await fetchJSON(`/api/editor/tracker/workspaces?${params.toString()}`);
       const list = Array.isArray(data && data.workspaces) ? data.workspaces : [];
       state.trackerWorkspaces = list;
       state.trackerAvailable = list.length > 0;
+      if (state.workspace && !list.some(w => String(w && w.id || "") === String(state.workspace))) {
+        state.workspace = "";
+        persistUIState();
+      }
     } catch (_) {
       state.trackerWorkspaces = [];
       state.trackerAvailable = false;
@@ -3054,7 +3082,10 @@ function bindFileImport(btn, input, url, done) {
         params.set("provider", state.snapshot);
         params.set("provider_instance", state.instance || "default");
       }
-      if (isTrackerSource()) params.set("workspace", state.workspace);
+      if (isTrackerSource()) {
+        params.set("workspace", state.workspace);
+        params.set("provider_instance", state.instance || "default");
+      }
       if (state.source === "playlist" && state.snapshot) params.set("endpoint", state.snapshot);
 
       const data = await fetchJSON(`/api/editor?${params.toString()}`);
@@ -3085,7 +3116,7 @@ function bindFileImport(btn, input, url, done) {
         state.manualAdds = data.manual_adds || {};
         state.manualBlocks = Array.isArray(data.manual_blocks) ? data.manual_blocks : [];
 
-        if (state.source === "state" && data && typeof data.provider_instance === "string") {
+        if (isPolicySource() && data && typeof data.provider_instance === "string") {
           state.instance = data.provider_instance;
           if (instanceSel) {
             instanceSel.value = state.instance;
@@ -3283,6 +3314,7 @@ function bindFileImport(btn, input, url, done) {
       }
       if (isTrackerSource()) {
         payload.workspace = state.workspace;
+        payload.provider_instance = state.instance || "default";
         payload.blocks = blocks;
       }
       if (state.source === "playlist") {
@@ -3424,7 +3456,6 @@ function bindFileImport(btn, input, url, done) {
       }
       if (isTrackerSource()) {
         state.workspace = "";
-        state.instance = "default";
       }
       persistUIState();
       syncSourceUI();
@@ -3495,6 +3526,11 @@ function bindFileImport(btn, input, url, done) {
       state.instance = instanceSel.value || "default";
       state.page = 0;
       persistUIState();
+      if (isTrackerSource()) {
+        state.workspace = "";
+        clearSelection();
+        await loadSnapshots();
+      }
       await loadState();
     });
   }
@@ -3545,7 +3581,7 @@ if (importProviderSel) {
     if (isTrackerSource()) {
       state.workspace = (snapSel && snapSel.value) ? snapSel.value : state.workspace || "";
       state.snapshot = "";
-      state.instance = "default";
+      state.instance = (instanceSel && instanceSel.value) ? instanceSel.value : state.instance || "default";
       return;
     }
     if (state.source === "state") {

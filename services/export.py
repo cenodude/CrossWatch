@@ -16,7 +16,8 @@ from typing import Any, Callable, Iterable
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 
-from cw_platform.config_base import CONFIG as CONFIG_DIR
+from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.provider_instances import sanitize_instance_label
 
 router = APIRouter(prefix="/api", tags=["export"])
 STATE_PATH = Path(os.environ.get("CW_STATE_PATH", str((CONFIG_DIR / "state.json").resolve())))
@@ -30,6 +31,38 @@ def _load_state() -> dict[str, Any]:
 
 def _providers_in_state(s: dict[str, Any]) -> list[str]:
     return sorted((s.get("providers") or {}).keys())
+
+
+def _load_config_safe() -> dict[str, Any]:
+    try:
+        return dict(load_config() or {})
+    except Exception:
+        return {}
+
+
+def _cfg_block_for_provider(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
+    p = str(provider or "").strip().lower()
+    keys = [p]
+    if p == "tmdb":
+        keys.insert(0, "tmdb_sync")
+    if p in {"cw", "crosswatch"}:
+        keys.insert(0, "crosswatch")
+    for key in keys:
+        blk = cfg.get(key)
+        if isinstance(blk, dict):
+            return blk
+    return {}
+
+
+def _configured_instance_label(cfg: dict[str, Any], provider: str, instance_id: str, fallback: str) -> str:
+    inst = str(instance_id or "").strip()
+    if not inst or inst.lower() == _DEFAULT_INSTANCE:
+        return "Default"
+    blk = _cfg_block_for_provider(cfg, provider)
+    insts = blk.get("instances")
+    ib = insts.get(inst) if isinstance(insts, dict) else None
+    label = sanitize_instance_label((ib or {}).get("label") if isinstance(ib, dict) else "")
+    return f"{fallback} - {label}" if label else fallback
 
 
 _DEFAULT_INSTANCE = "default"
@@ -833,6 +866,7 @@ _BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str], str | None],
 @router.get("/export/options", response_class=JSONResponse)
 def api_export_options() -> dict[str, Any]:
     s = _load_state()
+    cfg = _load_config_safe()
     provs = _providers_in_state(s)
     features = ["watchlist", "history", "ratings", "combined"]
 
@@ -844,7 +878,8 @@ def api_export_options() -> dict[str, Any]:
         insts = blk.get("instances")
         if isinstance(insts, dict):
             for inst_id in sorted(insts.keys(), key=lambda x: str(x)):
-                out.append({"id": str(inst_id), "label": str(inst_id)})
+                iid = str(inst_id)
+                out.append({"id": iid, "label": _configured_instance_label(cfg, p, iid, iid)})
         return out
 
     instances: dict[str, list[dict[str, str]]] = {p: insts_for(p) for p in provs}

@@ -15,21 +15,23 @@ import tempfile
 import zipfile
 
 from cw_platform.config_base import CONFIG, load_config
+from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
 Kind = Literal["watchlist", "history", "ratings", "progress"]
 
 _JSON_FILE_SUFFIX = ".json"
 
-def _cw_cfg() -> dict[str, Any]:
+def _cw_cfg(provider_instance: Any = None) -> dict[str, Any]:
     try:
         cfg = load_config()
     except Exception:
         return {}
-    cw = cfg.get("crosswatch") or {}
+    inst = normalize_instance_id(provider_instance)
+    cw = get_provider_block(cfg, "crosswatch", inst) or cfg.get("crosswatch") or {}
     return cw if isinstance(cw, dict) else {}
 
-def _root_dir() -> Path:
-    cw = _cw_cfg()
+def _root_dir(provider_instance: Any = None) -> Path:
+    cw = _cw_cfg(provider_instance)
     root = cw.get("root_dir") or ".cw_provider"
     p = Path(root)
     if not p.is_absolute():
@@ -46,13 +48,13 @@ def _ensure_under_root(root: Path, path: Path) -> Path:
         raise ValueError("Invalid path") from e
     return path_r
 
-def _snapshots_dir() -> Path:
-    d = _root_dir() / "snapshots"
+def _snapshots_dir(provider_instance: Any = None) -> Path:
+    d = _root_dir(provider_instance) / "snapshots"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
-def _state_path(kind: Kind) -> Path:
-    return _root_dir() / f"{kind}.json"
+def _state_path(kind: Kind, provider_instance: Any = None) -> Path:
+    return _root_dir(provider_instance) / f"{kind}.json"
 
 
 def _write_json_atomic(path: Path, data: Any) -> None:
@@ -86,9 +88,10 @@ def _validated_json_filename(name: str, *, label: str) -> str:
     return raw
 
 
-def _resolve_snapshot_name(name: str) -> Path:
+def _resolve_snapshot_name(name: str, provider_instance: Any = None) -> Path:
     raw = _validated_json_filename(name, label="snapshot name")
-    return _ensure_under_root(_snapshots_dir(), _snapshots_dir() / raw)
+    snaps = _snapshots_dir(provider_instance)
+    return _ensure_under_root(snaps, snaps / raw)
 
 
 def _resolve_pair_dataset_path(name: str) -> Path:
@@ -97,14 +100,14 @@ def _resolve_pair_dataset_path(name: str) -> Path:
     return _ensure_under_root(root, root / raw)
 
 
-def _selected_snapshot_path(kind: Kind, snapshot: str | None) -> Path:
+def _selected_snapshot_path(kind: Kind, snapshot: str | None, provider_instance: Any = None) -> Path:
     if not snapshot:
-        return _state_path(kind)
+        return _state_path(kind, provider_instance)
 
     target = _validated_json_filename(snapshot, label="snapshot name")
-    for meta in list_snapshots(kind):
+    for meta in list_snapshots(kind, provider_instance=provider_instance):
         if str(meta.get("name") or "") == target:
-            return _resolve_snapshot_name(target)
+            return _resolve_snapshot_name(target, provider_instance)
     raise ValueError("Snapshot not found")
 
 
@@ -148,8 +151,8 @@ def _snapshot_meta_for_file(path: Path, kind: Kind) -> dict[str, Any]:
         "size": path.stat().st_size,
     }
 
-def list_snapshots(kind: Kind) -> list[dict[str, Any]]:
-    snaps_dir = _snapshots_dir()
+def list_snapshots(kind: Kind, provider_instance: Any = None) -> list[dict[str, Any]]:
+    snaps_dir = _snapshots_dir(provider_instance)
     suffix = f"-{kind}.json"
     items: list[tuple[int, dict[str, Any]]] = []
     for p in snaps_dir.glob(f"*{suffix}"):
@@ -161,20 +164,20 @@ def list_snapshots(kind: Kind) -> list[dict[str, Any]]:
     items.sort(key=lambda t: t[0], reverse=True)
     return [m for _, m in items]
 
-def _snapshot_enabled() -> bool:
-    cw = _cw_cfg()
+def _snapshot_enabled(provider_instance: Any = None) -> bool:
+    cw = _cw_cfg(provider_instance)
     return bool(cw.get("auto_snapshot", True))
 
-def _snapshot_limits() -> tuple[int, int]:
-    cw = _cw_cfg()
+def _snapshot_limits(provider_instance: Any = None) -> tuple[int, int]:
+    cw = _cw_cfg(provider_instance)
     max_snaps = int(cw.get("max_snapshots", 64) or 0)
     retention_days = int(cw.get("retention_days", 30) or 0)
     return max_snaps, retention_days
 
-def _make_snapshot(kind: Kind) -> None:
-    if not _snapshot_enabled():
+def _make_snapshot(kind: Kind, provider_instance: Any = None) -> None:
+    if not _snapshot_enabled(provider_instance):
         return
-    path = _state_path(kind)
+    path = _state_path(kind, provider_instance)
     if not path.exists():
         return
     try:
@@ -186,17 +189,17 @@ def _make_snapshot(kind: Kind) -> None:
 
     dt = datetime.now(timezone.utc)
     name = dt.strftime("%Y%m%dT%H%M%SZ") + f"-{kind}.json"
-    snaps_dir = _snapshots_dir()
+    snaps_dir = _snapshots_dir(provider_instance)
     dest = snaps_dir / name
     try:
         dest.write_text(payload, encoding="utf-8")
     except Exception:
         return
-    _enforce_snapshot_retention(kind)
+    _enforce_snapshot_retention(kind, provider_instance)
 
-def _enforce_snapshot_retention(kind: Kind) -> None:
-    max_snaps, retention_days = _snapshot_limits()
-    snaps = list_snapshots(kind)
+def _enforce_snapshot_retention(kind: Kind, provider_instance: Any = None) -> None:
+    max_snaps, retention_days = _snapshot_limits(provider_instance)
+    snaps = list_snapshots(kind, provider_instance=provider_instance)
     keep: list[str] = []
     now = datetime.now(timezone.utc)
     for meta in snaps:
@@ -210,7 +213,7 @@ def _enforce_snapshot_retention(kind: Kind) -> None:
         keep = keep[:max_snaps]
 
     keep_set = set(keep)
-    snaps_dir = _snapshots_dir()
+    snaps_dir = _snapshots_dir(provider_instance)
     suffix = f"-{kind}.json"
     for p in snaps_dir.glob(f"*{suffix}"):
         if p.name not in keep_set:
@@ -219,7 +222,7 @@ def _enforce_snapshot_retention(kind: Kind) -> None:
             except Exception:
                 continue
 
-def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[str, Any]:
+def load_state(kind: Kind | None = None, snapshot: str | None = None, provider_instance: Any = None) -> dict[str, Any]:
     if kind is None:
         kind_val: Kind = "watchlist"
     elif kind in ("watchlist", "history", "ratings", "progress"):
@@ -227,7 +230,7 @@ def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[st
     else:
         raise ValueError(f"Unsupported kind: {kind!r}")
 
-    path = _selected_snapshot_path(kind_val, snapshot)
+    path = _selected_snapshot_path(kind_val, snapshot, provider_instance)
 
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -243,7 +246,7 @@ def load_state(kind: Kind | None = None, snapshot: str | None = None) -> dict[st
 
     return {"items": items, "ts": ts}
 
-def save_state(kind: Kind | None, items: dict[str, Any]) -> dict[str, Any]:
+def save_state(kind: Kind | None, items: dict[str, Any], provider_instance: Any = None) -> dict[str, Any]:
     if kind is None:
         kind_val: Kind = "watchlist"
     elif kind in ("watchlist", "history", "ratings", "progress"):
@@ -251,13 +254,13 @@ def save_state(kind: Kind | None, items: dict[str, Any]) -> dict[str, Any]:
     else:
         raise ValueError(f"Unsupported kind: {kind!r}")
 
-    _make_snapshot(kind_val)
+    _make_snapshot(kind_val, provider_instance)
 
     state = {
         "items": items or {},
         "ts": int(datetime.now(timezone.utc).timestamp()),
     }
-    path = _state_path(kind_val)
+    path = _state_path(kind_val, provider_instance)
     try:
         _write_json_atomic(path, state)
     except Exception:
@@ -266,8 +269,8 @@ def save_state(kind: Kind | None, items: dict[str, Any]) -> dict[str, Any]:
 
 TrackerImportStats = dict[str, Any]
 
-def export_tracker_zip() -> bytes:
-    root = _root_dir()
+def export_tracker_zip(provider_instance: Any = None) -> bytes:
+    root = _root_dir(provider_instance)
     root.mkdir(parents=True, exist_ok=True)
 
     buf = BytesIO()
@@ -280,8 +283,8 @@ def export_tracker_zip() -> bytes:
             zf.write(path, rel.as_posix())
     return buf.getvalue()
 
-def import_tracker_zip(fp: IO[bytes]) -> TrackerImportStats:
-    root = _root_dir()
+def import_tracker_zip(fp: IO[bytes], provider_instance: Any = None) -> TrackerImportStats:
+    root = _root_dir(provider_instance)
     root.mkdir(parents=True, exist_ok=True)
 
     stats: TrackerImportStats = {
@@ -338,7 +341,7 @@ def _normalize_import_items(data: Any) -> dict[str, Any]:
         return out
     return {}
 
-def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
+def import_tracker_json(payload: bytes, filename: str, provider_instance: Any = None) -> TrackerImportStats:
     try:
         text = payload.decode("utf-8")
         raw = json.loads(text)
@@ -361,7 +364,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     name = (filename or "upload.json").strip()
     lower = name.lower()
 
-    root = _root_dir()
+    root = _root_dir(provider_instance)
     root.mkdir(parents=True, exist_ok=True)
 
     target: str
@@ -370,7 +373,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     if lower in ("watchlist.json", "history.json", "ratings.json", "progress.json"):
         base = lower.split(".")[0]  # "watchlist" / "history" / "ratings"
         kind = cast(Kind, base)
-        dest = _state_path(kind)
+        dest = _state_path(kind, provider_instance)
         target = "state"
     else:
         for candidate in ("watchlist", "history", "ratings", "progress"):
@@ -383,7 +386,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
                 "Use filenames like 'watchlist.json' or "
                 "'YYYYMMDDTHHMMSSZ-watchlist.json'.",
             )
-        dest = _resolve_snapshot_name(name)
+        dest = _resolve_snapshot_name(name, provider_instance)
         target = "snapshot"
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -391,7 +394,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
     _write_json_atomic(dest, state)
 
     if target == "snapshot" and kind is not None:
-        _enforce_snapshot_retention(kind)
+        _enforce_snapshot_retention(kind, provider_instance)
 
     stats: TrackerImportStats = {
         "files": 1,
@@ -408,6 +411,7 @@ def import_tracker_json(payload: bytes, filename: str) -> TrackerImportStats:
 def import_tracker_upload(
     payload: bytes,
     filename: str | None = None,
+    provider_instance: Any = None,
 ) -> TrackerImportStats:
     name = (filename or "").strip() or "upload.bin"
     buf = BytesIO(payload)
@@ -419,16 +423,16 @@ def import_tracker_upload(
 
     if is_zip:
         buf.seek(0)
-        stats = import_tracker_zip(buf)
+        stats = import_tracker_zip(buf, provider_instance)
         stats.setdefault("mode", "zip")
         return stats
 
     lower = name.lower()
     if lower.endswith(".json"):
-        return import_tracker_json(payload, name)
+        return import_tracker_json(payload, name, provider_instance)
 
     try:
-        return import_tracker_json(payload, name)
+        return import_tracker_json(payload, name, provider_instance)
     except Exception as e:
         raise ValueError("Unsupported file type; expected a ZIP or JSON file") from e
 
