@@ -14,8 +14,10 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, File, UploadFile
+from fastapi import APIRouter, Body, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
+
+from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
 _LOG = logging.getLogger("crosswatch.api.maintenance")
 
@@ -102,13 +104,14 @@ def _clear_cw_state_files() -> list[str]:
 
 
 # --- CrossWatch tracker (.cw_provider) functions ---
-def _cw_tracker_root(config_dir: Path) -> Path:
+def _cw_tracker_root(config_dir: Path, provider_instance: Any = None) -> Path:
     """Resolve CrossWatch tracker root dir from config.json or default."""
     cfg_path = config_dir / "config.json"
     root: str | None = None
     try:
         cfg = json.loads(cfg_path.read_text("utf-8"))
-        cw_cfg = cfg.get("crosswatch") or {}
+        inst = normalize_instance_id(provider_instance)
+        cw_cfg = get_provider_block(cfg, "crosswatch", inst) or cfg.get("crosswatch") or {}
         root = (
             cw_cfg.get("root_dir")
             or cw_cfg.get("root")
@@ -595,23 +598,30 @@ def _scan_cw_tracker(root: Path) -> dict[str, Any]:
 
 
 @router.get("/crosswatch-tracker")
-def crosswatch_tracker_status() -> dict[str, Any]:
+def crosswatch_tracker_status(
+    provider_instance: str | None = Query("default"),
+) -> dict[str, Any]:
     """Inspect CrossWatch tracker folder (.cw_provider)."""
     _, CONFIG_DIR, *_ = _cw()
-    root = _cw_tracker_root(CONFIG_DIR)
+    inst = normalize_instance_id(provider_instance)
+    root = _cw_tracker_root(CONFIG_DIR, inst)
     info = _scan_cw_tracker(root)
     return {
         "ok": True,
+        "provider_instance": inst,
         "root": str(root),
         **info,
     }
 
 
 @router.get("/crosswatch-tracker/export")
-def crosswatch_tracker_export() -> StreamingResponse:
+def crosswatch_tracker_export(
+    provider_instance: str | None = Query("default"),
+) -> StreamingResponse:
     from services.editor import export_tracker_zip
 
-    data = export_tracker_zip()
+    inst = normalize_instance_id(provider_instance)
+    data = export_tracker_zip(inst)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/zip",
@@ -620,17 +630,21 @@ def crosswatch_tracker_export() -> StreamingResponse:
 
 
 @router.post("/crosswatch-tracker/import")
-async def crosswatch_tracker_import(file: UploadFile = File(...)) -> dict[str, Any]:
+async def crosswatch_tracker_import(
+    provider_instance: str | None = Query("default"),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
     from services.editor import import_tracker_upload
 
+    inst = normalize_instance_id(provider_instance)
     payload = await file.read()
     filename = file.filename or "upload.json"
     try:
-        stats = import_tracker_upload(payload, filename)
+        stats = import_tracker_upload(payload, filename, inst)
     except ValueError:
         _LOG.warning("tracker import rejected: %s", filename, exc_info=True)
         return {"ok": False, "error": "Import failed; expected a valid CrossWatch tracker ZIP or JSON file."}
-    return {"ok": True, **stats}
+    return {"ok": True, "provider_instance": inst, **stats}
 
 
 @router.post("/clear-state")
@@ -667,9 +681,11 @@ def clear_state_minimal() -> dict[str, Any]:
 def crosswatch_tracker_clear(
     clear_state: bool = Body(True),
     clear_snapshots: bool = Body(False),
+    provider_instance: str | None = Body("default"),
 ) -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
-    root = _cw_tracker_root(CONFIG_DIR)
+    inst = normalize_instance_id(provider_instance)
+    root = _cw_tracker_root(CONFIG_DIR, inst)
 
     before = _scan_cw_tracker(root)
     selected_before_paths = []
@@ -703,6 +719,7 @@ def crosswatch_tracker_clear(
 
     return {
         "ok": True,
+        "provider_instance": inst,
         "root": str(root),
         "removed": {
             "state_files": removed_state,

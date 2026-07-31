@@ -234,7 +234,9 @@
     const viewportHeight = window.innerHeight || d.documentElement.clientHeight || 0;
     const margin = 12;
     const gap = 8;
-    const width = Math.max(0, Math.round(rect.width));
+    const cfg = wrap.__cwNativeSelect?.__cwIconSelectCfg || {};
+    const minWidth = Number(cfg.menuMinWidth || 0);
+    const width = Math.max(0, Math.round(rect.width), Number.isFinite(minWidth) ? minWidth : 0);
     const left = Math.max(margin, Math.min(Math.round(rect.left), Math.max(margin, viewportWidth - width - margin)));
     const spaceBelow = Math.max(0, viewportHeight - rect.bottom - gap - margin);
     const spaceAbove = Math.max(0, rect.top - gap - margin);
@@ -285,6 +287,10 @@
     }
     wrap.__cwNativeSelect = select;
     wrap.className = `cw-icon-select ${String(select.__cwIconSelectCfg?.className || "").trim()}`.trim();
+    if (wrap.__cwMenu) {
+      const hidden = wrap.__cwMenu.classList.contains("hidden");
+      wrap.__cwMenu.className = `cw-icon-select-menu${hidden ? " hidden" : ""} ${String(select.__cwIconSelectCfg?.menuClassName || "").trim()}`.trim();
+    }
 
     const legacyChev = wrap.nextElementSibling;
     if (legacyChev?.classList?.contains("chev")) legacyChev.style.display = "none";

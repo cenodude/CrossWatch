@@ -37,6 +37,7 @@ const fjson = async (url, opts = {}) => {
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch]));
 const post = (url, body) =>
   fjson(url, body === undefined ? { method: "POST" } : {
     method: "POST",
@@ -89,15 +90,23 @@ const OPS = [
     tag: "archive & recovery",
     desc: "Manage local tracker state files, snapshots, exports and imports.",
     extra: `
-      <div class="action-options">
-        <label><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
-        <label><input type="checkbox" id="cxm-cw-snaps"><span>All snapshots</span></label>
+      <div class="action-options tracker-archive-options">
+        <label class="tracker-profile-control">
+          <span>Profile</span>
+          <select id="cxm-cw-profile" class="input"><option value="default">Default</option></select>
+        </label>
+        <label class="tracker-archive-check"><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
+        <label class="tracker-archive-check"><input type="checkbox" id="cxm-cw-snaps"><span>All snapshots</span></label>
       </div>
     `,
     sideActions: `
       <div class="archive-actions">
-        <button type="button" class="archive-btn secondary" id="cxm-cw-export" data-label="Download tracker archive">Download ZIP</button>
-        <button type="button" class="archive-btn secondary" id="cxm-cw-import" data-label="Import tracker archive">Import file</button>
+        <button type="button" class="archive-btn icon-only secondary" id="cxm-cw-export" data-label="Download tracker archive" title="Download tracker archive" aria-label="Download tracker archive">
+          <span class="material-symbols-rounded" aria-hidden="true">download</span>
+        </button>
+        <button type="button" class="archive-btn icon-only secondary" id="cxm-cw-import" data-label="Import tracker archive" title="Import tracker archive" aria-label="Import tracker archive">
+          <span class="material-symbols-rounded" aria-hidden="true">upload_file</span>
+        </button>
         <input type="file" id="cxm-cw-import-file" accept=".zip,.json" hidden>
       </div>
     `,
@@ -436,10 +445,33 @@ export default {
       statusEl.className = "status-message" + (kind ? " " + kind : "");
       statusEl.hidden = !msg;
     };
+    const trackerProfile = () => String($("#cxm-cw-profile", root)?.value || "default").trim() || "default";
+    const trackerProfileQuery = () => `provider_instance=${encodeURIComponent(trackerProfile())}`;
+    const loadTrackerProfiles = async () => {
+      const sel = $("#cxm-cw-profile", root);
+      if (!sel) return;
+      const current = sel.value || "default";
+      try {
+        const data = await fjson("/api/provider-instances/CROSSWATCH");
+        const list = Array.isArray(data) && data.length ? data : [{ id: "default", label: "Default" }];
+        sel.innerHTML = list
+          .map(p => `<option value="${escapeHtml(String(p?.id || "default"))}">${escapeHtml(String(p?.label || p?.id || "Default"))}</option>`)
+          .join("");
+      } catch {
+        sel.innerHTML = '<option value="default">Default</option>';
+      }
+      const values = Array.from(sel.options).map(o => o.value);
+      sel.value = values.includes(current) ? current : "default";
+      window.CW?.ProfileSelect?.enhanceProfile?.(sel, {
+        className: "cxm-tracker-profile-select",
+        menuClassName: "cxm-tracker-profile-menu",
+        menuMinWidth: 220,
+      });
+    };
 
     const downloadTrackerArchive = () => {
       const a = document.createElement("a");
-      a.href = "/api/maintenance/crosswatch-tracker/export";
+      a.href = `/api/maintenance/crosswatch-tracker/export?${trackerProfileQuery()}`;
       a.download = "crosswatch-tracker.zip";
       document.body.appendChild(a);
       a.click();
@@ -454,7 +486,7 @@ export default {
       setOperationBusy(true);
       setStatus("Importing tracker archive...", "busy");
       try {
-        const data = await fjson("/api/maintenance/crosswatch-tracker/import", {
+        const data = await fjson(`/api/maintenance/crosswatch-tracker/import?${trackerProfileQuery()}`, {
           method: "POST",
           body: form,
         });
@@ -477,7 +509,7 @@ export default {
     function setOperationBusy(busy) {
       if (operationBusy === busy) return;
       operationBusy = busy;
-      const controls = root.querySelectorAll(".run-btn, .archive-btn, .category-run-btn, #cxm-close");
+      const controls = root.querySelectorAll(".run-btn, .archive-btn, .category-run-btn, #cxm-cw-profile, #cxm-close");
       controls.forEach((control) => {
         if (busy) {
           control.dataset.cwWasDisabled = control.disabled ? "1" : "0";
@@ -670,7 +702,7 @@ export default {
     async function refreshSummary() {
       try {
         const [tracker, cache] = await Promise.all([
-          fjson("/api/maintenance/crosswatch-tracker").catch(() => null),
+          fjson(`/api/maintenance/crosswatch-tracker?${trackerProfileQuery()}`).catch(() => null),
           fjson("/api/maintenance/provider-cache").catch(() => null),
         ]);
 
@@ -779,6 +811,7 @@ export default {
           res = await post("/api/maintenance/crosswatch-tracker/clear", {
             clear_state: clearState,
             clear_snapshots: clearSnaps,
+            provider_instance: trackerProfile(),
           });
         } else if (kind === "defaults") {
           const warn = [
@@ -882,7 +915,7 @@ export default {
       const btn = row?.querySelector(".action-run-btn");
       if (btn) btn.addEventListener("click", () => runOp(kind, btn));
       row?.addEventListener("click", (event) => {
-        if (event.target.closest("button, input, label, a, summary")) return;
+        if (event.target.closest("button, input, label, a, summary, .cw-icon-select")) return;
         loadActionInsight(kind);
       });
       row?.addEventListener("keydown", (event) => {
@@ -893,6 +926,10 @@ export default {
     });
 
     root.querySelector("#cxm-cw-export")?.addEventListener("click", downloadTrackerArchive);
+    root.querySelector("#cxm-cw-profile")?.addEventListener("change", async () => {
+      await refreshSummary();
+      if (selectedInsightKind === "tracker") await loadActionInsight("tracker");
+    });
     const archiveInput = root.querySelector("#cxm-cw-import-file");
     root.querySelector("#cxm-cw-import")?.addEventListener("click", () => archiveInput?.click());
     archiveInput?.addEventListener("change", async () => {
@@ -945,6 +982,7 @@ export default {
     }
 
     showOverviewStatus();
+    await loadTrackerProfiles();
     await refreshSummary();
     setStatus("");
     const initialGroup = String(props?.group || props?.target || "").trim().toLowerCase();
