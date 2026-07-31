@@ -10,6 +10,7 @@ import re
 
 _DEFAULT_INSTANCE = "default"
 _INSTANCES_KEY = "instances"
+_CROSSWATCH_PROFILE_ROOT = "profiles"
 
 
 def _deep_merge(base: dict[str, Any], overlay: Mapping[str, Any]) -> dict[str, Any]:
@@ -35,8 +36,52 @@ def normalize_instance_id(v: Any) -> str:
     return _DEFAULT_INSTANCE if not s or s.lower() == _DEFAULT_INSTANCE else s
 
 
+def sanitize_instance_label(v: Any, *, max_len: int = 12) -> str:
+    s = str(v or "").strip()
+    s = " ".join(s.split())
+    return s[:max(0, int(max_len or 0))]
+
+
 def provider_key(provider_name: str) -> str:
-    return str(provider_name or "").strip().lower()
+    raw = str(provider_name or "").strip().lower()
+    return "crosswatch" if raw in {"cw", "crosswatch"} else raw
+
+
+def _profile_prefix(provider: str) -> str:
+    k = provider_key(provider)
+    if k == "crosswatch":
+        return "CW"
+    return str(provider or "").strip().upper()
+
+
+def _safe_profile_dir_name(instance_id: Any) -> str:
+    raw = normalize_instance_id(instance_id)
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._- ")
+    return safe or "default"
+
+
+def _crosswatch_profile_root_dir(base_block: Mapping[str, Any], instance_id: Any) -> str:
+    root = str(base_block.get("root_dir") or "/config/.cw_provider").strip() or "/config/.cw_provider"
+    inst = _safe_profile_dir_name(instance_id)
+    clean_root = root.rstrip("/").rstrip("\\")
+    return f"{clean_root}/{_CROSSWATCH_PROFILE_ROOT}/{inst}"
+
+
+def _with_crosswatch_profile_defaults(
+    provider_name: str,
+    base_block: Mapping[str, Any],
+    instance_id: Any,
+    block: dict[str, Any],
+    instance_block: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if provider_key(provider_name) != "crosswatch" or normalize_instance_id(instance_id) == _DEFAULT_INSTANCE:
+        return block
+    out = dict(block or {})
+    inst_root = str((instance_block or {}).get("root_dir") or "").strip()
+    if not inst_root:
+        out["root_dir"] = _crosswatch_profile_root_dir(base_block, instance_id)
+    out["connected"] = (instance_block or {}).get("connected") is True
+    return out
 
 
 def _config_key_for(cfg: Mapping[str, Any], provider_name: str) -> str:
@@ -58,9 +103,16 @@ def get_provider_block(cfg: Mapping[str, Any], provider_name: str, instance_id: 
 
     insts = base_block.get(_INSTANCES_KEY)
     if isinstance(insts, Mapping) and inst in insts and isinstance(insts.get(inst), Mapping):
+        inst_block = dict(insts.get(inst) or {})
         merged_base = dict(base_block or {})
         merged_base.pop(_INSTANCES_KEY, None)
-        return _deep_merge(merged_base, dict(insts.get(inst) or {}))
+        return _with_crosswatch_profile_defaults(
+            provider_name,
+            base_block,
+            inst,
+            _deep_merge(merged_base, inst_block),
+            inst_block,
+        )
 
     return {}
 
@@ -146,6 +198,18 @@ def get_instance_block(
     out: dict[str, Any] = {}
     insts[inst] = out
     return out
+
+
+def apply_instance_defaults(cfg: dict[str, Any], provider_name: str, instance_id: Any = None) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    block = get_instance_block(cfg, provider_name, inst, create=True)
+    if provider_key(provider_name) == "crosswatch" and inst != _DEFAULT_INSTANCE:
+        base = cfg.get(provider_key(provider_name))
+        base_block = base if isinstance(base, Mapping) else {}
+        block.setdefault("root_dir", _crosswatch_profile_root_dir(base_block, inst))
+    if "label" in block:
+        block["label"] = sanitize_instance_label(block.get("label"))
+    return block
 
 
 def instance_exists(cfg: Mapping[str, Any], provider_name: str, instance_id: Any = None) -> bool:

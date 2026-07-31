@@ -21,7 +21,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from api.provider_guard import usage_conflict_response
 from cw_platform.config_base import DEFAULT_CFG, load_config, save_config
-from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
+from cw_platform.provider_instances import apply_instance_defaults, ensure_instance_block, ensure_provider_block, normalize_instance_id
+from cw_platform.tracker_storage import remove_crosswatch_storage
 from cw_platform.value_coercion import coerce_bool
 from providers.sync.emby._utils import (
     ensure_whitelist_defaults as emby_ensure_whitelist_defaults,
@@ -381,6 +382,59 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     @app.get("/api/auth/providers/html", tags=["auth"])
     def api_auth_providers_html():
         return HTMLResponse(auth_providers_html())
+
+    @app.post("/api/crosswatch/connect", tags=["auth"])
+    def api_crosswatch_connect(instance: str | None = Query(None)) -> dict[str, Any]:
+        try:
+            cfg = load_config() or {}
+            if not isinstance(cfg, dict):
+                cfg = dict(cfg)
+            inst = normalize_instance_id(instance)
+            base = ensure_provider_block(cfg, "crosswatch")
+            base["connected"] = True
+            base.setdefault("root_dir", "/config/.cw_provider")
+            base.setdefault("retention_days", 30)
+            base.setdefault("auto_snapshot", True)
+            base.setdefault("max_snapshots", 64)
+            if inst != "default":
+                block = ensure_instance_block(cfg, "crosswatch", inst)
+                block["connected"] = True
+                apply_instance_defaults(cfg, "crosswatch", inst)
+            save_config(cfg)
+            _safe_log(log_fn, "CROSSWATCH", f"[CROSSWATCH:{inst}] connected")
+            _probe_bust("crosswatch")
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "CROSSWATCH", f"[CROSSWATCH] ERROR connect: {e}")
+            return {"ok": False, "error": "connect_failed", "instance": normalize_instance_id(instance)}
+
+    @app.post("/api/crosswatch/disconnect", tags=["auth"])
+    def api_crosswatch_disconnect() -> Any:
+        try:
+            cfg = load_config() or {}
+            if not isinstance(cfg, dict):
+                cfg = dict(cfg)
+            cw = cfg.get("crosswatch") if isinstance(cfg.get("crosswatch"), dict) else cfg.get("CrossWatch")
+            if not isinstance(cw, dict):
+                return {"ok": False, "error": "not_found", "instance": "default"}
+            insts = cw.get("instances")
+            if isinstance(insts, dict) and insts:
+                return {"ok": False, "error": "profiles_exist"}
+            conflict = usage_conflict_response(cfg, "crosswatch", "default")
+            if conflict is not None:
+                return conflict
+            cleanup = remove_crosswatch_storage(cfg, "default")
+            if cleanup.get("ok") is False:
+                return cleanup
+            cfg.pop("crosswatch", None)
+            cfg.pop("CrossWatch", None)
+            save_config(cfg)
+            _safe_log(log_fn, "CROSSWATCH", "[CROSSWATCH] disconnected")
+            _probe_bust("crosswatch")
+            return {"ok": True, "instance": "default", "storage": cleanup}
+        except Exception as e:
+            _safe_log(log_fn, "CROSSWATCH", f"[CROSSWATCH] ERROR disconnect: {e}")
+            return {"ok": False, "error": "disconnect_failed", "instance": "default"}
 
     # PLEX
     def plex_request_pin(instance_id: Any) -> dict[str, Any]:

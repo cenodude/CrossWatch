@@ -158,6 +158,12 @@ def get_manifest() -> Mapping[str, Any]:
                 "unrate": True,
                 "from_date": False,
             },
+            "history": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+                "timestamp": True,
+            },
             "progress": {
                 "upsert": True,
                 "remove": True,
@@ -414,6 +420,12 @@ class _CrossWatchOPS:
                 "unrate": True,
                 "from_date": False,
             },
+            "history": {
+                "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+                "timestamp": True,
+            },
             "progress": {
                 "upsert": True,
                 "remove": True,
@@ -426,7 +438,9 @@ class _CrossWatchOPS:
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         root = (cfg or {}).get("CrossWatch") or (cfg or {}).get("crosswatch") or {}
         if not isinstance(root, Mapping):
-            return True
+            return False
+        if root.get("connected") is not True:
+            return False
         v = root.get("enabled")
         if v is None:
             return True

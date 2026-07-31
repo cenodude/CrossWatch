@@ -3,6 +3,7 @@
   if (w.cwAuthLoader) return;
 
   const SCRIPTS = {
+    crosswatch: "/assets/auth/auth.crosswatch.js",
     plex: "/assets/auth/auth.plex.js",
     simkl: "/assets/auth/auth.simkl.js",
     trakt: "/assets/auth/auth.trakt.js",
@@ -19,6 +20,7 @@
   };
 
   const SECTION_TO_PROVIDER = {
+    "sec-crosswatch": "crosswatch",
     "sec-plex": "plex",
     "sec-simkl": "simkl",
     "sec-trakt": "trakt",

@@ -16,80 +16,8 @@ function formatCwSnapshotLabel(name) {
   return `${year}-${month}-${day} - ${hour}:${min}`;
 }
 
-async function loadCrossWatchSnapshots(cfg) {
-  const cw = (cfg && cfg.crosswatch) || {};
-  const desired = {
-    watchlist: (cw.restore_watchlist || "latest").trim() || "latest",
-    history:   (cw.restore_history   || "latest").trim() || "latest",
-    ratings:   (cw.restore_ratings   || "latest").trim() || "latest",
-  };
-
-  try {
-    const res = await fetch("/api/files?path=/config/.cw_provider/snapshots");
-    if (!res.ok) {
-      console.warn("CrossWatch snapshot list HTTP", res.status);
-      return;
-    }
-
-    const files = await res.json();
-    const list = (Array.isArray(files) ? files : []).filter(
-      (f) => f && typeof f.name === "string" && f.name.endsWith(".json")
-    );
-
-    
-    const groups = {
-      watchlist: [],
-      history:   [],
-      ratings:   [],
-    };
-
-    for (const f of list) {
-      const name = f.name;
-      if (name.endsWith("-watchlist.json")) groups.watchlist.push(name);
-      else if (name.endsWith("-history.json")) groups.history.push(name);
-      else if (name.endsWith("-ratings.json")) groups.ratings.push(name);
-    }
-    Object.keys(groups).forEach((k) => groups[k].sort());
-
-    const idMap = {
-      watchlist: "cw_restore_watchlist",
-      history:   "cw_restore_history",
-      ratings:   "cw_restore_ratings",
-    };
-
-    for (const key of ["watchlist", "history", "ratings"]) {
-      const sel = document.getElementById(idMap[key]);
-      if (!sel) continue;
-
-      const names = groups[key];
-      sel.innerHTML = "";
-
-      
-      const baseOpt = document.createElement("option");
-      baseOpt.value = "latest";
-      baseOpt.textContent = "Latest (default)";
-      sel.appendChild(baseOpt);
-
-      for (const name of names) {
-        const o = document.createElement("option");
-        o.value = name;
-        o.textContent = formatCwSnapshotLabel(name);
-        sel.appendChild(o);
-      }
-
-      const wanted = desired[key] || "latest";
-      const hasWanted = names.includes(wanted);
-      sel.value = hasWanted ? wanted : "latest";
-    }
-  } catch (e) {
-    console.warn("CrossWatch snapshot list failed", e);
-  }
-}
-
 /*! Settings */
 
-
-/* Settings Hub: UI / Security / Local Tracker */
 
 const UI_SETTINGS_TAB_KEY = "cw.ui.settings.tab.v1";
 
@@ -122,7 +50,6 @@ function cwUiSettingsSelect(tab, opts = {}) {
 
 function cwUiSettingsHubUpdate() {
   const aaRememberEnabled = (document.getElementById("app_auth_remember_enabled")?.value || "").toString() === "true";
-  const cwEnabled = (document.getElementById("cw_enabled")?.value || "").toString() !== "false";
 
   const authFields = document.getElementById("app_auth_fields");
   if (authFields) authFields.classList.remove("cw-disabled");
@@ -133,9 +60,6 @@ function cwUiSettingsHubUpdate() {
   const rememberDays = document.getElementById("app_auth_remember_days");
   if (rememberDays) rememberDays.disabled = !aaRememberEnabled;
   try { cwValidateAppAuthRememberDays(); } catch {}
-
-  const trackerFields = document.getElementById("cw_restore_fields");
-  if (trackerFields) trackerFields.classList.toggle("cw-disabled", !cwEnabled);
 }
 
 function _cwTrustedProxiesEl() {
@@ -213,14 +137,7 @@ function cwUiSettingsHubInit() {
     "app_auth_password2",
     "app_auth_remember_enabled",
     "app_auth_remember_days",
-    "trusted_proxies",
-    "cw_enabled",
-    "cw_retention_days",
-    "cw_auto_snapshot",
-    "cw_max_snapshots",
-    "cw_restore_watchlist",
-    "cw_restore_history",
-    "cw_restore_ratings"
+    "trusted_proxies"
   ];
 
   ids.forEach((id) => {
@@ -242,7 +159,7 @@ function cwUiSettingsHubInit() {
   let tab = "ui";
   try {
     const saved = (localStorage.getItem(UI_SETTINGS_TAB_KEY) || "").toLowerCase();
-    if (["ui","security","tracker"].includes(saved)) tab = saved;
+    if (["ui","security"].includes(saved)) tab = saved;
   } catch {}
 
   cwUiSettingsSelect(tab, { persist: false });
@@ -1386,7 +1303,6 @@ async function loadConfig() {
   
   (function () {
     const ui = cfg.ui || cfg.user_interface || {};
-    const cw = cfg.crosswatch || {};
     const aa = cfg.app_auth || {};
 
     
@@ -1509,40 +1425,10 @@ async function loadConfig() {
       tpEl.value = tp.filter((x) => typeof x === "string" && x.trim()).join(";");
     }
 
-
-    
-    {
-      const enabled = (cw.enabled === false) ? "false" : "true";
-      _setSelectValue("cw_enabled", enabled);
-    }
-    const cwRetEl = document.getElementById("cw_retention_days");
-    if (cwRetEl) {
-      const v = Number.isFinite(cw.retention_days) ? cw.retention_days : 30;
-      cwRetEl.value = String(v);
-    }
-    {
-      const on = (cw.auto_snapshot === false) ? "false" : "true";
-      _setSelectValue("cw_auto_snapshot", on);
-    }
-    const cwMaxEl = document.getElementById("cw_max_snapshots");
-    if (cwMaxEl) {
-      const v = Number.isFinite(cw.max_snapshots) ? cw.max_snapshots : 64;
-      cwMaxEl.value = String(v);
-    }
-    const setVal = (id, val) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.value = val || "latest";
-      _refreshSelectUi(el);
-    };
-    setVal("cw_restore_watchlist", cw.restore_watchlist || "latest");
-    setVal("cw_restore_history", cw.restore_history || "latest");
-    setVal("cw_restore_ratings", cw.restore_ratings || "latest");
   })();
 
   try { cwUiSettingsHubInit?.(); } catch {}
 
-  await loadCrossWatchSnapshots(cfg);
   window.appDebug = !!(cfg?.runtime?.debug || cfg?.runtime?.debug_mods);
 
 
@@ -1886,7 +1772,6 @@ function setTraktSuccess(show) {
 
   const SettingsUI = {
     formatCwSnapshotLabel,
-    loadCrossWatchSnapshots,
     cwUiSettingsSelect,
     cwUiSettingsHubUpdate,
     cwUiSettingsHubInit,

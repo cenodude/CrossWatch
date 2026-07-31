@@ -10,6 +10,7 @@ from typing import Any
 # Global module registry
 MODULES: dict[str, dict[str, str]] = {
     "AUTH": {
+        "_auth_CROSSWATCH": "providers.auth._auth_CROSSWATCH",
         "_auth_PLEX":     "providers.auth._auth_PLEX",
         "_auth_SIMKL":    "providers.auth._auth_SIMKL",
         "_auth_TRAKT":    "providers.auth._auth_TRAKT",

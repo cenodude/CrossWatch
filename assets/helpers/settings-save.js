@@ -634,33 +634,40 @@ async function saveSettings() {
     }
 
     try {
-      const prevCw = serverCfg?.crosswatch || {};
-      const nextCw = { ...(cfg.crosswatch || {}) };
-      let cwChanged = false;
-      const intOr = (id, prev) => {
-        const raw = _getVal(id);
-        const n = parseInt(raw, 10);
-        return Number.isNaN(n) ? prev : Math.max(0, n);
-      };
-      const setCw = (key, next, prev) => { if (next !== prev) { nextCw[key] = next; cwChanged = true; } };
-
-      setCw("enabled", _cwEl("cw_enabled") ? _cwTruthy(_cwEl("cw_enabled").value) : (prevCw.enabled !== false), prevCw.enabled !== false);
-      setCw("retention_days", intOr("cw_retention_days", Number.isFinite(prevCw.retention_days) ? Number(prevCw.retention_days) : 30), Number.isFinite(prevCw.retention_days) ? Number(prevCw.retention_days) : 30);
-      setCw("auto_snapshot", _cwEl("cw_auto_snapshot") ? _cwTruthy(_cwEl("cw_auto_snapshot").value) : (prevCw.auto_snapshot !== false), prevCw.auto_snapshot !== false);
-      setCw("max_snapshots", intOr("cw_max_snapshots", Number.isFinite(prevCw.max_snapshots) ? Number(prevCw.max_snapshots) : 64), Number.isFinite(prevCw.max_snapshots) ? Number(prevCw.max_snapshots) : 64);
-
-      const prevRestore = {
-        watchlist: _cwNorm(prevCw.restore_watchlist || "latest") || "latest",
-        history: _cwNorm(prevCw.restore_history || "latest") || "latest",
-        ratings: _cwNorm(prevCw.restore_ratings || "latest") || "latest"
-      };
-      ["watchlist", "history", "ratings"].forEach((key) => {
-        const el = _cwEl(`cw_restore_${key}`);
-        if (!el) return;
-        const next = _cwNorm(el.value) || "latest";
-        if (next !== prevRestore[key]) { nextCw[`restore_${key}`] = next; cwChanged = true; }
-      });
-      if (cwChanged) { cfg.crosswatch = nextCw; mark(); }
+      const trackerLabelEl = _cwEl("cw_tracker_label");
+      if (trackerLabelEl) {
+        const inst = _cwSelectedInst("crosswatch", "cw.ui.crosswatch.auth.instance.v1");
+        const prevRoot = serverCfg?.crosswatch && typeof serverCfg.crosswatch === "object" ? serverCfg.crosswatch : {};
+        const prevBlock = _cwInstBlock(prevRoot, inst);
+        if (prevBlock?.connected !== true) throw new Error("Connect CrossWatch Local Tracker before saving.");
+        cfg.crosswatch = cfg.crosswatch && typeof cfg.crosswatch === "object" ? cfg.crosswatch : {};
+        const target = _cwEnsureInstBlock(cfg.crosswatch, inst);
+        let dirty = false;
+        const set = (key, next, prev) => {
+          if (next !== prev) {
+            target[key] = next;
+            dirty = true;
+          }
+        };
+        const intOr = (id, prev, fallback) => {
+          const raw = _cwNorm(_cwEl(id)?.value);
+          const n = parseInt(raw, 10);
+          return Number.isNaN(n) ? (Number.isFinite(prev) ? Number(prev) : fallback) : Math.max(0, n);
+        };
+        const labelEl = _cwEl("cw_tracker_label");
+        if (labelEl && labelEl.value.length > 12) labelEl.value = labelEl.value.slice(0, 12);
+        set("label", _cwNorm(labelEl?.value).slice(0, 12), _cwNorm(prevBlock?.label).slice(0, 12));
+        set("retention_days", intOr("cw_tracker_retention_days", Number(prevBlock?.retention_days), 30), Number.isFinite(prevBlock?.retention_days) ? Number(prevBlock.retention_days) : 30);
+        set("auto_snapshot", _cwTruthy(_cwEl("cw_tracker_auto_snapshot")?.value), prevBlock?.auto_snapshot !== false);
+        set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 64), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 64);
+        ["watchlist", "history", "ratings", "progress"].forEach((key) => {
+          const el = _cwEl(`cw_tracker_restore_${key}`);
+          if (!el) return;
+          const next = _cwNorm(el.value) || "latest";
+          set(`restore_${key}`, next, _cwNorm(prevBlock?.[`restore_${key}`] || "latest") || "latest");
+        });
+        if (dirty) mark();
+      }
     } catch {}
 
     try {

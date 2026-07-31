@@ -13,13 +13,22 @@ from fastapi.responses import JSONResponse
 
 from api.provider_guard import usage_conflict_response
 from cw_platform.config_base import load_config, save_config
-from cw_platform.provider_instances import list_instance_ids, provider_key, normalize_instance_id
+from cw_platform.provider_instances import (
+    apply_instance_defaults,
+    list_instance_ids,
+    normalize_instance_id,
+    provider_key,
+    sanitize_instance_label,
+)
+from cw_platform.tracker_storage import remove_crosswatch_storage
 
 router = APIRouter(prefix="/api", tags=["provider-instances"])
 
 _CFG_KEY_ALIAS = {
     "tmdb": "tmdb_sync",
     "tmdb_sync": "tmdb_sync",
+    "cw": "crosswatch",
+    "crosswatch": "crosswatch",
 }
 _MAX_GENERATED_PROFILES = 9
 
@@ -52,6 +61,9 @@ def _known_providers_from_registry() -> tuple[str, ...]:
 
 
 def _prov_prefix(provider: str) -> str:
+    key = provider_key(provider)
+    if key == "crosswatch":
+        return "CW"
     return str(provider or "").strip().upper()
 
 
@@ -82,7 +94,15 @@ def _next_profile_id(provider: str, insts: dict[str, Any]) -> str:
     return ""
 
 
-def _create_instance(insts: dict[str, Any], inst: str, payload: dict[str, Any]) -> None:
+def _profile_label(block: Any, fallback: str) -> str:
+    if isinstance(block, dict):
+        label = sanitize_instance_label(block.get("label"))
+        if label:
+            return f"{fallback} - {label}"
+    return fallback
+
+
+def _create_instance(cfg: dict[str, Any], provider: str, insts: dict[str, Any], inst: str, payload: dict[str, Any]) -> None:
     raw_copy_from = str((payload or {}).get("copy_from") or "").strip()
     copy_from = normalize_instance_id(raw_copy_from) if raw_copy_from else ""
     template = (payload or {}).get("template")
@@ -94,6 +114,10 @@ def _create_instance(insts: dict[str, Any], inst: str, payload: dict[str, Any]) 
         insts[inst] = copy.deepcopy(src) if isinstance(src, dict) else {}
     else:
         insts[inst] = {}
+    label = sanitize_instance_label((payload or {}).get("label"))
+    if label:
+        insts[inst]["label"] = label
+    apply_instance_defaults(cfg, _cfg_key(provider), inst)
 
 
 def _provider_block(cfg: dict[str, Any], provider: str) -> dict[str, Any]:
@@ -124,8 +148,11 @@ def _strip_instances(d: dict[str, Any]) -> dict[str, Any]:
 def _instances_map_for(cfg: dict[str, Any], provider: str) -> list[dict[str, str]]:
     ids = list_instance_ids(cfg, _cfg_key(provider))
     out: list[dict[str, str]] = []
+    blk = _provider_block(cfg, provider)
+    insts = blk.get("instances")
+    inst_map = insts if isinstance(insts, dict) else {}
     for i in ids:
-        lab = "Default" if i == "default" else i
+        lab = "Default" if i == "default" else _profile_label(inst_map.get(i), i)
         out.append({"id": i, "label": lab})
     return out
 
@@ -173,7 +200,7 @@ def api_provider_instances_create_next(provider: str, payload: dict[str, Any] = 
     if inst in insts and isinstance(insts.get(inst), dict):
         return {"ok": True, "id": inst}
 
-    _create_instance(insts, inst, payload or {})
+    _create_instance(cfg, provider, insts, inst, payload or {})
     save_config(cfg)
     _invalidate_provider_cache(provider)
     return {"ok": True, "id": inst}
@@ -198,7 +225,7 @@ def api_provider_instances_create(provider: str, instance_id: str, payload: dict
     if inst in insts and isinstance(insts.get(inst), dict):
         return {"ok": True, "id": inst}
 
-    _create_instance(insts, inst, payload or {})
+    _create_instance(cfg, provider, insts, inst, payload or {})
 
     save_config(cfg)
     _invalidate_provider_cache(provider)
@@ -221,7 +248,13 @@ def api_provider_instances_delete(provider: str, instance_id: str) -> Any:
     if conflict is not None:
         return conflict
 
+    cleanup: dict[str, Any] | None = None
+    if _cfg_key(provider) == "crosswatch":
+        cleanup = remove_crosswatch_storage(cfg, inst)
+        if cleanup.get("ok") is False:
+            return cleanup
+
     insts.pop(inst, None)
     save_config(cfg)
     _invalidate_provider_cache(provider)
-    return {"ok": True}
+    return {"ok": True, **({"storage": cleanup} if cleanup else {})}
