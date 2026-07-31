@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -21,22 +22,50 @@ Kind = Literal["watchlist", "history", "ratings", "progress"]
 
 _JSON_FILE_SUFFIX = ".json"
 
+def _tracker_base_root(cfg: Mapping[str, Any]) -> Path:
+    node = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
+    raw = ""
+    if isinstance(node, Mapping):
+        raw = str(node.get("root_dir") or "").strip()
+    p = Path(raw or ".cw_provider")
+    if not p.is_absolute():
+        p = Path(CONFIG) / p
+    return p
+
+
+def _tracker_configured_instance(cfg: Mapping[str, Any], provider_instance: Any = None) -> str:
+    requested = normalize_instance_id(provider_instance)
+    if requested == "default":
+        return "default"
+    node = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
+    instances = node.get("instances") if isinstance(node, Mapping) else {}
+    if not isinstance(instances, Mapping):
+        return "default"
+    for key in instances.keys():
+        candidate = normalize_instance_id(key)
+        if candidate == requested:
+            return candidate
+    return "default"
+
+
 def _cw_cfg(provider_instance: Any = None) -> dict[str, Any]:
     try:
         cfg = load_config()
     except Exception:
         return {}
-    inst = normalize_instance_id(provider_instance)
+    inst = _tracker_configured_instance(cfg, provider_instance)
     cw = get_provider_block(cfg, "crosswatch", inst) or cfg.get("crosswatch") or {}
     return cw if isinstance(cw, dict) else {}
 
 def _root_dir(provider_instance: Any = None) -> Path:
-    cw = _cw_cfg(provider_instance)
-    root = cw.get("root_dir") or ".cw_provider"
-    p = Path(root)
-    if not p.is_absolute():
-        p = Path(CONFIG) / p
-    return p
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    inst = _tracker_configured_instance(cfg, provider_instance)
+    if inst == "default":
+        return _tracker_base_root(cfg)
+    return _tracker_base_root(cfg) / "profiles" / inst
 
 
 def _ensure_under_root(root: Path, path: Path) -> Path:

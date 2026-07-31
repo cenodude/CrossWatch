@@ -308,3 +308,40 @@ def test_rebuild_sync_state_reports_pair_mapping_metric(tmp_path, monkeypatch) -
 
     metric = next(m for m in status["metrics"] if m["label"] == "Pair mapping files")
     assert metric["value"] == len(scoped)
+
+
+def test_crosswatch_tracker_clear_rejects_profile_path_input(tmp_path, monkeypatch) -> None:
+    root = tmp_path / ".cw_provider"
+    snaps = root / "snapshots"
+    profile_root = root / "profiles" / "CW-P01"
+    outside = tmp_path / "outside"
+    snaps.mkdir(parents=True)
+    profile_root.mkdir(parents=True)
+    outside.mkdir()
+    (root / "watchlist.json").write_text("{}", encoding="utf-8")
+    (snaps / "20260101T000000Z-watchlist.json").write_text("{}", encoding="utf-8")
+    (profile_root / "watchlist.json").write_text("{}", encoding="utf-8")
+    (outside / "watchlist.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "config.json").write_text(
+        json.dumps({"crosswatch": {"root_dir": str(root), "instances": {"CW-P01": {}}}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        maintenanceAPI,
+        "_cw",
+        lambda: (tmp_path / "cache", tmp_path, tmp_path / ".cw_state", None, None, None),
+    )
+
+    result = maintenanceAPI.crosswatch_tracker_clear(
+        clear_state=True,
+        clear_snapshots=True,
+        provider_instance="../outside",
+    )
+
+    assert result["ok"] is True
+    assert result["provider_instance"] == "default"
+    assert not (root / "watchlist.json").exists()
+    assert not (snaps / "20260101T000000Z-watchlist.json").exists()
+    assert (profile_root / "watchlist.json").exists()
+    assert (outside / "watchlist.json").exists()

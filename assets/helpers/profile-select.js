@@ -18,11 +18,11 @@
   }
 
   function enhanceProvider(select, cfg = {}) {
-    return CW.IconSelect?.enhance?.(select, { className: `cw-profile-select cw-provider-select ${text(cfg.className)}`.trim(), getOptionData: cfg.getOptionData || providerOption });
+    return CW.IconSelect?.enhance?.(select, { ...cfg, className: `cw-profile-select cw-provider-select ${text(cfg.className)}`.trim(), getOptionData: cfg.getOptionData || providerOption });
   }
 
   function enhanceProfile(select, cfg = {}) {
-    return CW.IconSelect?.enhance?.(select, { className: `cw-profile-select cw-profile-instance-select ${text(cfg.className)}`.trim(), getOptionData: cfg.getOptionData || profileOption });
+    return CW.IconSelect?.enhance?.(select, { ...cfg, className: `cw-profile-select cw-profile-instance-select ${text(cfg.className)}`.trim(), getOptionData: cfg.getOptionData || profileOption });
   }
 
   function enhancePair(providerSelect, profileSelect, cfg = {}) {

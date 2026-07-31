@@ -9,13 +9,16 @@ import logging
 import os
 import shutil
 import threading
+from collections.abc import Mapping
 from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, File, UploadFile
+from fastapi import APIRouter, Body, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
+
+from cw_platform.provider_instances import normalize_instance_id
 
 _LOG = logging.getLogger("crosswatch.api.maintenance")
 
@@ -102,22 +105,38 @@ def _clear_cw_state_files() -> list[str]:
 
 
 # --- CrossWatch tracker (.cw_provider) functions ---
-def _cw_tracker_root(config_dir: Path) -> Path:
-    """Resolve CrossWatch tracker root dir from config.json or default."""
+def _cw_tracker_config(config_dir: Path) -> dict[str, Any]:
     cfg_path = config_dir / "config.json"
-    root: str | None = None
     try:
         cfg = json.loads(cfg_path.read_text("utf-8"))
-        cw_cfg = cfg.get("crosswatch") or {}
-        root = (
-            cw_cfg.get("root_dir")
-            or cw_cfg.get("root")
-            or cw_cfg.get("dir")
-            or None
-        )
     except Exception:
-        root = None
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
 
+
+def _cw_tracker_configured_instance(cfg: Mapping[str, Any], provider_instance: Any = None) -> str:
+    requested = normalize_instance_id(provider_instance)
+    if requested == "default":
+        return "default"
+    node = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
+    instances = node.get("instances") if isinstance(node, Mapping) else {}
+    if not isinstance(instances, Mapping):
+        return "default"
+    for key in instances.keys():
+        candidate = normalize_instance_id(key)
+        if candidate == requested:
+            return candidate
+    return "default"
+
+
+def _cw_tracker_base_root(config_dir: Path, cfg: Mapping[str, Any]) -> Path:
+    cw_cfg = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
+    root = (
+        cw_cfg.get("root_dir")
+        or cw_cfg.get("root")
+        or cw_cfg.get("dir")
+        or None
+    ) if isinstance(cw_cfg, Mapping) else None
     if not root:
         root = ".cw_provider"
 
@@ -125,6 +144,49 @@ def _cw_tracker_root(config_dir: Path) -> Path:
     if not p.is_absolute():
         p = config_dir / p
     return p
+
+
+def _cw_tracker_root(config_dir: Path, provider_instance: Any = None) -> Path:
+    cfg = _cw_tracker_config(config_dir)
+    inst = _cw_tracker_configured_instance(cfg, provider_instance)
+    base = _cw_tracker_base_root(config_dir, cfg)
+    if inst == "default":
+        return base
+    return base / "profiles" / inst
+
+
+def _cw_tracker_context(config_dir: Path, provider_instance: Any = None) -> tuple[str, Path]:
+    cfg = _cw_tracker_config(config_dir)
+    inst = _cw_tracker_configured_instance(cfg, provider_instance)
+    base = _cw_tracker_base_root(config_dir, cfg)
+    root = base if inst == "default" else base / "profiles" / inst
+    return inst, root
+
+
+def _json_files_in_dir(root: Path) -> list[Path]:
+    safe_root = root.resolve(strict=False)
+    if not safe_root.exists():
+        return []
+    out: list[Path] = []
+    for path in safe_root.glob("*.json"):
+        resolved = path.resolve(strict=False)
+        try:
+            resolved.relative_to(safe_root)
+        except ValueError:
+            continue
+        if resolved.is_file():
+            out.append(resolved)
+    return out
+
+
+def _cw_tracker_snapshot_dir(root: Path) -> Path:
+    safe_root = root.resolve(strict=False)
+    snaps = (safe_root / "snapshots").resolve(strict=False)
+    try:
+        snaps.relative_to(safe_root)
+    except ValueError as exc:
+        raise ValueError("Invalid tracker snapshot path") from exc
+    return snaps
 
 
 def _file_meta(path: Path) -> dict[str, Any]:
@@ -595,23 +657,30 @@ def _scan_cw_tracker(root: Path) -> dict[str, Any]:
 
 
 @router.get("/crosswatch-tracker")
-def crosswatch_tracker_status() -> dict[str, Any]:
+def crosswatch_tracker_status(
+    provider_instance: str | None = Query("default"),
+) -> dict[str, Any]:
     """Inspect CrossWatch tracker folder (.cw_provider)."""
     _, CONFIG_DIR, *_ = _cw()
-    root = _cw_tracker_root(CONFIG_DIR)
+    inst, root = _cw_tracker_context(CONFIG_DIR, provider_instance)
     info = _scan_cw_tracker(root)
     return {
         "ok": True,
+        "provider_instance": inst,
         "root": str(root),
         **info,
     }
 
 
 @router.get("/crosswatch-tracker/export")
-def crosswatch_tracker_export() -> StreamingResponse:
+def crosswatch_tracker_export(
+    provider_instance: str | None = Query("default"),
+) -> StreamingResponse:
     from services.editor import export_tracker_zip
 
-    data = export_tracker_zip()
+    _, CONFIG_DIR, *_ = _cw()
+    inst, _ = _cw_tracker_context(CONFIG_DIR, provider_instance)
+    data = export_tracker_zip(inst)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/zip",
@@ -620,17 +689,22 @@ def crosswatch_tracker_export() -> StreamingResponse:
 
 
 @router.post("/crosswatch-tracker/import")
-async def crosswatch_tracker_import(file: UploadFile = File(...)) -> dict[str, Any]:
+async def crosswatch_tracker_import(
+    provider_instance: str | None = Query("default"),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
     from services.editor import import_tracker_upload
 
+    _, CONFIG_DIR, *_ = _cw()
+    inst, _ = _cw_tracker_context(CONFIG_DIR, provider_instance)
     payload = await file.read()
     filename = file.filename or "upload.json"
     try:
-        stats = import_tracker_upload(payload, filename)
+        stats = import_tracker_upload(payload, filename, inst)
     except ValueError:
         _LOG.warning("tracker import rejected: %s", filename, exc_info=True)
         return {"ok": False, "error": "Import failed; expected a valid CrossWatch tracker ZIP or JSON file."}
-    return {"ok": True, **stats}
+    return {"ok": True, "provider_instance": inst, **stats}
 
 
 @router.post("/clear-state")
@@ -667,42 +741,44 @@ def clear_state_minimal() -> dict[str, Any]:
 def crosswatch_tracker_clear(
     clear_state: bool = Body(True),
     clear_snapshots: bool = Body(False),
+    provider_instance: str | None = Body("default"),
 ) -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
-    root = _cw_tracker_root(CONFIG_DIR)
+    inst, root = _cw_tracker_context(CONFIG_DIR, provider_instance)
+    state_paths = _json_files_in_dir(root)
+    snapshot_paths = _json_files_in_dir(_cw_tracker_snapshot_dir(root)) if clear_snapshots else []
 
     before = _scan_cw_tracker(root)
     selected_before_paths = []
     if clear_state:
-        selected_before_paths.extend(root.glob("*.json"))
+        selected_before_paths.extend(state_paths)
     if clear_snapshots:
-        selected_before_paths.extend((root / "snapshots").glob("*.json"))
+        selected_before_paths.extend(snapshot_paths)
     before_usage = _paths_usage(list(selected_before_paths))
     removed_state: list[str] = []
     removed_snapshots: list[str] = []
 
-    if clear_state and root.exists():
-        for p in root.glob("*.json"):
+    if clear_state:
+        for p in state_paths:
             if p.is_file() and _safe_remove_path(p):
                 removed_state.append(p.name)
 
     if clear_snapshots:
-        snaps_dir = root / "snapshots"
-        if snaps_dir.exists():
-            for p in snaps_dir.glob("*.json"):
-                if p.is_file() and _safe_remove_path(p):
-                    removed_snapshots.append(p.name)
+        for p in snapshot_paths:
+            if p.is_file() and _safe_remove_path(p):
+                removed_snapshots.append(p.name)
 
     after = _scan_cw_tracker(root)
     selected_after_paths = []
     if clear_state:
-        selected_after_paths.extend(root.glob("*.json"))
+        selected_after_paths.extend(_json_files_in_dir(root))
     if clear_snapshots:
-        selected_after_paths.extend((root / "snapshots").glob("*.json"))
+        selected_after_paths.extend(_json_files_in_dir(_cw_tracker_snapshot_dir(root)))
     after_usage = _paths_usage(list(selected_after_paths))
 
     return {
         "ok": True,
+        "provider_instance": inst,
         "root": str(root),
         "removed": {
             "state_files": removed_state,

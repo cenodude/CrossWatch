@@ -169,6 +169,24 @@ def test_tracker_archive_json_import_uses_crosswatch_profile_snapshot_dir(tmp_pa
     assert not (root / "snapshots" / "20260101T000000Z-watchlist.json").exists()
 
 
+def test_tracker_archive_ignores_unconfigured_profile_path_input(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "cw_provider"
+    outside = tmp_path / "outside"
+    monkeypatch.setattr(editor_service, "load_config", lambda: {
+        "crosswatch": {"root_dir": str(root), "instances": {"CW-P04": {"retention_days": 0}}},
+    })
+
+    stats = editor_service.import_tracker_json(
+        b'{"items":{"movie:x":{"title":"X"}}}',
+        "watchlist.json",
+        "../outside",
+    )
+
+    assert stats["target"] == "state"
+    assert (root / "watchlist.json").exists()
+    assert not outside.exists()
+
+
 def test_status_probes_include_crosswatch_profiles(monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
