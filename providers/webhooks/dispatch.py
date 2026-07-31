@@ -73,6 +73,10 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.mdblist.sink import MDBListSink
 
         cls = MDBListSink
+    elif sink == "crosswatch":
+        from providers.scrobble.crosswatch.sink import CrossWatchSink
+
+        cls = CrossWatchSink
     else:
         raise ValueError(f"Unknown sink: {sink}")
     for kwargs in (

@@ -3,13 +3,13 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any
-from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
 
 
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
-ROUTE_SINKS = {"trakt", "simkl", "mdblist"}
+ROUTE_SINKS = {"trakt", "simkl", "mdblist", "crosswatch"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_RANGES = {
@@ -183,6 +183,15 @@ def find_route(cfg: dict[str, Any], route_id: str | None) -> dict[str, Any] | No
 
 
 def _provider_view(cfg: dict[str, Any], provider: str, instance_id: str) -> dict[str, Any]:
+    try:
+        merged = get_provider_block(cfg, provider, instance_id)
+        if merged:
+            base = cfg.get(provider) if isinstance(cfg.get(provider), dict) else {}
+            if isinstance(base, dict) and "instances" in base:
+                merged["instances"] = base.get("instances")
+            return merged
+    except Exception:
+        pass
     base = cfg.get(provider) if isinstance(cfg.get(provider), dict) else {}
     inst = {}
     if isinstance(base, dict):
