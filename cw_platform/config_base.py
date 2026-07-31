@@ -550,6 +550,7 @@ DEFAULT_CFG: dict[str, Any] = {
     },
 
     "crosswatch": {
+        "connected":        False,                      # True after local tracker connection is created
         "root_dir":         "/config/.cw_provider",     # Root folder for local provider state
         "enabled":          True,                       # Enable/disable CrossWatch as sync provider
         "retention_days":   30,                         # Snapshot retention in days; 0 = keep forever
@@ -1771,6 +1772,28 @@ def load_config() -> dict[str, Any]:
 
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
     cfg.setdefault("version", _current_version_norm())
+    try:
+        user_cw = user_cfg.get("crosswatch") if isinstance(user_cfg.get("crosswatch"), dict) else user_cfg.get("CrossWatch")
+        cw = cfg.get("crosswatch")
+        if isinstance(cw, dict):
+            if isinstance(user_cw, dict) and "connected" not in user_cw and user_cw.get("enabled") is not False:
+                cw["connected"] = True
+            elif not isinstance(user_cw, dict):
+                cw["connected"] = False
+            user_insts = user_cw.get("instances") if isinstance(user_cw, dict) else None
+            insts = cw.get("instances")
+            if isinstance(user_insts, dict) and isinstance(insts, dict):
+                for inst_id, inst_block in insts.items():
+                    user_inst = user_insts.get(inst_id)
+                    if (
+                        isinstance(inst_block, dict)
+                        and isinstance(user_inst, dict)
+                        and "connected" not in user_inst
+                        and user_inst.get("enabled") is not False
+                    ):
+                        inst_block["connected"] = True
+    except Exception:
+        pass
     _normalize_tmdb_sync(cfg)
     _normalize_trakt(cfg)
     _normalize_simkl(cfg)

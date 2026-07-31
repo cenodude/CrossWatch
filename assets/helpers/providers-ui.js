@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
@@ -164,6 +164,7 @@
     if (p === "stremio") return hasConfiguredValue(b.auth_key) || hasConfiguredValue(b.authKey);
     if (p === "tautulli") return hasConfiguredValue((b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server_url || (b || cfg?.tautulli || cfg?.auth?.tautulli || {}).server);
     if (p === "tmdb") return hasConfiguredValue(b.account_id) || (hasConfiguredValue(b.api_key) && hasConfiguredValue(b.session_id || b.session));
+    if (p === "crosswatch") return !!(cfg?.crosswatch || cfg?.CrossWatch) && b.connected === true && b.enabled !== false;
     return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.api_key) || hasConfiguredValue(b.token);
   }
 
@@ -568,6 +569,16 @@
       steps: [["1", "Enter server", "Add your Tautulli URL and API key"], ["2", "Choose user", "Optionally limit to one user ID"], ["3", "Validate server", "CrossWatch confirms Tautulli access"]],
       order: [".grid2", "#tautulli_hint", "#tautulli_actions_row"],
       actions: [{ row: "#tautulli_actions_row", status: "#tautulli_msg", buttons: "#tautulli_save" }]
+    },
+    CROSSWATCH: {
+      provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("connection-profiles"), deleteSelector: "#cw_crosswatch_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect local tracker"], settings: ["database", "Settings", "Storage and restore"] },
+      copy: { auth: ["CrossWatch Authentication", "Connect this local tracker profile."], settings: ["CrossWatch Local Tracker", "Configure storage and restore snapshots for this tracker profile."] },
+      journey: ["Connect Local Tracker", "Use CrossWatch Local Tracker as a normal sync connection. Create CW-P profiles when you need separate local tracker data while keeping account-level provider credentials and schedules shared.", "124,92,255", "98,194,255", "CROSSWATCH"],
+      steps: [["1", "Choose profile", "Use Default or create CW-P profiles"], ["2", "Connect locally", "Enable the selected profile as a connection"], ["3", "Sync locally", "Use the profile in normal sync pairs"]],
+      introSubs: ["auth"],
+      order: [".cw-tracker-auth-card", ".cw-tracker-settings-stack"],
+      actions: [{ row: ".cw-tracker-auth-actions", status: "#cw_tracker_auth_msg", buttons: "#cw_crosswatch_connect" }]
     },
     TMDB_METADATA: {
       provider: "tmdb", logo: "TMDB", help: window.CW.HelpLinks.url("tmdb-metadata"), deleteSelector: "#tmdb_delete",

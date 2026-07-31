@@ -587,7 +587,7 @@ def _get_index_html_static() -> str:
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="app" onclick="cwSettingsSelect?.('app')">
             <span class="material-symbols-rounded">security</span>
-            <span><strong>UI and Security</strong><small>Interface, auth and tracker</small></span>
+            <span><strong>UI and Security</strong><small>Interface and auth</small></span>
             <span class="cw-settings-nav-chev" aria-hidden="true">chevron_right</span>
           </button>
           <button type="button" class="cw-settings-nav-btn" data-pane="maintenance" onclick="cwSettingsSelect?.('maintenance')">
@@ -812,33 +812,26 @@ def _get_index_html_static() -> str:
             <div class="cw-app-hero-copy">
               <div class="cw-app-hero-panel active" data-app-hero="ui">
                 <div class="cw-settings-pane-kicker">UI and Security</div>
-                <h3>Interface, authentication and Local Tracker</h3>
-                <p>Shape the experience, lock things down, and manage tracker behavior.</p>
+                <h3>Interface and authentication</h3>
+                <p>Shape the experience and lock things down.</p>
               </div>
               <div class="cw-app-hero-panel" data-app-hero="security">
                 <div class="cw-settings-pane-kicker">Security</div>
                 <h3>Authentication and access controls</h3>
                 <p>Manage sign-in, sessions, remembered browsers and trusted proxy access.</p>
               </div>
-              <div class="cw-app-hero-panel" data-app-hero="tracker">
-                <div class="cw-settings-pane-kicker">Local Tracker</div>
-                <h3>Retention, capture and restore snapshots</h3>
-                <p>Control local provider snapshots and choose restore defaults per feature.</p>
-              </div>
             </div>
             <div class="cw-settings-jumpbar" aria-label="UI settings sections">
               <button type="button" class="cw-settings-jump active" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
               <button type="button" class="cw-settings-jump" data-target="security" onclick="cwUiSettingsJump?.('security')">Security</button>
-              <button type="button" class="cw-settings-jump" data-target="tracker" onclick="cwUiSettingsJump?.('tracker')">Local Tracker</button>
             </div>
             <span class="material-symbols-rounded cw-app-hero-shape active" data-app-hero-shape="ui" aria-hidden="true">desktop_windows</span>
             <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="security" aria-hidden="true">shield</span>
-            <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="tracker" aria-hidden="true">database</span>
           </div>
           <div class="section open cw-settings-section cw-app-section" id="sec-ui" data-accordion="off">
             <div class="head" style="display:flex;align-items:center">
               <span class="chev"></span>
-              <strong>Settings (UI / Security / Local Tracker)</strong>
+              <strong>Settings (UI / Security)</strong>
             </div>
             <div class="body">
 
@@ -1162,100 +1155,6 @@ def _get_index_html_static() -> str:
                             Enter proxy IPs or CIDR ranges separated by <code>;</code>
                           </div>
                         </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Panel: Local Tracker -->
-                <div class="cw-settings-panel cw-settings-shell cw-app-panel" data-tab="tracker">
-                  <div class="cw-settings-layout cw-app-tracker-layout">
-                    <div class="cw-settings-block cw-app-card">
-                      <div class="cw-app-card-head">
-                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">schedule</span>
-                        <div>
-                          <div class="cw-settings-block-title">Retention and Capture</div>
-                          <div class="sub">Control how snapshots are retained and created under <code class="cw-code-badge">/config/.cw_provider</code>.</div>
-                        </div>
-                      </div>
-                      <div class="cw-settings-2col">
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_enabled">Enabled</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Enabled: Turns the local tracker snapshot system on or off." aria-label="Local Tracker enabled setting help">help</button>
-                          </div>
-                          <select id="cw_enabled" name="cw_enabled">
-                            <option value="true">Enabled</option>
-                            <option value="false">Disabled</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_retention_days">Retention (days)</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Retention days: How long snapshot files are kept before cleanup. Set 0 to keep snapshots forever." aria-label="Retention days setting help">help</button>
-                          </div>
-                          <input id="cw_retention_days" name="cw_retention_days" type="number" min="0" step="1" placeholder="30">
-                          <div class="sub" style="margin-top:0.35rem">0 = keep snapshots forever.</div>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_auto_snapshot">Auto snapshot</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Auto snapshot: Saves a tracker snapshot before CrossWatch writes provider changes, giving you a local restore point." aria-label="Auto snapshot setting help">help</button>
-                          </div>
-                          <select id="cw_auto_snapshot" name="cw_auto_snapshot">
-                            <option value="true">On (before writes)</option>
-                            <option value="false">Off</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_max_snapshots">Max snapshots per feature</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Max snapshots per feature: Limits how many Watchlist, Ratings, and History snapshots are kept. Set 0 for unlimited." aria-label="Max snapshots per feature setting help">help</button>
-                          </div>
-                          <input id="cw_max_snapshots" name="cw_max_snapshots" type="number" min="0" step="1" placeholder="64">
-                          <div class="sub" style="margin-top:0.35rem">0 = unlimited.</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="cw-settings-block cw-app-card">
-                      <div class="cw-app-card-head">
-                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">restore_page</span>
-                        <div>
-                          <div class="cw-settings-block-title">Restore Snapshots</div>
-                          <div class="sub">Choose which snapshots to restore for each feature.</div>
-                        </div>
-                      </div>
-                      <div class="cw-settings-2col" id="cw_restore_fields">
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_restore_watchlist">Watchlist snapshot</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist snapshot: Select which local watchlist snapshot should be used for restore or tracker-backed reads." aria-label="Watchlist snapshot setting help">help</button>
-                          </div>
-                          <select id="cw_restore_watchlist" name="cw_restore_watchlist"></select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_restore_history">History snapshot</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="History snapshot: Select which local history snapshot should be used for restore or tracker-backed reads." aria-label="History snapshot setting help">help</button>
-                          </div>
-                          <select id="cw_restore_history" name="cw_restore_history"></select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="cw_restore_ratings">Ratings snapshot</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Ratings snapshot: Select which local ratings snapshot should be used for restore or tracker-backed reads." aria-label="Ratings snapshot setting help">help</button>
-                          </div>
-                          <select id="cw_restore_ratings" name="cw_restore_ratings"></select>
-                        </div>
-                      </div>
-                      <div class="sub" style="margin-top:0.75rem">
-                        Select <code>latest</code> to use the most recent snapshot, or choose a specific file name for each feature.
                       </div>
                     </div>
                   </div>
