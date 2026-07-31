@@ -3,11 +3,12 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 import io
 import json
 import os
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
@@ -22,7 +23,6 @@ from cw_platform.playlists import PlaylistSnapshot, supports_playlists
 from cw_platform import playlists_runner
 from cw_platform.provider_instances import (
     build_provider_config_view,
-    get_provider_block,
     list_instance_ids,
     normalize_instance_id,
 )
@@ -947,22 +947,46 @@ _TRACKER_RESERVED_SCOPES = frozenset({"unresolved", "restore_state", "tmp", "sna
 _TRACKER_DEFAULT_ROOT = Path("/config/.cw_provider")
 
 
-def _tracker_root(provider_instance: Any = None) -> Path:
-    node: Any = {}
-    cfg: dict[str, Any] = {}
-    inst = normalize_instance_id(provider_instance)
-    try:
-        cfg = load_config() or {}
-        node = get_provider_block(cfg, "CROSSWATCH", inst) or cfg.get("CrossWatch") or cfg.get("crosswatch") or {}
-    except Exception:
-        node = {}
+def _safe_tracker_profile_dir(instance_id: Any) -> str:
+    raw = normalize_instance_id(instance_id)
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._- ")
+    return safe or "default"
+
+
+def _tracker_base_root(cfg: Mapping[str, Any]) -> Path:
+    node = cfg.get("crosswatch") if isinstance(cfg, dict) else {}
     raw = ""
     if isinstance(node, dict):
         raw = str(node.get("root_dir") or "").strip()
     try:
-        return Path(raw or _TRACKER_DEFAULT_ROOT).resolve()
+        root = Path(raw or _TRACKER_DEFAULT_ROOT).expanduser().resolve(strict=False)
     except Exception:
         return _TRACKER_DEFAULT_ROOT
+    try:
+        if root == Path(root.anchor):
+            return _TRACKER_DEFAULT_ROOT
+    except Exception:
+        return _TRACKER_DEFAULT_ROOT
+    return root
+
+
+def _tracker_root(provider_instance: Any = None) -> Path:
+    cfg: dict[str, Any] = {}
+    inst = normalize_instance_id(provider_instance)
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        cfg = {}
+    base = _tracker_base_root(cfg)
+    if inst == "default":
+        return base
+    profiles_root = (base / "profiles").resolve(strict=False)
+    profile_root = (profiles_root / _safe_tracker_profile_dir(inst)).resolve(strict=False)
+    try:
+        profile_root.relative_to(profiles_root)
+        return profile_root
+    except Exception:
+        return profiles_root / "default"
 
 
 def _tracker_scan(root: Path) -> dict[str, dict[str, str]]:
