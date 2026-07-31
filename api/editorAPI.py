@@ -970,23 +970,32 @@ def _tracker_base_root(cfg: Mapping[str, Any]) -> Path:
     return root
 
 
+def _tracker_configured_instance(cfg: Mapping[str, Any], provider_instance: Any = None) -> str:
+    requested = normalize_instance_id(provider_instance)
+    if requested == "default":
+        return "default"
+    node = cfg.get("crosswatch") if isinstance(cfg, dict) else {}
+    instances = node.get("instances") if isinstance(node, dict) else {}
+    if not isinstance(instances, dict):
+        return "default"
+    for key in instances.keys():
+        candidate = normalize_instance_id(key)
+        if candidate == requested:
+            return candidate
+    return "default"
+
+
 def _tracker_root(provider_instance: Any = None) -> Path:
     cfg: dict[str, Any] = {}
-    inst = normalize_instance_id(provider_instance)
     try:
         cfg = load_config() or {}
     except Exception:
         cfg = {}
+    inst = _tracker_configured_instance(cfg, provider_instance)
     base = _tracker_base_root(cfg)
     if inst == "default":
         return base
-    profiles_root = (base / "profiles").resolve(strict=False)
-    profile_root = (profiles_root / _safe_tracker_profile_dir(inst)).resolve(strict=False)
-    try:
-        profile_root.relative_to(profiles_root)
-        return profile_root
-    except Exception:
-        return profiles_root / "default"
+    return base / "profiles" / _safe_tracker_profile_dir(inst)
 
 
 def _tracker_scan(root: Path) -> dict[str, dict[str, str]]:
