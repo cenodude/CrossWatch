@@ -216,6 +216,25 @@ def test_insights_playlist_statistics_use_endpoint_counts():
     assert 'providers_instances_by_feature.setdefault("playlists"' in api
 
 
+def test_insights_main_load_uses_lightweight_stats_first():
+    insights = (REPO / "assets" / "js" / "insights.js").read_text(encoding="utf-8")
+    api = (REPO / "api" / "insightAPI.py").read_text(encoding="utf-8")
+
+    assert "refreshInsightsFastThenFull" in insights
+    assert "/api/insights?limit_samples=0&history=0" in insights
+    assert "return refreshInsightsFastThenFull()" in insights
+    assert "optimisticConfigured" in insights
+    assert "configuredProvidersSnapshot(blk.active)" in insights
+    assert "_configuredProvidersCache" in insights
+    assert "new Set(Object.entries(active || {}).filter" in insights
+    assert "new Set([...Object.keys(blk.providers || {}), ...Object.keys(blk.active || {})])" not in insights
+    assert "const configured = await getConfiguredProviders" not in insights
+    assert 'if sample_limit > 0:' in api
+    assert "samples = []" in api
+    assert "history_limit = max(0, int(history))" in api
+    assert "if history_limit > 0 else []" in api
+
+
 def test_playlist_runner_emits_live_summary_events():
     runner = (REPO / "cw_platform" / "playlists_runner.py").read_text(encoding="utf-8")
     assert '"apply:add:done"' in runner

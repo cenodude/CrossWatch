@@ -351,7 +351,7 @@
     if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
 
     const crosswatch = cfg?.crosswatch || cfg?.CrossWatch || {};
-    if (crosswatch.enabled !== false) set.add("CROSSWATCH");
+    if ((cfg?.crosswatch || cfg?.CrossWatch) && crosswatch.connected === true && crosswatch.enabled !== false) set.add("CROSSWATCH");
     return set;
   }
 
