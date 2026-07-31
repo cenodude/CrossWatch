@@ -13,6 +13,7 @@ import api.insightAPI as insight_api
 import api.authenticationAPI as auth_api
 import services.editor as editor_service
 import services.export as export_service
+import cw_platform.tracker_storage as tracker_storage
 from cw_platform.provider_instances import build_pair_config_view, get_provider_block
 from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
 
@@ -326,6 +327,7 @@ def test_crosswatch_profile_delete_removes_profile_storage(tmp_path: Path, monke
     profile_root.mkdir(parents=True)
     (profile_root / "watchlist.json").write_text("{}", "utf-8")
     store: dict[str, Any] = {"crosswatch": {"root_dir": str(root), "instances": {"CW-P04": {"label": "Desk"}}}}
+    monkeypatch.setattr(tracker_storage, "_DEFAULT_TRACKER_ROOT", str(root))
 
     def fake_load() -> dict[str, Any]:
         return json.loads(json.dumps(store))
@@ -354,6 +356,7 @@ def test_crosswatch_disconnect_removes_connection_and_storage(tmp_path: Path, mo
     root.mkdir()
     (root / "watchlist.json").write_text("{}", "utf-8")
     store: dict[str, Any] = {"crosswatch": {"root_dir": str(root), "retention_days": 30}}
+    monkeypatch.setattr(tracker_storage, "_DEFAULT_TRACKER_ROOT", str(root))
 
     def fake_load() -> dict[str, Any]:
         return json.loads(json.dumps(store))
