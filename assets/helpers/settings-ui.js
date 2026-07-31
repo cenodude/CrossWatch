@@ -456,8 +456,9 @@ function cwSchedSettingsHubUpdate() {
 
   const adv = patch.advanced || {};
   const jobs = Array.isArray(adv.jobs) ? adv.jobs : [];
-  const active = jobs.filter(j => j && j.active !== false).length;
-  const total = jobs.length;
+  const workflows = Array.isArray(adv.workflows) ? adv.workflows : [];
+  const active = jobs.filter(j => j && j.active !== false).length + workflows.filter(w => w && w.active !== false).length;
+  const total = jobs.length + workflows.length;
 
   set("hub_sch_adv", `Plan: ${adv.enabled ? "On" : "Off"}`);
   set("hub_sch_steps", total ? `Steps: ${active}/${total}` : "Steps: —");

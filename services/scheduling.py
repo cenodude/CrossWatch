@@ -35,6 +35,7 @@ DEFAULT_SCHEDULING: dict[str, Any] = {
         "capture_jobs": [],
         "backup_jobs": [],
         "event_rules": [],
+        "workflows": [],
     },
 }
 
@@ -163,6 +164,8 @@ def merge_defaults(s: dict[str, Any]) -> dict[str, Any]:
                 out_adv["backup_jobs"] = []
             if not isinstance(out_adv.get("event_rules"), list):
                 out_adv["event_rules"] = []
+            if not isinstance(out_adv.get("workflows"), list):
+                out_adv["workflows"] = []
             out["advanced"] = out_adv
     if not isinstance(out.get("advanced"), dict):
         out["advanced"] = dict(DEFAULT_SCHEDULING["advanced"])
@@ -255,6 +258,39 @@ def _normalize_job(j: dict[str, Any]) -> dict[str, Any]:
         "days": days2,
         "after": (str(j.get("after") or "").strip() or None),
         "active": bool(j.get("active", True)),
+    }
+
+
+def _normalize_workflow_step(step: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(step.get("id") or "").strip() or f"step_{_now_ts()}",
+        "pair_id": (str(step.get("pair_id") or "").strip() or None),
+        "active": _as_bool(step.get("active"), True),
+    }
+
+
+def _normalize_workflow(raw: dict[str, Any]) -> dict[str, Any]:
+    mode = str(raw.get("mode") or "hourly").strip().lower()
+    if mode not in {"hourly", "every_n_hours", "daily_time", "custom_interval"}:
+        mode = "hourly"
+    steps_raw = raw.get("steps") or []
+    steps: list[dict[str, Any]] = []
+    if isinstance(steps_raw, list):
+        for item in steps_raw:
+            if not isinstance(item, dict):
+                continue
+            step = _normalize_workflow_step(item)
+            if step["active"] and step["pair_id"]:
+                steps.append(step)
+    return {
+        "id": str(raw.get("id") or "").strip() or f"workflow_{_now_ts()}",
+        "name": str(raw.get("name") or "").strip(),
+        "mode": mode,
+        "every_n_hours": _as_int(raw.get("every_n_hours"), 1, minimum=1),
+        "daily_time": str(raw.get("daily_time") or "03:30").strip() or "03:30",
+        "custom_interval_minutes": _as_int(raw.get("custom_interval_minutes"), 60, minimum=15),
+        "steps": steps,
+        "active": _as_bool(raw.get("active"), True),
     }
 
 
@@ -380,6 +416,28 @@ def _iter_adv_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
         if not j["at"] or _parse_hhmm(j["at"]) is None:
             continue
         out.append(j)
+    return out
+
+
+def _iter_adv_workflows(sch: dict[str, Any]) -> list[dict[str, Any]]:
+    adv = sch.get("advanced") or {}
+    if not isinstance(adv, dict) or not adv.get("enabled"):
+        return []
+    workflows = adv.get("workflows") or []
+    if not isinstance(workflows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in workflows:
+        if not isinstance(raw, dict):
+            continue
+        workflow = _normalize_workflow(raw)
+        if not workflow["active"]:
+            continue
+        if not workflow["steps"]:
+            continue
+        if workflow["mode"] == "daily_time" and _parse_hhmm(workflow["daily_time"]) is None:
+            continue
+        out.append(workflow)
     return out
 
 
@@ -535,6 +593,56 @@ def _next_job_time(now_local: datetime, job: dict[str, Any]) -> datetime | None:
     return None
 
 
+def _workflow_slot(now_local: datetime, workflow: dict[str, Any]) -> datetime | None:
+    base = now_local.replace(second=0, microsecond=0)
+    mode = workflow.get("mode")
+    if mode == "daily_time":
+        hhmm = _parse_hhmm(workflow.get("daily_time") or "")
+        if not hhmm:
+            return None
+        hh, mm = hhmm
+        cand = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        return cand if cand <= base else None
+
+    if mode == "every_n_hours":
+        interval = max(1, _as_int(workflow.get("every_n_hours"), 1, minimum=1)) * 60
+    elif mode == "custom_interval":
+        interval = max(15, _as_int(workflow.get("custom_interval_minutes"), 60, minimum=15))
+    else:
+        interval = 60
+
+    midnight = base.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = int((base - midnight).total_seconds() // 60)
+    return midnight + timedelta(minutes=(elapsed // interval) * interval)
+
+
+def _next_workflow_time(now_local: datetime, workflow: dict[str, Any]) -> datetime | None:
+    base = now_local.replace(second=0, microsecond=0)
+    mode = workflow.get("mode")
+    if mode == "daily_time":
+        hhmm = _parse_hhmm(workflow.get("daily_time") or "")
+        if not hhmm:
+            return None
+        hh, mm = hhmm
+        cand = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        return cand if cand > base else cand + timedelta(days=1)
+
+    if mode == "every_n_hours":
+        interval = max(1, _as_int(workflow.get("every_n_hours"), 1, minimum=1)) * 60
+    elif mode == "custom_interval":
+        interval = max(15, _as_int(workflow.get("custom_interval_minutes"), 60, minimum=15))
+    else:
+        interval = 60
+
+    midnight = base.replace(hour=0, minute=0, second=0, microsecond=0)
+    elapsed = int((base - midnight).total_seconds() // 60)
+    return midnight + timedelta(minutes=((elapsed // interval) + 1) * interval)
+
+
+def _workflow_key(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d@%H:%M")
+
+
 def _topo_order(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     by_id = {j["id"]: j for j in jobs}
     pending = list(jobs)
@@ -649,11 +757,24 @@ class SyncScheduler:
 
     def _adv_signature(self, sch: dict[str, Any]) -> str:
         jobs = _iter_adv_jobs(sch)
+        workflows = _iter_adv_workflows(sch)
         capture_jobs = _iter_adv_capture_jobs(sch)
         backup_jobs = _iter_adv_backup_jobs(sch)
         pairs = [
-            ("sync", str(j.get("id") or ""), str(j.get("pair_id") or ""), str(j.get("at") or ""), tuple(j.get("days") or []))
+            ("sync", str(j.get("id") or ""), str(j.get("pair_id") or ""), str(j.get("at") or ""), tuple(j.get("days") or []), str(j.get("after") or ""))
             for j in jobs
+        ]
+        pairs += [
+            (
+                "workflow",
+                str(w.get("id") or ""),
+                str(w.get("mode") or ""),
+                int(w.get("every_n_hours") or 1),
+                str(w.get("daily_time") or ""),
+                int(w.get("custom_interval_minutes") or 60),
+                tuple((str(s.get("id") or ""), str(s.get("pair_id") or ""), bool(s.get("active", True))) for s in (w.get("steps") or [])),
+            )
+            for w in workflows
         ]
         pairs += [
             (
@@ -702,6 +823,12 @@ class SyncScheduler:
             if dt is None or dt >= current:
                 continue
             self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
+
+        for workflow in _iter_adv_workflows(sch):
+            dt = _workflow_slot(base, workflow)
+            if dt is None or dt >= current:
+                continue
+            self._adv_last_key[f"workflow:{workflow['id']}"] = _workflow_key(dt)
 
         for job in _iter_adv_capture_jobs(sch):
             dt = _job_due_today(base, job)
@@ -1016,9 +1143,10 @@ class SyncScheduler:
 
     def _adv_next(self, sch: dict[str, Any], now_local: datetime, tz: Any | None) -> datetime | None:
         jobs = _iter_adv_jobs(sch)
+        workflows = _iter_adv_workflows(sch)
         capture_jobs = _iter_adv_capture_jobs(sch)
         backup_jobs = _iter_adv_backup_jobs(sch)
-        if not jobs and not capture_jobs and not backup_jobs:
+        if not jobs and not workflows and not capture_jobs and not backup_jobs:
             return None
 
         now = _as_now_in_tz(tz)
@@ -1035,6 +1163,14 @@ class SyncScheduler:
                 if not dep_key.startswith(today):
                     cand2 = _next_job_time(base + timedelta(days=1), j)
                     cand = cand2 or cand
+            if best is None or cand < best:
+                best = cand
+        for workflow in workflows:
+            cand = _workflow_slot(base, workflow)
+            if cand is None or self._adv_last_key.get(f"workflow:{workflow['id']}") == _workflow_key(cand):
+                cand = _next_workflow_time(base, workflow)
+            if cand is None:
+                continue
             if best is None or cand < best:
                 best = cand
         for j in capture_jobs:
@@ -1071,6 +1207,27 @@ class SyncScheduler:
             if self._adv_last_key.get(j["id"]) == key:
                 continue
             due.append((dt, j))
+
+        due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
+        return due
+
+    def _adv_due_workflows(self, sch: dict[str, Any], tz: Any | None) -> list[tuple[datetime, dict[str, Any]]]:
+        workflows = _iter_adv_workflows(sch)
+        if not workflows:
+            return []
+
+        now = _as_now_in_tz(tz)
+        base = now.replace(second=0, microsecond=0)
+
+        due: list[tuple[datetime, dict[str, Any]]] = []
+        for workflow in workflows:
+            dt = _workflow_slot(base, workflow)
+            if dt is None:
+                continue
+            key = _workflow_key(dt)
+            if self._adv_last_key.get(f"workflow:{workflow['id']}") == key:
+                continue
+            due.append((dt, workflow))
 
         due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
         return due
@@ -1125,9 +1282,10 @@ class SyncScheduler:
 
     def _adv_run_due(self, sch: dict[str, Any], tz: Any | None) -> bool:
         due = self._adv_due_jobs(sch, tz)
+        due_workflows = self._adv_due_workflows(sch, tz)
         due_capture = self._adv_due_capture_jobs(sch, tz)
         due_backup = self._adv_due_backup_jobs(sch, tz)
-        if not due and not due_capture and not due_backup:
+        if not due and not due_workflows and not due_capture and not due_backup:
             return False
 
         now = _as_now_in_tz(tz)
@@ -1189,6 +1347,65 @@ class SyncScheduler:
 
             self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
             executed.add(j["id"])
+
+        for due_at, workflow in due_workflows:
+            if self._stop.is_set():
+                break
+
+            workflow_ok = True
+            steps = list(workflow.get("steps") or [])
+            for step in steps:
+                if self._stop.is_set():
+                    break
+
+                waited = 0
+                while self.is_sync_running_fn() and not self._stop.is_set():
+                    if waited == 0:
+                        self._log("advanced workflow: sync is busy; waiting to run due workflow", level="INFO")
+                    waited += 1
+                    self._sleep_or_poke(2.0)
+                    if self._poke.is_set():
+                        self._poke.clear()
+                        return True
+
+                payload = {
+                    "source": "scheduler",
+                    "scheduler_mode": "advanced_workflow",
+                    "workflow_id": workflow["id"],
+                    "workflow_step_id": step["id"],
+                    "pair_id": step["pair_id"],
+                }
+
+                self._log(f"advanced workflow: running {workflow['id']} step {step['id']} for pair {step['pair_id']}", level="INFO")
+                ok = self._run_sync(payload)
+                if not ok:
+                    ok_all = False
+                    workflow_ok = False
+                    self._log(f"advanced workflow: step {step['id']} failed", level="ERROR")
+                else:
+                    self._log(f"advanced workflow: step {step['id']} ok", level="INFO")
+
+                with self._lock:
+                    self._status["last_run_ok"] = ok
+                    self._status["last_run_at"] = _now_ts()
+                    self._status["last_error"] = "" if ok else "advanced workflow step failed"
+                    self._status["last_job_id"] = step["id"]
+                    self._status["last_pair_id"] = step["pair_id"] or ""
+                    self._status["last_capture_job_id"] = ""
+                    self._status["last_capture_provider"] = ""
+                    self._status["last_capture_feature"] = ""
+                    self._status["last_backup_job_id"] = ""
+                    self._status["last_backup_scope"] = ""
+                    self._status["last_rule_id"] = ""
+                    self._status["last_event_source"] = ""
+                    self._status["last_event_name"] = ""
+
+                if not ok:
+                    break
+
+            self._adv_last_key[f"workflow:{workflow['id']}"] = _workflow_key(due_at)
+            if workflow_ok:
+                self._log(f"advanced workflow: workflow {workflow['id']} ok", level="INFO")
 
         for _, j in due_capture:
             if self._stop.is_set():
