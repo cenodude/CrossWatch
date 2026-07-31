@@ -257,7 +257,7 @@ def _normalize(
     skipped_reported_raw = res.get("skipped")
     skipped_exact = len(skeys)
     inferred_remainder = max(0, attempted - int(confirmed) - unresolved - errors)
-    exact_basis = bool(res.get("ambiguous")) or (tag == "apply:add" and bool(ckeys))
+    exact_basis = bool(res.get("ambiguous")) or (tag == "apply:add" and bool(ckeys or skeys))
     if exact_basis:
         skipped = skipped_exact
         skipped_inferred = 0

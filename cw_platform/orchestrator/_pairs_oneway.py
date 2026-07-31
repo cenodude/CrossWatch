@@ -99,8 +99,10 @@ def compute_effective_add(
         eff = 0
     else:
         eff = len(conf) if (verify_after_write or have_exact_keys) else min(pc, len(conf))
-    success_keys = conf if (verify_after_write or have_exact_keys) else conf[:eff]
     skset = set(skipped_keys or set())
+    skipped_success = [k for k in (attempted_keys or []) if k in skset]
+    success_keys = conf if (verify_after_write or have_exact_keys) else conf[:eff]
+    success_keys = list(dict.fromkeys(list(success_keys) + skipped_success))
     sset = set(success_keys)
     failed_keys = [k for k in (attempted_keys or []) if k not in sset and k not in skset]
     return {
@@ -1548,7 +1550,7 @@ def run_one_way_feature(
 
             skipped_keys_set: set[str] = set(prov_skipped_keys)
 
-            have_exact_keys = bool(prov_confirmed_keys)
+            have_exact_keys = bool(prov_confirmed_keys or prov_skipped_keys)
             if have_exact_keys:
                 attempted_set = set(attempted_keys)
                 confirmed_keys = [k for k in prov_confirmed_keys if k in attempted_set]
@@ -1627,6 +1629,7 @@ def run_one_way_feature(
                 if success_keys and not ambiguous_partial:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
                     clear_unresolved(dst, feature, success_keys)
+                    unresolved_new_total = max(0, unresolved_new_total - len(set(success_keys) & set(still_unresolved)))
                     resolved_keys = [k for k in success_keys if k in unresolved_before]
                     if resolved_keys:
                         _emit_item_resolutions(emit, dst, feature, pair_key, resolved_keys, key2item)
