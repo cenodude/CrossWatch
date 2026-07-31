@@ -19,6 +19,7 @@ from cw_platform.orchestrator._progress_completion import progress_caps_from_ops
 from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
+from .adapters.crosswatch import CrossWatchPlaybackAdapter
 from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter, KodiPlaybackAdapter, PlexPlaybackAdapter
 from .adapters.mdblist import MDBListPlaybackAdapter
 from .adapters.nuvio import NuvioPlaybackAdapter
@@ -34,7 +35,7 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio")
+PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -675,6 +676,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "nuvio": "Nuvio",
         "kodi": "Kodi",
         "stremio": "Stremio",
+        "crosswatch": "CrossWatch",
     }.get(provider, provider)
     if label.lower() == "default":
         return f"{provider_label} Default"
@@ -700,6 +702,11 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
     inst = normalize_instance_id(instance_id)
     if inst == "default":
         return True
+    provider_key = str(provider or "").strip().lower()
+    if provider_key in {"cw", "crosswatch"}:
+        base = cfg.get("crosswatch") if isinstance(cfg, Mapping) else None
+        insts = (base or {}).get("instances") if isinstance(base, Mapping) else None
+        return bool(isinstance(insts, Mapping) and inst in insts and isinstance(insts.get(inst), Mapping))
     raw = get_instance_block(cfg, provider, inst, create=False)
     if not raw:
         return False
@@ -797,6 +804,7 @@ class PlaybackProgressService:
             "nuvio": NuvioPlaybackAdapter(),
             "kodi": KodiPlaybackAdapter(),
             "stremio": StremioPlaybackAdapter(),
+            "crosswatch": CrossWatchPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._lock = threading.RLock()

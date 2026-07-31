@@ -18,6 +18,7 @@ from services.playback_progress.adapters.base import PlaybackProgressAdapter
 import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
 import services.playback_progress.adapters.stremio as stremio_playback_adapter
+from services.playback_progress.adapters.crosswatch import CrossWatchPlaybackAdapter
 from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter, KodiPlaybackAdapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
 
@@ -71,7 +72,7 @@ def test_playback_bulk_footer_uses_wide_management_layout():
 def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
-    assert 'const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio"];' in js
+    assert 'const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio"];' in js
 
 
 class _PolicyOps:
@@ -375,6 +376,125 @@ def test_playback_progress_settings_reports_disabled_profiles_and_clamped_timeou
     assert data["provider_timeout_seconds"] == 60.0
     assert by_key["trakt:default"]["included"] is True
     assert by_key["trakt:TRAKT-P01"]["included"] is False
+
+
+class _FakeCrossWatchOps:
+    def __init__(self) -> None:
+        self.index_roots = []
+        self.added = []
+        self.removed = []
+
+    def _root(self, cfg):
+        return str((cfg.get("crosswatch") or {}).get("root_dir") or "")
+
+    def capabilities(self):
+        return {
+            "progress": {
+                "types": {"movies": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+            },
+            "history": {"upsert": True},
+        }
+
+    def is_configured(self, cfg):
+        block = cfg.get("crosswatch") or {}
+        value = block.get("enabled")
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+    def build_index(self, cfg, *, feature):
+        assert feature == "progress"
+        self.index_roots.append(self._root(cfg))
+        return {
+            "tmdb:123": {
+                "type": "movie",
+                "title": "Pressure",
+                "year": 2026,
+                "ids": {"tmdb": "123"},
+                "progress_ms": 120000,
+                "duration_ms": 600000,
+                "progress_at": "2026-07-30T20:00:00Z",
+            }
+        }
+
+    def remove(self, cfg, items, *, feature, dry_run=False):
+        self.removed.append({"feature": feature, "root": self._root(cfg), "items": list(items)})
+        return {"ok": True, "count": len(items), "feature": feature}
+
+    def add(self, cfg, items, *, feature, dry_run=False):
+        self.added.append({"feature": feature, "root": self._root(cfg), "items": list(items)})
+        return {"ok": True, "count": len(items), "feature": feature}
+
+
+def test_playback_progress_uses_crosswatch_profiles(monkeypatch, tmp_path):
+    cw_ops = _FakeCrossWatchOps()
+    root = tmp_path / "cw_provider"
+    cfg = {
+        "crosswatch": {
+            "root_dir": str(root),
+            "instances": {
+                "CW-P01": {"label": "Desk"},
+                "CW-P02": {"enabled": False, "label": "Old"},
+            },
+        }
+    }
+
+    monkeypatch.setattr(CrossWatchPlaybackAdapter, "ops", cw_ops)
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    providers = [spec for spec in service.provider_instances(cfg) if spec["provider"] == "crosswatch"]
+    caps_by_instance = {
+        cap.instance_id: cap
+        for cap in service.capabilities(cfg)
+        if cap.provider == "crosswatch"
+    }
+
+    assert providers == [
+        {"provider": "crosswatch", "instance_id": "default", "instance_label": "CrossWatch Default"},
+        {"provider": "crosswatch", "instance_id": "CW-P01", "instance_label": "CrossWatch Desk"},
+        {"provider": "crosswatch", "instance_id": "CW-P02", "instance_label": "CrossWatch Old"},
+    ]
+    assert caps_by_instance["default"].read is True
+    assert caps_by_instance["CW-P01"].read is True
+    assert caps_by_instance["CW-P02"].configured is False
+    assert caps_by_instance["CW-P02"].read is False
+
+    result = service.items(provider="crosswatch", instance_id="CW-P01", force_refresh=True)
+    record = result["items"][0]
+
+    assert result["errors"] == []
+    expected_profile_root = str(root / "profiles" / "CW-P01").replace("\\", "/")
+
+    assert [value.replace("\\", "/") for value in cw_ops.index_roots] == [expected_profile_root]
+    assert record["provider"] == "crosswatch"
+    assert record["provider_label"] == "CrossWatch"
+    assert record["instance_id"] == "CW-P01"
+    assert record["instance_label"] == "CrossWatch Desk"
+    assert record["progress_percent"] == 20.0
+    assert record["can_remove_progress"] is True
+    assert record["can_mark_watched"] is True
+    assert record["can_update_progress"] is True
+
+    service.remove({"provider": "crosswatch", "instance_id": "CW-P01", "record": record})
+    service.mark_watched({"provider": "crosswatch", "instance_id": "CW-P01", "record": record})
+    service.update_progress({"provider": "crosswatch", "instance_id": "CW-P01", "record": record, "progress_percent": 25})
+
+    assert [call["feature"] for call in cw_ops.removed] == ["progress", "progress", "progress"]
+    assert [call["feature"] for call in cw_ops.added] == ["history", "progress"]
+    assert all(call["root"].replace("\\", "/") == expected_profile_root for call in cw_ops.removed + cw_ops.added)
+    assert cw_ops.added[0]["items"][0]["watched_at"]
+    assert cw_ops.added[1]["items"][0]["progress_ms"] == 150000
+
+
+def test_playback_progress_settings_use_short_crosswatch_profile_ids() -> None:
+    js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
+
+    assert 'String(p.provider || "").toLowerCase() === "crosswatch"' in js
+    assert "/^CW-P\\d+$/i.test(id)" in js
+    assert "return id.toUpperCase()" in js
 
 
 class _UnreadPlaybackAdapter(PlaybackProgressAdapter):
