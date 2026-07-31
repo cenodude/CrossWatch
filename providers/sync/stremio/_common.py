@@ -112,6 +112,18 @@ def stremio_id_for_item(item: Mapping[str, Any]) -> str | None:
     return imdb_id(imdb_ids_from_item(item).get("imdb"))
 
 
+def metahub_poster_url(stremio_id: Any) -> str:
+    found = imdb_id(stremio_id)
+    return f"https://images.metahub.space/poster/small/{found}/img" if found else ""
+
+
+def poster_url_from_item(item: Mapping[str, Any], stremio_id: Any = None) -> str:
+    poster = str(item.get("poster") or item.get("poster_url") or item.get("posterUrl") or "").strip()
+    if poster.startswith(("http://", "https://")):
+        return poster
+    return metahub_poster_url(stremio_id or stremio_id_for_item(item))
+
+
 def video_id_for_episode(item: Mapping[str, Any], show_id: str) -> str | None:
     direct = str(item.get("_stremio_video_id") or item.get("video_id") or "").strip()
     if direct:
@@ -214,8 +226,7 @@ def default_record(stremio_id: str, item_type: str, item: Mapping[str, Any] | No
     ts = iso_from_epoch_ms(timestamp) or now_iso()
     typ = "series" if item_type in {"series", "show", "episode", "episodes"} else "movie"
     src = item or {}
-    poster = str(src.get("poster") or src.get("poster_url") or src.get("posterUrl") or "").strip()
-    poster_value = poster if poster.startswith(("http://", "https://")) else ""
+    poster_value = poster_url_from_item(src, stremio_id)
     return {
         "_id": stremio_id,
         "name": str(src.get("series_title") or src.get("show_title") or src.get("title") or stremio_id),

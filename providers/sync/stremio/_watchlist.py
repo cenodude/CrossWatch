@@ -20,6 +20,7 @@ from ._common import (
     item_from_movie_record,
     library_records,
     now_iso,
+    poster_url_from_item,
     record_id,
     stremio_id_for_item,
     tmdb_metadata_provider,
@@ -115,8 +116,8 @@ def _unresolved(item: Mapping[str, Any], reason: str) -> dict[str, Any]:
 
 
 def _apply_membership(record: dict[str, Any], item: Mapping[str, Any], listed: bool) -> None:
-    poster = str(item.get("poster") or item.get("poster_url") or item.get("posterUrl") or "").strip()
-    if poster.startswith(("http://", "https://")) and not str(record.get("poster") or "").strip():
+    poster = poster_url_from_item(item, record.get("_id"))
+    if poster and not str(record.get("poster") or "").strip():
         record["poster"] = poster
     record["removed"] = not listed
     record["temp"] = False

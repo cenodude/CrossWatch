@@ -32,6 +32,7 @@ from ._common import (
     record_id,
     state_of,
     stremio_id_for_item,
+    poster_url_from_item,
     tmdb_metadata_provider,
     video_id_for_episode,
 )
@@ -247,8 +248,8 @@ def _api_failure(item: Mapping[str, Any], key: str, exc: StremioAuthError, fallb
 
 
 def _apply_poster(record: dict[str, Any], item: Mapping[str, Any]) -> None:
-    poster = str(item.get("poster") or item.get("poster_url") or item.get("posterUrl") or "").strip()
-    if poster.startswith(("http://", "https://")) and not str(record.get("poster") or "").strip():
+    poster = poster_url_from_item(item, record.get("_id"))
+    if poster and not str(record.get("poster") or "").strip():
         record["poster"] = poster
 
 

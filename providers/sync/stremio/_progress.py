@@ -24,6 +24,7 @@ from ._common import (
     read_merge_write,
     state_of,
     stremio_id_for_item,
+    poster_url_from_item,
     tmdb_metadata_provider,
     to_int,
     video_id_for_episode,
@@ -229,8 +230,8 @@ def _api_failure(item: Mapping[str, Any], key: str, exc: StremioAuthError, fallb
 
 def _apply_progress(record: dict[str, Any], item: Mapping[str, Any], clear: bool) -> str | None:
     state = record.setdefault("state", {})
-    poster = str(item.get("poster") or item.get("poster_url") or item.get("posterUrl") or "").strip()
-    if poster.startswith(("http://", "https://")) and not str(record.get("poster") or "").strip():
+    poster = poster_url_from_item(item, record.get("_id"))
+    if poster and not str(record.get("poster") or "").strip():
         record["poster"] = poster
     duration = _duration_ms(item) or positive_int(state.get("duration"))
     position = _progress_ms(item, duration)

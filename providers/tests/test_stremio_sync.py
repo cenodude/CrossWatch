@@ -345,7 +345,7 @@ def test_created_record_uses_stremio_library_shape() -> None:
 
     assert record["_ctime"] == _common.iso_from_epoch_ms(1_785_441_200_000)
     assert record["_mtime"] == _common.iso_from_epoch_ms(1_785_441_200_000)
-    assert record["poster"] == ""
+    assert record["poster"] == "https://images.metahub.space/poster/small/tt0137523/img"
     assert record["state"]["lastWatched"] == ""
     assert record["state"]["video_id"] == ""
     assert record["state"]["watched"] == ""
@@ -353,6 +353,18 @@ def test_created_record_uses_stremio_library_shape() -> None:
     assert record["state"]["season"] == 0
     assert record["state"]["episode"] == 0
     assert record["behaviorHints"] == {"defaultVideoId": None, "featuredVideoId": None, "hasScheduledVideos": False}
+
+
+def test_history_write_backfills_empty_poster_from_metahub() -> None:
+    record = movie_record(poster="")
+    adapter = FakeAdapter([record])
+    item = {"type": "movie", "ids": {"imdb": "tt0137523"}, "title": "Fight Club"}
+
+    result = _history.add(adapter, [item])
+    written = adapter.client.puts[-1][0]
+
+    assert result["count"] == 1
+    assert written["poster"] == "https://images.metahub.space/poster/small/tt0137523/img"
 
 
 def test_watchlist_reads_explicit_library_movies_and_series() -> None:
