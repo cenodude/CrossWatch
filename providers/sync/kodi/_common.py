@@ -422,7 +422,13 @@ def _progress_signature(item: Mapping[str, Any]) -> tuple[int | None, int | None
     )
 
 
+def _is_capture_mode() -> bool:
+    return str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _load_kodi_feature_baseline(adapter: Any, feature: str) -> Mapping[str, Mapping[str, Any]]:
+    if _is_capture_mode():
+        return {}
     name = str(feature or "").strip().lower()
     injected = getattr(adapter, f"_kodi_{name}_baseline", None)
     if isinstance(injected, Mapping):

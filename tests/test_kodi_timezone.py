@@ -194,6 +194,33 @@ def test_kodi_ratings_keep_prior_timestamp_when_rating_is_unchanged(monkeypatch)
     assert row["rated_at_source"] == "kodi_first_observed"
 
 
+def test_kodi_capture_mode_ignores_synthetic_timestamp_baseline(monkeypatch) -> None:
+    from providers.sync.kodi import _common
+    from providers.sync.kodi._common import KodiConfig, feature_index
+
+    monkeypatch.setenv("CW_CAPTURE_MODE", "1")
+    monkeypatch.setattr(_common, "_utc_now_iso", lambda: "2026-07-29T00:47:01Z")
+    adapter = SimpleNamespace(
+        cfg=KodiConfig(server="http://kodi.local:8080"),
+        client=_FakeKodiClient(),
+        _kodi_library_index_ratings=_rated_movie_index(7),
+        _kodi_ratings_baseline={
+            "tmdb:329865": {
+                "type": "movie",
+                "ids": {"tmdb": "329865"},
+                "rating": 7,
+                "rated_at": "2026-07-28T10:00:00Z",
+                "rated_at_source": "kodi_first_observed",
+            }
+        },
+    )
+
+    row = feature_index(adapter, "ratings")["tmdb:329865"]
+
+    assert row["rated_at"] == "2026-07-29T00:47:01Z"
+    assert row["rated_at_source"] == "kodi_first_observed"
+
+
 def test_kodi_ratings_update_timestamp_when_rating_changes(monkeypatch) -> None:
     from providers.sync.kodi import _common
     from providers.sync.kodi._common import KodiConfig, feature_index
