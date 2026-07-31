@@ -173,7 +173,7 @@ def test_episode_history_read_does_not_expose_stremio_mtime_as_watched_at(monkey
     assert item["_stremio_changed_at"] == "2026-07-30T19:53:20Z"
 
 
-def test_history_write_enriches_episode_poster_from_tmdb(monkeypatch) -> None:
+def test_history_write_resolves_imdb_with_tmdb_and_uses_metahub_poster(monkeypatch) -> None:
     class Provider:
         def fetch(self, **_kwargs: Any) -> dict[str, Any]:
             return {
@@ -198,7 +198,7 @@ def test_history_write_enriches_episode_poster_from_tmdb(monkeypatch) -> None:
 
     assert result["count"] == 1
     assert written["_id"] == "tt14586350"
-    assert written["poster"] == "https://image.tmdb.org/t/p/w780/love-death.jpg"
+    assert written["poster"] == "https://images.metahub.space/poster/small/tt14586350/img"
     assert _history.decode_watched_episodes(written["state"]["watched"], ["tt14586350:1:7"]) == {"tt14586350:1:7"}
 
 
@@ -324,7 +324,7 @@ def test_progress_write_enriches_percent_only_episode_from_tmdb(monkeypatch) -> 
 
     assert result["count"] == 1
     assert written["_id"] == "tt14586350"
-    assert written["poster"] == "https://image.tmdb.org/t/p/w780/love-death.jpg"
+    assert written["poster"] == "https://images.metahub.space/poster/small/tt14586350/img"
     assert written["state"]["video_id"] == "tt14586350:1:7"
     assert written["state"]["duration"] == 2_940_000
     assert written["state"]["timeOffset"] == 294_000
@@ -358,6 +358,21 @@ def test_created_record_uses_stremio_library_shape() -> None:
 def test_history_write_backfills_empty_poster_from_metahub() -> None:
     record = movie_record(poster="")
     adapter = FakeAdapter([record])
+    item = {"type": "movie", "ids": {"imdb": "tt0137523"}, "title": "Fight Club"}
+
+    result = _history.add(adapter, [item])
+    written = adapter.client.puts[-1][0]
+
+    assert result["count"] == 1
+    assert written["poster"] == "https://images.metahub.space/poster/small/tt0137523/img"
+
+
+def test_history_write_skips_tmdb_for_imdb_only_poster(monkeypatch) -> None:
+    def fail_provider(_adapter: Any) -> Any:
+        raise AssertionError("tmdb should not be used")
+
+    monkeypatch.setattr(_history, "tmdb_metadata_provider", fail_provider)
+    adapter = FakeAdapter([])
     item = {"type": "movie", "ids": {"imdb": "tt0137523"}, "title": "Fight Club"}
 
     result = _history.add(adapter, [item])

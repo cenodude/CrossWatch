@@ -61,7 +61,10 @@ def _is_listed(record: Mapping[str, Any]) -> bool:
 
 def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[str, Any]:
     out = dict(item)
-    if stremio_id_for_item(out) and str(out.get("poster") or out.get("poster_url") or "").strip():
+    stremio_id = stremio_id_for_item(out)
+    if stremio_id:
+        if not str(out.get("poster") or out.get("poster_url") or "").strip():
+            out["poster"] = poster_url_from_item(out, stremio_id)
         return out
     provider = tmdb_metadata_provider(adapter)
     if provider is None:
@@ -93,7 +96,7 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
     if not str(out.get("title") or out.get("series_title") or "").strip() and str(detail.get("title") or "").strip():
         out["title"] = str(detail.get("title") or "").strip()
     if not str(out.get("poster") or out.get("poster_url") or "").strip():
-        poster = _image_url(detail, "poster")
+        poster = poster_url_from_item(out, found) or _image_url(detail, "poster")
         if poster:
             out["poster"] = poster
     return out
