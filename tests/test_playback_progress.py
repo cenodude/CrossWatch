@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 from services.playback_progress.service import (
     _combine_records,
@@ -13,8 +14,10 @@ from services.playback_progress.service import (
     PlaybackProgressService,
 )
 from services.playback_progress.models import PlaybackCapabilities
+from services.playback_progress.adapters.base import PlaybackProgressAdapter
 import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
+import services.playback_progress.adapters.stremio as stremio_playback_adapter
 from services.playback_progress.adapters.media_servers import JellyfinPlaybackAdapter, KodiPlaybackAdapter
 from services.playback_progress.adapters.trakt import _trakt_image_url
 
@@ -68,7 +71,7 @@ def test_playback_bulk_footer_uses_wide_management_layout():
 def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
-    assert 'const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi"];' in js
+    assert 'const PLAYBACK_PROVIDER_KEYS = ["trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio"];' in js
 
 
 class _PolicyOps:
@@ -79,7 +82,9 @@ class _PolicyOps:
         return {"progress": self._progress_caps}
 
 
-class _PolicyAdapter:
+class _PolicyAdapter(PlaybackProgressAdapter):
+    ops: _PolicyOps
+
     def __init__(self, progress_caps):
         self.ops = _PolicyOps(progress_caps)
 
@@ -372,7 +377,7 @@ def test_playback_progress_settings_reports_disabled_profiles_and_clamped_timeou
     assert by_key["trakt:TRAKT-P01"]["included"] is False
 
 
-class _UnreadPlaybackAdapter:
+class _UnreadPlaybackAdapter(PlaybackProgressAdapter):
     provider = "trakt"
     provider_label = "Trakt"
 
@@ -509,7 +514,7 @@ def test_playback_progress_includes_kodi_provider(monkeypatch):
     monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
 
     service = PlaybackProgressService()
-    service.adapters["kodi"].ops = kodi_ops
+    cast(KodiPlaybackAdapter, service.adapters["kodi"]).ops = kodi_ops
     providers = service.provider_instances(cfg)
     result = service.items(provider="kodi", force_refresh=True)
     record = result["items"][0]
@@ -700,6 +705,106 @@ def test_nuvio_playback_progress_enriches_missing_episode_metadata_from_content_
     assert record.year == 2019
     assert record.poster_url == "https://image.tmdb.org/t/p/w342/poster.jpg"
     assert record.backdrop_url == "https://image.tmdb.org/t/p/w780/backdrop.jpg"
+
+
+class _FakeStremioOps:
+    def __init__(self) -> None:
+        self.added = []
+        self.removed = []
+
+    def capabilities(self):
+        return {
+            "progress": {
+                "types": {"movies": True, "episodes": True},
+                "upsert": True,
+                "remove": True,
+            },
+            "history": {"upsert": True},
+        }
+
+    def is_configured(self, cfg):
+        return bool(cfg.get("stremio", {}).get("auth_key"))
+
+    def build_index(self, cfg, *, feature):
+        assert feature == "progress"
+        return {
+            "imdb:tt0903747#s01e02": {
+                "type": "episode",
+                "ids": {"imdb": "tt0903747"},
+                "show_ids": {"imdb": "tt0903747"},
+                "series_title": "Breaking Bad",
+                "season": 1,
+                "episode": 2,
+                "_stremio_id": "tt0903747",
+                "_stremio_video_id": "tt0903747:1:2",
+                "progress_ms": 120000,
+                "duration_ms": 600000,
+                "progress_at": "2026-07-30T20:00:00Z",
+                "poster": "https://image.example/breaking-bad.jpg",
+            }
+        }
+
+    def remove(self, cfg, items, *, feature, dry_run=False):
+        self.removed.extend(items)
+        return {"ok": True, "count": len(items), "feature": feature}
+
+    def add(self, cfg, items, *, feature, dry_run=False):
+        self.added.append((feature, list(items)))
+        return {"ok": True, "count": len(items), "feature": feature}
+
+
+def test_playback_progress_uses_stremio_adapter(monkeypatch):
+    stremio_ops = _FakeStremioOps()
+    cfg = {"stremio": {"auth_key": "secret"}}
+
+    monkeypatch.setattr(stremio_playback_adapter, "STREMIO_OPS", stremio_ops)
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    providers = service.provider_instances(cfg)
+    result = service.items(provider="stremio", force_refresh=True)
+    record = result["items"][0]
+
+    assert {"provider": "stremio", "instance_id": "default", "instance_label": "Stremio Default"} in providers
+    assert result["errors"] == []
+    assert record["provider"] == "stremio"
+    assert record["provider_label"] == "Stremio"
+    assert record["remote_id"] == "tt0903747:1:2"
+    assert record["progress_percent"] == 20.0
+    assert record["poster_url"] == "https://image.example/breaking-bad.jpg"
+    assert record["provider_metadata"]["stremio_profile_id"] == "default"
+    assert ("stremio", "default", "default") in service._cache
+
+    service.remove({"provider": "stremio", "instance_id": "default", "record": record})
+    service.mark_watched({"provider": "stremio", "instance_id": "default", "record": record})
+    service.update_progress({"provider": "stremio", "instance_id": "default", "record": record, "progress_percent": 25})
+
+    assert stremio_ops.removed[0]["_stremio_video_id"] == "tt0903747:1:2"
+    assert stremio_ops.added[0][0] == "history"
+    assert stremio_ops.added[1][0] == "progress"
+    assert stremio_ops.added[1][1][0]["progress_ms"] == 150000
+
+
+def test_stremio_playback_progress_update_allows_percent_only(monkeypatch):
+    stremio_ops = _FakeStremioOps()
+    monkeypatch.setattr(stremio_playback_adapter, "STREMIO_OPS", stremio_ops)
+    record = {
+        "media_type": "episode",
+        "title": "Love & Death",
+        "series_title": "Love & Death",
+        "season": 1,
+        "episode": 7,
+        "ids": {"tmdb": "124800"},
+        "canonical_key": "tmdb:124800#s01e07",
+        "provider_metadata": {"show_ids": {"tmdb": "124800"}},
+    }
+
+    result = stremio_playback_adapter.StremioPlaybackAdapter().update_progress({"stremio": {"auth_key": "secret"}}, record, 10.63, instance_id="default", instance_label="Stremio Default")
+
+    assert result.ok is True
+    assert stremio_ops.added[0][0] == "progress"
+    assert stremio_ops.added[0][1][0]["progress_percent"] == 10.63
+    assert "progress_ms" not in stremio_ops.added[0][1][0]
 
 
 def test_nuvio_playback_progress_enriches_episode_metadata_from_tvdb_id(monkeypatch):

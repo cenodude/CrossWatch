@@ -24,6 +24,7 @@ from .adapters.mdblist import MDBListPlaybackAdapter
 from .adapters.nuvio import NuvioPlaybackAdapter
 from .adapters.publicmetadb import PublicMetaDBPlaybackAdapter
 from .adapters.simkl import SimklPlaybackAdapter
+from .adapters.stremio import StremioPlaybackAdapter
 from .adapters.trakt import TraktPlaybackAdapter
 from .models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, clean_mapping, utc_now_iso
 
@@ -33,7 +34,7 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi")
+PHASE1_PROVIDERS = ("trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -673,6 +674,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "jellyfin": "Jellyfin",
         "nuvio": "Nuvio",
         "kodi": "Kodi",
+        "stremio": "Stremio",
     }.get(provider, provider)
     if label.lower() == "default":
         return f"{provider_label} Default"
@@ -724,6 +726,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
         "jellyfin": ("access_token", "user_id"),
         "nuvio": ("access_token", "refresh_token", "profile_id"),
         "kodi": ("server", "server_url", "connection_verified", "username"),
+        "stremio": ("auth_key", "authKey"),
     }.get(str(provider or "").strip().lower(), ())
     return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
 
@@ -793,8 +796,9 @@ class PlaybackProgressService:
             "jellyfin": JellyfinPlaybackAdapter(),
             "nuvio": NuvioPlaybackAdapter(),
             "kodi": KodiPlaybackAdapter(),
+            "stremio": StremioPlaybackAdapter(),
         }
-        self._cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._lock = threading.RLock()
 
     def _adapter(self, provider: str) -> PlaybackProgressAdapter | None:
@@ -832,7 +836,7 @@ class PlaybackProgressService:
                 cap.included = _profile_included(config, provider, spec["instance_id"])
                 if not cap.included:
                     cap.reason = "Excluded from Playback Progress."
-                cached = self._cache.get((provider, spec["instance_id"]))
+                cached = self._cache.get(self._cache_key(provider, spec["instance_id"], adapter))
                 if cached:
                     cap.last_refresh = cached.get("refreshed_at")
                     err = cached.get("error")
@@ -854,12 +858,16 @@ class PlaybackProgressService:
                 )
         return out
 
-    def _cache_key(self, provider: str, instance_id: str) -> tuple[str, str]:
-        return (str(provider).lower(), normalize_instance_id(instance_id))
+    def _cache_key(self, provider: str, instance_id: str, adapter: PlaybackProgressAdapter | None = None) -> tuple[str, str, str]:
+        prov = str(provider).lower()
+        profile = str(getattr(adapter, "stremio_profile_id", "default") if prov == "stremio" else "default").strip() or "default"
+        return (prov, normalize_instance_id(instance_id), profile)
 
     def invalidate(self, provider: str, instance_id: str) -> None:
         with self._lock:
-            self._cache.pop(self._cache_key(provider, instance_id), None)
+            prefix = (str(provider).lower(), normalize_instance_id(instance_id))
+            for key in [key for key in self._cache if key[:2] == prefix]:
+                self._cache.pop(key, None)
         LOG.debug(f"cache invalidated provider={provider} instance={normalize_instance_id(instance_id)}")
 
     def _activity_marker(self, adapter: PlaybackProgressAdapter, config_view: Mapping[str, Any], *, instance_id: str) -> str:
@@ -898,7 +906,7 @@ class PlaybackProgressService:
                 message=cap.reason or "Provider does not support playback listing.",
             )
 
-        key = self._cache_key(provider, instance_id)
+        key = self._cache_key(provider, instance_id, adapter)
         now = time.time()
         with self._lock:
             cached = self._cache.get(key)
