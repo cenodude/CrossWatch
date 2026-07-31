@@ -32,6 +32,7 @@ from ._common import (
     record_id,
     state_of,
     stremio_id_for_item,
+    poster_url_from_item,
     tmdb_metadata_provider,
     video_id_for_episode,
 )
@@ -150,7 +151,10 @@ def _image_url(detail: Mapping[str, Any], kind: str) -> str:
 
 def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[str, Any]:
     out = dict(item)
-    if stremio_id_for_item(out) and str(out.get("poster") or out.get("poster_url") or "").strip():
+    stremio_id = stremio_id_for_item(out)
+    if stremio_id:
+        if not str(out.get("poster") or out.get("poster_url") or "").strip():
+            out["poster"] = poster_url_from_item(out, stremio_id)
         return out
     provider = tmdb_metadata_provider(adapter)
     if provider is None:
@@ -186,9 +190,8 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
             merged = dict(out_ids)
             merged["imdb"] = imdb
             out["ids"] = merged
-    poster = str(out.get("poster") or out.get("poster_url") or "").strip()
-    if not poster:
-        poster = _image_url(detail, "poster")
+    if not str(out.get("poster") or out.get("poster_url") or "").strip():
+        poster = poster_url_from_item(out, imdb) or _image_url(detail, "poster")
         if poster:
             out["poster"] = poster
     return out
@@ -247,8 +250,8 @@ def _api_failure(item: Mapping[str, Any], key: str, exc: StremioAuthError, fallb
 
 
 def _apply_poster(record: dict[str, Any], item: Mapping[str, Any]) -> None:
-    poster = str(item.get("poster") or item.get("poster_url") or item.get("posterUrl") or "").strip()
-    if poster.startswith(("http://", "https://")) and not str(record.get("poster") or "").strip():
+    poster = poster_url_from_item(item, record.get("_id"))
+    if poster and not str(record.get("poster") or "").strip():
         record["poster"] = poster
 
 

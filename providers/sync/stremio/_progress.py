@@ -24,6 +24,7 @@ from ._common import (
     read_merge_write,
     state_of,
     stremio_id_for_item,
+    poster_url_from_item,
     tmdb_metadata_provider,
     to_int,
     video_id_for_episode,
@@ -91,8 +92,12 @@ def _image_url(detail: Mapping[str, Any], kind: str) -> str:
 
 def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[str, Any]:
     out = dict(item)
-    if stremio_id_for_item(out) and _duration_ms(out):
-        return out
+    stremio_id = stremio_id_for_item(out)
+    if stremio_id:
+        if not str(out.get("poster") or out.get("poster_url") or "").strip():
+            out["poster"] = poster_url_from_item(out, stremio_id)
+        if _duration_ms(out):
+            return out
     provider = tmdb_metadata_provider(adapter)
     if provider is None:
         return out
@@ -142,9 +147,8 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
                 duration = positive_int(ep.get("runtime"))
     if duration:
         out.setdefault("duration_ms", duration * 60_000)
-    poster = str(out.get("poster") or out.get("poster_url") or "").strip()
-    if not poster:
-        poster = _image_url(detail, "poster")
+    if not str(out.get("poster") or out.get("poster_url") or "").strip():
+        poster = poster_url_from_item(out, imdb) or _image_url(detail, "poster")
         if poster:
             out["poster"] = poster
     return out
@@ -229,8 +233,8 @@ def _api_failure(item: Mapping[str, Any], key: str, exc: StremioAuthError, fallb
 
 def _apply_progress(record: dict[str, Any], item: Mapping[str, Any], clear: bool) -> str | None:
     state = record.setdefault("state", {})
-    poster = str(item.get("poster") or item.get("poster_url") or item.get("posterUrl") or "").strip()
-    if poster.startswith(("http://", "https://")) and not str(record.get("poster") or "").strip():
+    poster = poster_url_from_item(item, record.get("_id"))
+    if poster and not str(record.get("poster") or "").strip():
         record["poster"] = poster
     duration = _duration_ms(item) or positive_int(state.get("duration"))
     position = _progress_ms(item, duration)
