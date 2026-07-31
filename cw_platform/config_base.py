@@ -1459,8 +1459,6 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
             j["after"] = None
         else:
             a = str(after).strip()
-            if a and not _is_hhmm(a):
-                a = ""
             j["after"] = a or None
 
         days0 = j.get("days")
@@ -1481,6 +1479,58 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
         out.append(j)
 
     adv["jobs"] = out
+
+    workflows0 = adv.get("workflows")
+    workflows: list[dict[str, Any]] = []
+    if isinstance(workflows0, list):
+        for it in workflows0:
+            if isinstance(it, dict):
+                workflows.append(dict(it))
+
+    wf_out: list[dict[str, Any]] = []
+    for i, workflow in enumerate(workflows):
+        wid = str(workflow.get("id") or "").strip() or f"workflow_{i+1}"
+        workflow["id"] = wid
+        workflow["name"] = str(workflow.get("name") or "").strip()
+        wf_mode = str(workflow.get("mode") or "hourly").strip().lower()
+        if wf_mode not in {"hourly", "every_n_hours", "daily_time", "custom_interval"}:
+            wf_mode = "hourly"
+        workflow["mode"] = wf_mode
+
+        try:
+            wf_hours = int(workflow.get("every_n_hours", 1) or 1)
+        except Exception:
+            wf_hours = 1
+        workflow["every_n_hours"] = max(1, wf_hours)
+
+        wf_time = str(workflow.get("daily_time", "03:30") or "03:30").strip()
+        if not _is_hhmm(wf_time):
+            wf_time = "03:30"
+        workflow["daily_time"] = wf_time
+
+        try:
+            wf_minutes = int(workflow.get("custom_interval_minutes", 60) or 60)
+        except Exception:
+            wf_minutes = 60
+        workflow["custom_interval_minutes"] = max(15, wf_minutes)
+
+        steps0 = workflow.get("steps")
+        steps: list[dict[str, Any]] = []
+        if isinstance(steps0, list):
+            for si, raw_step in enumerate(steps0):
+                if not isinstance(raw_step, dict):
+                    continue
+                step = dict(raw_step)
+                step["id"] = str(step.get("id") or "").strip() or f"step_{si+1}"
+                pair_id = step.get("pair_id")
+                step["pair_id"] = None if pair_id is None else (str(pair_id).strip() or None)
+                step["active"] = bool(step.get("active", True))
+                steps.append(step)
+        workflow["steps"] = steps
+        workflow["active"] = bool(workflow.get("active", True))
+        wf_out.append(workflow)
+
+    adv["workflows"] = wf_out
 
 
 def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
