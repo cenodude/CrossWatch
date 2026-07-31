@@ -61,6 +61,7 @@
   let dragScrollFrame = 0;
   let dragScrollDelta = 0;
   let masonryFrame = 0;
+  let masonryObserver = null;
   let detailCard = null;
   let detailItem = null;
   let detailMeta = null;
@@ -248,7 +249,30 @@
     if (!spans.length) return 1;
     const total = spans.reduce((sum, span) => sum + span, 0);
     const widest = Math.max(...spans);
-    return Math.max(1, Math.min(total, Math.max(maxColumns * UNITS, widest * 2)));
+    const tracks = maxColumns * UNITS;
+    if (spans.length === 1) return Math.max(widest, tracks);
+    return Math.max(1, Math.min(total, Math.max(tracks, widest * 2)));
+  }
+
+  function assignWidgetColumns(cols, singleColumn) {
+    let used = 0;
+    for (const widget of orderedWidgets(true)) {
+      const node = widgetNode(widget.key);
+      if (!node) continue;
+      if (singleColumn || node.classList.contains("hidden")) {
+        node.style.gridColumn = "";
+        continue;
+      }
+      if (node.dataset.widgetSize === "large") {
+        node.style.gridColumn = "";
+        used = 0;
+        continue;
+      }
+      const span = Math.min(node.dataset.widgetSpan === "2" ? WIDE_UNITS : UNITS, cols);
+      if (used + span > cols) used = 0;
+      node.style.gridColumn = `${used + 1} / span ${span}`;
+      used = (used + span) % cols;
+    }
   }
 
   function updateMasonry() {
@@ -257,10 +281,13 @@
     if (!card || card.classList.contains("hidden")) return;
     const singleColumn = window.matchMedia?.("(max-width: 1180px)")?.matches;
     const maxColumns = singleColumn ? 1 : window.matchMedia?.("(max-width: 1280px)")?.matches ? 2 : 3;
-    card.style.setProperty("--cw-widget-cols", String(widgetColumnCount(maxColumns)));
+    const cols = widgetColumnCount(maxColumns);
+    card.style.setProperty("--cw-widget-cols", String(cols));
+    assignWidgetColumns(cols, singleColumn);
     const styles = getComputedStyle(card);
-    const row = Number.parseFloat(styles.getPropertyValue("--cw-widget-masonry-row")) || 8;
-    const gap = Number.parseFloat(styles.rowGap || styles.gap) || 14;
+    const row = Number.parseFloat(styles.getPropertyValue("--cw-widget-masonry-row")) || 1;
+    const rowGap = Number.parseFloat(styles.rowGap) || 0;
+    const gutter = Number.parseFloat(styles.columnGap) || 14;
     for (const widget of WIDGETS) {
       const node = widgetNode(widget.key);
       if (!node) continue;
@@ -270,8 +297,15 @@
       }
       node.style.gridRowEnd = "span 1";
       const height = node.getBoundingClientRect().height;
-      node.style.gridRowEnd = `span ${Math.max(1, Math.ceil((height + gap) / (row + gap)))}`;
+      node.style.gridRowEnd = `span ${Math.max(1, Math.ceil((height + gutter) / (row + rowGap)))}`;
     }
+  }
+
+  function observeWidgetHeight(node) {
+    if (!node || node.__cwMasonryObserved || typeof ResizeObserver !== "function") return;
+    masonryObserver = masonryObserver || new ResizeObserver(() => scheduleMasonry());
+    masonryObserver.observe(node);
+    node.__cwMasonryObserved = true;
   }
 
   function scheduleMasonry() {
@@ -565,6 +599,7 @@
       const node = widgetNode(widget.key);
       if (!node) continue;
       node.dataset.widgetKey = widget.key;
+      observeWidgetHeight(node);
       if (!node.querySelector(".cw-dash-layout-controls")) {
         node.appendChild(createWidgetControls(widget.key, widget.label));
       }

@@ -32,7 +32,7 @@
 
   async function openProviderConnection(key, instance = "default") {
     const prov = up(key);
-    if (!prov || prov === "CROSSWATCH") return;
+    if (!prov) return;
     if (typeof meta.sectionId === "function" && !meta.sectionId(prov)) return;
     try { localStorage.setItem(`cw.ui.${prov.toLowerCase()}.auth.instance.v1`, txt(instance) || "default"); } catch {}
     try {
@@ -251,20 +251,24 @@
       case "PLEX":
         return {
           vip: !!(data?.plexpass || data?.subscription?.plan),
-          detail: data?.subscription?.plan ? `Plex Pass - ${data.subscription.plan}` : "",
+          detail: data?.subscription?.plan ? `Plan: ${titleCase(data.subscription.plan)}` : (data?.plexpass ? "Plan: Plex Pass" : ""),
         };
       case "TRAKT":
-        return { vip: !!data?.vip, detail: data?.vip ? "VIP status" : "Free account" };
+        return { vip: !!data?.vip, detail: data?.vip ? "Plan: VIP" : "Plan: Free" };
       case "SIMKL": {
         const plan = txt(data?.account_type || data?.plan_type || data?.account?.type).toLowerCase();
         const premium = plan === "pro" || plan === "vip";
         const label = plan ? (plan === "vip" ? "VIP" : titleCase(plan)) : "";
-        return { vip: premium, detail: label ? `SIMKL plan: ${label}` : "" };
+        return { vip: premium, detail: label ? `Plan: ${label}` : "" };
       }
       case "EMBY":
-        return { vip: !!data?.premiere, detail: data?.premiere ? "Premiere active" : "" };
-      case "MDBLIST":
-        return { vip: !!data?.vip, detail: "" };
+        return { vip: !!data?.premiere, detail: data?.premiere ? "Plan: Premiere" : "" };
+      case "MDBLIST": {
+        const plan = txt(data?.vip_type || data?.patron_status || (data?.vip ? "VIP" : ""));
+        return { vip: !!data?.vip, detail: plan ? `Plan: ${titleCase(plan.replace(/^active[_ -]/i, ""))}` : "" };
+      }
+      case "CROSSWATCH":
+        return { vip: true, detail: ["Plan: VIP", txt(data?.vip_text) || "You've earned it"].join("\n") };
       default:
         return { vip: false, detail: "" };
     }

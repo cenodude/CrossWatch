@@ -48,6 +48,7 @@ STATUS_TTL = int(os.environ.get("CW_STATUS_TTL", "60"))
 PROBE_TTL = int(os.environ.get("CW_PROBE_TTL", "15"))
 USERINFO_TTL = int(os.environ.get("CW_USERINFO_TTL", "600"))
 PROVIDERS: tuple[str, ...] = (
+    "crosswatch",
     "plex",
     "simkl",
     "trakt",
@@ -130,6 +131,8 @@ PROBE_CFG_KEY: dict[str, str] = {
     "NUVIO": "nuvio",
     "KODI": "kodi",
     "STREMIO": "stremio",
+    "CROSSWATCH": "crosswatch",
+    "CW": "crosswatch",
 }
 
 _FALLBACK_KEYS: dict[str, tuple[str, ...]] = {
@@ -258,6 +261,15 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         key = str((s.get("auth_key") or s.get("authKey") or "")).strip()
         profile = str(s.get("stremio_profile_id") or "default").strip() or "default"
         return f"stremio|auth:{_secret_cache_tag(key)}|profile:{profile}" if key else "stremio|unconfigured"
+
+    if p == "crosswatch":
+        c = cfg.get("crosswatch") or {}
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        connected = "1" if isinstance(c, Mapping) and c.get("connected") is True else "0"
+        enabled = "0" if isinstance(c, Mapping) and c.get("enabled") is False else "1"
+        root = str((c.get("root_dir") if isinstance(c, Mapping) else "") or "/config/.cw_provider").strip()
+        return f"crosswatch|inst:{inst}|connected:{connected}|enabled:{enabled}|root:{_secret_cache_tag(root)}"
 
     if p == "tautulli":
         t = cfg.get("tautulli") or {}
@@ -1215,6 +1227,31 @@ def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         PROBE_DETAIL_CACHE[key] = (now, True, "")
     return True, ""
 
+
+def _probe_crosswatch_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("crosswatch", cfg)
+    bust_ts = _consume_bust("crosswatch")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    raw = cfg.get("crosswatch") if isinstance(cfg.get("crosswatch"), Mapping) else cfg.get("CrossWatch")
+    if not isinstance(raw, Mapping):
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, "CrossWatch Local Tracker: not configured")
+        return False, "CrossWatch Local Tracker: not configured"
+    cw = raw
+    if cw.get("connected") is not True:
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, "CrossWatch Local Tracker: not connected")
+        return False, "CrossWatch Local Tracker: not connected"
+    ok = not (isinstance(cw, Mapping) and cw.get("enabled") is False)
+    rsn = "" if ok else "CrossWatch Local Tracker: disabled"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
 def plex_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("plex", cfg)
     bust_ts = _consume_bust("plex")
@@ -1539,7 +1576,13 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
 
     # CrossWatch local/virtual provider
     if n in ("CROSSWATCH", "CW"):
-        cw = cfg.get("crosswatch") or cfg.get("CrossWatch") or {}
+        inst = normalize_instance_id(instance_id)
+        raw = cfg.get("crosswatch") if isinstance(cfg.get("crosswatch"), Mapping) else cfg.get("CrossWatch")
+        if not isinstance(raw, Mapping):
+            return False
+        cw = get_provider_block(cfg, "crosswatch", inst) or cfg.get("crosswatch") or cfg.get("CrossWatch") or {}
+        if cw.get("connected") is not True:
+            return False
         enabled = cw.get("enabled")
         return bool(enabled) if isinstance(enabled, bool) else True
 
@@ -1653,6 +1696,7 @@ def connected_status(cfg: dict[str, Any]) -> tuple[bool, bool, bool, bool, bool,
 
 # Mappings
 DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
+    "CROSSWATCH": _probe_crosswatch_detail,
     "PLEX": _probe_plex_detail,
     "SIMKL": _probe_simkl_detail,
     "TRAKT": _probe_trakt_detail,
@@ -1809,6 +1853,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 insts = configured_instances.get(prov) or set()
                 if not insts:
                     return set()
+                if prov == "CROSSWATCH":
+                    return set(insts)
                 used = {
                     inst
                     for inst in (used_instances.get(prov) or set())
@@ -1906,6 +1952,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             emby_ok, emby_reason, cfg_emby = _provider_tuple("EMBY")
             kodi_ok, kodi_reason, cfg_kodi = _provider_tuple("KODI")
             tmdb_ok, tmdb_reason, cfg_tmdb = _provider_tuple("TMDB")
+            crosswatch_ok, crosswatch_reason, cfg_crosswatch = _provider_tuple("CROSSWATCH")
             mdbl_ok, mdbl_reason, cfg_mdbl = _provider_tuple("MDBLIST")
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
@@ -2013,6 +2060,20 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "connected": plex_ok,
                     **({} if plex_ok else {"reason": plex_reason}),
                     **({} if not info_plex else {"plexpass": bool(info_plex.get("plexpass")), "subscription": info_plex.get("subscription") or {}}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+            if "CROSSWATCH" in active_providers:
+                inst_map, inst_sum = _instances_payload("CROSSWATCH")
+                cw_block = (cfg_crosswatch.get("crosswatch") or {}) if isinstance(cfg_crosswatch.get("crosswatch"), Mapping) else {}
+                providers_out["CROSSWATCH"] = {
+                    "connected": crosswatch_ok,
+                    **({} if crosswatch_ok else {"reason": crosswatch_reason}),
+                    "vip": True,
+                    "vip_type": "crown",
+                    "vip_text": "You've earned it",
+                    **({"root_dir": cw_block.get("root_dir")} if cw_block.get("root_dir") else {}),
                     "instances": inst_map,
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
@@ -2212,6 +2273,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "emby_connected": emby_ok,
                 "kodi_connected": kodi_ok,
                 "tmdb_connected": tmdb_ok,
+                "crosswatch_connected": crosswatch_ok,
                 "mdblist_connected": mdbl_ok,
                 "publicmetadb_connected": publicmetadb_ok,
                 "nuvio_connected": nuvio_ok,
