@@ -24,6 +24,7 @@ from ._common import (
     make_logger,
     pair_scoped,
     scoped_file,
+    state_file_for_read,
 )
 
 _dbg, _info, _warn, _error = make_logger("ratings")
@@ -93,7 +94,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         except Exception:
             return None
 
-    raw = _read_json(path)
+    read_path = state_file_for_read(root, "ratings", path)
+    raw = _read_json(read_path)
     if raw is None:
         alt = latest_state_file(root, "ratings")
         if alt and alt != path:

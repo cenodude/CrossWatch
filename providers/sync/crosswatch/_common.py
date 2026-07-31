@@ -115,6 +115,27 @@ def latest_state_file(root: Path, stem: str) -> Path | None:
         return candidates[-1]
 
 
+def state_file_for_read(root: Path, stem: str, scoped: Path) -> Path:
+    if not pair_scoped():
+        return scoped
+
+    src = str(os.getenv("CW_PAIR_SRC") or "").strip().upper()
+    if src != "CROSSWATCH":
+        return scoped
+
+    latest = latest_state_file(root, stem)
+    if latest is None or latest == scoped:
+        return scoped
+    if not scoped.exists():
+        return latest
+    try:
+        if latest.stat().st_mtime_ns > scoped.stat().st_mtime_ns:
+            return latest
+    except Exception:
+        pass
+    return scoped
+
+
 def latest_snapshot_file(root: Path, feature: str) -> Path | None:
     snaps = root / "snapshots"
     if not snaps.exists() or not snaps.is_dir():
