@@ -3,8 +3,9 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-  const logo = (v) => ({ plex: "/assets/img/PLEX.svg", jellyfin: "/assets/img/JELLYFIN.svg", emby: "/assets/img/EMBY.svg", kodi: "/assets/img/KODI.png", trakt: "/assets/img/TRAKT.svg", simkl: "/assets/img/SIMKL.svg", mdblist: "/assets/img/MDBLIST.svg" }[String(v || "").toLowerCase()] || "");
+  const providerMeta = () => w.CW?.ProviderMeta || {};
+  const label = (v) => providerMeta().label?.(v) || String(v || "").toUpperCase();
+  const logo = (v) => providerMeta().logoPath?.(v) || "";
   const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0, hybridDismissed: false };
 
   async function j(url, options = {}) {

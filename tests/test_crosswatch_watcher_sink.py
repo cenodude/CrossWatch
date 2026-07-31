@@ -125,6 +125,7 @@ def test_crosswatch_watcher_sink_writes_progress_and_history(monkeypatch, tmp_pa
 
 def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:
     text = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8")
+    scrobbler = (ROOT / "assets" / "js" / "scrobbler.js").read_text("utf-8")
     css = (ROOT / "assets" / "css" / "providers.css").read_text("utf-8")
     meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8")
 
@@ -133,5 +134,7 @@ def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:
     assert 'crosswatch: "/assets/img/CROSSWATCH.svg"' in text
     assert ".scrm-provider-card.provider-crosswatch" in css
     assert ".scrm-provider-card.provider-crosswatch::after{background-image:url(/assets/img/CROSSWATCH.svg)}" in css
+    assert "providerMeta().logoPath?.(v)" in scrobbler
+    assert 'mdblist: "/assets/img/MDBLIST.svg"' not in scrobbler
     assert "CROSSWATCH:" in meta
     assert "scrobblerSink: true" in meta
