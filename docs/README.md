@@ -7,7 +7,7 @@
     <img class="cw-logo" src="images/CrossWatch.png" alt="CrossWatch">
     <p class="cw-kicker">Media sync hub</p>
     <h1>CrossWatch</h1>
-    <p class="cw-lede">Keep Plex, Jellyfin, Emby, Kodi and your trackers moving together from one local web UI.</p>
+    <p class="cw-lede">Keep your media servers, media clients and trackers moving together from one local web UI.</p>
     <div class="cw-actions" aria-label="CrossWatch links">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
       <a class="cw-button" href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">View screenshots</a>
@@ -37,7 +37,7 @@
     <p class="cw-kicker">One control room</p>
     <h2>Your media state, kept in sync.</h2>
   </div>
-  <p>CrossWatch/CW links accounts, profiles, sync pairs, schedules, snapshots, scrobbling routes and repair tools into one local dashboard. Run it for yourself, then create separate profiles for family, friends, servers or tracker setups.</p>
+  <p>CrossWatch (CW) links accounts, profiles, sync pairs, schedules, snapshots, scrobbling routes and repair tools into one local dashboard. Run it for yourself, then create separate profiles for family, friends, servers or tracker setups.</p>
 </section>
 
 <section class="cw-provider-wall" aria-label="Supported services">
@@ -65,6 +65,12 @@
     <span>Media client</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-stremio">
+    <img class="cw-provider-mark" src="images/providers/STREMIO.png" alt="" aria-hidden="true">
+    <strong>Stremio</strong>
+    <span>Media client</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-trakt">
     <img class="cw-provider-mark" src="images/providers/TRAKT.svg" alt="" aria-hidden="true">
     <strong>Trakt</strong>
@@ -80,6 +86,12 @@
   <article class="cw-provider-card is-mdblist">
     <img class="cw-provider-mark" src="images/providers/MDBLIST.svg" alt="" aria-hidden="true">
     <strong>MDBList</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-floppy">
+    <img class="cw-provider-mark" src="images/providers/FLOPPY.png" alt="" aria-hidden="true">
+    <strong>Floppy</strong>
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>

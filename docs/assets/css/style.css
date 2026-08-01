@@ -371,7 +371,9 @@ a[href="#content"],
 .cw-provider-card.is-emby,
 .cw-provider-card.is-trakt,
 .cw-provider-card.is-simkl,
+.cw-provider-card.is-floppy,
 .cw-provider-card.is-anilist,
+.cw-provider-card.is-stremio,
 .cw-provider-card.is-nuvio {
   border-color: rgba(239, 111, 214, .24);
 }
@@ -386,6 +388,14 @@ a[href="#content"],
   height: 210px;
   right: -44px;
   bottom: -62px;
+  opacity: .18;
+}
+
+.cw-provider-card.is-floppy .cw-provider-mark {
+  width: 190px;
+  height: 190px;
+  right: -32px;
+  bottom: -52px;
   opacity: .18;
 }
 
