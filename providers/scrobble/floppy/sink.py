@@ -53,17 +53,6 @@ def _clamp(value: Any) -> float:
     return max(0.0, min(100.0, raw))
 
 
-def _watched_at(cfg: Mapping[str, Any]) -> float:
-    try:
-        sc = cfg.get("scrobble") if isinstance(cfg, Mapping) else {}
-        value = ((sc or {}).get("floppy") or {}).get("watched_at")
-        if value is None:
-            value = ((sc or {}).get("trakt") or {}).get("watched_at", 90.0)
-        return max(0.0, min(100.0, float(value)))
-    except Exception:
-        return 90.0
-
-
 def _route_source(cfg: Mapping[str, Any]) -> tuple[str, str]:
     watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, Mapping) else {}
     source = str(watch.get("route_provider") or "watcher").strip().lower() or "watcher"
@@ -71,27 +60,27 @@ def _route_source(cfg: Mapping[str, Any]) -> tuple[str, str]:
     return source, source_instance
 
 
-def _find_int(raw: Any, keys: set[str]) -> int | None:
+def _find_int(raw: Any, keys: set[str], *, positive: bool = False) -> int | None:
     if isinstance(raw, Mapping):
         for key, value in raw.items():
             if str(key or "").strip().lower() in keys:
                 found = _int(value)
-                if found is not None and found >= 0:
+                if found is not None and found >= (1 if positive else 0):
                     return found
         for value in raw.values():
-            found = _find_int(value, keys)
+            found = _find_int(value, keys, positive=positive)
             if found is not None:
                 return found
     if isinstance(raw, list):
         for value in raw:
-            found = _find_int(value, keys)
+            found = _find_int(value, keys, positive=positive)
             if found is not None:
                 return found
     return None
 
 
 def _duration_ms(raw: Any) -> int | None:
-    value = _find_int(raw, {"duration", "duration_ms", "durationms", "runtime_ms", "totaltime"})
+    value = _find_int(raw, {"duration", "duration_ms", "durationms", "runtime_ms", "totaltime"}, positive=True)
     if value is None or value <= 0:
         return None
     return value * 1000 if value < 10_000 else value
@@ -106,6 +95,16 @@ def _position_ms(raw: Any, progress: float, duration_ms: int | None) -> int | No
     if duration_ms and duration_ms > 10_000 and 0 < value < 10_000:
         value *= 1000
     return max(0, min(value, duration_ms)) if duration_ms else max(0, value)
+
+
+def _completed(position_ms: int | None, duration_ms: int | None, progress: float) -> bool | None:
+    if position_ms is None:
+        return None
+    if duration_ms and duration_ms > 0:
+        position = max(0, round(position_ms / 1000.0))
+        duration = max(1, round(duration_ms / 1000.0))
+        return position >= max(0, duration - 30)
+    return progress >= 95.0
 
 
 def _ids(ev: ScrobbleEvent) -> dict[str, str]:
@@ -124,7 +123,7 @@ def _ids(ev: ScrobbleEvent) -> dict[str, str]:
     return out
 
 
-def _payload(ev: ScrobbleEvent, cfg: Mapping[str, Any]) -> dict[str, Any] | None:
+def _payload(ev: ScrobbleEvent) -> dict[str, Any] | None:
     progress = _clamp(ev.progress)
     ids = _ids(ev)
     if not ids:
@@ -143,14 +142,18 @@ def _payload(ev: ScrobbleEvent, cfg: Mapping[str, Any]) -> dict[str, Any] | None
         body["series_title"] = ev.title
         body["season_number"] = season
         body["episode_number"] = episode
-    duration = _duration_ms(ev.raw)
-    position = _position_ms(ev.raw, progress, duration)
+    duration = _int(getattr(ev, "duration_ms", None)) or _duration_ms(ev.raw)
+    position = _int(getattr(ev, "position_ms", None))
+    if position is None:
+        position = _position_ms(ev.raw, progress, duration)
     if duration:
         body["duration_seconds"] = max(1, round(duration / 1000.0))
     if position is not None:
         body["position_seconds"] = max(0, round(position / 1000.0))
     if body["action"] == "stop":
-        body["completed"] = progress >= _watched_at(cfg)
+        complete = _completed(position, duration, progress)
+        if complete is not None:
+            body["completed"] = complete
         body["played_at"] = utc_now_iso()
     return {k: v for k, v in body.items() if v not in (None, "", {}, [])}
 
@@ -199,7 +202,7 @@ class FloppySink(ScrobbleSink):
         if not is_configured(view):
             _log(f"Floppy disabled for sink profile {self._instance_id}; skipping", "WARNING")
             return
-        body = _payload(ev, cfgd)
+        body = _payload(ev)
         if not body:
             _log("Floppy sink skipped event without enough identity", "DEBUG")
             return

@@ -312,6 +312,11 @@ class KodiWatchService:
 
     def _event(self, session: Mapping[str, Any], action: str, progress: float, props: Mapping[str, Any]) -> ScrobbleEvent:
         meta = _dict(session.get("meta"))
+        duration_ms = _to_int(session.get("duration_ms"))
+        position_seconds = _time_parts_to_seconds(_dict(props).get("time"))
+        position_ms = int(position_seconds * 1000) if position_seconds is not None else None
+        if position_ms is None and duration_ms and duration_ms > 0:
+            position_ms = round((float(progress or 0.0) / 100.0) * float(duration_ms))
         raw = {
             "provider": "kodi",
             "provider_instance": self._instance_id,
@@ -336,6 +341,8 @@ class KodiWatchService:
             server_uuid=session.get("server_uuid"),
             session_key=str(session.get("session_key") or ""),
             raw=raw,
+            position_ms=position_ms,
+            duration_ms=duration_ms if duration_ms and duration_ms > 0 else None,
         )
 
     def _tvshow_details(self, tvshow_id: int) -> dict[str, Any] | None:

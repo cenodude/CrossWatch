@@ -182,7 +182,8 @@ def _tmdb_enrich(cfg: Mapping[str, Any], *, media_type: str, ids: Mapping[str, A
 def _item_from_event(ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float) -> dict[str, Any] | None:
     now = utc_now_iso()
     media_type = "episode" if ev.media_type == "episode" else "movie"
-    duration_ms = _best_duration_ms(ev.raw)
+    duration_ms = _int(getattr(ev, "duration_ms", None)) or _best_duration_ms(ev.raw)
+    position_ms = _int(getattr(ev, "position_ms", None))
 
     if media_type == "movie":
         ids = _ids_for_movie(ev)
@@ -223,7 +224,7 @@ def _item_from_event(ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float)
 
     if duration_ms and duration_ms > 0:
         item["duration_ms"] = duration_ms
-        item["progress_ms"] = max(0, min(duration_ms, round((progress / 100.0) * float(duration_ms))))
+        item["progress_ms"] = max(0, min(duration_ms, position_ms if position_ms is not None else round((progress / 100.0) * float(duration_ms))))
     return {k: v for k, v in item.items() if v not in (None, "", {}, [])}
 
 

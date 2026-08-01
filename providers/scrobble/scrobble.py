@@ -184,6 +184,8 @@ class ScrobbleEvent:
     server_uuid: str | None
     session_key: str | None
     raw: dict[str, Any]
+    position_ms: int | None = None
+    duration_ms: int | None = None
 
 
 class ScrobbleSink(Protocol):

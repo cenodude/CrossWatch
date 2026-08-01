@@ -806,6 +806,8 @@ class EmbyWatchService:
         year = item.get("ProductionYear")
         season = item.get("ParentIndexNumber") if mtype == "episode" else None
         number = item.get("IndexNumber") if mtype == "episode" else None
+        duration_ms = _ticks_to_ms(item.get("RunTimeTicks"))
+        position_ms = _ticks_to_ms(_ps.get("PositionTicks") if isinstance(_ps, dict) else None)
 
         mt: MediaType = "episode" if mtype == "episode" else "movie"
         act = "start" if action == "playing" else "pause" if action == "paused" else "stop"
@@ -823,6 +825,8 @@ class EmbyWatchService:
             server_uuid=self._server_id,
             session_key=str(sess.get("Id") or ""),
             raw=sess,
+            position_ms=position_ms,
+            duration_ms=duration_ms,
         )
 
     def _current_sessions(self, cfg: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -1186,6 +1190,9 @@ class EmbyWatchService:
                 mt: MediaType = "episode" if mt_raw == "episode" else "movie"
 
                 ids_stop = _normalize_ids(dict(meta.get("ids") or {}))
+                best_offset = self._best_offset.get(sid)
+                position_ms = int(best_offset[0]) if best_offset and best_offset[0] is not None else None
+                duration_ms = int(best_offset[1]) if best_offset and best_offset[1] is not None and best_offset[1] > 0 else None
 
                 ev = ScrobbleEvent(
                     action="stop",
@@ -1200,6 +1207,8 @@ class EmbyWatchService:
                     server_uuid=self._server_id,
                     session_key=sid,
                     raw=fake,
+                    position_ms=position_ms,
+                    duration_ms=duration_ms,
                 )
                 last_em = self._last_emit.get(sid)
                 if not (last_em and last_em[0] == "stop"):
