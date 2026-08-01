@@ -9,7 +9,8 @@ from cw_platform.provider_instances import get_provider_block, normalize_instanc
 
 DEFAULT_INSTANCE_ID = "default"
 ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
-ROUTE_SINKS = {"trakt", "simkl", "mdblist", "crosswatch"}
+ROUTE_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy"}
+ROUTE_RATING_SINKS = {"trakt", "simkl", "mdblist"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_RANGES = {
@@ -73,7 +74,7 @@ def normalize_route_options(options: Any) -> dict[str, Any]:
     seen: set[str] = set()
     for item in targets_in:
         target = str(item or "").strip().lower()
-        if not target or target not in ROUTE_SINKS or target in seen:
+        if not target or target not in ROUTE_RATING_SINKS or target in seen:
             continue
         seen.add(target)
         targets.append(target)
@@ -217,7 +218,7 @@ def build_route_cfg(cfg: dict[str, Any], route: dict[str, Any]) -> dict[str, Any
     rating_targets = ratings.get("targets") if isinstance(ratings, dict) else []
     for target in rating_targets if isinstance(rating_targets, list) else []:
         target_key = str(target or "").strip().lower()
-        if target_key in ROUTE_SINKS:
+        if target_key in ROUTE_RATING_SINKS:
             out[target_key] = _provider_view(out, target_key, r["sink_instance"])
 
     w["filters"] = _deep_clone(r.get("filters") or {})

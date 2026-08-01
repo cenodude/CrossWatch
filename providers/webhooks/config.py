@@ -9,12 +9,13 @@ from typing import Any
 
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
-_SINKS = {"trakt", "simkl", "mdblist", "crosswatch"}
+_SINKS = {"trakt", "simkl", "mdblist", "crosswatch", "floppy"}
 
 _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "trakt": ("access_token",),
     "simkl": ("access_token",),
     "mdblist": ("api_key", "access_token"),
+    "floppy": ("server_url", "api_token"),
 }
 
 _MEDIA_CREDENTIALS: dict[str, tuple[str, ...]] = {
