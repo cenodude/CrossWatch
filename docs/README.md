@@ -177,7 +177,7 @@
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
-    <p>Route play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL or MDBList without needing Plex Pass or Emby Premiere.</p>
+    <p>Route Watcher play events from Plex, Emby, Jellyfin and Kodi to Trakt, SIMKL, MDBList, Floppy or the CW local tracker. Webhooks support Plex, Emby and Jellyfin to Trakt, SIMKL or MDBList, without needing Plex Pass or Emby Premiere.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>
@@ -210,7 +210,7 @@
   <div>
     <span>03</span>
     <strong>Automate</strong>
-    <p>Run manually, schedule jobs or listen live.</p>
+    <p>Run manually, schedule jobs, or trigger with Watcher and/or webhooks.</p>
   </div>
   <div>
     <span>04</span>

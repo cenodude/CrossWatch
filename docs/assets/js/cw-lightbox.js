@@ -86,10 +86,14 @@
         lastFocus = document.activeElement;
         restoreOverflow = document.body.style.overflow || "";
         document.body.style.overflow = "hidden";
+        document.documentElement.classList.add("cw-lb-open");
+        document.body.classList.add("cw-lb-open");
         ui.classList.add("is-open");
         btnClose.focus();
       } else {
         ui.classList.remove("is-open");
+        document.documentElement.classList.remove("cw-lb-open");
+        document.body.classList.remove("cw-lb-open");
         document.body.style.overflow = restoreOverflow;
         if (lastFocus && typeof lastFocus.focus === "function") lastFocus.focus();
       }
