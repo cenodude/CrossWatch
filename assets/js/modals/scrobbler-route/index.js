@@ -173,6 +173,8 @@ function duplicateRoute(r) {
 }
 
 function logo(provider) {
+  const shared = window.CW?.ProviderMeta?.logoPath?.(provider);
+  if (shared) return shared;
   return ({
     plex: "/assets/img/PLEX.svg",
     jellyfin: "/assets/img/JELLYFIN.svg",
@@ -182,6 +184,7 @@ function logo(provider) {
     simkl: "/assets/img/SIMKL.svg",
     mdblist: "/assets/img/MDBLIST.svg",
     crosswatch: "/assets/img/CROSSWATCH.svg",
+    floppy: "/assets/img/FLOPPY.png",
   }[String(provider || "").toLowerCase()] || "");
 }
 
