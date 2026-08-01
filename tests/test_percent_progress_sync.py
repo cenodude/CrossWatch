@@ -116,6 +116,50 @@ def test_crosswatch_progress_accepts_percent_only_items(tmp_path: Path, monkeypa
     assert index["tmdb:69478#s06e02"]["progress_percent"] == 21.0
 
 
+def test_plex_progress_keeps_resume_item_with_view_count(monkeypatch) -> None:
+    from providers.sync.plex import _progress
+
+    class Element:
+        def __init__(self, attrib: dict[str, Any], children: list[Any] | None = None) -> None:
+            self.attrib = attrib
+            self._children = children or []
+
+        def __iter__(self):
+            return iter(self._children)
+
+        def findall(self, _path: str):
+            return []
+
+    class Server:
+        def query(self, path: str, params: dict[str, Any] | None = None):
+            if path == "/library/sections":
+                return Element({}, [Element({"key": "3", "type": "show"})])
+            return Element(
+                {"totalSize": "1"},
+                [
+                    Element(
+                        {
+                            "ratingKey": "25517",
+                            "type": "episode",
+                            "title": "Pilot",
+                            "grandparentTitle": "Shelter",
+                            "year": "2023",
+                            "parentIndex": "1",
+                            "index": "1",
+                            "viewOffset": "1159000",
+                            "viewCount": "1",
+                            "duration": "3403296",
+                        }
+                    )
+                ],
+            )
+
+    rows = _progress._fetch_resume_items(Server(), page_size=150, allowed_library_ids={"3"})
+
+    assert "25517" in rows
+    assert rows["25517"][0]["viewOffset"] == "1159000"
+
+
 class _ProgressStateStore:
     def load_state(self) -> dict[str, Any]:
         return {}

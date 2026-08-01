@@ -301,7 +301,7 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
         series_title = _first_str(row.get("series_title")) if media_type in {"episode", "anime_episode"} else ""
         show_ids = clean_mapping(row.get("show_ids") if isinstance(row.get("show_ids"), Mapping) else {})
         if media_type in {"episode", "anime_episode"}:
-            show_ids = _resolve_with_metadata(metadata_provider, entity="tv", title=series_title or title, year=None, ids=show_ids)
+            show_ids = _resolve_with_metadata(metadata_provider, entity="tv", title=series_title or title, year=row.get("year"), ids=show_ids)
         else:
             ids = _resolve_with_metadata(metadata_provider, entity="movie", title=title, year=row.get("year"), ids=ids)
         progress_ms = _int(row.get("progress_ms") or row.get("viewOffset") or row.get("view_offset"))

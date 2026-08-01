@@ -16,6 +16,7 @@ from services.playback_progress.service import (
 from services.playback_progress.models import PlaybackCapabilities
 from services.playback_progress.adapters.base import PlaybackProgressAdapter
 import services.playback_progress.service as playback_service
+import services.playback_progress.adapters.floppy as floppy_playback_adapter
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
 import services.playback_progress.adapters.stremio as stremio_playback_adapter
 from services.playback_progress.adapters.crosswatch import CrossWatchPlaybackAdapter
@@ -72,7 +73,7 @@ def test_playback_bulk_footer_uses_wide_management_layout():
 def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
-    assert 'const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio"];' in js
+    assert 'const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"];' in js
 
 
 class _PolicyOps:
@@ -220,6 +221,45 @@ def test_same_episode_profiles_share_only_artwork_metadata():
     assert profile["ids"]["tmdb_show"] == "69478"
     assert profile["poster_url"] == donor["poster_url"]
     assert profile["backdrop_url"] == donor["backdrop_url"]
+
+
+def test_media_server_episode_metadata_resolution_passes_show_year():
+    from services.playback_progress.adapters.media_servers import PlexPlaybackAdapter
+
+    class FakeMetadata:
+        def __init__(self):
+            self.calls = []
+
+        def fetch(self, *, entity, ids, locale=None, need=None):
+            self.calls.append({"entity": entity, "ids": dict(ids)})
+            return {"ids": {"tmdb": "210787", "tvdb": "421123"}}
+
+    adapter = PlexPlaybackAdapter()
+    metadata = FakeMetadata()
+    caps = PlaybackCapabilities("plex", "Plex", "P01", "P01", True, True, True, True, True, True, True, True, True, True, False)
+    record = adapter._normalize(
+        "plex:25515#s01e02",
+        {
+            "type": "episode",
+            "title": "Pak me als je kan",
+            "series_title": "Shelter",
+            "year": 2023,
+            "season": 1,
+            "episode": 2,
+            "ids": {"tmdb": "4524138"},
+            "show_ids": {"plex": "25515"},
+            "progress_ms": 1119000,
+            "duration_ms": 2675904,
+        },
+        metadata,
+        "P01",
+        "Plex P01",
+        caps,
+    )
+
+    assert metadata.calls[0] == {"entity": "tv", "ids": {"plex": "25515", "title": "Shelter", "year": "2023"}}
+    assert record is not None
+    assert record.provider_metadata["show_ids"]["tmdb"] == "210787"
 
 
 def test_unscoped_live_stream_only_updates_default_profile():
@@ -925,6 +965,105 @@ def test_stremio_playback_progress_update_allows_percent_only(monkeypatch):
     assert stremio_ops.added[0][0] == "progress"
     assert stremio_ops.added[0][1][0]["progress_percent"] == 10.63
     assert "progress_ms" not in stremio_ops.added[0][1][0]
+
+
+class _FakeFloppyOps:
+    def __init__(self):
+        self.removed = []
+        self.added = []
+
+    def capabilities(self):
+        return {
+            "progress": {"read": True, "upsert": True, "remove": True, "types": {"movies": True, "episodes": True}},
+            "history": {"upsert": True},
+        }
+
+    def is_configured(self, cfg):
+        return bool(cfg.get("floppy", {}).get("server_url") and cfg.get("floppy", {}).get("api_token"))
+
+    def build_index(self, cfg, *, feature):
+        assert feature == "progress"
+        return {
+            "tmdb:22#s01e02": {
+                "type": "episode",
+                "show_ids": {"tmdb": "22"},
+                "series_title": "Show",
+                "title": "Episode",
+                "season": 1,
+                "episode": 2,
+                "progress_ms": 120000,
+                "duration_ms": 600000,
+                "progress_at": "2026-08-01T12:00:00Z",
+            }
+        }
+
+    def remove(self, cfg, items, *, feature, dry_run=False):
+        self.removed.extend(items)
+        return {"ok": True, "count": len(items), "feature": feature}
+
+    def add(self, cfg, items, *, feature, dry_run=False):
+        self.added.append((feature, list(items)))
+        return {"ok": True, "count": len(items), "feature": feature}
+
+
+def test_playback_progress_uses_floppy_adapter(monkeypatch):
+    floppy_ops = _FakeFloppyOps()
+    cfg = {"floppy": {"server_url": "http://floppy.local", "api_token": "secret"}}
+
+    monkeypatch.setattr(floppy_playback_adapter, "FLOPPY_OPS", floppy_ops)
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    service = PlaybackProgressService()
+    providers = service.provider_instances(cfg)
+    result = service.items(provider="floppy", force_refresh=True)
+    record = result["items"][0]
+
+    assert {"provider": "floppy", "instance_id": "default", "instance_label": "Floppy Default"} in providers
+    assert result["errors"] == []
+    assert record["provider"] == "floppy"
+    assert record["progress_percent"] == 20.0
+
+    service.remove({"provider": "floppy", "instance_id": "default", "record": record})
+    service.mark_watched({"provider": "floppy", "instance_id": "default", "record": record})
+    service.update_progress({"provider": "floppy", "instance_id": "default", "record": record, "progress_percent": 25})
+
+    assert floppy_ops.removed[0]["show_ids"] == {"tmdb": "22"}
+    assert floppy_ops.added[0][0] == "history"
+    assert floppy_ops.added[1][0] == "progress"
+    assert floppy_ops.added[1][1][0]["progress_ms"] == 150000
+
+
+def test_playback_progress_lists_floppy_position_without_duration(monkeypatch):
+    class PositionOnlyFloppyOps(_FakeFloppyOps):
+        def build_index(self, cfg, *, feature):
+            assert feature == "progress"
+            return {
+                "tmdb:223300#s01e03": {
+                    "type": "episode",
+                    "show_ids": {"tmdb": "223300"},
+                    "series_title": "The Abandons",
+                    "title": "Triage",
+                    "season": 1,
+                    "episode": 3,
+                    "progress_ms": 749000,
+                    "progress_at": "2026-08-01T18:48:14Z",
+                }
+            }
+
+    cfg = {"floppy": {"server_url": "http://floppy.local", "api_token": "secret"}}
+
+    monkeypatch.setattr(floppy_playback_adapter, "FLOPPY_OPS", PositionOnlyFloppyOps())
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+
+    result = PlaybackProgressService().items(provider="floppy", force_refresh=True)
+    record = result["items"][0]
+
+    assert result["errors"] == []
+    assert record["provider"] == "floppy"
+    assert record["title"] == "The Abandons"
+    assert record["progress_percent"] is None
+    assert record["duration_seconds"] is None
+    assert record["can_update_progress"] is False
 
 
 def test_nuvio_playback_progress_enriches_episode_metadata_from_tvdb_id(monkeypatch):
