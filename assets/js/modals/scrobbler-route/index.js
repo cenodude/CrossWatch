@@ -1,8 +1,9 @@
 /* CrossWatch - Scrobbler Route Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi"];
-const sinks = ["crosswatch", "trakt", "simkl", "mdblist"];
+const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy"];
+const ratingSinks = ["trakt", "simkl", "mdblist"];
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -87,8 +88,8 @@ function sinkProviders(selected = "") {
 }
 
 function ratingSinkProviders(selected = []) {
-  const available = sinkProviders();
-  const selectedList = [...selected].map((x) => String(x || "").toLowerCase()).filter((x) => sinks.includes(x));
+  const available = sinkProviders().filter((x) => ratingSinks.includes(x));
+  const selectedList = [...selected].map((x) => String(x || "").toLowerCase()).filter((x) => ratingSinks.includes(x));
   return [...selectedList.filter((x) => !available.includes(x)), ...available];
 }
 

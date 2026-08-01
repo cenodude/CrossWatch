@@ -162,6 +162,10 @@ def _make_sink(name: str, cfg_provider: Callable[[], dict[str, Any]], instance_i
         from providers.scrobble.crosswatch.sink import CrossWatchSink
 
         cls = CrossWatchSink
+    elif sink == "floppy":
+        from providers.scrobble.floppy.sink import FloppySink
+
+        cls = FloppySink
     else:
         raise ValueError(f"Unknown sink: {sink}")
 

@@ -120,7 +120,7 @@
               <div class="sc2-route-flow-wrap">
                 <div class="sc2-route-endpoint">${providerLogo(x.provider)}<div><strong>${esc(label(x.provider))}</strong><span>${esc(webhookProfileName(x))}</span></div></div>
                 <div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>
-                <div class="sc2-route-endpoint">${providerLogo(x.sink)}<div><strong>${esc(label(x.sink))}</strong><span>${esc(instanceName(x.sink_instance))}</span></div></div>
+                <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(x.sink))}</strong><span>${esc(instanceName(x.sink_instance))}</span></div>${providerLogo(x.sink)}</div>
               </div>
               <div class="sc2-route-meta">
                 <span class="sc2-route-type"><span class="material-symbols-rounded">webhook</span>Webhook</span>
@@ -158,7 +158,7 @@
               <div class="sc2-route-flow-wrap">
                 <div class="sc2-route-endpoint">${providerLogo(r.provider)}<div><strong>${esc(label(r.provider))}</strong><span>${esc(instanceName(r.provider_instance))}</span></div></div>
                 <div class="sc2-rt-conn"><span class="sc2-rt-conn-line"></span></div>
-                <div class="sc2-route-endpoint">${providerLogo(r.sink)}<div><strong>${esc(label(r.sink))}</strong><span>${esc(instanceName(r.sink_instance))}</span></div></div>
+                <div class="sc2-route-endpoint sc2-route-endpoint-sink"><div><strong>${esc(label(r.sink))}</strong><span>${esc(instanceName(r.sink_instance))}</span></div>${providerLogo(r.sink)}</div>
               </div>
               <div class="sc2-route-meta">
                 <span class="sc2-route-type"><span class="material-symbols-rounded">sensors</span>Watcher</span>
