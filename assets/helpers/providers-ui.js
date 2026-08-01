@@ -529,7 +529,7 @@
       provider: "floppy", logo: "FLOPPY", help: window.CW.HelpLinks.url("floppy"), deleteSelector: "#floppy_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect your Floppy server"] },
       copy: { auth: ["Floppy Authentication", "Connect Floppy with server URL and API token."] },
-      journey: ["Connect to Floppy", "Create an API token in Floppy Settings > Advanced, then connect your self-hosted server. Sync features are not enabled yet.", "245,101,30", "4,181,220", "FLOPPY"],
+    journey: ["Connect to Floppy", "Create an API token in Floppy Settings > Integrations, then connect your self-hosted server.", "245,101,30", "4,181,220", "FLOPPY"],
       steps: [["1", "Create token", "Generate a token in Floppy"], ["2", "Enter server", "Add your Floppy server URL"], ["3", "Validate access", "CrossWatch confirms the token works"]],
       order: [".grid2", ".verify", "#floppy_actions_row"],
       actions: [{ row: "#floppy_actions_row", status: "#floppy_msg", buttons: "#floppy_connect" }]
