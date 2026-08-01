@@ -42,6 +42,8 @@ if (typeof window._detLastSeq === "undefined") window._detLastSeq = 0;
 if (typeof window._debugLastSeq === "undefined") window._debugLastSeq = 0;
 if (typeof window._detailsDropped === "undefined") window._detailsDropped = { sync: 0, watcher: 0, debug: 0 };
 if (typeof window._detailsStatusRAF === "undefined") window._detailsStatusRAF = null;
+if (typeof window._detailsOpenRAF === "undefined") window._detailsOpenRAF = null;
+if (typeof window._detailsOpenTO === "undefined") window._detailsOpenTO = null;
 
 function _activeDetailsLogEl() {
   if (window._detailsTab === "watcher") return document.getElementById("det-watch-log");
@@ -1036,11 +1038,27 @@ function toggleDetails() {
   const isOpen = d.classList.contains("hidden");
   const layout = document.getElementById("layout");
 
+  if (window._detailsOpenRAF) {
+    cancelAnimationFrame(window._detailsOpenRAF);
+    window._detailsOpenRAF = null;
+  }
+  if (window._detailsOpenTO) {
+    clearTimeout(window._detailsOpenTO);
+    window._detailsOpenTO = null;
+  }
+
   d.classList.toggle("hidden", !isOpen);
   layout?.classList.toggle("details-open", isOpen);
   if (isOpen) {
-    try { initDetailsTabs(); } catch {}
-    try { setDetailsTab(window._detailsTab || "sync"); } catch {}
+    window._detailsOpenRAF = requestAnimationFrame(() => {
+      window._detailsOpenRAF = null;
+      window._detailsOpenTO = setTimeout(() => {
+        window._detailsOpenTO = null;
+        if (!_detailsVisible()) return;
+        try { initDetailsTabs(); } catch {}
+        try { setDetailsTab(window._detailsTab || "sync"); } catch {}
+      }, 0);
+    });
   } else {
     closeDetailsLog();
   }

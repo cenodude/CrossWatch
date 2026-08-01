@@ -982,6 +982,16 @@
   async function showTab(name) {
     const tab = normalizeRouteTab(name);
     writeRouteHash(tab);
+
+    if (state.currentTab === tab) {
+      if (tab === "settings") {
+        const pane = normalizeSettingsPane(window.__cwSettingsPane || readRouteHash().pane || "overview");
+        window.__cwSettingsPane = pane;
+        setTimeout(() => window.cwSettingsSelect?.(pane), 0);
+      }
+      return;
+    }
+
     setTabHeaderState(tab);
     setPageVisibility(tab);
     document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab, tab } }));
