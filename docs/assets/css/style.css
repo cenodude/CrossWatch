@@ -658,6 +658,11 @@ a[href="#content"],
   display: block;
 }
 
+html.cw-lb-open,
+body.cw-lb-open {
+  overflow: hidden;
+}
+
 .cw-lb__backdrop {
   position: absolute;
   inset: 0;
@@ -669,7 +674,7 @@ a[href="#content"],
   position: absolute;
   inset: 4vh 4vw;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   border: 1px solid var(--cw-line-strong);
   border-radius: 8px;
   background: rgba(9, 12, 18, .9);
@@ -706,11 +711,19 @@ a[href="#content"],
   display: grid;
   place-items: center;
   padding: 14px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .cw-lb__img {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
+  object-fit: contain;
   border-radius: 8px;
   border: 1px solid var(--cw-line);
   box-shadow: 0 18px 60px rgba(0, 0, 0, .55);
@@ -753,12 +766,17 @@ a[href="#content"],
   display: flex;
   gap: 10px;
   padding: 12px 14px;
-  overflow: auto;
+  min-height: 82px;
+  max-height: 82px;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-top: 1px solid var(--cw-line);
   background: rgba(0, 0, 0, .2);
+  scrollbar-width: thin;
 }
 
 .cw-lb__thumbs img {
+  flex: 0 0 auto;
   width: 90px;
   height: 56px;
   object-fit: cover;
