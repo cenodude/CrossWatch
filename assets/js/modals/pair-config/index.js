@@ -32,6 +32,7 @@ const isJelly=(v)=>same(v,"jellyfin");
 const isTrakt=(v)=>same(v,"trakt");
 const isMDBList=(v)=>same(v,"mdblist");
 const isPublicMetaDB=(v)=>same(v,"publicmetadb");
+const isFloppy=(v)=>same(v,"floppy");
 const isStremio=(v)=>same(v,"stremio");
 const isPlex = (v) => same(v, "plex");
 const isKodi = (v) => same(v, "kodi");
@@ -46,6 +47,7 @@ function hasJelly(state){return isJelly(state?.src)||isJelly(state?.dst)}
 function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
+function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
 const isAniList=(v)=>same(v,"anilist");
 function hasAniList(state){return isAniList(state?.src)||isAniList(state?.dst)}
@@ -585,7 +587,7 @@ function renderProviderSelects(state){
     if(isMedia(name)) return "Media server";
     if(isKodi(name)) return "Media client";
     if(isCrossWatch(name)) return "Tracker";
-    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"tautulli")) return "Tracker";
+    if(isTrakt(name)||isSimkl(name)||same(name,"mdblist")||same(name,"publicmetadb")||same(name,"floppy")||same(name,"tautulli")) return "Tracker";
     if(same(name,"tmdb")||same(name,"anilist")) return "Metadata";
     return "Provider";
   };
@@ -702,6 +704,7 @@ function applySubDisable(feature){
       "#plx-wl-pms","#plx-wl-limit","#plx-wl-delay","#plx-wl-title","#plx-wl-meta","#plx-wl-guid",
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
+      "#cx-floppy-wl-name",
       "#cx-wl-q","#cx-wl-delay","#cx-wl-guid",
       "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze"
     ],
@@ -1053,6 +1056,8 @@ function renderFeaturePanel(state){
     const jfw = state.jellyfin?.watchlist || { mode: "favorites", playlist_name: "Watchlist" };
     const pmw = state.pairProviders?.publicmetadb || {};
     const pmwName = (pmw.watchlist_name || state.cfgRaw?.publicmetadb?.watchlist_name || "Watchlist");
+    const floppyw = state.pairProviders?.floppy || {};
+    const floppyName = (floppyw.watchlist_name || state.cfgRaw?.floppy?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
     const showAnime = hasAniList(state);
     const canAnimeOnly = anilistCanReceive(state);
@@ -1133,6 +1138,16 @@ function renderFeaturePanel(state){
           <div class="opt-row" style="grid-column:1/-1">
             <label for="cx-pmdb-wl-name">List name</label>
             <input id="cx-pmdb-wl-name" class="input" type="text" value="${pmwName}" placeholder="Watchlist">
+          </div>
+        </div>
+      `:""}
+
+      ${hasFloppy(state)?`
+        <div class="panel-title small" style="margin-top:6px">Floppy specifics</div>
+        <div class="grid2 compact">
+          <div class="opt-row" style="grid-column:1/-1">
+            <label for="cx-floppy-wl-name">List name</label>
+            <input id="cx-floppy-wl-name" class="input" type="text" value="${floppyName}" placeholder="Watchlist">
           </div>
         </div>
       `:""}
@@ -2061,6 +2076,13 @@ function bindChangeHandlers(state,root){
       state.pairProviders.publicmetadb=pm;
     }
 
+    if(id==="cx-floppy-wl-name"){
+      state.pairProviders=state.pairProviders||{};
+      const fp=Object.assign({},state.pairProviders.floppy||{});
+      fp.watchlist_name=(ID("cx-floppy-wl-name")?.value||"").trim()||"Watchlist";
+      state.pairProviders.floppy=fp;
+    }
+
     if (/^(plx-|jf-|em-)/.test(id)) {
       refreshProviderCardSummaries(state);
     }
@@ -2384,6 +2406,7 @@ function buildPayload(state,wrap){
   const useEm=(String(src).toUpperCase()==="EMBY"||String(dst).toUpperCase()==="EMBY");
   const useTr=(String(src).toUpperCase()==="TRAKT"||String(dst).toUpperCase()==="TRAKT");
   const usePmdb=(String(src).toUpperCase()==="PUBLICMETADB"||String(dst).toUpperCase()==="PUBLICMETADB");
+  const useFloppy=(String(src).toUpperCase()==="FLOPPY"||String(dst).toUpperCase()==="FLOPPY");
   if(usePlex) prov.plex={strict_id_matching:getPairProviderStrictValue(state, "plex")};
   if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin")};
   if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
@@ -2391,6 +2414,11 @@ function buildPayload(state,wrap){
     const pmSrc=pp.publicmetadb||{};
     const name=(ID("cx-pmdb-wl-name")?.value||pmSrc.watchlist_name||state.cfgRaw?.publicmetadb?.watchlist_name||"Watchlist").trim()||"Watchlist";
     prov.publicmetadb=Object.assign({},pmSrc,{watchlist_name:name});
+  }
+  if(useFloppy){
+    const fpSrc=pp.floppy||{};
+    const name=(ID("cx-floppy-wl-name")?.value||fpSrc.watchlist_name||state.cfgRaw?.floppy?.watchlist_name||"Watchlist").trim()||"Watchlist";
+    prov.floppy=Object.assign({},fpSrc,{watchlist_name:name});
   }
   if(useTr){
     const trSrc=pp.trakt||{};
