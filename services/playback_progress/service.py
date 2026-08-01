@@ -20,6 +20,7 @@ from cw_platform.provider_instances import build_provider_config_view, get_insta
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
 from .adapters.crosswatch import CrossWatchPlaybackAdapter
+from .adapters.floppy import FloppyPlaybackAdapter
 from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter, KodiPlaybackAdapter, PlexPlaybackAdapter
 from .adapters.mdblist import MDBListPlaybackAdapter
 from .adapters.nuvio import NuvioPlaybackAdapter
@@ -35,7 +36,7 @@ CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
 GROUP_PROGRESS_TOLERANCE = 2.0
-PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio")
+PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
 LIVE_MEDIA_PROVIDERS = {"plex", "emby", "jellyfin", "kodi"}
 LIVE_ACTIVE_STATES = {"playing", "paused", "buffering"}
@@ -412,23 +413,44 @@ def _show_ids_for_artwork(item: Mapping[str, Any]) -> dict[str, Any]:
             if not _blank_scalar(value):
                 show_ids[target] = value
                 break
-    if _group_text(item.get("media_type") or item.get("type")) in {"episode", "anime_episode"}:
-        match = CANONICAL_TMDB_RE.match(str(item.get("canonical_key") or "").strip())
-        if match and _blank_scalar(show_ids.get("tmdb")):
-            show_ids["tmdb"] = match.group(1)
     return clean_mapping(show_ids)
+
+
+def _artwork_identity_keys(item: Mapping[str, Any]) -> list[str]:
+    media_type = _group_text(item.get("media_type") or item.get("type"))
+    keys: list[str] = []
+    ids = _as_mapping(item.get("ids"))
+    if media_type == "movie":
+        for provider in ("tmdb", "imdb", "tvdb"):
+            value = ids.get(provider)
+            if not _blank_scalar(value):
+                keys.append(f"movie:{provider}:{_group_text(value)}")
+    elif media_type in {"episode", "anime_episode"}:
+        season = _group_number(item.get("season"))
+        episode = _group_number(item.get("episode"))
+        for provider, value in _show_ids_for_artwork(item).items():
+            if provider in {"tmdb", "imdb", "tvdb"} and not _blank_scalar(value):
+                keys.append(f"episode:{provider}:{_group_text(value)}:{season}:{episode}")
+    fallback = _artwork_identity_key(item)
+    if fallback:
+        keys.append(fallback)
+    return list(dict.fromkeys(keys))
 
 
 def _share_artwork_metadata(items: list[dict[str, Any]]) -> None:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in items:
-        key = _artwork_identity_key(item)
-        if key:
+        for key in _artwork_identity_keys(item):
             grouped.setdefault(key, []).append(item)
 
+    seen_groups: set[tuple[int, ...]] = set()
     for records in grouped.values():
         if len(records) < 2:
             continue
+        group_key = tuple(sorted(id(record) for record in records))
+        if group_key in seen_groups:
+            continue
+        seen_groups.add(group_key)
         shared_show_ids: dict[str, Any] = {}
         poster = ""
         backdrop = ""
@@ -676,6 +698,7 @@ def _instance_label(cfg: Mapping[str, Any], provider: str, instance_id: str) -> 
         "nuvio": "Nuvio",
         "kodi": "Kodi",
         "stremio": "Stremio",
+        "floppy": "Floppy",
         "crosswatch": "CrossWatch",
     }.get(provider, provider)
     if label.lower() == "default":
@@ -734,6 +757,7 @@ def _profile_has_explicit_identity(cfg: Mapping[str, Any], provider: str, instan
         "nuvio": ("access_token", "refresh_token", "profile_id"),
         "kodi": ("server", "server_url", "connection_verified", "username"),
         "stremio": ("auth_key", "authKey"),
+        "floppy": ("server_url", "api_token"),
     }.get(str(provider or "").strip().lower(), ())
     return any(str(_path_value(raw, path) or "").strip() for path in identity_paths)
 
@@ -804,6 +828,7 @@ class PlaybackProgressService:
             "nuvio": NuvioPlaybackAdapter(),
             "kodi": KodiPlaybackAdapter(),
             "stremio": StremioPlaybackAdapter(),
+            "floppy": FloppyPlaybackAdapter(),
             "crosswatch": CrossWatchPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}

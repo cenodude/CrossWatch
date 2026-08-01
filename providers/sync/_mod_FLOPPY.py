@@ -12,6 +12,7 @@ from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_FLOPPY import FloppyAuthError, FloppyClient
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session
 from providers.sync.floppy import _history as feat_history
+from providers.sync.floppy import _progress as feat_progress
 from providers.sync.floppy import _ratings as feat_ratings
 from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
@@ -27,8 +28,8 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": False, "playlists": False}
-_FEATURE_MODULES = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history}
+_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
+_FEATURE_MODULES = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history, "progress": feat_progress}
 
 
 def _rate_limit_settings(block: Mapping[str, Any]) -> dict[str, float]:
@@ -74,7 +75,7 @@ def get_manifest() -> Mapping[str, Any]:
             "watchlist": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "custom_lists": True},
             "ratings": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "scale": "0-10"},
             "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"]},
-            "progress": {"read": False, "write": False},
+            "progress": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": False, "requires_ids": ["tmdb"], "units": "seconds", "completion_policy": {"progress_write": {"mode": "none"}}},
             "playlists": {"read": False, "write": False},
         },
     }

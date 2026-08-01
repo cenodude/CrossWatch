@@ -66,10 +66,11 @@ def test_floppy_capabilities_expose_only_requested_features() -> None:
     features = OPS.features()
     caps = OPS.capabilities()
 
-    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": False, "playlists": False}
+    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False}
     assert caps["watchlist"]["custom_lists"] is True
     assert caps["ratings"]["scale"] == "0-10"
-    assert caps["progress"]["read"] is False
+    assert caps["progress"]["read"] is True
+    assert caps["progress"]["write"] is True
 
 
 def test_floppy_module_uses_shared_rate_limiter() -> None:
@@ -243,6 +244,74 @@ def test_floppy_ratings_zero_is_not_written_as_rating() -> None:
     assert res["count"] == 0
     assert res["skipped"] == 1
     assert adapter.client.session.calls == []
+
+
+def test_floppy_progress_reads_movies_and_episodes() -> None:
+    from providers.sync.floppy import _progress
+
+    adapter = AdapterStub(
+        {
+            ("GET", "playback/progress"): {
+                "results": [
+                    {"media_type": "movie", "source": "tmdb", "media_id": "11", "position_seconds": 120, "duration_seconds": 600, "updated_at": "2026-08-01T12:00:00Z"},
+                    {"media_type": "episode", "ids": {"tmdb": "22"}, "season_number": 1, "episode_number": 2, "position_seconds": 300, "duration_seconds": 3000},
+                ],
+                "count": 2,
+            }
+        }
+    )
+
+    out = _progress.build_index(adapter)
+
+    assert out["tmdb:11"]["progress_ms"] == 120000
+    assert out["tmdb:11"]["progress_percent"] == 20.0
+    assert out["tmdb:22#s01e02"]["duration_ms"] == 3000000
+
+
+def test_floppy_progress_reads_position_without_duration() -> None:
+    from providers.sync.floppy import _progress
+
+    adapter = AdapterStub(
+        {
+            ("GET", "playback/progress"): {
+                "results": [
+                    {"media_type": "episode", "ids": {"tmdb": "1407"}, "season_number": 5, "episode_number": 6, "position_seconds": 1886, "duration_seconds": None, "completed": True},
+                    {"media_type": "episode", "ids": {"tmdb": "223300"}, "season_number": 1, "episode_number": 3, "position_seconds": 749, "duration_seconds": None, "completed": False},
+                    {"media_type": "episode", "ids": {"tmdb": "87917"}, "season_number": 4, "episode_number": 1, "position_seconds": 1456, "duration_seconds": 3000, "completed": False},
+                ],
+                "count": 3,
+            }
+        }
+    )
+
+    out = _progress.build_index(adapter)
+
+    assert "tmdb:1407#s05e06" not in out
+    assert out["tmdb:223300#s01e03"]["progress_ms"] == 749000
+    assert "duration_ms" not in out["tmdb:223300#s01e03"]
+    assert "progress_percent" not in out["tmdb:223300#s01e03"]
+    assert out["tmdb:87917#s04e01"]["progress_percent"] == 48.533
+    assert adapter.client.session.calls[0]["params"]["completed"] == "false"
+
+
+def test_floppy_progress_write_and_clear_use_playback_progress_api() -> None:
+    from providers.sync.floppy import _progress
+
+    adapter = AdapterStub(
+        {
+            ("PUT", "playback/progress"): ResponseStub(204, {}),
+        }
+    )
+    item = {"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2, "progress_ms": 300000, "duration_ms": 3000000}
+
+    add = _progress.add(adapter, [item])
+    remove = _progress.remove(adapter, [item])
+
+    assert add["count"] == 1
+    assert remove["count"] == 1
+    assert adapter.client.session.calls[0]["json"] == {"media_type": "episode", "ids": {"tmdb": "22"}, "season_number": 1, "episode_number": 2, "position_seconds": 300, "duration_seconds": 3000}
+    assert adapter.client.session.calls[1]["method"] == "PUT"
+    assert adapter.client.session.calls[1]["json"] == {"media_type": "episode", "ids": {"tmdb": "22"}, "season_number": 1, "episode_number": 2, "position_seconds": None}
 
 
 def test_floppy_history_reads_movies_and_episodes() -> None:

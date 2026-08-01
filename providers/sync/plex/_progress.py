@@ -321,8 +321,6 @@ def _fetch_resume_items(
                 progress_ms = _to_int(a.get("viewOffset"))
                 if progress_ms is None or progress_ms <= 0:
                     continue
-                if (_to_int(a.get("viewCount")) or 0) > 0:
-                    continue
                 key_id = str(rk)
                 row, ids = _row_with_ids(el, library_id)
                 if key_id in items:
