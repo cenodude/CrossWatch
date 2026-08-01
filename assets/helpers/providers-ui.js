@@ -581,10 +581,10 @@
       actions: [{ row: "#tautulli_actions_row", status: "#tautulli_msg", buttons: "#tautulli_save" }]
     },
     CROSSWATCH: {
-      provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("connection-profiles"), deleteSelector: "#cw_crosswatch_disconnect",
+      provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("crosswatch"), deleteSelector: "#cw_crosswatch_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect local tracker"], settings: ["database", "Settings", "Storage and restore"] },
       copy: { auth: ["CrossWatch Authentication", "Connect this local tracker profile."], settings: ["CrossWatch Local Tracker", "Configure storage and restore snapshots for this tracker profile."] },
-      journey: ["Connect Local Tracker", "Use CrossWatch Local Tracker as a normal sync connection. Create CW-P profiles when you need separate local tracker data while keeping account-level provider credentials and schedules shared.", "124,92,255", "98,194,255", "CROSSWATCH"],
+      journey: ["Connect Local Tracker", "Enable the built-in CrossWatch tracker as a normal connection. Use profiles when you want separate local watchlist, ratings, history or progress data.", "124,92,255", "98,194,255", "CROSSWATCH"],
       steps: [["1", "Choose profile", "Use Default or create CW-P profiles"], ["2", "Connect locally", "Enable the selected profile as a connection"], ["3", "Sync locally", "Use the profile in normal sync pairs"]],
       introSubs: ["auth"],
       order: [".cw-tracker-auth-card", ".cw-tracker-settings-stack"],

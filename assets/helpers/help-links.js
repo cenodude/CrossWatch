@@ -15,6 +15,7 @@
     publicmetadb: "crosswatch/settings/connections/trackers/publicmetadb",
     anilist: "crosswatch/settings/connections/trackers/anilist",
     floppy: "crosswatch/settings/connections/trackers/floppy",
+    crosswatch: "crosswatch/settings/connections/trackers/crosswatch",
     nuvio: "crosswatch/settings/connections/media-clients/nuvio",
     kodi: "crosswatch/settings/connections/media-clients/kodi",
     stremio: "crosswatch/settings/connections/media-clients/stremio",
