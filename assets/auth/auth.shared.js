@@ -75,7 +75,7 @@
   }
 
   const PROVIDER_LABELS = {
-    plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", kodi: "Kodi",
+    plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", kodi: "Kodi", floppy: "Floppy",
     trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", stremio: "Stremio",
   };
 

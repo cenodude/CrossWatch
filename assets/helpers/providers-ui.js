@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "FLOPPY"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI"] },
   ]);
@@ -159,6 +159,7 @@
     if (p === "trakt" || p === "simkl") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token);
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
+    if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
     if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
     if (p === "stremio") return hasConfiguredValue(b.auth_key) || hasConfiguredValue(b.authKey);
@@ -523,6 +524,15 @@
       steps: [["1", "Create API key", "Generate a key in PublicMetaDB"], ["2", "Connect key", "Paste the key and connect"], ["3", "Validate access", "CrossWatch confirms the key works"]],
       order: [".grid2", "#publicmetadb_hint", ".publicmetadb-actions"],
       actions: [{ row: ".publicmetadb-actions", status: "#publicmetadb_msg", buttons: "#publicmetadb_save" }]
+    },
+    FLOPPY: {
+      provider: "floppy", logo: "FLOPPY", help: window.CW.HelpLinks.url("floppy"), deleteSelector: "#floppy_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect your Floppy server"] },
+      copy: { auth: ["Floppy Authentication", "Connect Floppy with server URL and API token."] },
+      journey: ["Connect to Floppy", "Create an API token in Floppy Settings > Advanced, then connect your self-hosted server. Sync features are not enabled yet.", "245,101,30", "4,181,220", "FLOPPY"],
+      steps: [["1", "Create token", "Generate a token in Floppy"], ["2", "Enter server", "Add your Floppy server URL"], ["3", "Validate access", "CrossWatch confirms the token works"]],
+      order: [".grid2", ".verify", "#floppy_actions_row"],
+      actions: [{ row: "#floppy_actions_row", status: "#floppy_msg", buttons: "#floppy_connect" }]
     },
     NUVIO: {
       provider: "nuvio", logo: "NUVIO", help: window.CW.HelpLinks.url("nuvio"), deleteSelector: "#nuvio_disconnect",
@@ -1647,6 +1657,7 @@
 
         window.initMDBListAuthUI?.();
         window.initPublicMetaDBAuthUI?.();
+        window.cwAuth?.floppy?.init?.();
         window.initNuvioAuthUI?.();
         window.initTautulliAuthUI?.();
         window.initAniListAuthUI?.();

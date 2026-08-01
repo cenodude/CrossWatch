@@ -6,7 +6,7 @@ const _cwJSONHeaders = { "Content-Type": "application/json" };
 const _cwSecretIds = [
   "plex_home_pin", "simkl_client_id", "simkl_client_secret",
   "trakt_client_id", "trakt_client_secret", "anilist_client_id", "anilist_client_secret",
-  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key",
+  "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key", "floppy_token",
   "kodi_password"
 ];
 
@@ -291,6 +291,18 @@ function _cwProviderAuthError(provider, code) {
     if (key.startsWith("validation_http_")) return "Tautulli validation failed";
     return "Saving Tautulli failed";
   }
+  if (provider === "floppy") {
+    if (key === "server_url_required") return "Enter Floppy server URL";
+    if (key === "api_token_required") return "Enter your Floppy API token";
+    if (key === "invalid_api_token") return "Invalid Floppy API token";
+    if (key === "validation_timeout") return "Floppy validation timed out";
+    if (key === "unreachable" || key === "validation_failed") return "Could not connect to Floppy";
+    if (key === "invalid_ssl") return "Floppy SSL validation failed";
+    if (key === "validation_bad_response") return "Floppy validation returned an unexpected response";
+    if (key === "server_error") return "Floppy server error";
+    if (key.startsWith("validation_http_")) return "Floppy validation failed";
+    return "Saving Floppy failed";
+  }
   if (provider === "publicmetadb") {
     if (key === "api_key_required") return "Enter your PublicMetaDB API key";
     if (key === "invalid_api_key") return "Invalid PublicMetaDB API key";
@@ -354,6 +366,22 @@ async function _cwValidateTautulliSecret(inst, payload) {
   const body = await _cwReadBody(resp);
   if (!resp?.ok || body?.ok === false) {
     _cwAbortSave(_cwProviderAuthError("tautulli", body?.error || body?.detail || `http_${resp?.status || 0}`));
+  }
+}
+
+async function _cwValidateFloppySecret(inst, payload) {
+  const server = _cwNorm(payload?.server_url);
+  const token = _cwNorm(payload?.api_token);
+  if (!server && !token && typeof payload?.verify_ssl !== "boolean") return;
+  const url = `/api/floppy/save?instance=${encodeURIComponent(_cwNormInst(inst))}`;
+  const resp = await _cwRequest(url, {
+    method: "POST",
+    headers: _cwJSONHeaders,
+    body: JSON.stringify(payload || {})
+  }, 15000);
+  const body = await _cwReadBody(resp);
+  if (!resp?.ok || body?.ok === false) {
+    _cwAbortSave(_cwProviderAuthError("floppy", body?.error || body?.detail || `http_${resp?.status || 0}`));
   }
 }
 
@@ -679,7 +707,8 @@ async function saveSettings() {
         mdblist: _cwInstBlock(serverCfg?.mdblist, _cwSelectedInst("mdblist")),
         publicmetadb: _cwInstBlock(serverCfg?.publicmetadb, _cwSelectedInst("publicmetadb")),
         tmdb_sync: _cwInstBlock(serverCfg?.tmdb_sync, _cwSelectedInst("tmdb_sync", "cw.ui.tmdb_sync.auth.instance.v1")),
-        kodi: _cwInstBlock(serverCfg?.kodi, _cwSelectedInst("kodi", "cw.ui.kodi.auth.instance.v1"))
+        kodi: _cwInstBlock(serverCfg?.kodi, _cwSelectedInst("kodi", "cw.ui.kodi.auth.instance.v1")),
+        floppy: _cwInstBlock(serverCfg?.floppy, _cwSelectedInst("floppy", "cw.ui.floppy.auth.instance.v1"))
       };
       const publicmetadbInst = _cwSelectedInst("publicmetadb");
       const publicmetadbKey = _cwReadSecret("publicmetadb_key", _cwNorm(secrets.publicmetadb?.api_key));
@@ -728,6 +757,30 @@ async function saveSettings() {
           ttarget.history = ttarget.history && typeof ttarget.history === "object" ? ttarget.history : {};
           ttarget.history.user_id = tautulliUser;
         }
+        mark();
+      }
+
+      const floppyInst = _cwSelectedInst("floppy", "cw.ui.floppy.auth.instance.v1");
+      const floppyPrev = _cwInstBlock(serverCfg?.floppy, floppyInst);
+      const floppyServer = _cwNorm(_cwEl("floppy_server")?.value || "");
+      const floppyToken = _cwReadSecret("floppy_token", _cwNorm(floppyPrev?.api_token));
+      const floppyVerifyEl = _cwEl("floppy_verify_ssl");
+      const floppyVerify = floppyVerifyEl ? !!floppyVerifyEl.checked : floppyPrev?.verify_ssl === true;
+      const floppyServerChanged = !!floppyServer && floppyServer !== _cwNorm(floppyPrev?.server_url);
+      const floppyVerifyChanged = !!floppyVerifyEl && floppyVerify !== (floppyPrev?.verify_ssl === true);
+      const floppyPayload = {};
+      if (floppyServer) floppyPayload.server_url = floppyServer;
+      if (floppyToken.changed && floppyToken.set) floppyPayload.api_token = floppyToken.set;
+      if (floppyVerifyEl) floppyPayload.verify_ssl = floppyVerify;
+      if (floppyServerChanged || (floppyToken.changed && floppyToken.set) || floppyVerifyChanged) {
+        await _cwValidateFloppySecret(floppyInst, floppyPayload);
+      }
+      if (floppyServerChanged || floppyToken.changed || floppyVerifyChanged) {
+        cfg.floppy = cfg.floppy && typeof cfg.floppy === "object" ? cfg.floppy : {};
+        const ftarget = _cwEnsureInstBlock(cfg.floppy, floppyInst);
+        if (floppyServer) ftarget.server_url = floppyServer;
+        if (floppyToken.changed) _cwApplySecret(ftarget, "api_token", floppyToken);
+        if (floppyVerifyEl) ftarget.verify_ssl = floppyVerify;
         mark();
       }
     } catch (e) {
