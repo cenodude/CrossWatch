@@ -10,6 +10,7 @@ const RATINGS_TYPE_RULES = {
   TMDB: { disable: ["seasons"] },
   ANILIST: { disable: ["seasons", "episodes"] },
   STREMIO: { disable: ["seasons", "episodes"] },
+  FLOPPY: { disable: ["seasons", "episodes"] },
 };
 
 export function ratingsDisabledForPair(state) {

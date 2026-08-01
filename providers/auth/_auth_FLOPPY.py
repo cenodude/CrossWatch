@@ -119,7 +119,7 @@ class FloppyAuth(AuthProvider):
         )
 
     def capabilities(self) -> dict[str, Any]:
-        return {"watchlist": False, "ratings": False, "history": False, "progress": False, "playlists": False}
+        return {"watchlist": True, "ratings": True, "history": True, "progress": False, "playlists": False}
 
     def get_status(self, cfg: Mapping[str, Any], *, instance_id: Any = None) -> AuthStatus:
         return status_for_block(_block(cfg, normalize_instance_id(instance_id)), instance_id=instance_id)

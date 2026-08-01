@@ -369,6 +369,11 @@ DEFAULT_CFG: dict[str, Any] = {
         "api_token": "",                                # Floppy API token from Settings > Advanced
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 12.0,                                # HTTP timeout (seconds)
+        "watchlist_name": "Watchlist",
+        "rate_limit": {
+            "get_per_sec": 20,
+            "post_per_sec": 20,
+        },
     },
 
     "playback_progress": {
@@ -625,6 +630,7 @@ DEFAULT_CFG: dict[str, Any] = {
             "PLEX": 500,
             "JELLYFIN": 500,
             "EMBY": 500,
+            "FLOPPY": 500,
             "STREMIO": 500,
             "NUVIO": 500,
             "KODI": 500
@@ -1374,6 +1380,48 @@ def _normalize_stremio(cfg: dict[str, Any]) -> None:
                 _block(inst)
 
 
+def _normalize_floppy(cfg: dict[str, Any]) -> None:
+    f0 = cfg.get("floppy")
+    if isinstance(f0, dict):
+        f = f0
+    else:
+        f = {}
+        cfg["floppy"] = f
+    insts = f.get("instances") if isinstance(f.get("instances"), dict) else None
+
+    def _block(block: dict[str, Any]) -> None:
+        block["server_url"] = str(block.get("server_url") or "").strip().rstrip("/")
+        block["api_token"] = str(block.get("api_token") or "").strip()
+        block["verify_ssl"] = bool(block.get("verify_ssl", False))
+        try:
+            timeout = float(block.get("timeout", 12.0) or 12.0)
+        except Exception:
+            timeout = 12.0
+        block["timeout"] = max(1.0, min(timeout, 120.0))
+        block["watchlist_name"] = str(block.get("watchlist_name") or "Watchlist").strip() or "Watchlist"
+        rl0 = block.get("rate_limit") if isinstance(block.get("rate_limit"), dict) else {}
+        rl = dict(rl0 or {})
+        def _rate(key: str, default: float) -> float:
+            try:
+                value = float(rl.get(key, default))
+            except Exception:
+                value = default
+            return max(0.0, min(value, 100.0))
+        get_rps = _rate("get_per_sec", 20.0)
+        post_rps = _rate("post_per_sec", 20.0)
+        block["rate_limit"] = {
+            "get_per_sec": int(get_rps) if float(get_rps).is_integer() else get_rps,
+            "post_per_sec": int(post_rps) if float(post_rps).is_integer() else post_rps,
+        }
+
+    _block(f)
+    if isinstance(insts, dict):
+        f["instances"] = insts
+        for inst in insts.values():
+            if isinstance(inst, dict):
+                _block(inst)
+
+
 def _is_hhmm(v: str) -> bool:
     s = (v or "").strip()
     if len(s) != 5 or s[2] != ":":
@@ -1859,6 +1907,7 @@ def load_config() -> dict[str, Any]:
     _normalize_publicmetadb(cfg)
     _normalize_nuvio(cfg)
     _normalize_stremio(cfg)
+    _normalize_floppy(cfg)
     _normalize_anime_mapping(cfg)
     _normalize_scheduling(cfg)
     _normalize_app_auth(cfg)
@@ -1912,6 +1961,7 @@ def save_config(cfg: dict[str, Any]) -> None:
     _normalize_publicmetadb(data)
     _normalize_nuvio(data)
     _normalize_stremio(data)
+    _normalize_floppy(data)
     _normalize_anime_mapping(data)
     _normalize_scheduling(data)
     _normalize_app_auth(data)

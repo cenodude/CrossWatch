@@ -1732,6 +1732,29 @@ def clear_provider_features(
                 percent=_progress_percent(index, len(feature_list) or 1, 0.96),
             )
 
+        hook = getattr(adapter, "cleanup_after_features", None)
+        if callable(hook):
+            _capture_progress_update(
+                progress_id,
+                stage="finalizing",
+                message="Finalizing provider cleanup...",
+                current_feature="cleanup",
+                items_done=total_removed,
+                total_items=total_removed,
+                percent=98,
+            )
+            try:
+                with _capture_mode_env(pid=pid, instance=inst, feat="cleanup"):
+                    extra = hook(feature_list) or {}
+                if isinstance(extra, Mapping) and extra:
+                    extra_removed = int(extra.get("removed") or extra.get("count") or 0)
+                    total_removed += extra_removed
+                    done["results"]["tracked_media"] = dict(extra)
+                    done["ok"] = done["ok"] and bool(extra.get("ok", True))
+            except Exception as e:
+                done["ok"] = False
+                done["results"]["tracked_media"] = {"ok": False, "removed": 0, "count": 0, "errors": [str(e)]}
+
         _capture_progress_done(
             progress_id,
             result={
