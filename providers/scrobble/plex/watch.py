@@ -1178,6 +1178,8 @@ class WatchService:
                     self._update_best_offset(sk, int(o), int(d))
                 if pct != ev.progress:
                     ev = ScrobbleEvent(**{**ev.__dict__, "progress": pct})
+            if o is not None or d is not None:
+                ev = ScrobbleEvent(**{**ev.__dict__, "position_ms": int(o) if o is not None else None, "duration_ms": int(d) if d is not None and d > 0 else None})
 
             if sk and sk not in self._first_seen:
                 self._first_seen[sk] = time.time()

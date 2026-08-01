@@ -124,7 +124,7 @@ def test_floppy_sink_sends_completed_episode_stop(monkeypatch: Any) -> None:
     monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *args, **kwargs: activities.append(kwargs))
     monkeypatch.setattr(floppy_sink, "utc_now_iso", lambda: "2026-08-01T12:00:00Z")
 
-    FloppySink(cfg_provider=_cfg).send(_episode())
+    FloppySink(cfg_provider=_cfg).send(_episode(progress=99.5))
 
     body = calls[0]["body"]
     assert body["action"] == "stop"
@@ -133,11 +133,73 @@ def test_floppy_sink_sends_completed_episode_stop(monkeypatch: Any) -> None:
     assert body["series_title"] == "Love & Death"
     assert body["season_number"] == 1
     assert body["episode_number"] == 7
-    assert body["position_seconds"] == 2760
+    assert body["position_seconds"] == 2985
     assert body["duration_seconds"] == 3000
     assert body["completed"] is True
     assert body["played_at"] == "2026-08-01T12:00:00Z"
     assert activities[0]["target"] == "floppy"
+
+
+def test_floppy_sink_sends_completed_false_for_resume_stop(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda _adapter, path, **kwargs: calls.append({"path": path, "body": kwargs.get("json")}) or {"detail": "ok"})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(floppy_sink, "utc_now_iso", lambda: "2026-08-01T12:00:00Z")
+
+    FloppySink(cfg_provider=_cfg).send(_episode(progress=68.0))
+
+    body = calls[0]["body"]
+    assert body["action"] == "stop"
+    assert body["position_seconds"] == 2040
+    assert body["completed"] is False
+
+
+def test_floppy_sink_does_not_let_floppy_fallback_complete_resume_without_duration(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda _adapter, path, **kwargs: calls.append({"path": path, "body": kwargs.get("json")}) or {"detail": "ok"})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(floppy_sink, "utc_now_iso", lambda: "2026-08-01T12:00:00Z")
+
+    ev = ScrobbleEvent(**{**_episode(progress=53.0).__dict__, "raw": {"viewOffset": 1886000}})
+
+    FloppySink(cfg_provider=_cfg).send(ev)
+
+    body = calls[0]["body"]
+    assert body["position_seconds"] == 1886
+    assert body["completed"] is False
+    assert "duration_seconds" not in body
+
+
+def test_floppy_sink_prefers_normalized_event_timing(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda _adapter, path, **kwargs: calls.append({"path": path, "body": kwargs.get("json")}) or {"detail": "ok"})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(floppy_sink, "utc_now_iso", lambda: "2026-08-01T12:00:00Z")
+
+    ev = ScrobbleEvent(**{**_episode(progress=31.0).__dict__, "raw": {"viewOffset": 749000}, "position_ms": 749000, "duration_ms": 2416000})
+
+    FloppySink(cfg_provider=_cfg).send(ev)
+
+    body = calls[0]["body"]
+    assert body["position_seconds"] == 749
+    assert body["duration_seconds"] == 2416
+    assert body["completed"] is False
+
+
+def test_floppy_sink_uses_nested_duration_when_raw_has_zero_first(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda _adapter, path, **kwargs: calls.append({"path": path, "body": kwargs.get("json")}) or {"detail": "ok"})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(floppy_sink, "utc_now_iso", lambda: "2026-08-01T12:00:00Z")
+
+    ev = ScrobbleEvent(**{**_episode(progress=68.0).__dict__, "raw": {"duration": 0, "MediaContainer": {"Metadata": [{"duration": 3000000, "viewOffset": 2040000}]}}})
+
+    FloppySink(cfg_provider=_cfg).send(ev)
+
+    body = calls[0]["body"]
+    assert body["duration_seconds"] == 3000
+    assert body["position_seconds"] == 2040
+    assert body["completed"] is False
 
 
 def test_scrobbler_route_modal_lists_floppy_sink() -> None:
