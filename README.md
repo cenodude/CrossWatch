@@ -1,5 +1,4 @@
-<img width="1672" height="941" alt="CW-image (1)" src="https://github.com/user-attachments/assets/e481fb6a-bc71-4f04-85c4-7c1012c6c84e" />
-
+<img width="1672" height="941" alt="image (1)" src="https://github.com/user-attachments/assets/567e8347-580a-4ea2-a239-d304fe08fc7d" />
 
 </center>
 
@@ -40,7 +39,7 @@
 </p>
 
 
-**CrossWatch/CW** is a synchronization engine that keeps your **Plex, Jellyfin, PublicMetaDB, Emby, SIMKL, Trakt, AniList, TMDb, MDBList, Tautulli and Nuvio** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
+**CrossWatch (CW)** is a synchronization engine that keeps your **Plex, Jellyfin, Emby, SIMKL, Floppy, Trakt, AniList, TMDb, MDBList, PublicMetaDB, Tautulli, Kodi, Nuvio, Stremio and CW local tracker** in sync. It runs locally with a web UI where you link accounts, define sync pairs, run them manually or on a schedule, and review stats and history. CW also includes its own tracker to keep your data safe with snapshots. With Profiles, you can manage separate sync setups for yourself and for friends or family too, with their own servers and/or tracker API's.
 
 ### CW in a nutshell:
 * **One brain for all your media syncs** A single place to configure everything.
@@ -50,8 +49,8 @@
   * Watchlists, Ratings, History and Progress
   * Anime ID mapping (powered AniBridge) for AniList matching across providers.
 * **Scrobble (tracks your activity)**
-  * **Watcher** (Plex/Emby/Jellyfin/Kodi to Trakt/SIMKL/MDBList)
-    * Does not require Plex Pass or Emby Premiere.  
+  * **Watcher** (Plex/Emby/Jellyfin/Kodi to Trakt/SIMKL/MDBList/Floppy/CW)
+    * Does not require Plex Pass or Emby Premiere. Yay!
   * **Webhooks** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
 * **Tools**
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
