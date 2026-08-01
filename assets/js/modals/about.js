@@ -135,18 +135,18 @@ function view(info, mods, logo) {
           </section>
         ` : ""}
         <section class="card">
-          <div class="lede">CrossWatch syncs Plex, Jellyfin, Emby, Nuvio, Kodi, MDBList, AniList, Tautulli, TMDb, SIMKL, PublicMetaDB and Trakt. Keep it behind your network edge and avoid exposing it directly to the internet.</div>
+          <div class="lede">CrossWatch syncs Plex, Jellyfin, Emby, Kodi, Nuvio, Stremio, MDBList, AniList, Floppy, TMDb, SIMKL, PublicMetaDB, Trakt and Tautulli. Keep it behind your network edge and avoid exposing it directly to the internet.</div>
         </section>
         ${_fold("Authentication providers", _providerRows(mods.groups?.AUTH))}
         ${_fold("Synchronization providers", _providerRows(mods.groups?.SYNC))}
         <section class="card">
           <div class="eyebrow">Disclaimer</div>
           <div class="discBody">
-            <div>Independent community project. Not affiliated with, endorsed by, or sponsored by Plex, Emby, Jellyfin, Nuvio, Kodi, Trakt, SIMKL, TMDb, Tautulli, AniList, PublicMetaDB, or MDBList. CrossWatch uses the AniBridge mappings dataset to translate media identifiers between AniList and providers such as TMDB, TVDB, IMDb, MyAnimeList and AniDB.</div>
+            <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, Kodi, Nuvio, Stremio, MDBList, AniList, Floppy, TMDb, SIMKL, PublicMetaDB, Trakt, Tautulli, or their owners. CrossWatch uses the AniBridge mappings dataset for AniList identifier translation.</div>
             <ul>
-              <li>Names, logos, and brands belong to their owners and are used for identification only.</li>
-              <li>Third-party APIs have their own rules. Use them without getting yourself banned.</li>
-              <li>Provided as-is, without any warranties. Backups still beat regret.</li>
+              <li>Names, logos, trademarks, and brands belong to their respective owners and are used for identification only.</li>
+              <li>Third-party APIs and services have their own terms, rate limits, and account policies. Use CrossWatch responsibly and within those rules.</li>
+              <li>CrossWatch is provided as-is, without warranties. Keep backups of any state, tracker, cache, or configuration data you edit.</li>
             </ul>
           </div>
         </section>
