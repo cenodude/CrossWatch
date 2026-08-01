@@ -63,6 +63,7 @@ PROVIDERS: tuple[str, ...] = (
     "nuvio",
     "kodi",
     "stremio",
+    "floppy",
 )
 
 # Caches
@@ -131,6 +132,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "NUVIO": "nuvio",
     "KODI": "kodi",
     "STREMIO": "stremio",
+    "FLOPPY": "floppy",
     "CROSSWATCH": "crosswatch",
     "CW": "crosswatch",
 }
@@ -261,6 +263,12 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         key = str((s.get("auth_key") or s.get("authKey") or "")).strip()
         profile = str(s.get("stremio_profile_id") or "default").strip() or "default"
         return f"stremio|auth:{_secret_cache_tag(key)}|profile:{profile}" if key else "stremio|unconfigured"
+
+    if p == "floppy":
+        f = cfg.get("floppy") or {}
+        base = _norm_url(f.get("server_url") or f.get("server"))
+        key = str((f.get("api_token") or f.get("token") or "")).strip()
+        return f"floppy|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}" if (base and key) else "floppy|unconfigured"
 
     if p == "crosswatch":
         c = cfg.get("crosswatch") or {}
@@ -1169,6 +1177,47 @@ def _probe_stremio_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> 
     return ok, rsn
 
 
+def _probe_floppy_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("floppy", cfg)
+    bust_ts = _consume_bust("floppy")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth import _auth_FLOPPY as floppy
+
+    f: Mapping[str, Any] = (cfg.get("floppy") or {}) if isinstance(cfg.get("floppy"), Mapping) else {}
+    server = floppy.normalize_server_url(f.get("server_url") or f.get("server"))
+    token = str(f.get("api_token") or f.get("token") or "").strip()
+    if not server or not token:
+        rsn = "Floppy: missing server URL or API token"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    ok, reason = floppy.validate_credentials(
+        server,
+        token,
+        timeout=float(f.get("timeout", HTTP_TIMEOUT) or HTTP_TIMEOUT),
+        verify_ssl=bool(f.get("verify_ssl", False)),
+    )
+    rsn = "" if ok else {
+        "server_url_required": "Floppy: missing server URL",
+        "api_token_required": "Floppy: missing API token",
+        "invalid_api_token": "Floppy: invalid API token",
+        "validation_timeout": "Floppy: validation timed out",
+        "unreachable": "Floppy: server unreachable",
+        "invalid_ssl": "Floppy: SSL validation failed",
+        "validation_bad_response": "Floppy: invalid response",
+        "server_error": "Floppy: server error",
+    }.get(str(reason or ""), "Floppy: probe failed")
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("kodi", cfg)
     bust_ts = _consume_bust("kodi")
@@ -1634,6 +1683,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "stremio":
         return _provider_auth().is_configured("stremio", blk)
 
+    if ck == "floppy":
+        return bool(str(blk.get("server_url") or blk.get("server") or "").strip() and str(blk.get("api_token") or blk.get("token") or "").strip())
+
     if ck == "tmdb_sync":
         return bool(str(blk.get("api_key") or "").strip() and str(blk.get("session_id") or "").strip())
 
@@ -1710,6 +1762,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "TAUTULLI": _probe_tautulli_detail,
     "NUVIO": _probe_nuvio_detail,
     "STREMIO": _probe_stremio_detail,
+    "FLOPPY": _probe_floppy_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
@@ -1957,6 +2010,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
+            floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
@@ -2225,6 +2279,19 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "FLOPPY" in active_providers:
+                inst_map, inst_sum = _instances_payload("FLOPPY")
+                f_block = (cfg_floppy.get("floppy") or {}) if isinstance(cfg_floppy.get("floppy"), Mapping) else {}
+                providers_out["FLOPPY"] = {
+                    "connected": floppy_ok,
+                    **({} if floppy_ok else {"reason": floppy_reason}),
+                    "experimental": True,
+                    **({"server_url": f_block.get("server_url")} if f_block.get("server_url") else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
 
 
             def _scope_for(prov: str) -> str:
@@ -2278,6 +2345,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "publicmetadb_connected": publicmetadb_ok,
                 "nuvio_connected": nuvio_ok,
                 "stremio_connected": stremio_ok,
+                "floppy_connected": floppy_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),

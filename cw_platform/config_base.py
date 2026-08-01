@@ -364,6 +364,13 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "floppy": {
+        "server_url": "",                               # http(s)://host:8000
+        "api_token": "",                                # Floppy API token from Settings > Advanced
+        "verify_ssl": False,                            # Verify TLS certificates
+        "timeout": 12.0,                                # HTTP timeout (seconds)
+    },
+
     "playback_progress": {
         "disabled_profiles": [],                        # Provider profiles excluded from Continue Watching, e.g. ["trakt:default"]
         "provider_timeout_seconds": 12.0,               # Max time this screen waits for provider profiles during one refresh
@@ -774,6 +781,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "publicmetadb": {"api_key"},
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
         "stremio": {"auth_key", "authKey"},
+        "floppy": {"api_token"},
         "tautulli": {"api_key"},
         "trakt": {"access_token", "refresh_token", "client_secret"},
         "jellyfin": {"access_token", "api_key", "password"},

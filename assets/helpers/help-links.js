@@ -14,6 +14,7 @@
     mdblist: "crosswatch/settings/connections/trackers/mdblist",
     publicmetadb: "crosswatch/settings/connections/trackers/publicmetadb",
     anilist: "crosswatch/settings/connections/trackers/anilist",
+    floppy: "crosswatch/settings/connections/trackers/floppy",
     nuvio: "crosswatch/settings/connections/media-clients/nuvio",
     kodi: "crosswatch/settings/connections/media-clients/kodi",
     stremio: "crosswatch/settings/connections/media-clients/stremio",

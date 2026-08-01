@@ -2256,6 +2256,86 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "disconnect_failed", "instance": inst}
 
 
+    # FLOPPY
+    @app.post("/api/floppy/save", tags=["auth"])
+    def api_floppy_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_FLOPPY as floppy_auth
+
+        inst = normalize_instance_id(instance)
+        raw = payload or {}
+        server_in = floppy_auth.normalize_server_url(raw.get("server_url") or raw.get("server") or "")
+        token_in = str(raw.get("api_token") or raw.get("token") or "").strip()
+        token_masked = token_in in ("••••••••", "********", "**********") or bool(token_in and set(token_in) <= {"*"})
+
+        cfg = load_config()
+        current = ensure_instance_block(cfg, "floppy", inst)
+        final_server = server_in or floppy_auth.normalize_server_url(current.get("server_url"))
+        final_token = str(current.get("api_token") or "").strip() if token_masked or not token_in else token_in
+        verify_ssl = coerce_bool(raw.get("verify_ssl", current.get("verify_ssl", False)), False)
+
+        if not final_server:
+            return {"ok": False, "error": "server_url_required", "instance": inst}
+        if not final_token:
+            return {"ok": False, "error": "api_token_required", "instance": inst}
+
+        ok, reason = floppy_auth.validate_credentials(
+            final_server,
+            final_token,
+            timeout=float(current.get("timeout", 12.0) or 12.0),
+            verify_ssl=verify_ssl,
+        )
+        if not ok:
+            _safe_log(log_fn, "FLOPPY", f"[FLOPPY] validation failed reason={reason} instance={inst}")
+            return {"ok": False, "error": reason, "instance": inst}
+
+        current["server_url"] = final_server
+        current["api_token"] = final_token
+        current["verify_ssl"] = verify_ssl
+        save_config(cfg)
+        _safe_log(log_fn, "FLOPPY", f"[FLOPPY] saved instance={inst}")
+        if isinstance(probe_cache, dict):
+            probe_cache["floppy"] = (0.0, False)
+        return {"ok": True, "server_url": final_server, "has_token": True, "verify_ssl": verify_ssl, "instance": inst}
+
+    @app.get("/api/floppy/status", tags=["auth"])
+    def api_floppy_status(instance: str | None = Query(None), verify: int | None = Query(None)) -> dict[str, Any]:
+        from providers.auth import _auth_FLOPPY as floppy_auth
+
+        inst = normalize_instance_id(instance)
+        cfg = load_config()
+        f = ensure_instance_block(cfg, "floppy", inst)
+        server = floppy_auth.normalize_server_url(f.get("server_url"))
+        token = str(f.get("api_token") or "").strip()
+        if not server or not token:
+            return {"connected": False, "instance": inst}
+        if not verify:
+            return {"connected": True, "server_url": server, "has_token": True, "verify_ssl": coerce_bool(f.get("verify_ssl", False), False), "instance": inst}
+        ok, reason = floppy_auth.validate_credentials(
+            server,
+            token,
+            timeout=float(f.get("timeout", 12.0) or 12.0),
+            verify_ssl=coerce_bool(f.get("verify_ssl", False), False),
+        )
+        return {"connected": bool(ok), "server_url": server, "has_token": True, "verify_ssl": coerce_bool(f.get("verify_ssl", False), False), "instance": inst, **({} if ok else {"reason": reason})}
+
+    @app.post("/api/floppy/disconnect", tags=["auth"])
+    def api_floppy_disconnect(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            f = ensure_instance_block(cfg, "floppy", inst)
+            f["server_url"] = ""
+            f["api_token"] = ""
+            save_config(cfg)
+            _safe_log(log_fn, "FLOPPY", f"[FLOPPY] disconnected instance={inst}")
+            if isinstance(probe_cache, dict):
+                probe_cache["floppy"] = (0.0, False)
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "FLOPPY", f"[FLOPPY] ERROR disconnect: {e}")
+            return {"ok": False, "error": "disconnect_failed", "instance": inst}
+
+
 
     # TRAKT
     def trakt_request_pin(instance_id: Any) -> dict[str, Any]:
