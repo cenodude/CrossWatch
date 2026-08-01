@@ -41,9 +41,9 @@
 </section>
 
 <section class="cw-provider-wall" aria-label="Supported services">
-  <article class="cw-provider-card is-plex">
-    <img class="cw-provider-mark" src="images/providers/PLEX.svg" alt="" aria-hidden="true">
-    <strong>Plex</strong>
+  <article class="cw-provider-card is-emby">
+    <img class="cw-provider-mark" src="images/providers/EMBY.svg" alt="" aria-hidden="true">
+    <strong>Emby</strong>
     <span>Media server</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
@@ -53,9 +53,9 @@
     <span>Media server</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
-  <article class="cw-provider-card is-emby">
-    <img class="cw-provider-mark" src="images/providers/EMBY.svg" alt="" aria-hidden="true">
-    <strong>Emby</strong>
+  <article class="cw-provider-card is-plex">
+    <img class="cw-provider-mark" src="images/providers/PLEX.svg" alt="" aria-hidden="true">
+    <strong>Plex</strong>
     <span>Media server</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
@@ -65,21 +65,33 @@
     <span>Media client</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-nuvio">
+    <img class="cw-provider-mark" src="images/providers/NUVIO.png" alt="" aria-hidden="true">
+    <strong>Nuvio</strong>
+    <span>Media client</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-stremio">
     <img class="cw-provider-mark" src="images/providers/STREMIO.png" alt="" aria-hidden="true">
     <strong>Stremio</strong>
     <span>Media client</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
-  <article class="cw-provider-card is-trakt">
-    <img class="cw-provider-mark" src="images/providers/TRAKT.svg" alt="" aria-hidden="true">
-    <strong>Trakt</strong>
+  <article class="cw-provider-card is-anilist">
+    <img class="cw-provider-mark" src="images/providers/ANILIST.svg" alt="" aria-hidden="true">
+    <strong>AniList</strong>
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
-  <article class="cw-provider-card is-simkl">
-    <img class="cw-provider-mark" src="images/providers/SIMKL.svg" alt="" aria-hidden="true">
-    <strong>SIMKL</strong>
+  <article class="cw-provider-card is-crosswatch">
+    <img class="cw-provider-mark" src="images/providers/CROSSWATCH.svg" alt="" aria-hidden="true">
+    <strong>CrossWatch</strong>
+    <span>Local tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-floppy">
+    <img class="cw-provider-mark" src="images/providers/FLOPPY.png" alt="" aria-hidden="true">
+    <strong>Floppy</strong>
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
@@ -89,40 +101,34 @@
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
-  <article class="cw-provider-card is-floppy">
-    <img class="cw-provider-mark" src="images/providers/FLOPPY.png" alt="" aria-hidden="true">
-    <strong>Floppy</strong>
+  <article class="cw-provider-card is-publicmetadb">
+    <img class="cw-provider-mark" src="images/providers/PUBLICMETADB.svg" alt="" aria-hidden="true">
+    <strong>PublicMetaDB</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-simkl">
+    <img class="cw-provider-mark" src="images/providers/SIMKL.svg" alt="" aria-hidden="true">
+    <strong>SIMKL</strong>
+    <span>Tracker</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
+  <article class="cw-provider-card is-tautulli">
+    <img class="cw-provider-mark" src="images/providers/TAUTULLI.svg" alt="" aria-hidden="true">
+    <strong>Tautulli</strong>
     <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
   <article class="cw-provider-card is-tmdb">
     <img class="cw-provider-mark" src="images/providers/TMDB.svg" alt="" aria-hidden="true">
     <strong>TMDb</strong>
-    <span>Metadata</span>
+    <span>Tracker and metadata</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
-  <article class="cw-provider-card is-anilist">
-    <img class="cw-provider-mark" src="images/providers/ANILIST.svg" alt="" aria-hidden="true">
-    <strong>AniList</strong>
-    <span>Anime tracker</span>
-    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
-  </article>
-  <article class="cw-provider-card is-publicmetadb">
-    <img class="cw-provider-mark" src="images/providers/PUBLICMETADB.svg" alt="" aria-hidden="true">
-    <strong>PublicMetaDB</strong>
-    <span>Ratings and metadata</span>
-    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
-  </article>
-  <article class="cw-provider-card is-tautulli">
-    <img class="cw-provider-mark" src="images/providers/TAUTULLI.svg" alt="" aria-hidden="true">
-    <strong>Tautulli</strong>
-    <span>Plex activity</span>
-    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
-  </article>
-  <article class="cw-provider-card is-nuvio">
-    <img class="cw-provider-mark" src="images/providers/NUVIO.png" alt="" aria-hidden="true">
-    <strong>Nuvio</strong>
-    <span>Media app</span>
+  <article class="cw-provider-card is-trakt">
+    <img class="cw-provider-mark" src="images/providers/TRAKT.svg" alt="" aria-hidden="true">
+    <strong>Trakt</strong>
+    <span>Tracker</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
 </section>
