@@ -115,7 +115,7 @@ class FloppyAuth(AuthProvider):
                 {"key": "floppy.verify_ssl", "label": "Verify SSL", "type": "bool", "required": False, "default": False},
             ],
             actions={"start": False, "finish": True, "refresh": False, "disconnect": True},
-            notes="Create the API token in Floppy > Settings > Advanced.",
+    notes="Create the API token in Floppy > Settings > Integrations.",
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -188,7 +188,7 @@ def html() -> str:
             <div class="cw-auth-journey" style="--cw-auth-c1:245,101,30;--cw-auth-c2:4,181,220;--cw-auth-logo:url('/assets/img/FLOPPY.png')">
               <div class="cw-auth-journey-text">
                 <div class="cw-auth-journey-title">Connect to Floppy</div>
-                <div class="cw-auth-journey-copy">Create an API token in Floppy &rsaquo; Settings &rsaquo; Advanced, then enter your server URL and token here.</div>
+              <div class="cw-auth-journey-copy">Create an API token in Floppy &rsaquo; Settings &rsaquo; Integrations, then enter your server URL and token here.</div>
               </div>
             </div>
             <div class="grid2">
