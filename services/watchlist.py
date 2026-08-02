@@ -857,29 +857,46 @@ def _jf_index_watchlist(
 def _jf_lookup_by_provider_ids(
     cfg: dict[str, Any],
     headers: dict[str, str],
-    tokens: list[str],
+    ids: dict[str, Any],
 ) -> str | None:
-    if not tokens:
-        return None
-    for tok in tokens:
-        try:
-            j = _jf_get(
-                _jf_base(cfg),
-                f"Users/{_jf_require_user(cfg)}/Items",
-                headers,
-                {
-                    "Recursive": "true",
-                    "IncludeItemTypes": "Movie,Series",
-                    "AnyProviderIdEquals": tok,
-                    "Limit": 1,
-                    "Fields": "ProviderIds",
-                },
-            )
-            items = (j.get("Items") or []) if isinstance(j, dict) else []
-            if items and items[0].get("Id"):
-                return str(items[0]["Id"])
-        except Exception:
+    wanted: dict[str, str] = {}
+    for k in ("tmdb", "imdb", "tvdb"):
+        v = ids.get(k)
+        if v in (None, "", 0):
             continue
+        wanted[k] = str(v).strip().lower()
+    if not wanted:
+        return None
+    try:
+        j = _jf_get(
+            _jf_base(cfg),
+            f"Users/{_jf_require_user(cfg)}/Items",
+            headers,
+            {
+                "Recursive": "true",
+                "IncludeItemTypes": "Movie,Series",
+                "AnyProviderIdEquals": ",".join(f"{k}.{v}" for k, v in wanted.items()),
+                "Limit": 500,
+                "Fields": "ProviderIds",
+            },
+        )
+    except Exception:
+        return None
+    for it in (j.get("Items") or []) if isinstance(j, dict) else []:
+        iid = str((it or {}).get("Id") or "")
+        if not iid:
+            continue
+        prov = it.get("ProviderIds") or {}
+        low = {str(pk).strip().lower(): pv for pk, pv in prov.items() if pv}
+        for k, v in wanted.items():
+            have = low.get(k)
+            if isinstance(have, list):
+                have = have[0] if have else None
+            have = str(have or "").strip().lower()
+            if not have:
+                continue
+            if have == v or (have.isdigit() and v.isdigit() and int(have) == int(v)):
+                return iid
     return None
 
 
@@ -1313,11 +1330,7 @@ def _delete_on_jellyfin_batch(
                 (by_token.get(t) for t in _jf_provider_tokens(ids) if by_token.get(t)),
                 None,
             )
-            or _jf_lookup_by_provider_ids(
-                cfg,
-                hdr,
-                _jf_provider_tokens(ids),
-            )
+            or _jf_lookup_by_provider_ids(cfg, hdr, ids)
         )
         if jf_id:
             jf_ids.append(str(jf_id))
