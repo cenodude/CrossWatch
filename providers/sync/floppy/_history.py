@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import os
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -10,7 +11,9 @@ from typing import Any
 from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import COMPLETED, api_delete, api_patch, api_post, canonical_item_key, failure_reason, item_from_row, paged, tmdb_id_for_item, track_media, unresolved
+from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, canonical_item_key, failure_reason, has_coord, int_or_none, item_from_row, paged, reset_layout_cache, show_layout, tmdb_id_for_item, track_media, unresolved
+
+_SRC_SNAPSHOT: dict[str, Any] = {"scope": None, "shows": {}}
 
 
 def _watched_at(item: Mapping[str, Any]) -> str:
@@ -29,6 +32,128 @@ def _episode_numbers(item: Mapping[str, Any]) -> tuple[int | None, int | None]:
     except Exception:
         return None, None
     return season, episode
+
+
+def _explicit_absolute(item: Mapping[str, Any]) -> int | None:
+    for key in ("_simkl_episode_number", "_trakt_number_abs"):
+        number = int_or_none(item.get(key))
+        if number is not None and number > 0:
+            return number
+    return None
+
+
+def _absolute_hint(item: Mapping[str, Any], season: int, episode: int) -> int | None:
+    explicit = _explicit_absolute(item)
+    if explicit is not None:
+        return explicit
+    return episode if season == 1 and episode > 0 else None
+
+
+def _floppy_coord(item: Mapping[str, Any]) -> tuple[int, int] | None:
+    season = int_or_none(item.get("_floppy_season"))
+    episode = int_or_none(item.get("_floppy_episode"))
+    if season is None or episode is None or season < 0 or episode <= 0:
+        return None
+    return season, episode
+
+
+def _pair_scope() -> str:
+    for name in ("CW_PAIR_KEY", "CW_PAIR_SCOPE", "CW_SYNC_PAIR", "CW_PAIR"):
+        value = str(os.getenv(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
+    shows: dict[str, dict[str, Any]] = {}
+    reset_layout_cache()
+    count = 0
+    for item in items or []:
+        if not isinstance(item, Mapping) or str(item.get("type") or "").strip().lower() != "episode":
+            continue
+        tmdb_id = tmdb_id_for_item(item, episode_show=True)
+        if not tmdb_id:
+            continue
+        season, episode = _episode_numbers(item)
+        if season is None or episode is None or season < 1 or episode < 1:
+            continue
+        record = shows.setdefault(tmdb_id, {"coords": set(), "abs": {}})
+        record["coords"].add((season, episode))
+        hint = _absolute_hint(item, season, episode)
+        if hint is not None:
+            record["abs"][(season, episode)] = hint
+        count += 1
+    _SRC_SNAPSHOT["scope"] = _pair_scope()
+    _SRC_SNAPSHOT["shows"] = shows
+    return count
+
+
+def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    shows: dict[str, dict[str, Any]] = _SRC_SNAPSHOT.get("shows") or {}
+    if not shows or not out or _SRC_SNAPSHOT.get("scope") != _pair_scope():
+        return out
+    owned_by_show: dict[str, dict[tuple[int, int], str]] = {}
+    for key, item in out.items():
+        if str(item.get("type") or "").strip().lower() != "episode":
+            continue
+        raw_show_ids = item.get("show_ids")
+        show_ids: Mapping[str, Any] = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
+        show = str(show_ids.get("tmdb") or "").strip()
+        season, episode = _episode_numbers(item)
+        if not show or season is None or episode is None:
+            continue
+        owned_by_show.setdefault(show, {})[(season, episode)] = key
+
+    for show, record in shows.items():
+        owned = owned_by_show.get(show)
+        if not owned:
+            continue
+        wanted: set[tuple[int, int]] = record["coords"]
+        missing = [coord for coord in wanted if coord not in owned]
+        if not missing:
+            continue
+        layout = show_layout(adapter, show)
+        if not layout:
+            continue
+        for coord in sorted(missing):
+            absolute = record["abs"].get(coord)
+            if absolute is None:
+                continue
+            real = absolute_to_coord(layout, absolute)
+            if real is None or real == coord or real in wanted:
+                continue
+            key = owned.get(real)
+            if not key:
+                continue
+            item = out.get(key)
+            if not isinstance(item, Mapping):
+                continue
+            rekeyed = dict(item)
+            rekeyed["_floppy_season"], rekeyed["_floppy_episode"] = real
+            rekeyed["season"], rekeyed["episode"] = coord
+            new_key = canonical_item_key(rekeyed)
+            if new_key in out:
+                continue
+            out.pop(key, None)
+            out[new_key] = rekeyed
+            owned.pop(real, None)
+            owned[coord] = new_key
+    return out
+
+
+def _write_coord(adapter: Any, tmdb_id: str, item: Mapping[str, Any], season: int, episode: int) -> tuple[int, int]:
+    stored = _floppy_coord(item)
+    if stored is not None:
+        return stored
+    absolute = _explicit_absolute(item)
+    if absolute is None:
+        return season, episode
+    layout = show_layout(adapter, tmdb_id)
+    if not layout or has_coord(layout, season, episode):
+        return season, episode
+    real = absolute_to_coord(layout, absolute)
+    return real if real is not None else (season, episode)
 
 
 def _history_id(item: Mapping[str, Any]) -> str | None:
@@ -63,6 +188,8 @@ def _put_latest(out: dict[str, dict[str, Any]], item: dict[str, Any]) -> None:
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in paged(adapter, "media/movie", params={"status": COMPLETED}):
+        if int_or_none(row.get("status")) != COMPLETED and not row.get("end_date"):
+            continue
         item = item_from_row(row, force_type="movie")
         if not item:
             continue
@@ -80,7 +207,7 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         item["watched_at"] = row.get("end_date") or row.get("progressed_at") or row.get("created_at")
         item["_floppy_consumption_id"] = row.get("consumption_id")
         _put_latest(out, item)
-    return out
+    return _rekey_to_source_numbering(adapter, out)
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
@@ -124,6 +251,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
                 continue
             try:
+                season, episode = _write_coord(adapter, tmdb_id, raw, season, episode)
                 if not _episode_history(adapter, tmdb_id, season, episode):
                     api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json={"end_date": _watched_at(raw)})
             except Exception as exc:
@@ -173,6 +301,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 season, episode = _episode_numbers(raw)
                 if not tmdb_id or season is None or episode is None:
                     raise ValueError("missing episode ids")
+                season, episode = _write_coord(adapter, tmdb_id, raw, season, episode)
                 history_id = _history_id(raw)
                 if not history_id:
                     rows = _episode_history(adapter, tmdb_id, season, episode)

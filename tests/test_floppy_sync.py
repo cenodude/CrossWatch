@@ -412,3 +412,230 @@ def test_floppy_raw_ids_survive_minimal_snapshot() -> None:
 
     assert out["_floppy_consumption_id"] == 41
     assert out["_floppy_list_item_id"] == 3
+
+
+def test_floppy_coordinates_survive_minimal_snapshot() -> None:
+    from cw_platform.id_map import minimal
+
+    out = minimal({"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 100, "_floppy_season": 5, "_floppy_episode": 12})
+
+    assert out["_floppy_season"] == 5
+    assert out["_floppy_episode"] == 12
+
+
+def _dbz_routes(watched: list[tuple[int, int]], layout: dict[int, int]) -> dict[tuple[str, str], Any]:
+    routes: dict[tuple[str, str], Any] = {
+        ("GET", "media/movie"): {"results": [], "count": 0},
+        ("GET", "media/episode"): {
+            "results": [{"item_id": f"tv/tmdb/12971/{s}/{e}", "end_date": "2026-01-02T00:00:00Z", "consumption_id": 1000 + i} for i, (s, e) in enumerate(watched)],
+            "count": len(watched),
+        },
+    }
+    for season, total in layout.items():
+        routes[("GET", f"media/tv/tmdb/12971/{season}/episodes")] = {
+            "results": [{"item_id": f"tv/tmdb/12971/{season}/{n}", "episode_number": n} for n in range(1, total + 1)],
+            "count": total,
+        }
+    return routes
+
+
+def test_floppy_history_rekeys_absolute_source_numbering_onto_aired_episodes() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    layout = {1: 39, 2: 35}
+    adapter = AdapterStub(_dbz_routes([(2, 5)], layout))
+
+    produced = _history.prepare_source_snapshot(
+        [{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_simkl_episode_number": 44}]
+    )
+    out = _history.build_index(adapter)
+
+    assert produced == 1
+    assert "tmdb:12971#s01e44" in out
+    assert "tmdb:12971#s02e05" not in out
+    assert out["tmdb:12971#s01e44"]["_floppy_season"] == 2
+    assert out["tmdb:12971#s01e44"]["_floppy_episode"] == 5
+    assert out["tmdb:12971#s01e44"]["_floppy_consumption_id"] == 1000
+
+
+def test_floppy_history_keeps_native_key_when_source_already_matches() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(_dbz_routes([(2, 5)], {1: 39, 2: 35}))
+
+    _history.prepare_source_snapshot([{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 2, "episode": 5}])
+    out = _history.build_index(adapter)
+
+    assert list(out) == ["tmdb:12971#s02e05"]
+    assert not any(c["path"].endswith("/episodes") for c in adapter.client.session.calls)
+
+
+def test_floppy_history_does_not_steal_an_episode_the_source_also_asked_for() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(_dbz_routes([(2, 5)], {1: 39, 2: 35}))
+
+    _history.prepare_source_snapshot(
+        [
+            {"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_simkl_episode_number": 44},
+            {"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 2, "episode": 5},
+        ]
+    )
+    out = _history.build_index(adapter)
+
+    assert list(out) == ["tmdb:12971#s02e05"]
+
+
+def test_floppy_history_ignores_a_snapshot_from_another_pair(monkeypatch: Any) -> None:
+    from providers.sync.floppy import _history
+
+    monkeypatch.setenv("CW_PAIR_KEY", "pair_simkl_floppy")
+    _history.prepare_source_snapshot(
+        [{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_simkl_episode_number": 44}]
+    )
+    monkeypatch.setenv("CW_PAIR_KEY", "pair_floppy_trakt")
+    adapter = AdapterStub(_dbz_routes([(2, 5)], {1: 39, 2: 35}))
+
+    out = _history.build_index(adapter)
+
+    assert list(out) == ["tmdb:12971#s02e05"]
+
+
+def test_floppy_history_add_writes_absolute_episode_to_its_aired_coordinate() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    routes = _dbz_routes([], {1: 39, 2: 35})
+    routes[("GET", "media/tv/tmdb/12971/2/5/history")] = {"results": [], "count": 0}
+    routes[("POST", "media/tv/tmdb/12971/2/episodes/5/watch")] = {"consumption_id": 77}
+    adapter = AdapterStub(routes)
+
+    res = _history.add(
+        adapter,
+        [{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_simkl_episode_number": 44, "watched_at": "2026-01-02T00:00:00Z"}],
+    )
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/12971/2/episodes/5/watch"]
+    assert res["confirmed_keys"] == ["tmdb:12971#s01e44"]
+
+
+def test_floppy_history_add_uses_stored_coordinate_without_layout_lookup() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/12971/2/5/history"): {"results": [], "count": 0},
+            ("POST", "media/tv/tmdb/12971/2/episodes/5/watch"): {"consumption_id": 77},
+        }
+    )
+
+    res = _history.add(
+        adapter,
+        [{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_floppy_season": 2, "_floppy_episode": 5}],
+    )
+
+    assert res["count"] == 1
+    assert not any(c["path"].endswith("/episodes") for c in adapter.client.session.calls)
+
+
+def test_floppy_history_add_leaves_regular_shows_untouched() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub(
+        {
+            ("GET", "media/tv/tmdb/22/1/2/history"): {"results": [], "count": 0},
+            ("POST", "media/tv/tmdb/22/1/episodes/2/watch"): {"consumption_id": 5},
+        }
+    )
+
+    res = _history.add(adapter, [{"type": "episode", "show_ids": {"tmdb": "22"}, "season": 1, "episode": 2}])
+
+    assert res["count"] == 1
+    assert [c["path"] for c in adapter.client.session.calls if c["method"] == "POST"] == ["media/tv/tmdb/22/1/episodes/2/watch"]
+
+
+def test_floppy_history_remove_targets_the_real_floppy_coordinate() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    _history.reset_layout_cache()
+    adapter = AdapterStub({("DELETE", "media/tv/tmdb/12971/2/5/history/1000"): ResponseStub(204, {})})
+
+    res = _history.remove(
+        adapter,
+        [{"type": "episode", "show_ids": {"tmdb": "12971"}, "season": 1, "episode": 44, "_floppy_season": 2, "_floppy_episode": 5, "_floppy_consumption_id": 1000}],
+    )
+
+    assert res["count"] == 1
+    assert adapter.client.session.calls[0]["path"] == "media/tv/tmdb/12971/2/5/history/1000"
+
+
+def test_floppy_history_movie_index_skips_unwatched_rows() -> None:
+    from providers.sync.floppy import _history
+
+    _history.prepare_source_snapshot([])
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {
+                "results": [
+                    {"item_id": "movie/tmdb/11", "status": 3, "end_date": "2026-01-01T00:00:00Z"},
+                    {"item_id": "movie/tmdb/12", "status": 0, "end_date": None},
+                    {"item_id": "movie/tmdb/13", "status": 1, "end_date": "2026-01-05T00:00:00Z"},
+                ],
+                "count": 3,
+            },
+            ("GET", "media/episode"): {"results": [], "count": 0},
+        }
+    )
+
+    out = _history.build_index(adapter)
+
+    assert sorted(out) == ["tmdb:11", "tmdb:13"]
+
+
+def test_floppy_paged_stops_when_endpoint_ignores_offset() -> None:
+    from providers.sync.floppy._common import paged
+
+    page = {"results": [{"item_id": f"movie/tmdb/{n}"} for n in range(200)]}
+    adapter = AdapterStub({("GET", "media/movie"): page})
+
+    rows = paged(adapter, "media/movie")
+
+    assert len(rows) == 200
+    assert len(adapter.client.session.calls) == 2
+
+
+def test_floppy_paged_stops_on_unpaginated_list_response() -> None:
+    from providers.sync.floppy._common import paged
+
+    adapter = AdapterStub({("GET", "media/episode"): [{"item_id": f"tv/tmdb/1/1/{n}"} for n in range(300)]})
+
+    rows = paged(adapter, "media/episode")
+
+    assert len(rows) == 300
+    assert len(adapter.client.session.calls) == 1
+
+
+def test_floppy_paged_still_walks_real_pages() -> None:
+    from providers.sync.floppy._common import paged
+
+    def route(call: dict[str, Any]) -> Any:
+        offset = int(call["params"]["offset"])
+        rows = [{"item_id": f"movie/tmdb/{offset + n}"} for n in range(min(200, 450 - offset))]
+        return {"results": rows, "count": 450}
+
+    adapter = AdapterStub({("GET", "media/movie"): route})
+
+    rows = paged(adapter, "media/movie")
+
+    assert len(rows) == 450
+    assert len(adapter.client.session.calls) == 3
