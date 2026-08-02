@@ -1801,8 +1801,8 @@ def api_editor_send(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
                 chunk_size=0,
                 chunk_pause_ms=0,
             )
-        except Exception as exc:
-            results.append({"provider": provider, "instance": instance, "ok": False, "error": "send_failed", "detail": str(exc)})
+        except Exception:
+            results.append({"provider": provider, "instance": instance, "ok": False, "error": "send_failed"})
             totals["errors"] += 1
             continue
 
