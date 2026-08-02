@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from cw_platform.config_base import load_config
 from cw_platform.id_map import canonical_key, merge_ids, minimal
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
+from cw_platform.orchestrator._applier import apply_add
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.playlists import PlaylistSnapshot, supports_playlists
@@ -1195,13 +1196,13 @@ def api_editor_state_providers() -> dict[str, Any]:
 
 @router.get("")
 def api_editor_get_state(
-    kind: str = Query("watchlist"),
-    snapshot: str | None = Query(None),
-    source: str = Query("state"),
-    provider: str | None = Query(None),
-    provider_instance: str | None = Query(None),
-    endpoint: str | None = Query(None),
-    workspace: str | None = Query(None),
+    kind: str = "watchlist",
+    snapshot: str | None = None,
+    source: str = "state",
+    provider: str | None = None,
+    provider_instance: str | None = None,
+    endpoint: str | None = None,
+    workspace: str | None = None,
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
     src = (source or "state").strip().lower()
@@ -1287,6 +1288,52 @@ def api_editor_get_state(
             "ts": ts,
             "count": len(items),
             "items": items,
+            "manual_adds": manual_adds,
+            "manual_blocks": manual_blocks,
+        }
+    if src in ("manual", "manual-overrides", "policy", "overrides"):
+        raw_state = _load_current_state()
+        raw_policy = _load_policy()
+        providers = _union_providers(raw_state, raw_policy)
+        chosen = (provider or "").strip() or (providers[0] if providers else "")
+        if not chosen:
+            return {
+                "kind": k,
+                "source": "manual",
+                "snapshot": None,
+                "provider": None,
+                "provider_instance": None,
+                "ts": None,
+                "count": 0,
+                "items": {},
+                "manual_adds": {},
+                "manual_blocks": [],
+            }
+
+        inst = normalize_instance_id(provider_instance)
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst)
+        if not pol_adds and not pol_blocks and raw_state:
+            pol_adds, pol_blocks = _load_state_manual(k, chosen, inst)
+
+        ts = None
+        try:
+            if _POLICY_PATH.exists():
+                ts = int(_POLICY_PATH.stat().st_mtime)
+            elif _STATE_PATH.exists():
+                ts = int(_STATE_PATH.stat().st_mtime)
+        except Exception:
+            ts = None
+        manual_adds = dict(pol_adds or {})
+        manual_blocks = _normalize_blocks(pol_blocks or [])
+        return {
+            "kind": k,
+            "source": "manual",
+            "snapshot": None,
+            "provider": chosen,
+            "provider_instance": inst,
+            "ts": ts,
+            "count": len(manual_adds),
+            "items": manual_adds,
             "manual_adds": manual_adds,
             "manual_blocks": manual_blocks,
         }
@@ -1378,10 +1425,10 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
             "ts": ts,
         }
 
-    if src in ("state", "current"):
+    if src in ("state", "current", "manual", "manual-overrides", "policy", "overrides"):
         provider = str(payload.get("provider") or "").strip()
         if not provider:
-            raise HTTPException(status_code=400, detail="Missing provider for source=state")
+            raise HTTPException(status_code=400, detail=f"Missing provider for source={src}")
         items = _canonicalize_manual_items(items)
 
         inst = normalize_instance_id(payload.get("provider_instance"))
@@ -1401,7 +1448,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
         return {
             "ok": True,
             "kind": kind,
-            "source": "state",
+            "source": "manual" if src not in ("state", "current") else "state",
             "provider": provider,
             "provider_instance": inst,
             "count": len(items),
@@ -1466,6 +1513,320 @@ def _import_enabled() -> bool:
 
 def _state_store() -> StateStore:
     return StateStore(_STATE_PATH.parent)
+
+
+def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, Any]]:
+    feat = str(feature or "").strip().lower()
+    if feat == "rating":
+        feat = "ratings"
+    if feat not in {"watchlist", "history", "ratings", "progress"}:
+        return []
+
+    targets: list[dict[str, Any]] = []
+    for provider in sync_provider_names(upper=True):
+        ops = load_sync_ops(provider)
+        if not ops:
+            continue
+        try:
+            supported = dict(ops.features() or {})
+        except Exception:
+            supported = {}
+        if not bool(supported.get(feat)):
+            continue
+
+        try:
+            instances = list_instance_ids(cfg, provider)
+        except Exception:
+            instances = ["default"]
+
+        for raw_instance in instances:
+            instance = normalize_instance_id(raw_instance)
+            cfg_view = build_provider_config_view(cfg, provider, instance)
+            try:
+                configured = bool(ops.is_configured(cfg_view))
+            except Exception:
+                configured = False
+            if not configured:
+                continue
+
+            label = provider.title()
+            try:
+                label = str(ops.label() or label)
+            except Exception:
+                pass
+
+            targets.append(
+                {
+                    "provider": provider,
+                    "instance": instance,
+                    "label": label,
+                    "display": label if instance == "default" else f"{label} ({instance})",
+                    "feature": feat,
+                    "history_enabled": bool(supported.get("history")),
+                    "ratings_enabled": bool(supported.get("ratings")),
+                    "watchlist_enabled": bool(supported.get("watchlist")),
+                    "progress_enabled": bool(supported.get("progress")),
+                }
+            )
+
+    targets.sort(key=lambda item: (str(item.get("label") or "").lower(), str(item.get("instance") or "")))
+    return targets
+
+
+@router.get("/send/providers")
+def api_editor_send_providers(kind: str = Query("watchlist")) -> dict[str, Any]:
+    cfg = load_config() or {}
+    feature = _normalize_kind(kind)
+    return {"ok": True, "kind": feature, "providers": _editor_send_targets(cfg, feature)}
+
+
+def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
+    if not isinstance(raw, Mapping):
+        return None
+    item = dict(raw)
+    key = str(item.pop("key", "") or "").strip()
+    ids = item.get("ids")
+    if not isinstance(ids, dict):
+        ids = {}
+    ids = {str(k).lower(): v for k, v in ids.items() if v not in (None, "")}
+    for id_key in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "anilist", "mal"):
+        val = item.get(id_key)
+        if val not in (None, "") and id_key not in ids:
+            ids[id_key] = val
+        item.pop(id_key, None)
+    if ids:
+        item["ids"] = ids
+
+    show_ids = item.get("show_ids")
+    if isinstance(show_ids, dict):
+        item["show_ids"] = {str(k).lower(): v for k, v in show_ids.items() if v not in (None, "")}
+
+    typ = str(item.get("type") or "").strip().lower()
+    if typ == "tv":
+        typ = "show"
+    if typ:
+        item["type"] = typ
+
+    title = str(item.get("title") or item.get("name") or item.get("series_title") or "").strip()
+    if title:
+        item["title"] = title
+
+    if feature == "ratings":
+        rating = item.get("rating", item.get("user_rating", item.get("score")))
+        try:
+            rating_i = int(float(str(rating).strip()))
+        except Exception:
+            return None
+        if rating_i < 1 or rating_i > 10:
+            return None
+        item["rating"] = rating_i
+    elif feature == "history":
+        watched_at = item.get("watched_at") or item.get("last_watched_at")
+        if not watched_at:
+            return None
+        item["watched_at"] = watched_at
+    elif feature == "progress":
+        has_progress = any(item.get(k) not in (None, "") for k in ("progress_ms", "progressMs", "progress", "progress_percent", "progressPercent"))
+        if not has_progress:
+            return None
+
+    if not ids and not key and not title:
+        return None
+    return item
+
+
+def _items_confirmed_by_send(items: list[dict[str, Any]], result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    key_fields = (
+        "confirmed_keys",
+        "skipped_keys",
+        "accepted_keys",
+        "presence_confirmed_keys",
+        "live_confirmed_keys",
+        "accepted_not_seen_live_keys",
+        "date_confirmed_keys",
+    )
+    keep: set[str] = set()
+    for field in key_fields:
+        values = result.get(field)
+        if isinstance(values, list):
+            keep.update(str(v) for v in values if v)
+    if keep:
+        out: list[dict[str, Any]] = []
+        for item in items:
+            try:
+                key = str(canonical_key(item) or "")
+            except Exception:
+                key = ""
+            if key and key in keep:
+                out.append(item)
+        return out
+
+    confirmed = int(result.get("confirmed", result.get("count", 0)) or 0)
+    if confirmed <= 0:
+        return []
+    return items[: min(confirmed, len(items))]
+
+
+def _merge_sent_items_into_state(provider: str, instance: str, feature: str, items: list[dict[str, Any]]) -> None:
+    if not items:
+        return
+    store = _state_store()
+    state = store.load_state() or {}
+    providers = state.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+        state["providers"] = providers
+
+    base = providers.get(provider)
+    if not isinstance(base, dict):
+        base = {}
+        providers[provider] = base
+
+    node = base
+    inst = normalize_instance_id(instance)
+    if inst != "default":
+        insts = node.get("instances")
+        if not isinstance(insts, dict):
+            insts = {}
+            node["instances"] = insts
+        node = insts.get(inst)
+        if not isinstance(node, dict):
+            node = {}
+            insts[inst] = node
+
+    feat_node = node.get(feature)
+    if not isinstance(feat_node, dict):
+        feat_node = {}
+        node[feature] = feat_node
+    baseline = feat_node.get("baseline")
+    if not isinstance(baseline, dict):
+        baseline = {}
+        feat_node["baseline"] = baseline
+    current = baseline.get("items")
+    if not isinstance(current, dict):
+        current = {}
+
+    for item in items:
+        try:
+            key = canonical_key(item)
+        except Exception:
+            key = ""
+        if not key:
+            continue
+        try:
+            current[str(key)] = minimal(item)
+        except Exception:
+            current[str(key)] = dict(item)
+
+    baseline["items"] = current
+    try:
+        import time as _t
+        state["last_sync_epoch"] = int(_t.time())
+    except Exception:
+        pass
+    if feature == "watchlist":
+        _rebuild_watchlist_wall(state)
+    store.save_state(state)
+
+
+@router.post("/send")
+def api_editor_send(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    feature = _normalize_kind(str(payload.get("kind") or "watchlist"))
+    raw_items = payload.get("items")
+    items_in = list(raw_items.values()) if isinstance(raw_items, dict) else raw_items
+    if not isinstance(items_in, list) or not items_in:
+        raise HTTPException(status_code=400, detail="No items selected")
+
+    items: list[dict[str, Any]] = []
+    invalid = 0
+    for raw in items_in:
+        item = _normalize_send_item(raw, feature)
+        if item is None:
+            invalid += 1
+            continue
+        items.append(item)
+    if not items:
+        raise HTTPException(status_code=400, detail=f"No selected rows can be sent as {feature}")
+
+    selected_targets = payload.get("providers") or []
+    if not isinstance(selected_targets, list) or not selected_targets:
+        raise HTTPException(status_code=400, detail="No target providers selected")
+
+    dry_run = bool(payload.get("dry_run", False))
+    cfg = load_config() or {}
+    available = _editor_send_targets(cfg, feature)
+    target_map = {
+        (str(it.get("provider") or "").upper(), normalize_instance_id(it.get("instance") or "default")): it
+        for it in available
+    }
+
+    def _emit(event: str, **data: Any) -> None:
+        try:
+            import crosswatch as CW  # type: ignore
+            msg = f"[EDITOR] {event} {data.get('dst') or data.get('provider') or ''} {data.get('feature') or feature} count={data.get('count', data.get('attempted', ''))}"
+            CW._append_log("SYNC", msg)
+        except Exception:
+            pass
+
+    results: list[dict[str, Any]] = []
+    totals = {"attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0}
+
+    for target_raw in selected_targets:
+        if not isinstance(target_raw, Mapping):
+            continue
+        provider = str(target_raw.get("provider") or "").strip().upper()
+        instance = normalize_instance_id(target_raw.get("instance") or target_raw.get("provider_instance") or "default")
+        if (provider, instance) not in target_map:
+            results.append({"provider": provider, "instance": instance, "ok": False, "error": "provider_not_allowed"})
+            totals["errors"] += 1
+            continue
+
+        ops = load_sync_ops(provider)
+        if not ops:
+            results.append({"provider": provider, "instance": instance, "ok": False, "error": "provider_unavailable"})
+            totals["errors"] += 1
+            continue
+
+        cfg_view = build_provider_config_view(cfg, provider, instance)
+        try:
+            res = apply_add(
+                dst_ops=ops,
+                cfg=cfg_view,
+                dst_name=provider,
+                feature=feature,
+                items=items,
+                dry_run=dry_run,
+                emit=_emit,
+                dbg=lambda *a, **k: None,
+                chunk_size=0,
+                chunk_pause_ms=0,
+            )
+        except Exception as exc:
+            results.append({"provider": provider, "instance": instance, "ok": False, "error": "send_failed", "detail": str(exc)})
+            totals["errors"] += 1
+            continue
+
+        entry = {"provider": provider, "instance": instance, "ok": bool(res.get("ok", True)), "result": res}
+        results.append(entry)
+        for key in totals:
+            totals[key] += int(res.get(key, 0) or 0)
+
+        if not dry_run and bool(res.get("ok", True)) and int(res.get("confirmed", res.get("count", 0)) or 0) > 0:
+            try:
+                _merge_sent_items_into_state(provider, instance, feature, _items_confirmed_by_send(items, res))
+            except Exception:
+                pass
+
+    return {
+        "ok": bool(results) and all(bool(r.get("ok")) for r in results),
+        "kind": feature,
+        "selected": len(items_in),
+        "sent": len(items),
+        "invalid": invalid,
+        "dry_run": dry_run,
+        "results": results,
+        **totals,
+    }
 
 
 
