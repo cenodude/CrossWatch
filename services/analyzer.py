@@ -2278,7 +2278,8 @@ def _target_has_peer(
             return _alias_peer_present(ctx, dst_key, alias_dest, item)
         exact_key = _history_exact_key(item)
         if exact_key is not None:
-            return exact_key in (ctx.history_exact.get(dst_key) or set())
+            if exact_key in (ctx.history_exact.get(dst_key) or set()):
+                return True
     target_aliases = ctx.aliases.get((dst_key, feat_key)) or {}
     return any(alias in target_aliases for alias in _alias_keys(vv))
 
@@ -3455,7 +3456,7 @@ def _problems(
                     "message": "Item has fallback IDs but no TMDB ID. Sync may still work, but some providers rely on TMDB for stronger matching.",
                 }
             )
-        if ids and not any(ids.get(ns) for ns in core):
+        if ids and not any((id_view.get(ns) or ids.get(ns)) for ns in core):
             probs.append(
                 {
                     "severity": "info",

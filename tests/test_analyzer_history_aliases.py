@@ -209,6 +209,37 @@ def test_unaliased_translation_still_counts_as_unsynced(cws) -> None:
     assert stats["synced"] == 0
 
 
+def test_episode_ids_match_when_source_lacks_show_ids(cws) -> None:
+    simkl = {
+        "imdb:tt7228262#s00e04": {
+            "type": "episode",
+            "title": "S00E04",
+            "series_title": "Fullmetal Alchemist: Brotherhood",
+            "season": 0,
+            "episode": 4,
+            "watched_at": WATCHED,
+            "ids": {"imdb": "tt7228262", "tvdb": "2832871"},
+        }
+    }
+    trakt = {
+        "tmdb:31911#s00e04": {
+            "type": "episode",
+            "title": "Yet Another Man's Battlefield",
+            "series_title": "Fullmetal Alchemist: Brotherhood",
+            "season": 0,
+            "episode": 4,
+            "watched_at": WATCHED,
+            "ids": {"imdb": "tt7228262", "tvdb": "2832871"},
+            "show_ids": {"tmdb": "31911"},
+        }
+    }
+
+    stats = _synced(_state(simkl, trakt), _cfg())
+
+    assert stats["total"] == 1
+    assert stats["synced"] == 1
+
+
 def test_state_baselines_are_not_rewritten(cws) -> None:
     simkl = {"tmdb:12971#s01e40": _episode(12971, 1, 40, series="Dragon Ball Z")}
     trakt = {"tmdb:12971#s02e01": _episode(12971, 2, 1, series="Dragon Ball Z", ep_trakt=498798)}
