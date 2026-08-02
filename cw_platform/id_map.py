@@ -349,6 +349,8 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "_simkl_episode_number",
         "_floppy_consumption_id",
         "_floppy_list_item_id",
+        "_floppy_season",
+        "_floppy_episode",
     ):
         if opt in item and item.get(opt) not in (None, ""):
             out[opt] = item.get(opt)

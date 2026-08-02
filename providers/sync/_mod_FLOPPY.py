@@ -17,7 +17,7 @@ from providers.sync.floppy import _ratings as feat_ratings
 from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "FLOPPYModule", "OPS"]
 
 if "ctx" not in globals():
@@ -136,6 +136,20 @@ class FLOPPYModule:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
         return mod.build_index(self, **kwargs) if mod else {}
 
+    def prepare_source_snapshot(self, feature: str, items: Any) -> int:
+        mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
+        hook = getattr(mod, "prepare_source_snapshot", None)
+        if not callable(hook):
+            return 0
+        seq = list(items.values()) if isinstance(items, Mapping) else list(items or [])
+        if not seq:
+            return 0
+        try:
+            produced = hook(seq)
+        except Exception:
+            return 0
+        return produced if isinstance(produced, int) else 0
+
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         mod = _FEATURE_MODULES.get(str(feature or "").strip().lower())
         return mod.add(self, items, dry_run=dry_run) if mod else build_op_result(ok=True, count=0, unsupported=True)
@@ -197,6 +211,9 @@ class _FLOPPYOPS:
 
     def build_index(self, cfg: Mapping[str, Any], *, feature: str) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
+
+    def prepare_source_snapshot(self, cfg: Mapping[str, Any], *, feature: str, items: Any) -> int:
+        return self._adapter(cfg).prepare_source_snapshot(feature, items)
 
     def add(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg).add(feature, items, dry_run=dry_run)

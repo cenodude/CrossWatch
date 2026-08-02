@@ -14,6 +14,19 @@ from providers.sync._mod_common import safe_json
 PLANNING = 0
 COMPLETED = 3
 PAGE_SIZE = 200
+MAX_PAGES = 200
+MAX_ROWS = 200_000
+MAX_SEASONS = 60
+MAX_EMPTY_SEASONS = 2
+
+_LAYOUT_CACHE: dict[str, list[tuple[int, int]]] = {}
+
+
+def int_or_none(value: Any) -> int | None:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return None
 
 
 def configured_block(cfg: Mapping[str, Any] | None, instance_id: str = "default") -> dict[str, Any]:
@@ -88,18 +101,38 @@ def api_delete(adapter: Any, path: str, **kwargs: Any) -> Any:
     return api_request(adapter, "DELETE", path, ok=(200, 202, 204, 404), **kwargs)
 
 
-def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = 1000) -> list[Mapping[str, Any]]:
+def _page_signature(rows: list[Any]) -> str:
+    parts: list[str] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            parts.append("")
+            continue
+        parts.append("|".join(str(row.get(k) or "") for k in ("item_id", "consumption_id", "id", "media_id", "end_date")))
+    return "\n".join(parts)
+
+
+def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = MAX_PAGES) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     base = dict(params or {})
     limit = max(1, min(PAGE_SIZE, int(base.pop("limit", PAGE_SIZE) or PAGE_SIZE)))
     offset = max(0, int(base.pop("offset", 0) or 0))
+    previous: str | None = None
     for _ in range(max(1, int(max_pages or 1))):
         data = api_get(adapter, path, params={**base, "limit": limit, "offset": offset})
-        rows = data.get("results") if isinstance(data, Mapping) else data
+        enveloped = isinstance(data, Mapping)
+        rows = data.get("results") if enveloped else data
         if not isinstance(rows, list) or not rows:
             break
+        before = len(out)
         out.extend(row for row in rows if isinstance(row, Mapping))
-        count = data.get("count") if isinstance(data, Mapping) else None
+        if not enveloped:
+            break
+        signature = _page_signature(rows)
+        if previous is not None and signature == previous:
+            del out[before:]
+            break
+        previous = signature
+        count = data.get("count")
         offset += len(rows)
         if len(rows) < limit:
             break
@@ -109,6 +142,8 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, m
                     break
             except Exception:
                 pass
+        if len(out) >= MAX_ROWS:
+            break
     return out
 
 
@@ -125,6 +160,63 @@ def media_parts_from_item_id(value: Any) -> tuple[str | None, str | None, str | 
         except Exception:
             season = episode = None
     return typ, source, media_id, season, episode
+
+
+def reset_layout_cache() -> None:
+    _LAYOUT_CACHE.clear()
+
+
+def _row_episode_number(row: Mapping[str, Any]) -> int | None:
+    for key in ("episode_number", "number", "episode"):
+        number = int_or_none(row.get(key))
+        if number is not None and number > 0:
+            return number
+    _, _, _, _, episode = media_parts_from_item_id(row.get("item_id"))
+    return episode if isinstance(episode, int) and episode > 0 else None
+
+
+def _season_episodes(adapter: Any, tmdb_id: str, season: int) -> list[int]:
+    try:
+        rows = paged(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes")
+    except Exception:
+        return []
+    numbers = {n for n in (_row_episode_number(row) for row in rows) if n}
+    return sorted(numbers)
+
+
+def show_layout(adapter: Any, tmdb_id: str) -> list[tuple[int, int]]:
+    key = str(tmdb_id or "").strip()
+    if not key:
+        return []
+    cached = _LAYOUT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    layout: list[tuple[int, int]] = []
+    empty = 0
+    for season in range(1, MAX_SEASONS + 1):
+        numbers = _season_episodes(adapter, key, season)
+        if not numbers:
+            empty += 1
+            if empty >= MAX_EMPTY_SEASONS:
+                break
+            continue
+        empty = 0
+        layout.extend((season, number) for number in numbers)
+    _LAYOUT_CACHE[key] = layout
+    return layout
+
+
+def absolute_to_coord(layout: list[tuple[int, int]], absolute: int) -> tuple[int, int] | None:
+    if not layout or absolute is None or absolute <= 0 or absolute > len(layout):
+        return None
+    return layout[absolute - 1]
+
+
+def has_coord(layout: list[tuple[int, int]], season: int, episode: int) -> bool:
+    try:
+        return (int(season), int(episode)) in layout
+    except Exception:
+        return False
 
 
 def floppy_type_for_item(item: Mapping[str, Any]) -> str | None:
