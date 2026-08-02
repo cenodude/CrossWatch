@@ -261,6 +261,10 @@ def jf_filter_library_candidates(
     return []
 
 
+def _trust_provider_index_scope(selected_libs: set[str]) -> bool:
+    return bool(selected_libs)
+
+
 def jf_scope_ratings(cfg: CfgLike) -> dict[str, Any]:
     return jf_library_scope(cfg, "ratings")
 
@@ -1202,7 +1206,11 @@ def _path_match_item_id(
                 seen.add(iid)
                 rows.append(row)
 
-    scoped = jf_filter_library_candidates(rows, selected_libs)
+    scoped = jf_filter_library_candidates(
+        rows,
+        selected_libs,
+        trust_query_scope=_trust_provider_index_scope(selected_libs),
+    )
     if item_type == "episode":
         scoped = [row for row in scoped if (row.get("Type") or "") == "Episode"]
         numbered = [row for row in scoped if _episode_number_matches(row, season, episode)]
@@ -1303,7 +1311,11 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
         for pref in pairs:
             raw_cands = idx.get(pref) or []
-            cands = jf_filter_library_candidates(raw_cands, selected_libs)
+            cands = jf_filter_library_candidates(
+                raw_cands,
+                selected_libs,
+                trust_query_scope=_trust_provider_index_scope(selected_libs),
+            )
             if raw_cands and not cands and selected_libs:
                 outside_scope_seen = True
             iid = _pick_from_candidates(cands, want_type="movie", want_year=year)
@@ -1350,7 +1362,11 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
         for pref in pairs:
             raw_rows = idx.get(pref) or []
-            rows = jf_filter_library_candidates(raw_rows, selected_libs)
+            rows = jf_filter_library_candidates(
+                raw_rows,
+                selected_libs,
+                trust_query_scope=_trust_provider_index_scope(selected_libs),
+            )
             if raw_rows and not rows and selected_libs:
                 outside_scope_seen = True
             cands = [row for row in rows if (row.get("Type") or "").strip() == "Series"]
@@ -1399,7 +1415,11 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
     idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
     for pref in episode_pairs:
         raw_rows = idx.get(pref) or []
-        rows = jf_filter_library_candidates(raw_rows, selected_libs)
+        rows = jf_filter_library_candidates(
+            raw_rows,
+            selected_libs,
+            trust_query_scope=_trust_provider_index_scope(selected_libs),
+        )
         if raw_rows and not rows and selected_libs:
             outside_scope_seen = True
         episode_rows: list[Mapping[str, Any]] = []
@@ -1459,7 +1479,11 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
     series_id_confirmed = False
     for pref in series_pairs:
         raw_rows = idx.get(pref) or []
-        scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs)
+        scoped_rows = jf_filter_library_candidates(
+            raw_rows,
+            selected_libs,
+            trust_query_scope=_trust_provider_index_scope(selected_libs),
+        )
         if raw_rows and not scoped_rows and selected_libs:
             outside_scope_seen = True
         series_rows = [row for row in scoped_rows if (row.get("Type") or "") == "Series"]
@@ -1550,7 +1574,11 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
     # Movies
     if t == "movie":
         for pref in pairs:
-            rows = jf_filter_library_candidates(idx.get(pref) or [], selected_libs)
+            rows = jf_filter_library_candidates(
+                idx.get(pref) or [],
+                selected_libs,
+                trust_query_scope=_trust_provider_index_scope(selected_libs),
+            )
             cands = [row for row in rows if (row.get("Type") or "") == "Movie"]
             if isinstance(year, int):
                 yr = int(year)

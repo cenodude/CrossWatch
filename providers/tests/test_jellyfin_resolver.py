@@ -50,6 +50,7 @@ class FakeCfg:
     strict_id_matching = False
     watchlist_guid_priority = None
     history_guid_priority = None
+    history_libraries = None
 
 
 class FakeAdapter:
@@ -133,6 +134,17 @@ def test_jellyfin_long_numeric_item_ids_are_valid_backend_ids():
     item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
 
     assert common.resolve_item_id(adapter, item, feature="history") == "7214430293560476068"
+
+
+def test_jellyfin_scoped_provider_index_trusts_rows_without_library_metadata():
+    row = jf_row("M1", "Movie", "Encanto", tmdb="568124")
+    adapter = FakeAdapter(FakeHttp([row]))
+    adapter.cfg.history_libraries = ["LIB1"]
+
+    item = {"type": "movie", "title": "Encanto", "year": 2021, "ids": {"tmdb": "568124"}}
+
+    assert common.resolve_item_id(adapter, item, feature="history") == "M1"
+    assert any(call["params"].get("ParentId") == "LIB1" for call in adapter.client.calls)
 
 
 def test_jellyfin_mark_played_uses_date_played_param_name():
