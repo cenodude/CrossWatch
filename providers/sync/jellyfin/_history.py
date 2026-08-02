@@ -364,7 +364,7 @@ def _series_ids_for(http: Any, uid: str, series_id: str | None) -> dict[str, str
 # low-level Jellyfin writes
 def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
     try:
-        params = {"datePlayed": date_played_iso} if date_played_iso else None
+        params = {"DatePlayed": date_played_iso} if date_played_iso else None
         r = http.post(played_route(item_id), params=user_params(uid, params))
         return getattr(r, "status_code", 0) in (200, 204)
     except Exception:

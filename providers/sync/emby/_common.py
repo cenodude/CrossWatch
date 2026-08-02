@@ -631,6 +631,14 @@ def provider_index(adapter: Any, *, ttl_sec: int = 300, force_refresh: bool = Fa
     return idx
 
 
+def _cached_provider_index(adapter: Any, feature: str, *, ttl_sec: int = 300) -> dict[str, list[dict[str, Any]]] | None:
+    key = (id(adapter), tuple(sorted(emby_selected_library_ids(adapter.cfg, feature))))
+    hit = _PROVIDER_INDEX_CACHE.get(key)
+    if hit and (time.time() - hit[0]) < max(1, int(ttl_sec)):
+        return hit[1]
+    return None
+
+
 def find_series_in_index(adapter: Any, pairs: Iterable[str]) -> dict[str, Any] | None:
     idx = provider_index(adapter)
     scope_hist: dict[str, Any] = {}
@@ -1519,7 +1527,9 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                 )
         ser_row: Mapping[str, Any] | None = None
         matched_series_pair: str | None = None
-        for pref in series_pairs:
+        known_idx = _cached_provider_index(adapter, feature)
+        series_lookups = [] if (known_idx and series_pairs and not any(p in known_idx for p in series_pairs)) else series_pairs
+        for pref in series_lookups:
             rows = _direct_query_by_pairs(http, uid, [pref], "Series", scope)
             series_rows = [r for r in _prefer_library(rows) if (r.get("Type") or "") == "Series"]
             if series_rows:
