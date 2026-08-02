@@ -67,6 +67,7 @@ __all__ = [
     "KEY_PRIORITY",
     "ids_from",
     "ids_from_guid",
+    "ids_from_jellyfin_providerids",
     "merge_ids",
     "coalesce_ids",
     "canonical_key",
@@ -165,6 +166,18 @@ def ids_from_guid(guid: str | None) -> dict[str, str]:
         elif label == "guid":
             out["guid"] = g
     return out
+
+
+def ids_from_jellyfin_providerids(provider_ids: Mapping[str, Any] | None) -> dict[str, str]:
+    """Normalize Jellyfin ProviderIds into CrossWatch id keys."""
+    if not isinstance(provider_ids, Mapping):
+        return {}
+    remapped = {
+        "imdb": provider_ids.get("Imdb") or provider_ids.get("IMDb") or provider_ids.get("imdb"),
+        "tmdb": provider_ids.get("Tmdb") or provider_ids.get("TMDb") or provider_ids.get("tmdb"),
+        "tvdb": provider_ids.get("Tvdb") or provider_ids.get("TVDb") or provider_ids.get("tvdb"),
+    }
+    return coalesce_ids(remapped)
 
 
 # Collect and merge

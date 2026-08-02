@@ -588,8 +588,16 @@ def map_provider_key(k: str) -> str | None:
         return "imdb"
     if kl.startswith("agent:tvdb"):
         return "tvdb"
+    if kl.startswith("agent:myanimelist") or kl.startswith("agent:mal"):
+        return "mal"
+    if kl.startswith("agent:anilist"):
+        return "anilist"
     if kl in ("tmdb", "imdb", "tvdb"):
         return kl
+    if kl in ("mal", "myanimelist", "myanimelistid"):
+        return "mal"
+    if kl in ("anilist", "anilistid"):
+        return "anilist"
     return None
 
 
@@ -624,6 +632,13 @@ def guid_priority_from_cfg(cfg_list: Iterable[str] | None) -> list[str]:
     return out
 
 
+def _merged_guid_priority(adapter: Any) -> list[str]:
+    cfg = getattr(adapter, "cfg", None) or {}
+    hist = _as_list_str(_pluck(cfg, "history_guid_priority"))
+    wlst = _as_list_str(_pluck(cfg, "watchlist_guid_priority"))
+    return guid_priority_from_cfg(hist + wlst)
+
+
 def pick_external_id(ids: Mapping[str, Any], priority: Iterable[str]) -> tuple[str, str] | None:
     for k in priority:
         v = ids.get(k)
@@ -641,13 +656,53 @@ def all_ext_pairs(it_ids: Mapping[str, Any], priority: Iterable[str]) -> list[st
         if p and p not in seen:
             out.append(p)
             seen.add(p)
-    for k in ("tmdb", "imdb", "tvdb"):
+    for k in ("tmdb", "imdb", "tvdb", "mal", "anilist"):
         v = (it_ids or {}).get(k)
         p = format_provider_pair(k, v) if v else None
         if p and p not in seen:
             out.append(p)
             seen.add(p)
     return out
+
+
+def _path_index_key(value: Any) -> str | None:
+    s = str(value or "").strip()
+    if not s:
+        return None
+    s = s.replace("\\", "/")
+    while "//" in s:
+        s = s.replace("//", "/")
+    return s.rstrip("/").lower()
+
+
+def _candidate_path_keys(it: Mapping[str, Any]) -> list[str]:
+    values: list[Any] = []
+    for key in ("path", "Path", "file", "File", "filepath", "file_path", "media_path"):
+        if it.get(key):
+            values.append(it.get(key))
+    for key in ("locations", "Locations", "paths", "Paths"):
+        raw = it.get(key)
+        if isinstance(raw, (list, tuple, set)):
+            values.extend(raw)
+        elif raw:
+            values.append(raw)
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        key = _path_index_key(value)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def _index_row_provider_ids(out: dict[str, list[dict[str, Any]]], row: Mapping[str, Any]) -> None:
+    for provider, value in _ids_from_provider_ids(row.get("ProviderIds")).items():
+        if provider == "jellyfin":
+            continue
+        pair = format_provider_pair(provider, value)
+        if pair:
+            out.setdefault(pair, []).append(dict(row))
 
 
 # provider index
@@ -660,6 +715,7 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
     http = adapter.client
     uid = adapter.cfg.user_id
     out: dict[str, list[dict[str, Any]]] = {}
+    path_index: dict[str, list[dict[str, Any]]] = {}
     start = 0
     limit = 500
     total: int | None = None
@@ -672,9 +728,12 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
 
     while True:
         params: dict[str, Any] = {
-            "IncludeItemTypes": "Movie,Series",
+            "IncludeItemTypes": "Movie,Series,Episode",
             "Recursive": True,
-            "Fields": "ProviderIds,ProductionYear,Type",
+            "Fields": (
+                "ProviderIds,ProductionYear,Type,IndexNumber,ParentIndexNumber,SeriesId,"
+                "SeriesName,ParentId,Path,CollectionFolderId,AncestorIds,LibraryId,Name"
+            ),
             "StartIndex": start,
             "Limit": limit,
             "EnableTotalRecordCount": True,
@@ -693,25 +752,12 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
             total = int(body.get("TotalRecordCount") or 0)
             _dbg('index_fetch_counts', source='provider_index', total=total)
         for row in items:
-            pids = row.get("ProviderIds") or {}
-            if not pids:
+            if not isinstance(row, Mapping):
                 continue
-            low = {str(k).lower(): str(v).strip() for k, v in pids.items() if v}
-            imdb_val = low.get("imdb")
-            if imdb_val:
-                m_imdb = _IMDB_PAT.search(imdb_val)
-                if m_imdb:
-                    out.setdefault(f"imdb.tt{m_imdb.group(1)}", []).append(row)
-            tmdb_val = low.get("tmdb")
-            if tmdb_val:
-                m_tmdb = _NUM_PAT.search(tmdb_val)
-                if m_tmdb:
-                    out.setdefault(f"tmdb.{int(m_tmdb.group(1))}", []).append(row)
-            tvdb_val = low.get("tvdb")
-            if tvdb_val:
-                m_tvdb = _NUM_PAT.search(tvdb_val)
-                if m_tvdb:
-                    out.setdefault(f"tvdb.{int(m_tvdb.group(1))}", []).append(row)
+            _index_row_provider_ids(out, row)
+            path_key = _path_index_key(row.get("Path"))
+            if path_key:
+                path_index.setdefault(path_key, []).append(dict(row))
         start += len(items)
         if not items or len(items) < limit or (total is not None and total > 0 and start >= total):
             parent_index += 1
@@ -722,9 +768,13 @@ def build_provider_index(adapter: Any, *, feature: str | None = None) -> dict[st
 
     for k, rows in out.items():
         rows.sort(key=lambda r: str(r.get("Id") or ""))
-    _dbg('index_done', source='provider_index', count=len(out))
+    for k, rows in path_index.items():
+        rows.sort(key=lambda r: str(r.get("Id") or ""))
+    _dbg('index_done', source='provider_index', count=len(out), path_count=len(path_index))
     setattr(adapter, "_provider_index_cache", out)
     setattr(adapter, "_provider_index_scope", scope_key)
+    setattr(adapter, "_path_index_cache", path_index)
+    setattr(adapter, "_path_index_scope", scope_key)
     return out
 
 
@@ -1125,6 +1175,59 @@ def _episode_number_matches(row: Mapping[str, Any], season: Any, episode: Any) -
         return False
 
 
+def _path_match_item_id(
+    adapter: Any,
+    it: Mapping[str, Any],
+    *,
+    feature: str,
+    item_type: str,
+    selected_libs: set[str],
+    year: Any = None,
+    season: Any = None,
+    episode: Any = None,
+) -> str | None:
+    keys = _candidate_path_keys(it)
+    if not keys:
+        return None
+    build_provider_index(adapter, feature=feature)
+    path_index = getattr(adapter, "_path_index_cache", None)
+    if not isinstance(path_index, dict):
+        return None
+
+    rows: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for key in keys:
+        for row in path_index.get(key) or []:
+            iid = str(row.get("Id") or "").strip()
+            if iid and iid not in seen:
+                seen.add(iid)
+                rows.append(row)
+
+    scoped = jf_filter_library_candidates(rows, selected_libs)
+    if item_type == "episode":
+        scoped = [row for row in scoped if (row.get("Type") or "") == "Episode"]
+        numbered = [row for row in scoped if _episode_number_matches(row, season, episode)]
+        if numbered:
+            scoped = numbered
+    elif item_type == "movie":
+        scoped = [row for row in scoped if (row.get("Type") or "") == "Movie"]
+        if isinstance(year, int):
+            yr = int(year)
+            scoped_year = [
+                row for row in scoped
+                if isinstance(row.get("ProductionYear"), int) and abs(int(row["ProductionYear"]) - yr) <= 1
+            ]
+            if scoped_year:
+                scoped = scoped_year
+    elif item_type in ("show", "series"):
+        scoped = [row for row in scoped if (row.get("Type") or "") == "Series"]
+
+    iid = _pick_from_candidates(scoped, want_type=item_type, want_year=year if isinstance(year, int) else None)
+    if iid:
+        _dbg('resolve_hit', kind=item_type, method='path_index', item_id=iid)
+    return iid
+
+
 def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "history") -> str | None:
     http = adapter.client
     uid = adapter.cfg.user_id
@@ -1173,7 +1276,20 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
 
     strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
 
-    prio = guid_priority_from_cfg(getattr(getattr(adapter, "cfg", None), "watchlist_guid_priority", None))
+    path_iid = _path_match_item_id(
+        adapter,
+        it,
+        feature=feature,
+        item_type=t,
+        selected_libs=selected_libs,
+        year=year,
+        season=season,
+        episode=episode,
+    )
+    if path_iid:
+        return path_iid
+
+    prio = _merged_guid_priority(adapter)
     episode_pairs = all_ext_pairs(ids, prio)
     series_pairs = all_ext_pairs(show_ids, prio) if show_ids else []
     pairs = list(episode_pairs)
@@ -1281,15 +1397,15 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         return None
 
     # Episodes
-    scope = jf_library_scope(adapter.cfg, feature)
+    idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
     for pref in episode_pairs:
-        rows = _direct_query_by_pairs(adapter, http, uid, [pref], "Episode,Series", scope)
+        raw_rows = idx.get(pref) or []
+        rows = jf_filter_library_candidates(raw_rows, selected_libs)
+        if raw_rows and not rows and selected_libs:
+            outside_scope_seen = True
         episode_rows: list[Mapping[str, Any]] = []
         seen_episode_ids: set[str] = set()
-        filtered_rows = jf_filter_library_candidates(rows, selected_libs, trust_query_scope=True)
-        if rows and not filtered_rows and selected_libs:
-            outside_scope_seen = True
-        for row in filtered_rows:
+        for row in rows:
             iid = str(row.get("Id") or "").strip()
             if (row.get("Type") or "") != "Episode" or not iid or looks_like_bad_id(iid):
                 continue
@@ -1343,9 +1459,9 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
     matched_series_pair: str | None = None
     series_id_confirmed = False
     for pref in series_pairs:
-        rows = _direct_query_by_pairs(adapter, http, uid, [pref], "Series", scope)
-        scoped_rows = jf_filter_library_candidates(rows, selected_libs, trust_query_scope=True)
-        if rows and not scoped_rows and selected_libs:
+        raw_rows = idx.get(pref) or []
+        scoped_rows = jf_filter_library_candidates(raw_rows, selected_libs)
+        if raw_rows and not scoped_rows and selected_libs:
             outside_scope_seen = True
         series_rows = [row for row in scoped_rows if (row.get("Type") or "") == "Series"]
         if series_rows:
@@ -1353,21 +1469,6 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
             matched_series_pair = pref
             series_id_confirmed = True
             break
-    if not series_row and series_pairs:
-        idx = build_provider_index(adapter) if feature == "history" else build_provider_index(adapter, feature=feature)
-        for pref in series_pairs:
-            raw_rows = idx.get(pref) or []
-            rows = jf_filter_library_candidates(raw_rows, selected_libs)
-            if raw_rows and not rows and selected_libs:
-                outside_scope_seen = True
-            series_row = next(
-                (dict(row) for row in rows if (row.get("Type") or "").strip() == "Series"),
-                None,
-            )
-            if series_row:
-                matched_series_pair = pref
-                series_id_confirmed = True
-                break
     if series_row and series_id_confirmed and season is not None and episode is not None:
         sid = series_row.get("Id")
         if sid:
@@ -1431,7 +1532,7 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
 
     strict = bool(getattr(getattr(adapter, "cfg", None), "strict_id_matching", False))
 
-    prio = guid_priority_from_cfg(getattr(getattr(adapter, "cfg", None), "watchlist_guid_priority", None))
+    prio = _merged_guid_priority(adapter)
     pairs = all_ext_pairs(ids, prio)
     if show_ids:
         spairs = all_ext_pairs(show_ids, prio)
