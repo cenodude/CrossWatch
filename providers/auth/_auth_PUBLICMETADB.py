@@ -188,7 +188,7 @@ def html() -> str:
             <div class="grid2">
               <div>
                 <label for="publicmetadb_key">API Key</label>
-                <input id="publicmetadb_key" name="publicmetadb_key" type="password" placeholder="pm-..." />
+                <input id="publicmetadb_key" name="publicmetadb_key" type="password" placeholder="pm-..." autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
               </div>
             </div>
 

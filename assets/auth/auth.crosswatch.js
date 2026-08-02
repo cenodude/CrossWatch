@@ -56,6 +56,8 @@
     if (!el) return;
     el.value = value == null ? "" : String(value);
     try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+    el.dataset.loaded = "1";
+    el.dataset.touched = "";
   }
 
   function setSelect(id, value) {
@@ -63,6 +65,8 @@
     if (!el) return;
     el.value = String(value);
     try { w.CW?.IconSelect?.refresh?.(el); } catch {}
+    el.dataset.loaded = "1";
+    el.dataset.touched = "";
   }
 
   function snapshotLabel(name) {
@@ -114,6 +118,8 @@
         sel.appendChild(opt);
       });
       sel.value = groups[feature].includes(wanted[feature]) ? wanted[feature] : "latest";
+      sel.dataset.loaded = "1";
+      sel.dataset.touched = "";
     });
   }
 
@@ -146,13 +152,18 @@
   }
 
   function wireFields() {
-    ["cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots", "cw_tracker_label"].forEach((id) => {
+    [
+      "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots", "cw_tracker_label",
+      "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
+    ].forEach((id) => {
       const el = $(id);
       if (!el || el.__cwTrackerWired) return;
       el.__cwTrackerWired = true;
       el.addEventListener("input", () => {
+        el.dataset.touched = "1";
         if (id === "cw_tracker_label" && el.value.length > 12) el.value = el.value.slice(0, 12);
       });
+      el.addEventListener("change", () => { el.dataset.touched = "1"; });
     });
     const connect = $("cw_crosswatch_connect");
     if (connect && !connect.__cwTrackerWired) {

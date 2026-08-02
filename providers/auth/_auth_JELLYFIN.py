@@ -404,7 +404,7 @@ def html() -> str:
               <div style="grid-column:1 / -1">
                 <label for="jfy_server">Server URL</label>
                 <div class="inp-row">
-                  <input id="jfy_server" name="jfy_server" class="grow" placeholder="http://host:8096/">
+                  <input id="jfy_server" name="jfy_server" class="grow" placeholder="http://host:8096/" autocomplete="off" spellcheck="false" autocapitalize="off">
                   <label class="verify"><input id="jfy_verify_ssl" type="checkbox"> Verify SSL</label>
                 </div>
               </div>
@@ -468,17 +468,17 @@ def html() -> str:
             <div style="max-width:820px">
               <label for="jfy_server_url">Server URL</label>
               <div class="inp-row">
-                <input id="jfy_server_url" name="jfy_server_url" class="grow" placeholder="http://host:8096/">
+                <input id="jfy_server_url" name="jfy_server_url" class="grow" placeholder="http://host:8096/" autocomplete="off" spellcheck="false" autocapitalize="off">
                 <label class="verify"><input id="jfy_verify_ssl_dup" type="checkbox"> Verify SSL</label>
               </div>
               <div class="sub">Leave blank to discover.</div>
 
               <label for="jfy_username" style="margin-top:10px">Username</label>
-              <input id="jfy_username" name="jfy_username" placeholder="Display name">
+                <input id="jfy_username" name="jfy_username" placeholder="Display name" autocomplete="off" spellcheck="false" autocapitalize="off">
 
               <label for="jfy_user_id" style="margin-top:10px">User_ID</label>
               <div class="inp-row">
-                <input id="jfy_user_id" name="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
+                <input id="jfy_user_id" name="jfy_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)" autocomplete="off" spellcheck="false" autocapitalize="off">
                 <button id="jfy_pick_user" class="cw-userpick-icon material-symbols-rounded" type="button" title="Pick user" aria-label="Pick user">person_search</button>
               </div>
               <div class="sub">Uses your signed-in account. Admin accounts show all users; otherwise you'll only see yourself.</div>

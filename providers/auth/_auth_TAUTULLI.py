@@ -224,17 +224,17 @@ def html() -> str:
             <div class="grid2">
               <div>
                 <label for="tautulli_server">Server URL</label>
-                <input id="tautulli_server" name="tautulli_server" type="text" placeholder="http://localhost:8181" />
+                <input id="tautulli_server" name="tautulli_server" type="text" placeholder="http://localhost:8181" autocomplete="off" spellcheck="false" autocapitalize="off" />
               </div>
               <div>
                 <label for="tautulli_key">API Key</label>
-                <input id="tautulli_key" name="tautulli_key" type="password" placeholder="********" />
+                <input id="tautulli_key" name="tautulli_key" type="password" placeholder="********" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
               </div>
             </div>
 
             <div style="margin-top:10px;max-width:240px">
               <label for="tautulli_user_id">User ID (optional)<span class="cw-help" title="If this is empty, CrossWatch imports history for all Tautulli users. Normally you only want one user ID.">?</span></label>
-              <input id="tautulli_user_id" name="tautulli_user_id" type="text" placeholder="1" />
+              <input id="tautulli_user_id" name="tautulli_user_id" type="text" placeholder="1" autocomplete="off" spellcheck="false" autocapitalize="off" />
             </div>
 
             <div id="tautulli_hint" class="msg warn" style="margin-top:10px">

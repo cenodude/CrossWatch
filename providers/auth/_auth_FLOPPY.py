@@ -194,11 +194,11 @@ def html() -> str:
             <div class="grid2">
               <div>
                 <label for="floppy_server">Server URL</label>
-                <input id="floppy_server" name="floppy_server" type="text" placeholder="http://localhost:8000">
+                <input id="floppy_server" name="floppy_server" type="text" placeholder="http://localhost:8000" autocomplete="off" spellcheck="false" autocapitalize="off">
               </div>
               <div>
                 <label for="floppy_token">API token</label>
-                <input id="floppy_token" name="floppy_token" type="password" placeholder="********">
+                <input id="floppy_token" name="floppy_token" type="password" placeholder="********" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               </div>
             </div>
             <label class="verify"><input id="floppy_verify_ssl" type="checkbox"> Verify SSL</label>
