@@ -65,6 +65,7 @@
     currentSummary: null,
     currentTab: "",
     lastStatusMs: 0,
+    navSeq: 0,
     pairedFetchAt: 0,
     softMainBusy: false,
   };
@@ -992,24 +993,29 @@
       return;
     }
 
+    const navSeq = ++state.navSeq;
+    const previousTab = state.currentTab;
+    const isCurrentNavigation = () => navSeq === state.navSeq;
+
     setTabHeaderState(tab);
     setPageVisibility(tab);
     document.dispatchEvent(new CustomEvent("tab-changed", { detail: { id: tab, tab } }));
+    state.currentTab = tab;
 
     const layout = byId("layout");
     const logPanel = byId("log-panel");
 
     if (tab === "main") {
       enforceMainLayout();
-      if (state.currentTab === "main") await softRefreshMain();
+      if (previousTab === "main") await softRefreshMain();
       else await hardRefreshMain();
+      if (!isCurrentNavigation()) return;
       logPanel?.classList.remove("hidden");
       queueSafe(() => {
         if (byId("det-log") && !window.esDet) {
           try { window.openDetailsLog?.(); } catch {}
         }
       });
-      state.currentTab = "main";
       return;
     }
 
@@ -1025,7 +1031,7 @@
       } catch (e) {
         console.warn("Watchlist load/refresh failed:", e);
       }
-      state.currentTab = "watchlist";
+      if (!isCurrentNavigation()) return;
       return;
     }
 
@@ -1040,7 +1046,7 @@
           root.innerHTML = '<div class="cw-page-load-error">Playback Progress failed to load. Refresh the page and try again.</div>';
         }
       }
-      state.currentTab = "playback_progress";
+      if (!isCurrentNavigation()) return;
       return;
     }
 
@@ -1052,7 +1058,7 @@
       } catch (e) {
         console.warn("Snapshots load/refresh failed:", e);
       }
-      state.currentTab = "snapshots";
+      if (!isCurrentNavigation()) return;
       return;
     }
 
@@ -1067,7 +1073,7 @@
           root.innerHTML = '<div class="cw-page-load-error">Playlists failed to load. Refresh the page and try again.</div>';
         }
       }
-      state.currentTab = "playlists";
+      if (!isCurrentNavigation()) return;
       return;
     }
 
@@ -1092,20 +1098,18 @@
       } catch (e) {
         console.warn("Editor load failed:", e);
       }
-      state.currentTab = "editor";
+      if (!isCurrentNavigation()) return;
       return;
     }
 
     if (tab === "settings") {
       await hydrateSettingsPage();
-      state.currentTab = "settings";
+      if (!isCurrentNavigation()) return;
       const pane = normalizeSettingsPane(window.__cwSettingsPane || readRouteHash().pane || "overview");
       window.__cwSettingsPane = pane;
       setTimeout(() => window.cwSettingsSelect?.(pane), 0);
       return;
     }
-
-    state.currentTab = tab;
   }
 
   window.addEventListener("hashchange", () => {
