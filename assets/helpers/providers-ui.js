@@ -1039,6 +1039,142 @@
     return card;
   }
 
+  function ensureConnectionWhitelistTable() {
+    if (window.cwWhitelistTable) return Promise.resolve(true);
+    if (window.__cwWhitelistTableLoading) return window.__cwWhitelistTableLoading;
+    window.__cwWhitelistTableLoading = new Promise((resolve) => {
+      const script = document.createElement("script");
+      script.src = `/assets/helpers/whitelist_table.js${window.__CW_VERSION__ ? `?v=${encodeURIComponent(window.__CW_VERSION__)}` : ""}`;
+      script.async = true;
+      script.onload = () => resolve(!!window.cwWhitelistTable);
+      script.onerror = () => resolve(false);
+      document.head.appendChild(script);
+    });
+    return window.__cwWhitelistTableLoading;
+  }
+
+  function connectionWhitelistConfig(info) {
+    if (!info) return null;
+    const map = {
+      PLEX: { prefix: "plex", api: "plex" },
+      JELLYFIN: { prefix: "jfy", api: "jellyfin" },
+      EMBY: { prefix: "emby", api: "emby" },
+      KODI: { prefix: "kodi", api: "kodi", host: "kodi_libraries" },
+    };
+    return map[info.key] || null;
+  }
+
+  function connectionWhitelistInstance(panel, info) {
+    const scoped = panel?.querySelector(`.cw-profile-switcher[data-cw-profile-provider="${info?.provider}"] select`);
+    return String(scoped?.value || panel?.querySelector(".cw-profile-switcher select")?.value || "default");
+  }
+
+  function connectionWhitelistSelect(prefix, feature) {
+    const suffix = { hist: "history", rate: "ratings", prog: "progress", scr: "scrobble" }[feature] || feature;
+    return document.getElementById(`${prefix}_lib_${suffix}`);
+  }
+
+  function connectionWhitelistRead(prefix, feature) {
+    return new Set(Array.from(connectionWhitelistSelect(prefix, feature)?.selectedOptions || []).map((opt) => String(opt.value || "").trim()).filter(Boolean));
+  }
+
+  function connectionWhitelistWrite(prefix, feature, values) {
+    const sel = connectionWhitelistSelect(prefix, feature);
+    if (!sel) return;
+    const esc = (value) => String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    sel.innerHTML = Array.from(values || []).map((value) => `<option selected value="${esc(value)}">${esc(value)}</option>`).join("");
+  }
+
+  function markConnectionWhitelistHydrated(info) {
+    if (info?.key === "PLEX") window.__plexHydrated = true;
+    else if (info?.key === "JELLYFIN") {
+      window.__jellyfinHydrated = true;
+      window.__jfyHydrated = true;
+    } else if (info?.key === "EMBY") window.__embyHydrated = true;
+    else if (info?.key === "KODI") window.__kodiHydrated = true;
+  }
+
+  async function loadConnectionWhitelistLibraries(panel, info, cfg) {
+    const inst = connectionWhitelistInstance(panel, info);
+    const url = new URL(`/api/${cfg.api}/libraries`, window.location.origin);
+    if (inst) url.searchParams.set("instance", inst);
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    const data = response.ok ? await response.json().catch(() => ({})) : {};
+    return Array.isArray(data?.libraries) ? data.libraries : (Array.isArray(data) ? data : []);
+  }
+
+  async function renderConnectionWhitelist(panel, info, opts = {}) {
+    const cfg = connectionWhitelistConfig(info);
+    if (!panel || !cfg) return false;
+    const host = document.getElementById(cfg.host || `${cfg.prefix}_lib_matrix`);
+    if (!host) return false;
+    const inst = connectionWhitelistInstance(panel, info);
+    if (host.__cwConnectionWhitelistInstance !== inst) {
+      host.__cwConnectionWhitelistInstance = inst;
+      host.__cwConnectionWhitelistSets = null;
+      host.__cwConnectionWhitelistLibs = null;
+      host.__cwConnectionWhitelistHandle = null;
+    }
+    await ensureConnectionWhitelistTable();
+    if (!window.cwWhitelistTable) return false;
+
+    const sets = host.__cwConnectionWhitelistSets || {
+      hist: connectionWhitelistRead(cfg.prefix, "hist"),
+      rate: connectionWhitelistRead(cfg.prefix, "rate"),
+      prog: connectionWhitelistRead(cfg.prefix, "prog"),
+      scr: connectionWhitelistRead(cfg.prefix, "scr"),
+    };
+    host.__cwConnectionWhitelistSets = sets;
+    const syncHidden = () => {
+      Object.keys(sets).forEach((feature) => connectionWhitelistWrite(cfg.prefix, feature, sets[feature]));
+      markConnectionWhitelistHydrated(info);
+    };
+    const ensureLibs = async (force = false) => {
+      if (force || !Array.isArray(host.__cwConnectionWhitelistLibs)) {
+        host.__cwConnectionWhitelistLibs = await loadConnectionWhitelistLibraries(panel, info, cfg);
+      }
+      return host.__cwConnectionWhitelistLibs;
+    };
+
+    if (!host.__cwConnectionWhitelistHandle) {
+      host.__cwConnectionWhitelistLibs = Array.isArray(host.__cwConnectionWhitelistLibs) ? host.__cwConnectionWhitelistLibs : [];
+      syncHidden();
+      host.__cwConnectionWhitelistHandle = window.cwWhitelistTable.mount({
+        host,
+        features: [
+          { key: "hist", label: "History" },
+          { key: "rate", label: "Ratings" },
+          { key: "prog", label: "Progress" },
+          { key: "scr", label: "Scrobble" },
+        ],
+        getLibs: () => host.__cwConnectionWhitelistLibs || [],
+        isOn: (feature, id) => sets[feature]?.has(String(id)),
+        setOn: (feature, id, on) => { if (on) sets[feature]?.add(String(id)); else sets[feature]?.delete(String(id)); },
+        commit: syncHidden,
+        load: async () => { host.__cwConnectionWhitelistLibs = await ensureLibs(true); syncHidden(); },
+      });
+    }
+
+    if (opts.force || !Array.isArray(host.__cwConnectionWhitelistLibs) || !host.__cwConnectionWhitelistLibs.length) {
+      host.__cwConnectionWhitelistLibs = await ensureLibs(!!opts.force);
+    }
+    syncHidden();
+    host.__cwConnectionWhitelistHandle?.render?.();
+    return true;
+  }
+
+  async function syncConnectionProviderSub(panel, info, sub) {
+    if (!panel || !info) return;
+    const wanted = String(sub || "").toLowerCase();
+    if (info.key === "TMDB_METADATA") {
+      try { window.cwMetaProviderSubSelect?.("tmdb", wanted); } catch {}
+      return;
+    }
+    if (wanted !== "whitelist") return;
+
+    await renderConnectionWhitelist(panel, info, { force: true });
+  }
+
   function ensureConnectionModalNav(panel, info) {
     if (!panel) return;
     let nav = panel.querySelector(":scope > .cw-subtiles");
@@ -1058,11 +1194,7 @@
         btn.innerHTML = `<span class="material-symbols-rounded cw-connection-nav-icon" aria-hidden="true">${data[0]}</span><span class="cw-connection-nav-copy"><strong>${data[1]}</strong><small>${data[2] || ""}</small></span><span class="material-symbols-rounded cw-connection-nav-chev" aria-hidden="true">chevron_right</span>`;
         btn.addEventListener("click", () => {
           const sub = String(btn.dataset.sub || "").toLowerCase();
-          if (info.key === "TMDB_METADATA") {
-            try { window.cwMetaProviderSubSelect?.("tmdb", sub); } catch {}
-          }
-          nav.querySelectorAll(".cw-subtile[data-sub]").forEach((node) => node.classList.toggle("active", node === btn));
-          panel.querySelectorAll(".cw-subpanel[data-sub]").forEach((node) => node.classList.toggle("active", String(node.dataset.sub || "").toLowerCase() === sub));
+          selectConnectionModalSub(panel, info, sub);
           setTimeout(() => {
             applyConnectionModalOrder(panel, info);
             syncConnectionModalCopy(panel, info);
@@ -1097,6 +1229,7 @@
     applyConnectionModalOrder(panel, info);
     syncConnectionModalCopy(panel, info, overlay);
     resetConnectionModalScroll(panel);
+    syncConnectionProviderSub(panel, info, wanted).finally(() => scheduleConnectionModalSize(panel, info));
   }
 
   function resetConnectionModalScroll(panel) {
