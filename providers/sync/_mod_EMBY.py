@@ -111,7 +111,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.1"
+__VERSION__ = "2.2"
 os.environ.setdefault("CW_EMBY_VERSION", __VERSION__)
 os.environ.setdefault("CW_EMBY_UA", f"CrossWatch/{__VERSION__} (Emby)")
 __all__ = ["get_manifest", "EMBYModule", "OPS"]
