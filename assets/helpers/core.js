@@ -76,7 +76,7 @@
   const PAIRS_CACHE_KEY = "cw.pairs.v1";
   const PAIRS_TTL_MS = 15_000;
   const STATUS_CACHE_KEY = "cw.status.v1";
-  const DETAILS_MAX_LINES = 2500;
+  const DETAILS_MAX_LINES = 500;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
@@ -1073,6 +1073,21 @@
 
     if (tab === "editor") {
       try {
+        await ensurePageModule("editor-datetime", "/assets/js/editor/datetime.js", "CrossWatchEditorDateTime");
+        await ensurePageModule("editor-search", "/assets/js/editor/search.js", "CrossWatchEditorSearch");
+        await ensurePageModule("editor-rows", "/assets/js/editor/rows.js", "CrossWatchEditorRows");
+        await ensurePageModule("editor-sources", "/assets/js/editor/sources.js", "CrossWatchEditorSources");
+        await ensurePageModule("editor-importers", "/assets/js/editor/importers.js", "CrossWatchEditorImporters");
+        await ensurePageModule("editor-persistence", "/assets/js/editor/persistence.js", "CrossWatchEditorPersistence");
+        await ensurePageModule("editor-table", "/assets/js/editor/table.js", "CrossWatchEditorTable");
+        await ensurePageModule("editor-chrome", "/assets/js/editor/chrome.js", "CrossWatchEditorChrome");
+        await ensurePageModule("editor-row-editor", "/assets/js/editor/row-editor.js", "CrossWatchEditorRowEditor");
+        await ensurePageModule("editor-table-controller", "/assets/js/editor/table-controller.js", "CrossWatchEditorTableController");
+        await ensurePageModule("editor-file-utils", "/assets/js/editor/file-utils.js", "CrossWatchEditorFileUtils");
+        await ensurePageModule("editor-load-controller", "/assets/js/editor/load-controller.js", "CrossWatchEditorLoadController");
+        await ensurePageModule("editor-extra-editors", "/assets/js/editor/extra-editors.js", "CrossWatchEditorExtraEditors");
+        await ensurePageModule("editor-metadata-replacer", "/assets/js/editor/metadata-replacer.js", "CrossWatchEditorMetadataReplacer");
+        await ensurePageModule("editor-send-modal", "/assets/js/editor/send-modal.js", "CrossWatchEditorSendModal");
         await ensurePageModule("editor", "/assets/js/editor.js", "Editor");
       } catch (e) {
         console.warn("Editor load failed:", e);
