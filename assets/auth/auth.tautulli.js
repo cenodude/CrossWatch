@@ -41,7 +41,9 @@
     const key = String(code || "").trim();
     switch (key) {
       case "server_url_required": return "Enter Tautulli server URL";
+      case "server_url required": return "Enter Tautulli server URL";
       case "api_key_required": return "Enter your Tautulli API key";
+      case "api_key required": return "Enter your Tautulli API key";
       case "invalid_api_key": return "Invalid Tautulli API key";
       case "validation_timeout": return "Tautulli validation timed out";
       case "validation_failed": return "Could not connect to Tautulli";
@@ -95,8 +97,19 @@
     const hasKey = !!txt((t && t.api_key) || "");
     const userId = txt((h && h.user_id) || "");
 
-    if (el("tautulli_server")) el("tautulli_server").value = server;
-    if (el("tautulli_user_id")) el("tautulli_user_id").value = userId;
+    const serverEl = el("tautulli_server");
+    if (serverEl) {
+      serverEl.value = server;
+      serverEl.dataset.loaded = "1";
+      serverEl.dataset.touched = "";
+    }
+
+    const userIdEl = el("tautulli_user_id");
+    if (userIdEl) {
+      userIdEl.value = userId;
+      userIdEl.dataset.loaded = "1";
+      userIdEl.dataset.touched = "";
+    }
 
     maskKey(el("tautulli_key"), hasKey);
     el("tautulli_hint")?.classList.toggle("hidden", hasKey);
@@ -123,7 +136,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server_url: server, api_key: key, user_id }),
       });
-      if (!r.ok || (r.data && r.data.ok === false)) throw new Error(friendlyError(r.data?.error || "save_failed"));
+      if (!r.ok || (r.data && r.data.ok === false)) throw new Error(friendlyError(r.data?.error || r.data?.detail || "save_failed"));
 
       if (key) maskKey(keyInput, true);
       el("tautulli_hint")?.classList.add("hidden");
@@ -163,9 +176,17 @@
       k.__wiredSecret = true;
     }
 
+    const server = el("tautulli_server");
+    if (server && !server.__wiredTouched) {
+      server.addEventListener("input", () => { server.dataset.touched = "1"; });
+      server.addEventListener("change", () => { server.dataset.touched = "1"; });
+      server.__wiredTouched = true;
+    }
+
     const u = el("tautulli_user_id");
     if (u && !u.__wiredUser) {
       u.addEventListener("input", () => { u.dataset.touched = "1"; });
+      u.addEventListener("change", () => { u.dataset.touched = "1"; });
       u.__wiredUser = true;
     }
   }
@@ -193,9 +214,12 @@
 
     const inst = getTautulliInstance();
 
-    const server = txt(el("tautulli_server")?.value || "");
+    const serverEl = el("tautulli_server");
+    const server = txt(serverEl?.value || "");
+    const serverTouched = !!serverEl?.dataset.touched;
     const keyEl = el("tautulli_key");
     let key = txt(keyEl?.value || "");
+    const keyTouched = !!keyEl?.dataset.touched;
 
     const userIdEl = el("tautulli_user_id");
     const user_id = txt(userIdEl?.value || "");
@@ -205,7 +229,7 @@
       key = "";
     }
 
-    if (!server && !key && !user_id && !uidTouched) return;
+    if (!serverTouched && !keyTouched && !uidTouched) return;
 
     cfg.tautulli = cfg.tautulli || {};
     let t = cfg.tautulli;
@@ -215,10 +239,10 @@
       t = t.instances[inst];
     }
 
-    if (server) t.server_url = server;
-    if (key) t.api_key = key;
+    if (serverTouched && server) t.server_url = server;
+    if (keyTouched && key) t.api_key = key;
 
-    if (user_id || uidTouched) {
+    if (uidTouched) {
       t.history = t.history || {};
       t.history.user_id = user_id;
     }

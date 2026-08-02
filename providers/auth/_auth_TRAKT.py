@@ -247,11 +247,11 @@ class _TraktProvider:
             <div class="grid2">
               <div>
                 <label for="trakt_client_id">Client ID</label>
-                <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID">
+                <input id="trakt_client_id" name="trakt_client_id" placeholder="Enter your Trakt Client ID" autocomplete="off" spellcheck="false" autocapitalize="off">
               </div>
               <div>
                 <label for="trakt_client_secret">Client Secret</label>
-                <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret">
+                <input id="trakt_client_secret" name="trakt_client_secret" type="password" placeholder="Enter your Trakt Client Secret" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               </div>
             </div>
 

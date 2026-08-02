@@ -186,7 +186,7 @@ def _tmdb_sync_html() -> str:
                 <div class="grid2">
                   <div>
                     <label for="tmdb_sync_api_key">API Key (v3)</label>
-                    <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="new-password" placeholder="Enter TMDb API key" spellcheck="false" autocapitalize="off" />
+                    <input id="tmdb_sync_api_key" name="tmdb_sync_api_key" type="password" autocomplete="off" placeholder="Enter TMDb API key" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
                     <div id="tmdb_sync_hint" class="msg warn" style="margin-top:8px">
                       Create one at
                       <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">TMDb Preferences</a>

@@ -9,6 +9,13 @@ const _cwSecretIds = [
   "tmdb_api_key", "tmdb_sync_api_key", "tmdb_sync_session_id", "mdblist_key", "publicmetadb_key", "tautulli_key", "floppy_token",
   "kodi_password"
 ];
+const _cwTouchedIds = [
+  ..._cwSecretIds,
+  "tautulli_server", "tautulli_user_id",
+  "floppy_server", "floppy_verify_ssl",
+  "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
+  "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
+];
 
 function _cwEl(id) { return document.getElementById(id); }
 function _getVal(id) { return _cwNorm(_cwEl(id)?.value); }
@@ -238,11 +245,17 @@ function _cwAbortSave(msg) {
   throw err;
 }
 
-function _cwWireTouched(ids = _cwSecretIds) {
+function _cwTouched(id) {
+  return !!_cwEl(id)?.dataset?.touched;
+}
+
+function _cwWireTouched(ids = _cwTouchedIds) {
   ids.forEach((id) => {
     const el = _cwEl(id);
     if (el && !el.__touchedWired) {
-      el.addEventListener("input", () => { el.dataset.touched = "1"; });
+      const markTouched = () => { el.dataset.touched = "1"; };
+      el.addEventListener("input", markTouched);
+      el.addEventListener("change", markTouched);
       el.__touchedWired = true;
     }
   });
@@ -282,8 +295,8 @@ function _cwReadSecret(id, previousValue) {
 function _cwProviderAuthError(provider, code) {
   const key = _cwNorm(code);
   if (provider === "tautulli") {
-    if (key === "server_url_required") return "Enter Tautulli server URL";
-    if (key === "api_key_required") return "Enter your Tautulli API key";
+    if (key === "server_url_required" || key === "server_url required") return "Enter Tautulli server URL";
+    if (key === "api_key_required" || key === "api_key required") return "Enter your Tautulli API key";
     if (key === "invalid_api_key") return "Invalid Tautulli API key";
     if (key === "validation_timeout") return "Tautulli validation timed out";
     if (key === "validation_failed") return "Could not connect to Tautulli";
@@ -663,7 +676,12 @@ async function saveSettings() {
 
     try {
       const trackerLabelEl = _cwEl("cw_tracker_label");
-      if (trackerLabelEl) {
+      const trackerFieldIds = [
+        "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
+        "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress"
+      ];
+      const trackerTouched = trackerFieldIds.some((id) => _cwTouched(id));
+      if (trackerLabelEl && trackerTouched) {
         const inst = _cwSelectedInst("crosswatch", "cw.ui.crosswatch.auth.instance.v1");
         const prevRoot = serverCfg?.crosswatch && typeof serverCfg.crosswatch === "object" ? serverCfg.crosswatch : {};
         const prevBlock = _cwInstBlock(prevRoot, inst);
@@ -684,13 +702,13 @@ async function saveSettings() {
         };
         const labelEl = _cwEl("cw_tracker_label");
         if (labelEl && labelEl.value.length > 12) labelEl.value = labelEl.value.slice(0, 12);
-        set("label", _cwNorm(labelEl?.value).slice(0, 12), _cwNorm(prevBlock?.label).slice(0, 12));
-        set("retention_days", intOr("cw_tracker_retention_days", Number(prevBlock?.retention_days), 30), Number.isFinite(prevBlock?.retention_days) ? Number(prevBlock.retention_days) : 30);
-        set("auto_snapshot", _cwTruthy(_cwEl("cw_tracker_auto_snapshot")?.value), prevBlock?.auto_snapshot !== false);
-        set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 64), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 64);
+        if (_cwTouched("cw_tracker_label")) set("label", _cwNorm(labelEl?.value).slice(0, 12), _cwNorm(prevBlock?.label).slice(0, 12));
+        if (_cwTouched("cw_tracker_retention_days")) set("retention_days", intOr("cw_tracker_retention_days", Number(prevBlock?.retention_days), 30), Number.isFinite(prevBlock?.retention_days) ? Number(prevBlock.retention_days) : 30);
+        if (_cwTouched("cw_tracker_auto_snapshot")) set("auto_snapshot", _cwTruthy(_cwEl("cw_tracker_auto_snapshot")?.value), prevBlock?.auto_snapshot !== false);
+        if (_cwTouched("cw_tracker_max_snapshots")) set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 64), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 64);
         ["watchlist", "history", "ratings", "progress"].forEach((key) => {
           const el = _cwEl(`cw_tracker_restore_${key}`);
-          if (!el) return;
+          if (!el || !_cwTouched(`cw_tracker_restore_${key}`)) return;
           const next = _cwNorm(el.value) || "latest";
           set(`restore_${key}`, next, _cwNorm(prevBlock?.[`restore_${key}`] || "latest") || "latest");
         });
@@ -736,24 +754,25 @@ async function saveSettings() {
       const tautulliInst = _cwSelectedInst("tautulli");
       const tautulliPrev = _cwInstBlock(serverCfg?.tautulli, tautulliInst);
       const tautulliServer = _cwNorm(_cwEl("tautulli_server")?.value || "");
+      const tautulliServerTouched = _cwTouched("tautulli_server");
       const tautulliKey = _cwReadSecret("tautulli_key", _cwNorm(tautulliPrev?.api_key));
       const tautulliUserEl = _cwEl("tautulli_user_id");
       const tautulliUser = _cwNorm(tautulliUserEl?.value || "");
       const tautulliUserTouched = !!tautulliUserEl?.dataset?.touched;
       const tautulliPayload = {};
-      const tautulliServerChanged = !!tautulliServer && tautulliServer !== _cwNorm(tautulliPrev?.server_url);
-      if (tautulliServer) tautulliPayload.server_url = tautulliServer;
+      const tautulliServerChanged = tautulliServerTouched && !!tautulliServer && tautulliServer !== _cwNorm(tautulliPrev?.server_url);
+      if (tautulliServer && (tautulliServerChanged || (tautulliKey.changed && tautulliKey.set))) tautulliPayload.server_url = tautulliServer;
       if (tautulliKey.changed && tautulliKey.set) tautulliPayload.api_key = tautulliKey.set;
-      if (tautulliUser || tautulliUserTouched) tautulliPayload.user_id = tautulliUser;
+      if (tautulliUserTouched) tautulliPayload.user_id = tautulliUser;
       if (tautulliServerChanged || (tautulliKey.changed && tautulliKey.set)) {
         await _cwValidateTautulliSecret(tautulliInst, tautulliPayload);
       }
-      if (tautulliServerChanged || tautulliKey.changed || tautulliUser || tautulliUserTouched) {
+      if (tautulliServerChanged || tautulliKey.changed || tautulliUserTouched) {
         cfg.tautulli = cfg.tautulli && typeof cfg.tautulli === "object" ? cfg.tautulli : {};
         const ttarget = _cwEnsureInstBlock(cfg.tautulli, tautulliInst);
-        if (tautulliServer) ttarget.server_url = tautulliServer;
+        if (tautulliServerChanged) ttarget.server_url = tautulliServer;
         if (tautulliKey.changed) _cwApplySecret(ttarget, "api_key", tautulliKey);
-        if (tautulliUser || tautulliUserTouched) {
+        if (tautulliUserTouched) {
           ttarget.history = ttarget.history && typeof ttarget.history === "object" ? ttarget.history : {};
           ttarget.history.user_id = tautulliUser;
         }
@@ -763,24 +782,25 @@ async function saveSettings() {
       const floppyInst = _cwSelectedInst("floppy", "cw.ui.floppy.auth.instance.v1");
       const floppyPrev = _cwInstBlock(serverCfg?.floppy, floppyInst);
       const floppyServer = _cwNorm(_cwEl("floppy_server")?.value || "");
+      const floppyServerTouched = _cwTouched("floppy_server");
       const floppyToken = _cwReadSecret("floppy_token", _cwNorm(floppyPrev?.api_token));
       const floppyVerifyEl = _cwEl("floppy_verify_ssl");
       const floppyVerify = floppyVerifyEl ? !!floppyVerifyEl.checked : floppyPrev?.verify_ssl === true;
-      const floppyServerChanged = !!floppyServer && floppyServer !== _cwNorm(floppyPrev?.server_url);
-      const floppyVerifyChanged = !!floppyVerifyEl && floppyVerify !== (floppyPrev?.verify_ssl === true);
+      const floppyServerChanged = floppyServerTouched && !!floppyServer && floppyServer !== _cwNorm(floppyPrev?.server_url);
+      const floppyVerifyChanged = _cwTouched("floppy_verify_ssl") && floppyVerify !== (floppyPrev?.verify_ssl === true);
       const floppyPayload = {};
-      if (floppyServer) floppyPayload.server_url = floppyServer;
+      if (floppyServer && (floppyServerChanged || (floppyToken.changed && floppyToken.set) || floppyVerifyChanged)) floppyPayload.server_url = floppyServer;
       if (floppyToken.changed && floppyToken.set) floppyPayload.api_token = floppyToken.set;
-      if (floppyVerifyEl) floppyPayload.verify_ssl = floppyVerify;
+      if (floppyVerifyEl && (floppyVerifyChanged || floppyServerChanged || (floppyToken.changed && floppyToken.set))) floppyPayload.verify_ssl = floppyVerify;
       if (floppyServerChanged || (floppyToken.changed && floppyToken.set) || floppyVerifyChanged) {
         await _cwValidateFloppySecret(floppyInst, floppyPayload);
       }
       if (floppyServerChanged || floppyToken.changed || floppyVerifyChanged) {
         cfg.floppy = cfg.floppy && typeof cfg.floppy === "object" ? cfg.floppy : {};
         const ftarget = _cwEnsureInstBlock(cfg.floppy, floppyInst);
-        if (floppyServer) ftarget.server_url = floppyServer;
+        if (floppyServerChanged) ftarget.server_url = floppyServer;
         if (floppyToken.changed) _cwApplySecret(ftarget, "api_token", floppyToken);
-        if (floppyVerifyEl) ftarget.verify_ssl = floppyVerify;
+        if (floppyVerifyChanged) ftarget.verify_ssl = floppyVerify;
         mark();
       }
     } catch (e) {

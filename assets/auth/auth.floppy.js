@@ -64,8 +64,18 @@
     const f = cfgBlock(cfg);
     const server = txt(f?.server_url || "");
     const hasToken = !!txt(f?.api_token || "");
-    if (el("floppy_server")) el("floppy_server").value = server;
-    if (el("floppy_verify_ssl")) el("floppy_verify_ssl").checked = f?.verify_ssl === true;
+    const serverEl = el("floppy_server");
+    if (serverEl) {
+      serverEl.value = server;
+      serverEl.dataset.loaded = "1";
+      serverEl.dataset.touched = "";
+    }
+    const verifyEl = el("floppy_verify_ssl");
+    if (verifyEl) {
+      verifyEl.checked = f?.verify_ssl === true;
+      verifyEl.dataset.loaded = "1";
+      verifyEl.dataset.touched = "";
+    }
     Shared.maskSecret(el("floppy_token"), hasToken);
     await refresh();
   }
@@ -119,6 +129,18 @@
     if (token && !token.__wiredSecret) {
       Shared.wireSecretInput(token);
       token.__wiredSecret = true;
+    }
+    const server = el("floppy_server");
+    if (server && !server.__wiredTouched) {
+      server.addEventListener("input", () => { server.dataset.touched = "1"; });
+      server.addEventListener("change", () => { server.dataset.touched = "1"; });
+      server.__wiredTouched = true;
+    }
+    const verify = el("floppy_verify_ssl");
+    if (verify && !verify.__wiredTouched) {
+      verify.addEventListener("input", () => { verify.dataset.touched = "1"; });
+      verify.addEventListener("change", () => { verify.dataset.touched = "1"; });
+      verify.__wiredTouched = true;
     }
   }
 

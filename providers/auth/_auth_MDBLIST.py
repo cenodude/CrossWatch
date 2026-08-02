@@ -289,7 +289,7 @@ def html() -> str:
                 <div>
                   <label for="mdblist_key">API Key</label>
                   <div class="mdbl-api-field-row">
-                    <input id="mdblist_key" name="mdblist_key" type="password" placeholder="********" />
+                    <input id="mdblist_key" name="mdblist_key" type="password" placeholder="********" autocomplete="off" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" />
                     <div id="mdblist_hint" class="msg warn">
                       Create API key at
                       <a href="https://mdblist.com/preferences/#api" target="_blank" rel="noopener">MDBList Preferences</a>.

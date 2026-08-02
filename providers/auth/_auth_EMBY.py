@@ -279,7 +279,7 @@ def html() -> str:
               <div style="grid-column:1 / -1">
                 <label for="emby_server">Server URL</label>
                 <div class="inp-row">
-                  <input id="emby_server" name="emby_server" class="grow" placeholder="http://host:8096/">
+                  <input id="emby_server" name="emby_server" class="grow" placeholder="http://host:8096/" autocomplete="off" spellcheck="false" autocapitalize="off">
                   <label class="verify"><input id="emby_verify_ssl" type="checkbox"> Verify SSL</label>
                 </div>
               </div>
@@ -287,11 +287,11 @@ def html() -> str:
             <div class="grid2" style="margin-top:8px">
               <div>
                 <label for="emby_user">Username</label>
-                <input id="emby_user" name="emby_user" placeholder="username">
+                <input id="emby_user" name="emby_user" placeholder="username" autocomplete="username">
               </div>
               <div>
                 <label for="emby_pass">Password</label>
-                <input id="emby_pass" name="emby_pass" type="password" placeholder="********">
+                <input id="emby_pass" name="emby_pass" type="password" placeholder="********" autocomplete="current-password">
               </div>
             </div>
             <div class="inline" style="margin-top:10px">
@@ -305,17 +305,17 @@ def html() -> str:
             <div style="max-width:820px">
               <label for="emby_server_url">Server URL</label>
               <div class="inp-row">
-                <input id="emby_server_url" name="emby_server_url" class="grow" placeholder="http://host:8096/">
+                <input id="emby_server_url" name="emby_server_url" class="grow" placeholder="http://host:8096/" autocomplete="off" spellcheck="false" autocapitalize="off">
                 <label class="verify"><input id="emby_verify_ssl_dup" type="checkbox"> Verify SSL</label>
               </div>
               <div class="sub">Leave blank to discover.</div>
 
               <label for="emby_username" style="margin-top:10px">Username</label>
-              <input id="emby_username" name="emby_username" placeholder="Display name">
+                <input id="emby_username" name="emby_username" placeholder="Display name" autocomplete="off" spellcheck="false" autocapitalize="off">
 
               <label for="emby_user_id" style="margin-top:10px">User_ID</label>
               <div class="inp-row">
-                <input id="emby_user_id" name="emby_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)">
+                <input id="emby_user_id" name="emby_user_id" class="grow" placeholder="e.g. 6f7a0b3b-... (GUID)" autocomplete="off" spellcheck="false" autocapitalize="off">
                 <button id="emby_pick_user" class="cw-userpick-icon material-symbols-rounded" type="button" data-cw-emby="pick-user" title="Pick user" aria-label="Pick user">person_search</button>
               </div>
               <div class="sub">Uses your signed-in account. Admin accounts show all users; otherwise you'll only see yourself.</div>

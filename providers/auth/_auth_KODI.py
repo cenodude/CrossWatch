@@ -372,7 +372,7 @@ def html() -> str:
               <div style="grid-column:1 / -1">
                 <label for="kodi_server">Server URL</label>
                 <div class="inp-row">
-                  <input id="kodi_server" name="kodi_server" class="grow" placeholder="http://host:8080">
+                <input id="kodi_server" name="kodi_server" class="grow" placeholder="http://host:8080" autocomplete="off" spellcheck="false" autocapitalize="off">
                   <label class="verify"><input id="kodi_verify_ssl" type="checkbox"> Verify SSL</label>
                 </div>
               </div>

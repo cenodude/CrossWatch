@@ -345,7 +345,7 @@ def html() -> str:
             <div style="max-width:820px">
               <label for="plex_server_url">Server URL</label>
               <div class="fieldline">
-                <input id="plex_server_url" name="plex_server_url" placeholder="http://host:32400" list="plex_server_suggestions">
+                  <input id="plex_server_url" name="plex_server_url" placeholder="http://host:32400" list="plex_server_suggestions" autocomplete="off" spellcheck="false" autocapitalize="off">
                 <datalist id="plex_server_suggestions"></datalist>
                 <label class="sslopt" title="Verify server TLS certificate">
                   <input type="checkbox" id="plex_verify_ssl">
@@ -356,15 +356,15 @@ def html() -> str:
 
               <label for="plex_username" style="margin-top:10px">Username</label>
               <div class="fieldline userpick">
-                <input id="plex_username" name="plex_username" placeholder="Plex Home profile">
+                <input id="plex_username" name="plex_username" placeholder="Plex Home profile" autocomplete="off" spellcheck="false" autocapitalize="off">
                 <button class="cw-userpick-icon material-symbols-rounded" id="plex_user_pick_btn" type="button" title="Choose from server users" aria-label="Choose from server users">person_search</button>
               </div>
 
               <label for="plex_account_id" style="margin-top:10px">Account_ID</label>
-              <input id="plex_account_id" name="plex_account_id" type="number" min="1" placeholder="e.g. 1">
+                <input id="plex_account_id" name="plex_account_id" type="number" min="1" placeholder="e.g. 1" autocomplete="off">
 
               <label for="plex_home_pin" style="margin-top:10px">Home PIN (optional)</label>
-              <input id="plex_home_pin" name="plex_home_pin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="4 digits">
+              <input id="plex_home_pin" name="plex_home_pin" type="password" inputmode="numeric" autocomplete="off" placeholder="4 digits" spellcheck="false" autocapitalize="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
               <div class="sub">Only needed if the selected Plex Home user is PIN-protected.</div>
 
               <div class="plex-btnrow">
