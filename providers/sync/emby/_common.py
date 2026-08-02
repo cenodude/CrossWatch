@@ -329,7 +329,7 @@ def _lookup_type(it: Mapping[str, Any]) -> str:
 
 
 def looks_like_bad_id(iid: Any) -> bool:
-    return bool(_BAD_NUM.match(str(iid or "")))
+    return False
 
 
 def _ids_from_provider_ids(pids: Mapping[str, Any] | None) -> dict[str, str]:
