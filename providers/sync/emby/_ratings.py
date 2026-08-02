@@ -61,28 +61,45 @@ def _meta_save(meta: Mapping[str, Mapping[str, Any]]) -> None:
 _dbg, _info, _warn, _error = make_logger("ratings")
 
 
+_UNRES_CACHE: dict[str, dict[str, Any]] = {}
+_UNRES_DIRTY: set[str] = set()
+
+
 def _load() -> dict[str, Any]:
     if _is_capture_mode() or _pair_scope() is None:
         return {}
-    try:
-        with open(_unresolved_path(), "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    path = _unresolved_path()
+    cached = _UNRES_CACHE.get(path)
+    if cached is None:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cached = json.load(f) or {}
+        except Exception:
+            cached = {}
+        _UNRES_CACHE[path] = cached
+    return cached
 
 
 def _save(obj: Mapping[str, Any]) -> None:
     if _is_capture_mode() or _pair_scope() is None:
         return
-    try:
-        path = _unresolved_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = f"{path}.tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2, sort_keys=True)
-        os.replace(tmp, path)
-    except Exception:
-        pass
+    path = _unresolved_path()
+    if _UNRES_CACHE.get(path) is not obj:
+        _UNRES_CACHE[path] = dict(obj)
+    _UNRES_DIRTY.add(path)
+
+
+def _flush() -> None:
+    for path in sorted(_UNRES_DIRTY):
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = f"{path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_UNRES_CACHE.get(path) or {}, f, ensure_ascii=False, indent=2, sort_keys=True)
+            os.replace(tmp, path)
+        except Exception:
+            pass
+    _UNRES_DIRTY.clear()
 
 
 def _freeze(item: Mapping[str, Any], *, reason: str) -> None:
@@ -368,6 +385,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         thumbs_cleared=stats["thumbs_cleared"],
         write_failed=stats["write_failed"],
     )
+    _flush()
     return ok, unresolved
 
 
@@ -414,4 +432,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     if meta_changed:
         _meta_save(meta)
     _info("write_done", op="remove", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
+    _flush()
     return ok, unresolved
