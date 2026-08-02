@@ -20,6 +20,8 @@ try:
         _load_provider_dropped_tokens,
         _filter_index_for_dropped_shows,
         _filter_items_for_dropped_shows,
+        _history_upsert_supported,
+        _history_watched_at_differs,
     )
 except Exception:  # pragma: no cover
     _HIST_RE = re.compile(r"^(?P<base>.+?)@(?P<ts>\d+)(?P<rest>.*)$")
@@ -57,6 +59,12 @@ except Exception:  # pragma: no cover
 
     def _filter_items_for_dropped_shows(items: list[dict[str, Any]], dropped_tokens: set[str]) -> tuple[list[dict[str, Any]], int]:
         return list(items or []), 0
+
+    def _history_upsert_supported(ops: Any, feature: str) -> bool:
+        return False
+
+    def _history_watched_at_differs(src_item: Mapping[str, Any], dst_item: Mapping[str, Any] | None) -> bool:
+        return False
 
 from ..provider_instances import normalize_instance_id
 from ._planner import diff_ratings, diff_progress, _pick_rating
@@ -1353,6 +1361,37 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 k: v for k, v in B_eff.items()
                 if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
             }
+            A_alias = _alias_index(A_eff)
+            B_alias = _alias_index(B_eff)
+
+            def _append_manual_history_updates(
+                manual_adds: Mapping[str, Any] | None,
+                dst_eff: dict[str, Any],
+                dst_alias: dict[str, str],
+                target: list[dict[str, Any]],
+            ) -> None:
+                seen: set[str] = {(_ck(it) or "") for it in target if isinstance(it, Mapping)}
+                source = manual_adds if isinstance(manual_adds, Mapping) else {}
+                for mk, mv in source.items():
+                    if not isinstance(mv, Mapping):
+                        continue
+                    dv = _find_in_idx(dst_eff, dst_alias, mv)
+                    if not isinstance(dv, Mapping):
+                        continue
+                    if not _history_watched_at_differs(mv, dv):
+                        continue
+                    upd = _minimal(mv)
+                    uk = _ck(upd) or _ck(mv) or str(mk)
+                    if uk and uk in seen:
+                        continue
+                    if uk:
+                        seen.add(uk)
+                    target.append(upd)
+
+            if _history_upsert_supported(bops, feature):
+                _append_manual_history_updates(manual_adds_A, B_eff, B_alias, upd_to_B)
+            if _history_upsert_supported(aops, feature):
+                _append_manual_history_updates(manual_adds_B, A_eff, A_alias, upd_to_A)
 
         bucket_sec = _hist_bucket_sec(a, b, feature)
         if bucket_sec and int(bucket_sec) > 1:

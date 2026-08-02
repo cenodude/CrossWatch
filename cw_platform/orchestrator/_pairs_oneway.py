@@ -384,6 +384,49 @@ def _filter_items_for_dropped_shows(items: list[dict[str, Any]], dropped_tokens:
     return out, removed
 
 
+def _history_upsert_supported(ops: Any, feature: str) -> bool:
+    if str(feature or "").strip().lower() != "history":
+        return False
+    try:
+        caps = ops.capabilities() or {}
+        per = caps.get("history") if isinstance(caps, Mapping) else None
+        if isinstance(per, Mapping):
+            return bool(per.get("upsert"))
+    except Exception:
+        pass
+    return False
+
+
+def _history_watched_at_value(it: Mapping[str, Any] | None) -> Any:
+    if not isinstance(it, Mapping):
+        return None
+    return it.get("watched_at") or it.get("last_watched_at")
+
+
+def _history_watched_at_epoch(it: Mapping[str, Any] | None) -> int | None:
+    raw = _history_watched_at_value(it)
+    if raw in (None, ""):
+        return None
+    try:
+        s = str(raw).strip().replace("Z", "+00:00").replace(" ", "T")
+        dt = _dt.datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_dt.timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        return None
+
+
+def _history_watched_at_differs(src_item: Mapping[str, Any], dst_item: Mapping[str, Any] | None) -> bool:
+    src_ts = _history_watched_at_epoch(src_item)
+    if src_ts is None:
+        return False
+    dst_ts = _history_watched_at_epoch(dst_item)
+    if dst_ts is None:
+        return True
+    return int(src_ts) != int(dst_ts)
+
+
 def _index_semantics(ops, feature: str, *, cfg: Mapping[str, Any] | None = None, provider: str = "") -> str:
     return provider_index_semantics(ops, cfg or {}, feature)
 
@@ -1138,6 +1181,26 @@ def run_one_way_feature(
                 k: dict(v) for k, v in src_idx.items()
                 if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
             }
+            if _history_upsert_supported(dst_ops, feature):
+                history_update_idx = dst_canonical if dst_canonical else dst_full
+                dst_alias_tmp = _alias_index(history_update_idx)
+                seen_history_updates: set[str] = set()
+                manual_history_adds = manual_adds if isinstance(manual_adds, Mapping) else {}
+                for _sk, sv in manual_history_adds.items():
+                    if not isinstance(sv, Mapping):
+                        continue
+                    dv = _find_in_idx(history_update_idx, dst_alias_tmp, sv)
+                    if not isinstance(dv, Mapping):
+                        continue
+                    if not _history_watched_at_differs(sv, dv):
+                        continue
+                    upd = _minimal(sv)
+                    uk = _ck(upd) or _ck(sv) or str(_sk)
+                    if uk and uk in seen_history_updates:
+                        continue
+                    if uk:
+                        seen_history_updates.add(uk)
+                    updates.append(upd)
 
         bucket_sec = _history_bucket_sec(src, dst, feature)
         if bucket_sec and int(bucket_sec) > 1:

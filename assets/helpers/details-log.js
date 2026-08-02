@@ -26,11 +26,11 @@ if (typeof window.debugBuf === "undefined") window.debugBuf = [];
 if (typeof window._debugFlushRAF === "undefined") window._debugFlushRAF = null;
 if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
 if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
-if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 600;
-if (typeof window.DETAILS_STREAM_TAIL === "undefined") window.DETAILS_STREAM_TAIL = 400;
-if (typeof window.DETAILS_QUEUE_MAX === "undefined") window.DETAILS_QUEUE_MAX = 1200;
-if (typeof window.DETAILS_BATCH_ROWS === "undefined") window.DETAILS_BATCH_ROWS = 80;
-if (typeof window.DETAILS_FRAME_BUDGET_MS === "undefined") window.DETAILS_FRAME_BUDGET_MS = 8;
+if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 500;
+if (typeof window.DETAILS_STREAM_TAIL === "undefined") window.DETAILS_STREAM_TAIL = 220;
+if (typeof window.DETAILS_QUEUE_MAX === "undefined") window.DETAILS_QUEUE_MAX = 700;
+if (typeof window.DETAILS_BATCH_ROWS === "undefined") window.DETAILS_BATCH_ROWS = 45;
+if (typeof window.DETAILS_FRAME_BUDGET_MS === "undefined") window.DETAILS_FRAME_BUDGET_MS = 5;
 if (typeof window._detOpenSeq === "undefined") window._detOpenSeq = 0;
 if (typeof window.syncBuf === "undefined") window.syncBuf = [];
 if (typeof window._syncFlushRAF === "undefined") window._syncFlushRAF = null;
@@ -44,6 +44,8 @@ if (typeof window._detailsDropped === "undefined") window._detailsDropped = { sy
 if (typeof window._detailsStatusRAF === "undefined") window._detailsStatusRAF = null;
 if (typeof window._detailsOpenRAF === "undefined") window._detailsOpenRAF = null;
 if (typeof window._detailsOpenTO === "undefined") window._detailsOpenTO = null;
+if (typeof window._detailsProgrammaticScrollUntil === "undefined") window._detailsProgrammaticScrollUntil = 0;
+if (typeof window._detailsProgrammaticScrollTO === "undefined") window._detailsProgrammaticScrollTO = null;
 
 function _activeDetailsLogEl() {
   if (window._detailsTab === "watcher") return document.getElementById("det-watch-log");
@@ -53,7 +55,47 @@ function _activeDetailsLogEl() {
 
 function _pruneDetailsLog(el) {
   const max = Number(window.DETAILS_MAX_LINES || 0) || 600;
-  while (el && el.childNodes && el.childNodes.length > max) el.removeChild(el.firstChild);
+  if (!el || !el.childNodes || el.childNodes.length <= max) return;
+  const drop = el.childNodes.length - max;
+  const removed = document.createDocumentFragment();
+  for (let i = 0; i < drop && el.firstChild; i++) {
+    removed.appendChild(el.firstChild);
+  }
+}
+
+function _isDetailsProgrammaticScroll() {
+  return Date.now() < Number(window._detailsProgrammaticScrollUntil || 0);
+}
+
+function _markDetailsProgrammaticScroll(ms = 180) {
+  window._detailsProgrammaticScrollUntil = Date.now() + ms;
+  if (window._detailsProgrammaticScrollTO) clearTimeout(window._detailsProgrammaticScrollTO);
+  window._detailsProgrammaticScrollTO = setTimeout(() => {
+    window._detailsProgrammaticScrollTO = null;
+    window._detailsProgrammaticScrollUntil = 0;
+  }, ms + 40);
+}
+
+function _setDetailsStickBottom(tab, value) {
+  const on = !!value;
+  if (tab === "watcher") window.watchStickBottom = on;
+  else if (tab === "debug") window.debugStickBottom = on;
+  else window.detStickBottom = on;
+}
+
+function _scrollDetailsToBottom(el, tab, afterScroll) {
+  if (!el) return;
+  _setDetailsStickBottom(tab, true);
+  _markDetailsProgrammaticScroll();
+  el.scrollTop = el.scrollHeight;
+  afterScroll?.();
+  requestAnimationFrame(() => {
+    _setDetailsStickBottom(tab, true);
+    _markDetailsProgrammaticScroll();
+    el.scrollTop = el.scrollHeight;
+    afterScroll?.();
+    _scheduleDetailsConsoleStatus();
+  });
 }
 
 function _pruneSeenDetailLines() {
@@ -541,15 +583,15 @@ function initDetailsTabs() {
       if (window._detailsTab === "watcher") {
         window.watchStickBottom = !window.watchStickBottom;
         const el = document.getElementById("det-watch-log");
-        if (window.watchStickBottom && el) el.scrollTop = el.scrollHeight;
+        if (window.watchStickBottom && el) _scrollDetailsToBottom(el, "watcher");
       } else if (window._detailsTab === "debug") {
         window.debugStickBottom = !window.debugStickBottom;
         const el = document.getElementById("det-debug-log");
-        if (window.debugStickBottom && el) el.scrollTop = el.scrollHeight;
+        if (window.debugStickBottom && el) _scrollDetailsToBottom(el, "debug");
       } else {
         window.detStickBottom = !window.detStickBottom;
         const el = document.getElementById("det-log");
-        if (window.detStickBottom && el) el.scrollTop = el.scrollHeight;
+        if (window.detStickBottom && el) _scrollDetailsToBottom(el, "sync");
       }
       _updateDetailsConsoleStatus();
     });
@@ -620,6 +662,7 @@ function openDebugLog() {
   try {
     if (!el.__cwScrollWired) {
       el.addEventListener("scroll", () => {
+        if (_isDetailsProgrammaticScroll()) return;
         const pad = 12;
         window.debugStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
         _updateDetailsConsoleStatus();
@@ -647,9 +690,10 @@ function openDebugLog() {
           row.classList.add("det-debug-line");
           frag.appendChild(row);
         }, () => {
+          const shouldFollow = !!window.debugStickBottom;
           el.appendChild(frag);
           _pruneDetailsLog(el);
-          if (window.debugStickBottom) el.scrollTop = el.scrollHeight;
+          if (shouldFollow) _scrollDetailsToBottom(el, "debug");
           _scheduleDetailsConsoleStatus();
         }, scheduleFlush);
       });
@@ -746,6 +790,7 @@ async function openWatcherLog() {
 
     if (!el.__cwScrollWired) {
       el.addEventListener("scroll", () => {
+        if (_isDetailsProgrammaticScroll()) return;
         const pad = 12;
         window.watchStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
         _updateDetailsConsoleStatus();
@@ -774,9 +819,10 @@ async function openWatcherLog() {
         _runDetailsBatch(window.watchBuf, (it) => {
           frag.appendChild(_structuredLogRow(it.html, it.tag));
         }, () => {
+          const shouldFollow = !!window.watchStickBottom;
           el.appendChild(frag);
           _pruneDetailsLog(el);
-          if (window.watchStickBottom) el.scrollTop = el.scrollHeight;
+          if (shouldFollow) _scrollDetailsToBottom(el, "watcher");
           _scheduleDetailsConsoleStatus();
         }, scheduleFlush);
       });
@@ -874,6 +920,7 @@ async function openDetailsLog() {
 
   const updateStick = () => {
     const pad = 6;
+    if (_isDetailsProgrammaticScroll()) return;
     window.detStickBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - pad;
   };
 
@@ -911,9 +958,10 @@ async function openDetailsLog() {
       _runDetailsBatch(window.syncBuf, (line) => {
         appendRaw(line);
       }, () => {
+        const shouldFollow = !!window.detStickBottom;
         _pruneDetailsLog(el);
-        if (window.detStickBottom) el.scrollTop = el.scrollHeight;
-        updateSlider();
+        if (shouldFollow) _scrollDetailsToBottom(el, "sync", updateSlider);
+        else updateSlider();
         _scheduleDetailsConsoleStatus();
       }, scheduleFlush);
     });
@@ -1019,8 +1067,7 @@ async function openDetailsLog() {
   window.esDetSummary = null;
 
   requestAnimationFrame(() => {
-    el.scrollTop = el.scrollHeight;
-    updateSlider();
+    _scrollDetailsToBottom(el, "sync", updateSlider);
   });
 }
 
