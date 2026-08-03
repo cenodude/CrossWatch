@@ -556,10 +556,11 @@ def run_pairs(ctx) -> dict[str, Any]:
         wall["now"] = int(wall.get("now") or 0)
         wall["unresolved"] = int(unresolved_total)
 
-        st = ctx.state_store.load_state() or {}
-        st["wall"] = wall
-        st["last_sync_epoch"] = now
-        ctx.state_store.save_state(st)
+        if getattr(ctx, "write_state_json", True):
+            st = ctx.state_store.load_state() or {}
+            st["wall"] = wall
+            st["last_sync_epoch"] = now
+            ctx.state_store.save_state(st)
 
         emit("stats:overview", overview=wall)
         emit(

@@ -1862,109 +1862,110 @@ def run_one_way_feature(
              refreshed_count=len(refreshed or {}), first_keys=list(refreshed or {})[:10],
              contains_trace_key=contains_trace, baseline_update_count=base_update)
 
-    try:
-        st = ctx.state_store.load_state() or {}
-        provs_block = st.setdefault("providers", {})
+    if getattr(ctx, "write_state_json", True):
+        try:
+            st = ctx.state_store.load_state() or {}
+            provs_block = st.setdefault("providers", {})
 
-        def _ensure_pf(pmap, prov, inst, feat):
-            pprov = pmap.setdefault(prov, {})
-            if inst != "default":
-                insts = pprov.setdefault("instances", {})
-                pprov = insts.setdefault(inst, {})
-            return pprov.setdefault(feat, {"baseline": {"items": {}}, "checkpoint": None})
-
-        def _commit_baseline(pmap, prov, inst, feat, items):
-            pf = _ensure_pf(pmap, prov, inst, feat)
-            pkey = _PROVIDER_KEY_MAP.get(str(prov or "").upper(), str(prov or "").strip().lower())
-
-            kept: dict[str, Any] = {}
-            for k, v in (items or {}).items():
-                if not isinstance(v, Mapping):
-                    continue
-
-                if v.get("_cw_persist") is False or v.get("_cw_transient") is True or v.get("_cw_skip_persist") is True:
-                    continue
-
-                pobj = v.get(pkey)
-                if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
-                    continue
-
-                mv = _minimal(v)
+            def _ensure_pf(pmap, prov, inst, feat):
+                pprov = pmap.setdefault(prov, {})
                 if inst != "default":
-                    mv["_cw_instance"] = inst
-                kept[str(k)] = mv
+                    insts = pprov.setdefault("instances", {})
+                    pprov = insts.setdefault(inst, {})
+                return pprov.setdefault(feat, {"baseline": {"items": {}}, "checkpoint": None})
 
-            pf["baseline"] = {"items": kept}
+            def _commit_baseline(pmap, prov, inst, feat, items):
+                pf = _ensure_pf(pmap, prov, inst, feat)
+                pkey = _PROVIDER_KEY_MAP.get(str(prov or "").upper(), str(prov or "").strip().lower())
 
-        def _merge_payload(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
-            out = dict(base or {})
-            for k, v in (extra or {}).items():
-                if k in ("ids", "show_ids"):
-                    continue
-                if out.get(k) in (None, "") and v not in (None, ""):
-                    out[k] = v
+                kept: dict[str, Any] = {}
+                for k, v in (items or {}).items():
+                    if not isinstance(v, Mapping):
+                        continue
 
-            for fld in ("ids", "show_ids"):
-                b = out.get(fld) if isinstance(out.get(fld), Mapping) else {}
-                e = extra.get(fld) if isinstance(extra.get(fld), Mapping) else {}
-                if b or e:
-                    merged: dict[str, Any] = dict(b or {})
-                    for kk, vv in (e or {}).items():
-                        if merged.get(kk) in (None, "") and vv not in (None, ""):
-                            merged[kk] = vv
-                    if merged:
-                        out[fld] = merged
+                    if v.get("_cw_persist") is False or v.get("_cw_transient") is True or v.get("_cw_skip_persist") is True:
+                        continue
 
-            if feature == "history":
-                a0 = out.get("watched_at")
-                b0 = extra.get("watched_at")
-                if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
-                    out["watched_at"] = b0
-            elif feature == "ratings":
-                a0 = out.get("rated_at")
-                b0 = extra.get("rated_at")
-                if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
-                    out["rated_at"] = b0
-            elif feature == "progress":
-                a0 = out.get("progress_at")
-                b0 = extra.get("progress_at")
-                if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
-                    out["progress_at"] = b0
-            return out
+                    pobj = v.get(pkey)
+                    if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
+                        continue
+
+                    mv = _minimal(v)
+                    if inst != "default":
+                        mv["_cw_instance"] = inst
+                    kept[str(k)] = mv
+
+                pf["baseline"] = {"items": kept}
+
+            def _merge_payload(base: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, Any]:
+                out = dict(base or {})
+                for k, v in (extra or {}).items():
+                    if k in ("ids", "show_ids"):
+                        continue
+                    if out.get(k) in (None, "") and v not in (None, ""):
+                        out[k] = v
+
+                for fld in ("ids", "show_ids"):
+                    b = out.get(fld) if isinstance(out.get(fld), Mapping) else {}
+                    e = extra.get(fld) if isinstance(extra.get(fld), Mapping) else {}
+                    if b or e:
+                        merged: dict[str, Any] = dict(b or {})
+                        for kk, vv in (e or {}).items():
+                            if merged.get(kk) in (None, "") and vv not in (None, ""):
+                                merged[kk] = vv
+                        if merged:
+                            out[fld] = merged
+
+                if feature == "history":
+                    a0 = out.get("watched_at")
+                    b0 = extra.get("watched_at")
+                    if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                        out["watched_at"] = b0
+                elif feature == "ratings":
+                    a0 = out.get("rated_at")
+                    b0 = extra.get("rated_at")
+                    if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                        out["rated_at"] = b0
+                elif feature == "progress":
+                    a0 = out.get("progress_at")
+                    b0 = extra.get("progress_at")
+                    if isinstance(b0, str) and b0 and (not isinstance(a0, str) or not a0 or b0 > a0):
+                        out["progress_at"] = b0
+                return out
 
 
-        def _commit_checkpoint(pmap, prov, inst, feat, chk):
-            if not chk:
-                return
-            pf = _ensure_pf(pmap, prov, inst, feat)
-            pf["checkpoint"] = chk
+            def _commit_checkpoint(pmap, prov, inst, feat, chk):
+                if not chk:
+                    return
+                pf = _ensure_pf(pmap, prov, inst, feat)
+                pf["checkpoint"] = chk
 
-        def _rekey_state_to_src_keyspace(idx0: dict[str, Any], src_idx0: dict[str, Any]) -> dict[str, Any]:
-            return _rekey_index_to_match_other_keys(
-                idx0,
-                src_idx0,
-                typed_tokens=_typed_tokens,
-                merge_payload=_merge_payload,
-            )
+            def _rekey_state_to_src_keyspace(idx0: dict[str, Any], src_idx0: dict[str, Any]) -> dict[str, Any]:
+                return _rekey_index_to_match_other_keys(
+                    idx0,
+                    src_idx0,
+                    typed_tokens=_typed_tokens,
+                    merge_payload=_merge_payload,
+                )
 
-        if feature in ("ratings", "progress"):
-            dst_full = _rekey_state_to_src_keyspace(dst_full, src_idx)
+            if feature in ("ratings", "progress"):
+                dst_full = _rekey_state_to_src_keyspace(dst_full, src_idx)
 
-        dst_commit = dst_canonical if feature == "history" else dst_full
-        if feature == "history" and len(dst_commit) != len(dst_full):
-            dbg("baseline.provider_native", feature=feature, dst=dst,
-                canonical=len(dst_commit), comparison=len(dst_full))
+            dst_commit = dst_canonical if feature == "history" else dst_full
+            if feature == "history" and len(dst_commit) != len(dst_full):
+                dbg("baseline.provider_native", feature=feature, dst=dst,
+                    canonical=len(dst_commit), comparison=len(dst_full))
 
-        _commit_baseline(provs_block, src, src_inst, feature, src_idx)
-        _commit_baseline(provs_block, dst, dst_inst, feature, dst_commit)
-        _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)
-        _commit_checkpoint(provs_block, dst, dst_inst, feature, now_cp_dst)
+            _commit_baseline(provs_block, src, src_inst, feature, src_idx)
+            _commit_baseline(provs_block, dst, dst_inst, feature, dst_commit)
+            _commit_checkpoint(provs_block, src, src_inst, feature, now_cp_src)
+            _commit_checkpoint(provs_block, dst, dst_inst, feature, now_cp_dst)
 
-        import time as _t
-        st["last_sync_epoch"] = int(_t.time())
-        ctx.state_store.save_state(st)
-    except Exception:
-        pass
+            import time as _t
+            st["last_sync_epoch"] = int(_t.time())
+            ctx.state_store.save_state(st)
+        except Exception:
+            pass
 
     emit("feature:done", src=src, dst=dst, feature=feature)
 

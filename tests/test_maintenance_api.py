@@ -181,6 +181,100 @@ def test_state_action_status_counts_provider_feature_baselines(tmp_path, monkeyp
     assert metrics["State storage"] > 0
 
 
+def test_state_file_action_status_reports_largest_baseline(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / ".cw_state"
+    state_dir.mkdir()
+    state = {
+        "providers": {
+            "TRAKT": {
+                "history": {"baseline": {"items": {"a": {}, "b": {}}}},
+            },
+            "SIMKL": {
+                "watchlist": {"baseline": {"items": {"c": {}}}},
+            },
+        }
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        maintenanceAPI,
+        "_cw",
+        lambda: (
+            tmp_path / "cache",
+            tmp_path,
+            state_dir,
+            SimpleNamespace(path=tmp_path / "statistics.json"),
+            None,
+            None,
+        ),
+    )
+
+    result = maintenanceAPI.maintenance_action_status("state-file")
+    metrics = {item["label"]: item["value"] for item in result["metrics"]}
+
+    assert result["ok"] is True
+    assert metrics["Providers"] == 2
+    assert metrics["Feature baselines"] == 2
+    assert metrics["Baseline items"] == 3
+    assert metrics["Largest baseline"] == "TRAKT history"
+
+
+def test_compact_state_file_creates_backup_and_rewrites_json(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / ".cw_state"
+    state_dir.mkdir()
+    payload = {"providers": {"TRAKT": {"watchlist": {"baseline": {"items": {"a": {"title": "A"}}}}}}}
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    before = state_path.stat().st_size
+    backups: list[dict] = []
+
+    def fake_backup(**kwargs):
+        backups.append(kwargs)
+        return {"ok": True, "path": "2026/pre-state-compact.zip"}
+
+    import services.backups as backups_svc
+
+    monkeypatch.setattr(backups_svc, "create_backup", fake_backup)
+    monkeypatch.setattr(
+        maintenanceAPI,
+        "_cw",
+        lambda: (tmp_path / "cache", tmp_path, state_dir, None, None, None),
+    )
+
+    result = maintenanceAPI.compact_state_file()
+
+    assert result["ok"] is True
+    assert result["backup"]["path"] == "2026/pre-state-compact.zip"
+    assert backups and backups[0]["scope"] == "app_state"
+    assert backups[0]["trigger"] == "maintenance_state_compact"
+    assert state_path.stat().st_size < before
+    assert "\n" not in state_path.read_text(encoding="utf-8")
+    assert json.loads(state_path.read_text(encoding="utf-8")) == payload
+
+
+def test_compact_state_file_rejects_invalid_json_without_backup(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / ".cw_state"
+    state_dir.mkdir()
+    (tmp_path / "state.json").write_text("{not valid", encoding="utf-8")
+
+    def fail_backup(**_kwargs):
+        raise AssertionError("backup should not be created for invalid JSON")
+
+    import services.backups as backups_svc
+
+    monkeypatch.setattr(backups_svc, "create_backup", fail_backup)
+    monkeypatch.setattr(
+        maintenanceAPI,
+        "_cw",
+        lambda: (tmp_path / "cache", tmp_path, state_dir, None, None, None),
+    )
+
+    result = maintenanceAPI.compact_state_file()
+
+    assert result["ok"] is False
+    assert result["error"] == "state_json_invalid"
+
+
 def test_clear_provider_cache_preserves_pair_scoped_history_mapping_state(tmp_path, monkeypatch) -> None:
     state_dir = tmp_path / ".cw_state"
     state_dir.mkdir()

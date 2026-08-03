@@ -321,6 +321,70 @@ def _sync_state_inventory(path: Path) -> tuple[int, int]:
     return len(providers), baseline_count
 
 
+def _sync_state_baseline_inventory(path: Path) -> dict[str, Any]:
+    payload = _read_json(path)
+    providers = payload.get("providers") if isinstance(payload, dict) else None
+    if not isinstance(providers, dict):
+        return {"providers": 0, "baselines": 0, "items": 0, "largest": None}
+
+    feature_names = {"history", "ratings", "watchlist", "playlists", "progress"}
+    baselines = 0
+    items_total = 0
+    largest: dict[str, Any] | None = None
+
+    def _visit_provider(provider_name: str, node: Any, instance: str = "default") -> None:
+        nonlocal baselines, items_total, largest
+        if not isinstance(node, dict):
+            return
+        for name, block in node.items():
+            feature = str(name).lower()
+            if feature not in feature_names or not isinstance(block, dict):
+                continue
+            baseline = block.get("baseline") or {}
+            items = baseline.get("items") if isinstance(baseline, dict) else None
+            count = len(items) if isinstance(items, dict) else 0
+            if block.get("baseline") is not None or block:
+                baselines += 1
+            items_total += count
+            row = {
+                "provider": provider_name,
+                "instance": instance,
+                "feature": feature,
+                "items": count,
+            }
+            if largest is None or count > int(largest.get("items") or 0):
+                largest = row
+
+        insts = node.get("instances")
+        if isinstance(insts, dict):
+            for inst_name, inst_node in insts.items():
+                _visit_provider(provider_name, inst_node, str(inst_name or "default"))
+
+    for provider_name, provider_node in providers.items():
+        _visit_provider(str(provider_name), provider_node)
+
+    return {
+        "providers": len(providers),
+        "baselines": baselines,
+        "items": items_total,
+        "largest": largest,
+    }
+
+
+def _write_json_compact_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".compact.tmp")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), "utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
 def _currently_playing_count(path: Path) -> int:
     payload = _read_json(path)
     if not isinstance(payload, dict):
@@ -351,6 +415,28 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Feature baselines", baselines),
                 _metric("Pair mapping files", len(scoped)),
                 _metric("State storage", scoped_usage["bytes"], "bytes"),
+                _metric("Last updated", usage["modified"], "datetime"),
+            ],
+        )
+    elif action == "state-file":
+        path = CONFIG_DIR / "state.json"
+        usage = _path_usage(path)
+        inv = _sync_state_baseline_inventory(path)
+        largest = inv.get("largest") if isinstance(inv.get("largest"), dict) else None
+        largest_label = "None"
+        if largest:
+            inst = str(largest.get("instance") or "default")
+            suffix = "" if inst == "default" else f" ({inst})"
+            largest_label = f"{largest.get('provider')} {largest.get('feature')}{suffix}"
+        response.update(
+            title="State file",
+            note="Inspects the legacy state.json baseline file. Compact rewrites the same JSON without indentation after creating an app-state backup.",
+            metrics=[
+                _metric("File size", usage["bytes"], "bytes"),
+                _metric("Providers", inv.get("providers", 0)),
+                _metric("Feature baselines", inv.get("baselines", 0)),
+                _metric("Baseline items", inv.get("items", 0)),
+                _metric("Largest baseline", largest_label, "text"),
                 _metric("Last updated", usage["modified"], "datetime"),
             ],
         )
@@ -735,6 +821,79 @@ def clear_state_minimal() -> dict[str, Any]:
             "path": str(state_path),
             "existed": bool(existed),
         }
+
+
+@router.post("/state-file/compact")
+def compact_state_file() -> dict[str, Any]:
+    _, CONFIG_DIR, *_ = _cw()
+    state_path = CONFIG_DIR / "state.json"
+    before = _path_usage(state_path)
+
+    if not state_path.exists():
+        return {
+            "ok": True,
+            "path": str(state_path),
+            "existed": False,
+            "backup": None,
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    payload = _read_json(state_path)
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "error": "state_json_invalid",
+            "path": str(state_path),
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    backup: dict[str, Any] | None = None
+    try:
+        from services.backups import create_backup
+
+        backup = create_backup(
+            scope="app_state",
+            label="pre-state-compact",
+            trigger="maintenance_state_compact",
+        )
+    except Exception:
+        _LOG.exception("state compact backup failed")
+        return {
+            "ok": False,
+            "error": "backup_failed",
+            "path": str(state_path),
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    try:
+        _write_json_compact_atomic(state_path, payload)
+    except Exception:
+        _LOG.exception("state compact write failed")
+        return {
+            "ok": False,
+            "error": "compact_failed",
+            "path": str(state_path),
+            "backup": backup,
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    after = _path_usage(state_path)
+    summary = {
+        "removed_files": 0,
+        "removed_items": 0,
+        "freed_bytes": max(0, int(before.get("bytes") or 0) - int(after.get("bytes") or 0)),
+    }
+    inv = _sync_state_baseline_inventory(state_path)
+    return {
+        "ok": True,
+        "path": str(state_path),
+        "existed": True,
+        "backup": backup,
+        "before_bytes": int(before.get("bytes") or 0),
+        "after_bytes": int(after.get("bytes") or 0),
+        "summary": summary,
+        "inventory": inv,
+    }
 
 
 @router.post("/crosswatch-tracker/clear")

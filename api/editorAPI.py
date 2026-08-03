@@ -42,7 +42,11 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), "utf-8")
+        if path.name == "state.json":
+            text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        else:
+            text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        tmp.write_text(text, "utf-8")
         os.replace(tmp, path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write {path}: {e}")
@@ -114,11 +118,14 @@ def _merge_blocks(a: list[str], b: list[str]) -> list[str]:
 
 
 
-def _load_policy_manual(kind: Kind, provider: str, provider_instance: str | None = None) -> tuple[dict[str, Any], list[str]]:
-    raw = _load_policy()
+def _policy_provider_node(
+    raw: dict[str, Any],
+    provider: str,
+    provider_instance: str | None = None,
+) -> dict[str, Any] | None:
     providers = raw.get("providers") or {}
     if not isinstance(providers, dict):
-        return {}, []
+        return None
 
     node = providers.get(provider)
     if not isinstance(node, dict):
@@ -128,16 +135,29 @@ def _load_policy_manual(kind: Kind, provider: str, provider_instance: str | None
                 node = v
                 break
     if not isinstance(node, dict):
-        return {}, []
+        return None
 
     inst = normalize_instance_id(provider_instance)
     if inst != "default":
         insts = node.get("instances") or {}
         if not isinstance(insts, dict):
-            return {}, []
+            return None
         node = insts.get(inst)
         if not isinstance(node, dict):
-            return {}, []
+            return None
+    return node
+
+
+def _load_policy_manual(
+    kind: Kind,
+    provider: str,
+    provider_instance: str | None = None,
+    raw_policy: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    raw = raw_policy if isinstance(raw_policy, dict) else _load_policy()
+    node = _policy_provider_node(raw, provider, provider_instance)
+    if not isinstance(node, dict):
+        return {}, []
 
     f = node.get(kind) or {}
     if not isinstance(f, dict):
@@ -380,15 +400,18 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
     return out
 
 
-def _mirror_policy_into_state() -> None:
+def _mirror_policy_into_state(
+    raw_state: dict[str, Any] | None = None,
+    raw_policy: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     if not _STATE_PATH.exists():
-        return
-    pol = _load_policy()
+        return None
+    pol = raw_policy if isinstance(raw_policy, dict) else _load_policy()
     prov_pol = pol.get("providers")
     if not isinstance(prov_pol, dict) or not prov_pol:
-        return
+        return raw_state if isinstance(raw_state, dict) else None
 
-    raw = _load_current_state()
+    raw = raw_state if isinstance(raw_state, dict) else _load_current_state()
     provs = raw.get("providers")
     if not isinstance(provs, dict):
         provs = {}
@@ -433,8 +456,8 @@ def _mirror_policy_into_state() -> None:
                 continue
             t = _ensure_dict(manual, kind)
 
-            adds_in, blocks_in = _load_policy_manual(kind, str(p), "default")
-            adds_state, blocks_state = _load_state_manual(kind, key, "default")
+            adds_in, blocks_in = _load_policy_manual(kind, str(p), "default", raw_policy=pol)
+            adds_state, blocks_state = _load_state_manual(kind, key, "default", raw_state=raw)
 
             merged_blocks = _merge_blocks(blocks_state or [], blocks_in or [])
             if t.get("blocks") != merged_blocks:
@@ -486,8 +509,8 @@ def _mirror_policy_into_state() -> None:
                     continue
                 t = _ensure_dict(inst_manual, kind)
 
-                adds_in, blocks_in = _load_policy_manual(kind, str(p), inst_id_n)
-                adds_state, blocks_state = _load_state_manual(kind, key, inst_id_n)
+                adds_in, blocks_in = _load_policy_manual(kind, str(p), inst_id_n, raw_policy=pol)
+                adds_state, blocks_state = _load_state_manual(kind, key, inst_id_n, raw_state=raw)
 
                 merged_blocks = _merge_blocks(blocks_state or [], blocks_in or [])
                 if t.get("blocks") != merged_blocks:
@@ -513,6 +536,7 @@ def _mirror_policy_into_state() -> None:
 
     if changed:
         _atomic_write_json(_STATE_PATH, raw)
+    return raw
 
 def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
     prov = pol.get("providers") or {}
@@ -548,11 +572,14 @@ def _state_providers(raw: dict[str, Any]) -> list[str]:
     return sorted([str(k) for k in providers.keys() if str(k).strip()])
 
 
-def _load_state_items(kind: Kind, provider: str, provider_instance: str | None = None) -> dict[str, Any]:
-    raw = _load_current_state()
+def _state_provider_node(
+    raw: dict[str, Any],
+    provider: str,
+    provider_instance: str | None = None,
+) -> dict[str, Any] | None:
     providers = raw.get("providers") or {}
     if not isinstance(providers, dict):
-        return {}
+        return None
 
     node = providers.get(provider)
     if not isinstance(node, dict):
@@ -562,16 +589,29 @@ def _load_state_items(kind: Kind, provider: str, provider_instance: str | None =
                 node = v
                 break
     if not isinstance(node, dict):
-        return {}
+        return None
 
     inst = normalize_instance_id(provider_instance)
     if inst != "default":
         insts = node.get("instances") or {}
         if not isinstance(insts, dict):
-            return {}
+            return None
         node = insts.get(inst)
         if not isinstance(node, dict):
-            return {}
+            return None
+    return node
+
+
+def _load_state_items(
+    kind: Kind,
+    provider: str,
+    provider_instance: str | None = None,
+    raw_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    raw = raw_state if isinstance(raw_state, dict) else _load_current_state()
+    node = _state_provider_node(raw, provider, provider_instance)
+    if not isinstance(node, dict):
+        return {}
 
     feature = node.get(kind) or {}
     if not isinstance(feature, dict):
@@ -632,29 +672,16 @@ def _save_state_items(kind: Kind, provider: str, items: dict[str, Any], provider
     _atomic_write_json(_STATE_PATH, raw)
 
 
-def _load_state_manual(kind: Kind, provider: str, provider_instance: str | None = None) -> tuple[dict[str, Any], list[str]]:
-    raw = _load_current_state()
-    providers = raw.get("providers") or {}
-    if not isinstance(providers, dict):
-        return {}, []
-    node = providers.get(provider)
-    if not isinstance(node, dict):
-        pl = str(provider).lower()
-        for k, v in providers.items():
-            if str(k).lower() == pl and isinstance(v, dict):
-                node = v
-                break
+def _load_state_manual(
+    kind: Kind,
+    provider: str,
+    provider_instance: str | None = None,
+    raw_state: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[str]]:
+    raw = raw_state if isinstance(raw_state, dict) else _load_current_state()
+    node = _state_provider_node(raw, provider, provider_instance)
     if not isinstance(node, dict):
         return {}, []
-
-    inst = normalize_instance_id(provider_instance)
-    if inst != "default":
-        insts = node.get("instances") or {}
-        if not isinstance(insts, dict):
-            return {}, []
-        node = insts.get(inst)
-        if not isinstance(node, dict):
-            return {}, []
 
     manual = node.get("manual") or {}
     if not isinstance(manual, dict):
@@ -1215,7 +1242,8 @@ def api_editor_get_state(
         filename = (ws["files"] or {}).get(k)
         items, ts = _tracker_read(ws["root"], filename) if filename else ({}, None)
 
-        pol_adds, pol_blocks = _load_policy_manual(k, _TRACKER_PROVIDER, inst)
+        raw_policy = _load_policy()
+        pol_adds, pol_blocks = _load_policy_manual(k, _TRACKER_PROVIDER, inst, raw_policy=raw_policy)
         st_adds, st_blocks = (
             _load_state_manual(k, _TRACKER_PROVIDER, inst) if _STATE_PATH.exists() else ({}, [])
         )
@@ -1260,12 +1288,11 @@ def api_editor_get_state(
         inst = normalize_instance_id(provider_instance)
 
         if _STATE_PATH.exists() and _POLICY_PATH.exists():
-            _mirror_policy_into_state()
-            raw_state = _load_current_state()
+            raw_state = _mirror_policy_into_state(raw_state, raw_policy) or raw_state
 
-        items = _load_state_items(k, chosen, inst) if raw_state else {}
-        st_adds, st_blocks = _load_state_manual(k, chosen, inst) if raw_state else ({}, [])
-        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst)
+        items = _load_state_items(k, chosen, inst, raw_state=raw_state) if raw_state else {}
+        st_adds, st_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state) if raw_state else ({}, [])
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
 
         manual_adds = dict(st_adds or {})
         manual_adds.update(dict(pol_adds or {}))
@@ -1311,9 +1338,9 @@ def api_editor_get_state(
             }
 
         inst = normalize_instance_id(provider_instance)
-        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst)
+        pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
         if not pol_adds and not pol_blocks and raw_state:
-            pol_adds, pol_blocks = _load_state_manual(k, chosen, inst)
+            pol_adds, pol_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state)
 
         ts = None
         try:

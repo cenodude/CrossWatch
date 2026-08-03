@@ -2175,6 +2175,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     _post_apply_refresh(b, dst_inst, post_apply_B_res, bops, B_eff, b_down)
 
     try:
+        if not getattr(ctx, "write_state_json", True):
+            raise RuntimeError("legacy state persistence disabled")
+
         st = ctx.state_store.load_state() or {}
         provs_block = st.setdefault("providers", {})
 

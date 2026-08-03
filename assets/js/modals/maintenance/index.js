@@ -56,6 +56,7 @@ const SIMPLE_OPS = {
   "events-health": "/api/maintenance/events-health",
   "events-optimize": "/api/maintenance/events-optimize",
   "events-rebuild": "/api/maintenance/events-rebuild",
+  "state-file": "/api/maintenance/state-file/compact",
 };
 const OPS = [
   {
@@ -73,6 +74,14 @@ const OPS = [
     title: "Retry provider items",
     tag: "runtime",
     desc: "Clears temporary retry and health data so items are tried again.",
+  },
+  {
+    key: "state-file",
+    kind: "state-file",
+    icon: "data_object",
+    title: "Compact state.json",
+    tag: "backup first",
+    desc: "Creates an app-state backup, then rewrites the same state file without indentation.",
   },
   {
     key: "meta",
@@ -185,6 +194,13 @@ const GROUPS = [
     keys: ["state", "cache"],
   },
   {
+    id: "state-file",
+    icon: "data_object",
+    title: "State File",
+    desc: "Inspect and compact the legacy state.json baseline file.",
+    keys: ["state-file"],
+  },
+  {
     id: "playback",
     icon: "play_circle",
     title: "Playback",
@@ -229,7 +245,7 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild"]);
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "state-file"]);
 const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
@@ -355,6 +371,13 @@ export default {
                     <span class="material-symbols-rounded" aria-hidden="true">history</span>
                     <span>Events</span>
                   </button>
+                </div>
+                <div class="side-nav-item" data-group="state-file">
+                  <button type="button" class="side-nav-btn" data-target="cxm-group-state-file">
+                    <span class="material-symbols-rounded" aria-hidden="true">data_object</span>
+                    <span>State File</span>
+                  </button>
+                  <button type="button" class="category-run-btn" data-run-group="state-file" aria-label="Run all State File tools">Run</button>
                 </div>
                 <div class="side-nav-item" data-group="archive">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-archive">
@@ -581,6 +604,17 @@ export default {
       return null;
     };
 
+    const stateFileReceipt = (res) => {
+      if (!res || typeof res !== "object") return null;
+      const backupPath = res.backup && res.backup.path ? String(res.backup.path) : "";
+      const before = formatBytes(res.before_bytes || 0);
+      const after = formatBytes(res.after_bytes || 0);
+      const freed = formatBytes((res.summary && res.summary.freed_bytes) || 0);
+      const bits = [`${before} → ${after}`, `${freed} reclaimed`];
+      if (backupPath) bits.push(`backup ${backupPath}`);
+      return `Compact state.json completed · ${bits.join(" · ")}.`;
+    };
+
     const formatMetric = ({ value, format }) => {
       if (format === "bytes") return formatBytes(value);
       if (format === "datetime") {
@@ -780,6 +814,11 @@ export default {
         return false;
       }
 
+      if (!skipConfirm && kind === "state-file" && !confirm("Create an app-state backup and compact state.json?\n\nThis keeps the same JSON data and only removes formatting whitespace.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
+
       if (manageLock) setOperationBusy(true);
       startActionFeedback(btn);
       const label = btn?.dataset?.label || OPS.find((item) => item.kind === kind)?.title || kind;
@@ -870,7 +909,8 @@ export default {
 
         if (selectedInsightKind === kind) await loadActionInsight(kind);
         const evReceipt = eventsReceipt(kind, res);
-        setStatus(evReceipt || completionReceipt(label, res), "ok");
+        const stateReceipt = kind === "state-file" ? stateFileReceipt(res) : null;
+        setStatus(evReceipt || stateReceipt || completionReceipt(label, res), "ok");
         finishActionFeedback(btn, "success");
         return res || { ok: true };
       } catch (e) {

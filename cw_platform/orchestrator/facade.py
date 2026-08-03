@@ -189,10 +189,11 @@ class Orchestrator:
             summary = _run_pairs(self.context)
 
 
-            try:
-                self._persist_state_wall(feature="watchlist")
-            except Exception:
-                pass
+            if self.write_state_json:
+                try:
+                    self._persist_state_wall(feature="watchlist")
+                except Exception:
+                    pass
 
             try:
                 self.state_store.clear_watchlist_hide()
@@ -213,7 +214,7 @@ class Orchestrator:
 
             try:
                 if hasattr(self.stats, "overview"):
-                    st = self.state_store.load_state()
+                    st = self.state_store.load_state() if self.write_state_json else {}
                     ov = self.stats.overview(st)
                     self.emit("stats:overview", overview=ov)
             except Exception:
@@ -395,6 +396,9 @@ class Orchestrator:
         import time as _t
         from typing import Mapping as _MappingType, Dict as _DictType
 
+        if not self.write_state_json:
+            return {}
+
         try:
             from ..id_map import minimal
         except Exception:
@@ -435,6 +439,9 @@ class Orchestrator:
 
     # Watchlist wall
     def _persist_state_wall(self, *, feature: str = "watchlist") -> dict[str, Any]:
+        if not self.write_state_json:
+            return {}
+
         state: dict[str, Any] = self.state_store.load_state() or {}
         providers = dict(state.get("providers") or {})
         wall: list[dict[str, Any]] = []
