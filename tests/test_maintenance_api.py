@@ -275,6 +275,98 @@ def test_compact_state_file_rejects_invalid_json_without_backup(tmp_path, monkey
     assert result["error"] == "state_json_invalid"
 
 
+def test_prune_state_file_reports_stale_baselines(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / ".cw_state"
+    state_dir.mkdir()
+    payload = {
+        "providers": {
+            "TRAKT": {"watchlist": {"baseline": {"items": {"a": {}}}}},
+            "SIMKL": {"history": {"baseline": {"items": {"b": {}}}}},
+            "PLEX": {"history": {"baseline": {"items": {"c": {}}}}},
+        }
+    }
+    (tmp_path / "state.json").write_text(json.dumps(payload), encoding="utf-8")
+    cfg = {"pairs": [{"source": "SIMKL", "target": "TRAKT"}]}
+
+    monkeypatch.setattr(maintenanceAPI, "_load_config_for_state_prune", lambda _config_dir: cfg)
+    monkeypatch.setattr(
+        maintenanceAPI,
+        "_cw",
+        lambda: (tmp_path / "cache", tmp_path, state_dir, None, None, None),
+    )
+
+    result = maintenanceAPI.maintenance_action_status("state-file-prune")
+    metrics = {item["label"]: item["value"] for item in result["metrics"]}
+
+    assert result["ok"] is True
+    assert metrics["Stale providers"] == 1
+    assert metrics["Stale baselines"] == 1
+    assert metrics["Stale items"] == 1
+
+
+def test_prune_state_file_creates_backup_and_removes_unconfigured_state(tmp_path, monkeypatch) -> None:
+    state_dir = tmp_path / ".cw_state"
+    state_dir.mkdir()
+    payload = {
+        "providers": {
+            "TRAKT": {"watchlist": {"baseline": {"items": {"keep-trakt": {}}}}},
+            "SIMKL": {"history": {"baseline": {"items": {"keep-simkl": {}}}}},
+            "PLEX": {"history": {"baseline": {"items": {"drop-plex": {}}}}},
+            "JELLYFIN": {
+                "instances": {
+                    "home": {"history": {"baseline": {"items": {"keep-jf": {}}}}},
+                    "old": {"history": {"baseline": {"items": {"drop-jf": {}}}}},
+                }
+            },
+            "MDBLIST": {"ratings": {"baseline": {"items": {"keep-mdblist": {}}}}},
+        }
+    }
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    cfg = {
+        "pairs": [{"source": "SIMKL", "target": "TRAKT"}],
+        "scrobble": {
+            "watch": {
+                "routes": [
+                    {"provider": "jellyfin", "provider_instance": "home", "sink": "mdblist"}
+                ]
+            }
+        },
+    }
+    backups: list[dict] = []
+
+    def fake_backup(**kwargs):
+        backups.append(kwargs)
+        return {"ok": True, "path": "2026/pre-state-prune.zip"}
+
+    import services.backups as backups_svc
+
+    monkeypatch.setattr(backups_svc, "create_backup", fake_backup)
+    monkeypatch.setattr(maintenanceAPI, "_load_config_for_state_prune", lambda _config_dir: cfg)
+    monkeypatch.setattr(
+        maintenanceAPI,
+        "_cw",
+        lambda: (tmp_path / "cache", tmp_path, state_dir, None, None, None),
+    )
+
+    result = maintenanceAPI.prune_state_file()
+    pruned = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert result["ok"] is True
+    assert result["backup"]["path"] == "2026/pre-state-prune.zip"
+    assert backups and backups[0]["trigger"] == "maintenance_state_prune"
+    assert result["removed"]["removed_providers"] == 1
+    assert result["removed"]["removed_instances"] == 1
+    assert result["removed"]["removed_baselines"] == 2
+    assert result["removed"]["removed_items"] == 2
+    assert "PLEX" not in pruned["providers"]
+    assert "old" not in pruned["providers"]["JELLYFIN"]["instances"]
+    assert "home" in pruned["providers"]["JELLYFIN"]["instances"]
+    assert "TRAKT" in pruned["providers"]
+    assert "SIMKL" in pruned["providers"]
+    assert "MDBLIST" in pruned["providers"]
+
+
 def test_clear_provider_cache_preserves_pair_scoped_history_mapping_state(tmp_path, monkeypatch) -> None:
     state_dir = tmp_path / ".cw_state"
     state_dir.mkdir()
