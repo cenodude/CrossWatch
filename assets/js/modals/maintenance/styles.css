@@ -111,7 +111,7 @@
 /* Action cards and feedback */
 .cw-maint .action-row { --inspect-accent: var(--maint-accent); position: relative; overflow: hidden; min-width: 0; min-height: 92px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--maint-border); border-radius: 8px; background: var(--maint-card); box-shadow: none; cursor: pointer; transition: background .14s ease, border-color .14s ease, box-shadow .14s ease, transform .14s ease; }
 .cw-maint .action-row.has-side-actions { grid-template-columns: minmax(0, 1fr) auto auto; }
-.cw-maint .action-row[data-kind="tracker"], .cw-maint .action-row[data-kind="state-file"] { --inspect-accent: var(--maint-good); }
+.cw-maint .action-row[data-kind="tracker"], .cw-maint .action-row[data-kind="state-file"], .cw-maint .action-row[data-kind="state-file-prune"] { --inspect-accent: var(--maint-good); }
 .cw-maint .action-row[data-kind="defaults"] { --inspect-accent: var(--maint-danger); }
 .cw-maint .action-row::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 0 999px 999px 0; background: var(--inspect-accent); opacity: 0; transform: scaleY(.35); transition: opacity .16s ease, transform .2s ease; }
 .cw-maint .action-row.is-inspected { border-color: color-mix(in srgb, var(--inspect-accent) 58%, var(--maint-border)); background: color-mix(in srgb, var(--inspect-accent) 8%, var(--maint-card)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--inspect-accent) 15%, transparent); }
@@ -164,7 +164,7 @@
 .cw-maint .tracker-profile-control .cw-icon-select-caret { flex: 0 0 9px; width: 9px; opacity: .72; }
 .cw-maint .tracker-archive-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--maint-accent); }
 .cxm-tracker-profile-menu .cw-icon-select-label { overflow: visible; text-overflow: clip; white-space: nowrap; }
-.cw-maint :is(.action-group.archive, .action-group.events, .action-group.state-file, .action-group.captures) .group-icon, .cw-maint .action-row[data-op="tracker"] .action-icon, .cw-maint .action-row[data-op="state-file"] .action-icon { color: var(--maint-good); }
+.cw-maint :is(.action-group.archive, .action-group.events, .action-group.state-file, .action-group.captures) .group-icon, .cw-maint .action-row[data-op="tracker"] .action-icon, .cw-maint .action-row[data-op="state-file"] .action-icon, .cw-maint .action-row[data-op="state-file-prune"] .action-icon { color: var(--maint-good); }
 .cw-maint :is(.action-group.archive, .action-group.events, .action-group.state-file, .action-group.captures) { --group-accent: var(--maint-good); }
 .cw-maint :is(.action-group.playback, .action-group.reports) .group-icon { color: var(--maint-accent); }
 .cw-maint .action-group.danger { --group-accent: var(--maint-danger); border-color: color-mix(in srgb, var(--maint-danger) 38%, var(--maint-border)); background: color-mix(in srgb, var(--maint-danger) 6%, var(--maint-panel)); }

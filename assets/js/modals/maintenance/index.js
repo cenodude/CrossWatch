@@ -57,6 +57,7 @@ const SIMPLE_OPS = {
   "events-optimize": "/api/maintenance/events-optimize",
   "events-rebuild": "/api/maintenance/events-rebuild",
   "state-file": "/api/maintenance/state-file/compact",
+  "state-file-prune": "/api/maintenance/state-file/prune",
 };
 const OPS = [
   {
@@ -82,6 +83,14 @@ const OPS = [
     title: "Compact state.json",
     tag: "backup first",
     desc: "Creates an app-state backup, then rewrites the same state file without indentation.",
+  },
+  {
+    key: "state-file-prune",
+    kind: "state-file-prune",
+    icon: "cleaning_services",
+    title: "Prune stale state",
+    tag: "backup first",
+    desc: "Creates an app-state backup, then removes state baselines for pairs or routes that no longer exist.",
   },
   {
     key: "meta",
@@ -194,13 +203,6 @@ const GROUPS = [
     keys: ["state", "cache"],
   },
   {
-    id: "state-file",
-    icon: "data_object",
-    title: "State File",
-    desc: "Inspect and compact the legacy state.json baseline file.",
-    keys: ["state-file"],
-  },
-  {
     id: "playback",
     icon: "play_circle",
     title: "Playback",
@@ -220,6 +222,13 @@ const GROUPS = [
     title: "Events",
     desc: "Check, optimize and rebuild the event history archive.",
     keys: ["events-health", "events-optimize", "events-rebuild"],
+  },
+  {
+    id: "state-file",
+    icon: "data_object",
+    title: "State File",
+    desc: "Inspect, compact and prune the legacy state.json baseline file.",
+    keys: ["state-file", "state-file-prune"],
   },
   {
     id: "archive",
@@ -245,7 +254,7 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "state-file"]);
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "state-file", "state-file-prune"]);
 const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
@@ -615,6 +624,20 @@ export default {
       return `Compact state.json completed · ${bits.join(" · ")}.`;
     };
 
+    const statePruneReceipt = (res) => {
+      if (!res || typeof res !== "object") return null;
+      const removed = res.removed || {};
+      const baselines = Number(removed.removed_baselines || 0);
+      const instances = Number(removed.removed_instances || 0);
+      const providers = Number(removed.removed_providers || 0);
+      const items = Number(removed.removed_items || 0);
+      const freed = formatBytes((res.summary && res.summary.freed_bytes) || 0);
+      const backupPath = res.backup && res.backup.path ? String(res.backup.path) : "";
+      const bits = [`${providers} providers`, `${instances} instances`, `${baselines} baselines`, `${items} items`, `${freed} reclaimed`];
+      if (backupPath) bits.push(`backup ${backupPath}`);
+      return `Prune state.json completed · ${bits.join(" · ")}.`;
+    };
+
     const formatMetric = ({ value, format }) => {
       if (format === "bytes") return formatBytes(value);
       if (format === "datetime") {
@@ -819,6 +842,11 @@ export default {
         return false;
       }
 
+      if (!skipConfirm && kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale state.json baselines?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
+
       if (manageLock) setOperationBusy(true);
       startActionFeedback(btn);
       const label = btn?.dataset?.label || OPS.find((item) => item.kind === kind)?.title || kind;
@@ -910,7 +938,8 @@ export default {
         if (selectedInsightKind === kind) await loadActionInsight(kind);
         const evReceipt = eventsReceipt(kind, res);
         const stateReceipt = kind === "state-file" ? stateFileReceipt(res) : null;
-        setStatus(evReceipt || stateReceipt || completionReceipt(label, res), "ok");
+        const statePrune = kind === "state-file-prune" ? statePruneReceipt(res) : null;
+        setStatus(evReceipt || stateReceipt || statePrune || completionReceipt(label, res), "ok");
         finishActionFeedback(btn, "success");
         return res || { ok: true };
       } catch (e) {

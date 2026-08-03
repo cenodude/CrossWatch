@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import copy
 import io
 import json
 import logging
@@ -371,6 +372,161 @@ def _sync_state_baseline_inventory(path: Path) -> dict[str, Any]:
     }
 
 
+FEATURE_NAMES = {"history", "ratings", "watchlist", "playlists", "progress"}
+
+
+def _feature_item_count(block: Any) -> int:
+    if not isinstance(block, dict):
+        return 0
+    baseline = block.get("baseline")
+    items = baseline.get("items") if isinstance(baseline, dict) else None
+    return len(items) if isinstance(items, dict) else 0
+
+
+def _count_feature_blocks(node: Any) -> tuple[int, int]:
+    if not isinstance(node, dict):
+        return 0, 0
+    baselines = 0
+    items = 0
+    for name, block in node.items():
+        if str(name).lower() in FEATURE_NAMES and isinstance(block, dict):
+            baselines += 1
+            items += _feature_item_count(block)
+    insts = node.get("instances")
+    if isinstance(insts, dict):
+        for inst_node in insts.values():
+            b, i = _count_feature_blocks(inst_node)
+            baselines += b
+            items += i
+    return baselines, items
+
+
+def _has_state_payload(node: Any) -> bool:
+    if not isinstance(node, dict):
+        return False
+    for name, block in node.items():
+        if str(name).lower() in FEATURE_NAMES and isinstance(block, dict):
+            return True
+    manual = node.get("manual")
+    if isinstance(manual, dict) and manual:
+        return True
+    return False
+
+
+def _load_config_for_state_prune(config_dir: Path) -> dict[str, Any] | None:
+    try:
+        from cw_platform.config_base import load_config
+
+        cfg = load_config() or {}
+        if isinstance(cfg, dict):
+            return cfg
+    except Exception:
+        pass
+    raw = _read_json(config_dir / "config.json")
+    return raw if isinstance(raw, dict) else None
+
+
+def _configured_state_refs(cfg: Mapping[str, Any]) -> set[tuple[str, str]]:
+    refs: set[tuple[str, str]] = set()
+
+    def add(provider: Any, instance: Any = "default") -> None:
+        key = str(provider or "").strip().upper()
+        if key:
+            refs.add((key, normalize_instance_id(instance)))
+
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, Mapping):
+            continue
+        add(pair.get("source"), pair.get("source_instance"))
+        add(pair.get("target"), pair.get("target_instance"))
+
+    scrobble = cfg.get("scrobble")
+    watch = scrobble.get("watch") if isinstance(scrobble, Mapping) else None
+    routes = watch.get("routes") if isinstance(watch, Mapping) else None
+    for route in routes if isinstance(routes, list) else []:
+        if not isinstance(route, Mapping):
+            continue
+        add(route.get("provider"), route.get("provider_instance") or route.get("providerInstance"))
+        add(route.get("sink"), route.get("sink_instance") or route.get("sinkInstance"))
+
+        ratings = route.get("options")
+        ratings = ratings.get("ratings") if isinstance(ratings, Mapping) else None
+        targets = ratings.get("targets") if isinstance(ratings, Mapping) else None
+        if isinstance(targets, Mapping):
+            for provider, enabled in targets.items():
+                if enabled is not False:
+                    add(provider, route.get("sink_instance") or route.get("sinkInstance"))
+        elif isinstance(targets, list):
+            for provider in targets:
+                add(provider, route.get("sink_instance") or route.get("sinkInstance"))
+
+    return refs
+
+
+def _prune_state_payload(payload: dict[str, Any], cfg: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, int], list[dict[str, Any]]]:
+    pruned = copy.deepcopy(payload)
+    providers = pruned.get("providers")
+    if not isinstance(providers, dict):
+        return pruned, {"removed_providers": 0, "removed_instances": 0, "removed_baselines": 0, "removed_items": 0}, []
+
+    refs = _configured_state_refs(cfg)
+    removed = {"removed_providers": 0, "removed_instances": 0, "removed_baselines": 0, "removed_items": 0}
+    details: list[dict[str, Any]] = []
+
+    def note(kind: str, provider: str, instance: str, baselines: int, items: int) -> None:
+        removed["removed_baselines"] += baselines
+        removed["removed_items"] += items
+        details.append({
+            "kind": kind,
+            "provider": provider,
+            "instance": instance,
+            "baselines": baselines,
+            "items": items,
+        })
+
+    for provider_name in list(providers.keys()):
+        provider_key = str(provider_name or "").strip().upper()
+        node = providers.get(provider_name)
+        if not isinstance(node, dict):
+            providers.pop(provider_name, None)
+            removed["removed_providers"] += 1
+            continue
+
+        keep_default = (provider_key, "default") in refs
+        insts = node.get("instances")
+        if isinstance(insts, dict):
+            for inst_name in list(insts.keys()):
+                inst = normalize_instance_id(inst_name)
+                if (provider_key, inst) in refs:
+                    continue
+                inst_node = insts.pop(inst_name, None)
+                baselines, items = _count_feature_blocks(inst_node)
+                removed["removed_instances"] += 1
+                note("instance", provider_key, inst, baselines, items)
+            if not insts:
+                node.pop("instances", None)
+
+        if not keep_default:
+            removed_default = False
+            for feat in list(node.keys()):
+                if str(feat).lower() not in FEATURE_NAMES:
+                    continue
+                block = node.pop(feat, None)
+                removed_default = True
+                note("default_feature", provider_key, "default", 1, _feature_item_count(block))
+            if isinstance(node.get("manual"), dict):
+                node.pop("manual", None)
+                removed_default = True
+            if removed_default and not _has_state_payload(node) and not isinstance(node.get("instances"), dict):
+                providers.pop(provider_name, None)
+                removed["removed_providers"] += 1
+        elif not _has_state_payload(node) and not isinstance(node.get("instances"), dict):
+            providers.pop(provider_name, None)
+            removed["removed_providers"] += 1
+
+    return pruned, removed, details
+
+
 def _write_json_compact_atomic(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".compact.tmp")
@@ -418,7 +574,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Last updated", usage["modified"], "datetime"),
             ],
         )
-    elif action == "state-file":
+    elif action in {"state-file", "state-file-prune"}:
         path = CONFIG_DIR / "state.json"
         usage = _path_usage(path)
         inv = _sync_state_baseline_inventory(path)
@@ -428,17 +584,34 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             inst = str(largest.get("instance") or "default")
             suffix = "" if inst == "default" else f" ({inst})"
             largest_label = f"{largest.get('provider')} {largest.get('feature')}{suffix}"
+        metrics = [
+            _metric("File size", usage["bytes"], "bytes"),
+            _metric("Providers", inv.get("providers", 0)),
+            _metric("Feature baselines", inv.get("baselines", 0)),
+            _metric("Baseline items", inv.get("items", 0)),
+            _metric("Largest baseline", largest_label, "text"),
+            _metric("Last updated", usage["modified"], "datetime"),
+        ]
+        if action == "state-file-prune":
+            cfg = _load_config_for_state_prune(CONFIG_DIR)
+            payload = _read_json(path)
+            stale = {"removed_providers": 0, "removed_instances": 0, "removed_baselines": 0, "removed_items": 0}
+            if isinstance(cfg, dict) and isinstance(payload, dict):
+                _, stale, _ = _prune_state_payload(payload, cfg)
+            metrics.extend([
+                _metric("Stale providers", stale.get("removed_providers", 0)),
+                _metric("Stale instances", stale.get("removed_instances", 0)),
+                _metric("Stale baselines", stale.get("removed_baselines", 0)),
+                _metric("Stale items", stale.get("removed_items", 0)),
+            ])
         response.update(
-            title="State file",
-            note="Inspects the legacy state.json baseline file. Compact rewrites the same JSON without indentation after creating an app-state backup.",
-            metrics=[
-                _metric("File size", usage["bytes"], "bytes"),
-                _metric("Providers", inv.get("providers", 0)),
-                _metric("Feature baselines", inv.get("baselines", 0)),
-                _metric("Baseline items", inv.get("items", 0)),
-                _metric("Largest baseline", largest_label, "text"),
-                _metric("Last updated", usage["modified"], "datetime"),
-            ],
+            title="Prune state file" if action == "state-file-prune" else "State file",
+            note=(
+                "Creates an app-state backup, then removes state.json provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes."
+                if action == "state-file-prune"
+                else "Inspects the legacy state.json baseline file. Compact rewrites the same JSON without indentation after creating an app-state backup."
+            ),
+            metrics=metrics,
         )
     elif action == "cache":
         info = _scan_provider_cache()
@@ -893,6 +1066,105 @@ def compact_state_file() -> dict[str, Any]:
         "after_bytes": int(after.get("bytes") or 0),
         "summary": summary,
         "inventory": inv,
+    }
+
+
+@router.post("/state-file/prune")
+def prune_state_file() -> dict[str, Any]:
+    _, CONFIG_DIR, *_ = _cw()
+    state_path = CONFIG_DIR / "state.json"
+    before = _path_usage(state_path)
+
+    if not state_path.exists():
+        return {
+            "ok": True,
+            "path": str(state_path),
+            "existed": False,
+            "backup": None,
+            "removed": {"removed_providers": 0, "removed_instances": 0, "removed_baselines": 0, "removed_items": 0},
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    payload = _read_json(state_path)
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "error": "state_json_invalid",
+            "path": str(state_path),
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    cfg = _load_config_for_state_prune(CONFIG_DIR)
+    if not isinstance(cfg, dict):
+        return {
+            "ok": False,
+            "error": "config_unavailable",
+            "path": str(state_path),
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    pruned, removed, details = _prune_state_payload(payload, cfg)
+    if removed.get("removed_baselines", 0) <= 0 and removed.get("removed_instances", 0) <= 0 and removed.get("removed_providers", 0) <= 0:
+        return {
+            "ok": True,
+            "path": str(state_path),
+            "existed": True,
+            "backup": None,
+            "removed": removed,
+            "details": details,
+            "before_bytes": int(before.get("bytes") or 0),
+            "after_bytes": int(before.get("bytes") or 0),
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+            "inventory": _sync_state_baseline_inventory(state_path),
+        }
+
+    backup: dict[str, Any] | None = None
+    try:
+        from services.backups import create_backup
+
+        backup = create_backup(
+            scope="app_state",
+            label="pre-state-prune",
+            trigger="maintenance_state_prune",
+        )
+    except Exception:
+        _LOG.exception("state prune backup failed")
+        return {
+            "ok": False,
+            "error": "backup_failed",
+            "path": str(state_path),
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    try:
+        _write_json_compact_atomic(state_path, pruned)
+    except Exception:
+        _LOG.exception("state prune write failed")
+        return {
+            "ok": False,
+            "error": "prune_failed",
+            "path": str(state_path),
+            "backup": backup,
+            "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
+        }
+
+    after = _path_usage(state_path)
+    summary = {
+        "removed_files": 0,
+        "removed_items": int(removed.get("removed_items") or 0),
+        "freed_bytes": max(0, int(before.get("bytes") or 0) - int(after.get("bytes") or 0)),
+    }
+    return {
+        "ok": True,
+        "path": str(state_path),
+        "existed": True,
+        "backup": backup,
+        "removed": removed,
+        "details": details,
+        "before_bytes": int(before.get("bytes") or 0),
+        "after_bytes": int(after.get("bytes") or 0),
+        "summary": summary,
+        "inventory": _sync_state_baseline_inventory(state_path),
     }
 
 
