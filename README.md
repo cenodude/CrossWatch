@@ -36,6 +36,9 @@
   <a href="https://wiki.crosswatch.app/" style="margin: 0 6px;">
     <img alt="Wiki" src="https://img.shields.io/badge/Wiki-wiki.crosswatch.app-B026FF?style=for-the-badge">
   </a>
+  <a href="https://www.reddit.com/r/CrossWatchApp/" style="margin: 0 6px;">
+    <img alt="Reddit" src="https://img.shields.io/badge/Reddit-r%2FCrossWatchApp-ff4500?style=for-the-badge&logo=reddit&logoColor=white">
+  </a>
 </p>
 
 
@@ -132,5 +135,4 @@ Every cent goes to the <b>ALS Foundation</b> in the Netherlands</center>
 <p align="center">
   Huge thanks to our sponsors for keeping this project moving.
 </p>
-
 

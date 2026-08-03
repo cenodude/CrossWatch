@@ -13,6 +13,7 @@
       <a class="cw-button" href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">View screenshots</a>
       <a class="cw-button" href="https://github.com/cenodude/CrossWatch">View on GitHub</a>
       <a class="cw-button" href="https://wiki.crosswatch.app/">Open Wiki</a>
+      <a class="cw-button" href="https://www.reddit.com/r/CrossWatchApp/">Reddit</a>
     </div>
   </div>
 </section>
@@ -29,6 +30,9 @@
   </a>
   <a href="https://wiki.crosswatch.app/getting-started/first-time-setup">
     <img src="https://img.shields.io/badge/Quick%20Start-Must%20read!-d93c4a?style=for-the-badge&amp;logo=gitbook" alt="Must-read: Quick Start">
+  </a>
+  <a href="https://www.reddit.com/r/CrossWatchApp/">
+    <img src="https://img.shields.io/badge/Reddit-r%2FCrossWatchApp-ff4500?style=for-the-badge&amp;logo=reddit&amp;logoColor=white" alt="Reddit">
   </a>
 </section>
 
