@@ -19,10 +19,19 @@
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.provider||"").trim()&&String(r?.feature||"").trim()&&String(r?.at||"").trim()).length,
     activeEventRules=c=>(((c?.scheduling||c||{})?.advanced?.event_rules)||((c?.scheduling||c||{})?.advanced?.eventRules)||[])
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.action?.kind||"sync_pair")==="sync_pair"&&String(r?.action?.pair_id||r?.action?.pairId||r?.pair_id||"").trim()&&String(r?.filters?.route_id||r?.filters?.routeId||"").trim()).length,
+    webhookState=c=>{
+      const wh=(c?.scheduling||c||{})?.webhooks||{};
+      if (!wh||typeof wh!=="object"||wh.enabled!==true) return {active:false,label:""};
+      const format=String(wh.payload_format||wh.payloadFormat||wh.format||"crosswatch").trim().toLowerCase().replace("-","_"),
+        label=format==="notifiarr"||format==="notifiarr_passthrough"?"Notifiarr Passthrough":"CrossWatch JSON",
+        url=String(wh.url||wh.default_url||wh.defaultUrl||"").trim(),
+        urls=[url,wh.base_url,wh.healthchecks_base_url,wh.start_url,wh.success_url,wh.failure_url].map(v=>String(v||"").trim()).filter(Boolean);
+      return {active:label==="Notifiarr Passthrough"?!!url:urls.length>0,label};
+    },
     chipText={pairs:"Sync pairs",sched:"Scheduler",watch:"Watcher",hook:"Webhook",health:"CrossWatch health",update:"Updates"},
     chipIcon={pairs:"sync_alt",sched:"calendar_month",watch:"visibility",hook:"webhook",health:"arrow_upward",update:"notifications"},
     chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},health:{target:"maintenance",label:"Open Maintenance tools"},update:{target:"refresh-update",label:"Re-check for updates"}},
-    S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{health:{known:false,ok:false,status:"checking"},update:{known:false,available:false,current:"",latest:"",url:""}},timers:{sched:null,scrob:null,health:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
+    S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{health:{known:false,ok:false,status:"checking"},update:{known:false,available:false,current:"",latest:"",url:""}},timers:{sched:null,scrob:null,health:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
   const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=3000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
   let scrobPollSeq=0;
 
@@ -77,6 +86,7 @@
 #ops-card #sched-inline-log .sched.has-copy .label,#ops-card #sched-inline-log .sched.has-copy .value,#ops-card #sched-inline-log .sched.has-copy .meta,#ops-card #sched-inline-log .sched.has-copy .badges{position:static!important;top:auto!important;transform:none!important;margin:0!important;padding:0!important;height:auto!important;line-height:1.15!important;}
 #ops-card #sched-inline-log .sched.has-copy .label{grid-column:1!important;grid-row:1!important;font-size:10px!important;font-weight:850!important;letter-spacing:.11em!important;color:var(--hub-muted)!important;}
 #ops-card #sched-inline-log .sched.has-copy .value{grid-column:2!important;grid-row:1!important;font-size:11px!important;font-weight:850!important;color:var(--service-state)!important;}
+#ops-card #sched-inline-log #chip-sched .cw-sched-warning-icon{display:inline-flex!important;align-items:center!important;justify-content:center!important;font-size:15px!important;line-height:1!important;font-variation-settings:"FILL" 1,"wght" 500,"GRAD" 0,"opsz" 20;}
 #ops-card #sched-inline-log .sched.has-copy .value:empty{display:none!important;}
 #ops-card #sched-inline-log .sched.has-copy .meta{grid-column:1 / -1!important;grid-row:2!important;font-size:10px!important;font-weight:650!important;color:var(--hub-muted)!important;overflow:hidden!important;text-overflow:ellipsis!important;}
 #ops-card #sched-inline-log .sched.has-copy .badges{grid-column:3!important;grid-row:1!important;display:inline-flex!important;gap:4px!important;}
@@ -291,6 +301,14 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       if (el.progressValue) el.progressValue.textContent=hasProgress?`${Math.round(pct)}%`:"";
     }
     el.value.textContent=value==null?"-":String(value);
+    const schedWarnings=(Array.isArray(S.sched?.warnings)?S.sched.warnings:[]).map(x=>String(x||"").trim()).filter(Boolean);
+    const schedHasWarning=el.chip?.id==="chip-sched"&&(!!S.sched?.warning||schedWarnings.length>0);
+    if (schedHasWarning) {
+      el.value.innerHTML=`<span class="material-symbols-rounded cw-sched-warning-icon" aria-hidden="true">warning</span>`;
+      el.value.setAttribute("aria-label","Scheduler issue");
+    } else {
+      el.value.removeAttribute("aria-label");
+    }
     el.meta.textContent=meta||"";
     el.meta.style.display=meta?"inline":"none";
     if (el.badges) {
@@ -299,6 +317,7 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       el.badges.style.display=badgeHtml?"inline-flex":"none";
     }
     tip=String(tip||"").trim().replace(/\s*\u2022\s*/,"\n");
+    if (el.chip?.id==="chip-sched"&&schedWarnings.length) tip=[tip,...schedWarnings.map(text=>`Warning: ${text}`)].filter(Boolean).join("\n");
     const action=el.chip.dataset.navLabel||"";
     const aria=[tip,action].filter(Boolean).join("\n");
     renderTip(el,tip,action);
@@ -315,7 +334,10 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
       hookItem=currentItem(S.hook),
       watchLive=!!(watchItem&&S.watch.alive),
       hookLive=!!hookItem,
-      schedBadges=[S.sched.captures?`C${S.sched.captures}`:"",S.evt.enabled&&S.evt.count?`E${S.evt.count}`:""].filter(Boolean);
+      schedBadges=[S.sched.captures?`C${S.sched.captures}`:"",S.evt.enabled&&S.evt.count?`E${S.evt.count}`:"",S.sched.webhooks?"WH":""].filter(Boolean),
+      schedWarnings=(Array.isArray(S.sched.warnings)?S.sched.warnings:[]).map(x=>String(x||"").trim()).filter(Boolean),
+      schedWarning=!!S.sched.warning||schedWarnings.length>0,
+      schedWebhookTip=S.sched.webhooks?` • scheduler webhooks active${S.sched.webhookLabel?` (${S.sched.webhookLabel})`:""}`:"";
 
     const pairTotal=Number(S.pairs?.total)||0, pairActive=Number(S.pairs?.active)||0;
     paint(pairs,pairTotal===0?{
@@ -332,11 +354,12 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     paint(sched,!S.sched.enabled?{
       show:false
     }:{
-      value:S.sched.running?"":(S.sched.advanced?"advanced":"scheduled"),
+      value:schedWarning?"":(S.sched.running?"":(S.sched.advanced?"advanced":"scheduled")),
       meta:S.sched.next?`next ${clock(S.sched.next,true)}`:"",
       badges:schedBadges,
-      live:S.sched.running,
-      tip:`Scheduler ${S.sched.running?"running":(S.sched.advanced?"advanced":"scheduled")}${S.sched.next?` • next ${clock(S.sched.next,true)}`:""}${S.sched.advanced?" • advanced mode":""}${S.sched.captures?` • ${S.sched.captures} capture schedule${S.sched.captures===1?"":"s"}`:""}${S.evt.enabled&&S.evt.count?` • ${S.evt.count} event trigger${S.evt.count===1?"":"s"}`:""}`
+      live:S.sched.running&&!schedWarning,
+      ok:!schedWarning,
+      tip:`Scheduler ${S.sched.running?"running":(S.sched.advanced?"advanced":"scheduled")}${S.sched.next?` • next ${clock(S.sched.next,true)}`:""}${S.sched.advanced?" • advanced mode":""}${S.sched.captures?` • ${S.sched.captures} capture schedule${S.sched.captures===1?"":"s"}`:""}${S.evt.enabled&&S.evt.count?` • ${S.evt.count} event trigger${S.evt.count===1?"":"s"}`:""}${schedWebhookTip}`
     });
 
     paint(watch,!S.watch.enabled?{
@@ -464,10 +487,11 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     if (document.hidden) return scheduleSched();
     try {
       const st=await API().Scheduling.status(force), sc=st?.config||S.cfg?.scheduling||{};
-      const adv=advancedOn(sc), captures=adv?activeCaptureJobs(sc):0, events=adv?activeEventRules(sc):0;
-      S.sched={enabled:schedulingOn(sc),advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures};
+      const adv=advancedOn(sc), captures=adv?activeCaptureJobs(sc):0, events=adv?activeEventRules(sc):0, wh=webhookState(sc);
+      const warnings=(Array.isArray(st?.scheduling_warnings)?st.scheduling_warnings:(Array.isArray(st?.warnings)?st.warnings:[])).map(x=>String(x||"").trim()).filter(Boolean);
+      S.sched={enabled:schedulingOn(sc),advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures,webhooks:!!wh.active,webhookLabel:wh.label||"",warning:!!st?.warning||warnings.length>0,warnings};
       S.evt={enabled:adv&&events>0,count:events};
-    } catch { S.sched={enabled:false,running:false,next:0,advanced:false,captures:0}; S.evt={enabled:false,count:0}; }
+    } catch { S.sched={enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]}; S.evt={enabled:false,count:0}; }
     render();
     scheduleSched();
   }
@@ -557,14 +581,14 @@ html.cw-theme-original #ops-card .action-row{--hub-service-good:#57b58a;--hub-se
     [S.cfg]=await Promise.all([readConfig(forceCfg),pollPairs(forceCfg),pollHealth()]);
     applyUpdateStatus();
     if (!schedulingOn(S.cfg?.scheduling) && !S.cfg?.scrobble?.enabled) {
-      S.sched={enabled:false,running:false,next:0,advanced:false,captures:0};
+      S.sched={enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]};
       S.evt={enabled:false,count:0};
       S.watch={...blank(),alive:false};
       S.hook=blank();
       clear("rotate");
       return render();
     }
-    schedulingOn(S.cfg?.scheduling)?await pollSched(true):(S.sched={enabled:false,running:false,next:0,advanced:false,captures:0},S.evt={enabled:false,count:0});
+    schedulingOn(S.cfg?.scheduling)?await pollSched(true):(S.sched={enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]},S.evt={enabled:false,count:0});
     S.cfg?.scrobble?.enabled?await pollScrob(true):(S.watch.enabled=S.hook.enabled=false,render());
   }
 
