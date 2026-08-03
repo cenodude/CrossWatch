@@ -47,6 +47,7 @@ class HistoryOps:
     index: dict[str, dict[str, Any]]
     feature: str = "history"
     translate_to: dict[str, Any] | None = None
+    history_upsert: bool = False
     add_calls: list[list[dict[str, Any]]] = field(default_factory=list)
     remove_calls: list[list[dict[str, Any]]] = field(default_factory=list)
     view_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -61,11 +62,14 @@ class HistoryOps:
         return {self.feature: True}
 
     def capabilities(self) -> Mapping[str, Any]:
-        return {
+        caps: dict[str, Any] = {
             "features": {self.feature: True},
             "observed_deletes": True,
             "index_semantics": "present",
         }
+        if self.feature == "history":
+            caps["history"] = {"upsert": bool(self.history_upsert), "observed_deletes": True}
+        return caps
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         return True
@@ -248,6 +252,51 @@ def test_translated_history_pair_converges_on_second_run(
     assert len(dst.add_calls) == 1
     assert dst.view_calls
     assert list(_baseline(orch, "DST", "history")) == [_event_key(dest_event)]
+
+
+def test_history_date_difference_without_manual_overlay_does_not_update_upsert_destination(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_watched = "2019-07-25T07:55:00.000Z"
+    new_watched = "2019-07-25T08:02:00.000Z"
+    src_event = {**_simkl_event(), "watched_at": new_watched}
+    dst_event = {**_simkl_event(), "watched_at": old_watched}
+    key = _event_key(src_event)
+
+    src = HistoryOps("SRC", {key: dict(src_event)})
+    dst = HistoryOps("DST", {key: dict(dst_event)}, history_upsert=True)
+
+    _run(monkeypatch, src, dst, "history")
+
+    assert dst.add_calls == []
+    assert dst.index[key]["watched_at"] == old_watched
+
+
+def test_manual_history_date_change_updates_upsert_destination(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old_watched = "2019-07-25T07:55:00.000Z"
+    new_watched = "2019-07-25T08:02:00.000Z"
+    src_event = {**_simkl_event(), "watched_at": old_watched}
+    manual_event = {**_simkl_event(), "watched_at": new_watched}
+    dst_event = {**_simkl_event(), "watched_at": old_watched}
+    key = _event_key(src_event)
+
+    def manual_policy(_state, provider, _feature):
+        if provider == "SRC":
+            return {key: manual_event}, set()
+        return {}, set()
+
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_oneway._manual_policy", manual_policy)
+
+    src = HistoryOps("SRC", {key: dict(src_event)})
+    dst = HistoryOps("DST", {key: dict(dst_event)}, history_upsert=True)
+
+    _run(monkeypatch, src, dst, "history")
+
+    assert len(dst.add_calls) == 1
+    assert dst.add_calls[0][0]["watched_at"] == new_watched
+    assert dst.index[key]["watched_at"] == new_watched
 
 
 def test_ratings_baseline_still_rekeys_to_source_keyspace(
