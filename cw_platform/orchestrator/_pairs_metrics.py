@@ -133,6 +133,8 @@ class ApiMetrics:
             pass
 
 def persist_api_totals(ctx, totals: Mapping[str, Any], *, ts: int | None = None) -> None:
+    if not getattr(ctx, "write_state_json", True):
+        return
     try:
         st = ctx.state_store.load_state() or {}
         st.setdefault("metrics", {}).setdefault("api", {})

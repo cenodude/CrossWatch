@@ -60,7 +60,11 @@ class StateStore:
         except Exception:
             pass
         tmp = p.with_suffix(p.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), "utf-8")
+        if p.name == "state.json":
+            text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        else:
+            text = json.dumps(data, ensure_ascii=False, indent=2)
+        tmp.write_text(text, "utf-8")
         tmp.replace(p)
 
 

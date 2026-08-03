@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
 from cw_platform.reason_labels import friendly_reason
 from cw_platform.value_coercion import coerce_bool
+from services.scheduler_webhooks import notify_scheduler_webhook
 
 __all__ = ["router", "_is_sync_running", "_load_state", "_find_state_path"]
 
@@ -511,7 +512,12 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     rt = _rt()
     LOG_BUFFERS, RUNNING_PROCS, STATE_PATH, _append_log, strip_ansi = rt[0], rt[1], rt[3], rt[8], rt[7]
     overrides = overrides or {}
+    scheduler_context = dict(overrides)
+    scheduler_context["run_id"] = str(run_id)
+    scheduler_webhook_cfg: dict[str, Any] | None = None
+    scheduler_start_sent = False
     _summary_reset()
+    _summary_set("run_id", str(run_id))
     LOG_BUFFERS["SYNC"] = []
     os.environ["CW_RUN_ID"] = str(run_id)
     _sync_progress_ui("::CLEAR::")
@@ -609,6 +615,18 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     try:
         load_config, _save = _env()
         cfg = load_config()
+        scheduler_webhook_cfg = cfg if isinstance(cfg, dict) else {}
+
+        try:
+            scheduler_start_sent = notify_scheduler_webhook(
+                scheduler_webhook_cfg,
+                "start",
+                scheduler_context,
+                _summary_snapshot(),
+                log_fn=lambda msg: _append_log("SYNC", msg),
+            )
+        except Exception:
+            scheduler_start_sent = False
 
         req_pair_id = ""
         try:
@@ -661,10 +679,16 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
 
             mgr = OrchestratorClass(config=cfg)
             dry = coerce_bool((cfg.get("sync") or {}).get("dry_run", False)) or coerce_bool((overrides or {}).get("dry_run"))
+            runtime_cfg = cfg.get("runtime") or {}
+            sync_cfg = cfg.get("sync") or {}
+            write_state_json = coerce_bool(
+                sync_cfg.get("write_state_json", runtime_cfg.get("write_state_json", True)),
+                True,
+            )
             result = mgr.run_pairs(
                 dry_run=dry,
                 progress=_sync_progress_ui,
-                write_state_json=True,
+                write_state_json=write_state_json,
                 state_path=STATE_PATH,
                 use_snapshot=True,
             )
@@ -672,7 +696,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         added_res = int(result.get("added", 0))
         removed_res = int(result.get("removed", 0))
         try:
-            state = _load_state()
+            state = _load_state() if write_state_json else {}
             if state:
                 _STATS = _rt()[5]
                 _STATS.refresh_from_state(state)
@@ -687,8 +711,10 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                         _PROVIDER_COUNTS_CACHE["data"] = counts
                 except Exception as e:
                     _append_log("SYNC", f"[!] Provider-counts cache warm failed: {e}")
-            else:
+            elif write_state_json:
                 _append_log("SYNC", "[!] No state found after sync; stats not updated.")
+            else:
+                _append_log("SYNC", "[i] Legacy state.json persistence disabled; state-backed stats skipped.")
         except Exception as e:
             _append_log("SYNC", f"[!] Stats update failed: {e}")
 
@@ -732,6 +758,28 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             if counts2:
                 _PROVIDER_COUNTS_CACHE["ts"] = time.time()
                 _PROVIDER_COUNTS_CACHE["data"] = counts2
+        except Exception:
+            pass
+        try:
+            snap = _summary_snapshot()
+            exit_code = snap.get("exit_code")
+            if exit_code is not None:
+                event = "success" if int(exit_code) == 0 else "failure"
+                notify_scheduler_webhook(
+                    scheduler_webhook_cfg,
+                    event,
+                    scheduler_context,
+                    snap,
+                    log_fn=lambda msg: _append_log("SYNC", msg),
+                )
+            elif scheduler_start_sent:
+                notify_scheduler_webhook(
+                    scheduler_webhook_cfg,
+                    "failure",
+                    scheduler_context,
+                    snap,
+                    log_fn=lambda msg: _append_log("SYNC", msg),
+                )
         except Exception:
             pass
         RUNNING_PROCS.pop("SYNC", None)
