@@ -2615,6 +2615,36 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 _apply_response_classification(items_list, payload)
 
             unknown_failed = len(not_found["movies"])
+            reported_total = (
+                int(added_new.get("movies") or 0)
+                + int(added_new.get("shows") or 0)
+                + int(added_new.get("episodes") or 0)
+            )
+            has_not_found = bool(not_found["shows"] or not_found["movies"] or not_found["episodes"])
+            if main_items_list and reported_total == 0 and not has_not_found:
+                hint = "simkl_write_response_unconfirmed:add"
+                _freeze_failed_adds(main_items_list, hint)
+                unresolved.extend(_unresolved_for_items(main_items_list, hint))
+                setattr(adapter, "_simkl_history_add_confirmed_keys", [])
+                setattr(adapter, "_simkl_history_add_skipped_keys", [])
+                _info(
+                    "write_done",
+                    op="add",
+                    ok=False,
+                    applied=0,
+                    unresolved=len(unresolved),
+                    movies=len(movies),
+                    shows_payload=len(shows_payload),
+                    seasons=seasons_count,
+                    episodes=eps_count,
+                    not_found=0,
+                    anime_retry=0,
+                    reported_movies=0,
+                    reported_shows=0,
+                    reported_episodes=0,
+                    reason=hint,
+                )
+                return 0, unresolved
             if not_found["shows"] or not_found["movies"] or not_found["episodes"]:
                 _dbg("resolve_miss", op="add", movies=len(not_found["movies"]), shows=len(not_found["shows"]), episodes=len(not_found["episodes"]))
 
@@ -3103,4 +3133,3 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     ok = len(confirmed_keys)
     _info("write_done", op="remove", ok=len(unresolved) == 0 and ok > 0, applied=ok, unresolved=len(unresolved))
     return ok, unresolved
-
