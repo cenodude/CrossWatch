@@ -14,6 +14,7 @@ from datetime import datetime
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 
 def _current_version_norm() -> str:
@@ -38,6 +39,18 @@ def CONFIG_BASE() -> Path:
 
 CONFIG: Path = CONFIG_BASE()
 CONFIG.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_SCHEDULER_WEBHOOKS: dict[str, Any] = {
+    "enabled": False,
+    "url": "",
+    "base_url": "",
+    "start_url": "",
+    "success_url": "",
+    "failure_url": "",
+    "payload_format": "crosswatch",
+    "notifiarr_channel_id": "",
+    "timeout_seconds": 10,
+}
 
 _ENC_PREFIX = "enc:v1:"
 
@@ -144,6 +157,10 @@ def _is_sensitive_path(path: tuple[str, ...]) -> bool:
 
     if len(clean) >= 2 and clean[0] == "security" and clean[1] == "webhook_ids":
         return True
+
+    if len(clean) >= 3 and clean[0] == "scheduling" and clean[1] == "webhooks":
+        if clean[-1] in {"url", "default_url", "base_url", "healthchecks_base_url", "start_url", "success_url", "failure_url"}:
+            return True
 
     leaf = clean[-1]
     exact = {
@@ -588,6 +605,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # Execution behavior:
         "verify_after_write": False,                    # When supported, re-check destination after writes
         "dry_run": False,                               # Plan and log only; do not perform writes
+        "write_state_json": True,                       # Write state.json baselines/stats; leave on true
         "drop_guard": False,                            # Guard against sudden inventory shrink (protects from bad/suspect snapshots)
         "allow_mass_delete": True,                      # If False, block large delete plans (e.g., >~10% of baseline)
         "tombstone_ttl_days": 1,                        # How long “observed deletes” (tombstones) stay valid
@@ -715,6 +733,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "every_n_hours": 12,                            # When mode=every_n_hours, run every N hours (2+ recommended)
         "daily_time": "03:30",                          # When mode=daily_time, run at this time (HH:MM, 24h)
         "custom_interval_minutes": 60,                  # When mode=custom_interval, run every N minutes (minimum 15)
+        "webhooks": dict(DEFAULT_SCHEDULER_WEBHOOKS),    # Optional outbound scheduler lifecycle callbacks
         "advanced": {
             "enabled": False,                           # Advanced scheduler master toggle
             "jobs": [],
@@ -924,6 +943,55 @@ def _get_nested_value(src: dict[str, Any], path: str | Iterable[str]) -> tuple[b
             return False, None
         cur = cur[part]
     return True, cur
+
+
+def _normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
+    src = value if isinstance(value, dict) else {}
+    out = dict(DEFAULT_SCHEDULER_WEBHOOKS)
+    enabled = src.get("enabled")
+    if isinstance(enabled, bool):
+        out["enabled"] = enabled
+    elif isinstance(enabled, (int, float)):
+        out["enabled"] = bool(enabled)
+    else:
+        out["enabled"] = str(enabled or "").strip().lower() in {"1", "true", "yes", "on"}
+    out["url"] = _http_url_or_blank(src.get("url") or src.get("default_url"))
+    out["base_url"] = _http_url_or_blank(src.get("base_url") or src.get("healthchecks_base_url"))
+    for key in ("start_url", "success_url", "failure_url"):
+        out[key] = _http_url_or_blank(src.get(key))
+    out["payload_format"] = _scheduler_webhook_payload_format(src.get("payload_format") or src.get("format"))
+    out["notifiarr_channel_id"] = _digits_or_blank(src.get("notifiarr_channel_id") or src.get("notifiarrChannelId"))
+    try:
+        timeout = int(src.get("timeout_seconds", 10) or 10)
+    except Exception:
+        timeout = 10
+    out["timeout_seconds"] = max(1, min(60, timeout))
+    return out
+
+
+def _http_url_or_blank(value: Any) -> str:
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return ""
+    if parts.scheme.lower() not in {"http", "https"} or not parts.netloc:
+        return ""
+    return url
+
+
+def _scheduler_webhook_payload_format(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    if text in {"notifiarr", "notifiarr_passthrough"}:
+        return "notifiarr"
+    return "crosswatch"
+
+
+def _digits_or_blank(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text.isdigit() else ""
 
 
 def _set_nested_value(dst: dict[str, Any], path: str | Iterable[str], value: Any) -> None:
@@ -1480,6 +1548,7 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
     if custom_minutes < 15:
         custom_minutes = 15
     s["custom_interval_minutes"] = custom_minutes
+    s["webhooks"] = _normalize_scheduler_webhooks(s.get("webhooks"))
 
     adv = _ensure_dict(s, "advanced")
     adv["enabled"] = bool(adv.get("enabled", False))

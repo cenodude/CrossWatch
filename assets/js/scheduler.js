@@ -29,21 +29,24 @@
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css", textContent: `
 #sec-scheduling{--sch-shell-bg:#171a22;--sch-card-bg:#20242d;--sch-card-bg-soft:#242936;--sch-input-bg:#252b36;--sch-input-bg-hover:#2a303d;--sch-border:rgba(255,255,255,.14);--sch-border-soft:rgba(255,255,255,.12);--sch-shadow:none;--sch-fg:#f3f7ff;--sch-fg-soft:rgba(215,222,235,.76)}
 #sec-scheduling .cw-subpanel[data-sub]{padding-top:6px}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#schAdv{position:relative;border:1px solid var(--sch-border);border-radius:22px;background:var(--sch-shell-bg);box-shadow:var(--sch-shadow);overflow:hidden}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card::before,#schAdv::before{content:none;display:none}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#schAdv,#schWebhooks{position:relative;border:1px solid var(--sch-border);border-radius:22px;background:var(--sch-shell-bg);box-shadow:var(--sch-shadow);overflow:hidden}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card::before,#schAdv::before,#schWebhooks::before{content:none;display:none}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-fields{position:relative;z-index:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:16px}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field{display:grid;gap:8px;padding:14px 16px;border:1px solid var(--sch-border-soft);border-radius:14px;background:var(--sch-card-bg);box-shadow:none}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field:first-child{grid-column:1 / -1}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .field>.muted{margin:0!important;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:rgba(214,223,238,.58)}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .field>.muted .th-help{display:inline-flex;align-items:center;gap:8px}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:#2b313d;color:#edf4ff;cursor:help;box-shadow:none}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:18px;line-height:1}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .field>.muted .th-help{display:inline-flex;align-items:center;gap:8px;line-height:1.15;vertical-align:middle}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;min-width:30px;padding:0;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:#2b313d;color:#edf4ff;cursor:help;box-shadow:none;vertical-align:middle}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:22px;line-height:1}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .sch-help:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(125,134,201,.16)}
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card-notes{margin-top:0;color:var(--sch-fg-soft);font-size:12px;line-height:1.45}
-#sec-scheduling .cw-subpanel[data-sub="basic"] select,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time],#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number],.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text]{width:100%;min-height:46px;padding:0 14px;border:1px solid rgba(136,151,190,.22);border-radius:12px;background:var(--sch-input-bg);color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:border-color .14s ease,background .14s ease,box-shadow .14s ease}
-#sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover,.sch-adv input[type=number]:hover,.sch-adv input[type=text]:hover{border-color:rgba(160,176,220,.30);background:var(--sch-input-bg-hover)}
-#sec-scheduling .cw-subpanel[data-sub="basic"] select:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:focus,.sch-adv select:focus,.sch-adv input[type=time]:focus,.sch-adv input[type=number]:focus,.sch-adv input[type=text]:focus{outline:none;border-color:rgba(125,134,201,.52);box-shadow:0 0 0 3px rgba(125,134,201,.16)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time],#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number],.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text],.sch-adv input[type=url]{width:100%;min-height:46px;padding:0 14px;border:1px solid rgba(136,151,190,.22);border-radius:12px;background:var(--sch-input-bg);color:var(--sch-fg);box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:border-color .14s ease,background .14s ease,box-shadow .14s ease}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:hover,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:hover,.sch-adv select:hover,.sch-adv input[type=time]:hover,.sch-adv input[type=number]:hover,.sch-adv input[type=text]:hover,.sch-adv input[type=url]:hover{border-color:rgba(160,176,220,.30);background:var(--sch-input-bg-hover)}
+#sec-scheduling .cw-subpanel[data-sub="basic"] select:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=time]:focus,#sec-scheduling .cw-subpanel[data-sub="basic"] input[type=number]:focus,.sch-adv select:focus,.sch-adv input[type=time]:focus,.sch-adv input[type=number]:focus,.sch-adv input[type=text]:focus,.sch-adv input[type=url]:focus{outline:none;border-color:rgba(125,134,201,.52);box-shadow:0 0 0 3px rgba(125,134,201,.16)}
 .sch-adv{padding:16px}
+.sch-webhooks{margin-top:14px}
+.sch-webhooks [data-webhook-format-for]{display:none!important}
+.sch-webhooks[data-payload-format="crosswatch"] [data-webhook-format-for~="crosswatch"],.sch-webhooks[data-payload-format="notifiarr"] [data-webhook-format-for~="notifiarr"]{display:grid!important}
 .sch-adv .cw-panel-head{position:relative;z-index:1;display:flex;align-items:center;min-height:104px;margin:0 0 14px;padding:14px 16px;border:none;border-radius:0;background:transparent;box-shadow:none}
 .sch-adv .cw-panel-head .cx-toggle{margin-top:20px}
 .sch-adv .mini,.sch-adv .status{position:relative;z-index:1}
@@ -58,9 +61,9 @@
 .sch-adv-section-copy.sch-workflow-intro{max-width:none;white-space:nowrap}
 .sch-adv table{position:relative;z-index:1;width:100%;border-collapse:separate;border-spacing:0 10px;margin-top:0;table-layout:fixed}
 .sch-adv thead th{padding:0 10px 6px;text-align:left;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:rgba(214,223,238,.56);border-bottom:none}
-.sch-adv .th-help{display:inline-flex;align-items:center;gap:8px}
-.sch-adv .sch-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:#2b313d;color:#edf4ff;cursor:help;box-shadow:none}
-.sch-adv .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:18px;line-height:1}
+.sch-adv .th-help{display:inline-flex;align-items:center;gap:8px;line-height:1.15;vertical-align:middle}
+.sch-adv .sch-help{position:relative;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;min-width:30px;padding:0;border-radius:999px;border:1px solid rgba(255,255,255,.16);background:#2b313d;color:#edf4ff;cursor:help;box-shadow:none;vertical-align:middle}
+.sch-adv .sch-help::before{content:"help";font-family:"Material Symbols Rounded","Material Symbols Outlined","Segoe UI Symbol",sans-serif;font-size:22px;line-height:1}
 .sch-adv .sch-help:focus-visible{outline:none;box-shadow:0 0 0 3px rgba(125,134,201,.16)}
 .sch-adv tbody tr{background:var(--sch-card-bg);box-shadow:none}
 .sch-adv tbody td{position:relative;overflow:visible;padding:12px 10px;vertical-align:middle;border-top:1px solid var(--sch-border-soft);border-bottom:1px solid var(--sch-border-soft)}
@@ -90,7 +93,8 @@
 .sch-adv .stack{display:grid;gap:8px}
 .sch-adv .stack.two{grid-template-columns:repeat(2,minmax(0,1fr))}
 .sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
-.sch-adv .subnote{font-size:10px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:rgba(214,223,238,.5)}
+.sch-adv .subnote{font-size:10px;font-weight:800;letter-spacing:.1em;line-height:1.15;text-transform:uppercase;color:rgba(214,223,238,.5)}
+.sch-adv .field-mini .subnote{display:flex;align-items:center;min-height:30px}
 .sch-adv .field-mini{display:grid;gap:6px;min-width:0}
 .sch-adv .capture-provider-stack{grid-template-columns:minmax(190px,1.4fr) minmax(150px,1fr)}
 .sch-adv td[data-label="Feature"]{min-width:150px}
@@ -192,7 +196,8 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
   document.head.appendChild(Object.assign(el("style"), { id: "sch-css-refine", textContent: `
 #sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card{display:grid;gap:10px;padding:0!important}
 #sec-scheduling #sched-provider-panel,#sec-scheduling #sched-provider-panel .cw-subpanels,#sec-scheduling #sched-provider-panel .cw-subpanel.active{width:100%;box-sizing:border-box}
-#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#sec-scheduling #schAdv{width:100%;max-width:none;margin:0!important;box-sizing:border-box}
+#sec-scheduling .cw-subpanel[data-sub="basic"] .auth-card,#sec-scheduling #schAdv,#sec-scheduling #schWebhooks{width:100%;max-width:none;margin:0!important;box-sizing:border-box}
+#sec-scheduling #schWebhooks{margin-top:14px!important}
 #sec-scheduling .sch-std-head{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:16px;padding:18px 18px 8px!important}
 #sec-scheduling .sch-std-head-copy{display:grid;gap:6px}
 #sec-scheduling .sch-card-head{display:flex;align-items:flex-start;gap:14px;min-width:0}
@@ -254,7 +259,7 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 .sch-adv tbody td{padding:10px 8px}
 .sch-adv tbody td:first-child{border-radius:16px 0 0 16px}
 .sch-adv tbody td:last-child{border-radius:0 16px 16px 0}
-.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text]{min-height:42px;padding:0 12px;border-radius:14px}
+.sch-adv select,.sch-adv input[type=time],.sch-adv input[type=number],.sch-adv input[type=text],.sch-adv input[type=url]{min-height:42px;padding:0 12px;border-radius:14px}
 .sch-adv .stack{gap:7px}
 .sch-adv .stack.two{grid-template-columns:minmax(0,1fr) minmax(118px,.92fr)}
 .sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -275,6 +280,17 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
 
   // state
   let _pairs = [], _jobs = [], _workflows = [], _captureJobs = [], _eventRules = [], _advEnabled = false, _loading = false;
+  let _webhooks = {
+    enabled: false,
+    url: "",
+    base_url: "",
+    start_url: "",
+    success_url: "",
+    failure_url: "",
+    payload_format: "crosswatch",
+    notifiarr_channel_id: "",
+    timeout_seconds: 10
+  };
   let _captureProviders = [];
   let _eventRoutes = { watcher: [], webhook: [] }, _eventRouteError = "";
   const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -303,7 +319,16 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     event: "Event:\nChoose which playback activity should trigger the rule.\nStart: playback begins or resumes.\nPause: playback is paused.\nStop: playback ends or stops.",
     filters: "Filters:\nMedia: only movies or episodes.\nMin %: require minimum playback progress.",
     action: "Action:\nChoose what happens when the rule matches.\nSync pair:\nRun one specific enabled sync pair immediately.",
-    guardrails: "Mute (min):\nIgnore new triggers for this rule after it runs.\nDedupe (sec):\nSuppress identical repeated events for a short window.\nMax / hour:\nHard safety cap for this rule in one hour."
+    guardrails: "Mute (min):\nIgnore new triggers for this rule after it runs.\nDedupe (sec):\nSuppress identical repeated events for a short window.\nMax / hour:\nHard safety cap for this rule in one hour.",
+    webhook_url: "All events URL:\nOptional http:// or https:// POST destination used for start, success, and failure events.\nUse this for services with one endpoint, including Notifiarr Passthrough.",
+    webhook_notifiarr_url: "Notifiarr passthrough URL:\nPaste the Notifiarr Passthrough endpoint.\nCrossWatch sends start, success, and failure notifications to this same URL.",
+    webhook_format: "Payload format:\nCrossWatch JSON sends the raw scheduler payload.\nNotifiarr Passthrough sends the notification/discord JSON shape expected by Notifiarr.",
+    webhook_base: "Compatible base URL:\nOptional http:// or https:// base ping URL for services that use suffixes.\nStart uses /start, success uses the base URL, and failure uses /fail.",
+    webhook_notifiarr_channel: "Notifiarr channel ID:\nOptional Discord channel id for Notifiarr Passthrough payloads.\nIf your Notifiarr setup requires a channel, enter the numeric Discord channel id here.",
+    webhook_timeout: "Timeout seconds:\nHow long CrossWatch waits for a callback request before logging it as failed.\nCallback failures do not fail the sync.",
+    webhook_start: "Start callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync starts.\nThis overrides the compatible base URL for start events.",
+    webhook_success: "Success callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync finishes successfully.\nThis overrides the compatible base URL for success events.",
+    webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events."
   };
   const defaultJob = () => ({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
   const defaultWorkflowStep = () => ({ id: genId(), pair_id: null, active: true });
@@ -351,6 +376,27 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     },
     active: true
   });
+  const normalizeWebhooks = (raw = {}) => ({
+    enabled: raw.enabled === true,
+    url: String(raw.url || raw.default_url || raw.defaultUrl || "").trim(),
+    base_url: String(raw.base_url || raw.baseUrl || raw.healthchecks_base_url || raw.healthchecksBaseUrl || "").trim(),
+    start_url: String(raw.start_url || raw.startUrl || "").trim(),
+    success_url: String(raw.success_url || raw.successUrl || "").trim(),
+    failure_url: String(raw.failure_url || raw.failureUrl || "").trim(),
+    payload_format: ["notifiarr", "notifiarr_passthrough"].includes(String(raw.payload_format || raw.payloadFormat || raw.format || "").trim().toLowerCase().replace("-", "_")) ? "notifiarr" : "crosswatch",
+    notifiarr_channel_id: String(raw.notifiarr_channel_id || raw.notifiarrChannelId || "").trim(),
+    timeout_seconds: Math.max(1, Math.min(60, parseInt(raw.timeout_seconds || raw.timeoutSeconds || 10, 10) || 10))
+  });
+  const isHttpUrl = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return true;
+    try {
+      const url = new URL(text);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
   const setBooleanSelect = (sel, v) => {
     if (!sel) return;
     const want = v ? "true" : "false";
@@ -928,6 +974,93 @@ const ensureStdEnabledToggle = () => {
     wrap.appendChild(btn);
     head.appendChild(wrap);
     return stackWrap("field-mini", head, control);
+  };
+  const syncWebhooksFromFields = () => {
+    _webhooks = normalizeWebhooks({
+      enabled: !!$("#schWebhookEnabled")?.checked,
+      url: $("#schWebhookUrl")?.value || "",
+      base_url: $("#schWebhookBase")?.value || "",
+      start_url: $("#schWebhookStart")?.value || "",
+      success_url: $("#schWebhookSuccess")?.value || "",
+      failure_url: $("#schWebhookFailure")?.value || "",
+      payload_format: $("#schWebhookFormat")?.value || "crosswatch",
+      notifiarr_channel_id: $("#schWebhookNotifiarrChannel")?.value || "",
+      timeout_seconds: $("#schWebhookTimeout")?.value || 10
+    });
+    applyWebhookVisibility();
+  };
+  const webhookFormat = () => _webhooks.payload_format === "notifiarr" ? "notifiarr" : "crosswatch";
+  const applyWebhookVisibility = () => {
+    const root = $("#schWebhooks");
+    if (!root) return;
+    const format = webhookFormat();
+    root.dataset.payloadFormat = format;
+    const urlLabel = $("#schWebhookUrlLabel", root);
+    const urlHelp = $("#schWebhookUrlHelp", root);
+    const urlInput = $("#schWebhookUrl", root);
+    if (urlLabel) urlLabel.textContent = format === "notifiarr" ? "Notifiarr passthrough URL" : "All events URL";
+    if (urlHelp) {
+      urlHelp.setAttribute("aria-label", `${urlLabel?.textContent || "All events URL"} help`);
+      urlHelp.dataset.helpKey = format === "notifiarr" ? "webhook_notifiarr_url" : "webhook_url";
+      urlHelp.title = HELP_TIPS[urlHelp.dataset.helpKey] || "";
+    }
+    if (urlInput) {
+      urlInput.placeholder = format === "notifiarr"
+        ? "https://notifiarr.com/api/v1/notification/passthrough/YOUR_API_KEY"
+        : "https://hooks.example.com/crosswatch";
+    }
+    root.querySelectorAll("[data-webhook-format-for] input,[data-webhook-format-for] select").forEach((node) => {
+      const holder = node.closest("[data-webhook-format-for]");
+      const formats = String(holder?.dataset?.webhookFormatFor || "").split(/\s+/).filter(Boolean);
+      node.disabled = formats.length > 0 && !formats.includes(format);
+    });
+  };
+  const renderWebhooks = () => {
+    const enabled = $("#schWebhookEnabled");
+    const url = $("#schWebhookUrl");
+    const base = $("#schWebhookBase");
+    const start = $("#schWebhookStart");
+    const success = $("#schWebhookSuccess");
+    const failure = $("#schWebhookFailure");
+    const format = $("#schWebhookFormat");
+    const notifiarrChannel = $("#schWebhookNotifiarrChannel");
+    const timeout = $("#schWebhookTimeout");
+    if (!enabled || !url || !base || !start || !success || !failure || !format || !notifiarrChannel || !timeout) return;
+    enabled.checked = !!_webhooks.enabled;
+    url.value = _webhooks.url || "";
+    base.value = _webhooks.base_url || "";
+    start.value = _webhooks.start_url || "";
+    success.value = _webhooks.success_url || "";
+    failure.value = _webhooks.failure_url || "";
+    format.value = _webhooks.payload_format || "crosswatch";
+    notifiarrChannel.value = _webhooks.notifiarr_channel_id || "";
+    timeout.value = String(_webhooks.timeout_seconds || 10);
+    applyWebhookVisibility();
+  };
+  const webhooksValidation = () => {
+    syncWebhooksFromFields();
+    const entries = webhookFormat() === "notifiarr" ? [
+      ["Notifiarr passthrough URL", _webhooks.url]
+    ] : [
+      ["All events URL", _webhooks.url],
+      ["Compatible base URL", _webhooks.base_url],
+      ["Start callback URL", _webhooks.start_url],
+      ["Success callback URL", _webhooks.success_url],
+      ["Failure callback URL", _webhooks.failure_url]
+    ];
+    const issues = [];
+    entries.forEach(([label, value]) => {
+      if (value && !isHttpUrl(value)) issues.push(`${label}: use an http:// or https:// URL.`);
+    });
+    if (webhookFormat() === "notifiarr" && _webhooks.notifiarr_channel_id && !/^\d+$/.test(_webhooks.notifiarr_channel_id)) {
+      issues.push("Notifiarr channel ID: use the numeric Discord channel id.");
+    }
+    if (_webhooks.enabled && !entries.some(([, value]) => String(value || "").trim())) {
+      issues.push(webhookFormat() === "notifiarr"
+        ? "Scheduler Webhooks: add the Notifiarr passthrough URL or turn webhooks off."
+        : "Scheduler Webhooks: add at least one callback URL or turn webhooks off.");
+    }
+    return issues;
   };
   const alignedField = (control) => stackWrap("field-mini control-align", Object.assign(el("div", "subnote"), { textContent: "Label" }), control);
   const guardInput = ({ id, value, placeholder, title, onChange }) => {
@@ -1863,17 +1996,62 @@ const ensureStdEnabledToggle = () => {
 
 `;
     host.appendChild(adv);
-    adv.querySelectorAll(".sch-help").forEach((btn) => {
-      const tip = HELP_TIPS[btn.dataset.helpKey] || "";
-      if (tip) {
-        btn.title = tip;
-      } else {
-        btn.removeAttribute("title");
-      }
-      btn.onclick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      };
+    const hooks = Object.assign(el("div", "sch-adv sch-webhooks"), { id: "schWebhooks" });
+    hooks.dataset.payloadFormat = "crosswatch";
+    hooks.innerHTML = `
+<div class="cw-panel-head">
+  <div class="sch-adv-head-copy sch-card-head">
+    <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">monitor_heart</span>
+    <div class="sch-card-head-copy">
+      <div class="sch-adv-head-title">Scheduler Webhooks</div>
+      <p>Send outbound POST callbacks when scheduled syncs start, succeed, or fail.</p>
+    </div>
+  </div>
+  <label class="cx-toggle">
+    <input type="checkbox" id="schWebhookEnabled">
+    <span class="cx-toggle-ui" aria-hidden="true"></span>
+    <span class="cx-toggle-text">Enable webhooks</span>
+    <span class="cx-toggle-state" aria-hidden="true"></span>
+  </label>
+</div>
+<section class="sch-adv-section">
+  <div class="stack two">
+    <label class="field-mini"><div class="subnote"><span class="th-help"><span id="schWebhookUrlLabel">All events URL</span><button id="schWebhookUrlHelp" type="button" class="sch-help" aria-label="All events URL help" data-help-key="webhook_url"></button></span></div><input id="schWebhookUrl" name="schWebhookUrl" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Payload format<button type="button" class="sch-help" aria-label="Payload format help" data-help-key="webhook_format"></button></span></div><select id="schWebhookFormat" name="schWebhookFormat"><option value="crosswatch">CrossWatch JSON</option><option value="notifiarr">Notifiarr Passthrough</option></select></label>
+  </div>
+  <div class="stack two">
+    <label class="field-mini" data-webhook-format-for="crosswatch"><div class="subnote"><span class="th-help">Compatible base URL<button type="button" class="sch-help" aria-label="Compatible base URL help" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://monitor.example/ping/crosswatch"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Timeout seconds<button type="button" class="sch-help" aria-label="Timeout seconds help" data-help-key="webhook_timeout"></button></span></div><input id="schWebhookTimeout" name="schWebhookTimeout" type="number" min="1" max="60"></label>
+  </div>
+  <div class="stack" data-webhook-format-for="notifiarr">
+    <label class="field-mini"><div class="subnote"><span class="th-help">Notifiarr channel ID<button type="button" class="sch-help" aria-label="Notifiarr channel ID help" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"></label>
+  </div>
+  <div class="stack three" data-webhook-format-for="crosswatch">
+    <label class="field-mini"><div class="subnote"><span class="th-help">Start callback URL<button type="button" class="sch-help" aria-label="Start callback URL help" data-help-key="webhook_start"></button></span></div><input id="schWebhookStart" name="schWebhookStart" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/start"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Success callback URL<button type="button" class="sch-help" aria-label="Success callback URL help" data-help-key="webhook_success"></button></span></div><input id="schWebhookSuccess" name="schWebhookSuccess" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/success"></label>
+    <label class="field-mini"><div class="subnote"><span class="th-help">Failure callback URL<button type="button" class="sch-help" aria-label="Failure callback URL help" data-help-key="webhook_failure"></button></span></div><input id="schWebhookFailure" name="schWebhookFailure" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://hooks.example.com/crosswatch/failure"></label>
+  </div>
+</section>
+`;
+    const hooksHost = $("#sec-scheduling .body") || host;
+    hooksHost.appendChild(hooks);
+    hooks.querySelectorAll("input,select").forEach((node) => {
+      node.addEventListener("input", syncWebhooksFromFields);
+      node.addEventListener("change", syncWebhooksFromFields);
+    });
+    [adv, hooks].forEach((root) => {
+      root.querySelectorAll(".sch-help").forEach((btn) => {
+        const tip = HELP_TIPS[btn.dataset.helpKey] || "";
+        if (tip) {
+          btn.title = tip;
+        } else {
+          btn.removeAttribute("title");
+        }
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        };
+      });
     });
 
     $("#btnAddStep").onclick = () => { _jobs.push(defaultJob()); renderJobs(); };
@@ -2088,11 +2266,13 @@ const ensureStdEnabledToggle = () => {
       _captureJobs = Array.isArray(adv.capture_jobs || adv.captureJobs) ? (adv.capture_jobs || adv.captureJobs).map(normalizeCaptureJob) : [];
       _captureJobs = mergeCaptureJobs(_captureJobs, getCaptureDraftJobs());
       _eventRules = Array.isArray(adv.event_rules || adv.eventRules) ? (adv.event_rules || adv.eventRules).map(normalizeEventRule) : [];
+      _webhooks = normalizeWebhooks(saved?.webhooks || {});
       _eventRules.forEach(syncRuleRoute);
       renderJobs();
       renderWorkflows();
       renderCaptureJobs();
       renderEventRules();
+      renderWebhooks();
       const pendingCapturePrefills = getPendingCapturePrefills();
       if (pendingCapturePrefills.length) {
         setPendingCapturePrefills([]);
@@ -2172,11 +2352,13 @@ const ensureStdEnabledToggle = () => {
     const workflowState = serializableWorkflows();
     const captureState = serializableCaptureJobs();
     const ruleState = serializableEventRules();
+    const webhookIssues = webhooksValidation();
     return {
       workflowIssues: workflowState.issues.slice(),
       captureIssues: captureState.issues.slice(),
       eventIssues: ruleState.issues.slice(),
-      issues: [...workflowState.issues, ...captureState.issues, ...ruleState.issues]
+      webhookIssues: webhookIssues.slice(),
+      issues: [...workflowState.issues, ...captureState.issues, ...ruleState.issues, ...webhookIssues]
     };
   };
   window.getSchedulingValidation = schedulingValidation;
@@ -2201,13 +2383,18 @@ const ensureStdEnabledToggle = () => {
       if (strict) throw new Error(validation.eventIssues[0]);
       return null;
     }
+    if (validation.webhookIssues.length) {
+      if (strict) throw new Error(validation.webhookIssues[0]);
+      return null;
+    }
+    syncWebhooksFromFields();
     const advanced = serializeAdvanced();
 
     // Advanced plan disables standard scheduling
     const stdEnabled = ($("#schEnabled")?.value || "").trim() === "true";
     const enabled = advanced.enabled ? false : stdEnabled;
 
-    return { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, advanced };
+    return { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, webhooks: normalizeWebhooks(_webhooks), advanced };
   };
 
   // boot
