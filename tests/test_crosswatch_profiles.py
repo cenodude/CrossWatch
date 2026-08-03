@@ -117,12 +117,13 @@ def test_editor_tracker_root_keeps_profile_under_profiles_dir(tmp_path: Path, mo
 
 def test_editor_hides_local_tracker_workspace_selector() -> None:
     editor_js = Path("assets/js/editor.js").read_text("utf-8")
+    sources_js = Path("assets/js/editor/sources.js").read_text("utf-8")
 
     assert "function syncSnapshotControlVisibility()" in editor_js
-    assert "const show = !isTrackerSource();" in editor_js
-    assert "if (snapLabel) snapLabel.style.display = show ? \"\" : \"none\";" in editor_js
-    assert "if (snapLabel) snapLabel.textContent = isState ? \"Provider\" : \"Endpoint\";" in editor_js
-    assert 'isTracker ? "Workspace"' not in editor_js
+    assert "const show = !isTrackerSource(state);" in sources_js
+    assert "if (ctx.snapLabel) ctx.snapLabel.style.display = show ? \"\" : \"none\";" in sources_js
+    assert "if (ctx.snapLabel) ctx.snapLabel.textContent = providerPicker ? \"Provider\" : \"Endpoint\";" in sources_js
+    assert 'isTracker ? "Workspace"' not in sources_js
 
 
 def test_editor_tracker_manual_policy_is_stored_per_crosswatch_profile(tmp_path: Path, monkeypatch) -> None:
@@ -281,7 +282,7 @@ def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
     assert 'restore: ["restore_page"' not in providers_ui
     assert "Local Tracker Restore" not in providers_ui
     assert "Storage and restore" in providers_ui
-    assert "Create CW-P profiles when you need separate local tracker data" in providers_ui
+    assert "Use profiles when you want separate local watchlist, ratings, history or progress data." in providers_ui
     assert 'introSubs: ["auth"]' in providers_ui
     assert 'introSubs: ["auth", "settings"]' not in providers_ui
     assert "cw_crosswatch_disconnect" in auth_html

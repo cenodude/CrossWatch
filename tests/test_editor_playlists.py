@@ -308,6 +308,44 @@ def test_editor_send_button_opens_visible_modal() -> None:
     assert ".cw-editor-send-card .body::-webkit-scrollbar-thumb" in css
 
 
+def test_editor_send_failure_does_not_expose_exception_detail(monkeypatch) -> None:
+    class FailingOps:
+        pass
+
+    monkeypatch.setattr(api, "load_config", lambda: {})
+    monkeypatch.setattr(
+        api,
+        "_editor_send_targets",
+        lambda cfg, feature: [
+            {
+                "provider": "TRAKT",
+                "instance": "default",
+                "history_enabled": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(api, "load_sync_ops", lambda provider: FailingOps())
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: {})
+
+    def fail_apply_add(**kwargs):
+        raise RuntimeError("stack trace with token=super-secret")
+
+    monkeypatch.setattr(api, "apply_add", fail_apply_add)
+
+    res = api.api_editor_send(
+        {
+            "kind": "history",
+            "providers": [{"provider": "TRAKT", "instance": "default"}],
+            "items": [{"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}, "watched_at": "2026-01-01T00:00:00Z"}],
+        }
+    )
+
+    assert res["ok"] is False
+    assert res["errors"] == 1
+    assert res["results"] == [{"provider": "TRAKT", "instance": "default", "ok": False, "error": "send_failed"}]
+    assert "super-secret" not in str(res)
+
+
 def test_editor_bulk_action_buttons_use_playback_action_colors() -> None:
     from pathlib import Path
 

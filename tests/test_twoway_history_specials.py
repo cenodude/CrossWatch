@@ -43,8 +43,9 @@ class _StateStore:
 
 
 class _Ops:
-    def __init__(self) -> None:
+    def __init__(self, *, history_upsert: bool = False) -> None:
         self.added: list[dict[str, Any]] = []
+        self.history_upsert = history_upsert
 
     def add(self, _cfg, items, *, feature, dry_run=False):
         self.added.extend(dict(item) for item in items)
@@ -62,12 +63,18 @@ class _Ops:
         return {"ok": True, "count": 0}
 
     def capabilities(self):
-        return {"history": {"observed_deletes": False}}
+        return {"history": {"observed_deletes": False, "upsert": self.history_upsert}}
 
 
-def _run_two_way(monkeypatch, snapshots: dict[str, dict[str, dict[str, Any]]]):
-    trakt = _Ops()
-    simkl = _Ops()
+def _run_two_way(
+    monkeypatch,
+    snapshots: dict[str, dict[str, dict[str, Any]]],
+    *,
+    trakt_upsert: bool = False,
+    simkl_upsert: bool = False,
+):
+    trakt = _Ops(history_upsert=trakt_upsert)
+    simkl = _Ops(history_upsert=simkl_upsert)
     monkeypatch.setattr(twoway, "build_snapshots_for_feature", lambda **_kwargs: snapshots)
     ctx = SimpleNamespace(
         config={"sync": {"include_observed_deletes": False, "blackbox": {"enabled": False}}, "runtime": {}},
@@ -86,7 +93,7 @@ def _run_two_way(monkeypatch, snapshots: dict[str, dict[str, dict[str, Any]]]):
     return result, trakt, simkl
 
 
-def test_trakt_simkl_two_way_routes_and_converges_special(monkeypatch) -> None:
+def _patch_common(monkeypatch) -> None:
     monkeypatch.setattr(twoway, "_supports_feature", lambda _ops, _feature: True)
     monkeypatch.setattr(twoway, "_health_feature_ok", lambda _health, _feature: True)
     monkeypatch.setattr(twoway, "_health_status", lambda _health: "up")
@@ -105,6 +112,10 @@ def test_trakt_simkl_two_way_routes_and_converges_special(monkeypatch) -> None:
     monkeypatch.setattr(twoway, "load_blackbox_keys", lambda *_args, **_kwargs: set())
     monkeypatch.setattr(twoway, "record_attempts", lambda *_args, **_kwargs: {"ok": True, "count": 0})
     monkeypatch.setattr(twoway, "record_success", lambda *_args, **_kwargs: {"ok": True, "count": 0})
+
+
+def test_trakt_simkl_two_way_routes_and_converges_special(monkeypatch) -> None:
+    _patch_common(monkeypatch)
 
     trakt_key = f"tmdb:1402#s00e48@{WATCHED_EPOCH}"
     missing_result, trakt, simkl = _run_two_way(monkeypatch, {"TRAKT": {trakt_key: TRAKT_SPECIAL}, "SIMKL": {}})
@@ -126,3 +137,33 @@ def test_trakt_simkl_two_way_routes_and_converges_special(monkeypatch) -> None:
     assert converged_result["adds_to_B"] == 0
     assert trakt.added == []
     assert simkl.added == []
+
+
+def test_manual_history_date_correction_updates_upsert_peer(monkeypatch) -> None:
+    _patch_common(monkeypatch)
+    old_watched = "2023-10-12T12:28:00.000Z"
+    corrected_watched = "2023-10-12T13:01:00.000Z"
+    trakt_old = {**TRAKT_SPECIAL, "watched_at": old_watched}
+    trakt_manual = {**TRAKT_SPECIAL, "watched_at": corrected_watched}
+    simkl_old = {**SIMKL_SPECIAL, "watched_at": old_watched}
+    trakt_key = f"tmdb:1402#s00e48@{WATCHED_EPOCH}"
+    simkl_key = f"tvdb:153021#s00e48@{WATCHED_EPOCH}"
+
+    def manual_policy(_state, provider, _feature):
+        if provider == "TRAKT":
+            return {canonical_key(trakt_manual): trakt_manual}, set()
+        return {}, set()
+
+    monkeypatch.setattr(twoway, "_manual_policy", manual_policy)
+
+    result, trakt, simkl = _run_two_way(
+        monkeypatch,
+        {"TRAKT": {trakt_key: trakt_old}, "SIMKL": {simkl_key: simkl_old}},
+        simkl_upsert=True,
+    )
+
+    assert result["adds_to_A"] == 0
+    assert result["adds_to_B"] == 0
+    assert trakt.added == []
+    assert len(simkl.added) == 1
+    assert simkl.added[0]["watched_at"] == corrected_watched
