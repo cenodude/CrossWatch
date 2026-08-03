@@ -868,6 +868,13 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
             for k in list(wh.keys()):
                 _mask_leaf(wh, k)
 
+    scheduling = out.get("scheduling")
+    if isinstance(scheduling, dict):
+        hooks = scheduling.get("webhooks")
+        if isinstance(hooks, dict):
+            for key in ("url", "default_url", "base_url", "healthchecks_base_url", "start_url", "success_url", "failure_url"):
+                _mask_leaf(hooks, key)
+
     return out
 
 

@@ -235,6 +235,188 @@ def test_scheduling_webhook_config_is_normalized_and_sensitive() -> None:
     assert _is_sensitive_path(("scheduling", "webhooks", "failure_url")) is True
 
 
+def test_config_save_preserves_redacted_scheduler_webhook_url() -> None:
+    from api.configAPI import _preserve_sensitive_config_values
+
+    mask = "••••••••"
+    current = {
+        "scheduling": {
+            "webhooks": {
+                "enabled": True,
+                "base_url": "https://hc-ping.com/secret-token",
+            }
+        }
+    }
+    incoming = {
+        "scheduling": {
+            "webhooks": {
+                "enabled": True,
+                "base_url": mask,
+            }
+        }
+    }
+    merged = {
+        "scheduling": {
+            "webhooks": {
+                "enabled": True,
+                "base_url": mask,
+            }
+        }
+    }
+
+    _preserve_sensitive_config_values(
+        current,
+        incoming,
+        merged,
+        lambda value: str(value or "").strip() in {"", mask},
+        lambda _key: False,
+    )
+
+    assert merged["scheduling"]["webhooks"]["base_url"] == "https://hc-ping.com/secret-token"
+
+
+def test_redact_config_masks_scheduler_webhook_urls() -> None:
+    from cw_platform.config_base import redact_config
+
+    redacted = redact_config({
+        "scheduling": {
+            "webhooks": {
+                "enabled": True,
+                "base_url": "https://hc-ping.com/secret-token",
+            }
+        }
+    })
+
+    assert redacted["scheduling"]["webhooks"]["base_url"] == "••••••••"
+
+
+def test_scheduler_webhook_save_logs_enabled_without_secret_url() -> None:
+    from api.schedulingAPI import _log_scheduler_webhook_status
+
+    logs: list[str] = []
+
+    def fake_logger(_kind: str, _channel: str):
+        def inner(message: str, **_kwargs: Any) -> None:
+            logs.append(message)
+        return inner
+
+    _log_scheduler_webhook_status(
+        {"webhooks": {"enabled": False}},
+        {
+            "webhooks": {
+                "enabled": True,
+                "payload_format": "crosswatch",
+                "base_url": "https://hc-ping.com/secret-token",
+            }
+        },
+        fake_logger,
+    )
+
+    assert logs == ["Scheduler webhooks enabled (CrossWatch JSON)"]
+    assert "secret-token" not in logs[0]
+
+
+def test_scheduler_webhook_save_log_dedupes_unchanged_enabled_state() -> None:
+    from api.schedulingAPI import _log_scheduler_webhook_status
+
+    logs: list[str] = []
+    scfg = {
+        "webhooks": {
+            "enabled": True,
+            "payload_format": "crosswatch",
+            "base_url": "https://hc-ping.com/secret-token",
+        }
+    }
+
+    def fake_logger(_kind: str, _channel: str):
+        def inner(message: str, **_kwargs: Any) -> None:
+            logs.append(message)
+        return inner
+
+    _log_scheduler_webhook_status(scfg, scfg, fake_logger)
+
+    assert logs == []
+
+
+def test_scheduler_start_logs_webhooks_enabled_without_secret_url() -> None:
+    from services.scheduling import SyncScheduler
+
+    logs: list[str] = []
+    cfg = {
+        "scheduling": {
+            "enabled": True,
+            "mode": "hourly",
+            "webhooks": {
+                "enabled": True,
+                "payload_format": "crosswatch",
+                "base_url": "https://hc-ping.com/secret-token",
+            },
+        }
+    }
+
+    scheduler = SyncScheduler(
+        load_config=lambda: cfg,
+        save_config=lambda _cfg: None,
+        run_sync_fn=lambda _payload=None: True,
+        is_sync_running_fn=lambda: False,
+        log_fn=lambda message, **_kwargs: logs.append(message),
+    )
+
+    scheduler._log_webhook_state()
+    scheduler._log_webhook_state()
+
+    assert logs == ["scheduler webhooks enabled (CrossWatch JSON)"]
+    assert "secret-token" not in logs[0]
+
+
+def test_advanced_workflow_rejected_start_dispatches_failure_webhook(monkeypatch) -> None:
+    import services.scheduling as scheduling
+    from services.scheduling import SyncScheduler
+
+    cfg = {
+        "scheduling": {
+            "advanced": {
+                "enabled": True,
+                "workflows": [
+                    {
+                        "id": "workflow-1",
+                        "mode": "every_n_hours",
+                        "every_n_hours": 1,
+                        "steps": [{"id": "step-1", "pair_id": "pair-1", "active": True}],
+                        "active": True,
+                    }
+                ],
+            },
+            "webhooks": {
+                "enabled": True,
+                "failure_url": "https://monitor.example/fail",
+            },
+        }
+    }
+    calls: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    def fake_notify(cfg_arg: dict[str, Any] | None, event: str, context: dict[str, Any] | None, summary: dict[str, Any] | None = None, **_kwargs: Any) -> bool:
+        calls.append((event, dict(context or {}), dict(summary or {})))
+        return True
+
+    monkeypatch.setattr(scheduling, "notify_scheduler_webhook", fake_notify)
+
+    scheduler = SyncScheduler(
+        load_config=lambda: cfg,
+        save_config=lambda _cfg: None,
+        run_sync_fn=lambda _payload=None: False,
+        is_sync_running_fn=lambda: False,
+        log_fn=lambda *_args, **_kwargs: None,
+    )
+
+    assert scheduler._adv_run_due(cfg["scheduling"], None) is False
+    assert [event for event, _, _ in calls] == ["failure"]
+    assert calls[0][1]["scheduler_mode"] == "advanced_workflow"
+    assert calls[0][1]["workflow_id"] == "workflow-1"
+    assert calls[0][1]["workflow_step_id"] == "step-1"
+    assert calls[0][2]["exit_code"] == 1
+
+
 def test_scheduled_sync_thread_dispatches_start_and_success_webhooks(monkeypatch, tmp_path) -> None:
     import api.syncAPI as sync
     import sys
