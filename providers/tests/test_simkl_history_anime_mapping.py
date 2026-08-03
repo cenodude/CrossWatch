@@ -327,6 +327,25 @@ def test_mixed_response_confirms_all_but_not_found(monkeypatch):
     assert len(unresolved) == 1
 
 
+def test_zero_reported_add_without_not_found_is_unconfirmed(monkeypatch):
+    import sync.simkl._history as m
+
+    _patch_fs(monkeypatch, m)
+    injected = []
+    monkeypatch.setattr(m, "_inject_adds_into_cache", lambda items: injected.extend(items))
+    session = _Session(post_handler=lambda url, body: _Resp(200, _ok_add(episodes=0)))
+    adapter = _adapter(session)
+
+    item = _episode("11256175", "2190", 27, 6, "South Park")
+    ok, unresolved = m.add(adapter, [item])
+
+    assert ok == 0
+    assert len(unresolved) == 1
+    assert unresolved[0]["hint"] == "simkl_write_response_unconfirmed:add"
+    assert getattr(adapter, "_simkl_history_add_confirmed_keys") == []
+    assert injected == []
+
+
 def test_anime_like_s00_unmapped_is_unresolved(monkeypatch):
     import sync.simkl._history as m
 
@@ -1081,4 +1100,3 @@ def test_show_no_abs_or_title_mapping_applied(monkeypatch):
     eps = [v for v in out.values() if str(v.get("type")) == "episode"]
     assert len(eps) == 1
     assert (eps[0]["season"], eps[0]["episode"]) == (1, 7)
-
