@@ -798,7 +798,7 @@ def get_series_episodes(
     series_id: str,
     start: int = 0,
     limit: int = 500,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     q = {
         "userId": user_id,
         "StartIndex": max(0, int(start)),
@@ -808,8 +808,11 @@ def get_series_episodes(
     }
     r = http.get(f"/Shows/{series_id}/Episodes", params=q)
     if getattr(r, "status_code", 0) != 200:
-        return {"Items": [], "TotalRecordCount": 0}
-    data = r.json() or {}
+        return None
+    try:
+        data = r.json() or {}
+    except Exception:
+        return None
     data.setdefault("Items", [])
     data.setdefault("TotalRecordCount", len(data["Items"]))
     return data
@@ -1501,9 +1504,14 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                 setattr(adapter, "_jellyfin_series_episodes_cache", episode_cache)
             eps_rows = episode_cache.get(str(sid))
             if eps_rows is None:
-                eps_rows = get_series_episodes(http, uid, sid, start=0, limit=10000).get("Items") or []
-                episode_cache[str(sid)] = eps_rows
-                _dbg('series_episodes_cached', series_id=str(sid), count=len(eps_rows))
+                body = get_series_episodes(http, uid, sid, start=0, limit=10000)
+                if body is None:
+                    eps_rows = []
+                    _dbg('series_episodes_fetch_failed', series_id=str(sid))
+                else:
+                    eps_rows = body.get("Items") or []
+                    episode_cache[str(sid)] = eps_rows
+                    _dbg('series_episodes_cached', series_id=str(sid), count=len(eps_rows))
             for row in eps_rows:
                 s = row.get("ParentIndexNumber")
                 e = row.get("IndexNumber")

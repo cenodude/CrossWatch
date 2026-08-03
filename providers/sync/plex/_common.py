@@ -1312,66 +1312,107 @@ def season_rating_key_from_show(show_obj: Any, season: Any) -> str | None:
     return None
 
 
-def episode_rating_key_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
-    def _match(ep: Any) -> str | None:
-        try:
-            season_ok = season is None or getattr(ep, "parentIndex", None) == season or getattr(ep, "seasonNumber", None) == season
-            episode_ok = episode is None or getattr(ep, "index", None) == episode
-            if season_ok and episode_ok:
-                rk = getattr(ep, "ratingKey", None)
-                return str(rk) if rk else None
-        except Exception:
-            return None
-        return None
+_SHOW_EPISODE_CACHE: dict[str, dict[str, Any]] = {}
+_SHOW_EPISODE_CACHE_TTL = 300.0
+_SHOW_EPISODE_CACHE_MAX = 256
 
-    try:
-        try:
-            episodes = show_obj.episodes() or []
-        except Exception:
-            episodes = []
-        for ep in episodes:
-            rk = _match(ep)
-            if rk:
-                return rk
-    except Exception:
-        pass
 
-    try:
+def _show_episode_cache_entry(show_obj: Any) -> dict[str, Any]:
+    rk = getattr(show_obj, "ratingKey", None)
+    key = None
+    if rk:
         srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
-        obj_id = getattr(show_obj, "ratingKey", None)
-        if not (srv and obj_id and hasattr(srv, "_session")):
-            return None
-
-        def _scan(path: str) -> str | None:
+        sid = getattr(srv, "machineIdentifier", None) or _as_base_url(srv) or ""
+        key = f"{sid}:{rk}"
+    now = time.monotonic()
+    if key:
+        entry = _SHOW_EPISODE_CACHE.get(key)
+        if entry is not None and (now - float(entry.get("ts") or 0.0)) <= _SHOW_EPISODE_CACHE_TTL:
+            return entry
+    entry = {"ts": now, "api": None, "children": None, "leaves": None}
+    if key:
+        for stale in [k for k, v in list(_SHOW_EPISODE_CACHE.items())
+                      if (now - float(v.get("ts") or 0.0)) > _SHOW_EPISODE_CACHE_TTL]:
+            _SHOW_EPISODE_CACHE.pop(stale, None)
+        while len(_SHOW_EPISODE_CACHE) >= _SHOW_EPISODE_CACHE_MAX:
             try:
-                resp = srv._session.get(
-                    srv.url(path),
-                    params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
-                    timeout=12,
-                )
-                if not resp.ok:
-                    return None
-                root = ET.fromstring(resp.text or "")
-                for ep in root.findall(".//Video"):
-                    try:
-                        season_ok = season is None or int(ep.attrib.get("parentIndex", "0") or "0") == int(season)
-                        episode_ok = episode is None or int(ep.attrib.get("index", "0") or "0") == int(episode)
-                        if season_ok and episode_ok:
-                            rk = ep.attrib.get("ratingKey")
-                            if rk:
-                                return str(rk)
-                    except Exception:
-                        continue
-            except Exception:
-                return None
-            return None
+                _SHOW_EPISODE_CACHE.pop(next(iter(_SHOW_EPISODE_CACHE)))
+            except StopIteration:
+                break
+        _SHOW_EPISODE_CACHE[key] = entry
+    return entry
 
-        rk = _scan(f"/library/metadata/{obj_id}/children")
-        if rk:
+
+def episode_rating_key_from_show(show_obj: Any, season: Any, episode: Any) -> str | None:
+    entry = _show_episode_cache_entry(show_obj)
+
+    api_rows: list[tuple[Any, Any, Any, str]] | None = entry["api"]
+    if api_rows is None:
+        rows: list[tuple[Any, Any, Any, str]] = []
+        try:
+            for ep in (show_obj.episodes() or []):
+                try:
+                    rk = getattr(ep, "ratingKey", None)
+                    if rk:
+                        rows.append((
+                            getattr(ep, "parentIndex", None),
+                            getattr(ep, "seasonNumber", None),
+                            getattr(ep, "index", None),
+                            str(rk),
+                        ))
+                except Exception:
+                    continue
+        except Exception:
+            rows = []
+        else:
+            entry["api"] = rows
+        api_rows = rows
+
+    for parent_index, season_number, index, rk in api_rows:
+        season_ok = season is None or parent_index == season or season_number == season
+        episode_ok = episode is None or index == episode
+        if season_ok and episode_ok:
             return rk
-        return _scan(f"/library/metadata/{obj_id}/allLeaves")
-    except Exception:
+
+    srv = getattr(show_obj, "_server", None) or getattr(show_obj, "server", None)
+    obj_id = getattr(show_obj, "ratingKey", None)
+    if not (srv and obj_id and hasattr(srv, "_session")):
         return None
+
+    def _rows(path: str) -> list[tuple[str, str, str]] | None:
+        out: list[tuple[str, str, str]] = []
+        try:
+            resp = srv._session.get(
+                srv.url(path),
+                params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
+                timeout=12,
+            )
+            if not resp.ok:
+                return None
+            root = ET.fromstring(resp.text or "")
+            for ep in root.findall(".//Video"):
+                rk = ep.attrib.get("ratingKey")
+                if rk:
+                    out.append((ep.attrib.get("parentIndex", "0") or "0", ep.attrib.get("index", "0") or "0", str(rk)))
+        except Exception:
+            return None
+        return out
+
+    for source, path in (("children", f"/library/metadata/{obj_id}/children"), ("leaves", f"/library/metadata/{obj_id}/allLeaves")):
+        cached = entry[source]
+        if cached is None:
+            cached = _rows(path)
+            if cached is not None:
+                entry[source] = cached
+        for parent_index, index, rk in (cached or ()):
+            try:
+                season_ok = season is None or int(parent_index) == int(season)
+                episode_ok = episode is None or int(index) == int(episode)
+            except Exception:
+                continue
+            if season_ok and episode_ok:
+                return rk
+    return None
 
 def _iso8601_any(v: Any) -> str | None:
     try:
