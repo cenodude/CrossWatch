@@ -321,7 +321,7 @@ def _config_needs_upgrade(cfg: dict[str, Any]) -> bool:
 def setup_lock_required(cfg: dict[str, Any]) -> bool:
     if reset_pending(cfg):
         return True
-    return not auth_required(cfg)
+    return (not auth_required(cfg)) and _config_needs_upgrade(cfg)
 
 
 def _find_session(a: dict[str, Any], token: str | None) -> dict[str, Any] | None:
