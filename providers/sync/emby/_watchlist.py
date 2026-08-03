@@ -562,7 +562,7 @@ def _add_playlist(
             if not sid:
                 _freeze(it, reason="resolve_failed")
                 continue
-            eps = _fetch_all_series_episodes(http, uid, sid, page_size=page_size)
+            eps = _fetch_all_series_episodes(http, uid, sid, page_size=page_size) or []
             eps = [ep for ep in eps if not _is_future_episode(ep)]
             if not eps:
                 _freeze(it, reason="future_episode")
