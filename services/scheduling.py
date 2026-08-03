@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from urllib.parse import urlsplit
+from services.scheduler_webhooks import notify_scheduler_webhook
 
 try:
     from zoneinfo import ZoneInfo  # py39+
@@ -764,6 +765,7 @@ class SyncScheduler:
         self._adv_seed_key: str = ""
         self._adv_seed_day: str = ""
         self._last_logged_next: int = 0
+        self._last_logged_webhook_state: str = ""
         self._event_last_run_at: dict[str, int] = {}
         self._event_last_fingerprint: dict[str, tuple[int, str]] = {}
         self._event_run_history: dict[str, list[int]] = {}
@@ -787,6 +789,32 @@ class SyncScheduler:
     def _get_sched_cfg(self) -> dict[str, Any]:
         cfg = self.load_config_cb() or {}
         return merge_defaults(cfg.get("scheduling") or {})
+
+    def _log_webhook_state(self, sch: dict[str, Any] | None = None) -> None:
+        hooks = (sch or self._get_sched_cfg()).get("webhooks") or {}
+        if not isinstance(hooks, dict) or hooks.get("enabled") is not True:
+            self._last_logged_webhook_state = "off"
+            return
+
+        fmt = _payload_format(hooks.get("payload_format") or hooks.get("format"))
+        label = "Notifiarr Passthrough" if fmt == "notifiarr" else "CrossWatch JSON"
+        common_url = str(hooks.get("url") or hooks.get("default_url") or "").strip()
+        urls = [
+            common_url,
+            str(hooks.get("base_url") or hooks.get("healthchecks_base_url") or "").strip(),
+            str(hooks.get("start_url") or "").strip(),
+            str(hooks.get("success_url") or "").strip(),
+            str(hooks.get("failure_url") or "").strip(),
+        ]
+        configured = bool(common_url) if fmt == "notifiarr" else any(urls)
+        state = f"on:{fmt}:{int(configured)}"
+        if state == self._last_logged_webhook_state:
+            return
+        self._last_logged_webhook_state = state
+        if configured:
+            self._log(f"scheduler webhooks enabled ({label})", level="INFO")
+        else:
+            self._log(f"scheduler webhooks enabled but no callback URL configured ({label})", level="INFO")
 
     def _set_sched_cfg(self, s: dict[str, Any]) -> None:
         cfg = self.load_config_cb() or {}
@@ -1032,6 +1060,7 @@ class SyncScheduler:
             self._thread = threading.Thread(target=self._loop, name="SyncScheduler", daemon=True)
             self._thread.start()
         self._log("scheduler thread started", level="INFO")
+        self._log_webhook_state()
 
     def stop(self) -> None:
         t = self._thread
@@ -1048,6 +1077,7 @@ class SyncScheduler:
 
     def refresh(self) -> None:
         self._poke.set()
+        self._log_webhook_state()
         if not self._thread or not self._thread.is_alive():
             self.start()
 
@@ -1174,6 +1204,24 @@ class SyncScheduler:
             return bool(self.run_sync_fn(payload))
         except TypeError:
             return bool(self.run_sync_fn())
+
+    def _notify_sync_start_rejected(self, payload: dict[str, Any], reason: str) -> None:
+        summary = {
+            "exit_code": 1,
+            "errors": 1,
+            "finished_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "reason": str(reason or "scheduler_rejected"),
+        }
+        try:
+            notify_scheduler_webhook(
+                self.load_config_cb() or {},
+                "failure",
+                payload,
+                summary,
+                log_fn=lambda msg: self._log(msg, level="INFO"),
+            )
+        except Exception:
+            pass
 
     def _update_next(self, nxt: datetime | None, *, effective_mode: str) -> None:
         sch = self._get_sched_cfg()
@@ -1381,6 +1429,7 @@ class SyncScheduler:
             if not ok:
                 ok_all = False
                 self._log(f"advanced: job {j['id']} failed", level="ERROR")
+                self._notify_sync_start_rejected(payload, "advanced job failed")
             else:
                 self._log(f"advanced: job {j['id']} ok", level="INFO")
 
@@ -1436,6 +1485,7 @@ class SyncScheduler:
                     ok_all = False
                     workflow_ok = False
                     self._log(f"advanced workflow: step {step['id']} failed", level="ERROR")
+                    self._notify_sync_start_rejected(payload, "advanced workflow step failed")
                 else:
                     self._log(f"advanced workflow: step {step['id']} ok", level="INFO")
 
@@ -1580,6 +1630,8 @@ class SyncScheduler:
         payload = {"source": "scheduler", "scheduler_mode": "standard"}
         self._log("standard: triggering sync run", level="INFO")
         ok = self._run_sync(payload)
+        if not ok:
+            self._notify_sync_start_rejected(payload, "standard run failed")
         with self._lock:
             self._status["last_run_ok"] = ok
             self._status["last_run_at"] = _now_ts()

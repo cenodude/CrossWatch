@@ -218,6 +218,39 @@ def _scheduling_warning_summary(cfg: dict[str, Any]) -> dict[str, Any]:
     return {"warning": bool(warnings), "warnings": _dedupe(warnings)}
 
 
+def _scheduler_webhook_status(scfg: dict[str, Any]) -> dict[str, Any]:
+    hooks = _as_dict(_as_dict(scfg).get("webhooks"))
+    enabled = hooks.get("enabled") is True
+    fmt_raw = _clean_text(hooks.get("payload_format") or hooks.get("payloadFormat") or hooks.get("format")).lower().replace("-", "_")
+    notifiarr = fmt_raw in {"notifiarr", "notifiarr_passthrough"}
+    label = "Notifiarr Passthrough" if notifiarr else "CrossWatch JSON"
+    common_url = _clean_text(hooks.get("url") or hooks.get("default_url") or hooks.get("defaultUrl"))
+    urls = [
+        common_url,
+        _clean_text(hooks.get("base_url") or hooks.get("healthchecks_base_url")),
+        _clean_text(hooks.get("start_url")),
+        _clean_text(hooks.get("success_url")),
+        _clean_text(hooks.get("failure_url")),
+    ]
+    configured = bool(common_url) if notifiarr else any(urls)
+    return {"enabled": enabled, "configured": configured, "label": label}
+
+
+def _log_scheduler_webhook_status(prev_scfg: dict[str, Any], next_scfg: dict[str, Any], log: Callable[..., Any]) -> None:
+    prev = _scheduler_webhook_status(prev_scfg)
+    cur = _scheduler_webhook_status(next_scfg)
+    if not cur["enabled"]:
+        return
+    if prev == cur:
+        return
+    suffix = f" ({cur['label']})" if cur.get("label") else ""
+    message = f"Scheduler webhooks enabled{suffix}" if cur["configured"] else f"Scheduler webhooks enabled but no callback URL configured{suffix}"
+    try:
+        log("SYNC", "SCHED")(message, level="INFO")
+    except Exception:
+        pass
+
+
 @router.post("/replan_now")
 def replan_now() -> dict[str, Any]:
     load_config, _, scheduler, hint, compute_next, log = _env()
@@ -333,12 +366,14 @@ def sched_get() -> dict[str, Any]:
 
 @router.post("")
 def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    load_config, save_config, scheduler, hint, compute_next, _ = _env()
+    load_config, save_config, scheduler, hint, compute_next, log = _env()
     cfg = load_config() or {}
+    prev_scfg = _as_dict(cfg.get("scheduling"))
     cfg["scheduling"] = (payload or {}) or {}
     save_config(cfg)
 
     scfg = cfg["scheduling"] or {}
+    _log_scheduler_webhook_status(prev_scfg, _as_dict(scfg), log)
     try:
         nxt = int(compute_next(scfg) or 0)
         hint["next_run_at"] = nxt

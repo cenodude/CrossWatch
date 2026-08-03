@@ -107,6 +107,60 @@ def _log_scrobble_source_state(env: dict[str, Any], cfg: dict[str, Any]) -> None
         pass
 
 
+def _is_sensitive_config_path(path: tuple[str, ...]) -> bool:
+    clean = [str(part or "").strip().lower() for part in path if str(part or "").strip()]
+    if len(clean) >= 3 and clean[0] == "scheduling" and clean[1] == "webhooks":
+        return clean[-1] in {"url", "default_url", "base_url", "healthchecks_base_url", "start_url", "success_url", "failure_url"}
+    return False
+
+
+def _preserve_sensitive_config_values(
+    current: Any,
+    incoming: Any,
+    merged: Any,
+    is_blank: Any,
+    is_sensitive_key: Any,
+    path: tuple[str, ...] = (),
+) -> None:
+    if isinstance(incoming, dict) and isinstance(merged, dict):
+        current_d = current if isinstance(current, dict) else {}
+        for key, incoming_value in incoming.items():
+            if key not in merged:
+                continue
+
+            next_path = path + (str(key),)
+            current_value = current_d.get(key) if isinstance(current_d, dict) else None
+            merged_value = merged.get(key)
+
+            if isinstance(incoming_value, dict) and isinstance(merged_value, dict):
+                _preserve_sensitive_config_values(current_value, incoming_value, merged_value, is_blank, is_sensitive_key, next_path)
+                continue
+
+            if isinstance(incoming_value, list) and isinstance(merged_value, list):
+                if isinstance(current_value, list):
+                    for idx in range(min(len(incoming_value), len(merged_value), len(current_value))):
+                        _preserve_sensitive_config_values(
+                            current_value[idx],
+                            incoming_value[idx],
+                            merged_value[idx],
+                            is_blank,
+                            is_sensitive_key,
+                            next_path + (str(idx),),
+                        )
+                continue
+
+            if (is_sensitive_key(key) or _is_sensitive_config_path(next_path)) and is_blank(incoming_value):
+                if isinstance(current_d, dict) and key in current_d:
+                    merged[key] = current_value
+                else:
+                    merged[key] = ""
+        return
+
+    if isinstance(incoming, list) and isinstance(current, list) and isinstance(merged, list):
+        for idx in range(min(len(incoming), len(current), len(merged))):
+            _preserve_sensitive_config_values(current[idx], incoming[idx], merged[idx], is_blank, is_sensitive_key, path + (str(idx),))
+
+
 def _after_config_save(env: dict[str, Any], cfg: dict[str, Any]) -> None:
     _log_scrobble_source_state(env, cfg)
 
@@ -457,38 +511,7 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
         )
         return any(s in k for s in subs)
 
-    def _preserve_sensitive(cur: Any, inc: Any, dst: Any) -> None:
-        if isinstance(inc, dict) and isinstance(dst, dict):
-            cur_d = cur if isinstance(cur, dict) else {}
-            for k, inc_v in inc.items():
-                if k not in dst:
-                    continue
-
-                cur_v = cur_d.get(k) if isinstance(cur_d, dict) else None
-                dst_v = dst.get(k)
-
-                if isinstance(inc_v, dict) and isinstance(dst_v, dict):
-                    _preserve_sensitive(cur_v, inc_v, dst_v)
-                    continue
-
-                if isinstance(inc_v, list) and isinstance(dst_v, list):
-                    if isinstance(cur_v, list):
-                        for i in range(min(len(inc_v), len(dst_v), len(cur_v))):
-                            _preserve_sensitive(cur_v[i], inc_v[i], dst_v[i])
-                    continue
-
-                if _is_sensitive_key(k) and _blank(inc_v):
-                    if isinstance(cur_d, dict) and k in cur_d:
-                        dst[k] = cur_v
-                    else:
-                        dst[k] = ""
-            return
-
-        if isinstance(inc, list) and isinstance(cur, list) and isinstance(dst, list):
-            for i in range(min(len(inc), len(cur), len(dst))):
-                _preserve_sensitive(cur[i], inc[i], dst[i])
-
-    _preserve_sensitive(current, incoming, merged)
+    _preserve_sensitive_config_values(current, incoming, merged, _blank, _is_sensitive_key)
 
     try:
         inc_a = incoming.get("app_auth")
@@ -542,6 +565,24 @@ def api_config_save(request: Request, payload: dict[str, Any] = Body(...)) -> di
     watcher_was_running = _watcher_running(request.app) if watch_runtime_changed else False
 
     env["save"](cfg)
+
+    try:
+        from api.schedulingAPI import _log_scheduler_webhook_status
+
+        cw = env.get("CW")
+        logger = getattr(cw, "_UIHostLogger", None) if cw is not None else None
+        if callable(logger):
+            prev_raw = current.get("scheduling")
+            next_raw = cfg.get("scheduling")
+            prev_scheduling: dict[str, Any] = prev_raw if isinstance(prev_raw, dict) else {}
+            next_scheduling: dict[str, Any] = next_raw if isinstance(next_raw, dict) else {}
+            _log_scheduler_webhook_status(
+                prev_scheduling,
+                next_scheduling,
+                logger,
+            )
+    except Exception:
+        pass
 
     _after_config_save(env, cfg)
 

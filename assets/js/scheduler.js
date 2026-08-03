@@ -47,6 +47,10 @@
 .sch-webhooks{margin-top:14px}
 .sch-webhooks [data-webhook-format-for]{display:none!important}
 .sch-webhooks[data-payload-format="crosswatch"] [data-webhook-format-for~="crosswatch"],.sch-webhooks[data-payload-format="notifiarr"] [data-webhook-format-for~="notifiarr"]{display:grid!important}
+.sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-ui{background:linear-gradient(180deg,rgba(42,202,126,0.34),rgba(28,136,87,0.28));border-color:rgba(34,197,94,0.42)}
+.sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-ui:after{transform:translateX(20px)}
+.sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-state{color:#d9fff0;border-color:rgba(34,197,94,0.26);background:rgba(34,197,94,0.12)}
+.sch-webhooks .cx-toggle[data-checked="true"] .cx-toggle-state:before{content:"On"}
 .sch-adv .cw-panel-head{position:relative;z-index:1;display:flex;align-items:center;min-height:104px;margin:0 0 14px;padding:14px 16px;border:none;border-radius:0;background:transparent;box-shadow:none}
 .sch-adv .cw-panel-head .cx-toggle{margin-top:20px}
 .sch-adv .mini,.sch-adv .status{position:relative;z-index:1}
@@ -291,6 +295,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     notifiarr_channel_id: "",
     timeout_seconds: 10
   };
+  let _webhooksHydrated = false;
   let _captureProviders = [];
   let _eventRoutes = { watcher: [], webhook: [] }, _eventRouteError = "";
   const DAY = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
@@ -976,8 +981,13 @@ const ensureStdEnabledToggle = () => {
     return stackWrap("field-mini", head, control);
   };
   const syncWebhooksFromFields = () => {
+    if (!_webhooksHydrated) {
+      applyWebhookVisibility();
+      return;
+    }
+    const enabledInput = $("#schWebhookEnabled");
     _webhooks = normalizeWebhooks({
-      enabled: !!$("#schWebhookEnabled")?.checked,
+      enabled: !!enabledInput?.checked,
       url: $("#schWebhookUrl")?.value || "",
       base_url: $("#schWebhookBase")?.value || "",
       start_url: $("#schWebhookStart")?.value || "",
@@ -987,6 +997,11 @@ const ensureStdEnabledToggle = () => {
       notifiarr_channel_id: $("#schWebhookNotifiarrChannel")?.value || "",
       timeout_seconds: $("#schWebhookTimeout")?.value || 10
     });
+    const toggle = enabledInput?.closest(".cx-toggle");
+    if (toggle) {
+      toggle.dataset.checked = _webhooks.enabled ? "true" : "false";
+      toggle.setAttribute("aria-checked", _webhooks.enabled ? "true" : "false");
+    }
     applyWebhookVisibility();
   };
   const webhookFormat = () => _webhooks.payload_format === "notifiarr" ? "notifiarr" : "crosswatch";
@@ -1027,6 +1042,11 @@ const ensureStdEnabledToggle = () => {
     const timeout = $("#schWebhookTimeout");
     if (!enabled || !url || !base || !start || !success || !failure || !format || !notifiarrChannel || !timeout) return;
     enabled.checked = !!_webhooks.enabled;
+    const toggle = enabled.closest(".cx-toggle");
+    if (toggle) {
+      toggle.dataset.checked = enabled.checked ? "true" : "false";
+      toggle.setAttribute("aria-checked", enabled.checked ? "true" : "false");
+    }
     url.value = _webhooks.url || "";
     base.value = _webhooks.base_url || "";
     start.value = _webhooks.start_url || "";
@@ -2267,12 +2287,13 @@ const ensureStdEnabledToggle = () => {
       _captureJobs = mergeCaptureJobs(_captureJobs, getCaptureDraftJobs());
       _eventRules = Array.isArray(adv.event_rules || adv.eventRules) ? (adv.event_rules || adv.eventRules).map(normalizeEventRule) : [];
       _webhooks = normalizeWebhooks(saved?.webhooks || {});
+      _webhooksHydrated = true;
+      renderWebhooks();
       _eventRules.forEach(syncRuleRoute);
       renderJobs();
       renderWorkflows();
       renderCaptureJobs();
       renderEventRules();
-      renderWebhooks();
       const pendingCapturePrefills = getPendingCapturePrefills();
       if (pendingCapturePrefills.length) {
         setPendingCapturePrefills([]);
@@ -2394,7 +2415,9 @@ const ensureStdEnabledToggle = () => {
     const stdEnabled = ($("#schEnabled")?.value || "").trim() === "true";
     const enabled = advanced.enabled ? false : stdEnabled;
 
-    return { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, webhooks: normalizeWebhooks(_webhooks), advanced };
+    const patch = { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, advanced };
+    if (_webhooksHydrated) patch.webhooks = normalizeWebhooks(_webhooks);
+    return patch;
   };
 
   // boot
