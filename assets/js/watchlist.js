@@ -109,6 +109,7 @@
   let cwProfileSel = null;
   let delProfile = null;
   function decorateToolbar() {
+    const toolbar = host.querySelector(".wl-toolbar");
     const left = host.querySelector(".wl-toolbar-left");
     const right = host.querySelector(".wl-toolbar-right");
     if (!left || !right || !qEl || !viewSel) return;
@@ -117,28 +118,38 @@
     colsLabel?.remove();
     colsBox?.remove();
     qEl.placeholder = "Filter by title / id / provider...";
+    toolbar?.classList.add("cw-controls");
+    qEl.classList.add("cw-input", "wl-toolbar-search");
 
+    const viewField = document.createElement("div");
+    viewField.className = "cw-page-size-control wl-toolbar-field wl-view-field";
+    viewField.innerHTML = `<span class="wl-toolbar-field-label">View</span>`;
     const viewWrap = document.createElement("button");
     viewWrap.id = "wl-view-menu";
-    viewWrap.className = "wl-btn wl-toolbar-menu wl-view-control";
+    viewWrap.className = "cw-btn wl-btn wl-toolbar-menu wl-view-control";
     viewWrap.type = "button";
     viewWrap.setAttribute("aria-label", "View");
-    viewWrap.innerHTML = `<span class="wl-toolbar-menu-label">View</span><span class="wl-toolbar-menu-value"></span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span>`;
+    viewWrap.innerHTML = `<span class="wl-toolbar-menu-value"></span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span>`;
     viewSel.style.display = "none";
     viewValueEl = viewWrap.querySelector(".wl-toolbar-menu-value");
+    viewField.appendChild(viewWrap);
 
+    const pageField = document.createElement("div");
+    pageField.className = "cw-page-size-control wl-toolbar-field wl-page-field";
+    pageField.innerHTML = `<span class="wl-toolbar-field-label">Rows</span>`;
     const pageWrap = document.createElement("button");
     pageWrap.id = "wl-page-size";
-    pageWrap.className = "wl-btn wl-toolbar-menu wl-page-size-control";
+    pageWrap.className = "cw-btn wl-btn wl-toolbar-menu wl-page-size-control";
     pageWrap.type = "button";
     pageWrap.setAttribute("aria-label", "Rows");
-    pageWrap.innerHTML = `<span class="wl-toolbar-menu-label">Rows</span><span class="wl-toolbar-menu-value"></span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span>`;
+    pageWrap.innerHTML = `<span class="wl-toolbar-menu-value"></span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span>`;
     pageSizeValueEl = pageWrap.querySelector(".wl-toolbar-menu-value");
     pageSizeSel = pageWrap;
+    pageField.appendChild(pageWrap);
 
     columnsBtn = document.createElement("button");
     columnsBtn.id = "wl-columns-btn";
-    columnsBtn.className = "wl-btn wl-columns-btn";
+    columnsBtn.className = "cw-btn wl-btn cw-columns-btn wl-columns-btn";
     columnsBtn.type = "button";
     columnsBtn.title = "Columns";
     columnsBtn.setAttribute("aria-label", "Columns");
@@ -146,16 +157,18 @@
 
     wideBtn = document.createElement("button");
     wideBtn.id = "wl-wide-btn";
-    wideBtn.className = "wl-btn wl-wide-btn";
+    wideBtn.className = "cw-btn wl-btn cw-wide-btn wl-wide-btn";
     wideBtn.type = "button";
     wideBtn.title = "Wide view";
     wideBtn.setAttribute("aria-label", "Wide view");
     wideBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">fullscreen</span>`;
 
     const spacer = document.createElement("div");
-    spacer.className = "wl-controls-spacer";
+    spacer.className = "cw-controls-spacer wl-controls-spacer";
     selAll?.closest(".wl-selectall")?.remove();
-    left.replaceChildren(qEl, viewWrap, pageWrap, columnsBtn, wideBtn, spacer);
+    left.replaceChildren(qEl, viewField, pageField, columnsBtn, wideBtn, spacer);
+    selCount?.classList.add("cw-chip");
+    filterStateEl?.classList.add("cw-chip");
     if (selCount) right.insertBefore(selCount, filterStateEl || null);
   }
   decorateToolbar();
@@ -317,7 +330,7 @@
     return th;
   }
 
-  function syncColumnGroup(table, columns, widths, titleExtra) {
+  function syncColumnGroup(table, columns, widths, titleExtra, fillerWidth = 0) {
     let group = table.querySelector("colgroup");
     if (!group) {
       group = document.createElement("colgroup");
@@ -331,10 +344,19 @@
       col.style.width = `${width}px`;
       group.appendChild(col);
     });
+    if (fillerWidth > 0) {
+      const col = document.createElement("col");
+      col.dataset.column = "_fill";
+      col.className = "c-fill";
+      col.style.width = `${fillerWidth}px`;
+      group.appendChild(col);
+    }
   }
 
   function applyRenderedRowColumnOrder() {
     const columns = visibleColumns();
+    const table = host.querySelector(".wl-table");
+    const needsFiller = table?.dataset?.hasFiller === "1";
     host.querySelectorAll(".wl-table tbody tr").forEach(tr => {
       const selectCell = tr.children[0] || null;
       const cells = {};
@@ -347,6 +369,18 @@
       columns.forEach(column => {
         if (cells[column]) frag.appendChild(cells[column]);
       });
+      let filler = tr.querySelector('td[data-col="_fill"]');
+      if (!needsFiller) {
+        filler?.remove();
+      } else {
+        if (!filler) {
+          filler = document.createElement("td");
+          filler.dataset.col = "_fill";
+          filler.className = "wl-fill-cell";
+          filler.setAttribute("aria-hidden", "true");
+        }
+        frag.appendChild(filler);
+      }
       tr.appendChild(frag);
     });
   }
@@ -388,18 +422,24 @@
       }
       layoutTotal = availableWidth - remaining;
     }
+    const fillerWidth = !hasOverflow && availableWidth > layoutTotal ? availableWidth - layoutTotal : 0;
+    const fillerHead = document.createElement("th");
+    fillerHead.dataset.col = "_fill";
+    fillerHead.className = "wl-fill-col";
+    fillerHead.setAttribute("aria-hidden", "true");
 
     selectHead.style.width = "46px";
     selectHead.style.minWidth = "46px";
-    headRow.replaceChildren(selectHead, ...columns.map(ensureColumnHeader));
-    syncColumnGroup(table, columns, layoutWidths, 0);
+    headRow.replaceChildren(selectHead, ...columns.map(ensureColumnHeader), ...(fillerWidth > 0 ? [fillerHead] : []));
+    syncColumnGroup(table, columns, layoutWidths, 0, fillerWidth);
     columns.forEach(column => {
       const th = columnHeaders[column];
       const width = layoutWidths[column];
       th.style.width = `${width}px`;
       th.style.minWidth = `${width}px`;
     });
-    table.style.width = hasOverflow ? `${total}px` : `${layoutTotal}px`;
+    table.dataset.hasFiller = fillerWidth > 0 ? "1" : "0";
+    table.style.width = hasOverflow ? `${total}px` : `${layoutTotal + fillerWidth}px`;
     table.style.minWidth = hasOverflow ? `${total}px` : "0";
     listWrapEl?.classList.toggle("wl-table-overflow-x", hasOverflow);
     applyRenderedRowColumnOrder();
@@ -1051,18 +1091,17 @@
   /* Provider chips */
   const providerLogoPath = name => window.CW?.ProviderMeta?.logoPath?.(name) || "";
 
-  function providerSelectOptionData(value, option, allLabel = "All") {
+  function providerSelectOptionData(value, option, allLabel = "All", showAllIcon = true) {
     const raw = String(value || "").trim();
     const isAll = !raw || raw.toUpperCase() === "ALL";
     const label = isAll ? allLabel : providerLabel(raw);
     const iconSrc = isAll ? "" : providerLogoPath(raw);
+    const icons = iconSrc
+      ? [{ src: iconSrc, alt: `${label} logo` }]
+      : (isAll && !showAllIcon ? [] : [{ text: isAll ? "ALL" : providerShortLabel(raw) }]);
     return {
       label: String(option?.textContent || label).trim() || label,
-      icons: [
-        iconSrc
-          ? { src: iconSrc, alt: `${label} logo` }
-          : { text: isAll ? "ALL" : providerShortLabel(raw) },
-      ],
+      icons,
     };
   }
 
@@ -1071,7 +1110,7 @@
     if (!enhance || !providerSel) return;
     enhance(providerSel, {
       className: "wl-provider-filter-select",
-      getOptionData: (value, option) => providerSelectOptionData(value, option, "All"),
+      getOptionData: (value, option) => providerSelectOptionData(value, option, "All", false),
     });
   }
 
@@ -1088,7 +1127,7 @@
     if (!enhance || !delProv) return;
     enhance(delProv, {
       className: "wl-action-provider-select",
-      getOptionData: (value, option) => providerSelectOptionData(value, option, "ALL (default)"),
+      getOptionData: (value, option) => providerSelectOptionData(value, option, "ALL (default)", false),
     });
     syncDeleteProviderDisabled();
   }
@@ -1554,6 +1593,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
         <td style="text-align:center"><input type="checkbox" name="wl-select" data-k="${key}" ${selected.has(key) ? "checked" : ""}></td>
         ${columns.map(column => cellHtml[column] || "").join("")}
       `;
+      tr.classList.toggle("selected", selected.has(key));
 
       if (d.relFmt || d.genresText) hydrateRow(it, tr);
       const posterCell = tr.querySelector(".wl-poster-cell");
@@ -1569,7 +1609,20 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       posterCell?.addEventListener("mouseleave", hideFromCover, true);
       posterCell?.addEventListener("focusin", showFromCover, true);
       posterCell?.addEventListener("focusout", hideFromCover, true);
-      tr.querySelector('input[type=checkbox]')?.addEventListener("change", e => { e.target.checked ? selected.add(key) : selected.delete(key); updateSelCount(); }, true);
+      const rowCheckbox = tr.querySelector('input[type=checkbox]');
+      const setRowSelected = checked => {
+        checked ? selected.add(key) : selected.delete(key);
+        tr.classList.toggle("selected", checked);
+        if (rowCheckbox) rowCheckbox.checked = checked;
+        if (listSelectAll) listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
+        updateSelCount();
+      };
+      rowCheckbox?.addEventListener("click", e => e.stopPropagation(), true);
+      rowCheckbox?.addEventListener("change", e => setRowSelected(!!e.target.checked), true);
+      tr.addEventListener("click", e => {
+        if (e.target?.closest?.("input,button,a,select,textarea,label,.wl-resize")) return;
+        setRowSelected(!selected.has(key));
+      }, true);
       frag.appendChild(tr);
     });
 
