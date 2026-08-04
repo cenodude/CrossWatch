@@ -446,6 +446,16 @@ def _iso_to_epoch(iso: str | None) -> int:
         return 0
 
 
+def _year_sort_value(value: Any) -> int:
+    try:
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        return int(text[:4]) if text[:4].isdigit() else int(text)
+    except Exception:
+        return 0
+
+
 def _norm_guid(g: str) -> tuple[str, str]:
     s = (g or "").strip()
     if not s:
@@ -1031,7 +1041,7 @@ def build_watchlist(state: dict[str, Any], tmdb_ok: bool) -> list[dict[str, Any]
         )
 
     out.sort(
-        key=lambda x: (x.get("added_epoch") or 0, x.get("year") or 0),
+        key=lambda x: (x.get("added_epoch") or 0, _year_sort_value(x.get("year"))),
         reverse=True,
     )
     return out
