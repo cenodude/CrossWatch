@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from providers.sync._mod_PUBLICMETADB import PUBLICMETADBModule
 from providers.sync.publicmetadb import _ratings
 
 
@@ -32,7 +33,9 @@ class FakeClient:
 
     def post_once(self, path: str, **kw: Any) -> FakeResp:
         self.calls.append({"method": "POST", "path": path, "json": kw.get("json")})
-        return FakeResp(200, self.responses.get(("POST", path), {"item": {"id": "new-rating", "score": 50}}))
+        payload = self.responses.get(("POST", path), {"item": {"id": "new-rating", "score": 50}})
+        status = int(payload.get("status", 200)) if isinstance(payload, dict) else 200
+        return FakeResp(status, payload)
 
     def delete(self, path: str, **kw: Any) -> FakeResp:
         self.calls.append({"method": "DELETE", "path": path, "json": kw.get("json")})
@@ -145,3 +148,69 @@ def test_add_recreates_when_existing_shadow_rating_id_is_already_missing(monkeyp
         ("DELETE", "/api/external/ratings/rating-gone"),
         ("POST", "/api/external/ratings"),
     ]
+
+
+def test_add_treats_matching_409_conflict_as_existing_rating(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(_ratings, "state_file", lambda name: tmp_path / name)
+    client = FakeClient(
+        {
+            ("POST", "/api/external/ratings"): {"status": 409, "error": "already_exists"},
+            ("GET", "/api/external/ratings"): {
+                "items": [
+                    {
+                        "id": "rating-existing",
+                        "tmdb_id": 550,
+                        "media_type": "movie",
+                        "score": 50,
+                        "label": "Overall",
+                    }
+                ]
+            },
+        }
+    )
+
+    adapter = FakeAdapter(client)
+    count, unresolved = _ratings.add(
+        adapter,
+        [{"type": "movie", "ids": {"tmdb": "550"}, "rating": 5, "label": "Overall"}],
+    )
+
+    assert count == 0
+    assert unresolved == []
+    assert adapter._publicmetadb_rating_skipped_keys == ["tmdb:550"]
+    assert [(c["method"], c["path"]) for c in client.calls] == [
+        ("POST", "/api/external/ratings"),
+        ("GET", "/api/external/ratings"),
+    ]
+    index = _ratings.build_index(FakeAdapter(FakeClient()))
+    assert index["tmdb:550#rating:overall"]["rating_id"] == "rating-existing"
+
+
+def test_module_reports_matching_409_conflict_as_skipped(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(_ratings, "state_file", lambda name: tmp_path / name)
+    mod = PUBLICMETADBModule.__new__(PUBLICMETADBModule)
+    mod.cfg = FakeCfg()
+    mod.client = FakeClient(
+        {
+            ("POST", "/api/external/ratings"): {"status": 409, "error": "already_exists"},
+            ("GET", "/api/external/ratings"): {
+                "items": [
+                    {
+                        "id": "rating-existing",
+                        "tmdb_id": 550,
+                        "media_type": "movie",
+                        "score": 50,
+                        "label": "Overall",
+                    }
+                ]
+            },
+        }
+    )
+    mod.config = {"publicmetadb": {"api_key": "k", "ratings_label": "Overall"}}
+
+    res = mod.add("ratings", [{"type": "movie", "ids": {"tmdb": "550"}, "rating": 5, "label": "Overall"}])
+
+    assert res["count"] == 0
+    assert res["confirmed_keys"] == []
+    assert res["skipped_keys"] == ["tmdb:550"]
+    assert res["unresolved"] == []
