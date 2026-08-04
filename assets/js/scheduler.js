@@ -293,7 +293,8 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     failure_url: "",
     payload_format: "crosswatch",
     notifiarr_channel_id: "",
-    timeout_seconds: 10
+    timeout_seconds: 10,
+    alert_on_unresolved: false
   };
   let _webhooksHydrated = false;
   let _captureProviders = [];
@@ -333,7 +334,8 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     webhook_timeout: "Timeout seconds:\nHow long CrossWatch waits for a callback request before logging it as failed.\nCallback failures do not fail the sync.",
     webhook_start: "Start callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync starts.\nThis overrides the compatible base URL for start events.",
     webhook_success: "Success callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync finishes successfully.\nThis overrides the compatible base URL for success events.",
-    webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events."
+    webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events.",
+    webhook_alert_unresolved: "Alert on unresolved items:\nOff means only a crashed or aborted run sends the failure callback.\nOn also sends failure when a run finishes with unresolved items or provider errors, such as a destination rejecting a write. The run itself still counts as successful in CrossWatch."
   };
   const defaultJob = () => ({ id: genId(), pair_id: null, at: null, days: [], after: null, active: true });
   const defaultWorkflowStep = () => ({ id: genId(), pair_id: null, active: true });
@@ -390,7 +392,8 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     failure_url: String(raw.failure_url || raw.failureUrl || "").trim(),
     payload_format: ["notifiarr", "notifiarr_passthrough"].includes(String(raw.payload_format || raw.payloadFormat || raw.format || "").trim().toLowerCase().replace("-", "_")) ? "notifiarr" : "crosswatch",
     notifiarr_channel_id: String(raw.notifiarr_channel_id || raw.notifiarrChannelId || "").trim(),
-    timeout_seconds: Math.max(1, Math.min(60, parseInt(raw.timeout_seconds || raw.timeoutSeconds || 10, 10) || 10))
+    timeout_seconds: Math.max(1, Math.min(60, parseInt(raw.timeout_seconds || raw.timeoutSeconds || 10, 10) || 10)),
+    alert_on_unresolved: (raw.alert_on_unresolved ?? raw.alertOnUnresolved) === true
   });
   const isHttpUrl = (value) => {
     const text = String(value || "").trim();
@@ -980,6 +983,12 @@ const ensureStdEnabledToggle = () => {
     head.appendChild(wrap);
     return stackWrap("field-mini", head, control);
   };
+  const setWebhookToggleState = (input, on) => {
+    const toggle = input?.closest(".cx-toggle");
+    if (!toggle) return;
+    toggle.dataset.checked = on ? "true" : "false";
+    toggle.setAttribute("aria-checked", on ? "true" : "false");
+  };
   const syncWebhooksFromFields = () => {
     if (!_webhooksHydrated) {
       applyWebhookVisibility();
@@ -995,13 +1004,11 @@ const ensureStdEnabledToggle = () => {
       failure_url: $("#schWebhookFailure")?.value || "",
       payload_format: $("#schWebhookFormat")?.value || "crosswatch",
       notifiarr_channel_id: $("#schWebhookNotifiarrChannel")?.value || "",
-      timeout_seconds: $("#schWebhookTimeout")?.value || 10
+      timeout_seconds: $("#schWebhookTimeout")?.value || 10,
+      alert_on_unresolved: !!$("#schWebhookAlertUnresolved")?.checked
     });
-    const toggle = enabledInput?.closest(".cx-toggle");
-    if (toggle) {
-      toggle.dataset.checked = _webhooks.enabled ? "true" : "false";
-      toggle.setAttribute("aria-checked", _webhooks.enabled ? "true" : "false");
-    }
+    setWebhookToggleState(enabledInput, _webhooks.enabled);
+    setWebhookToggleState($("#schWebhookAlertUnresolved"), _webhooks.alert_on_unresolved);
     applyWebhookVisibility();
   };
   const webhookFormat = () => _webhooks.payload_format === "notifiarr" ? "notifiarr" : "crosswatch";
@@ -1040,13 +1047,10 @@ const ensureStdEnabledToggle = () => {
     const format = $("#schWebhookFormat");
     const notifiarrChannel = $("#schWebhookNotifiarrChannel");
     const timeout = $("#schWebhookTimeout");
+    const alertUnresolved = $("#schWebhookAlertUnresolved");
     if (!enabled || !url || !base || !start || !success || !failure || !format || !notifiarrChannel || !timeout) return;
     enabled.checked = !!_webhooks.enabled;
-    const toggle = enabled.closest(".cx-toggle");
-    if (toggle) {
-      toggle.dataset.checked = enabled.checked ? "true" : "false";
-      toggle.setAttribute("aria-checked", enabled.checked ? "true" : "false");
-    }
+    setWebhookToggleState(enabled, enabled.checked);
     url.value = _webhooks.url || "";
     base.value = _webhooks.base_url || "";
     start.value = _webhooks.start_url || "";
@@ -1055,6 +1059,10 @@ const ensureStdEnabledToggle = () => {
     format.value = _webhooks.payload_format || "crosswatch";
     notifiarrChannel.value = _webhooks.notifiarr_channel_id || "";
     timeout.value = String(_webhooks.timeout_seconds || 10);
+    if (alertUnresolved) {
+      alertUnresolved.checked = !!_webhooks.alert_on_unresolved;
+      setWebhookToggleState(alertUnresolved, alertUnresolved.checked);
+    }
     applyWebhookVisibility();
   };
   const webhooksValidation = () => {
@@ -2042,6 +2050,14 @@ const ensureStdEnabledToggle = () => {
   <div class="stack two">
     <label class="field-mini" data-webhook-format-for="crosswatch"><div class="subnote"><span class="th-help">Compatible base URL<button type="button" class="sch-help" aria-label="Compatible base URL help" data-help-key="webhook_base"></button></span></div><input id="schWebhookBase" name="schWebhookBase" type="url" inputmode="url" pattern="https?://.+" autocomplete="off" placeholder="https://monitor.example/ping/crosswatch"></label>
     <label class="field-mini"><div class="subnote"><span class="th-help">Timeout seconds<button type="button" class="sch-help" aria-label="Timeout seconds help" data-help-key="webhook_timeout"></button></span></div><input id="schWebhookTimeout" name="schWebhookTimeout" type="number" min="1" max="60"></label>
+  </div>
+  <div class="stack">
+    <label class="cx-toggle">
+      <input type="checkbox" id="schWebhookAlertUnresolved">
+      <span class="cx-toggle-ui" aria-hidden="true"></span>
+      <span class="cx-toggle-text"><span class="th-help">Alert on unresolved items<button type="button" class="sch-help" aria-label="Alert on unresolved items help" data-help-key="webhook_alert_unresolved"></button></span></span>
+      <span class="cx-toggle-state" aria-hidden="true"></span>
+    </label>
   </div>
   <div class="stack" data-webhook-format-for="notifiarr">
     <label class="field-mini"><div class="subnote"><span class="th-help">Notifiarr channel ID<button type="button" class="sch-help" aria-label="Notifiarr channel ID help" data-help-key="webhook_notifiarr_channel"></button></span></div><input id="schWebhookNotifiarrChannel" name="schWebhookNotifiarrChannel" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="123456789012345678"></label>

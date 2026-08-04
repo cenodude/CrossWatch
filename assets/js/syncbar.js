@@ -115,6 +115,7 @@
       this._successExit0Seen = false;
       this._exitCode = null;
       this._hadError = false;
+      this._unresolved = 0;
       this.render();
     }
 
@@ -163,7 +164,8 @@
         _streamArmed: false,
         _successExit0Seen: false,
         _exitCode: null,
-        _hadError: false
+        _hadError: false,
+        _unresolved: 0
       });
       PhaseAgg.snap = { done: 0, total: 0, started: false, finished: false };
       PhaseAgg.apply = { done: 0, total: 0, started: false, finished: false };
@@ -309,6 +311,8 @@
         if (p === "apply" || p === "sync" || p === "syncing") mapped.post = true;
       }
       const exitCode = sum?.exit_code != null ? Number(sum.exit_code) : null;
+      const unresolved = Number(sum?.unresolved || 0);
+      if (Number.isFinite(unresolved) && unresolved >= 0) this._unresolved = unresolved;
 
       if (exitCode != null) {
         if (exitCode === 0) this.success();
@@ -391,10 +395,15 @@
       phase.append(phaseText);
       meta.append(label, phase);
       headMain.append(meta);
+      const headSide = document.createElement("div");
+      headSide.className = "sb-head-side";
+      const note = document.createElement("div");
+      note.className = "sb-note hide";
       const badge = document.createElement("div");
       badge.className = "sb-badge";
       badge.textContent = "Idle";
-      head.append(headMain, badge);
+      headSide.append(note, badge);
+      head.append(headMain, headSide);
 
       const rail = document.createElement("div");
       rail.className = "sb-rail";
@@ -412,7 +421,7 @@
       });
       rail.append(fill, fly);
       host.append(head, rail, steps);
-      dom = { head, badge, phaseText, rail, fill, fly, steps };
+      dom = { head, badge, phaseText, note, rail, fill, fly, steps };
       this._dom = dom;
       return dom;
     }
@@ -422,7 +431,7 @@
       if (!host) return;
       const dom = this._ensureDom();
       if (!dom) return;
-      const { badge, phaseText: phaseTextEl, rail, fill, fly, steps } = dom;
+      const { badge, phaseText: phaseTextEl, note: noteEl, rail, fill, fly, steps } = dom;
       fly.textContent = this._pairText || "";
 
       const allowDone = !!this._successExit0Seen;
@@ -464,6 +473,16 @@
       badge.classList.toggle("done", hardDone && !this._hadError);
       badge.classList.toggle("error", this._hadError);
       phaseTextEl.textContent = phaseLabel;
+
+      const unresolved = Number(this._unresolved || 0);
+      const showNote = unresolved > 0 && (hardDone || this._hadError);
+      if (noteEl) {
+        noteEl.classList.toggle("hide", !showNote);
+        if (showNote) {
+          noteEl.textContent = `${unresolved} unresolved`;
+          noteEl.title = `${unresolved} item${unresolved === 1 ? "" : "s"} could not be written to the destination. See the sync log for details.`;
+        }
+      }
 
       rail.classList.toggle("running", isRunning && !this.timeline.done);
       rail.classList.toggle("indet", shouldFlow);
