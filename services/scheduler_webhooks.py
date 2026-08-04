@@ -21,6 +21,7 @@ DEFAULT_WEBHOOKS: dict[str, Any] = {
     "payload_format": "crosswatch",
     "notifiarr_channel_id": "",
     "timeout_seconds": 10,
+    "alert_on_unresolved": False,
 }
 
 
@@ -28,6 +29,7 @@ def normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
     src = value if isinstance(value, dict) else {}
     out = dict(DEFAULT_WEBHOOKS)
     out["enabled"] = _as_bool(src.get("enabled"), False)
+    out["alert_on_unresolved"] = _as_bool(src.get("alert_on_unresolved") or src.get("alertOnUnresolved"), False)
     out["url"] = _http_url_or_blank(src.get("url") or src.get("default_url"))
     out["base_url"] = _http_url_or_blank(src.get("base_url") or src.get("healthchecks_base_url"))
     for key in ("start_url", "success_url", "failure_url"):
@@ -107,6 +109,26 @@ def build_payload(
     if _payload_format(payload_format) == "notifiarr":
         return _notifiarr_payload(payload, ctx, snap)
     return payload
+
+
+def resolve_completion_event(cfg: dict[str, Any] | None, summary: dict[str, Any] | None) -> str:
+    snap = summary if isinstance(summary, dict) else {}
+    try:
+        exit_code = int(snap.get("exit_code") or 0)
+    except Exception:
+        exit_code = 0
+    if exit_code != 0:
+        return "failure"
+
+    sch = (cfg or {}).get("scheduling") if isinstance(cfg, dict) else {}
+    webhooks = normalize_scheduler_webhooks((sch if isinstance(sch, dict) else {}).get("webhooks"))
+    if not webhooks.get("alert_on_unresolved"):
+        return "success"
+
+    for key in ("unresolved", "errors"):
+        if _as_int(snap.get(key), 0, minimum=0) > 0:
+            return "failure"
+    return "success"
 
 
 def notify_scheduler_webhook(
