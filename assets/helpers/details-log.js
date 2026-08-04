@@ -26,11 +26,12 @@ if (typeof window.debugBuf === "undefined") window.debugBuf = [];
 if (typeof window._debugFlushRAF === "undefined") window._debugFlushRAF = null;
 if (typeof window._detailsTabsWired === "undefined") window._detailsTabsWired = false;
 if (typeof window._detailsTab === "undefined") window._detailsTab = "sync";
-if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 500;
-if (typeof window.DETAILS_STREAM_TAIL === "undefined") window.DETAILS_STREAM_TAIL = 220;
-if (typeof window.DETAILS_QUEUE_MAX === "undefined") window.DETAILS_QUEUE_MAX = 700;
-if (typeof window.DETAILS_BATCH_ROWS === "undefined") window.DETAILS_BATCH_ROWS = 45;
-if (typeof window.DETAILS_FRAME_BUDGET_MS === "undefined") window.DETAILS_FRAME_BUDGET_MS = 5;
+if (typeof window.DETAILS_MAX_LINES === "undefined") window.DETAILS_MAX_LINES = 300;
+if (typeof window.DETAILS_STREAM_TAIL === "undefined") window.DETAILS_STREAM_TAIL = 120;
+if (typeof window.DETAILS_STREAM_BACKLOG === "undefined") window.DETAILS_STREAM_BACKLOG = 160;
+if (typeof window.DETAILS_QUEUE_MAX === "undefined") window.DETAILS_QUEUE_MAX = 300;
+if (typeof window.DETAILS_BATCH_ROWS === "undefined") window.DETAILS_BATCH_ROWS = 24;
+if (typeof window.DETAILS_FRAME_BUDGET_MS === "undefined") window.DETAILS_FRAME_BUDGET_MS = 3;
 if (typeof window._detOpenSeq === "undefined") window._detOpenSeq = 0;
 if (typeof window.syncBuf === "undefined") window.syncBuf = [];
 if (typeof window._syncFlushRAF === "undefined") window._syncFlushRAF = null;
@@ -96,6 +97,14 @@ function _scrollDetailsToBottom(el, tab, afterScroll) {
     afterScroll?.();
     _scheduleDetailsConsoleStatus();
   });
+}
+
+function _followDetailsLog(el, tab, afterScroll) {
+  if (!el) return;
+  _setDetailsStickBottom(tab, true);
+  _markDetailsProgrammaticScroll(90);
+  el.scrollTop = el.scrollHeight;
+  afterScroll?.();
 }
 
 function _pruneSeenDetailLines() {
@@ -440,12 +449,6 @@ function _scheduleDetailsConsoleStatus() {
 }
 
 function _wireDetailsConsoleStatus() {
-  for (const id of ["det-log", "det-watch-log", "det-debug-log"]) {
-    const el = document.getElementById(id);
-    if (!el || el.__cwStatusObserver) continue;
-    el.__cwStatusObserver = new MutationObserver(_scheduleDetailsConsoleStatus);
-    el.__cwStatusObserver.observe(el, { childList: true });
-  }
   _updateDetailsConsoleStatus();
 }
 
@@ -693,7 +696,7 @@ function openDebugLog() {
           const shouldFollow = !!window.debugStickBottom;
           el.appendChild(frag);
           _pruneDetailsLog(el);
-          if (shouldFollow) _scrollDetailsToBottom(el, "debug");
+          if (shouldFollow) _followDetailsLog(el, "debug");
           _scheduleDetailsConsoleStatus();
         }, scheduleFlush);
       });
@@ -703,6 +706,7 @@ function openDebugLog() {
     url.searchParams.set("tag", "DEBUG");
     if (debugReconnect) url.searchParams.set("since", String(debugSince));
     else url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    url.searchParams.set("max_backlog", String(_detailsLimit("DETAILS_STREAM_BACKLOG", 160)));
     url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
 
@@ -754,7 +758,13 @@ function openDebugLog() {
       document.removeEventListener("visibilitychange", window._debugVisibilityHandler);
     }
     window._debugVisibilityHandler = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible") {
+        try { window.esDebug?.close?.(); } catch {}
+        window.esDebug = null;
+        tabDebug?.classList.remove("connected");
+        _updateDetailsConsoleStatus();
+        return;
+      }
       if (_detailsVisible() && window._detailsTab === "debug") { try { openDebugLog(); } catch {} }
     };
     document.addEventListener("visibilitychange", window._debugVisibilityHandler);
@@ -784,7 +794,8 @@ async function openWatcherLog() {
     const uniq = _watchLogTagsFromConfig(cfg);
 
     const url = new URL("/api/logs/watcher", document.baseURI);
-    url.searchParams.set("tail", "200");
+    url.searchParams.set("tail", "120");
+    url.searchParams.set("max_backlog", "80");
     url.searchParams.set("plain", "1");
     if (uniq.length) url.searchParams.set("tags", uniq.join(","));
 
@@ -822,7 +833,7 @@ async function openWatcherLog() {
           const shouldFollow = !!window.watchStickBottom;
           el.appendChild(frag);
           _pruneDetailsLog(el);
-          if (shouldFollow) _scrollDetailsToBottom(el, "watcher");
+          if (shouldFollow) _followDetailsLog(el, "watcher");
           _scheduleDetailsConsoleStatus();
         }, scheduleFlush);
       });
@@ -865,7 +876,13 @@ async function openWatcherLog() {
       document.removeEventListener("visibilitychange", window._watchVisibilityHandler);
     }
     window._watchVisibilityHandler = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible") {
+        try { window.esWatch?.close?.(); } catch {}
+        window.esWatch = null;
+        tabWatch?.classList.remove("connected");
+        _updateDetailsConsoleStatus();
+        return;
+      }
       if (_detailsVisible() && window._detailsTab === "watcher") { try { openWatcherLog(); } catch {} }
     };
     document.addEventListener("visibilitychange", window._watchVisibilityHandler);
@@ -937,13 +954,13 @@ async function openDetailsLog() {
     });
   }
 
-  const appendRaw = (s) => {
+  const appendRaw = (s, target = el) => {
     const lines = String(s).replace(/\r\n/g, "\n").split("\n");
     for (const line of lines) {
       if (!line) continue;
       const row = _structuredLogRow(_decodeLogLine(line), "SYNC");
       row.classList.add("det-plain-line");
-      el.appendChild(row);
+      target.appendChild(row);
     }
   };
 
@@ -955,12 +972,14 @@ async function openDetailsLog() {
     if (window._syncFlushRAF || window._detailsTab !== "sync") return;
     window._syncFlushRAF = requestAnimationFrame(() => {
       window._syncFlushRAF = null;
+      const frag = document.createDocumentFragment();
       _runDetailsBatch(window.syncBuf, (line) => {
-        appendRaw(line);
+        appendRaw(line, frag);
       }, () => {
         const shouldFollow = !!window.detStickBottom;
+        el.appendChild(frag);
         _pruneDetailsLog(el);
-        if (shouldFollow) _scrollDetailsToBottom(el, "sync", updateSlider);
+        if (shouldFollow) _followDetailsLog(el, "sync", updateSlider);
         else updateSlider();
         _scheduleDetailsConsoleStatus();
       }, scheduleFlush);
@@ -977,6 +996,7 @@ async function openDetailsLog() {
     url.searchParams.set("tag", "SYNC");
     if (!initialConnect && since > 0) url.searchParams.set("since", String(since));
     else url.searchParams.set("tail", String(_detailsLimit("DETAILS_STREAM_TAIL", 400)));
+    url.searchParams.set("max_backlog", String(_detailsLimit("DETAILS_STREAM_BACKLOG", 160)));
     url.searchParams.set("plain", "1");
     url.searchParams.set("_ts", String(Date.now()));
     window.esDet = new EventSource(url.toString());
@@ -1058,7 +1078,13 @@ async function openDetailsLog() {
   }, STALE_MS);
 
   window._detVisibilityHandler = () => {
-    if (document.visibilityState !== "visible") return;
+    if (document.visibilityState !== "visible") {
+      try { window.esDet?.close?.(); } catch {}
+      window.esDet = null;
+      tabSync?.classList.remove("connected");
+      _updateDetailsConsoleStatus();
+      return;
+    }
     if (window._detailsTab === "sync" && (!window.esDet || (Date.now() - lastMsgAt > STALE_MS))) connect();
   };
   document.addEventListener("visibilitychange", window._detVisibilityHandler);

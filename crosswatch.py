@@ -47,6 +47,17 @@ BACKUP_LOG = LOG.child("BACKUP")
 def _c(text: str, color: str) -> str:
     return f"{color}{text}{RESET}" if LOG.use_color else text
 
+def _fmt_bytes(value: Any) -> str:
+    try:
+        size = float(value or 0)
+    except Exception:
+        size = 0.0
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return "0 B"
+
 from api.versionAPI import CURRENT_VERSION
 from services import register as register_services
 from fastapi import FastAPI, Query, Request
@@ -87,14 +98,10 @@ if str(ROOT) not in sys.path:
 STATE_DIR = CONFIG_DIR
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-STATE_PATH      = (STATE_DIR / "state.json").resolve()
-TOMBSTONES_PATH = (STATE_DIR / "tombstones.json").resolve()
-LAST_SYNC_PATH  = (STATE_DIR / "last_sync.json").resolve()
-
-REPORT_DIR = (CONFIG_DIR / "sync_reports"); REPORT_DIR.mkdir(parents=True, exist_ok=True)
+REPORT_DIR = CONFIG_DIR / "sync_reports"
 CACHE_DIR  = (CONFIG_DIR / "cache");        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-STATE_PATHS = [CONFIG_DIR / "state.json", ROOT / "state.json"]
 CW_STATE_DIR = (CONFIG_DIR / ".cw_state"); CW_STATE_DIR.mkdir(parents=True, exist_ok=True)
+TOMBSTONES_PATH = (CW_STATE_DIR / "tombstones.json").resolve()
 
 _METADATA: Any = None
 scheduler: Optional[SyncScheduler] = None
@@ -891,6 +898,7 @@ async def api_logs_stream_initial(
     tag: str = Query("SYNC"),
     tail: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
     since: int | None = Query(None, ge=1),
+    max_backlog: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
     plain: bool = Query(False),
 ):
     tag = _norm_log_tag(tag)
@@ -922,6 +930,11 @@ async def api_logs_stream_initial(
             start_idx = int(start_seq - base)
             if start_idx < 0:
                 start_idx = 0
+            if max_backlog:
+                backlog = len(new_buf) - start_idx
+                if backlog > max_backlog:
+                    start_idx = max(0, len(new_buf) - int(max_backlog))
+                    last_seq = base + start_idx - 1
             for i in range(start_idx, len(new_buf)):
                 line = new_buf[i]
                 seq = base + i
@@ -950,6 +963,7 @@ async def api_logs_watcher(
     request: Request,
     tail: int = Query(200, ge=1, le=3000),
     tags: str = Query("", description="Optional CSV override"),
+    max_backlog: int | None = Query(None, ge=1, le=3000),
     plain: bool = Query(False),
 ):
     tags_sel = _watch_log_selection(tags)
@@ -981,6 +995,11 @@ async def api_logs_watcher(
                 start_idx = int(start_seq - base)
                 if start_idx < 0:
                     start_idx = 0
+                if max_backlog:
+                    backlog = len(buf) - start_idx
+                    if backlog > max_backlog:
+                        start_idx = max(0, len(buf) - int(max_backlog))
+                        seen = base + start_idx - 1
                 for i in range(start_idx, len(buf)):
                     line = buf[i]
                     safe = _log_stream_text(line, plain)
@@ -1223,20 +1242,55 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     boot.info("")
     boot.info(f"  {_c('Cache:', DIM)}      {CACHE_DIR}")
     boot.info(f"  {_c('CW_STATE:', DIM)}   {CW_STATE_DIR}")
-    boot.info(f"  {_c('Reports:', DIM)}    {REPORT_DIR}")
-    boot.info(f"  {_c('Last Sync:', DIM)}  {LAST_SYNC_PATH} (JSON)")
     boot.info(f"  {_c('Tombstones:', DIM)} {TOMBSTONES_PATH} (JSON)")
-    boot.info(f"  {_c('State:', DIM)}      {STATE_PATH} (JSON)")
     boot.info(f"  {_c('Config:', DIM)}     {CONFIG_DIR / 'config.json'} (JSON)")
 
+    db_path: Any = None
     try:
-        from cw_platform.event_archive import boot_check as _events_boot_check, events_db_path
+        from cw_platform.local_db import crosswatch_db_path
+
+        db_path = crosswatch_db_path(CONFIG_DIR)
+    except Exception:
+        db_path = CONFIG_DIR / ".cw_databases" / "crosswatch.sqlite3"
+    boot.info(f"  {_c('Database:', DIM)}   {db_path} (SQLite)")
+
+    try:
+        from cw_platform.local_db.diagnostics import diagnostics as _runtime_db_diagnostics
+
+        rt = _runtime_db_diagnostics(CONFIG_DIR)
+        if rt.get("ok"):
+            raw_counts = rt.get("table_counts")
+            counts: dict[str, Any] = raw_counts if isinstance(raw_counts, dict) else {}
+            version = rt.get("schema_version") or rt.get("expected_schema_version") or "?"
+            size = _fmt_bytes(
+                int(rt.get("size_bytes") or 0)
+                + int(rt.get("wal_size_bytes") or 0)
+                + int(rt.get("shm_size_bytes") or 0)
+            )
+            state_blocks = int(counts.get("provider_feature_state") or 0)
+            baseline_items = int(counts.get("baseline_items") or 0)
+            status = "Ready" if rt.get("healthy") else "Warning"
+            color = GREEN if rt.get("healthy") else YELLOW
+            runtime_msg = f"Runtime DB: {status} - schema v{version} - {state_blocks:,} feature blocks - {baseline_items:,} items - {size}"
+            boot.info(f"              {_c(runtime_msg, color)}")
+        else:
+            runtime_msg = f"Runtime DB: error - {rt.get('error') or 'unavailable'}"
+            boot.info(f"              {_c(runtime_msg, RED)}")
+    except Exception as exc:
+        boot.info(f"              {_c(f'Runtime DB: error - {exc}', RED)}")
+
+    try:
+        from cw_platform.event_archive import boot_check as _events_boot_check
+
         ev = _events_boot_check(state_dir=CW_STATE_DIR, reports_dir=REPORT_DIR)
         ev_color = GREEN if ev.get("status") in ("ready", "created") else (RED if not ev.get("ok") else YELLOW)
-        boot.info(f"  {_c('Events DB:', DIM)}  {ev.get('path') or events_db_path()} (SQLite)")
-        boot.info(f"              {_c(ev.get('message') or 'unknown', ev_color)}")
+        ev_status = str(ev.get("status") or "unknown").capitalize()
+        ev_version = ev.get("schema_version") or "?"
+        ev_events = int(ev.get("events") or 0)
+        ev_size = _fmt_bytes(ev.get("size_bytes") or 0)
+        boot.info(f"              {_c(f'Event archive: {ev_status} - schema v{ev_version} - {ev_events:,} events - {ev_size}', ev_color)}")
     except Exception as exc:
-        boot.info(f"  {_c('Events DB:', DIM)}  {_c(f'error — {exc}', RED)}")
+        boot.info(f"              {_c(f'Event archive: error - {exc}', RED)}")
     boot.info("")
 
     debug = bool((cfg.get("runtime") or {}).get("debug"))

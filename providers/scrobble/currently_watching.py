@@ -3,10 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
 import threading
 import time
-from pathlib import Path
 from typing import Any, Optional
 
 try:
@@ -14,6 +12,9 @@ try:
 except Exception:
     BASE_LOG = None  # type: ignore
 
+from cw_platform.local_db.currently_watching import clear_streams as _db_clear_streams
+from cw_platform.local_db.currently_watching import load_state as _db_load_state
+from cw_platform.local_db.currently_watching import replace_state as _db_replace_state
 from providers.scrobble.scrobble import ScrobbleEvent
 
 STATE_VERSION = 2
@@ -35,58 +36,12 @@ def _log(msg: str, lvl: str = "DEBUG") -> None:
         pass
 
 
-def _state_file() -> Path:
-    base = Path("/config/.cw_state") if Path("/config/config.json").exists() else Path(".cw_state")
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-    return base / "currently_watching.json"
+def load_state() -> dict[str, Any]:
+    return _db_load_state()
 
 
-
-def state_file() -> Path:
-    return _state_file()
-
-
-def _write_raw(payload: Optional[dict[str, Any]]) -> None:
-    p = _state_file()
-    with _STATE_LOCK:
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        if not payload:
-            try:
-                if p.exists():
-                    p.unlink()
-            except Exception as e:
-                _log(f"remove failed: {e}")
-            return
-        tmp = p.with_name(f"{p.name}.{time.time_ns()}.{threading.get_ident()}.tmp")
-        try:
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-            tmp.replace(p)
-        except Exception as e:
-            _log(f"write failed: {e}")
-            try:
-                if tmp.exists():
-                    tmp.unlink()
-            except Exception:
-                pass
-
-
-def _read_raw() -> Any:
-    p = _state_file()
-    with _STATE_LOCK:
-        if not p.exists():
-            return None
-        try:
-            raw = p.read_text(encoding="utf-8")
-            return json.loads(raw) if raw.strip() else None
-        except Exception as e:
-            _log(f"read failed: {e}", "ERROR")
-            return None
+def clear_state() -> int:
+    return _db_clear_streams()
 
 
 def _extract_tmdb_ids(ev: ScrobbleEvent) -> dict[str, Any]:
@@ -243,7 +198,7 @@ def _prune(streams: dict[str, Any], now: int) -> None:
 def _update_stream(source: str, payload: dict[str, Any], clear_on_stop: bool) -> None:
     with _STATE_LOCK:
         now = int(time.time())
-        raw = _read_raw()
+        raw = _db_load_state()
         state = _as_v2(raw, source_hint=source)
         streams = state.get("streams") or {}
         if not isinstance(streams, dict):
@@ -293,10 +248,11 @@ def _update_stream(source: str, payload: dict[str, Any], clear_on_stop: bool) ->
             streams[key] = payload
 
         if not streams:
-            _write_raw(None)
+            _db_clear_streams()
             return
 
-        _write_raw({"v": STATE_VERSION, "streams": streams})
+        if not _db_replace_state({"v": STATE_VERSION, "streams": streams}):
+            _log("write failed: database unavailable", "ERROR")
 
 
 def update_from_event(

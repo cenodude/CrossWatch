@@ -3,37 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
-import time
-from pathlib import Path
 from typing import Any
 
+from cw_platform.local_db.ttl_dedupe import once_per_ttl
 
-_TTL_PATH = Path("/config/.cw_state/watchlist_wl_autoremove.json")
 _TTL_SECONDS = 120
-
-
-def _now() -> float:
-    return time.time()
-
-
-def _read_json(p: Path) -> dict[str, float]:
-    try:
-        if not p.exists():
-            return {}
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _write_json_atomic(p: Path, data: dict[str, float]) -> None:
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
-        tmp.replace(p)
-    except Exception:
-        pass
 
 
 def _norm_ids(ids: dict[str, Any] | None) -> dict[str, str]:
@@ -62,19 +36,7 @@ def _dedupe_key(ids: dict[str, str], media_type: str | None, scope: str | None =
 
 
 def _once_per_ttl(key: str) -> bool:
-    if not key:
-        return True
-    data = _read_json(_TTL_PATH)
-    ts = float(data.get(key, 0.0) or 0.0)
-    if _now() - ts < _TTL_SECONDS:
-        return False
-    now = _now()
-    data[key] = now
-    cutoff = now - _TTL_SECONDS
-    if len(data) > 2000:
-        data = {k: v for k, v in data.items() if v >= cutoff}
-    _write_json_atomic(_TTL_PATH, data)
-    return True
+    return once_per_ttl(None, "watchlist_auto_remove", key, ttl_seconds=_TTL_SECONDS)
 
 
 def _log(msg: str, level: str = "INFO") -> None:
@@ -128,12 +90,12 @@ def remove_across_providers_by_ids(
     except Exception as e:
         _log(f"auto-remove failed via _watchlistAPI: {e}", "WARN")
         try:
-            from cw_platform.config_base import load_config
-            from api.syncAPI import _load_state
+            from cw_platform.config_base import CONFIG, load_config
+            from cw_platform.orchestrator._state_store import StateStore
             from services.watchlist import delete_watchlist_batch
 
             cfg = load_config()
-            st = _load_state() or {}
+            st = StateStore(CONFIG).load_state_features({"watchlist"}) or {}
             keys: list[str] = []
             for k in ("tmdb", "imdb", "tvdb", "trakt"):
                 v = norm.get(k)

@@ -19,6 +19,24 @@ from typing import Any
 from fastapi import APIRouter, Body, File, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
+from cw_platform.local_db import crosswatch_db_path
+from cw_platform.local_db.currently_watching import clear_streams as clear_currently_watching_streams
+from cw_platform.local_db.currently_watching import stream_count as currently_watching_stream_count
+from cw_platform.local_db.diagnostics import diagnostics as local_db_diagnostics
+from cw_platform.local_db.legacy_files import (
+    LAST_SYNC_JSON,
+    LEGACY_DIR,
+    STATE_JSON,
+    STATE_MANUAL_JSON,
+    STATISTICS_JSON,
+    legacy_path,
+)
+from cw_platform.local_db.sync_reports import (
+    base_path_from_report_dir,
+    clear_reports as clear_sync_reports,
+    report_count as sync_report_count,
+)
+from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import normalize_instance_id
 
 _LOG = logging.getLogger("crosswatch.api.maintenance")
@@ -40,12 +58,7 @@ SYNC_STATE_PATTERNS = (
 )
 
 CW_STATE_KEEP_DIRS = {"id"}
-CW_STATE_KEEP_FILES = {
-    "activity_history.json",
-    "currently_watching.json",
-    "auto_remove_seen.json",
-    "watchlist_wl_autoremove.json",
-}
+CW_STATE_KEEP_FILES: set[str] = set()
 
 
 def _is_sync_state_file(name: str) -> bool:
@@ -65,11 +78,26 @@ def _sync_state_files() -> list[Path]:
     return [found[name] for name in sorted(found)]
 
 
+def _sync_state_storage_paths(config_dir: Path, scoped: list[Path] | None = None) -> list[Path]:
+    paths = [legacy_path(config_dir, STATE_JSON)]
+    try:
+        paths.append(crosswatch_db_path(config_dir))
+    except Exception:
+        pass
+    paths.extend(scoped or _sync_state_files())
+    return list(dict.fromkeys(paths))
+
+
 def _cw() -> tuple[Any, Any, Any, Any, Any, Any]:
-    from .syncAPI import _load_state
     from crosswatch import CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _append_log
 
-    return CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log
+    def _load_statistics_state() -> dict[str, Any]:
+        try:
+            return StateStore(CONFIG_DIR).load_state_features({"watchlist", "history", "ratings", "playlists"}) or {}
+        except Exception:
+            return {}
+
+    return CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_statistics_state, _append_log
 
 
 def _safe_remove_path(p: Path) -> bool:
@@ -275,8 +303,14 @@ def _statistics_artifact_paths(
     paths: list[Path] = []
     if include_stats:
         paths.append(stats_path)
+        try:
+            from cw_platform.local_db import crosswatch_db_path
+
+            paths.append(crosswatch_db_path(config_dir))
+        except Exception:
+            pass
     if include_state:
-        paths.append(config_dir / "state.json")
+        paths.extend(_sync_state_storage_paths(config_dir, []))
     if include_reports:
         try:
             from services.statistics import REPORT_DIR
@@ -299,12 +333,21 @@ def _read_json(path: Path) -> Any:
         return None
 
 
+def _load_sync_state(config_dir: Path) -> dict[str, Any]:
+    payload = StateStore(config_dir).load_state()
+    return payload if isinstance(payload, dict) else {}
+
+
+def _save_sync_state(config_dir: Path, payload: Mapping[str, Any]) -> None:
+    StateStore(config_dir).save_state(payload)
+
+
 def _metric(label: str, value: Any, fmt: str = "number") -> dict[str, Any]:
     return {"label": label, "value": value, "format": fmt}
 
 
-def _sync_state_inventory(path: Path) -> tuple[int, int]:
-    payload = _read_json(path)
+def _sync_state_inventory(config_dir: Path) -> tuple[int, int]:
+    payload = _load_sync_state(config_dir)
     providers = payload.get("providers") if isinstance(payload, dict) else None
     if not isinstance(providers, dict):
         return 0, 0
@@ -322,8 +365,8 @@ def _sync_state_inventory(path: Path) -> tuple[int, int]:
     return len(providers), baseline_count
 
 
-def _sync_state_baseline_inventory(path: Path) -> dict[str, Any]:
-    payload = _read_json(path)
+def _sync_state_baseline_inventory(config_dir: Path) -> dict[str, Any]:
+    payload = _load_sync_state(config_dir)
     providers = payload.get("providers") if isinstance(payload, dict) else None
     if not isinstance(providers, dict):
         return {"providers": 0, "baselines": 0, "items": 0, "largest": None}
@@ -541,28 +584,20 @@ def _write_json_compact_atomic(path: Path, payload: Any) -> None:
         raise
 
 
-def _currently_playing_count(path: Path) -> int:
-    payload = _read_json(path)
-    if not isinstance(payload, dict):
-        return 0
-    streams = payload.get("streams")
-    if isinstance(streams, dict):
-        return len(streams)
-    return 1 if payload.get("title") else 0
+def _currently_playing_count(config_dir: Path) -> int:
+    return currently_watching_stream_count(config_dir, active_only=True)
 
 
 def maintenance_action_status(action: str) -> dict[str, Any]:
     """Build the read-only inventory shown when a maintenance action is selected."""
-    CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log = _cw()
+    CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_statistics_state, _append_log = _cw()
     action = str(action or "").strip().lower()
     response: dict[str, Any] = {"ok": True, "action": action, "metrics": []}
 
     if action == "state":
-        path = CONFIG_DIR / "state.json"
-        usage = _path_usage(path)
-        providers, baselines = _sync_state_inventory(path)
+        providers, baselines = _sync_state_inventory(CONFIG_DIR)
         scoped = _sync_state_files()
-        scoped_usage = _paths_usage([path, *scoped])
+        scoped_usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, scoped))
         response.update(
             title="Rebuild sync state",
             note="These provider baselines are removed together with pair-scoped history aliases, mapping caches, watermarks and tombstones; the next sync reads fresh provider data and rebuilds translated aliases.",
@@ -571,13 +606,12 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Feature baselines", baselines),
                 _metric("Pair mapping files", len(scoped)),
                 _metric("State storage", scoped_usage["bytes"], "bytes"),
-                _metric("Last updated", usage["modified"], "datetime"),
+                _metric("Last updated", scoped_usage["modified"], "datetime"),
             ],
         )
     elif action in {"state-file", "state-file-prune"}:
-        path = CONFIG_DIR / "state.json"
-        usage = _path_usage(path)
-        inv = _sync_state_baseline_inventory(path)
+        usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR))
+        inv = _sync_state_baseline_inventory(CONFIG_DIR)
         largest = inv.get("largest") if isinstance(inv.get("largest"), dict) else None
         largest_label = "None"
         if largest:
@@ -594,7 +628,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         ]
         if action == "state-file-prune":
             cfg = _load_config_for_state_prune(CONFIG_DIR)
-            payload = _read_json(path)
+            payload = _load_sync_state(CONFIG_DIR)
             stale = {"removed_providers": 0, "removed_instances": 0, "removed_baselines": 0, "removed_items": 0}
             if isinstance(cfg, dict) and isinstance(payload, dict):
                 _, stale, _ = _prune_state_payload(payload, cfg)
@@ -605,13 +639,39 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
                 _metric("Stale items", stale.get("removed_items", 0)),
             ])
         response.update(
-            title="Prune state file" if action == "state-file-prune" else "State file",
+            title="Prune sync state" if action == "state-file-prune" else "Sync state",
             note=(
-                "Creates an app-state backup, then removes state.json provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes."
+                "Creates an app-state backup, then removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes."
                 if action == "state-file-prune"
-                else "Inspects the legacy state.json baseline file. Compact rewrites the same JSON without indentation after creating an app-state backup."
+                else "Inspects the local sync state baseline store."
             ),
             metrics=metrics,
+        )
+    elif action == "database-health":
+        health = local_db_diagnostics(CONFIG_DIR)
+        tables_raw = health.get("table_counts")
+        orphans_raw = health.get("orphan_counts")
+        stale_raw = health.get("stale_counts")
+        last_sync_raw = health.get("last_sync")
+        tables: Mapping[str, Any] = tables_raw if isinstance(tables_raw, Mapping) else {}
+        orphans: Mapping[str, Any] = orphans_raw if isinstance(orphans_raw, Mapping) else {}
+        stale: Mapping[str, Any] = stale_raw if isinstance(stale_raw, Mapping) else {}
+        last_sync: Mapping[str, Any] = last_sync_raw if isinstance(last_sync_raw, Mapping) else {}
+        orphan_total = sum(int(value or 0) for value in orphans.values())
+        response.update(
+            title="Database health",
+            note="Checks the local CrossWatch database integrity, schema, table counts and row consistency. Read-only.",
+            metrics=[
+                _metric("Integrity", health.get("integrity", "unknown"), "text"),
+                _metric("Schema version", health.get("schema_version") or 0),
+                _metric("Database size", int(health.get("size_bytes") or 0), "bytes"),
+                _metric("Tables", len(tables)),
+                _metric("Feature baselines", int(tables.get("provider_feature_state") or 0)),
+                _metric("Baseline items", int(tables.get("baseline_items") or 0)),
+                _metric("Orphan rows", orphan_total),
+                _metric("Expired TTL rows", int(stale.get("ttl_expired") or 0)),
+                _metric("Last sync", last_sync.get("state_epoch"), "datetime"),
+            ],
         )
     elif action == "cache":
         info = _scan_provider_cache()
@@ -644,13 +704,14 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             ],
         )
     elif action == "playing":
-        path = CW_STATE_DIR / "currently_watching.json"
-        usage = _path_usage(path)
+        db_path = crosswatch_db_path(CONFIG_DIR)
+        active_count = _currently_playing_count(CONFIG_DIR)
+        usage = _path_usage(db_path)
         response.update(
             title="Clear currently playing",
             note="Only CrossWatch's local live-playback sessions are affected; provider playback history is not changed.",
             metrics=[
-                _metric("Active sessions", _currently_playing_count(path)),
+                _metric("Active sessions", active_count),
                 _metric("Storage", usage["bytes"], "bytes"),
                 _metric("Last updated", usage["modified"], "datetime"),
             ],
@@ -665,7 +726,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             note="Removes only scrobble rows from Recent Activity. Other activity and provider watch history remain.",
             metrics=[
                 _metric("Scrobble rows", int(events.get("total") or 0)),
-                _metric("Activity file", usage["bytes"], "bytes"),
+                _metric("Activity storage", usage["bytes"], "bytes"),
                 _metric("Last updated", usage["modified"], "datetime"),
             ],
         )
@@ -674,10 +735,23 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             from services.statistics import REPORT_DIR
         except Exception:
             REPORT_DIR = CONFIG_DIR / "sync_reports"
-        stats_path = Path(getattr(STATS, "path", CONFIG_DIR / "statistics.json"))
-        stats_usage = _path_usage(stats_path)
+        stats_path = Path(getattr(STATS, "path", legacy_path(CONFIG_DIR, STATISTICS_JSON)))
+        stats_usage = _paths_usage(
+            _statistics_artifact_paths(
+                CACHE_DIR,
+                CONFIG_DIR,
+                CW_STATE_DIR,
+                stats_path,
+                include_stats=True,
+                include_state=False,
+                include_reports=False,
+                include_insights=False,
+            )
+        )
         report_paths = list(Path(REPORT_DIR).glob("sync-*.json")) if Path(REPORT_DIR).exists() else []
         report_usage = _paths_usage(report_paths)
+        report_rows = sync_report_count(base_path_from_report_dir(REPORT_DIR))
+        last_report = report_usage["modified"] or (stats_usage["modified"] if report_rows else 0)
         insight_paths: list[Path] = []
         for root in (CW_STATE_DIR, CACHE_DIR, CONFIG_DIR):
             if not root.exists():
@@ -689,10 +763,10 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             title="Rebuild statistics",
             note="Statistics, saved sync reports and generated insight caches are rebuilt from future sync activity.",
             metrics=[
-                _metric("Sync reports", report_usage["files"]),
+                _metric("Sync reports", report_rows + int(report_usage["files"] or 0)),
                 _metric("Insight cache files", insight_usage["files"]),
                 _metric("Data rebuilt", int(stats_usage["bytes"] or 0) + int(report_usage["bytes"] or 0) + int(insight_usage["bytes"] or 0), "bytes"),
-                _metric("Last report", report_usage["modified"], "datetime"),
+                _metric("Last report", last_report, "datetime"),
             ],
         )
     elif action == "metadata":
@@ -725,10 +799,11 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
     elif action == "defaults":
         snapshots_dir = CONFIG_DIR / "snapshots"
         paths = [
-            CONFIG_DIR / "last_sync.json",
-            CONFIG_DIR / "state.json",
-            CONFIG_DIR / "statistics.json",
+            legacy_path(CONFIG_DIR, LAST_SYNC_JSON),
+            legacy_path(CONFIG_DIR, STATE_JSON),
+            legacy_path(CONFIG_DIR, STATISTICS_JSON),
             CONFIG_DIR / "sync_reports",
+            CONFIG_DIR / LEGACY_DIR,
             CW_STATE_DIR,
             CONFIG_DIR / ".cw_databases",
             _cw_tracker_root(CONFIG_DIR),
@@ -969,17 +1044,23 @@ async def crosswatch_tracker_import(
 @router.post("/clear-state")
 def clear_state_minimal() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
-    state_path = CONFIG_DIR / "state.json"
-    existed = state_path.exists()
-    scoped = _sync_state_files()
-    before_usage = _paths_usage([state_path, *scoped])
+    state_path = legacy_path(CONFIG_DIR, STATE_JSON)
+    db_existed = False
     try:
+        db_existed = crosswatch_db_path(CONFIG_DIR).exists()
+    except Exception:
+        db_existed = False
+    existed = state_path.exists() or db_existed
+    scoped = _sync_state_files()
+    before_usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, scoped))
+    try:
+        StateStore(CONFIG_DIR).clear_state()
         state_path.unlink(missing_ok=True)
         removed_scoped: list[str] = []
         for p in scoped:
             if _safe_remove_path(p):
                 removed_scoped.append(p.name)
-        after_usage = _paths_usage([state_path, *_sync_state_files()])
+        after_usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR))
         return {
             "ok": True,
             "path": str(state_path),
@@ -999,10 +1080,14 @@ def clear_state_minimal() -> dict[str, Any]:
 @router.post("/state-file/compact")
 def compact_state_file() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
-    state_path = CONFIG_DIR / "state.json"
-    before = _path_usage(state_path)
+    state_path = legacy_path(CONFIG_DIR, STATE_JSON)
+    before = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, []))
 
-    if not state_path.exists():
+    try:
+        state_exists = state_path.exists() or crosswatch_db_path(CONFIG_DIR).exists()
+    except Exception:
+        state_exists = state_path.exists()
+    if not state_exists:
         return {
             "ok": True,
             "path": str(state_path),
@@ -1011,7 +1096,7 @@ def compact_state_file() -> dict[str, Any]:
             "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
         }
 
-    payload = _read_json(state_path)
+    payload = _load_sync_state(CONFIG_DIR)
     if not isinstance(payload, dict):
         return {
             "ok": False,
@@ -1039,7 +1124,7 @@ def compact_state_file() -> dict[str, Any]:
         }
 
     try:
-        _write_json_compact_atomic(state_path, payload)
+        _save_sync_state(CONFIG_DIR, payload)
     except Exception:
         _LOG.exception("state compact write failed")
         return {
@@ -1050,13 +1135,13 @@ def compact_state_file() -> dict[str, Any]:
             "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
         }
 
-    after = _path_usage(state_path)
+    after = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, []))
     summary = {
         "removed_files": 0,
         "removed_items": 0,
         "freed_bytes": max(0, int(before.get("bytes") or 0) - int(after.get("bytes") or 0)),
     }
-    inv = _sync_state_baseline_inventory(state_path)
+    inv = _sync_state_baseline_inventory(CONFIG_DIR)
     return {
         "ok": True,
         "path": str(state_path),
@@ -1072,10 +1157,14 @@ def compact_state_file() -> dict[str, Any]:
 @router.post("/state-file/prune")
 def prune_state_file() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
-    state_path = CONFIG_DIR / "state.json"
-    before = _path_usage(state_path)
+    state_path = legacy_path(CONFIG_DIR, STATE_JSON)
+    before = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, []))
 
-    if not state_path.exists():
+    try:
+        state_exists = state_path.exists() or crosswatch_db_path(CONFIG_DIR).exists()
+    except Exception:
+        state_exists = state_path.exists()
+    if not state_exists:
         return {
             "ok": True,
             "path": str(state_path),
@@ -1085,7 +1174,7 @@ def prune_state_file() -> dict[str, Any]:
             "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
         }
 
-    payload = _read_json(state_path)
+    payload = _load_sync_state(CONFIG_DIR)
     if not isinstance(payload, dict):
         return {
             "ok": False,
@@ -1115,7 +1204,7 @@ def prune_state_file() -> dict[str, Any]:
             "before_bytes": int(before.get("bytes") or 0),
             "after_bytes": int(before.get("bytes") or 0),
             "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
-            "inventory": _sync_state_baseline_inventory(state_path),
+            "inventory": _sync_state_baseline_inventory(CONFIG_DIR),
         }
 
     backup: dict[str, Any] | None = None
@@ -1137,7 +1226,7 @@ def prune_state_file() -> dict[str, Any]:
         }
 
     try:
-        _write_json_compact_atomic(state_path, pruned)
+        _save_sync_state(CONFIG_DIR, pruned)
     except Exception:
         _LOG.exception("state prune write failed")
         return {
@@ -1148,7 +1237,7 @@ def prune_state_file() -> dict[str, Any]:
             "summary": {"removed_files": 0, "removed_items": 0, "freed_bytes": 0},
         }
 
-    after = _path_usage(state_path)
+    after = _paths_usage(_sync_state_storage_paths(CONFIG_DIR, []))
     summary = {
         "removed_files": 0,
         "removed_items": int(removed.get("removed_items") or 0),
@@ -1164,7 +1253,7 @@ def prune_state_file() -> dict[str, Any]:
         "before_bytes": int(before.get("bytes") or 0),
         "after_bytes": int(after.get("bytes") or 0),
         "summary": summary,
-        "inventory": _sync_state_baseline_inventory(state_path),
+        "inventory": _sync_state_baseline_inventory(CONFIG_DIR),
     }
 
 
@@ -1276,6 +1365,16 @@ def action_status(action: str) -> dict[str, Any]:
     return maintenance_action_status(action)
 
 
+@router.post("/database-health")
+def maintenance_database_health() -> dict[str, Any]:
+    _, CONFIG_DIR, *_ = _cw()
+    try:
+        return local_db_diagnostics(CONFIG_DIR)
+    except Exception:
+        _LOG.exception("database-health failed")
+        return {"ok": False, "error": "internal_error"}
+
+
 @router.post("/events-health")
 def maintenance_events_health() -> dict[str, Any]:
     try:
@@ -1341,8 +1440,8 @@ def reset_all_to_default(payload: dict[str, Any] | None = Body(None)) -> dict[st
             report["errors"].append("config_backup_failed")
             return report
 
-    files = ["last_sync.json", "state.json", "statistics.json"]
-    dirs = [".cw_state", ".cw_databases", "sync_reports", ".cw_provider", "cache", "tls"]
+    files = [LAST_SYNC_JSON, STATE_JSON, STATE_MANUAL_JSON, STATISTICS_JSON]
+    dirs = [".cw_state", ".cw_databases", "sync_reports", LEGACY_DIR, ".cw_provider", "cache", "tls"]
 
     for name in files:
         p = CONFIG_DIR / name
@@ -1399,32 +1498,32 @@ def restart_crosswatch() -> dict[str, Any]:
 
 @router.post("/reset-currently-watching")
 def reset_currently_watching() -> dict[str, Any]:
-    _, _, CW_STATE_DIR, _, _, _append_log = _cw()
-    path = CW_STATE_DIR / "currently_watching.json"
-    existed = path.exists()
-    before_usage = _path_usage(path)
+    _, CONFIG_DIR, _, _, _, _append_log = _cw()
+    db_path = crosswatch_db_path(CONFIG_DIR)
+    before_count = currently_watching_stream_count(CONFIG_DIR)
+    before_usage = _path_usage(db_path)
     try:
-        path.unlink(missing_ok=True)
-        after_usage = _path_usage(path)
+        removed = clear_currently_watching_streams(CONFIG_DIR)
+        after_usage = _path_usage(db_path)
         try:
             _append_log(
                 "TRBL",
-                "\x1b[91m[TROUBLESHOOT]\x1b[0m Reset currently_watching.json (currently playing).",
+                "\x1b[91m[TROUBLESHOOT]\x1b[0m Reset currently playing sessions.",
             )
         except Exception:
             pass
         return {
             "ok": True,
-            "path": str(path),
-            "existed": bool(existed),
-            "summary": _cleanup_summary(before_usage, after_usage),
+            "path": str(db_path),
+            "existed": bool(before_count),
+            "summary": _cleanup_summary(before_usage, after_usage, removed_items=removed),
         }
     except Exception as e:
         return {
             "ok": False,
             "error": "reset_currently_watching_failed",
-            "path": str(path),
-            "existed": bool(existed),
+            "path": str(db_path),
+            "existed": bool(before_count),
         }
 
 @router.post("/clear-activity-log")
@@ -1480,13 +1579,13 @@ def reset_stats(
     purge_reports: bool = Body(False),
     purge_insights: bool = Body(False),
 ) -> dict[str, Any]:
-    CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_state, _append_log = _cw()
+    CACHE_DIR, CONFIG_DIR, CW_STATE_DIR, STATS, _load_statistics_state, _append_log = _cw()
 
     if not any((recalc, purge_file, purge_state, purge_reports, purge_insights)):
         purge_file = purge_state = purge_reports = purge_insights = True
         recalc = False
 
-    stats_path = Path(getattr(STATS, "path", CONFIG_DIR / "statistics.json"))
+    stats_path = Path(getattr(STATS, "path", legacy_path(CONFIG_DIR, STATISTICS_JSON)))
     before_usage = _paths_usage(
         _statistics_artifact_paths(
             CACHE_DIR,
@@ -1513,6 +1612,8 @@ def reset_stats(
         except Exception:
             LOG_BUFFERS = {}
 
+        reports_rows_dropped = 0
+
         if _summary_reset:
             _summary_reset()
 
@@ -1534,12 +1635,14 @@ def reset_stats(
             STATS._load()
             STATS._save()
 
-        # --- state.json ---
+        # --- sync state ---
         if purge_state and _find_state_path:
             try:
-                sp = _find_state_path()
-                if sp and sp.exists():
-                    sp.unlink()
+                from cw_platform.orchestrator._state_store import StateStore
+
+                StateStore(CONFIG_DIR).clear_state()
+                legacy_state = legacy_path(CONFIG_DIR, STATE_JSON)
+                legacy_state.unlink(missing_ok=True)
             except Exception:
                 pass
 
@@ -1552,6 +1655,7 @@ def reset_stats(
                     from pathlib import Path as _P
                     REPORT_DIR = _P("/config/sync_reports")
 
+                reports_rows_dropped = clear_sync_reports(base_path_from_report_dir(REPORT_DIR))
                 for f in REPORT_DIR.glob("sync-*.json"):
                     try:
                         f.unlink()
@@ -1606,10 +1710,10 @@ def reset_stats(
             except Exception:
                 pass
 
-        # --- recalc from state.json ---
+        # --- recalc from sync state ---
         if recalc:
             try:
-                state = _load_state()
+                state = _load_statistics_state()
                 if state:
                     STATS.refresh_from_state(state)
             except Exception:
@@ -1638,7 +1742,7 @@ def reset_stats(
                 "insights_mem": bool(purge_insights),
             },
             "recalculated": bool(recalc),
-            "summary": _cleanup_summary(before_usage, after_usage),
+            "summary": _cleanup_summary(before_usage, after_usage, removed_items=reports_rows_dropped),
         }
     except Exception:
         return {"ok": False, "error": "reset_stats_failed"}

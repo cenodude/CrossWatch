@@ -68,7 +68,6 @@ def import_all(
 
     base = _config_base()
     sdir = Path(state_dir) if state_dir is not None else (base / ".cw_state")
-    rdir = Path(reports_dir) if reports_dir is not None else (base / "sync_reports")
 
     total_rows = 0
     total_files = 0
@@ -79,11 +78,6 @@ def import_all(
             files = [p for p in sdir.iterdir() if p.is_file() and p.suffix == ".json"]
         except Exception:
             files = []
-    if rdir.exists():
-        try:
-            files += [p for p in rdir.glob("sync-*.json") if p.is_file()]
-        except Exception:
-            pass
 
     for p in files:
         try:

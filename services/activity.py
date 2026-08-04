@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from _logging import log as BASE_LOG
+from cw_platform.local_db import activity as sqlite_activity
+from cw_platform.local_db import crosswatch_db_path
 
 LOG = BASE_LOG.child("ACTIVITY")
-LOG_VERSION = 1
 DEFAULT_LIMIT = 1000
-LOG_FILE_NAME = "activity_history.json"
 GROUP_WINDOW_SECONDS = 120
 _LOCK = threading.RLock()
 
@@ -30,7 +30,12 @@ def state_dir() -> Path:
 
 
 def activity_path() -> Path:
-    return state_dir() / LOG_FILE_NAME
+    return crosswatch_db_path(_activity_base_path())
+
+
+def _activity_base_path() -> Path:
+    path = state_dir()
+    return path.parent if path.name == ".cw_state" else path
 
 
 def _now() -> int:
@@ -136,35 +141,6 @@ def _item_activity_ids(item: Mapping[str, Any], media_type: str) -> dict[str, An
     if not ids and media_type == "movie":
         ids = _compact_dict(_nested_dict(item, "movie").get("ids"))
     return ids
-
-
-def _read_payload() -> dict[str, Any]:
-    path = activity_path()
-    if not path.exists():
-        return {"v": LOG_VERSION, "items": []}
-    try:
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw) if raw.strip() else {}
-    except Exception:
-        return {"v": LOG_VERSION, "items": []}
-    if isinstance(data, list):
-        return {"v": LOG_VERSION, "items": [x for x in data if isinstance(x, dict)]}
-    if isinstance(data, dict):
-        items = data.get("items")
-        return {"v": LOG_VERSION, "items": [x for x in (items or []) if isinstance(x, dict)]}
-    return {"v": LOG_VERSION, "items": []}
-
-
-def _write_payload(payload: Mapping[str, Any]) -> None:
-    path = activity_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-    tmp = path.with_name(f"{path.name}.{time.time_ns()}.{threading.get_ident()}.tmp")
-    data = {"v": LOG_VERSION, "items": list(payload.get("items") or [])}
-    tmp.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    tmp.replace(path)
 
 
 def _event_id(item: Mapping[str, Any]) -> str:
@@ -296,13 +272,8 @@ def add_event(event: Mapping[str, Any], *, limit: int = DEFAULT_LIMIT) -> dict[s
     item["id"] = str(event.get("id") or "").strip() or _event_id(item)
 
     with _LOCK:
-        payload = _read_payload()
-        items = [x for x in list(payload.get("items") or []) if isinstance(x, dict)]
-        items = [x for x in items if str(x.get("id") or "") != item["id"]]
-        items.insert(0, item)
         cap = max(1, int(limit or DEFAULT_LIMIT))
-        payload["items"] = items[:cap]
-        _write_payload(payload)
+        sqlite_activity.save_event(_activity_base_path(), item, limit=cap)
     return item
 
 
@@ -400,43 +371,16 @@ def list_events(
     group_routes: bool = True,
 ) -> dict[str, Any]:
     with _LOCK:
-        items = [x for x in list(_read_payload().get("items") or []) if isinstance(x, dict)]
+        items = sqlite_activity.list_events(
+            _activity_base_path(),
+            media_type=media_type,
+            status=status,
+            kind=kind,
+            query=query,
+            since=_as_int(since),
+        )
 
-    mt = str(media_type or "all").strip().lower()
-    st = str(status or "all").strip().lower()
-    kd = str(kind or "all").strip().lower()
-    q = str(query or "").strip().lower()
-    since_ts = _as_int(since)
-
-    def keep(item: Mapping[str, Any]) -> bool:
-        if since_ts is not None:
-            ts = _as_int(item.get("captured_at")) or _as_int(item.get("watched_at")) or 0
-            if ts < since_ts:
-                return False
-        if mt in {"movie", "episode"} and str(item.get("media_type") or "").lower() != mt:
-            return False
-        if st in {"ok", "failed", "error"}:
-            want = "failed" if st == "error" else st
-            got = str(item.get("status") or "").lower()
-            if got != want:
-                return False
-        if kd != "all" and str(item.get("kind") or "").strip().lower() != kd:
-            return False
-        if q:
-            hay = " ".join(
-                str(item.get(k) or "")
-                for k in ("title", "source", "target", "account", "media_type", "event", "method")
-            ).lower()
-            hay += " " + " ".join(
-                str(item.get(k) or "")
-                for k in ("source_instance", "target_instance")
-            ).lower()
-            if q not in hay:
-                return False
-        return True
-
-    filtered = [x for x in items if keep(x)]
-    display_items = _group_route_fanout(filtered) if group_routes else filtered
+    display_items = _group_route_fanout(items) if group_routes else items
     start = max(0, int(offset or 0))
     cap = max(1, min(500, int(limit or 100)))
     page = display_items[start:start + cap]
@@ -453,29 +397,17 @@ def list_events(
 
 def clear_events(*, kind: str | None = None) -> dict[str, Any]:
     path = activity_path()
-    existed = path.exists()
     wanted = str(kind or "").strip().lower()
     with _LOCK:
         try:
-            if not wanted:
-                path.unlink(missing_ok=True)
-                return {"ok": True, "path": str(path), "existed": bool(existed), "removed": 1 if existed else 0}
-
-            payload = _read_payload()
-            items = [x for x in list(payload.get("items") or []) if isinstance(x, dict)]
-            kept = [x for x in items if str(x.get("kind") or "").strip().lower() != wanted]
-            removed = len(items) - len(kept)
-            if kept:
-                _write_payload({"v": LOG_VERSION, "items": kept})
-            else:
-                path.unlink(missing_ok=True)
+            result = sqlite_activity.clear_events(_activity_base_path(), kind=wanted or None)
             return {
                 "ok": True,
                 "path": str(path),
-                "existed": bool(existed),
+                "existed": bool(result.get("existed")),
                 "kind": wanted,
-                "removed": removed,
-                "remaining": len(kept),
+                "removed": int(result.get("removed") or 0),
+                "remaining": int(result.get("remaining") or 0),
             }
         except Exception as e:
             LOG.error(f"failed to clear activity log: {type(e).__name__}: {e}")

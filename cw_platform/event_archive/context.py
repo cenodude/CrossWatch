@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from .db import get_conn
 from . import query as _query
+from ..local_db.legacy_files import STATE_MANUAL_JSON
 
 _RELATED_LIMIT = 50
 
@@ -417,12 +418,11 @@ def current_provider_health(route: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def current_manual_block(provider: str | None, feature: str | None, item_key: str | None) -> dict[str, Any] | None:
-    import json
-    p = _config_base() / "state.manual.json"
-    if not p.exists():
-        return {"present": False}
     try:
-        raw = json.loads(p.read_text("utf-8"))
+        from ..local_db import manual_policy as sqlite_manual_policy
+
+        base = _config_base()
+        raw = sqlite_manual_policy.load_policy(base)
     except Exception:
         return {"present": False}
     provs = (raw or {}).get("providers") or {}
@@ -439,7 +439,7 @@ def current_analyzer_findings(item_key: str | None, feature: str | None) -> dict
     if not item_key:
         return None
     from services.analyzer import _load_state
-    state = _load_state(None) or {}
+    state = _load_state(None, {str(feature or "").lower()} if feature else None) or {}
     providers = (state.get("providers") or {}) if isinstance(state, dict) else {}
     variants = _item_variants(item_key)
     feat = str(feature or "")
@@ -490,7 +490,7 @@ def _baseline_states() -> list[Mapping[str, Any]]:
         except Exception:
             files = []
         for p in files:
-            if p.name == "state.manual.json":
+            if p.name == STATE_MANUAL_JSON:
                 continue
             rp = str(p.resolve())
             if rp in seen:
@@ -502,7 +502,7 @@ def _baseline_states() -> list[Mapping[str, Any]]:
     if not out:
         try:
             from services.analyzer import _load_state
-            gs = _load_state(None)
+            gs = _load_state(None, {"history", "watchlist", "ratings", "progress"})
             if isinstance(gs, Mapping):
                 out.append(gs)
         except Exception:

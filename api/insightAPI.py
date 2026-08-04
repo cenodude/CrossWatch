@@ -38,6 +38,17 @@ def _env() -> tuple[
         return None, (lambda: {}), (lambda _cfg: None), (lambda *a, **k: None)
 
 
+def _load_state_features(features: set[str] | list[str] | tuple[str, ...]) -> dict[str, Any]:
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
+
+        state = StateStore(CONFIG).load_state_features(features)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
 _AUTH_KEYS = {
     "plex": ("account_token", "token", "access_token"),
     "emby": ("access_token", "api_key", "token"),
@@ -254,13 +265,9 @@ def register_insights(app: FastAPI) -> None:
     def api_stats() -> dict[str, Any]:
         CW, _, _, _ = _env()
         STATS = getattr(CW, "STATS", None)
-        _load_state = getattr(CW, "_load_state", lambda: None)
         StatsClass = getattr(CW, "Stats", None)
 
-        try:
-            state = _load_state()
-        except Exception:
-            state = None
+        state = _load_state_features({"watchlist"})
 
         base: dict[str, Any] = {}
         try:
@@ -312,9 +319,7 @@ def register_insights(app: FastAPI) -> None:
         REPORT_DIR = getattr(CW, "REPORT_DIR", None)
         CACHE_DIR = getattr(CW, "CACHE_DIR", None)
         _load_wall_snapshot = getattr(CW, "_load_wall_snapshot", lambda: [])
-        _get_orchestrator = getattr(CW, "_get_orchestrator", None)
         _append_log = getattr(CW, "_append_log", lambda *a, **k: None)
-        _load_state = getattr(CW, "_load_state", lambda: {})
         
         def _series_title_for_event(e: dict[str, Any]) -> str:
             series_title = (
@@ -1012,6 +1017,9 @@ def register_insights(app: FastAPI) -> None:
             return merged or list(base_feats)
 
         feature_keys = _features_from(getattr(STATS, "data", {}) or {})
+        state_features = set(feature_keys)
+        state_features.update(base_feats)
+        state: dict[str, Any] | None = _load_state_features(state_features)
         events_raw: list[dict[str, Any]] = []
         _lane_cache: dict[tuple[int, int, int], tuple[dict[str, dict[str, Any]], dict[str, bool]]] = {}
 
@@ -1437,12 +1445,9 @@ def register_insights(app: FastAPI) -> None:
                 samples_raw = list((data or {}).get("samples") or [])
                 
                 events_raw = list((data or {}).get("events") or [])
-                try:
-                    state = _load_state() or {}
-                except Exception:
-                    state = {}
-                key_map, id_map = _build_show_title_maps(state)
-                movie_key_map, movie_id_map = _build_movie_title_maps(state)
+                state_for_maps = state or {}
+                key_map, id_map = _build_show_title_maps(state_for_maps)
+                movie_key_map, movie_id_map = _build_movie_title_maps(state_for_maps)
                 _extend_show_title_maps_from_cw_state(id_map)
                 _extend_movie_title_maps_from_cw_state(movie_key_map, movie_id_map)
 
@@ -1481,111 +1486,17 @@ def register_insights(app: FastAPI) -> None:
 
         rows: list[dict[str, Any]] = []
         try:
-            files: list[Path] = []
-            if REPORT_DIR is not None:
-                try:
-                    history_limit = max(0, int(history))
-                    files = sorted(
-                        REPORT_DIR.glob("sync-*.json"),
-                        key=lambda p: p.stat().st_mtime,
-                        reverse=True,
-                    )[:history_limit] if history_limit > 0 else []
-                except Exception as e:
-                    _append_log("INSIGHTS", f"[!] report glob failed: {e}")
-                    files = []
+            history_limit = max(0, int(history))
+            if history_limit > 0:
+                from cw_platform.local_db.sync_reports import base_path_from_report_dir, list_reports
 
-            for p in files:
-                try:
-                    d = json.loads(p.read_text(encoding="utf-8"))
-                    if not isinstance(d, dict):
-                        continue
-
-                    lanes_raw = d.get("features")
-                    lanes_in: dict[str, Any] = lanes_raw if isinstance(lanes_raw, dict) else {}
-                    lanes: dict[str, dict[str, Any]] = {}
-                    for name in feature_keys:
-                        lane_val = lanes_in.get(name)
-                        lanes[name] = lane_val if isinstance(lane_val, dict) else _zero_lane()
-
-                    since = _safe_parse_epoch(d.get("raw_started_ts") or d.get("started_at"))
-                    until = _safe_parse_epoch(d.get("finished_at")) or int(p.stat().st_mtime)
-
-                    stats_feats, stats_enabled = _safe_compute_lanes(since, until)
-                    for name in feature_keys:
-                        lane_in = lanes_in.get(name)
-                        if not isinstance(lane_in, dict):
-                            lanes[name] = stats_feats.get(name) or _zero_lane()
-
-                    enabled_raw = d.get("features_enabled") or d.get("enabled") or {}
-                    enabled: dict[str, bool] = (
-                        enabled_raw if isinstance(enabled_raw, dict) else dict(stats_enabled)
-                    )
-
-                    provider_posts = {
-                        str(k[:-5]).strip().lower(): v
-                        for k, v in d.items()
-                        if isinstance(k, str) and k.endswith("_post")
-                    }
-                    pc = d.get("provider_counts") or d.get("provider_counts_post") or d.get("provider_counts_pre")
-                    if isinstance(pc, dict):
-                        for k0, v0 in pc.items():
-                            kk = str(k0 or "").strip().lower()
-                            if kk and kk not in provider_posts:
-                                provider_posts[kk] = v0
-                    plex_post = d.get("plex_post")
-                    simkl_post = d.get("simkl_post")
-                    trakt_post = d.get("trakt_post")
-                    tmdb_post = d.get("tmdb_post")
-                    jellyfin_post = d.get("jellyfin_post")
-                    emby_post = d.get("emby_post")
-                    mdblist_post = d.get("mdblist_post")
-                    crosswatch_post = d.get("crosswatch_post")
-
-                    if plex_post is None:
-                        plex_post = provider_posts.get("plex")
-                    if simkl_post is None:
-                        simkl_post = provider_posts.get("simkl")
-                    if trakt_post is None:
-                        trakt_post = provider_posts.get("trakt")
-                    if tmdb_post is None:
-                        tmdb_post = provider_posts.get("tmdb")
-                    if jellyfin_post is None:
-                        jellyfin_post = provider_posts.get("jellyfin")
-                    if emby_post is None:
-                        emby_post = provider_posts.get("emby")
-                    if mdblist_post is None:
-                        mdblist_post = provider_posts.get("mdblist")
-                    if crosswatch_post is None:
-                        crosswatch_post = provider_posts.get("crosswatch")
-
-
-                    rows.append(
-                        {
-                            "started_at": d.get("started_at"),
-                            "finished_at": d.get("finished_at"),
-                            "duration_sec": d.get("duration_sec"),
-                            "result": d.get("result") or "",
-                            "exit_code": d.get("exit_code"),
-                            "added": _as_int(d.get("added_last")),
-                            "removed": _as_int(d.get("removed_last")),
-                            "features": lanes,
-                            "features_enabled": enabled,
-                            "updated_total": _as_int(d.get("updated_last")),
-                            "provider_posts": provider_posts,
-                            "plex_post": plex_post,
-                            "simkl_post": simkl_post,
-                            "trakt_post": trakt_post,
-                            "tmdb_post": tmdb_post,
-                            "jellyfin_post": jellyfin_post,
-                            "emby_post": emby_post,
-                            "mdblist_post": mdblist_post,
-                            "crosswatch_post": crosswatch_post,
-                        }
-                    )
-                except Exception as e:
-                    _append_log("INSIGHTS", f"[!] report parse failed {p.name}: {e}")
+                rows = list_reports(
+                    base_path_from_report_dir(REPORT_DIR),
+                    limit=history_limit,
+                    feature_keys=feature_keys,
+                )
         except Exception as e:
-            _append_log("INSIGHTS", f"[!] report scan failed: {e}")
+            _append_log("INSIGHTS", f"[!] report load failed: {e}")
 
         wall_raw = _load_wall_snapshot()
         wall: list[Any]
@@ -1594,19 +1505,8 @@ def register_insights(app: FastAPI) -> None:
         else:
             wall = []
 
-        state: dict[str, Any] | None = None
-        if not wall and callable(_get_orchestrator):
-            try:
-                orc = _get_orchestrator()
-                files_obj = getattr(orc, "files", None)
-                if files_obj is not None and hasattr(files_obj, "load_state"):
-                    state_candidate = files_obj.load_state()
-                    if isinstance(state_candidate, dict):
-                        state = state_candidate
-                        wall = list(state.get("wall") or [])
-            except Exception as e:
-                _append_log("SYNC", f"[!] insights: orchestrator init failed: {e}")
-                wall = []
+        if not wall and state:
+            wall = list(state.get("wall") or [])
 
         cfg = load_config() or {}
         api_key = str(((cfg.get("tmdb") or {}).get("api_key") or "")).strip()
@@ -1746,17 +1646,6 @@ def register_insights(app: FastAPI) -> None:
             "days": round(total_min / 1440, 1),
             "method": "tmdb" if tmdb_hits and not tmdb_misses else ("mixed" if tmdb_hits else "estimate"),
         }
-
-        if state is None and callable(_get_orchestrator):
-            try:
-                orc = _get_orchestrator()
-                files_obj = getattr(orc, "files", None)
-                if files_obj is not None and hasattr(files_obj, "load_state"):
-                    st2 = files_obj.load_state()
-                    if isinstance(st2, dict):
-                        state = st2
-            except Exception:
-                state = None
 
         prov_block: dict[str, Any] = (state or {}).get("providers") or {}
         providers_set: set[str] = set(sync_provider_names(upper=False))

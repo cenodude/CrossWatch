@@ -605,7 +605,7 @@ DEFAULT_CFG: dict[str, Any] = {
         # Execution behavior:
         "verify_after_write": False,                    # When supported, re-check destination after writes
         "dry_run": False,                               # Plan and log only; do not perform writes
-        "write_state_json": True,                       # Write state.json baselines/stats; leave on true
+        "write_state_json": True,                       # Write sync state baselines/stats; leave on true
         "drop_guard": False,                            # Guard against sudden inventory shrink (protects from bad/suspect snapshots)
         "allow_mass_delete": True,                      # If False, block large delete plans (e.g., >~10% of baseline)
         "tombstone_ttl_days": 1,                        # How long “observed deletes” (tombstones) stay valid

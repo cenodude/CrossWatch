@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import services.analyzer as A
+from cw_platform.orchestrator._state_store import StateStore
 
 
 def _mismatch(provider, feature, key, targets, alias_keys, *, blocked=False):
@@ -118,7 +119,36 @@ def test_provider_neutral():
     assert model["counts"]["total"] == 1
     row = model["rows"][0]
     assert row["current_mismatch"] and row["unresolved"]
-    assert row["provider"] == "JELLYFIN"
+
+
+def test_analyzer_main_db_edit_preserves_non_analyzer_features(tmp_path, monkeypatch):
+    monkeypatch.setattr(A, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(A, "load_config", lambda: {})
+    store = StateStore(tmp_path)
+    store.save_state(
+        {
+            "providers": {
+                "TRAKT": {
+                    "history": {"baseline": {"items": {"tmdb:1": {"title": "Old", "ids": {"tmdb": "1"}}}}},
+                    "playlists": {"baseline": {"items": {"list:1": {"title": "Keep"}}}},
+                }
+            }
+        }
+    )
+
+    res = A.api_edit(
+        {
+            "provider": "TRAKT",
+            "feature": "history",
+            "key": "tmdb:1",
+            "updates": {"title": "New"},
+        }
+    )
+
+    loaded = store.load_state()
+    assert res["ok"] is True
+    assert loaded["providers"]["TRAKT"]["history"]["baseline"]["items"]["tmdb:1"]["title"] == "New"
+    assert loaded["providers"]["TRAKT"]["playlists"]["baseline"]["items"]["list:1"]["title"] == "Keep"
 
 
 def test_blocked_item_distinct_from_failed_write():

@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
-import json
 import math
 import re
 import threading
@@ -186,25 +185,18 @@ def _live_rank(stream: Mapping[str, Any]) -> tuple[int, int]:
     return (rank, -updated)
 
 
-def _currently_watching_state_file() -> Any:
+def _currently_watching_state() -> Any:
     try:
-        from providers.scrobble.currently_watching import state_file
+        from providers.scrobble.currently_watching import load_state
 
-        return state_file()
+        return load_state()
     except Exception:
         return None
 
 
 def _load_live_streams(now: int | None = None) -> list[dict[str, Any]]:
-    path = _currently_watching_state_file()
-    if path is None:
-        return []
-    try:
-        if not path.exists():
-            return []
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw) if raw.strip() else None
-    except Exception:
+    data = _currently_watching_state()
+    if data is None:
         return []
     if not isinstance(data, Mapping) or int(data.get("v") or 0) != 2 or not isinstance(data.get("streams"), Mapping):
         return []

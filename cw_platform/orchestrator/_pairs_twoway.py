@@ -9,7 +9,7 @@ import os
 import re
 import datetime as _dt
 
-from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, is_remove_retry_reason, resolve_baseline_writes, select_baseline_keys
+from ._pairs_oneway import _emit_item_failures, _emit_item_resolutions, compute_effective_add, compute_effective_remove, is_remove_retry_reason, load_feature_state, resolve_baseline_writes, select_baseline_keys
 
 try:
     from ._pairs_oneway import (
@@ -431,11 +431,18 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     B_cur = snaps.get(b) or {}
 
 
-    prev_state = getattr(ctx, "_stable_prev_state", None)
-    if not prev_state:
-        prev_state = ctx.state_store.load_state() or {}
+    prev_state_cache = getattr(ctx, "_stable_prev_state_by_feature", None)
+    if not isinstance(prev_state_cache, dict):
+        prev_state_cache = {}
         try:
-            setattr(ctx, "_stable_prev_state", prev_state)
+            setattr(ctx, "_stable_prev_state_by_feature", prev_state_cache)
+        except Exception:
+            pass
+    prev_state = prev_state_cache.get(feature)
+    if not prev_state:
+        prev_state = load_feature_state(ctx.state_store, feature)
+        try:
+            prev_state_cache[feature] = prev_state
         except Exception:
             pass
 
@@ -2178,8 +2185,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if not getattr(ctx, "write_state_json", True):
             raise RuntimeError("legacy state persistence disabled")
 
-        st = ctx.state_store.load_state() or {}
-        provs_block = st.setdefault("providers", {})
+        provs_block: dict[str, Any] = {}
 
         def _ensure_pf(pmap, prov, inst, feat):
             pprov = pmap.setdefault(prov, {})
@@ -2306,8 +2312,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         _commit_checkpoint(provs_block, a, src_inst, feature, now_cp_A)
         _commit_checkpoint(provs_block, b, dst_inst, feature, now_cp_B)
 
-        st["last_sync_epoch"] = int(_t.time())
-        ctx.state_store.save_state(st)
+        last_sync_epoch = int(_t.time())
+        blocks = {
+            (str(a).upper(), str(src_inst or "default"), str(feature).lower()): _ensure_pf(provs_block, a, src_inst, feature),
+            (str(b).upper(), str(dst_inst or "default"), str(feature).lower()): _ensure_pf(provs_block, b, dst_inst, feature),
+        }
+        ctx.state_store.save_feature_blocks(blocks, last_sync_epoch=last_sync_epoch)
     except Exception:
         pass
 

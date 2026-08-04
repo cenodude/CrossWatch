@@ -12,6 +12,18 @@ import datetime as _dt
 from ._progress_completion import fcfg_for_progress_target
 
 
+def load_feature_state(state_store: Any, feature: str) -> dict[str, Any]:
+    load_features = getattr(state_store, "load_state_features", None)
+    if callable(load_features):
+        state = load_features({feature})
+        return state if isinstance(state, dict) else {}
+    load_all = getattr(state_store, "load_state", None)
+    if callable(load_all):
+        state = load_all()
+        return state if isinstance(state, dict) else {}
+    return {}
+
+
 def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res) -> None:
     try:
         prom = set((bb_res or {}).get("promoted_keys") or [])
@@ -977,7 +989,7 @@ def run_one_way_feature(
     src_cur = snaps.get(src) or {}
     dst_cur = snaps.get(dst) or {}
 
-    prev_state = ctx.state_store.load_state() or {}
+    prev_state = load_feature_state(ctx.state_store, feature)
     manual_adds, manual_blocks = _manual_policy(prev_state, src, feature)
     prev_provs = (prev_state.get("providers") or {})
 
@@ -1866,8 +1878,7 @@ def run_one_way_feature(
 
     if getattr(ctx, "write_state_json", True):
         try:
-            st = ctx.state_store.load_state() or {}
-            provs_block = st.setdefault("providers", {})
+            provs_block: dict[str, Any] = {}
 
             def _ensure_pf(pmap, prov, inst, feat):
                 pprov = pmap.setdefault(prov, {})
@@ -1964,8 +1975,12 @@ def run_one_way_feature(
             _commit_checkpoint(provs_block, dst, dst_inst, feature, now_cp_dst)
 
             import time as _t
-            st["last_sync_epoch"] = int(_t.time())
-            ctx.state_store.save_state(st)
+            last_sync_epoch = int(_t.time())
+            blocks = {
+                (str(src).upper(), str(src_inst or "default"), str(feature).lower()): _ensure_pf(provs_block, src, src_inst, feature),
+                (str(dst).upper(), str(dst_inst or "default"), str(feature).lower()): _ensure_pf(provs_block, dst, dst_inst, feature),
+            }
+            ctx.state_store.save_feature_blocks(blocks, last_sync_epoch=last_sync_epoch)
         except Exception:
             pass
 

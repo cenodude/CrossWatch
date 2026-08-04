@@ -5,12 +5,9 @@ from __future__ import annotations
 
 import csv
 import io
-import json
-import os
 import re
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -20,13 +17,28 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.provider_instances import sanitize_instance_label
 
 router = APIRouter(prefix="/api", tags=["export"])
-STATE_PATH = Path(os.environ.get("CW_STATE_PATH", str((CONFIG_DIR / "state.json").resolve())))
 
 
-def _load_state() -> dict[str, Any]:
-    if not STATE_PATH.exists():
-        return {"providers": {}}
-    return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+_EXPORT_STATE_FEATURES = {"watchlist", "history", "ratings"}
+
+
+def _state_features_for_export(feature: str | None = None) -> set[str]:
+    feat = str(feature or "").strip().lower()
+    if feat == "combined":
+        return {"history", "ratings"}
+    if feat in _EXPORT_STATE_FEATURES:
+        return {feat}
+    return set(_EXPORT_STATE_FEATURES)
+
+
+def _load_state(features: set[str] | None = None) -> dict[str, Any]:
+    try:
+        from cw_platform.orchestrator._state_store import StateStore
+
+        state = StateStore(CONFIG_DIR).load_state_features(features or _EXPORT_STATE_FEATURES)
+    except Exception:
+        state = {}
+    return state if isinstance(state, dict) else {"providers": {}}
 
 
 def _providers_in_state(s: dict[str, Any]) -> list[str]:
@@ -865,7 +877,7 @@ _BUILDERS: dict[str, Callable[[str, str, dict[str, Any], list[str], str | None],
 
 @router.get("/export/options", response_class=JSONResponse)
 def api_export_options() -> dict[str, Any]:
-    s = _load_state()
+    s = _load_state(_EXPORT_STATE_FEATURES)
     cfg = _load_config_safe()
     provs = _providers_in_state(s)
     features = ["watchlist", "history", "ratings", "combined"]
@@ -937,7 +949,8 @@ def api_export_sample(
     limit: int = Query(25, ge=1, le=250),
     q: str = Query("", description="case-insensitive multi-token contains"),
 ) -> dict[str, Any]:
-    s = _load_state()
+    feature = feature.lower().strip()
+    s = _load_state(_state_features_for_export(feature))
     provider = (provider or "").upper().strip()
     inst = (provider_instance or "all").strip() or "all"
     fmt = format.lower().strip()
@@ -1000,10 +1013,10 @@ def api_export_file(
     q: str = Query("", description="optional search filter (server-side)"),
     ids: str = Query("", description="optional CSV of keys to include (overrides q)"),
 ) -> Response:
-    s = _load_state()
     provider_in = (provider or "").upper().strip()
     provider_eff = provider_in or "TRAKT"
     feature = feature.lower().strip()
+    s = _load_state(_state_features_for_export(feature))
     fmt = format.lower().strip()
     inst = (provider_instance or "all").strip() or "all"
     media = _parse_media_types(media_types)

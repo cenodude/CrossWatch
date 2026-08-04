@@ -100,7 +100,9 @@
       year: String(row.year || ""),
       imdb: "",
       tmdb: "",
+      tvdb: "",
       trakt: "",
+      simkl: "",
       mal: "",
       anilist: "",
       raw: JSON.parse(JSON.stringify(row.raw || {})),
@@ -114,7 +116,9 @@
       yearIn: stub(),
       imdbIn: stub(),
       tmdbIn: stub(),
+      tvdbIn: stub(),
       traktIn: stub(),
+      simklIn: stub(),
       typeBtn: document.createElement("button"),
       onApplied: applied => {
         const key = String(applied.key || "").trim();
@@ -532,6 +536,18 @@
                       row.trakt = trVal;
                       row.raw.ids.trakt = ids.trakt;
                       if (refs.traktIn) refs.traktIn.value = trVal;
+                    }
+                    if (ids.tvdb) {
+                      const tvdbVal = String(ids.tvdb);
+                      row.tvdb = tvdbVal;
+                      row.raw.ids.tvdb = ids.tvdb;
+                      if (refs.tvdbIn) refs.tvdbIn.value = tvdbVal;
+                    }
+                    if (ids.simkl) {
+                      const simklVal = String(ids.simkl);
+                      row.simkl = simklVal;
+                      row.raw.ids.simkl = ids.simkl;
+                      if (refs.simklIn) refs.simklIn.value = simklVal;
                     }
                   }
                 } catch (err) {

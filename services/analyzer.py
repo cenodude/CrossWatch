@@ -20,14 +20,15 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_message
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
-STATE_PATH = CONFIG_DIR / "state.json"
-MANUAL_STATE_PATH = CONFIG_DIR / "state.manual.json"
 CWS_DIR = CONFIG_DIR / ".cw_state"
+_MANUAL_POLICY_REF = "manual policy"
+_ANALYZER_FEATURES = ("history", "watchlist", "ratings", "progress")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROVIDERS_SYNC_DIR = REPO_ROOT / "providers" / "sync"
 ORCH_ROOT_DIR = REPO_ROOT / "cw_platform"
@@ -366,16 +367,75 @@ def _pick_existing(paths: list[Path]) -> Path | None:
     return None
 
 
-def _load_state_at(path: Path) -> dict[str, Any]:
+def _main_state_db_exists() -> bool:
     try:
-        return json.loads(_resolve_analyzer_path(path).read_text(encoding="utf-8"))
+        from cw_platform.local_db import crosswatch_db_path
+
+        return crosswatch_db_path(CONFIG_DIR).exists()
+    except Exception:
+        return False
+
+
+def _feature_set(features: Iterable[str] | None = None) -> set[str]:
+    wanted = {str(feature or "").strip().lower() for feature in (features or _ANALYZER_FEATURES)}
+    return {feature for feature in wanted if feature in _ANALYZER_FEATURES}
+
+
+def _load_main_state(features: Iterable[str] | None = None) -> dict[str, Any]:
+    try:
+        from cw_platform.orchestrator._state_store import StateStore
+
+        state = StateStore(CONFIG_DIR).load_state_features(_feature_set(features))
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        raise HTTPException(500, "Failed to load state")
+
+
+def _feature_block(state: dict[str, Any], provider: str, feature: str) -> tuple[str, str, str, dict[str, Any]] | None:
+    providers = state.get("providers") if isinstance(state, dict) else None
+    if not isinstance(providers, dict):
+        return None
+    base, inst, _ = _split_prov_token_ex(provider)
+    node = providers.get(base)
+    if not isinstance(node, dict):
+        return None
+    target = node
+    if inst != _DEFAULT_INSTANCE:
+        insts = node.get("instances")
+        if not isinstance(insts, dict) or not isinstance(insts.get(inst), dict):
+            return None
+        target = insts.get(inst) or {}
+    feat = str(feature or "").strip().lower()
+    block = target.get(feat)
+    if not isinstance(block, dict):
+        return None
+    return base, inst, feat, block
+
+
+def _save_main_feature(state: dict[str, Any], provider: str, feature: str) -> None:
+    try:
+        from cw_platform.orchestrator._state_store import StateStore
+
+        block = _feature_block(state, provider, feature)
+        if block is None:
+            raise HTTPException(500, "Invalid analyzer state feature")
+        base, inst, feat, feat_block = block
+        StateStore(CONFIG_DIR).save_feature_blocks({(base, inst, feat): feat_block})
+    except Exception:
+        raise HTTPException(500, "Failed to save state")
+
+
+def _load_state_at(path: Path) -> dict[str, Any]:
+    path_resolved = _resolve_analyzer_path(path)
+    try:
+        return json.loads(path_resolved.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise HTTPException(404, f"{path.name} not found")
     except Exception:
         raise HTTPException(500, f"Failed to parse {path.name}")
 
 
-def _load_state_handles(pairs_raw: str | None) -> list[dict[str, Any]]:
+def _load_state_handles(pairs_raw: str | None, features: Iterable[str] | None = None) -> list[dict[str, Any]]:
     pairs = _parse_pairs_raw(pairs_raw)
     handles: list[dict[str, Any]] = []
     if pairs:
@@ -392,13 +452,15 @@ def _load_state_handles(pairs_raw: str | None) -> list[dict[str, Any]]:
         if handles:
             return handles
 
-    if STATE_PATH.exists():
-        return [{"pair": None, "safe": None, "path": STATE_PATH, "state": _load_state_at(STATE_PATH)}]
+    state = _load_main_state(features)
+    if state.get("providers") or _main_state_db_exists():
+        return [{"pair": None, "safe": None, "main": True, "state": state}]
     raise HTTPException(404, "No analyzer state found")
 
 
-def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
+def _merge_states(handles: list[dict[str, Any]], features: Iterable[str] | None = None) -> dict[str, Any]:
     merged: dict[str, Any] = {"providers": {}}
+    wanted = _feature_set(features)
 
     def merge_feat(dst_blk: dict[str, Any], src_blk: dict[str, Any], feat: str) -> None:
         items = (((src_blk.get(feat) or {}).get("baseline") or {}).get("items") or {})
@@ -442,7 +504,7 @@ def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
             if not isinstance(mpv, dict):
                 continue
 
-            for feat in ("history", "watchlist", "ratings", "progress"):
+            for feat in wanted:
                 merge_feat(mpv, pv, feat)
 
             insts = pv.get("instances")
@@ -461,14 +523,14 @@ def _merge_states(handles: list[dict[str, Any]]) -> dict[str, Any]:
                 if not isinstance(dib, dict):
                     dib = {}
                     minst[str(inst_id)] = dib
-                for feat in ("history", "watchlist", "ratings", "progress"):
+                for feat in wanted:
                     merge_feat(dib, blk, feat)
 
     return merged
 
-def _load_state(pairs_raw: str | None = None) -> dict[str, Any]:
-    handles = _load_state_handles(pairs_raw)
-    return _merge_states(handles)
+def _load_state(pairs_raw: str | None = None, features: Iterable[str] | None = None) -> dict[str, Any]:
+    handles = _load_state_handles(pairs_raw, features)
+    return _merge_states(handles, features)
 
 
 def _save_state_at(path: Path, s: dict[str, Any]) -> None:
@@ -479,15 +541,34 @@ def _save_state_at(path: Path, s: dict[str, Any]) -> None:
         tmp.replace(path)
 
 
+def _save_state_handle(
+    handle: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    provider: str | None = None,
+    feature: str | None = None,
+) -> None:
+    if handle.get("main"):
+        if provider and feature:
+            _save_main_feature(state, provider, feature)
+            return
+        raise HTTPException(500, "Analyzer main DB writes require a provider and feature")
+        return
+    path = handle.get("path")
+    if not isinstance(path, Path):
+        raise HTTPException(500, "Invalid analyzer state handle")
+    _save_state_at(path, state)
+
+
 def _save_state(s: dict[str, Any]) -> None:
-    _save_state_at(STATE_PATH, s)
+    raise HTTPException(500, "Analyzer full-state DB writes are disabled")
 
 
 def _load_manual_state() -> dict[str, Any]:
     try:
-        return json.loads(MANUAL_STATE_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
+        from cw_platform.local_db import manual_policy as sqlite_manual_policy
+
+        return sqlite_manual_policy.load_policy(CONFIG_DIR)
     except Exception:
         return {}
 
@@ -758,6 +839,8 @@ def _read_cw_state(allowed_scopes: set[str] | None = None) -> dict[str, Any]:
 def _iter_analyzer_artifacts() -> Iterable[Path]:
     if CONFIG_DIR.exists():
         for p in sorted(CONFIG_DIR.glob("*.json")):
+            if p.name in DB_MANAGED_ARTIFACTS:
+                continue
             yield p
         for p in sorted(CONFIG_DIR.glob("*.json.tmp")):
             yield p
@@ -860,22 +943,6 @@ def _validate_tombstones_document(path: Path, data: Any) -> list[dict[str, Any]]
     return probs
 
 
-def _validate_watchlist_hide_document(path: Path, data: Any) -> list[dict[str, Any]]:
-    if isinstance(data, (list, dict)):
-        return []
-    return [_artifact_problem("warn", "artifact_schema_mismatch", path, "watchlist_hide.json should be a list or object.")]
-
-
-def _validate_last_sync_document(path: Path, data: Any) -> list[dict[str, Any]]:
-    probs: list[dict[str, Any]] = []
-    if not isinstance(data, dict):
-        return [_artifact_problem("warn", "artifact_schema_mismatch", path, "last_sync.json should be an object.")]
-    timeline = data.get("timeline")
-    if timeline is not None and not isinstance(timeline, dict):
-        probs.append(_artifact_problem("warn", "artifact_schema_mismatch", path, "last_sync.timeline should be an object."))
-    return probs
-
-
 def _validate_generic_artifact(path: Path, data: Any) -> list[dict[str, Any]]:
     if isinstance(data, (dict, list)):
         return []
@@ -886,16 +953,12 @@ def _artifact_schema_problems(path: Path, data: Any) -> list[dict[str, Any]]:
     name = path.name.lower()
     if name.endswith(".json.tmp"):
         return []
-    if name == "state.manual.json":
+    if name in DB_MANAGED_ARTIFACTS:
         return _validate_generic_artifact(path, data)
-    if name == "state.json" or (name.startswith("state.") and name.endswith(".json")):
+    if name.startswith("state.") and name.endswith(".json"):
         return _validate_state_document(path, data)
     if name == "tombstones.json":
         return _validate_tombstones_document(path, data)
-    if name == "last_sync.json":
-        return _validate_last_sync_document(path, data)
-    if name == "watchlist_hide.json":
-        return _validate_watchlist_hide_document(path, data)
     if name == "ratings_changes.json":
         return _validate_generic_artifact(path, data)
     if ".unresolved.pending." in name or name.endswith(".unresolved.pending.json"):
@@ -925,7 +988,7 @@ def _artifact_diagnostics() -> list[dict[str, Any]]:
 
 def _state_epoch() -> int | None:
     try:
-        raw = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        raw = _load_main_state()
         if isinstance(raw, dict):
             value = raw.get("last_sync_epoch")
             if value is not None:
@@ -986,8 +1049,6 @@ def _cw_state_meta(path: Path) -> dict[str, Any]:
     base = name[:-5]
     if lower.startswith("state."):
         return {"name": name, "kind": "pair_state", "scope": base[6:]}
-    if lower == "currently_watching.json":
-        return {"name": name, "kind": "currently_watching"}
     if lower == "tombstones.json":
         return {"name": name, "kind": "tombstones"}
     for rx in _CW_STATE_PARSE_PATTERNS:
@@ -1453,7 +1514,7 @@ def _cw_state_pair_state_problems(path: Path, data: Any, meta: Mapping[str, Any]
 def _cw_state_semantic_diagnostics() -> list[dict[str, Any]]:
     probs: list[dict[str, Any]] = []
     try:
-        state = _load_state_at(STATE_PATH) if STATE_PATH.exists() else {}
+        state = _load_main_state()
     except Exception:
         state = {}
     now_epoch = _state_epoch()
@@ -3262,7 +3323,7 @@ def _missing_peer_hints(
     hints: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str, str]] = set()
     if blocked:
-        hints.append({"kind": "blocked_manual", "message": f"Blocked by manual list ({MANUAL_STATE_PATH}).", "source": str(MANUAL_STATE_PATH)})
+        hints.append({"kind": "blocked_manual", "message": f"Blocked by {_MANUAL_POLICY_REF}.", "source": _MANUAL_POLICY_REF})
     for dst in missing_targets:
         dst_norm = _norm_prov_token(dst)
         dst_base = _provider_base(dst_norm)
@@ -3372,7 +3433,7 @@ def _problems(
                     "episode": v.get("episode"),
                     "ids": v.get("ids") or {},
                     "targets": missing_targets,
-                    **({"manual_ref": str(MANUAL_STATE_PATH)} if blocked else {}),
+                    **({"manual_ref": _MANUAL_POLICY_REF} if blocked else {}),
                 }
                 if tracker_to_media and not blocked:
                     prob["sync_context"] = "tracker_to_media_server"
@@ -3392,7 +3453,7 @@ def _problems(
                     details = _missing_peer_show_hints(feat, v, missing_targets, analysis.history_show_index)
                     hint_seconds += time.perf_counter() - _th
                     if blocked:
-                        details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + (details or []))
+                        details = ([{"target": "ALL", "feature": feat, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + (details or []))
                     if details:
                         prob["target_show_info"] = details
                 probs.append(prob)
@@ -3764,11 +3825,16 @@ def _path_stamp(path: Path) -> tuple[str, int, int]:
 
 def _state_signature(pairs_raw: str | None) -> tuple[Any, ...]:
     artifacts = sorted(CWS_DIR.glob("*.json")) if CWS_DIR.exists() else []
+    try:
+        from cw_platform.local_db import crosswatch_db_path
+
+        db_stamp = _path_stamp(crosswatch_db_path(CONFIG_DIR))
+    except Exception:
+        db_stamp = ("local-db", 0, 0)
     return (
         tuple(_parse_pairs_raw(pairs_raw)),
         _path_stamp(CONFIG_DIR / "config.json"),
-        _path_stamp(STATE_PATH),
-        _path_stamp(MANUAL_STATE_PATH),
+        db_stamp,
         tuple(_path_stamp(path) for path in artifacts),
     )
 
@@ -3794,8 +3860,8 @@ def _load_analysis_state(pairs_raw: str | None) -> tuple[dict[str, Any], _Analys
         return state, context, allowed, selected_cfg, {"state_load": 0.0, "index_build": 0.0}
 
     t0 = time.perf_counter()
-    handles = _load_state_handles(pairs_raw)
-    state = _merge_states(handles)
+    handles = _load_state_handles(pairs_raw, _ANALYZER_FEATURES)
+    state = _merge_states(handles, _ANALYZER_FEATURES)
     t1 = time.perf_counter()
     selected_cfg = _config_for_pairs(_cfg(), pairs_raw)
     context = _analysis_context(state, selected_cfg)
@@ -3935,7 +4001,7 @@ def _detail_for_item(pairs_raw: str | None, provider: str, feature: str, key: st
     hints = _missing_peer_hints(_unresolved_index(allowed), feat_key, alias_keys, missing_targets, blocked)
     details = _missing_peer_show_hints(feat_key, it, missing_targets, context.history_show_index)
     if blocked:
-        details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by manual list ({MANUAL_STATE_PATH})."}] + details)
+        details = ([{"target": "ALL", "feature": feat_key, "message": f"Blocked by {_MANUAL_POLICY_REF}."}] + details)
     return {"targets": missing_targets, "hints": hints, "target_show_info": details}
 
 @router.get("/analyzer/state", response_class=JSONResponse)
@@ -3998,7 +4064,7 @@ def api_detail(provider: str, feature: str, key: str, pairs: str | None = None) 
 
 @router.get("/analyzer/ratings-audit", response_class=JSONResponse)
 def api_ratings_audit(pairs: str | None = None) -> dict[str, Any]:
-    s = _load_state(pairs)
+    s = _load_state(pairs, {"ratings"})
     return _ratings_audit(s)
 
 @router.get("/analyzer/cw-state", response_class=JSONResponse)
@@ -4017,15 +4083,17 @@ def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, An
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
 
-    handles = _load_state_handles(pairs)
+    feature = str(payload["feature"]).strip().lower()
+    handles = _load_state_handles(pairs, _ANALYZER_FEATURES)
     new_key = str(payload["key"])
     touched = 0
 
     for h in handles:
         s = h["state"]
-        b, it = _find_item(s, payload["provider"], payload["feature"], payload["key"])
-        if b is None or it is None:
+        hits = _find_items(s, payload["provider"], feature, payload["key"])
+        if not hits:
             continue
+        provider_token, b, it = hits[0]
 
         ids = dict(it.get("ids") or {})
         for k_any, v in (payload.get("ids") or {}).items():
@@ -4058,7 +4126,7 @@ def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, An
             s,
             pairs_map,
             payload["provider"],
-            payload["feature"],
+            feature,
             new_key,
             it,
             idx,
@@ -4067,7 +4135,7 @@ def api_patch(payload: dict[str, Any], pairs: str | None = None) -> dict[str, An
             cfg,
         )
 
-        _save_state_at(h["path"], s)
+        _save_state_handle(h, s, provider=provider_token, feature=feature)
         touched += 1
 
     if touched == 0:
@@ -4079,8 +4147,9 @@ def api_suggest(payload: dict[str, Any], pairs: str | None = None) -> dict[str, 
     for f in ("provider", "feature", "key"):
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
-    s = _load_state(pairs)
-    return _suggest(s, payload["provider"], payload["feature"], payload["key"])
+    feature = str(payload["feature"]).strip().lower()
+    s = _load_state(pairs, {feature})
+    return _suggest(s, payload["provider"], feature, payload["key"])
 
 
 @router.post("/analyzer/fix", response_class=JSONResponse)
@@ -4089,17 +4158,22 @@ def api_fix(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any]
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
 
-    handles = _load_state_handles(pairs)
+    feature = str(payload["feature"]).strip().lower()
+    handles = _load_state_handles(pairs, _ANALYZER_FEATURES)
     touched = 0
     out: dict[str, Any] | None = None
 
     for h in handles:
         s = h["state"]
+        hits = _find_items(s, payload["provider"], feature, payload["key"])
+        if not hits:
+            continue
+        provider_token = hits[0][0]
         try:
             r = _apply_fix(s, payload)
         except HTTPException:
             continue
-        _save_state_at(h["path"], s)
+        _save_state_handle(h, s, provider=provider_token, feature=feature)
         touched += 1
         if out is None:
             out = r
@@ -4114,17 +4188,18 @@ def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
 
-    handles = _load_state_handles(pairs)
+    feature = str(payload["feature"]).strip().lower()
+    handles = _load_state_handles(pairs, _ANALYZER_FEATURES)
     new_key = str(payload["key"])
     touched = 0
 
     for h in handles:
         s = h["state"]
-        b = _bucket(s, payload["provider"], payload["feature"])
-        if not b or payload["key"] not in b:
+        hits = _find_items(s, payload["provider"], feature, payload["key"])
+        if not hits:
             continue
+        provider_token, b, it = hits[0]
 
-        it = b[payload["key"]]
         up = payload["updates"]
 
         if "title" in up:
@@ -4149,7 +4224,7 @@ def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any
             s,
             pairs_map,
             payload["provider"],
-            payload["feature"],
+            feature,
             new_key,
             it,
             idx,
@@ -4157,7 +4232,7 @@ def api_edit(payload: dict[str, Any], pairs: str | None = None) -> dict[str, Any
             pair_types,
             cfg,
         )
-        _save_state_at(h["path"], s)
+        _save_state_handle(h, s, provider=provider_token, feature=feature)
         touched += 1
 
     if touched == 0:
@@ -4170,16 +4245,18 @@ def api_delete(payload: dict[str, Any], pairs: str | None = None) -> dict[str, A
         if f not in payload:
             raise HTTPException(400, f"Missing {f}")
 
-    handles = _load_state_handles(pairs)
+    feature = str(payload["feature"]).strip().lower()
+    handles = _load_state_handles(pairs, {feature})
     touched = 0
 
     for h in handles:
         s = h["state"]
-        b = _bucket(s, payload["provider"], payload["feature"])
-        if not b or payload["key"] not in b:
+        hits = _find_items(s, payload["provider"], feature, payload["key"])
+        if not hits:
             continue
+        provider_token, b, _it = hits[0]
         b.pop(payload["key"], None)
-        _save_state_at(h["path"], s)
+        _save_state_handle(h, s, provider=provider_token, feature=feature)
         touched += 1
 
     if touched == 0:

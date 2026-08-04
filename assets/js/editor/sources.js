@@ -230,7 +230,7 @@
     if (!stateHint) return;
     if (mode === "state") {
       stateHint.innerHTML =
-        "<strong>No state.json found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
+        "<strong>No sync state found.</strong> Run a CrossWatch sync once to generate it. After that, your manual adds and blocks will show up here.";
       stateHint.style.display = "block";
       return;
     }
