@@ -498,6 +498,81 @@ def test_scheduled_sync_thread_dispatches_start_and_success_webhooks(monkeypatch
     assert calls[1][2]["added_last"] == 2
 
 
+def test_scheduled_sync_thread_dispatches_failure_webhook_on_unresolved(monkeypatch, tmp_path) -> None:
+    import api.syncAPI as sync
+    import sys
+
+    log_buffers: dict[str, list[str]] = {"SYNC": []}
+
+    def append_log(kind: str, message: str) -> None:
+        log_buffers.setdefault(kind, []).append(str(message))
+
+    fake_crosswatch = types.SimpleNamespace(
+        LOG_BUFFERS=log_buffers,
+        RUNNING_PROCS={"SYNC": object()},
+        SYNC_PROC_LOCK=threading.Lock(),
+        STATS=types.SimpleNamespace(refresh_from_state=lambda _state: None, record_summary=lambda *_args: None),
+        REPORT_DIR=tmp_path,
+        strip_ansi=lambda value: str(value),
+        _append_log=append_log,
+        minimal=lambda value: value,
+        canonical_key=lambda value: str(value),
+    )
+    monkeypatch.setitem(sys.modules, "crosswatch", fake_crosswatch)
+
+    cfg = {
+        "pairs": [{"id": "plex-mdblist", "enabled": True, "source": "PLEX", "target": "MDBLIST"}],
+        "scheduling": {
+            "webhooks": {
+                "enabled": True,
+                "base_url": "https://hc-ping.com/abc123",
+            }
+        },
+    }
+    monkeypatch.setattr(sync, "_env", lambda: (lambda: cfg, lambda _cfg: None))
+    monkeypatch.setattr(sync, "_load_state", lambda: None)
+    monkeypatch.setattr(sync, "_counts_from_state", lambda _state: None)
+    monkeypatch.setattr(sync, "_provider_count_defaults", lambda: {})
+
+    class UnresolvedOrchestrator:
+        def __init__(self, config: dict[str, Any]) -> None:
+            self.config = config
+
+        def run_pairs(self, **kwargs: Any) -> dict[str, int]:
+            progress = kwargs["progress"]
+            progress('{"event":"apply:add:done","feature":"history","attempted":1,"added":0,"unresolved":1,"errors":0}')
+            return {"added": 0, "removed": 0, "updated": 0, "unresolved": 1, "errors": 0}
+
+    fake_orchestrator_module = types.SimpleNamespace(Orchestrator=UnresolvedOrchestrator, __file__="fake-orchestrator.py")
+    monkeypatch.setattr(
+        sync.importlib,
+        "import_module",
+        lambda name: fake_orchestrator_module if name == "cw_platform.orchestrator" else __import__(name),
+    )
+
+    calls: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+
+    def fake_notify(cfg_arg: dict[str, Any] | None, event: str, context: dict[str, Any] | None, summary: dict[str, Any] | None = None, **_kwargs: Any) -> bool:
+        calls.append((event, dict(context or {}), dict(summary or {})))
+        return True
+
+    monkeypatch.setattr(sync, "notify_scheduler_webhook", fake_notify)
+
+    sync._run_pairs_thread(
+        "run-unresolved",
+        {
+            "source": "scheduler",
+            "scheduler_mode": "advanced",
+            "job_id": "job-mdblist",
+            "pair_id": "plex-mdblist",
+        },
+    )
+
+    assert [event for event, _, _ in calls] == ["start", "failure"]
+    assert calls[1][2]["exit_code"] == 1
+    assert calls[1][2]["unresolved"] == 1
+
+
 def test_scheduled_sync_thread_dispatches_failure_webhook_on_exception(monkeypatch, tmp_path) -> None:
     import api.syncAPI as sync
     import sys

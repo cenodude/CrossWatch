@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator import _applier, _unresolved
 from cw_platform.orchestrator._pairs_oneway import compute_effective_add
-from providers.sync.mdblist._history import _bucketize
+from providers.sync.mdblist._history import _bucketize, _items_for_not_found
+from providers.sync import _mod_MDBLIST as mdblist_mod
 from providers.sync.publicmetadb._history import _payload_for_item, _to_minimal
 from providers.sync._mod_SIMKL import _confirmed_keys
 from providers.sync.simkl import _history as simkl_history
@@ -95,6 +96,42 @@ def test_mdblist_groups_multiple_specials_under_one_season() -> None:
         }
     ]
     assert len(accepted) == 2
+
+
+def test_mdblist_not_found_keeps_episode_unresolved_key(monkeypatch) -> None:
+    monkeypatch.setattr(_applier, "record_unresolved", lambda *a, **k: {"ok": True})
+    item = {
+        "type": "episode",
+        "title": "Episode 1",
+        "series_title": "Japanology Plus",
+        "ids": {"tmdb": "1359983"},
+        "show_ids": {"tmdb": "73679"},
+        "season": 2014,
+        "episode": 1,
+        "watched_at": WATCHED_AT,
+    }
+    attempted_key = canonical_key(item)
+    row = {"ids": {"tmdb": 73679}, "seasons": [{"number": 2014, "episodes": [{"number": 1}]}]}
+
+    matches = _items_for_not_found(row, "shows")
+    unresolved = [{"item": minimal(matches[0]), "hint": "not_found", "key": attempted_key}]
+    confirmed = mdblist_mod._confirmed_keys(mdblist_mod._mdblist_key_of, [item], unresolved)
+
+    assert [canonical_key(match) for match in matches] == [attempted_key]
+    assert confirmed == []
+
+    norm = _applier._normalize(
+        {"ok": True, "count": 1, "unresolved": unresolved, "unresolved_keys": [attempted_key]},
+        [item],
+        "apply:add",
+        dst="MDBLIST",
+        feature="history",
+        emit=lambda *a, **k: None,
+    )
+
+    assert norm["confirmed"] == 0
+    assert norm["unresolved"] == 1
+    assert norm["unresolved_keys"] == [attempted_key]
 
 
 def test_trakt_special_episode_add_and_remove_shapes() -> None:

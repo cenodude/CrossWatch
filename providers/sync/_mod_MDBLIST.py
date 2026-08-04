@@ -24,6 +24,36 @@ from ._mod_common import (
 )
 
 
+def _unresolved_keys(key_of, unresolved: Any) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        key = str(value or "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+
+    if unresolved:
+        for u in unresolved:
+            obj: Any = u
+            if isinstance(u, Mapping):
+                add(u.get("key"))
+                if isinstance(u.get("unresolved_key"), str):
+                    add(u.get("unresolved_key"))
+                if "item" in u:
+                    obj = u.get("item")
+            if isinstance(obj, str) and obj:
+                add(obj)
+                continue
+            if isinstance(obj, Mapping):
+                try:
+                    add(key_of(obj))
+                except Exception:
+                    pass
+    return keys
+
+
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
     attempted: list[str] = []
     for it in items or []:
@@ -34,34 +64,37 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         if k:
             attempted.append(k)
 
-    unresolved_keys: set[str] = set()
-    if unresolved:
-        for u in unresolved:
-            obj: Any = u
-            if isinstance(u, Mapping):
-                if isinstance(u.get("key"), str) and u.get("key"):
-                    unresolved_keys.add(str(u.get("key")))
-                    continue
-                if "item" in u:
-                    obj = u.get("item")
-            if isinstance(obj, str) and obj:
-                unresolved_keys.add(obj)
-                continue
-            if isinstance(obj, Mapping):
-                try:
-                    k = str(key_of(obj) or "").strip()
-                except Exception:
-                    k = ""
-                if k:
-                    unresolved_keys.add(k)
+    unresolved_key_set = set(_unresolved_keys(key_of, unresolved))
 
     out: list[str] = []
     seen: set[str] = set()
     for k in attempted:
-        if k in unresolved_keys or k in seen:
+        if k in unresolved_key_set or k in seen:
             continue
         out.append(k)
         seen.add(k)
+    return out
+
+
+def _write_result(raw: Any, items: list[Mapping[str, Any]]) -> dict[str, Any]:
+    if isinstance(raw, Mapping):
+        out = dict(raw)
+        out.setdefault("ok", True)
+        out.setdefault("unresolved", [])
+    else:
+        _cnt, unresolved = raw
+        out = {"ok": True, "unresolved": unresolved}
+
+    unresolved_keys = _unresolved_keys(_mdblist_key_of, out.get("unresolved") or [])
+    confirmed_keys = (
+        [str(x) for x in (out.get("confirmed_keys") or []) if x]
+        if isinstance(out.get("confirmed_keys"), list)
+        else _confirmed_keys(_mdblist_key_of, items, out.get("unresolved") or [])
+    )
+    unresolved_set = set(unresolved_keys)
+    out["unresolved_keys"] = unresolved_keys
+    out["confirmed_keys"] = [k for k in confirmed_keys if k not in unresolved_set]
+    out["count"] = len(out["confirmed_keys"])
     return out
 
 def _mdblist_key_of(obj: Any) -> str:
@@ -101,7 +134,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.4"
+__VERSION__ = "1.5"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -711,19 +744,7 @@ class MDBLISTModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             raw = mod.add(self, lst)
-            if isinstance(raw, Mapping):
-                out = dict(raw)
-                out.setdefault("ok", True)
-                out.setdefault("unresolved", [])
-                out.setdefault("confirmed_keys", [])
-                if isinstance(out.get("confirmed_keys"), list):
-                    out["count"] = len([x for x in out.get("confirmed_keys") or [] if x])
-                else:
-                    out.setdefault("count", int(out.get("count", 0) or 0))
-                return out
-            cnt, unresolved = raw
-            confirmed_keys = _confirmed_keys(_mdblist_key_of, lst, unresolved)
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            return _write_result(raw, lst)
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -748,19 +769,7 @@ class MDBLISTModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             raw = mod.remove(self, lst)
-            if isinstance(raw, Mapping):
-                out = dict(raw)
-                out.setdefault("ok", True)
-                out.setdefault("unresolved", [])
-                out.setdefault("confirmed_keys", [])
-                if isinstance(out.get("confirmed_keys"), list):
-                    out["count"] = len([x for x in out.get("confirmed_keys") or [] if x])
-                else:
-                    out.setdefault("count", int(out.get("count", 0) or 0))
-                return out
-            cnt, unresolved = raw
-            confirmed_keys = _confirmed_keys(_mdblist_key_of, lst, unresolved)
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            return _write_result(raw, lst)
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

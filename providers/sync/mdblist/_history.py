@@ -911,6 +911,66 @@ def _stable_show_key(ids: Mapping[str, Any]) -> str:
     return json.dumps(keep, sort_keys=True)
 
 
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except Exception:
+        return None
+
+
+def _unresolved_entry(item: Mapping[str, Any], hint: str) -> dict[str, Any]:
+    minimal_item = id_minimal(item)
+    entry: dict[str, Any] = {"item": minimal_item, "hint": hint}
+    try:
+        key = str(canonical_key(minimal_item) or "").strip()
+    except Exception:
+        key = ""
+    if key:
+        entry["key"] = key
+    return entry
+
+
+def _items_for_not_found(row: Mapping[str, Any], kind: str) -> list[dict[str, Any]]:
+    ids = row.get("ids") if isinstance(row.get("ids"), Mapping) else {}
+    item_type = kind[:-1]
+    if kind != "shows":
+        return [{"type": item_type, "ids": dict(ids or {})}]
+
+    seasons = row.get("seasons")
+    if not isinstance(seasons, list) or not seasons:
+        return [{"type": "show", "ids": dict(ids or {})}]
+
+    out: list[dict[str, Any]] = []
+    for season in seasons:
+        if not isinstance(season, Mapping):
+            continue
+        season_number = _as_int(season.get("number"))
+        episodes = season.get("episodes")
+        if isinstance(episodes, list) and episodes:
+            for episode in episodes:
+                if not isinstance(episode, Mapping):
+                    continue
+                out.append(
+                    {
+                        "type": "episode",
+                        "ids": dict(ids or {}),
+                        "show_ids": dict(ids or {}),
+                        "season": season_number,
+                        "episode": _as_int(episode.get("number")),
+                    }
+                )
+        else:
+            out.append(
+                {
+                    "type": "season",
+                    "ids": dict(ids or {}),
+                    "show_ids": dict(ids or {}),
+                    "season": season_number,
+                }
+            )
+    return out or [{"type": "show", "ids": dict(ids or {})}]
+
+
 def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
     shows_nested: dict[str, dict[str, Any]] = {}
@@ -1155,8 +1215,8 @@ def _write(
             for row_nf in rows_nf:
                 if not isinstance(row_nf, Mapping):
                     continue
-                ids_nf = row_nf.get("ids") or {}
-                unresolved.append({"item": id_minimal({"type": item_type, "ids": ids_nf}), "hint": "not_found"})
+                for item_nf in _items_for_not_found(row_nf, kind):
+                    unresolved.append(_unresolved_entry(item_nf, "not_found"))
 
         updated = data.get("updated") or {}
         added = data.get("added") or {}
@@ -1287,12 +1347,7 @@ def _write(
                             continue
 
                         ids2 = single.get("ids") or {}
-                        unresolved.append(
-                            {
-                                "item": id_minimal({"type": "show", "ids": ids2}),
-                                "hint": f"http:{r2.status_code}",
-                            }
-                        )
+                        unresolved.append(_unresolved_entry({"type": "show", "ids": ids2}, f"http:{r2.status_code}"))
                     break
 
                 _warn(
@@ -1306,7 +1361,11 @@ def _write(
                 for x in part:
                     ids = x.get("ids") or {}
                     t = "show" if bucket == "shows" else "movie"
-                    unresolved.append({"item": id_minimal({"type": t, "ids": ids}), "hint": f"http:{r.status_code}"})
+                    if bucket == "shows":
+                        for item_nf in _items_for_not_found(x, "shows"):
+                            unresolved.append(_unresolved_entry(item_nf, f"http:{r.status_code}"))
+                    else:
+                        unresolved.append(_unresolved_entry({"type": t, "ids": ids}, f"http:{r.status_code}"))
                 break
 
     if ok > 0 and not unresolved:
