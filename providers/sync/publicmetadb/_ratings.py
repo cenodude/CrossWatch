@@ -336,11 +336,28 @@ def _payload_for_item(adapter: Any, item: Mapping[str, Any]) -> tuple[str | None
     )
 
 
+def _accept_remote_item(
+    item: Mapping[str, Any],
+    mini: Mapping[str, Any],
+    label: str | None,
+    fallback: Any,
+) -> tuple[str, dict[str, Any]]:
+    rid = str(item.get("id") or item.get("rating_id") or "").strip()
+    accepted = dict(mini)
+    accepted["rating"] = _response_rating(item, fallback)
+    accepted["label"] = label or "Overall"
+    if rid:
+        accepted["rating_id"] = rid
+        accepted["_publicmetadb_rating_id"] = rid
+    return rid, accepted
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     items_list = list(items or [])
     shadow = _shadow_load()
     remote_ids: dict[str, Any] = dict(shadow.get("items") or {})
     unresolved: list[dict[str, Any]] = []
+    skipped_keys: list[str] = []
     ok = 0
 
     for it in items_list:
@@ -373,22 +390,48 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if 200 <= r.status_code < 300:
             data = adapter.client.safe_json(r)
             item = data.get("item") if isinstance(data, Mapping) else None
-            rid = str(item.get("id") or "").strip() if isinstance(item, Mapping) else ""
-            accepted = dict(mini)
-            accepted["rating"] = _response_rating(
-                item,
+            rid, accepted = _accept_remote_item(
+                item if isinstance(item, Mapping) else {},
+                mini,
+                label,
                 mini.get("rating") if "rating" in mini else it.get("rating"),
             )
-            accepted["label"] = label or "Overall"
-            if rid:
-                accepted["rating_id"] = rid
-                accepted["_publicmetadb_rating_id"] = rid
             remote_ids[key] = {"id": rid, "label": label or "Overall", "item": accepted}
             ok += 1
+        elif r.status_code == 409:
+            lookup_item = dict(mini)
+            lookup_item["label"] = label or "Overall"
+            lookup_path, lookup_params = _remote_lookup_params(lookup_item)
+            found = None
+            if lookup_path and lookup_params:
+                data = adapter.client.get_json(lookup_path, params=lookup_params)
+                want = _response_rating(payload, payload.get("score"))
+                for row in _rows(data):
+                    if not isinstance(row, Mapping):
+                        continue
+                    if _response_rating(row, None) == want:
+                        found = row
+                        break
+            if isinstance(found, Mapping):
+                rid, accepted = _accept_remote_item(
+                    found,
+                    mini,
+                    label,
+                    mini.get("rating") if "rating" in mini else it.get("rating"),
+                )
+                remote_ids[key] = {"id": rid, "label": label or "Overall", "item": accepted}
+                skipped_keys.append(canonical_key(mini))
+            else:
+                _warn("write_failed", op="add_conflict", status=r.status_code, body=(r.text or "")[:200])
+                unresolved.append({"item": mini, "hint": "http:409"})
         else:
             _warn("write_failed", op="add", status=r.status_code, body=(r.text or "")[:200])
             unresolved.append({"item": mini, "hint": f"http:{r.status_code}"})
     _shadow_save(remote_ids)
+    try:
+        adapter._publicmetadb_rating_skipped_keys = skipped_keys
+    except Exception:
+        pass
     _info("write_done", op="add", applied=ok, unresolved=len(unresolved))
     return ok, unresolved
 
