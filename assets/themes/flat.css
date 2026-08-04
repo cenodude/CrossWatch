@@ -494,3 +494,6 @@ html[data-cw-theme="flat-light"] body #playback-progress-root .pp-card .pp-actio
 html[data-cw-theme="flat-light"] body #playback-progress-root .pp-card .pp-action-watch{color:#125c38 !important;-webkit-text-fill-color:#125c38 !important;border-color:rgba(18,92,56,0.3)!important}
 html[data-cw-theme="flat-light"] body #playback-progress-root .pp-card .pp-provider-pill{background:rgba(255,255,255,0.86)!important;border-color:rgba(16,24,40,0.16)!important;color:#253044 !important;-webkit-text-fill-color:#253044 !important}
 html[data-cw-theme="flat-light"] body #playback-progress-root .pp-card .pp-rating-chip{background:rgba(255,255,255,0.9)!important;border-color:rgba(184,121,0,0.32)!important;color:#7a4f00 !important;-webkit-text-fill-color:#7a4f00 !important}
+
+html[data-cw-theme] #ux-progress .sb-note{background:#332a19 !important;background-image:none !important;border-color:rgba(230,177,80,0.36)!important;color:#ffe3aa !important;-webkit-text-fill-color:#ffe3aa !important;box-shadow:none !important}
+html[data-cw-theme="flat-light"] #ux-progress .sb-note{background:#f7e7c8 !important;background-image:none !important;border-color:rgba(154,93,0,0.28)!important;color:#704400 !important;-webkit-text-fill-color:#704400 !important;box-shadow:none !important}
