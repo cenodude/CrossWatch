@@ -930,45 +930,139 @@ def _unresolved_entry(item: Mapping[str, Any], hint: str) -> dict[str, Any]:
     return entry
 
 
-def _items_for_not_found(row: Mapping[str, Any], kind: str) -> list[dict[str, Any]]:
-    ids = row.get("ids") if isinstance(row.get("ids"), Mapping) else {}
-    item_type = kind[:-1]
-    if kind != "shows":
-        return [{"type": item_type, "ids": dict(ids or {})}]
+def _id_aliases(ids: Any) -> set[str]:
+    out: set[str] = set()
+    if not isinstance(ids, Mapping):
+        return out
+    for k, v in ids.items():
+        if v in (None, ""):
+            continue
+        out.add(f"{str(k).strip().lower()}:{str(v).strip().lower()}")
+    return out
 
-    seasons = row.get("seasons")
-    if not isinstance(seasons, list) or not seasons:
-        return [{"type": "show", "ids": dict(ids or {})}]
+
+def _match_sent_row(ids: Any, sent_rows: Any) -> Mapping[str, Any] | None:
+    aliases = _id_aliases(ids)
+    if not aliases or not isinstance(sent_rows, (list, tuple)):
+        return None
+    for sent in sent_rows:
+        if not isinstance(sent, Mapping):
+            continue
+        if aliases & _id_aliases(sent.get("ids")):
+            return sent
+    return None
+
+
+def _seasons_of(row: Any) -> list[Mapping[str, Any]]:
+    seasons = row.get("seasons") if isinstance(row, Mapping) else None
+    if not isinstance(seasons, list):
+        return []
+    return [s for s in seasons if isinstance(s, Mapping)]
+
+
+def _show_meta(*rows: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        title = row.get("title") or row.get("series_title")
+        if isinstance(title, str) and title.strip() and "series_title" not in out:
+            out["series_title"] = title.strip()
+        year = _as_int(row.get("year") if row.get("year") is not None else row.get("series_year"))
+        if year and "series_year" not in out:
+            out["series_year"] = year
+    return out
+
+
+def _expand_season(ids: Mapping[str, Any], season: Mapping[str, Any], meta: Mapping[str, Any]) -> list[dict[str, Any]]:
+    season_number = _as_int(season.get("number"))
+    episodes = season.get("episodes")
+    if not isinstance(episodes, list) or not episodes:
+        return [{"type": "season", "ids": dict(ids), "show_ids": dict(ids), "season": season_number, **meta}]
+    out: list[dict[str, Any]] = []
+    for episode in episodes:
+        if not isinstance(episode, Mapping):
+            continue
+        out.append(
+            {
+                "type": "episode",
+                "ids": dict(ids),
+                "show_ids": dict(ids),
+                "season": season_number,
+                "episode": _as_int(episode.get("number")),
+                **meta,
+            }
+        )
+    return out
+
+
+def _show_node(row: Any) -> Mapping[str, Any] | None:
+    node = row.get("show") if isinstance(row, Mapping) else None
+    return node if isinstance(node, Mapping) else None
+
+
+def _identity_ids(row: Mapping[str, Any], kind: str) -> dict[str, Any]:
+    show = _show_node(row)
+    show_ids = show.get("ids") if show is not None else None
+    own_ids = row.get("ids") if isinstance(row.get("ids"), Mapping) else None
+    if kind in ("seasons", "episodes"):
+        if isinstance(show_ids, Mapping) and show_ids:
+            return dict(show_ids)
+        return dict(own_ids or {})
+    if isinstance(own_ids, Mapping) and own_ids:
+        return dict(own_ids)
+    return dict(show_ids or {}) if isinstance(show_ids, Mapping) else {}
+
+
+def _items_for_not_found(row: Mapping[str, Any], kind: str, sent_rows: Any = None) -> list[dict[str, Any]]:
+    ids = _identity_ids(row, kind)
+    sent = _match_sent_row(ids, sent_rows)
+    meta = _show_meta(_show_node(row), row, sent)
+
+    if kind == "movies":
+        title = meta.get("series_title")
+        year = meta.get("series_year")
+        movie: dict[str, Any] = {"type": "movie", "ids": ids}
+        if title:
+            movie["title"] = title
+        if year:
+            movie["year"] = year
+        return [movie]
+
+    if kind == "episodes":
+        season_number = _as_int(row.get("season") if row.get("season") is not None else row.get("season_number"))
+        episode_number = _as_int(row.get("number") if row.get("number") is not None else row.get("episode"))
+        if season_number is not None and episode_number is not None:
+            return [
+                {
+                    "type": "episode",
+                    "ids": ids,
+                    "show_ids": ids,
+                    "season": season_number,
+                    "episode": episode_number,
+                    **meta,
+                }
+            ]
+
+    if kind == "seasons":
+        season_number = _as_int(row.get("number") if row.get("number") is not None else row.get("season"))
+        if season_number is not None:
+            sent_season = next((s for s in _seasons_of(sent) if _as_int(s.get("number")) == season_number), None)
+            return _expand_season(ids, sent_season or {"number": season_number}, meta)
+
+    seasons = _seasons_of(row) or _seasons_of(sent)
+    show: dict[str, Any] = {"type": "show", "ids": ids}
+    if meta.get("series_title"):
+        show["title"] = meta["series_title"]
+    if meta.get("series_year"):
+        show["year"] = meta["series_year"]
+    if not seasons:
+        return [show]
 
     out: list[dict[str, Any]] = []
     for season in seasons:
-        if not isinstance(season, Mapping):
-            continue
-        season_number = _as_int(season.get("number"))
-        episodes = season.get("episodes")
-        if isinstance(episodes, list) and episodes:
-            for episode in episodes:
-                if not isinstance(episode, Mapping):
-                    continue
-                out.append(
-                    {
-                        "type": "episode",
-                        "ids": dict(ids or {}),
-                        "show_ids": dict(ids or {}),
-                        "season": season_number,
-                        "episode": _as_int(episode.get("number")),
-                    }
-                )
-        else:
-            out.append(
-                {
-                    "type": "season",
-                    "ids": dict(ids or {}),
-                    "show_ids": dict(ids or {}),
-                    "season": season_number,
-                }
-            )
-    return out or [{"type": "show", "ids": dict(ids or {})}]
+        out.extend(_expand_season(ids, season, meta))
+    return out or [show]
 
 
 def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -1211,11 +1305,10 @@ def _write(
             rows_nf = not_found.get(kind) or []
             if not isinstance(rows_nf, list):
                 continue
-            item_type = kind[:-1]
             for row_nf in rows_nf:
                 if not isinstance(row_nf, Mapping):
                     continue
-                for item_nf in _items_for_not_found(row_nf, kind):
+                for item_nf in _items_for_not_found(row_nf, kind, payload_rows):
                     unresolved.append(_unresolved_entry(item_nf, "not_found"))
 
         updated = data.get("updated") or {}
