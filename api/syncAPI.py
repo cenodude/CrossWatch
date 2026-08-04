@@ -19,7 +19,7 @@ from cw_platform.modules_registry import get_sync_module_path_by_name, sync_prov
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.reason_labels import friendly_reason
 from cw_platform.value_coercion import coerce_bool
-from services.scheduler_webhooks import notify_scheduler_webhook
+from services.scheduler_webhooks import notify_scheduler_webhook, resolve_completion_event
 
 __all__ = ["router", "_is_sync_running", "_load_state", "_find_state_path"]
 
@@ -747,8 +747,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 _emit_unresolved_details(unresolved)
             except Exception:
                 pass
-        final_exit_code = 1 if unresolved > 0 or errors > 0 else 0
-        _sync_progress_ui(f"[SYNC] exit code: {final_exit_code}")
+        _sync_progress_ui("[SYNC] exit code: 0")
     except Exception as e:
         _sync_progress_ui(f"[!] Sync error: {e}")
         _sync_progress_ui("[SYNC] exit code: 1")
@@ -768,10 +767,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             snap = _summary_snapshot()
             exit_code = snap.get("exit_code")
             if exit_code is not None:
-                unresolved_count = int(snap.get("unresolved") or 0)
-                errors_count = int(snap.get("errors") or 0)
-                is_clean = int(exit_code) == 0 and unresolved_count == 0 and errors_count == 0
-                event = "success" if is_clean else "failure"
+                event = resolve_completion_event(scheduler_webhook_cfg, snap)
                 notify_scheduler_webhook(
                     scheduler_webhook_cfg,
                     event,

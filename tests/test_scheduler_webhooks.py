@@ -4,6 +4,30 @@ import threading
 import types
 from typing import Any
 
+import pytest
+
+
+def test_resolve_completion_event_keeps_unresolved_runs_successful() -> None:
+    from services.scheduler_webhooks import resolve_completion_event
+
+    cfg = {"scheduling": {"webhooks": {"enabled": True, "base_url": "https://hc-ping.com/abc123"}}}
+
+    assert resolve_completion_event(cfg, {"exit_code": 0, "unresolved": 3, "errors": 2, "blocked": 1}) == "success"
+    assert resolve_completion_event(cfg, {"exit_code": 1}) == "failure"
+
+
+def test_resolve_completion_event_alerts_on_unresolved_when_opted_in() -> None:
+    from services.scheduler_webhooks import resolve_completion_event
+
+    def cfg_with(**hooks: Any) -> dict[str, Any]:
+        return {"scheduling": {"webhooks": {"enabled": True, "base_url": "https://hc-ping.com/abc123", **hooks}}}
+
+    cfg = cfg_with(alert_on_unresolved=True)
+
+    assert resolve_completion_event(cfg, {"exit_code": 0, "unresolved": 1}) == "failure"
+    assert resolve_completion_event(cfg, {"exit_code": 0, "errors": 1}) == "failure"
+    assert resolve_completion_event(cfg, {"exit_code": 0, "unresolved": 0, "skipped": 4, "blocked": 2}) == "success"
+
 
 def test_scheduler_webhook_healthchecks_urls_preserve_query() -> None:
     from services.scheduler_webhooks import callback_url, normalize_scheduler_webhooks
@@ -496,7 +520,11 @@ def test_scheduled_sync_thread_dispatches_start_and_success_webhooks(monkeypatch
     assert calls[1][2]["added_last"] == 2
 
 
-def test_scheduled_sync_thread_dispatches_failure_webhook_on_unresolved(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("alert_on_unresolved", "expected_event"),
+    [(False, "success"), (True, "failure")],
+)
+def test_scheduled_sync_thread_event_on_unresolved(monkeypatch, tmp_path, alert_on_unresolved, expected_event) -> None:
     import api.syncAPI as sync
     import sys
 
@@ -509,6 +537,8 @@ def test_scheduled_sync_thread_dispatches_failure_webhook_on_unresolved(monkeypa
         LOG_BUFFERS=log_buffers,
         RUNNING_PROCS={"SYNC": object()},
         SYNC_PROC_LOCK=threading.Lock(),
+        STATE_PATH=tmp_path / "state.json",
+        STATE_PATHS=[],
         STATS=types.SimpleNamespace(refresh_from_state=lambda _state: None, record_summary=lambda *_args: None),
         REPORT_DIR=tmp_path,
         strip_ansi=lambda value: str(value),
@@ -524,6 +554,7 @@ def test_scheduled_sync_thread_dispatches_failure_webhook_on_unresolved(monkeypa
             "webhooks": {
                 "enabled": True,
                 "base_url": "https://hc-ping.com/abc123",
+                "alert_on_unresolved": alert_on_unresolved,
             }
         },
     }
@@ -566,8 +597,8 @@ def test_scheduled_sync_thread_dispatches_failure_webhook_on_unresolved(monkeypa
         },
     )
 
-    assert [event for event, _, _ in calls] == ["start", "failure"]
-    assert calls[1][2]["exit_code"] == 1
+    assert [event for event, _, _ in calls] == ["start", expected_event]
+    assert calls[1][2]["exit_code"] == 0
     assert calls[1][2]["unresolved"] == 1
 
 

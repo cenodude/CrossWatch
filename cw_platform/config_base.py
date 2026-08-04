@@ -50,6 +50,7 @@ DEFAULT_SCHEDULER_WEBHOOKS: dict[str, Any] = {
     "payload_format": "crosswatch",
     "notifiarr_channel_id": "",
     "timeout_seconds": 10,
+    "alert_on_unresolved": False,
 }
 
 _ENC_PREFIX = "enc:v1:"
@@ -952,16 +953,21 @@ def _get_nested_value(src: dict[str, Any], path: str | Iterable[str]) -> tuple[b
     return True, cur
 
 
+def _scheduler_webhook_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _normalize_scheduler_webhooks(value: Any) -> dict[str, Any]:
     src = value if isinstance(value, dict) else {}
     out = dict(DEFAULT_SCHEDULER_WEBHOOKS)
-    enabled = src.get("enabled")
-    if isinstance(enabled, bool):
-        out["enabled"] = enabled
-    elif isinstance(enabled, (int, float)):
-        out["enabled"] = bool(enabled)
-    else:
-        out["enabled"] = str(enabled or "").strip().lower() in {"1", "true", "yes", "on"}
+    out["enabled"] = _scheduler_webhook_flag(src.get("enabled"))
+    out["alert_on_unresolved"] = _scheduler_webhook_flag(
+        src.get("alert_on_unresolved") if src.get("alert_on_unresolved") is not None else src.get("alertOnUnresolved")
+    )
     out["url"] = _http_url_or_blank(src.get("url") or src.get("default_url"))
     out["base_url"] = _http_url_or_blank(src.get("base_url") or src.get("healthchecks_base_url"))
     for key in ("start_url", "success_url", "failure_url"):

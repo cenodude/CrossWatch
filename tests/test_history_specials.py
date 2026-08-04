@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator import _applier, _unresolved
 from cw_platform.orchestrator._pairs_oneway import compute_effective_add
@@ -132,6 +134,119 @@ def test_mdblist_not_found_keeps_episode_unresolved_key(monkeypatch) -> None:
     assert norm["confirmed"] == 0
     assert norm["unresolved"] == 1
     assert norm["unresolved_keys"] == [attempted_key]
+
+
+@pytest.mark.parametrize(
+    ("row", "kind"),
+    [
+        ({"ids": {"tmdb": 73679}, "seasons": [{"number": 2014, "episodes": [{"number": 1}, {"number": 2}]}]}, "shows"),
+        ({"ids": {"tmdb": 73679}}, "shows"),
+        ({"ids": {"tmdb": 73679}, "number": 2014}, "seasons"),
+    ],
+)
+def test_mdblist_not_found_resolves_episode_keys_for_every_response_shape(row, kind) -> None:
+    items = [
+        {
+            "type": "episode",
+            "series_title": "Japanology Plus",
+            "ids": {"tmdb": "1359983"},
+            "show_ids": {"tmdb": "73679"},
+            "season": 2014,
+            "episode": number,
+            "watched_at": WATCHED_AT,
+        }
+        for number in (1, 2)
+    ]
+    attempted_keys = [canonical_key(item) for item in items]
+    sent_rows = [
+        {
+            "ids": {"tmdb": 73679},
+            "title": "Japanology Plus",
+            "year": 2014,
+            "seasons": [{"number": 2014, "episodes": [{"number": 1}, {"number": 2}]}],
+        }
+    ]
+
+    matches = _items_for_not_found(row, kind, sent_rows)
+    unresolved = [
+        {"item": minimal(match), "hint": "not_found", "key": canonical_key(match)} for match in matches
+    ]
+
+    assert [canonical_key(match) for match in matches] == attempted_keys
+    assert mdblist_mod._confirmed_keys(mdblist_mod._mdblist_key_of, items, unresolved) == []
+    assert all(match["series_title"] == "Japanology Plus" for match in matches)
+    assert all(minimal(match)["series_title"] == "Japanology Plus" for match in matches)
+
+
+def test_mdblist_not_found_episode_row_leaves_untouched_episode_confirmed() -> None:
+    items = [
+        {
+            "type": "episode",
+            "series_title": "Japanology Plus",
+            "ids": {"tmdb": "1359983"},
+            "show_ids": {"tmdb": "73679"},
+            "season": 2014,
+            "episode": number,
+            "watched_at": WATCHED_AT,
+        }
+        for number in (1, 2)
+    ]
+    sent_rows = [
+        {
+            "ids": {"tmdb": 73679},
+            "title": "Japanology Plus",
+            "year": 2014,
+            "seasons": [{"number": 2014, "episodes": [{"number": 1}, {"number": 2}]}],
+        }
+    ]
+
+    matches = _items_for_not_found({"ids": {"tmdb": 73679}, "season": 2014, "number": 1}, "episodes", sent_rows)
+    unresolved = [
+        {"item": minimal(match), "hint": "not_found", "key": canonical_key(match)} for match in matches
+    ]
+
+    assert [canonical_key(match) for match in matches] == [canonical_key(items[0])]
+    assert mdblist_mod._confirmed_keys(mdblist_mod._mdblist_key_of, items, unresolved) == [canonical_key(items[1])]
+
+
+def test_mdblist_not_found_seasons_bucket_nests_ids_under_show() -> None:
+    show_ids = {"imdb": "tt13207736", "tmdb": 113988, "tvdb": 389492}
+    sent_rows = [
+        {
+            "ids": show_ids,
+            "title": "Alice in Borderland",
+            "year": 2020,
+            "seasons": [
+                {"number": 2, "episodes": [{"number": n} for n in range(1, 9)]},
+                {"number": 3, "episodes": [{"number": n} for n in range(1, 10)]},
+            ],
+        }
+    ]
+    items = [
+        {
+            "type": "episode",
+            "series_title": "Alice in Borderland",
+            "ids": {"tmdb": str(9000 + index)},
+            "show_ids": show_ids,
+            "season": season,
+            "episode": number,
+            "watched_at": WATCHED_AT,
+        }
+        for season, count in ((2, 8), (3, 9))
+        for index, number in enumerate(range(1, count + 1))
+    ]
+
+    matches: list[dict] = []
+    for row in ({"number": 2, "show": {"ids": show_ids}}, {"number": 3, "show": {"ids": show_ids}}):
+        matches.extend(_items_for_not_found(row, "seasons", sent_rows))
+    unresolved = [
+        {"item": minimal(match), "hint": "not_found", "key": canonical_key(match)} for match in matches
+    ]
+
+    assert len(matches) == len(items)
+    assert [canonical_key(match) for match in matches] == [canonical_key(item) for item in items]
+    assert mdblist_mod._confirmed_keys(mdblist_mod._mdblist_key_of, items, unresolved) == []
+    assert all(match["series_title"] == "Alice in Borderland" for match in matches)
 
 
 def test_trakt_special_episode_add_and_remove_shapes() -> None:
