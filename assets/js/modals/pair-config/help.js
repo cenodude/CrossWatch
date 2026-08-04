@@ -30,6 +30,7 @@ export const HELP_TEXT = {
   "cx-hs-enable": "History: Enable\nCompare and write watch history to the target.",
   "cx-hs-add": "History: Add\nAdds plays/watched items to the target history.",
   "cx-hs-remove": "History: Remove\nRemoving history is discouraged (destructive and only for very specific needs).",
+  "cx-hs-rewatches": "History: Rewatches\nSync separate play events when both providers support it. SIMKL requires Pro/VIP.",
   "cx-tr-hs-col": "Trakt: Add to library\nAlso add items to your Trakt library when writing history (if enabled).",
   "cx-tr-hs-ignore-dropped": "Trakt: Ignore dropped shows\nWhen enabled, shows marked as dropped on Trakt are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",
   "cx-md-hs-ignore-dropped": "MDBList: Ignore dropped shows\nWhen enabled, shows marked as dropped on MDBList are skipped during history sync. This suppresses sync for those shows; it does not remove them elsewhere.",

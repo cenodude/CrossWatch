@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.orchestrator._history_rewatches import history_event_present
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
 from cw_platform.provider_instances import normalize_instance_id
@@ -1823,6 +1824,30 @@ def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, st
 
     return mp
 
+
+def _history_rewatch_pair_set(cfg: dict[str, Any]) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    for pr in cfg.get("pairs") or []:
+        if not isinstance(pr, dict) or pr.get("enabled") is False:
+            continue
+        feats = pr.get("features")
+        hist = feats.get("history") if isinstance(feats, dict) else None
+        if not isinstance(hist, dict) or not bool(hist.get("rewatches")):
+            continue
+        src = str(pr.get("src") or pr.get("source") or "").upper().strip()
+        dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
+        if not (src and dst):
+            continue
+        si = normalize_instance_id(pr.get("src_instance") or pr.get("source_instance"))
+        ti = normalize_instance_id(pr.get("dst_instance") or pr.get("target_instance"))
+        src_tok = _prov_token(src, si)
+        dst_tok = _prov_token(dst, ti)
+        out.add((src_tok, dst_tok))
+        mode = str(pr.get("mode") or "one-way").lower()
+        if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
+            out.add((dst_tok, src_tok))
+    return out
+
 def _supports_pair_libs(prov: str) -> bool:
     base, _ = _split_prov_token(prov)
     return base in ("PLEX", "EMBY", "JELLYFIN")
@@ -2098,6 +2123,31 @@ def _history_exact_key(item: Mapping[str, Any]) -> tuple[str, str, Any, Any] | N
     return (sig, typ, season, episode)
 
 
+def _history_event_tokens(item: Mapping[str, Any]) -> set[str]:
+    typ = str(item.get("type") or "").strip().lower()
+    ids_raw = item.get("show_ids") if typ in {"episode", "season"} and isinstance(item.get("show_ids"), Mapping) else item.get("ids")
+    ids = ids_raw if isinstance(ids_raw, Mapping) else {}
+    out: set[str] = set()
+    if typ == "episode":
+        season = _hist_num(item.get("season"))
+        episode = _hist_num(item.get("episode"))
+        if season is None or episode is None:
+            return out
+        frag = f"#s{int(season):02d}e{int(episode):02d}" if isinstance(season, int) and isinstance(episode, int) else f"#s{season}e{episode}"
+    elif typ == "season":
+        season = _hist_num(item.get("season"))
+        if season is None:
+            return out
+        frag = f"#season:{season}"
+    else:
+        frag = ""
+    for key, value in ids.items():
+        if value in (None, ""):
+            continue
+        out.add(f"{str(key).lower()}:{str(value).lower()}{frag}")
+    return out
+
+
 def _history_exact_indices(s: dict[str, Any]) -> dict[str, set[tuple[str, str, Any, Any]]]:
     out: dict[str, set[tuple[str, str, Any, Any]]] = {}
     for prov, feat, _, item in _iter_items(s):
@@ -2294,6 +2344,7 @@ class _AnalysisContext:
     history_show_index: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     history_pair_aliases: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
     history_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
+    history_rewatch_pairs: set[tuple[str, str]] = field(default_factory=set)
 
 
 def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _AnalysisContext:
@@ -2310,6 +2361,7 @@ def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _
         history_show_index=_history_show_index(s),
         history_pair_aliases=_history_pair_alias_index(pairs, config),
         history_keys=_history_key_index(s),
+        history_rewatch_pairs=_history_rewatch_pair_set(config),
     )
 
 
@@ -2337,6 +2389,9 @@ def _target_has_peer(
         alias_dest = _alias_peer_key(ctx, prov_key, dst_key, item_key, item)
         if alias_dest:
             return _alias_peer_present(ctx, dst_key, alias_dest, item)
+        if (prov_key, dst_key) in ctx.history_rewatch_pairs:
+            dest_items = (ctx.history_keys or {}).get(dst_key) or {}
+            return history_event_present(item, item_key, dest_items, _history_event_tokens, 0)
         exact_key = _history_exact_key(item)
         if exact_key is not None:
             if exact_key in (ctx.history_exact.get(dst_key) or set()):
@@ -2400,6 +2455,7 @@ def _has_peer_by_pairs(
         pair_types=pair_types or {},
         history_pair_aliases=_history_pair_alias_index(pairs, cfg or {}),
         history_keys=_history_key_index(s),
+        history_rewatch_pairs=_history_rewatch_pair_set(cfg or {}),
     )
     filtered_targets = _eligible_targets(ctx, prov_key, feat_key, item)
     if not filtered_targets:

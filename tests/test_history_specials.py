@@ -1825,7 +1825,7 @@ def _simkl_index_env(monkeypatch, tmp_path, *, cached, rows, acts):
     monkeypatch.setattr(sh, "fetch_activities", lambda *a, **k: (acts, None))
     monkeypatch.setattr(sh, "_headers", lambda *a, **k: {})
 
-    def _fetch(session, headers, *, since_iso=None, timeout=None):
+    def _fetch(session, headers, *, since_iso=None, timeout=None, rewatches=False):
         calls["since"].append(since_iso)
         return dict(rows)
 

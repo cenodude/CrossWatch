@@ -76,6 +76,7 @@ except Exception:
         return idx
 
 from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
+from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
     config_with_pair_feature_options as _anime_config_with_pair_feature_options,
@@ -100,6 +101,15 @@ from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
 from ._pairs_blocklist import apply_blocklist
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_massdelete
+from ._history_rewatches import (
+    collapse_history_latest,
+    config_with_history_rewatches,
+    filter_history_events,
+    history_event_diff,
+    history_event_present,
+    history_rewatch_pair_enabled,
+    history_rewatches_requested,
+)
 from ._pairs_utils import (
     supports_feature as _supports_feature,
     resolve_flags as _resolve_flags,
@@ -390,6 +400,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
              b_supported=_supports_feature(bops, feature) and _health_feature_ok(Hb, feature))
         return {"ok": True, "adds_to_A": 0, "adds_to_B": 0, "rem_from_A": 0, "rem_from_B": 0}
 
+    history_rewatch_requested = history_rewatches_requested(feature, fcfg)
+    history_event_mode = history_rewatch_pair_enabled(feature, fcfg, a, aops, b, bops, bidirectional=True)
+    if history_event_mode:
+        provider_cfg = config_with_history_rewatches(provider_cfg, True)
+    elif history_rewatch_requested:
+        provider_cfg = config_with_history_rewatches(provider_cfg, False)
+        emit("debug", msg="history.rewatches.disabled", a=a, b=b, reason="provider_capability")
+
     def _pause_for(pname: str) -> int:
         base = int(getattr(ctx, "apply_chunk_pause_ms", 0) or 0)
         inst = src_inst if pname == a else (dst_inst if pname == b else "default")
@@ -561,6 +579,21 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if len(A_eff) != a_before or len(B_eff) != b_before:
             dbg("anime_mapping.rekeyed", feature=feature, a=a, b=b, a_items=len(A_eff), b_items=len(B_eff))
 
+    if feature == "history":
+        A_cur = filter_history_events(A_cur, event_mode=history_event_mode)
+        B_cur = filter_history_events(B_cur, event_mode=history_event_mode)
+        prevA = filter_history_events(prevA, event_mode=history_event_mode)
+        prevB = filter_history_events(prevB, event_mode=history_event_mode)
+        A_eff = filter_history_events(A_eff, event_mode=history_event_mode)
+        B_eff = filter_history_events(B_eff, event_mode=history_event_mode)
+        if not history_event_mode:
+            A_cur = collapse_history_latest(A_cur)
+            B_cur = collapse_history_latest(B_cur)
+            prevA = collapse_history_latest(prevA)
+            prevB = collapse_history_latest(prevB)
+            A_eff = collapse_history_latest(A_eff)
+            B_eff = collapse_history_latest(B_eff)
+
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))
     tomb_ttl_secs = max(1, tomb_ttl_days) * 24 * 3600
@@ -588,6 +621,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
             def _tokens_for_ck(ck: str) -> set[str]:
                 toks = {ck}
+                if feature == "history" and history_event_mode:
+                    return toks
                 it = (prevA.get(ck) or prevB.get(ck) or {})
                 ids = (it.get("ids") or {})
                 try:
@@ -671,6 +706,29 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
         return toks
 
+    def _sync_key(it: Mapping[str, Any], fallback_key: str | None = None) -> str:
+        if feature == "history":
+            return history_sync_key(it, fallback_key, event_mode=history_event_mode)
+        return _ck(it) or (str(fallback_key or "").strip())
+
+    def _sync_minimal(it: Mapping[str, Any], fallback_key: str | None = None) -> dict[str, Any]:
+        if feature == "history":
+            return minimal_history_item(it, fallback_key, event_mode=history_event_mode)
+        return _minimal(it)
+
+    def _find_history_event_in_idx(idx: Mapping[str, Any], it: Mapping[str, Any], fallback_key: str | None = None) -> Mapping[str, Any] | None:
+        if feature != "history" or not history_event_mode:
+            return None
+        sk = _sync_key(it, fallback_key)
+        direct = idx.get(sk) if sk else None
+        if isinstance(direct, Mapping):
+            return direct
+        bucket_sec = _hist_bucket_sec(a, b, feature)
+        for dk, dv in (idx or {}).items():
+            if isinstance(dv, Mapping) and history_event_present(it, sk, {str(dk): dv}, _typed_tokens, bucket_sec=bucket_sec):
+                return dv
+        return None
+
     def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
         ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else it.get("ids")
         ids = ids_raw if isinstance(ids_raw, Mapping) else {}
@@ -753,7 +811,10 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     def _tokens(it: Mapping[str, Any]) -> set[str]:
         toks: set[str] = set()
         try:
-            ck = _ck(it)
+            if feature == "history" and history_event_mode:
+                ck_event = _sync_key(it)
+                return {ck_event} if ck_event else set()
+            ck = _sync_key(it)
             if ck:
                 toks.add(ck)
             toks |= _typed_tokens(it)
@@ -831,6 +892,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         tombX = set(tomb)
 
     def _prev_had(prev_idx: dict[str, Any], prev_alias: dict[str, str], it: Mapping[str, Any]) -> bool:
+        if feature == "history" and history_event_mode:
+            return bool(_find_history_event_in_idx(prev_idx, it))
         ck = _ck(it)
         if ck in prev_idx:
             return True
@@ -861,7 +924,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     obsB_tokens = _observed_tokens(prevB, obsB)
 
     def _deleted_on_A(it: Mapping[str, Any]) -> bool:
-        ck = _ck(it)
+        ck = _sync_key(it)
+        if feature == "history" and history_event_mode:
+            return bool(ck and ck in obsA)
         if ck in obsA:
             return True
         try:
@@ -870,7 +935,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             return False
 
     def _deleted_on_B(it: Mapping[str, Any]) -> bool:
-        ck = _ck(it)
+        ck = _sync_key(it)
+        if feature == "history" and history_event_mode:
+            return bool(ck and ck in obsB)
         if ck in obsB:
             return True
         try:
@@ -1359,7 +1426,32 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     else:
         # Strip synthetic entries (no watched_at) from both sides before planning
-        if feature == "history":
+        if feature == "history" and history_event_mode:
+            A_eff = filter_history_events(A_eff, event_mode=True)
+            B_eff = filter_history_events(B_eff, event_mode=True)
+            A_alias = _alias_index(A_eff)
+            B_alias = _alias_index(B_eff)
+            bucket_sec = _hist_bucket_sec(a, b, feature)
+            missing_for_B, _ = history_event_diff(A_eff, B_eff, typed_tokens=_typed_tokens, bucket_sec=bucket_sec)
+            missing_for_A, _ = history_event_diff(B_eff, A_eff, typed_tokens=_typed_tokens, bucket_sec=bucket_sec)
+
+            for v in missing_for_B:
+                tomb_blocks = _tomb_blocks_remove(v, prev_self=prevA, prev_self_alias=prevA_alias)
+                sk = _sync_key(v)
+                if allow_removals and (tomb_blocks or (sk in obsB) or (sk in shrinkB)) and (_prev_had(prevB, prevB_alias, v) or tomb_blocks):
+                    rem_from_A.append(_sync_minimal(v))
+                else:
+                    add_to_B.append(_sync_minimal(v))
+
+            for v in missing_for_A:
+                tomb_blocks = _tomb_blocks_remove(v, prev_self=prevB, prev_self_alias=prevB_alias)
+                sk = _sync_key(v)
+                if allow_removals and (tomb_blocks or (sk in obsA) or (sk in shrinkA)) and (_prev_had(prevA, prevA_alias, v) or tomb_blocks):
+                    rem_from_B.append(_sync_minimal(v))
+                else:
+                    add_to_A.append(_sync_minimal(v))
+
+        elif feature == "history":
             A_eff = {
                 k: v for k, v in A_eff.items()
                 if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
@@ -1400,7 +1492,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             if _history_upsert_supported(aops, feature):
                 _append_manual_history_updates(manual_adds_B, A_eff, A_alias, upd_to_A)
 
-        bucket_sec = _hist_bucket_sec(a, b, feature)
+        bucket_sec = 0 if (feature == "history" and history_event_mode) else _hist_bucket_sec(a, b, feature)
         if bucket_sec and int(bucket_sec) > 1:
             bsec = int(bucket_sec)
 
@@ -1471,7 +1563,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     rem_from_B.append(_minimal(v))
                 else:
                     add_to_A.append(_minimal(v))
-        else:
+        elif not (feature == "history" and history_event_mode):
             for _k, v in A_eff.items():
                 if _present(B_eff, B_alias, v):
                     continue
@@ -1516,8 +1608,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     try:
         unresolved_A = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature)) or [])
         unresolved_B = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature)) or [])
-        retryA = sum(1 for it in add_to_A if _ck(it) in unresolved_A)
-        retryB = sum(1 for it in add_to_B if _ck(it) in unresolved_B)
+        retryA = sum(1 for it in add_to_A if _sync_key(it) in unresolved_A)
+        retryB = sum(1 for it in add_to_B if _sync_key(it) in unresolved_B)
         if retryA:
             emit("debug", msg="unresolved.retry", feature=feature, dst=a, pair=f"{a}-{b}", retried=retryA)
         if retryB:
@@ -1582,9 +1674,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     guardB = PhantomGuard(src=a, dst=b, feature=feature, ttl_days=bb_ttl_days, enabled=use_phantoms)
 
     if use_phantoms and add_to_A:
-        add_to_A, _ = guardA.filter_adds(add_to_A, _ck, _minimal, emit, ctx.state_store, pair_key)
+        add_to_A, _ = guardA.filter_adds(add_to_A, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
     if use_phantoms and add_to_B:
-        add_to_B, _ = guardB.filter_adds(add_to_B, _ck, _minimal, emit, ctx.state_store, pair_key)
+        add_to_B, _ = guardB.filter_adds(add_to_B, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
 
     if feature == "ratings":
         upd_to_A = [it for it in add_to_A if _present(A_eff, A_alias, it)]
@@ -1602,7 +1694,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     ) -> list[dict[str, Any]]:
         if not allow_removals:
             return planned_items
-        planned = {k for k in (_ck(it) for it in planned_items) if k}
+        planned = {k for k in (_sync_key(it) for it in planned_items) if k}
         retry: list[dict[str, Any]] = []
         stale: list[str] = []
         try:
@@ -1616,20 +1708,22 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             key = str(rec.get("key") or "")
             if not isinstance(item, Mapping):
                 continue
-            if _present(src_eff, src_alias, item):
+            if (feature == "history" and history_event_mode and _find_history_event_in_idx(src_eff, item)) or (
+                not (feature == "history" and history_event_mode) and _present(src_eff, src_alias, item)
+            ):
                 if key:
                     stale.append(key)
                 continue
-            dv = _find_in_idx(dst_eff, dst_alias, item)
+            dv = _find_history_event_in_idx(dst_eff, item) if (feature == "history" and history_event_mode) else _find_in_idx(dst_eff, dst_alias, item)
             if not dv:
                 if key:
                     stale.append(key)
                 continue
-            rk = _ck(dv) or _ck(item)
+            rk = _sync_key(dv) or _sync_key(item)
             if not rk or rk in planned:
                 continue
             planned.add(rk)
-            retry.append(_minimal(dv))
+            retry.append(_sync_minimal(dv))
         if stale and not dry_run_flag:
             try:
                 clear_unresolved(dst_name, feature, stale)
@@ -1641,9 +1735,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
 
     rem_from_A = _retry_pending_removes(a, A_eff, A_alias, B_eff, B_alias, rem_from_A)
     rem_from_B = _retry_pending_removes(b, B_eff, B_alias, A_eff, A_alias, rem_from_B)
-    retry_remove_keys = {k for k in (_ck(it) for it in (rem_from_A or []) + (rem_from_B or [])) if k}
-    add_to_A = [it for it in add_to_A if _ck(it) not in retry_remove_keys]
-    add_to_B = [it for it in add_to_B if _ck(it) not in retry_remove_keys]
+    retry_remove_keys = {k for k in (_sync_key(it) for it in (rem_from_A or []) + (rem_from_B or [])) if k}
+    add_to_A = [it for it in add_to_A if _sync_key(it) not in retry_remove_keys]
+    add_to_B = [it for it in add_to_B if _sync_key(it) not in retry_remove_keys]
 
     rem_from_A = _maybe_block_massdelete(
         rem_from_A, baseline_size=len(A_eff),
@@ -1669,8 +1763,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     eff_rem_B = 0
     remove_unresolved_A = 0
     remove_unresolved_B = 0
-    remA_keys = [_ck(_minimal(it)) for it in (rem_from_A or []) if _ck(_minimal(it))]
-    remB_keys = [_ck(_minimal(it)) for it in (rem_from_B or []) if _ck(_minimal(it))]
+    remA_keys = [_sync_key(_sync_minimal(it)) for it in (rem_from_A or []) if _sync_key(_sync_minimal(it))]
+    remB_keys = [_sync_key(_sync_minimal(it)) for it in (rem_from_B or []) if _sync_key(_sync_minimal(it))]
 
     def _mark_tombs(items: list[dict[str, Any]]) -> None:
         try:
@@ -1681,9 +1775,11 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             tokens = set()
             for it in (items or []):
                 try:
-                    ck = _ck(_minimal(it))
+                    ck = _sync_key(_sync_minimal(it))
                     if ck:
                         tokens.add(ck)
+                    if feature == "history" and history_event_mode:
+                        continue
                     for idk, idv in ((it.get("ids") or {}) or {}).items():
                         if idv is None or str(idv) == "":
                             continue
@@ -1726,14 +1822,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 okA_set = set(okA_keys)
                 for k in okA_keys:
                     A_eff.pop(k, None)
-                _mark_tombs([it for it in rem_from_A if _ck(_minimal(it)) in okA_set])
+                _mark_tombs([it for it in rem_from_A if _sync_key(_sync_minimal(it)) in okA_set])
                 _bust_snapshot(a)
                 clear_unresolved(a, feature, okA_keys)
             if decA_rem["failed_keys"] and not dry_run_flag:
                 failA = set(decA_rem["failed_keys"])
                 record_unresolved(
                     a, feature,
-                    [it for it in rem_from_A if _ck(_minimal(it)) in failA],
+                    [it for it in rem_from_A if _sync_key(_sync_minimal(it)) in failA],
                     hint="two:apply:remove:unconfirmed",
                 )
 
@@ -1772,14 +1868,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 okB_set = set(okB_keys)
                 for k in okB_keys:
                     B_eff.pop(k, None)
-                _mark_tombs([it for it in rem_from_B if _ck(_minimal(it)) in okB_set])
+                _mark_tombs([it for it in rem_from_B if _sync_key(_sync_minimal(it)) in okB_set])
                 _bust_snapshot(b)
                 clear_unresolved(b, feature, okB_keys)
             if decB_rem["failed_keys"] and not dry_run_flag:
                 failB = set(decB_rem["failed_keys"])
                 record_unresolved(
                     b, feature,
-                    [it for it in rem_from_B if _ck(_minimal(it)) in failB],
+                    [it for it in rem_from_B if _sync_key(_sync_minimal(it)) in failB],
                     hint="two:apply:remove:unconfirmed",
                 )
 
@@ -1898,12 +1994,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             seen_A: set[str] = set()
             k2i_A: dict[str, Any] = {}
             for it in add_to_A:
-                k = _ck(_minimal(it))
+                k = _sync_key(_sync_minimal(it))
                 if not k or k in seen_A:
                     continue
                 seen_A.add(k)
                 attempted_A.append(k)
-                k2i_A[k] = _minimal(it)
+                k2i_A[k] = _sync_minimal(it)
             
             resA_add = apply_add(
                 dst_ops=aops, cfg=provider_cfg, dst_name=a, feature=feature, items=add_to_A,
@@ -2031,12 +2127,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             seen_B: set[str] = set()
             k2i_B: dict[str, Any] = {}
             for it in add_to_B:
-                k = _ck(_minimal(it))
+                k = _sync_key(_sync_minimal(it))
                 if not k or k in seen_B:
                     continue
                 seen_B.add(k)
                 attempted_B.append(k)
-                k2i_B[k] = _minimal(it)
+                k2i_B[k] = _sync_minimal(it)
             
             resB_add = apply_add(
                 dst_ops=bops, cfg=provider_cfg, dst_name=b, feature=feature, items=add_to_B,
@@ -2210,7 +2306,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
                     continue
 
-                mv = _minimal(v)
+                mv = _sync_minimal(v, str(k))
                 if inst != "default":
                     mv["_cw_instance"] = inst
                 kept[str(k)] = mv

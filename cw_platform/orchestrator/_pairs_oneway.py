@@ -201,6 +201,7 @@ def select_baseline_keys(success_keys, result) -> list:
 from ..provider_instances import normalize_instance_id
 
 from ..id_map import minimal as _minimal, canonical_key as _ck, merge_ids as _merge_ids
+from ..history_events import history_sync_key, minimal_history_item
 from ..anime_mapping.service import (
     anime_mapping_pair_feature_options as _anime_pair_feature_options,
     config_with_pair_feature_options as _anime_config_with_pair_feature_options,
@@ -238,6 +239,15 @@ from ._pairs_utils import (
 )
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_mass_delete
 from ._pairs_blocklist import apply_blocklist
+from ._history_rewatches import (
+    collapse_history_latest,
+    config_with_history_rewatches,
+    filter_history_events,
+    history_event_diff,
+    history_event_present,
+    history_rewatch_pair_enabled,
+    history_rewatches_requested,
+)
 
 # Blackbox imports
 from ._blackbox import load_blackbox_keys, record_attempts, record_success
@@ -689,7 +699,7 @@ def _ratings_filter_index(idx: dict[str, Any], fcfg: Mapping[str, Any]) -> dict[
     return {k: v for k, v in idx.items() if _keep(v)}
 
 # One-way sync core
-def run_one_way_feature(
+def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     ctx,
     src: str,
     dst: str,
@@ -749,6 +759,14 @@ def run_one_way_feature(
     include_observed = bool(sync_cfg.get("include_observed_deletes", True))
     if src_down or dst_down:
         include_observed = False
+
+    history_rewatch_requested = history_rewatches_requested(feature, fcfg)
+    history_event_mode = history_rewatch_pair_enabled(feature, fcfg, src, src_ops, dst, dst_ops)
+    if history_event_mode:
+        provider_cfg = config_with_history_rewatches(provider_cfg, True)
+    elif history_rewatch_requested:
+        provider_cfg = config_with_history_rewatches(provider_cfg, False)
+        emit("debug", msg="history.rewatches.disabled", src=src, dst=dst, reason="provider_capability")
 
     def _cap_obsdel(ops) -> bool | None:
         try:
@@ -846,6 +864,29 @@ def run_one_way_feature(
                 toks.add(f"{str(k).lower()}:{str(v).lower()}")
 
         return toks
+
+    def _sync_key(it: Mapping[str, Any], fallback_key: str | None = None) -> str:
+        if feature == "history":
+            return history_sync_key(it, fallback_key, event_mode=history_event_mode)
+        return _ck(it) or (str(fallback_key or "").strip())
+
+    def _sync_minimal(it: Mapping[str, Any], fallback_key: str | None = None) -> dict[str, Any]:
+        if feature == "history":
+            return minimal_history_item(it, fallback_key, event_mode=history_event_mode)
+        return _minimal(it)
+
+    def _find_history_event_in_idx(idx: Mapping[str, Any], it: Mapping[str, Any], fallback_key: str | None = None) -> Mapping[str, Any] | None:
+        if feature != "history" or not history_event_mode:
+            return None
+        sk = _sync_key(it, fallback_key)
+        direct = idx.get(sk) if sk else None
+        if isinstance(direct, Mapping):
+            return direct
+        bucket_sec = _history_bucket_sec(src, dst, feature)
+        for dk, dv in (idx or {}).items():
+            if isinstance(dv, Mapping) and history_event_present(it, sk, {str(dk): dv}, _typed_tokens, bucket_sec=bucket_sec):
+                return dv
+        return None
 
     def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
         ids_raw = it.get("show_ids") if isinstance(it.get("show_ids"), Mapping) else it.get("ids")
@@ -1105,9 +1146,24 @@ def run_one_way_feature(
         if len(src_idx) != src_before or len(dst_full) != dst_before:
             dbg("anime_mapping.rekeyed", feature=feature, src=src, dst=dst, src_items=len(src_idx), dst_items=len(dst_full))
 
+    if feature == "history":
+        src_idx = filter_history_events(src_idx, event_mode=history_event_mode)
+        dst_full = filter_history_events(dst_full, event_mode=history_event_mode)
+        if history_event_mode:
+            prev_src = filter_history_events(prev_src, event_mode=True)
+            prev_dst = filter_history_events(prev_dst, event_mode=True)
+        else:
+            src_idx = collapse_history_latest(src_idx)
+            dst_full = collapse_history_latest(dst_full)
+            prev_src = collapse_history_latest(prev_src)
+            prev_dst = collapse_history_latest(prev_dst)
+
+    dst_canonical: dict[str, Any] = {}
+    if feature == "history" and not history_event_mode:
+        dst_canonical = dict(dst_full)
+
     # Repair sparse destination snapshots using the source index.
-    dst_canonical: dict[str, Any] = dict(dst_full) if feature == "history" else {}
-    if feature in ("history", "ratings", "progress"):
+    if feature in ("history", "ratings", "progress") and not (feature == "history" and history_event_mode):
         try:
             _view_hook = getattr(dst_ops, "destination_comparison_view", None)
             if callable(_view_hook):
@@ -1189,7 +1245,16 @@ def run_one_way_feature(
             src_idx = _merge_manual_adds(src_idx, manual_adds)
 
         # Strip synthetic entries (no watched_at) from src before planning
-        if feature == "history":
+        if feature == "history" and history_event_mode:
+            src_idx = filter_history_events(src_idx, event_mode=True)
+            dst_full = filter_history_events(dst_full, event_mode=True)
+            adds, mirror_removes = history_event_diff(
+                src_idx,
+                dst_full,
+                typed_tokens=_typed_tokens,
+                bucket_sec=_history_bucket_sec(src, dst, feature),
+            )
+        elif feature == "history" and not history_event_mode:
             src_idx = {
                 k: dict(v) for k, v in src_idx.items()
                 if isinstance(v, Mapping) and (v.get("watched_at") or v.get("last_watched_at"))
@@ -1215,7 +1280,7 @@ def run_one_way_feature(
                         seen_history_updates.add(uk)
                     updates.append(upd)
 
-        bucket_sec = _history_bucket_sec(src, dst, feature)
+        bucket_sec = 0 if (feature == "history" and history_event_mode) else _history_bucket_sec(src, dst, feature)
         if bucket_sec and int(bucket_sec) > 1:
             b = int(bucket_sec)
 
@@ -1278,7 +1343,7 @@ def run_one_way_feature(
                 if toks and any((tok, tsb) in src_tok_ts for tok in toks):
                     continue
                 mirror_removes.append(_minimal(dv))
-        else:
+        elif not (feature == "history" and history_event_mode):
             adds, mirror_removes = diff(src_idx, dst_full)
 
     src_alias = _alias_index(src_idx)
@@ -1288,7 +1353,7 @@ def run_one_way_feature(
         # Progress uses upsert semantics (update resume position)
         if feature not in ("ratings", "history", "progress"):
             adds = [it for it in adds if not _present(dst_full, dst_alias, it)]
-        elif feature == "history":
+        elif feature == "history" and not history_event_mode:
             pruned: list[dict[str, Any]] = []
             for it in adds:
                 ck = _ck(it) or ""
@@ -1307,13 +1372,21 @@ def run_one_way_feature(
         src_obs = dict(src_cur or {})
         if manual_adds:
             src_obs = _merge_manual_adds(src_obs, manual_adds)
+        if feature == "history":
+            src_obs = filter_history_events(src_obs, event_mode=history_event_mode)
+            if not history_event_mode:
+                src_obs = collapse_history_latest(src_obs)
         src_obs_alias = _alias_index(src_obs)
 
         observed: list[Mapping[str, Any]] = []
-        for it in (prev_src or {}).values():
+        for pk, it in (prev_src or {}).items():
             if not isinstance(it, Mapping):
                 continue
-            if not _present(src_obs, src_obs_alias, it):
+            if feature == "history" and history_event_mode:
+                if _find_history_event_in_idx(src_obs, it, str(pk)):
+                    continue
+                observed.append(it)
+            elif not _present(src_obs, src_obs_alias, it):
                 observed.append(it)
 
         if not observed:
@@ -1321,15 +1394,15 @@ def run_one_way_feature(
 
         seen: set[str] = set()
         for it in observed:
-            dv = _find_in_idx(dst_full, dst_alias, it)
+            dv = _find_history_event_in_idx(dst_full, it) if (feature == "history" and history_event_mode) else _find_in_idx(dst_full, dst_alias, it)
             if not dv:
                 continue
-            rk = _ck(dv) or _ck(it)
+            rk = _sync_key(dv) or _sync_key(it)
             if rk and rk in seen:
                 continue
             if rk:
                 seen.add(rk)
-            observed_removes.append(_minimal(dv))
+            observed_removes.append(_sync_minimal(dv))
 
         return observed_removes
 
@@ -1344,16 +1417,21 @@ def run_one_way_feature(
         elif remove_mode == "mirror":
             removes = list(mirror_removes or [])
             if removes:
-                removes = [it for it in removes if not _present(src_idx, src_alias, it)]
-                try:
-                    removes = [it for it in removes if _ck(it) in prev_dst]
-                except Exception:
-                    pass
+                if feature == "history" and history_event_mode:
+                    removes = [it for it in removes if not _find_history_event_in_idx(src_idx, it)]
+                    if prev_dst:
+                        removes = [it for it in removes if _find_history_event_in_idx(prev_dst, it)]
+                else:
+                    removes = [it for it in removes if not _present(src_idx, src_alias, it)]
+                    try:
+                        removes = [it for it in removes if _ck(it) in prev_dst]
+                    except Exception:
+                        pass
         else:
             removes = _observed_source_removes()
 
         if not dst_suspect:
-            planned = {k for k in (_ck(it) for it in removes) if k}
+            planned = {k for k in (_sync_key(it) for it in removes) if k}
             retry_removes: list[dict[str, Any]] = []
             stale_pending: list[str] = []
             try:
@@ -1367,20 +1445,22 @@ def run_one_way_feature(
                 key = str(rec.get("key") or "")
                 if not isinstance(item, Mapping):
                     continue
-                if _present(src_idx, src_alias, item):
+                if (feature == "history" and history_event_mode and _find_history_event_in_idx(src_idx, item)) or (
+                    not (feature == "history" and history_event_mode) and _present(src_idx, src_alias, item)
+                ):
                     if key:
                         stale_pending.append(key)
                     continue
-                dv = _find_in_idx(dst_full, dst_alias, item)
+                dv = _find_history_event_in_idx(dst_full, item) if (feature == "history" and history_event_mode) else _find_in_idx(dst_full, dst_alias, item)
                 if not dv:
                     if key:
                         stale_pending.append(key)
                     continue
-                rk = _ck(dv) or _ck(item)
+                rk = _sync_key(dv) or _sync_key(item)
                 if not rk or rk in planned:
                     continue
                 planned.add(rk)
-                retry_removes.append(_minimal(dv))
+                retry_removes.append(_sync_minimal(dv))
             if stale_pending and not bool(ctx.dry_run or sync_cfg.get("dry_run", False)):
                 try:
                     clear_unresolved(dst, feature, stale_pending)
@@ -1449,7 +1529,7 @@ def run_one_way_feature(
 
     if unresolved_known:
         try:
-            retried = sum(1 for it in adds if _ck(it) in unresolved_known) + sum(1 for it in updates if _ck(it) in unresolved_known)
+            retried = sum(1 for it in adds if _sync_key(it) in unresolved_known) + sum(1 for it in updates if _sync_key(it) in unresolved_known)
         except Exception:
             retried = 0
         if retried:
@@ -1465,20 +1545,20 @@ def run_one_way_feature(
 
     guard = PhantomGuard(src, dst, feature, ttl_days=ttl_days, enabled=use_phantoms)
     if use_phantoms and adds:
-        adds, _blocked = guard.filter_adds(adds, _ck, _minimal, emit, ctx.state_store, pair_key)
+        adds, _blocked = guard.filter_adds(adds, _sync_key, _sync_minimal, emit, ctx.state_store, pair_key)
 
     attempted_keys: list[str] = []
     key2item: dict[str, Any] = {}
     seen: set[str] = set()
 
     for it in adds:
-        k = _ck(it)
+        k = _sync_key(it)
         if not k:
             continue
         if k not in seen:
             attempted_keys.append(k)
             seen.add(k)
-        key2item.setdefault(k, _minimal(it))
+        key2item.setdefault(k, _sync_minimal(it))
 
     add_attempted_raw = len(adds)
     add_attempted_unique = len(attempted_keys)
@@ -1726,7 +1806,7 @@ def run_one_way_feature(
             if baseline_writes and not dry_run_flag:
                 for dk, item in baseline_writes:
                     dst_full[dk] = item
-                    if feature == "history":
+                    if feature == "history" and not history_event_mode:
                         dst_canonical[dk] = item
                 _bust_snapshot(dst)
             post_apply_add_res = add_res
@@ -1738,9 +1818,9 @@ def run_one_way_feature(
     if removes:
         try:
             for it in removes:
-                k = _ck(_minimal(it))
+                k = _sync_key(_sync_minimal(it))
                 if k:
-                    rem_key2item.setdefault(k, it)
+                    rem_key2item.setdefault(k, _sync_minimal(it))
             rem_keys_attempted = list(rem_key2item.keys())
         except Exception:
             rem_keys_attempted = []
@@ -1804,6 +1884,8 @@ def run_one_way_feature(
                             continue
                         try:
                             removed_tokens.add(k)
+                            if feature == "history" and history_event_mode:
+                                continue
                             ids = (it.get("ids") or {})
                             for idk, idv in (ids or {}).items():
                                 if idv is None or str(idv) == "":
@@ -1824,7 +1906,7 @@ def run_one_way_feature(
                 for k in rem_success_keys:
                     if k in dst_full:
                         dst_full.pop(k, None)
-                if feature == "history":
+                if feature == "history" and not history_event_mode:
                     dest_removed = [str(x) for x in ((rem_res or {}).get("removed_destination_keys") or []) if x]
                     for dk in dest_removed:
                         dst_canonical.pop(dk, None)
@@ -1868,7 +1950,7 @@ def run_one_way_feature(
                 if rk not in dst_full:
                     base_update += 1
                 dst_full[rk] = rv
-                if feature == "history":
+                if feature == "history" and not history_event_mode:
                     dst_canonical[rk] = rv
         tk = str(os.environ.get("CW_PLEX_TRACE_KEY", "") or "").strip().lower()
         contains_trace = bool(tk) and any(str(k).split("@", 1)[0].lower() == tk for k in (refreshed or {}))
@@ -1903,7 +1985,7 @@ def run_one_way_feature(
                     if isinstance(pobj, Mapping) and pobj.get("ignored") is True:
                         continue
 
-                    mv = _minimal(v)
+                    mv = _sync_minimal(v, str(k))
                     if inst != "default":
                         mv["_cw_instance"] = inst
                     kept[str(k)] = mv
@@ -1964,7 +2046,7 @@ def run_one_way_feature(
             if feature in ("ratings", "progress"):
                 dst_full = _rekey_state_to_src_keyspace(dst_full, src_idx)
 
-            dst_commit = dst_canonical if feature == "history" else dst_full
+            dst_commit = dst_full if (feature == "history" and history_event_mode) else (dst_canonical if feature == "history" else dst_full)
             if feature == "history" and len(dst_commit) != len(dst_full):
                 dbg("baseline.provider_native", feature=feature, dst=dst,
                     canonical=len(dst_commit), comparison=len(dst_full))

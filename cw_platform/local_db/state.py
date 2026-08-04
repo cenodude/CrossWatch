@@ -17,7 +17,7 @@ from .db import get_conn
 from .schema import ID_KEYS
 
 _LOCK = threading.RLock()
-_EVENT_KEY_RE = re.compile(r"^(?P<base>.+)@(?P<epoch>\d{7,})$")
+_EVENT_KEY_RE = re.compile(r"^(?P<base>.+)@(?P<event>(?:\d{7,}|id:.+))$")
 _CACHE: dict[str, Any] = {"path": None, "fingerprint": None, "state": None}
 _BASELINE_ITEM_COLUMNS = [
     "provider_state_id",
@@ -123,8 +123,11 @@ def _iso_from_event_key(key: str) -> str | None:
     m = _EVENT_KEY_RE.match(str(key or ""))
     if not m:
         return None
+    event = str(m.group("event") or "").split("~", 1)[0]
+    if not event.isdigit():
+        return None
     try:
-        return datetime.fromtimestamp(int(m.group("epoch")), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return datetime.fromtimestamp(int(event), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     except Exception:
         return None
 
@@ -221,7 +224,7 @@ def _item_to_row(provider_state_id: int, key: str, item: Mapping[str, Any], ts: 
         _b(item.get("_cw_marked")) if "_cw_marked" in item else None,
         _s(item.get("_cw_instance")),
         _s(item.get("provider_item_id")),
-        _s(item.get("provider_event_id")),
+        _s(item.get("provider_event_id") or item.get("_simkl_rewatch_id") or item.get("rewatch_id") or item.get("_publicmetadb_history_id")),
         ts,
     )
 

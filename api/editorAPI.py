@@ -15,6 +15,7 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.history_events import history_sync_key, is_history_event_key, minimal_history_item
 from cw_platform.id_map import canonical_key, merge_ids, minimal
 from cw_platform.local_db import crosswatch_db_path, manual_policy as sqlite_manual_policy
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
@@ -224,7 +225,7 @@ def _save_policy_manual(
     blocks: list[str],
     provider_instance: str | None = None,
 ) -> None:
-    adds_items = _canonicalize_manual_items(adds_items)
+    adds_items = _canonicalize_manual_items(adds_items, kind)
     raw = _load_policy()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -336,8 +337,8 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
                 items_out = adds_out.get("items")
                 if not isinstance(items_out, dict):
                     items_out = {}
-                merged = _canonicalize_manual_items(dict(items_out))
-                for mk, mv in _canonicalize_manual_items({str(k): v for k, v in items_in.items()}).items():
+                merged = _canonicalize_manual_items(dict(items_out), kind)
+                for mk, mv in _canonicalize_manual_items({str(k): v for k, v in items_in.items()}, kind).items():
                     merged[mk] = _merge_manual_item(merged.get(mk), mv)
                 adds_out["items"] = merged
 
@@ -1142,16 +1143,31 @@ def _merge_manual_item(existing: Any, incoming: Any) -> dict[str, Any]:
     return out
 
 
-def _canonicalize_manual_items(items: dict[str, Any]) -> dict[str, Any]:
+def _history_item_is_event(key: str, item: Mapping[str, Any]) -> bool:
+    return is_history_event_key(key) or bool(item.get("_cw_rewatch_sync") is True or item.get("_cw_event_key"))
+
+
+def _editor_item_key(feature: str, key: str, item: Mapping[str, Any]) -> str:
+    if feature == "history" and _history_item_is_event(key, item):
+        return history_sync_key(item, key, event_mode=True)
+    try:
+        return str(canonical_key(item) or key).strip().lower()
+    except Exception:
+        return str(key or "").strip().lower()
+
+
+def _editor_minimal_item(feature: str, key: str, item: Mapping[str, Any]) -> dict[str, Any]:
+    if feature == "history" and _history_item_is_event(key, item):
+        return minimal_history_item(item, key, event_mode=True)
+    return minimal(item)
+
+
+def _canonicalize_manual_items(items: dict[str, Any], feature: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for raw_key, raw_item in (items or {}).items():
         key = str(raw_key or "").strip()
         item = dict(raw_item) if isinstance(raw_item, dict) else {}
-        try:
-            ckey = canonical_key(item)
-        except Exception:
-            ckey = ""
-        final_key = str(ckey or key).strip().lower()
+        final_key = _editor_item_key(feature, key, item)
         if not final_key:
             continue
         if final_key in out:
@@ -1174,7 +1190,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
     if src in ("tracker", "crosswatch"):
         inst = normalize_instance_id(payload.get("provider_instance"))
         ws = _tracker_workspace(payload.get("workspace") or payload.get("snapshot"), inst)
-        items = _canonicalize_manual_items(items)
+        items = _canonicalize_manual_items(items, kind)
         blocks = _normalize_blocks(payload.get("blocks"))
         _save_policy_manual(kind, _TRACKER_PROVIDER, items, blocks, inst)
         ts = None
@@ -1198,7 +1214,7 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
         provider = str(payload.get("provider") or "").strip()
         if not provider:
             raise HTTPException(status_code=400, detail=f"Missing provider for source={src}")
-        items = _canonicalize_manual_items(items)
+        items = _canonicalize_manual_items(items, kind)
 
         inst = normalize_instance_id(payload.get("provider_instance"))
 
@@ -1345,6 +1361,9 @@ def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
         return None
     item = dict(raw)
     key = str(item.pop("key", "") or "").strip()
+    if feature == "history" and is_history_event_key(key):
+        item["_cw_event_key"] = key
+        item["_cw_rewatch_sync"] = True
     ids = item.get("ids")
     if not isinstance(ids, dict):
         ids = {}
@@ -1395,7 +1414,7 @@ def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
     return item
 
 
-def _items_confirmed_by_send(items: list[dict[str, Any]], result: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _items_confirmed_by_send(feature: Kind, items: list[dict[str, Any]], result: Mapping[str, Any]) -> list[dict[str, Any]]:
     key_fields = (
         "confirmed_keys",
         "skipped_keys",
@@ -1413,10 +1432,7 @@ def _items_confirmed_by_send(items: list[dict[str, Any]], result: Mapping[str, A
     if keep:
         out: list[dict[str, Any]] = []
         for item in items:
-            try:
-                key = str(canonical_key(item) or "")
-            except Exception:
-                key = ""
+            key = _editor_item_key(feature, str(item.get("_cw_event_key") or ""), item)
             if key and key in keep:
                 out.append(item)
         return out
@@ -1436,14 +1452,11 @@ def _merge_sent_items_into_state(provider: str, instance: str, feature: Kind, it
     current = dict(_load_state_items(feature, provider, inst, raw_state=state))
 
     for item in items:
-        try:
-            key = canonical_key(item)
-        except Exception:
-            key = ""
+        key = _editor_item_key(feature, str(item.get("_cw_event_key") or ""), item)
         if not key:
             continue
         try:
-            current[str(key)] = minimal(item)
+            current[str(key)] = _editor_minimal_item(feature, str(key), item)
         except Exception:
             current[str(key)] = dict(item)
 
@@ -1545,7 +1558,7 @@ def api_editor_send(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
         if not dry_run and bool(res.get("ok", True)) and int(res.get("confirmed", res.get("count", 0)) or 0) > 0:
             try:
-                _merge_sent_items_into_state(provider, instance, feature, _items_confirmed_by_send(items, res))
+                _merge_sent_items_into_state(provider, instance, feature, _items_confirmed_by_send(feature, items, res))
             except Exception:
                 pass
 

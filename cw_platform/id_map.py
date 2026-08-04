@@ -343,14 +343,26 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
     # Preserve provider-specific raw history ids
     for opt in (
         "_trakt_history_id",
+        "trakt_history_id",
         "history_id",
+        "provider_event_id",
+        "_publicmetadb_history_id",
+        "_simkl_history_id",
+        "_simkl_rewatch_id",
+        "rewatch_id",
+        "is_rewatch",
+        "rewatch_status",
         "simkl_bucket",
         "anime_type",
         "_simkl_episode_number",
         "_floppy_consumption_id",
+        "consumption_id",
+        "_history_id",
         "_floppy_list_item_id",
         "_floppy_season",
         "_floppy_episode",
+        "_cw_event_key",
+        "_cw_rewatch_sync",
     ):
         if opt in item and item.get(opt) not in (None, ""):
             out[opt] = item.get(opt)

@@ -15,12 +15,13 @@ import time
 import datetime as _dt
 
 from ..id_map import canonical_key, KEY_PRIORITY
+from ..history_events import history_event_key, is_history_event_key
 from ..provider_instances import normalize_instance_id
 from ._types import InventoryOps
 from ..modules_registry import load_sync_ops
 
 SnapIndex = dict[str, dict[str, Any]]
-SnapCache = dict[tuple[str, str, str], tuple[float, SnapIndex]]
+SnapCache = dict[tuple[str, ...], tuple[float, SnapIndex]]
 
 
 def bust_snapshot_cache(snap_cache: Any, provider: str, feature: str) -> None:
@@ -30,7 +31,7 @@ def bust_snapshot_cache(snap_cache: Any, provider: str, feature: str) -> None:
     feat = str(feature or "")
     for key in [
         k for k in list(snap_cache.keys())
-        if isinstance(k, tuple) and len(k) == 3 and str(k[1]) == prov and str(k[2]) == feat
+        if isinstance(k, tuple) and len(k) >= 3 and str(k[1]) == prov and str(k[2]) == feat
     ]:
         snap_cache.pop(key, None)
 
@@ -51,8 +52,12 @@ def canonicalize_index(idx_raw: Any, *, feature: str) -> "SnapIndex":
                 continue
             item = dict(raw)
             computed = canonical_key(item) or ""
-            provider_key = k.split("@", 1)[0] if isinstance(k, str) and k else ""
-            key = _pick_key(provider_key, computed)
+            provider_key = str(k or "").strip().lower() if isinstance(k, str) and k else ""
+            if str(feature or "").lower() == "history" and is_history_event_key(provider_key):
+                key = history_event_key(item, provider_key)
+            else:
+                provider_key = provider_key.split("@", 1)[0] if provider_key else ""
+                key = _pick_key(provider_key, computed)
             if key:
                 canon[key] = item
     return _coalesce_by_shared_ids(canon, feature=feature)
@@ -93,7 +98,8 @@ def refresh_destination_after_apply(
     try:
         scope = pair_scope() or "unscoped"
         if canon:
-            snap_cache[(scope, provider, feature)] = (time.time(), canon)
+            mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
+            snap_cache[(scope, provider, feature, mode)] = (time.time(), canon)
     except Exception:
         pass
     return canon
@@ -719,7 +725,8 @@ def build_snapshots_for_feature(
             continue
 
         scope = pair_scope() or "unscoped"
-        memo_key = (scope, name, feature)
+        mode = "events" if bool((config or {}).get("_cw_history_rewatches")) and str(feature).lower() == "history" else "state"
+        memo_key = (scope, name, feature, mode)
         if snap_ttl_sec > 0:
             ent = snap_cache.get(memo_key)
             if ent is not None:

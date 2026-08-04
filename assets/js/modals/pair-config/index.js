@@ -208,7 +208,7 @@ function defaultState(){
     options:{
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
-      history:{enable:false,add:false,remove:false},
+      history:{enable:false,add:false,remove:false,rewatches:false},
       playlists:{enable:false,add:true,remove:false},
       progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}
     },
@@ -358,6 +358,25 @@ const byName=(state,n)=>state.providers.find(p=>p.name===n);
 function progressCapsForProvider(state, providerName){
   return byName(state, providerName)?.capabilities?.progress || {};
 }
+function historyRewatchCapsForProvider(state, providerName){
+  return byName(state, providerName)?.capabilities?.history?.rewatches || {};
+}
+function providerSupportsHistoryRewatch(state, providerName, op){
+  const caps = historyRewatchCapsForProvider(state, providerName);
+  return !!(caps && caps[op]);
+}
+function pairSupportsHistoryRewatches(state, src = state?.src, dst = state?.dst, twoWay = isTwoWayMode(state)){
+  if(!src || !dst) return false;
+  if(twoWay){
+    return providerSupportsHistoryRewatch(state, src, "read")
+      && providerSupportsHistoryRewatch(state, src, "write")
+      && providerSupportsHistoryRewatch(state, dst, "read")
+      && providerSupportsHistoryRewatch(state, dst, "write");
+  }
+  return providerSupportsHistoryRewatch(state, src, "read")
+    && providerSupportsHistoryRewatch(state, dst, "read")
+    && providerSupportsHistoryRewatch(state, dst, "write");
+}
 function progressCompletionPercentFromCaps(caps){
   const progress = (caps && typeof caps === "object") ? caps : {};
   const policy = (progress.completion_policy && typeof progress.completion_policy === "object") ? progress.completion_policy : {};
@@ -418,6 +437,7 @@ const commonFeatures=(state)=>{
 };
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
+  k==="history"?{enable:false,add:false,remove:false,rewatches:false}:
   k==="playlists"?{enable:false,add:true,remove:false}:
   k==="progress"?{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}:
   {enable:false,add:false,remove:false};
@@ -712,7 +732,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance"]
   };
@@ -1428,6 +1448,7 @@ function renderFeaturePanel(state){
 
   if (state.feature === "history") {
     const hs = getOpts(state, "history");
+    const rwSupported = pairSupportsHistoryRewatches(state);
     const trCfg = (state.cfgRaw?.trakt) || {};
     const emCfg = (state.cfgRaw?.emby?.history) || {};
 
@@ -1521,11 +1542,18 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
+        <div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-hs-rewatches">Rewatches</label>
+          <label class="switch">
+            <input id="cx-hs-rewatches" type="checkbox" ${hs.rewatches && rwSupported ? "checked" : ""} ${rwSupported ? "" : "disabled"}>
+            <span class="slider"></span>
+          </label>
+        </div>
         ${trColRow}
         ${mdDroppedRow}
         ${smDroppedRow}
       </div>
-      <div class="muted">Synchronize plays between providers. “Remove” is not recommended and should only be enabled for specific cases like mirroring.</div>
+      <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 
     const parts = [`<div class="panel-title">Advanced</div>`];
@@ -1631,6 +1659,12 @@ left.innerHTML = `
 
     right.innerHTML = parts.join("");
     applySubDisable("history");
+    const rw = ID("cx-hs-rewatches");
+    if(rw && !rwSupported){
+      rw.checked = false;
+      rw.disabled = true;
+      rw.closest(".opt-row")?.classList.add("disabled");
+    }
     return;
   }
 
@@ -1979,6 +2013,7 @@ function bindChangeHandlers(state,root){
         enable: !!ID("cx-hs-enable")?.checked,
         add:    !!ID("cx-hs-add")?.checked,
         remove: !!ID("cx-hs-remove")?.checked,
+        rewatches: !!ID("cx-hs-rewatches")?.checked,
       });
       state.visited.add("history");
     }
@@ -2397,7 +2432,9 @@ function buildPayload(state,wrap){
   progress.max_percent = applyProgressMaxRecommendation(state, progress).maxPercent;
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
-  const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history:get("history"),progress,playlists:get("playlists")});
+  const history=get("history");
+  if(history && !pairSupportsHistoryRewatches(state, src, dst, modeTwo)) history.rewatches=false;
+  const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists")});
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   const prov={};
   const pp=state.pairProviders||{};

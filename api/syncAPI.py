@@ -165,6 +165,8 @@ def _normalize_features(f: dict | None) -> dict:
             v["enable"] = coerce_bool(v.get("enable", True), True)
             v["add"] = coerce_bool(v.get("add", True), True)
             v["remove"] = coerce_bool(v.get("remove", False))
+        if k == "history" and isinstance(f.get(k), dict):
+            f[k]["rewatches"] = coerce_bool(f[k].get("rewatches", False))
         if isinstance(f.get(k), dict) and ("use_anime_mapping" in f[k] or "anime_only_sync" in f[k]):
             use_map = coerce_bool(f[k].get("use_anime_mapping", False))
             f[k]["use_anime_mapping"] = use_map
@@ -1743,6 +1745,19 @@ def api_sync_providers() -> JSONResponse:
         progress = _norm_progress_caps(caps.get("progress"))
         if progress:
             out["progress"] = progress
+        history = caps.get("history")
+        if isinstance(history, Mapping):
+            rewatches = history.get("rewatches")
+            if isinstance(rewatches, Mapping):
+                clean: dict[str, Any] = {
+                    "read": bool(rewatches.get("read", False)),
+                    "write": bool(rewatches.get("write", False)),
+                }
+                if rewatches.get("account_gate"):
+                    clean["account_gate"] = str(rewatches.get("account_gate"))
+                out["history"] = {"rewatches": clean}
+            elif isinstance(rewatches, bool):
+                out["history"] = {"rewatches": {"read": rewatches, "write": rewatches}}
         return out
 
     def _configured_state(mod, provider_name: str) -> bool:
