@@ -365,7 +365,20 @@ class PUBLICMETADBModule:
             cnt, unresolved = feat_ratings.add(self, lst)
         else:
             cnt, unresolved = feat_watchlist.add(self, lst)
-        return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": _confirmed_keys(lst, unresolved)}
+        skipped_keys = (
+            [str(k) for k in getattr(self, "_publicmetadb_rating_skipped_keys", []) if k]
+            if feature == "ratings"
+            else []
+        )
+        skipped_set = set(skipped_keys)
+        confirmed_keys = [k for k in _confirmed_keys(lst, unresolved) if k not in skipped_set]
+        return {
+            "ok": True,
+            "count": int(cnt),
+            "unresolved": unresolved,
+            "confirmed_keys": confirmed_keys,
+            "skipped_keys": skipped_keys,
+        }
 
     def remove(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         lst = list(items or [])
