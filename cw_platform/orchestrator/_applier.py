@@ -253,6 +253,16 @@ def _normalize(
         unresolved_keys = [k for k in unresolved_keys if k and (k not in seen and not seen.add(k))]
 
     unresolved = len(unresolved_list) if isinstance(unresolved_list, list) else int(unresolved_list or 0)
+    if unresolved_keys:
+        unresolved_key_set = set(unresolved_keys)
+        if ckeys:
+            ckeys = [k for k in ckeys if k not in unresolved_key_set]
+            confirmed = len(ckeys)
+        elif unresolved > 0:
+            confirmed = min(int(confirmed), max(0, attempted - unresolved))
+    elif unresolved > 0 and not ckeys:
+        confirmed = min(int(confirmed), max(0, attempted - unresolved))
+
     errors = int(res.get("errors") or 0)
     skipped_reported_raw = res.get("skipped")
     skipped_exact = len(skeys)

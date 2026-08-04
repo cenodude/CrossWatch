@@ -733,6 +733,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         errors = _merge_total("errors")
         blocked = _merge_total("blocked")
         extra = f", Total blocked: {blocked}"
+        for key, value in (("skipped", skipped), ("unresolved", unresolved), ("errors", errors), ("blocked", blocked)):
+            _summary_set(key, value)
 
         _sync_progress_ui(
             f"[i] Done. Total added: {added}, Total removed: {removed}, Total updated: {updated}, "
@@ -743,7 +745,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 _emit_unresolved_details(unresolved)
             except Exception:
                 pass
-        _sync_progress_ui("[SYNC] exit code: 0")
+        final_exit_code = 1 if unresolved > 0 or errors > 0 else 0
+        _sync_progress_ui(f"[SYNC] exit code: {final_exit_code}")
     except Exception as e:
         _sync_progress_ui(f"[!] Sync error: {e}")
         _sync_progress_ui("[SYNC] exit code: 1")
@@ -764,7 +767,10 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             snap = _summary_snapshot()
             exit_code = snap.get("exit_code")
             if exit_code is not None:
-                event = "success" if int(exit_code) == 0 else "failure"
+                unresolved_count = int(snap.get("unresolved") or 0)
+                errors_count = int(snap.get("errors") or 0)
+                is_clean = int(exit_code) == 0 and unresolved_count == 0 and errors_count == 0
+                event = "success" if is_clean else "failure"
                 notify_scheduler_webhook(
                     scheduler_webhook_cfg,
                     event,

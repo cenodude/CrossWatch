@@ -773,6 +773,7 @@ class MDBListSink(ScrobbleSink):
             bodies = [b0] + [b for b in bodies if _body_ids_desc(b) != best_desc]
 
         sent_ok = False
+        last_err: dict[str, Any] | None = None
         for i, body in enumerate(bodies):
             if not (best_skel is not None and i == 0):
                 intent_prog = int(float(body.get("progress") or p_send))
@@ -781,6 +782,7 @@ class MDBListSink(ScrobbleSink):
 
             res = self._send_http(path, body, api_key, cfg)
             if not res.get("ok"):
+                last_err = dict(res)
                 _log(f"{path} failed for {name}: {res}", "WARN")
                 continue
 
@@ -821,4 +823,5 @@ class MDBListSink(ScrobbleSink):
             _auto_remove_across(ev, cfg, scope=f"mdblist:{self._instance_id}")
             self._completed[done_key] = p_send
         elif not sent_ok and action in ("start", "stop"):
-            self._note_watch(ev, action, cfg, p_send, status="fail")
+            reason = str((last_err or {}).get("status") or (last_err or {}).get("error") or "")
+            self._note_watch(ev, action, cfg, p_send, status="fail", reason=reason or None)

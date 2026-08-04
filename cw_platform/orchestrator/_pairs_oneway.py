@@ -89,7 +89,9 @@ def compute_effective_add(
     verify_after_write,
     provider_skipped,
 ) -> dict[str, Any]:
-    conf = list(confirmed_keys or [])
+    unres = set(still_unresolved or set())
+    skset = set(skipped_keys or set())
+    conf = [k for k in (confirmed_keys or []) if k not in unres and k not in skset]
     pc = int(prov_confirmed or 0)
     if have_exact_keys:
         pc = min(pc or len(conf), len(conf))
@@ -99,7 +101,6 @@ def compute_effective_add(
         eff = 0
     else:
         eff = len(conf) if (verify_after_write or have_exact_keys) else min(pc, len(conf))
-    skset = set(skipped_keys or set())
     skipped_success = [k for k in (attempted_keys or []) if k in skset]
     success_keys = conf if (verify_after_write or have_exact_keys) else conf[:eff]
     success_keys = list(dict.fromkeys(list(success_keys) + skipped_success))
@@ -1656,6 +1657,7 @@ def run_one_way_feature(
             )
             prov_confirmed = _decision["prov_confirmed"]
             added_effective = _decision["effective"]
+            added_provider_reported = prov_confirmed
             ambiguous_partial = _decision["ambiguous_partial"]
             success_keys = _decision["success_keys"]
             failed_keys = _decision["failed_keys"]
