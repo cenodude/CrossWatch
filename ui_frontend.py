@@ -46,10 +46,21 @@ self.addEventListener("fetch", (event) => {
 });
 """
 
+_REVALIDATE_SUFFIXES = {".js", ".mjs", ".css", ".html"}
+
+
+class _AssetStaticFiles(StaticFiles):
+    def file_response(self, full_path, stat_result, scope, status_code: int = 200) -> Response:
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        if Path(full_path).suffix.lower() in _REVALIDATE_SUFFIXES:
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def register_assets_and_favicons(app: FastAPI, root: Path) -> None:
     assets_dir = root / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+    app.mount("/assets", _AssetStaticFiles(directory=str(assets_dir)), name="assets")
 
     def asset_response(name: str, fallback: str, media_type: str, **headers: str) -> Response:
         try:
