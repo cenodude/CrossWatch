@@ -49,6 +49,13 @@ function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
+function pairInstanceForKind(state, kind){
+  const want=String(kind||"").trim().toLowerCase();
+  if(!want) return "default";
+  if(same(state?.src, want)) return String(state?.src_instance||"default")||"default";
+  if(same(state?.dst, want)) return String(state?.dst_instance||"default")||"default";
+  return "default";
+}
 const isAniList=(v)=>same(v,"anilist");
 function hasAniList(state){return isAniList(state?.src)||isAniList(state?.dst)}
 function hasOwn(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,key)}
@@ -596,6 +603,7 @@ const {
   hasKodi,
   getOpts,
   onLibrariesChanged: (state) => refreshProviderCardSummaries(state),
+  instanceFor: (state, kind) => pairInstanceForKind(state, kind),
 });
 
 function renderProviderSelects(state){
@@ -682,8 +690,9 @@ function renderInstanceSelects(state){
   state.src_instance=norm(srcInstSel.value);
   state.dst_instance=norm(dstInstSel.value);
 
-  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value)};
-  dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value)};
+  const onInstChange=()=>{try{renderFeaturePanel(state)}catch{}};
+  srcInstSel.onchange=()=>{state.src_instance=norm(srcInstSel.value);onInstChange()};
+  dstInstSel.onchange=()=>{state.dst_instance=norm(dstInstSel.value);onInstChange()};
 
   try{
     G.CW?.ProfileSelect?.enhanceProfile?.(srcInstSel,{className:"cx-profile-select-glass"});
