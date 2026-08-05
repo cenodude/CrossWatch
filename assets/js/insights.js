@@ -99,7 +99,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   let _prefs = loadPrefs(), _visibleFeats = visibleFeatures(_prefs);
   const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
-  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null;
+  let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null;
 
   function syncPrefs(instancesByProvider = {}) {
     const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
@@ -265,10 +265,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     else if (maxDigits <= 3 && totalDigits <= 8) minScale = .89;
     el.style.setProperty("--ins-mse-scale", String(Math.max(minScale, Math.min(1, (tw - 10) / mw)).toFixed(3)));
   }
-  function animateNumber(el, to, duration = 650) {
+  function animateNumber(el, to, duration = 650, animate = true) {
     if (!el) return;
     const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0, done = () => { el.textContent = String(to); el.dataset.v = String(to); fitProviderNumber(el); };
-    if (from === to) return done();
+    if (!animate || from === to) return done();
     const start = performance.now(), dur = Math.max(180, duration);
     const step = now => {
       const p = Math.min(1, (now - start) / dur);
@@ -361,7 +361,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     return cur === undefined || !Array.isArray(cur) ? cur !== false : cur.length > 0;
   };
 
-  function renderProviderStats(provTotals = {}, provActive = {}, configuredSet = new Set(), breakdownMap = {}, instancesByProvider = {}) {
+  function renderProviderStats(provTotals = {}, provActive = {}, configuredSet = new Set(), breakdownMap = {}, instancesByProvider = {}, animate = true) {
     const wrap = footWrap();
     let host = $("#stat-providers");
     if (!host) {
@@ -414,7 +414,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       $(".tile-k", tile).textContent = label;
       $(".tile-state", tile).classList.toggle("on", live);
       $(".tile-state .txt", tile).textContent = live ? "Live" : "Idle";
-      animateNumber($(".n", tile), total, 650);
+      animateNumber($(".n", tile), total, 650, animate);
 
       const info = $(".mse", tile);
       if (!per || prov === "crosswatch" || _feature === "playlists") {
@@ -539,12 +539,14 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       if (data?.watchtime) renderWatchtime(data.watchtime);
     }
     renderTopStats(blk);
+    const animateTiles = _tilesFeature === _feature;
+    _tilesFeature = _feature;
     const optimisticConfigured = configuredProvidersSnapshot(blk.active);
-    renderProviderStats(blk.providers, blk.active, optimisticConfigured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
+    renderProviderStats(blk.providers, blk.active, optimisticConfigured, blk.raw?.providers_mse || null, data?.instances_by_provider || {}, animateTiles);
     renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
     getConfiguredProviders(forceConfigured)
       .then((configured) => {
-        renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {});
+        renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {}, animateTiles);
         renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
       })
       .catch((e) => console.error("[Insights] Failed to resolve configured providers", e));
@@ -552,7 +554,13 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   async function refreshInsights(force = false) {
     if (authSetupPending()) return;
-    try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`), false, force); }
+    try {
+      const [data] = await Promise.all([
+        fetchJSON(`/api/insights?limit_samples=60&history=60${force ? `&t=${Date.now()}` : ""}`),
+        getConfiguredProviders(force).catch(() => null),
+      ]);
+      await renderFromData(data, false, force);
+    }
     catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights", e);
@@ -564,7 +572,13 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const now = Date.now();
     if (!force && now - _lastStatsFetch < 900) return;
     _lastStatsFetch = now;
-    try { await renderFromData(await fetchJSON(`/api/insights?limit_samples=0&history=0${force ? `&t=${Date.now()}` : ""}`), true, force); }
+    try {
+      const [data] = await Promise.all([
+        fetchJSON(`/api/insights?limit_samples=0&history=0&include_events=0${force ? `&t=${Date.now()}` : ""}`),
+        getConfiguredProviders(force).catch(() => null),
+      ]);
+      await renderFromData(data, true, force);
+    }
     catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights (stats)", e);

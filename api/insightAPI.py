@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re
+import threading
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -22,6 +23,38 @@ from cw_platform.provider_instances import (
     normalize_instance_id,
     sanitize_instance_label,
 )
+
+_SHADOW_CACHE_LOCK = threading.Lock()
+_SHADOW_CACHE: dict[str, tuple[tuple[int, int], dict[str, Any] | None]] = {}
+_SHADOW_CACHE_MAX = 64
+
+
+def _load_shadow_state(path: Path) -> dict[str, Any] | None:
+    try:
+        stat = path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+    except Exception:
+        return None
+
+    key = str(path)
+    with _SHADOW_CACHE_LOCK:
+        cached = _SHADOW_CACHE.get(key)
+        if cached is not None and cached[0] == signature:
+            return cached[1]
+
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        parsed = None
+    if not isinstance(parsed, dict):
+        parsed = None
+
+    with _SHADOW_CACHE_LOCK:
+        if len(_SHADOW_CACHE) >= _SHADOW_CACHE_MAX:
+            _SHADOW_CACHE.clear()
+        _SHADOW_CACHE[key] = (signature, parsed)
+    return parsed
+
 
 def _env() -> tuple[
     Any | None,
@@ -313,6 +346,7 @@ def register_insights(app: FastAPI) -> None:
         limit_samples: int = Query(60),
         history: int = Query(3),
         runtime: int = Query(0),
+        include_events: int = Query(1),
     ) -> JSONResponse:
         CW, load_config, _, get_runtime = _env()
         STATS = getattr(CW, "STATS", None)
@@ -725,11 +759,8 @@ def register_insights(app: FastAPI) -> None:
 
                 for p in files:
                     prio = _prio_for_file(p.name)
-                    try:
-                        raw = json.loads(p.read_text(encoding="utf-8") or "{}")
-                    except Exception:
-                        continue
-                    if not isinstance(raw, dict):
+                    raw = _load_shadow_state(p)
+                    if raw is None:
                         continue
 
                     for dict_key, rec in _iter_items(raw.get("items")):
@@ -823,6 +854,25 @@ def register_insights(app: FastAPI) -> None:
 
             return out
 
+        def _extend_title_maps_from_db(
+            show_key_map: dict[str, str],
+            show_id_map: dict[str, str],
+            movie_key_map: dict[str, tuple[str, int | None]],
+            movie_id_map: dict[str, tuple[str, int | None]],
+        ) -> None:
+            try:
+                from cw_platform.local_db.title_index import history_title_maps
+
+                db_movie_key, db_movie_id, db_show_id = history_title_maps()
+            except Exception:
+                return
+            for key, value in db_movie_key.items():
+                movie_key_map.setdefault(key, value)
+            for key, value in db_movie_id.items():
+                movie_id_map.setdefault(key, value)
+            for key, value in db_show_id.items():
+                show_id_map.setdefault(key, value)
+
         def _extend_show_title_maps_from_cw_state(id_map: dict[str, str]) -> None:
             try:
                 cw_state_dir = getattr(CW, "CW_STATE_DIR", None) or Path("/config/.cw_state")
@@ -877,12 +927,8 @@ def register_insights(app: FastAPI) -> None:
                     return ""
 
                 for p in files:
-                    try:
-                        raw = json.loads(p.read_text(encoding="utf-8") or "{}")
-                    except Exception:
-                        continue
-
-                    if not isinstance(raw, dict):
+                    raw = _load_shadow_state(p)
+                    if raw is None:
                         continue
 
                     for rec in _iter_items(raw.get("items")):
@@ -1445,24 +1491,28 @@ def register_insights(app: FastAPI) -> None:
                 samples_raw = list((data or {}).get("samples") or [])
                 
                 events_raw = list((data or {}).get("events") or [])
-                state_for_maps = state or {}
-                key_map, id_map = _build_show_title_maps(state_for_maps)
-                movie_key_map, movie_id_map = _build_movie_title_maps(state_for_maps)
-                _extend_show_title_maps_from_cw_state(id_map)
-                _extend_movie_title_maps_from_cw_state(movie_key_map, movie_id_map)
+                if int(include_events):
+                    state_for_maps = state or {}
+                    key_map, id_map = _build_show_title_maps(state_for_maps)
+                    movie_key_map, movie_id_map = _build_movie_title_maps(state_for_maps)
+                    _extend_show_title_maps_from_cw_state(id_map)
+                    _extend_movie_title_maps_from_cw_state(movie_key_map, movie_id_map)
+                    _extend_title_maps_from_db(key_map, id_map, movie_key_map, movie_id_map)
 
-                events = [
-                    _format_event_title(
-                        _enrich_event_from_state(
-                            _enrich_movie_event_from_state(e, movie_key_map, movie_id_map),
-                            key_map,
-                            id_map,
+                    events = [
+                        _format_event_title(
+                            _enrich_event_from_state(
+                                _enrich_movie_event_from_state(e, movie_key_map, movie_id_map),
+                                key_map,
+                                id_map,
+                            )
                         )
-                    )
-                    for e in events_raw
-                    if isinstance(e, dict) and not str(e.get("key", "")).startswith("agg:")
-                ]
-                events = _sort_events(events)
+                        for e in events_raw
+                        if isinstance(e, dict) and not str(e.get("key", "")).startswith("agg:")
+                    ]
+                    events = _sort_events(events)
+                else:
+                    events = []
                 http_block = dict((data or {}).get("http") or {})
                 generated_at = (data or {}).get("generated_at")
 

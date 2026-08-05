@@ -424,7 +424,7 @@ def _get_index_html_static() -> str:
     </div>
   </section>
 
-  <section id="stats-card" class="card cw-main-card cw-main-card--stats">
+  <section id="stats-card" class="card cw-main-card cw-main-card--stats collapsed">
     <div class="title">Statistics</div>
     <div class="cw-main-card-head cw-main-card-head--compact">
       <div class="cw-main-card-head-copy">

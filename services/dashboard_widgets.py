@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import re
 from typing import Any, Iterable, Mapping
@@ -608,6 +609,15 @@ def _ensure_cover_art(row: dict[str, Any], *, size: str) -> None:
         row["cover"] = cover
 
 
+_ART_RESOLVE_WORKERS = 8
+
+
+def _needs_metadata_lookup(row: Mapping[str, Any]) -> bool:
+    if not (row.get("poster") or row.get("tmdb")):
+        return True
+    return _media_type(row) == "episode" and _looks_like_episode_code(row.get("title"))
+
+
 def _resolve_missing_art_rows(
     rows: list[dict[str, Any]],
     *,
@@ -616,10 +626,20 @@ def _resolve_missing_art_rows(
     cover_size: str = "w342",
     backdrop_fallback: bool = False,
 ) -> list[dict[str, Any]]:
-    for row in rows:
+    def _resolve_row(row: dict[str, Any]) -> None:
         _resolve_episode_show_title(row)
         _resolve_missing_art(row, size=size, episode_still=episode_still, backdrop_fallback=backdrop_fallback)
         _ensure_cover_art(row, size=cover_size)
+
+    pending = sum(1 for row in rows if _needs_metadata_lookup(row))
+    if pending > 1:
+        _metadata_manager()
+        with ThreadPoolExecutor(max_workers=min(_ART_RESOLVE_WORKERS, pending)) as pool:
+            list(pool.map(_resolve_row, rows))
+        return rows
+
+    for row in rows:
+        _resolve_row(row)
     return rows
 
 
