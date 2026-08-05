@@ -89,7 +89,10 @@ def _plex_btok(cfg: dict[str, Any], instance_id: Any = None) -> tuple[str, str]:
         if isinstance(pms_blk, dict):
             pms = str(pms_blk.get("token") or pms_blk.get("x_plex_token") or "").strip()
 
-    if pms:
+    bound = str(px.get("pms_token_server") or "").strip().rstrip("/")
+    stale = bool(pms and cloud and bound and bound != base)
+
+    if pms and not stale:
         return base, pms
     pms2, _ = _try_discover_pms_token(cfg, base, cloud, instance_id=instance_id)
     return base, (pms2 or cloud)
