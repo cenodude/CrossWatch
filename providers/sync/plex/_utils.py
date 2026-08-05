@@ -32,10 +32,11 @@ _MIN_HTTP_S = float(os.environ.get("CW_PLEX_MIN_HTTP_INTERVAL_S", "5"))
 
 
 _CACHE: dict[str, dict[str, Any]] = {
-    "libs": {"key": None, "ts": 0.0, "data": []},
+    "libs": {},
     "owner": {"key": None, "ts": 0.0, "data": (None, None)},
     "aid_by_user": {},
 }
+_LIBS_CACHE_MAX = 32
 _LAST_HTTP: dict[str, float] = {}
 
 
@@ -185,6 +186,63 @@ def _resource_token_for_connection(token: str, client_id: str | None, baseurl: s
     return best[1], best[2]
 
 
+def _norm_base(url: Any) -> str:
+    return str(url or "").strip().rstrip("/")
+
+
+def ensure_pms_token_bound(
+    plex: dict[str, Any],
+    base: Any,
+    *,
+    timeout: float = 8.0,
+) -> tuple[str, str, bool]:
+    current = _norm_base(base)
+    pms_token = str(plex.get("pms_token") or "").strip()
+    machine_id = str(plex.get("machine_id") or "").strip()
+    account_token = str(plex.get("account_token") or "").strip()
+    if not current or not account_token:
+        return pms_token, machine_id, False
+
+    bound = _norm_base(plex.get("pms_token_server"))
+    has_creds = bool(pms_token or machine_id)
+    hard_stale = has_creds and bool(bound) and bound != current
+    soft_stale = has_creds and not bound
+    stale = hard_stale or soft_stale
+    if not (stale or not pms_token or not machine_id):
+        return pms_token, machine_id, False
+
+    changed = False
+    rebound = False
+    try:
+        mid2, tok2 = _resource_token_for_connection(
+            account_token, plex.get("client_id"), current, timeout=timeout
+        )
+        if tok2 and (stale or not pms_token):
+            _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
+            pms_token = tok2
+            changed = True
+        if mid2 and (stale or not machine_id):
+            _insert_key_after_inplace(
+                plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2
+            )
+            machine_id = mid2
+            changed = True
+        if tok2 or mid2:
+            rebound = True
+            if _norm_base(plex.get("pms_token_server")) != current:
+                plex["pms_token_server"] = current
+                changed = True
+            if stale:
+                _info("pms_token_rebound", server_url=current, bound_to=bound or "unknown")
+    except Exception as e:  # noqa: BLE001
+        _warn("pms_token_discovery_failed", error=str(e))
+
+    if hard_stale and not rebound:
+        _warn("pms_token_stale_unresolved", server_url=current, bound_to=bound)
+        return "", "", changed
+    return pms_token, machine_id, changed
+
+
 def _resource_host_flags(uri: str) -> tuple[str, bool, bool]:
     try:
         u = urlparse(uri)
@@ -226,106 +284,6 @@ def _resource_conn_score(uri: str, local: bool, relay: bool) -> int:
     score += 1 if (host and not is_ip) else 0
     return score
 
-
-def discover_pms_access_from_cloud(
-    token: str,
-    base_url: str | None = None,
-    machine_id: str | None = None,
-    timeout: float = 8.0,
-) -> tuple[str | None, str | None, str | None]:
-
-    t = (token or "").strip()
-    if not t:
-        return None, None, None
-
-    want_host = ""
-    want_port = 32400
-    want_scheme = ""
-    if base_url:
-        try:
-            u = urlparse((base_url or "").strip())
-            want_host = (u.hostname or "").strip().lower()
-            want_port = int(u.port or 32400)
-            want_scheme = (u.scheme or "").strip().lower()
-        except Exception:  # noqa: BLE001
-            want_host, want_port, want_scheme = "", 32400, ""
-
-    headers = _plex_headers(t)
-    try:
-        r = requests.get(
-            "https://plex.tv/api/resources",
-            params={"includeHttps": 1, "includeRelay": 1, "includeIPv6": 1},
-            headers=headers,
-            timeout=float(timeout),
-        )
-        if not r.ok or not (r.text or "").lstrip().startswith("<"):
-            return None, None, None
-        root = ET.fromstring(r.text or "")
-    except Exception:  # noqa: BLE001
-        return None, None, None
-
-    best: tuple[int, str | None, str | None, str | None] = (-1, None, None, None)
-
-    for dev in list(root):
-        if (dev.tag or "").lower() != "device":
-            continue
-        attrs = dev.attrib or {}
-        provides = (attrs.get("provides") or "").lower()
-        if "server" not in provides:
-            continue
-
-        dev_mid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip() or None
-        dev_tok = (attrs.get("accessToken") or "").strip() or None
-        if not dev_tok:
-            continue
-
-        hard_match = False
-        soft_match = False
-        if machine_id and dev_mid and dev_mid == str(machine_id).strip():
-            hard_match = True
-
-        best_uri = ""
-        best_uri_score = -1
-        base_match_score = -1
-
-        for conn in dev.findall(".//Connection"):
-            uri = (conn.attrib.get("uri") or "").strip().rstrip("/")
-            if not uri:
-                continue
-            local = (conn.attrib.get("local") or "").strip().lower() in ("1", "true", "yes")
-            relay = (conn.attrib.get("relay") or "").strip().lower() in ("1", "true", "yes")
-
-            cs = _resource_conn_score(uri, local=local, relay=relay)
-            if cs > best_uri_score:
-                best_uri_score = cs
-                best_uri = uri
-
-            if want_host:
-                try:
-                    cu = urlparse(uri)
-                    host = (cu.hostname or "").strip().lower()
-                    port = int(cu.port or 32400)
-                    scheme = (cu.scheme or "").strip().lower()
-                except Exception:  # noqa: BLE001
-                    continue
-                if host == want_host and port == want_port:
-                    soft_match = True
-                    base_match_score = max(base_match_score, 200 if scheme == want_scheme else 160)
-
-        if not (hard_match or soft_match):
-            continue
-
-        dev_score = best_uri_score
-        if hard_match:
-            dev_score += 1000
-        if soft_match:
-            dev_score += 800
-        dev_score += base_match_score if base_match_score > 0 else 0
-
-        if dev_score > best[0]:
-            best = (dev_score, dev_tok, dev_mid, best_uri or None)
-
-    return best[1], best[2], best[3]
 
 def _resolve_verify_from_cfg(cfg: Mapping[str, Any], url: str, instance_id: Any = None) -> bool:
     if not str(url).lower().startswith("https"):
@@ -385,30 +343,96 @@ def _try_get(session: requests.Session, base: str, path: str, timeout: float) ->
     return None
 
 
-def _pick_server_url_from_resources(xml_text: str) -> str:
+_DISCOVERY_PROBE_MAX = int(os.environ.get("CW_PLEX_DISCOVERY_PROBE_MAX", "6"))
+_DISCOVERY_PROBE_TIMEOUT_S = float(os.environ.get("CW_PLEX_DISCOVERY_PROBE_TIMEOUT_S", "3"))
+
+
+def _rank_server_candidates(xml_text: str) -> list[dict[str, Any]]:
     try:
         root = ET.fromstring(xml_text)
-        best_uri = ""
-        best_score = -1
-        for dev in root.findall(".//Device"):
-            if "server" not in (dev.attrib.get("provides") or ""):
-                continue
-            for conn in dev.findall(".//Connection"):
-                uri = (conn.attrib.get("uri") or "").strip().rstrip("/")
-                if not uri:
-                    continue
-                local = (conn.attrib.get("local") or "").strip().lower() in ("1", "true", "yes")
-                relay = (conn.attrib.get("relay") or "").strip().lower() in ("1", "true", "yes")
-                score = _resource_conn_score(uri, local=local, relay=relay)
-                if score > best_score:
-                    best_score = score
-                    best_uri = uri
-        return best_uri
     except Exception:  # noqa: BLE001
+        return []
+
+    out: list[dict[str, Any]] = []
+    for dev in root.findall(".//Device"):
+        attrs = dev.attrib or {}
+        if "server" not in (attrs.get("provides") or ""):
+            continue
+        owned = (attrs.get("owned") or "").strip().lower() in ("1", "true", "yes")
+        name = (attrs.get("name") or "").strip()
+        mid = (attrs.get("clientIdentifier") or attrs.get("machineIdentifier") or "").strip()
+        dev_token = (attrs.get("accessToken") or "").strip()
+        for conn in dev.findall(".//Connection"):
+            uri = (conn.attrib.get("uri") or "").strip().rstrip("/")
+            if not uri:
+                continue
+            local = (conn.attrib.get("local") or "").strip().lower() in ("1", "true", "yes")
+            relay = (conn.attrib.get("relay") or "").strip().lower() in ("1", "true", "yes")
+            out.append(
+                {
+                    "uri": uri,
+                    "score": _resource_conn_score(uri, local=local, relay=relay),
+                    "owned": owned,
+                    "name": name,
+                    "machine_id": mid,
+                    "token": dev_token,
+                }
+            )
+
+    out.sort(key=lambda c: (-int(c["score"]), not c["owned"], str(c["name"]), str(c["uri"])))
+    return out
+
+
+def _probe_identity(uri: str, token: str, timeout: float) -> bool:
+    url = f"{uri.rstrip('/')}/identity"
+    verifies = (True, False) if uri.lower().startswith("https") else (True,)
+    for verify in verifies:
+        session = None
+        try:
+            session = _build_session(token, verify)
+            if getattr(session.get(url, timeout=timeout), "ok", False):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            if session is not None:
+                try:
+                    session.close()
+                except Exception:  # noqa: BLE001
+                    pass
+    return False
+
+
+def _pick_server_url_from_resources(xml_text: str, account_token: str = "", probe: bool = False) -> str:
+    candidates = _rank_server_candidates(xml_text)
+    if not candidates:
         return ""
+    if not probe:
+        return str(candidates[0]["uri"])
+
+    tried = 0
+    for cand in candidates:
+        if tried >= max(1, _DISCOVERY_PROBE_MAX):
+            break
+        token = str(cand.get("token") or "") or account_token
+        if not token:
+            continue
+        tried += 1
+        if _probe_identity(str(cand["uri"]), token, _DISCOVERY_PROBE_TIMEOUT_S):
+            _info(
+                "server_url_probe_selected",
+                server_url=str(cand["uri"]),
+                server_name=str(cand.get("name") or ""),
+                owned=bool(cand.get("owned")),
+            )
+            return str(cand["uri"])
+
+    fallback = str(candidates[0]["uri"])
+    _warn("server_url_probe_none_reachable", probed=tried, fallback=fallback)
+    return fallback
 
 
-def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> str | None:
+def discover_server_url_from_cloud(token: str, timeout: float = 10.0, probe: bool = True) -> str | None:
     try:
         response = requests.get(
             "https://plex.tv/api/resources?includeHttps=1&includeRelay=1&includeIPv6=1",
@@ -416,7 +440,7 @@ def discover_server_url_from_cloud(token: str, timeout: float = 10.0) -> str | N
             timeout=timeout,
         )
         if response.ok and (response.text or "").lstrip().startswith("<"):
-            picked = _pick_server_url_from_resources(response.text)
+            picked = _pick_server_url_from_resources(response.text, account_token=token, probe=probe)
             return picked or None
     except Exception:  # noqa: BLE001
         pass
@@ -800,8 +824,8 @@ def fetch_account_id_for_cloud_id(
     return aid
 
 
-def _libs_key(base_url: str, token: str, verify: bool) -> tuple[str, str, bool]:
-    return base_url.rstrip("/"), token or "", bool(verify)
+def _libs_key(base_url: str, token: str, verify: bool) -> str:
+    return f"{_norm_base(base_url)}\n{token or ''}\n{1 if verify else 0}"
 
 
 def fetch_libraries(
@@ -811,11 +835,12 @@ def fetch_libraries(
     timeout: float = 10.0,
 ) -> list[dict[str, Any]]:
     key = _libs_key(base_url, token, verify)
-    ent = _CACHE["libs"]
-    if ent["key"] == key and _cache_hit(ent["ts"], _LIB_TTL_S):
-        return list(ent["data"])
-    if _throttle("/library/sections"):
-        return list(ent["data"])
+    bucket = _CACHE["libs"]
+    ent = bucket.get(key)
+    if ent and _cache_hit(ent.get("ts", 0.0), _LIB_TTL_S):
+        return list(ent.get("data") or [])
+    if _throttle(f"/library/sections\n{key}"):
+        return list(ent.get("data") or []) if ent else []
     libs: list[dict[str, Any]] = []
     try:
         session = _build_session(token, verify)
@@ -830,15 +855,25 @@ def fetch_libraries(
                     libs.append({"key": str(keyv), "title": title, "type": lib_type or "lib"})
     except Exception as e:  # noqa: BLE001
         _warn("sections_fetch_failed", error=str(e))
-    _CACHE["libs"] = {"key": key, "ts": time.time(), "data": list(libs)}
+    if not libs:
+        bucket.pop(key, None)
+        return libs
+    if len(bucket) >= _LIBS_CACHE_MAX:
+        for stale_key in sorted(bucket, key=lambda k: bucket[k].get("ts", 0.0))[: len(bucket) - _LIBS_CACHE_MAX + 1]:
+            bucket.pop(stale_key, None)
+    bucket[key] = {"ts": time.time(), "data": list(libs)}
     return libs
 
 
-def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> list[dict[str, Any]]:
+def fetch_libraries_from_cfg(
+    cfg: dict[str, Any] | None = None,
+    instance_id: Any = None,
+    *,
+    persist: bool = True,
+) -> list[dict[str, Any]]:
     cfg = load_config() if cfg is None else cfg
     plex = _plex(cfg, instance_id)
     cloud_token = (plex.get("account_token") or "").strip()
-    pms_token = (plex.get("pms_token") or "").strip()
     base = (plex.get("server_url") or "").strip()
     if not cloud_token:
         return []
@@ -846,30 +881,35 @@ def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any
         base_url = discover_server_url_from_cloud(cloud_token) or ""
         if base_url:
             _insert_key_first_inplace(plex, "server_url", base_url)
-            save_config(cfg)
+            if persist:
+                save_config(cfg)
         base = base_url
     if not base:
         return []
 
-    if not pms_token:
+    pms_token, _, changed = ensure_pms_token_bound(plex, base)
+    if changed and persist:
         try:
-            mid2, tok2 = _resource_token_for_connection(cloud_token, plex.get("client_id"), base, timeout=8.0)
-            if tok2:
-                _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
-                pms_token = tok2
-            if mid2 and not str(plex.get("machine_id") or "").strip():
-                _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
-            if tok2 or mid2:
-                save_config(cfg)
+            save_config(cfg)
         except Exception as e:  # noqa: BLE001
-            _warn("pms_token_discovery_failed", error=str(e))
+            _warn("pms_token_persist_failed", error=str(e))
 
     verify = _resolve_verify_from_cfg(cfg, base, instance_id)
-    libs = fetch_libraries(base, (pms_token or cloud_token), verify=verify)
-    if not libs and verify:
-        _info("libs_retry_insecure")
-        libs = fetch_libraries(base, (pms_token or cloud_token), verify=False)
-    return libs
+    tokens = [t for t in (pms_token, cloud_token) if t]
+    seen: set[str] = set()
+    for token in tokens:
+        if token in seen:
+            continue
+        seen.add(token)
+        libs = fetch_libraries(base, token, verify=verify)
+        if libs:
+            return libs
+        if verify:
+            _info("libs_retry_insecure")
+            libs = fetch_libraries(base, token, verify=False)
+            if libs:
+                return libs
+    return []
 
 
 def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> dict[str, Any]:
@@ -930,25 +970,7 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
         base = base_url
 
     if token and base:
-        bound = str(plex.get("pms_token_server") or "").strip().rstrip("/")
-        current = base.rstrip("/")
-        stale = bool(pms_token or machine_id) and bound != current
-
-        if stale or not pms_token or not machine_id:
-            try:
-                mid2, tok2 = _resource_token_for_connection(token, plex.get("client_id"), base, timeout=8.0)
-                if tok2 and (stale or not pms_token):
-                    _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
-                    pms_token = tok2
-                if mid2 and (stale or not machine_id):
-                    _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
-                    machine_id = mid2
-                if tok2 or mid2:
-                    plex["pms_token_server"] = current
-                    if stale:
-                        _info("pms_token_rebound", server_url=current, bound_to=bound or "unknown")
-            except Exception as e:  # noqa: BLE001
-                _warn("pms_token_discovery_failed", error=str(e))
+        pms_token, machine_id, _changed = ensure_pms_token_bound(plex, base)
 
         verify = _resolve_verify_from_cfg(cfg, base, instance_id)
 
@@ -1040,7 +1062,12 @@ def resolve_user_scope(
     return username, (int(aid) if aid is not None else None)
 
 
-def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: Any = None) -> bool:
+def ensure_whitelist_defaults(
+    cfg: dict[str, Any] | None = None,
+    instance_id: Any = None,
+    *,
+    persist: bool = True,
+) -> bool:
     cfg = load_config() if cfg is None else cfg
     plex = _plex(cfg, instance_id)
     changed = False
@@ -1056,7 +1083,7 @@ def ensure_whitelist_defaults(cfg: dict[str, Any] | None = None, instance_id: An
         if libs != norm:
             plex[sec]["libraries"] = norm
             changed = True
-    if changed:
+    if changed and persist:
         save_config(cfg)
         _info("whitelist_defaults_ensured")
     return changed

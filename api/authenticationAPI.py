@@ -57,7 +57,12 @@ def _apply_media_overrides(cfg: Any, provider: str, inst: str, server: str | Non
     block = ensure_instance_block(cfg, provider, inst)
     s = str(server or "").strip()
     if s:
-        block["server_url" if provider == "plex" else "server"] = s
+        key = "server_url" if provider == "plex" else "server"
+        if provider == "plex" and plex_utils._norm_base(s) != plex_utils._norm_base(block.get(key)):
+            block.pop("pms_token", None)
+            block.pop("pms_token_server", None)
+            block.pop("machine_id", None)
+        block[key] = s
     if verify_ssl is not None:
         block["verify_ssl"] = coerce_bool(verify_ssl)
     return block
@@ -594,9 +599,11 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
     def plex_libraries(instance: str | None = Query(None), server: str | None = Query(None), verify_ssl: bool | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
         cfg = load_config()
+        override = bool(str(server or "").strip())
         _apply_media_overrides(cfg, "plex", inst, server, verify_ssl)
-        ensure_whitelist_defaults(cfg, instance_id=inst)
-        return {"libraries": fetch_libraries_from_cfg(cfg, instance_id=inst), "instance": inst}
+        ensure_whitelist_defaults(cfg, instance_id=inst, persist=not override)
+        libs = fetch_libraries_from_cfg(cfg, instance_id=inst, persist=not override)
+        return {"libraries": libs, "instance": inst}
 
     
     @app.get("/api/plex/pms/probe", tags=["media providers"])
@@ -634,7 +641,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         try:
             verify = plex_utils._resolve_verify_from_cfg(cfg, base, instance_id=inst)
-            pms_token = (plex.get("pms_token") or "").strip()
+            pms_token, _mid, changed = plex_utils.ensure_pms_token_bound(plex, base)
+            if changed and not str(server or "").strip():
+                try:
+                    save_config(cfg)
+                except Exception:
+                    pass
             candidates: list[tuple[str, str]] = []
             if pms_token:
                 candidates.append(("pms_token", pms_token))
@@ -696,23 +708,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         pms_rows = []
         if base:
             verify = plex_utils._resolve_verify_from_cfg(cfg, base, instance_id=inst)
-            pms_token = (plex.get("pms_token") or "").strip()
-            if not pms_token:
+            pms_token, _mid, changed = plex_utils.ensure_pms_token_bound(plex, base)
+            if changed and not override:
                 try:
-                    tok2, mid2, url2 = plex_utils.discover_pms_access_from_cloud(token, base_url=base, machine_id=(plex.get("machine_id") or ""), timeout=8.0)
-                    if tok2:
-                        plex["pms_token"] = tok2
-                        pms_token = tok2
-                    if mid2 and not (plex.get("machine_id") or "").strip():
-                        plex["machine_id"] = mid2
-                    if url2 and not (plex.get("server_url") or "").strip():
-                        plex["server_url"] = url2
-                        base = url2
-                    if not override:
-                        try:
-                            save_config(cfg)
-                        except Exception:
-                            pass
+                    save_config(cfg)
                 except Exception:
                     pass
             sess_tok = pms_token or token
