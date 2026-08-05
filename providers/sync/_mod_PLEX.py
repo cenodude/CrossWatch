@@ -522,6 +522,29 @@ def get_manifest() -> Mapping[str, Any]:
             "playlists": _PLAYLIST_CAPABILITIES,
         },
     }
+
+
+def _same_pms_base(a: Any, b: Any) -> bool:
+    return str(a or "").strip().rstrip("/") == str(b or "").strip().rstrip("/")
+
+
+def _resolve_pms_binding(
+    plex_cfg: Mapping[str, Any],
+    pms: Mapping[str, Any],
+    baseurl: Any,
+) -> tuple[Any, Any]:
+    pms_token = plex_cfg.get("pms_token") or pms.get("token") or pms.get("x_plex_token")
+    machine_id = plex_cfg.get("machine_id")
+    bound = plex_cfg.get("pms_token_server")
+    if not (pms_token and bound and baseurl) or _same_pms_base(bound, baseurl):
+        return pms_token, machine_id
+    if not (plex_cfg.get("account_token") or plex_cfg.get("token")):
+        _warn("pms_token_stale_kept", server_url=str(baseurl), bound_to=str(bound), reason="no_account_token")
+        return pms_token, machine_id
+    _warn("pms_token_stale", server_url=str(baseurl), bound_to=str(bound))
+    return None, None
+
+
 @dataclass
 class PLEXConfig:
     token: str | None = None
@@ -612,6 +635,25 @@ class PLEXClient:
             self.session.headers["X-Plex-Token"] = connection_token
 
             if self.cfg.baseurl:
+                # Shared users need a server-scoped resource token for PMS endpoints.
+                mid = (self.cfg.machine_id or "").strip() or None
+                if not pms_token and cloud_token:
+                    try:
+                        m2, t2 = _plex_tv_resource_for_connection(
+                            cloud_token, cid, baseurl=str(self.cfg.baseurl).strip(), timeout=float(self.cfg.timeout)
+                        )
+                        if m2 and not mid:
+                            mid = m2
+                        if t2:
+                            pms_token = t2
+                            self._pms_token = t2
+                            connection_token = t2
+                            self.session.headers["X-Plex-Token"] = t2
+                        if pms_token and mid:
+                            self.cfg.machine_id = mid
+                    except Exception:
+                        pass
+
                 try:
                     self.server = PlexServer(self.cfg.baseurl, connection_token, timeout=self.cfg.timeout)
                     self.server._session = self.session  # type: ignore[attr-defined]
@@ -623,24 +665,12 @@ class PLEXClient:
                     self._post_connect_user_scope(str(pms_token or cloud_token))
                     return self
 
-                # Shared users need a server-scoped resource token for PMS endpoints.
-                if not pms_token:
-                    if not cloud_token:
-                        raise PLEXAuthError("Missing Plex account token for PMS resource discovery")
+                if not pms_token and cloud_token:
                     try:
-                        baseurl = str(self.cfg.baseurl or "").strip()
-                        mid = (self.cfg.machine_id or "").strip() or None
-                        if baseurl:
-                            m2, t2 = _plex_tv_resource_for_connection(cloud_token, cid, baseurl=baseurl, timeout=float(self.cfg.timeout))
-                            if m2 and not mid:
-                                mid = m2
-                            if t2:
-                                pms_token = t2
-                        if not pms_token:
-                            if not mid:
-                                mid = self._infer_machine_id(self.server)
-                            if mid:
-                                pms_token = _plex_tv_resource_access_token(cloud_token, cid, machine_id=mid, timeout=float(self.cfg.timeout))
+                        if not mid:
+                            mid = self._infer_machine_id(self.server)
+                        if mid:
+                            pms_token = _plex_tv_resource_access_token(cloud_token, cid, machine_id=mid, timeout=float(self.cfg.timeout))
                         if pms_token and mid:
                             self.cfg.machine_id = mid
                     except Exception:
@@ -662,10 +692,10 @@ class PLEXClient:
 
             try:
                 account = self._ensure_account()
-                res = self._pick_resource(account)
+                res, srv = self._pick_resource(account)
                 res_tok = str(getattr(res, "accessToken", None) or "").strip() or None
                 res_mid = str(getattr(res, "clientIdentifier", None) or "").strip() or None
-                self.server = res.connect(timeout=self.cfg.timeout)  # type: ignore[assignment]
+                self.server = srv or res.connect(timeout=self.cfg.timeout)  # type: ignore[assignment]
                 self.server._session = self.session  # type: ignore[attr-defined]
                 self._pms_baseurl = str(getattr(self.server, "baseurl", None) or "")
                 if res_mid and not (self.cfg.machine_id or "").strip():
@@ -695,24 +725,46 @@ class PLEXClient:
                 raise PLEXAuthError("Plex authorization failed") from e
             raise PLEXError(f"Plex connect failed: {e}") from e
 
-    def _pick_resource(self, acc: MyPlexAccount):
+    def _pick_resource(self, acc: MyPlexAccount) -> tuple[Any, Any]:
         servers = [r for r in acc.resources() if "server" in (r.provides or "")]
         if self.cfg.machine_id:
             mid = self.cfg.machine_id.lower()
             for r in servers:
                 if (r.clientIdentifier or "").lower() == mid:
-                    return r
+                    return r, None
         if self.cfg.server_name:
             name = self.cfg.server_name.lower()
             for r in servers:
                 if (r.name or "").lower() == name:
-                    return r
-        for r in servers:
-            if getattr(r, "owned", False):
-                return r
-        if servers:
-            return servers[0]
-        raise PLEXNotFound("No Plex Media Server resource found")
+                    return r, None
+        if not servers:
+            raise PLEXNotFound("No Plex Media Server resource found")
+
+        ordered = sorted(
+            servers,
+            key=lambda r: (not bool(getattr(r, "owned", False)), str(getattr(r, "name", "") or "")),
+        )
+        if len(ordered) == 1:
+            return ordered[0], None
+
+        for r in ordered:
+            try:
+                srv = r.connect(timeout=min(float(self.cfg.timeout), 5.0))
+            except Exception:  # noqa: BLE001
+                continue
+            _info(
+                "resource_probe_selected",
+                server_name=str(getattr(r, "name", "") or ""),
+                owned=bool(getattr(r, "owned", False)),
+            )
+            return r, srv
+
+        _warn(
+            "resource_probe_none_reachable",
+            count=len(ordered),
+            fallback=str(getattr(ordered[0], "name", "") or ""),
+        )
+        return ordered[0], None
 
     def _apply_pms_token(self, token: str) -> None:
         tok = str(token or "").strip()
@@ -1126,13 +1178,16 @@ class PLEXModule:
         plex_cfg = dict(cfg.get("plex") or {})
         pms = plex_cfg.get("pms") or {}
         baseurl = plex_cfg.get("baseurl") or plex_cfg.get("server_url") or pms.get("url") or pms.get("baseurl") or pms.get("server_url")
+
+        pms_token, machine_id = _resolve_pms_binding(plex_cfg, pms, baseurl)
+
         self.cfg = PLEXConfig(
             token=plex_cfg.get("account_token") or plex_cfg.get("token"),
-            pms_token=plex_cfg.get("pms_token") or pms.get("token") or pms.get("x_plex_token"),
+            pms_token=pms_token,
             baseurl=baseurl,
             client_id=plex_cfg.get("client_id"),
             server_name=plex_cfg.get("server_name") or plex_cfg.get("server"),
-            machine_id=plex_cfg.get("machine_id"),
+            machine_id=machine_id,
             username=plex_cfg.get("username"),
             account_id=int(plex_cfg["account_id"]) if str(plex_cfg.get("account_id", "")).strip().isdigit() else None,
             home_pin=plex_cfg.get("home_pin"),

@@ -10,6 +10,7 @@ export function createLibraryController({
   hasKodi,
   getOpts,
   onLibrariesChanged,
+  instanceFor,
 }) {
   let pairServerCfgPromise = null;
   let pairServerCfgAt = 0;
@@ -38,14 +39,30 @@ export function createLibraryController({
     pairServerCfgAt = 0;
   }
 
-  function fetchServerLibraries(kind) {
-    let url = null;
-    if (kind === "PLEX") url = "/api/plex/libraries";
-    else if (kind === "JELLYFIN") url = "/api/jellyfin/libraries";
-    else if (kind === "EMBY") url = "/api/emby/libraries";
-    else if (kind === "KODI") url = "/api/kodi/libraries";
-    if (!url) return Promise.resolve([]);
-    return fetch(url + "?cb=" + Date.now(), { cache: "no-store" })
+  function providerKeyFor(kind) {
+    if (kind === "PLEX") return "plex";
+    if (kind === "JELLYFIN") return "jellyfin";
+    if (kind === "EMBY") return "emby";
+    if (kind === "KODI") return "kodi";
+    return "";
+  }
+
+  function resolveInstance(state, kind) {
+    try {
+      const inst = instanceFor?.(state, kind);
+      return String(inst || "default").trim() || "default";
+    } catch {
+      return "default";
+    }
+  }
+
+  function fetchServerLibraries(state, kind) {
+    const prov = providerKeyFor(kind);
+    if (!prov) return Promise.resolve([]);
+    const url = `/api/${prov}/libraries`;
+    const inst = resolveInstance(state, kind);
+    const qs = `?cb=${Date.now()}&instance=${encodeURIComponent(inst)}`;
+    return fetch(url + qs, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => (j && Array.isArray(j.libraries) ? j.libraries : []))
       .catch(() => []);
@@ -61,16 +78,15 @@ export function createLibraryController({
     return pairServerCfgPromise;
   }
 
-  function filterLibsByServerConfig(libs, kind, feature, cfg) {
+  function filterLibsByServerConfig(libs, kind, feature, cfg, instance) {
     try {
-      let prov = "";
-      if (kind === "PLEX") prov = "plex";
-      else if (kind === "JELLYFIN") prov = "jellyfin";
-      else if (kind === "EMBY") prov = "emby";
-      else if (kind === "KODI") prov = "kodi";
+      const prov = providerKeyFor(kind);
       if (!prov) return libs;
       const f = feature === "history" ? "history" : feature === "ratings" ? "ratings" : feature;
-      const serverLibs = cfg?.[prov]?.[f]?.libraries;
+      const root = cfg?.[prov];
+      const inst = String(instance || "default");
+      const block = inst === "default" ? root : root?.instances?.[inst];
+      const serverLibs = block?.[f]?.libraries;
       const ids = Array.isArray(serverLibs) ? serverLibs.map((x) => String(x)) : [];
       if (!ids.length) return libs;
       const set = new Set(ids);
@@ -80,9 +96,10 @@ export function createLibraryController({
     }
   }
 
-  function fetchPairLibraries(kind, feature) {
-    return Promise.all([fetchServerLibraries(kind), fetchPairServerConfig()]).then(([libs, cfg]) =>
-      filterLibsByServerConfig(libs, kind, feature, cfg)
+  function fetchPairLibraries(state, kind, feature) {
+    const inst = resolveInstance(state, kind);
+    return Promise.all([fetchServerLibraries(state, kind), fetchPairServerConfig()]).then(([libs, cfg]) =>
+      filterLibsByServerConfig(libs, kind, feature, cfg, inst)
     );
   }
 
@@ -146,13 +163,13 @@ export function createLibraryController({
         btn.textContent = "Loading...";
       }
       Promise.all([
-        fetchPairLibraries(kind, "history").then((libs) => {
+        fetchPairLibraries(state, kind, "history").then((libs) => {
           renderPairLibChips(state, kind, "history", libs);
         }),
-        fetchPairLibraries(kind, "ratings").then((libs) => {
+        fetchPairLibraries(state, kind, "ratings").then((libs) => {
           renderPairLibChips(state, kind, "ratings", libs);
         }),
-        fetchPairLibraries(kind, "progress").then((libs) => {
+        fetchPairLibraries(state, kind, "progress").then((libs) => {
           renderPairLibChips(state, kind, "progress", libs);
         }),
       ]).finally(() => {
@@ -167,8 +184,9 @@ export function createLibraryController({
       btn.__wired = true;
       btn.addEventListener("click", load);
     }
-    if (!state._libsAutoload[kind]) {
-      state._libsAutoload[kind] = true;
+    const autoKey = `${kind}:${resolveInstance(state, kind)}`;
+    if (!state._libsAutoload[autoKey]) {
+      state._libsAutoload[autoKey] = true;
       load();
     }
   }
