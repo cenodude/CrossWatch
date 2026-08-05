@@ -930,15 +930,23 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
         base = base_url
 
     if token and base:
-        if not pms_token or not machine_id:
+        bound = str(plex.get("pms_token_server") or "").strip().rstrip("/")
+        current = base.rstrip("/")
+        stale = bool(pms_token or machine_id) and bound != current
+
+        if stale or not pms_token or not machine_id:
             try:
                 mid2, tok2 = _resource_token_for_connection(token, plex.get("client_id"), base, timeout=8.0)
-                if tok2 and not pms_token:
+                if tok2 and (stale or not pms_token):
                     _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
                     pms_token = tok2
-                if mid2 and not machine_id:
+                if mid2 and (stale or not machine_id):
                     _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
                     machine_id = mid2
+                if tok2 or mid2:
+                    plex["pms_token_server"] = current
+                    if stale:
+                        _info("pms_token_rebound", server_url=current, bound_to=bound or "unknown")
             except Exception as e:  # noqa: BLE001
                 _warn("pms_token_discovery_failed", error=str(e))
 

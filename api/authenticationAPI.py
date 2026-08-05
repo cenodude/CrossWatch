@@ -634,20 +634,33 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
         try:
             verify = plex_utils._resolve_verify_from_cfg(cfg, base, instance_id=inst)
-            s = plex_utils._build_session(token, verify)
-            r = plex_utils._try_get(s, base, "/identity", timeout=float(timeout))
-            if r is None:
+            pms_token = (plex.get("pms_token") or "").strip()
+            candidates: list[tuple[str, str]] = []
+            if pms_token:
+                candidates.append(("pms_token", pms_token))
+            if token and token != pms_token:
+                candidates.append(("account_token", token))
+
+            last: Any = None
+            for label, candidate in candidates:
+                for use_verify in ((True, False) if verify else (False,)):
+                    session = plex_utils._build_session(candidate, use_verify)
+                    resp = plex_utils._try_get(session, base, "/identity", timeout=float(timeout))
+                    if resp is None:
+                        continue
+                    last = resp
+                    if getattr(resp, "ok", False):
+                        out["status"] = int(resp.status_code)
+                        out["reachable"] = True
+                        out["token_source"] = label
+                        if not use_verify:
+                            out["verify_ssl"] = False
+                        return out
+
+            if last is None:
                 out["error"] = "No response"
                 return out
-            out["status"] = int(r.status_code)
-            out["reachable"] = bool(getattr(r, "ok", False))
-            if not out["reachable"] and verify:
-                s2 = plex_utils._build_session(token, False)
-                r2 = plex_utils._try_get(s2, base, "/identity", timeout=float(timeout))
-                if r2 is not None and getattr(r2, "ok", False):
-                    out["reachable"] = True
-                    out["status"] = int(r2.status_code)
-                    out["verify_ssl"] = False
+            out["status"] = int(last.status_code)
         except Exception:
             _LOG.exception("plex PMS probe failed")
             out["error"] = "probe_failed"
