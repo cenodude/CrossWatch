@@ -932,26 +932,21 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
     if token and base:
         bound = str(plex.get("pms_token_server") or "").strip().rstrip("/")
         current = base.rstrip("/")
-        if pms_token and bound != current:
-            plex.pop("pms_token", None)
-            plex.pop("machine_id", None)
-            plex.pop("pms_token_server", None)
-            pms_token = ""
-            machine_id = ""
-            _info("pms_token_invalidated", server_url=current, bound_to=bound or "unknown")
+        stale = bool(pms_token or machine_id) and bound != current
 
-        if not pms_token or not machine_id:
+        if stale or not pms_token or not machine_id:
             try:
                 mid2, tok2 = _resource_token_for_connection(token, plex.get("client_id"), base, timeout=8.0)
-                if tok2 and not pms_token:
+                if tok2 and (stale or not pms_token):
                     _insert_key_after_inplace(plex, "account_token", "pms_token", tok2)
                     pms_token = tok2
-                if mid2 and not machine_id:
+                if mid2 and (stale or not machine_id):
                     _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
                     machine_id = mid2
-                if pms_token or machine_id:
+                if tok2 or mid2:
                     plex["pms_token_server"] = current
-                    save_config(cfg)
+                    if stale:
+                        _info("pms_token_rebound", server_url=current, bound_to=bound or "unknown")
             except Exception as e:  # noqa: BLE001
                 _warn("pms_token_discovery_failed", error=str(e))
 
