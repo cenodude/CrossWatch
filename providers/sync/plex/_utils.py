@@ -930,6 +930,16 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
         base = base_url
 
     if token and base:
+        bound = str(plex.get("pms_token_server") or "").strip().rstrip("/")
+        current = base.rstrip("/")
+        if pms_token and bound != current:
+            plex.pop("pms_token", None)
+            plex.pop("machine_id", None)
+            plex.pop("pms_token_server", None)
+            pms_token = ""
+            machine_id = ""
+            _info("pms_token_invalidated", server_url=current, bound_to=bound or "unknown")
+
         if not pms_token or not machine_id:
             try:
                 mid2, tok2 = _resource_token_for_connection(token, plex.get("client_id"), base, timeout=8.0)
@@ -939,6 +949,9 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
                 if mid2 and not machine_id:
                     _insert_key_after_inplace(plex, "client_id" if "client_id" in plex else "pms_token", "machine_id", mid2)
                     machine_id = mid2
+                if pms_token or machine_id:
+                    plex["pms_token_server"] = current
+                    save_config(cfg)
             except Exception as e:  # noqa: BLE001
                 _warn("pms_token_discovery_failed", error=str(e))
 
