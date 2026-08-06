@@ -27,7 +27,6 @@ from ._common import (
     home_scope_exit,
     iso_from_epoch as _iso,
     item_guid_candidates,
-    meta_guids,
     minimal_from_history_row,
     normalize as plex_normalize,
     normalize_discover_row,
@@ -175,6 +174,74 @@ def _clear_guid_index() -> None:
     _GUID_INDEX_KEY = None
 
 
+def _row_guids(row: Mapping[str, Any]) -> list[str]:
+    vals: list[str] = []
+    g = row.get("guid")
+    if g:
+        vals.append(str(g))
+    for gg in row.get("Guid") or []:
+        gid = gg.get("id") if isinstance(gg, Mapping) else None
+        if gid:
+            vals.append(str(gid))
+    return vals
+
+
+def _fetch_section_guid_rows(srv: Any, section_id: str, plex_type: int) -> tuple[list[Mapping[str, Any]], int]:
+    base = _as_base_url(srv)
+    ses = getattr(srv, "_session", None)
+    token = getattr(srv, "token", None) or getattr(srv, "_token", None) or ""
+    if not (base and ses and token and section_id):
+        return [], 0
+
+    headers = dict(getattr(ses, "headers", {}) or {})
+    headers.update(plex_headers(token))
+    headers["Accept"] = "application/json"
+
+    page_size = 1000
+    out: list[Mapping[str, Any]] = []
+    seen_pages: set[tuple[str, ...]] = set()
+    start = 0
+    made = 0
+
+    while True:
+        params = {
+            "type": plex_type,
+            "includeGuids": 1,
+            "X-Plex-Container-Start": start,
+            "X-Plex-Container-Size": page_size,
+        }
+        try:
+            r = ses.get(f"{base}/library/sections/{section_id}/all", params=params, headers=headers, timeout=20)
+        except Exception:
+            break
+        made += 1
+        if not getattr(r, "ok", False):
+            break
+        try:
+            ctype = (r.headers.get("content-type") or "").lower()
+            data = (r.json() or {}) if "application/json" in ctype else _xml_to_container(r.text or "")
+            mc = data.get("MediaContainer") or {}
+            rows = [x for x in (mc.get("Metadata") or []) if isinstance(x, Mapping)]
+            total = mc.get("totalSize")
+            total_i = int(total) if total is not None else None
+        except Exception:
+            break
+        if not rows:
+            break
+        signature = tuple(str(row.get("ratingKey") or row.get("key") or "") for row in rows)
+        if signature in seen_pages:
+            break
+        seen_pages.add(signature)
+        out.extend(rows)
+        start += len(rows)
+        if total_i is not None and start >= total_i:
+            break
+        if len(rows) < page_size:
+            break
+
+    return out, made
+
+
 def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False) -> None:
     global _GUID_INDEX_KEY
     srv = getattr(getattr(adapter, "client", None), "server", None)
@@ -187,6 +254,7 @@ def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False) -> 
         _dbg("index_cache_hit", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
         return
     try:
+        requests_made = 0
         for sec in adapter.libraries(types=("movie", "show")) or []:
             sid = str(getattr(sec, "key", "") or "").strip()
             if allow and sid and sid not in allow:
@@ -194,23 +262,28 @@ def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False) -> 
             libtype = "movie" if getattr(sec, "type", "") == "movie" else "show"
             dst = _GUID_INDEX_MOVIE if libtype == "movie" else _GUID_INDEX_SHOW
             try:
-                for obj in (sec.all() or []):
-                    try:
-                        rk = str(getattr(obj, "ratingKey", "") or "").strip()
-                        if not rk:
-                            continue
-                        for g in meta_guids(obj):
-                            gg = str(g or "").strip().lower()
-                            if gg and gg not in dst:
-                                dst[gg] = rk
-                    except Exception:
+                rows, n = _fetch_section_guid_rows(srv, sid, 1 if libtype == "movie" else 2)
+                requests_made += n
+                for row in rows:
+                    rk = str(row.get("ratingKey") or "").strip()
+                    if not rk:
                         continue
+                    for g in _row_guids(row):
+                        gg = str(g or "").strip().lower()
+                        if gg and gg not in dst:
+                            dst[gg] = rk
             except Exception:
                 continue
         if srv:
             _save_guid_index(srv, allow)
         _GUID_INDEX_KEY = key
-        _dbg("index_fetch_counts", source="guid_index", movies=len(_GUID_INDEX_MOVIE), shows=len(_GUID_INDEX_SHOW))
+        _dbg(
+            "index_fetch_counts",
+            source="guid_index",
+            movies=len(_GUID_INDEX_MOVIE),
+            shows=len(_GUID_INDEX_SHOW),
+            requests=requests_made,
+        )
     except Exception:
         pass
 
@@ -487,6 +560,33 @@ def build_catalog_from_entries(entries: Iterable[Mapping[str, Any]]) -> HistoryC
 
 def _emit(evt: dict[str, Any]) -> None:
     emit(evt, default_feature="history")
+
+
+class _WriteProgress:
+    __slots__ = ("phase", "total", "_last_at", "_last_done", "_step", "_interval")
+
+    def __init__(self, phase: str, total: int, *, step: int = 100, interval_s: float = 3.0) -> None:
+        self.phase = phase
+        self.total = int(total or 0)
+        self._last_at = time.time()
+        self._last_done = -1
+        self._step = max(1, int(step))
+        self._interval = float(interval_s)
+
+    def tick(self, done: int, *, force: bool = False) -> None:
+        d = int(done or 0)
+        if not force:
+            now = time.time()
+            if d == self._last_done:
+                return
+            if (d % self._step) and (now - self._last_at) < self._interval:
+                return
+            self._last_at = now
+        self._last_done = d
+        _emit({
+            "event": "plex.write", "action": "progress", "feature": "history", "level": "info",
+            "phase": self.phase, "done": d, "total": self.total,
+        })
 
 
 def _epoch_from_history_entry(entry: Any) -> int | None:
@@ -994,8 +1094,12 @@ def _populate_catalog_episode_leaves(adapter: Any, allow: set[str], cat: History
                 break
             seen_pages.add(signature)
             scanned += len(rows)
+            _emit({
+                "event": "plex.catalog", "action": "episode_leaves_progress", "feature": "history", "level": "info",
+                "section_id": section_id, "scanned": scanned, "total": total_i,
+            })
             for row in rows:
-                meta = normalize_discover_row(row, token=token) or {}
+                meta = normalize_discover_row(row, token=token, hydrate_item_ids=False) or {}
                 ids = dict(meta.get("ids") or {})
                 rk = str(ids.get("plex") or row.get("ratingKey") or "").strip()
                 if not rk:
@@ -1674,7 +1778,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             if _populate_catalog_episode_leaves(adapter, allow, cat):
                 _store_history_catalog(adapter, allow, cat)
 
-        for item in items or []:
+        item_list = list(items or [])
+        resolve_progress = _WriteProgress("resolve", len(item_list))
+        resolve_progress.tick(0, force=True)
+
+        for resolved_n, item in enumerate(item_list, 1):
+            resolve_progress.tick(resolved_n)
             key = canonical_key(item) or ""
             ts = _as_epoch(item.get("watched_at"))
             if not ts:
@@ -1717,17 +1826,30 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             to_scrobble.append((item, key, str(rk), int(ts)))
 
+        resolve_progress.tick(len(item_list), force=True)
+
         write_workers = 0
         write_ms = 0
         if to_scrobble:
             write_workers = plex_worker_count(adapter, "history_workers", "CW_PLEX_HISTORY_WORKERS", 12)
             _ensure_session_pool(srv, write_workers)
+            write_progress = _WriteProgress("scrobble", len(to_scrobble))
+            write_progress.tick(0, force=True)
             _t_write = time.time()
             if write_workers > 1 and len(to_scrobble) > 1:
+                scrobble_ok = []
                 with ThreadPoolExecutor(max_workers=write_workers, thread_name_prefix="plex-scrobble") as ex:
-                    scrobble_ok = list(ex.map(lambda t: _scrobble_with_date(srv, t[2], t[3]), to_scrobble))
+                    for done_n, success in enumerate(
+                        ex.map(lambda t: _scrobble_with_date(srv, t[2], t[3]), to_scrobble), 1
+                    ):
+                        scrobble_ok.append(success)
+                        write_progress.tick(done_n)
             else:
-                scrobble_ok = [_scrobble_with_date(srv, rk, ts) for (_item, _key, rk, ts) in to_scrobble]
+                scrobble_ok = []
+                for done_n, (_item, _key, rk, ts) in enumerate(to_scrobble, 1):
+                    scrobble_ok.append(_scrobble_with_date(srv, rk, ts))
+                    write_progress.tick(done_n)
+            write_progress.tick(len(to_scrobble), force=True)
             write_ms = int((time.time() - _t_write) * 1000)
 
             for (item, key, _rk, _ts), success in zip(to_scrobble, scrobble_ok):

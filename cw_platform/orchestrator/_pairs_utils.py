@@ -8,6 +8,58 @@ import importlib
 from collections.abc import Mapping as _Mapping
 from ..id_map import canonical_key as _ck, ID_KEYS
 
+LIBRARY_SCOPED_FEATURES = frozenset({"history", "ratings", "progress"})
+
+LIBRARY_PROVIDER_KEYS = {
+    "PLEX": "plex",
+    "JELLYFIN": "jellyfin",
+    "EMBY": "emby",
+    "KODI": "kodi",
+}
+
+
+def pair_feature_libraries(fcfg: Any, provider: str) -> list[str]:
+    lib_cfg = (fcfg or {}).get("libraries") if isinstance(fcfg, Mapping) else None
+    if not isinstance(lib_cfg, Mapping):
+        return []
+    name = str(provider or "").strip()
+    per = lib_cfg.get(name.upper())
+    if per is None:
+        per = lib_cfg.get(name.lower())
+    if not isinstance(per, (list, tuple)):
+        return []
+    return [str(x).strip() for x in per if str(x).strip()]
+
+
+def config_with_pair_libraries(
+    cfg: Mapping[str, Any],
+    fcfg: Any,
+    feature: str,
+    providers: Any,
+) -> dict[str, Any]:
+    base = dict(cfg or {})
+    if str(feature or "").strip().lower() not in LIBRARY_SCOPED_FEATURES:
+        return base
+
+    out: dict[str, Any] | None = None
+    for provider in providers or ():
+        key = LIBRARY_PROVIDER_KEYS.get(str(provider or "").strip().upper())
+        if not key:
+            continue
+        libs = pair_feature_libraries(fcfg, provider)
+        if not libs:
+            continue
+        if out is None:
+            out = dict(base)
+        block = dict(out.get(key) or {})
+        feat = dict(block.get(feature) or {})
+        feat["libraries"] = list(libs)
+        block[feature] = feat
+        out[key] = block
+
+    return out if out is not None else base
+
+
 def supports_feature(ops, feature: str) -> bool:
     try:
         feats = (ops.capabilities() or {}).get("features", {})

@@ -109,12 +109,19 @@ try:
 except ImportError:
     from _id_map import minimal as id_minimal, ids_from_guid  # type: ignore
 
-_PLEX_CTX: dict[str, str | None] = {"baseurl": None, "token": None}
+_PLEX_CTX: dict[str, str | None] = {"baseurl": None, "token": None, "account_token": None}
 
 
-def configure_plex_context(*, baseurl: str | None, token: str | None) -> None:
+def configure_plex_context(
+    *,
+    baseurl: str | None,
+    token: str | None,
+    account_token: str | None = None,
+) -> None:
     _PLEX_CTX["baseurl"] = baseurl.rstrip("/") if isinstance(baseurl, str) else None
     _PLEX_CTX["token"] = token or None
+    if account_token:
+        _PLEX_CTX["account_token"] = account_token
 
 
 DISCOVER = "https://discover.provider.plex.tv"
@@ -938,6 +945,8 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
             return {}
 
     headers = plex_headers(token)
+    cloud_token = str(_PLEX_CTX.get("account_token") or "").strip() or token
+    cloud_headers = plex_headers(cloud_token) if cloud_token != token else headers
     base = str(_PLEX_CTX.get("baseurl") or "").strip().rstrip("/")
 
     meta_status: int | None = None
@@ -973,7 +982,12 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
 
     for url, kind in urls:
         try:
-            r = requests.get(url, headers=headers, params={"includeGuids": 1}, timeout=10)
+            r = requests.get(
+                url,
+                headers=cloud_headers if kind == "meta" else headers,
+                params={"includeGuids": 1},
+                timeout=10,
+            )
             if kind == "meta":
                 meta_status = r.status_code
             if r.status_code == 401:
@@ -1076,12 +1090,17 @@ def ids_from_discover_row(row: Mapping[str, Any]) -> dict[str, str]:
     return {k: v for k, v in ids.items() if v and str(v).strip().lower() not in ("none", "null")}
 
 
-def normalize_discover_row(row: Mapping[str, Any], *, token: str | None = None) -> dict[str, Any]:
+def normalize_discover_row(
+    row: Mapping[str, Any],
+    *,
+    token: str | None = None,
+    hydrate_item_ids: bool = True,
+) -> dict[str, Any]:
     if token is None:
         token = _PLEX_CTX["token"]
     t = (row.get("type") or "movie").lower()
     ids = ids_from_discover_row(row)
-    if not any(k in ids for k in ("tmdb", "imdb", "tvdb")) and token:
+    if hydrate_item_ids and not any(k in ids for k in ("tmdb", "imdb", "tvdb")) and token:
         rk = row.get("ratingKey")
         ids.update(hydrate_external_ids(token, str(rk) if rk else None))
         ids = {k: v for k, v in ids.items() if v}
