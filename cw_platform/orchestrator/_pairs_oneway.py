@@ -227,6 +227,7 @@ from ._tombstones import clear_items_for_feature
 
 
 from ._pairs_utils import (
+    config_with_pair_libraries as _config_with_pair_libraries,
     _supports_feature,
     _resolve_flags,
     _health_status,
@@ -720,6 +721,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     dst_ops = provs.get(dst)
     anime_pair_opts = _anime_pair_feature_options(cfg, fcfg, feature, src, dst, anime_only_default=(dst == "ANILIST"))
     provider_cfg = _anime_config_with_pair_feature_options(cfg, anime_pair_opts)
+    provider_cfg = _config_with_pair_libraries(provider_cfg, fcfg, feature, (src, dst))
 
     emit("feature:start", src=src, dst=dst, feature=feature)
 
