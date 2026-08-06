@@ -719,7 +719,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     src_ops = provs.get(src)
     dst_ops = provs.get(dst)
     anime_pair_opts = _anime_pair_feature_options(cfg, fcfg, feature, src, dst, anime_only_default=(dst == "ANILIST"))
-    provider_cfg = _anime_config_with_pair_feature_options(cfg, anime_pair_opts) if "ANILIST" in {src, dst} else cfg
+    provider_cfg = _anime_config_with_pair_feature_options(cfg, anime_pair_opts)
 
     emit("feature:start", src=src, dst=dst, feature=feature)
 

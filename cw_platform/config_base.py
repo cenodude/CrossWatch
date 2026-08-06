@@ -674,8 +674,8 @@ DEFAULT_CFG: dict[str, Any] = {
         "release_tag": "v3",                            # AniBridge release tag
         "refresh_hours": 24,                            # Minimum age before an automatic refresh is considered
         "stale_after_days": 14,                         # UI/status warning threshold
-        "use_for_pairs": ["anilist"],                   # Providers that activate anime mapping when present in a pair
-        "features": ["watchlist", "ratings"],           # Sync features where anime ID enrichment is applied
+        "use_for_pairs": ["anilist", "simkl"],          # Providers that activate anime mapping when present in a pair ("*" = any pair)
+        "features": ["watchlist", "ratings", "history"],  # Sync features where anime mapping may apply; history is opt-in per pair
     },
 
     # --- Scrobble ------------------------------------------------------------
@@ -1708,8 +1708,8 @@ def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
             out.append(name)
         return out or list(default)
 
-    am["use_for_pairs"] = _string_list(am.get("use_for_pairs"), ["anilist"])
-    am["features"] = _string_list(am.get("features"), ["watchlist", "ratings"])
+    am["use_for_pairs"] = _string_list(am.get("use_for_pairs"), ["anilist", "simkl"])
+    am["features"] = _string_list(am.get("features"), ["watchlist", "ratings", "history"])
 
 
 def _normalize_scrobble_webhook(cfg: dict[str, Any]) -> None:

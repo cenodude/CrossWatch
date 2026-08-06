@@ -62,6 +62,24 @@ function hasOwn(obj,key){return !!obj&&Object.prototype.hasOwnProperty.call(obj,
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
+function hasAnimeProvider(state){return hasAniList(state)||isSimkl(state?.src)||isSimkl(state?.dst)}
+function tmdbMetadataReady(state){return !!String(state?.cfgRaw?.tmdb?.api_key||state?.cfgRaw?.metadata?.tmdb_api_key||"").trim()}
+function animeHistoryBlockReason(state){
+  if(!tmdbMetadataReady(state)) return "Requires a TMDB metadata key. Add one under Settings &rsaquo; Metadata first.";
+  if(!globalAnimeMappingEnabled(state)) return "Enabling this also turns on Anime ID Mapping and downloads the AniBridge dataset.";
+  return "";
+}
+function normalizeAnimeHistoryOptions(state){
+  const opts=Object.assign({}, state?.options?.history||{});
+  if(!hasAnimeProvider(state)||!tmdbMetadataReady(state)){
+    opts.use_anime_mapping=false;
+  }else{
+    opts.use_anime_mapping=!!opts.use_anime_mapping;
+  }
+  opts.anime_only_sync=false;
+  state.options.history=opts;
+  return opts;
+}
 function normalizeAnimeFeatureOptions(state, feature){
   const key=String(feature||"watchlist").trim().toLowerCase()||"watchlist";
   const opts=Object.assign({}, state?.options?.[key]||{});
@@ -741,7 +759,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance"]
   };
@@ -1104,7 +1122,7 @@ function renderFeaturePanel(state){
       </div>
 
       ${showAnime?`
-        <div class="panel-title small" style="margin-top:6px">AniList options</div>
+        <div class="panel-title small" style="margin-top:6px">Anime options</div>
         <div class="grid2 compact">
           <div class="opt-row">
             <label for="cx-wl-anime-map">Use Anime ID Mapping</label>
@@ -1323,7 +1341,7 @@ function renderFeaturePanel(state){
       <div class="grid2"><div class="opt-row"><label for="cx-rt-add">Add / Update</label><label class="switch"><input id="cx-rt-add" type="checkbox" ${rt.add?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="cx-rt-remove">Remove (clear)</label><label class="switch"><input id="cx-rt-remove" type="checkbox" ${rt.remove?"checked":""}><span class="slider"></span></label></div></div>
       ${showAnime?`
-        <div class="panel-title small" style="margin-top:6px">AniList options</div>
+        <div class="panel-title small" style="margin-top:6px">Anime options</div>
         <div class="grid2 compact">
           <div class="opt-row">
             <label for="cx-rt-anime-map">Use Anime ID Mapping</label>
@@ -1527,6 +1545,21 @@ function renderFeaturePanel(state){
           </label>
         </div>`
       : "";
+    const animeOpts = normalizeAnimeHistoryOptions(state);
+    const animeBlocked = !tmdbMetadataReady(state);
+    const animeNote = animeHistoryBlockReason(state);
+    const animeRow = hasAnimeProvider(state)
+      ? `
+      <div class="panel-title small" style="margin-top:6px">Anime</div>
+      <div class="opt-row ${animeBlocked ? "muted" : ""}">
+        <label for="cx-hs-anime-map">Anime episode mapping</label>
+        <label class="switch">
+          <input id="cx-hs-anime-map" type="checkbox" ${animeOpts.use_anime_mapping ? "checked" : ""} ${animeBlocked ? "disabled" : ""}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}`
+      : "";
 left.innerHTML = `
       <div class="panel-title">History | Basics</div>
       <div class="opt-row">
@@ -1562,6 +1595,7 @@ left.innerHTML = `
         ${mdDroppedRow}
         ${smDroppedRow}
       </div>
+      ${animeRow}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 
@@ -2018,11 +2052,14 @@ function bindChangeHandlers(state,root){
 
     if (id.startsWith("cx-hs-")) {
       const prev = state.options.history || {};
+      const animeEl = ID("cx-hs-anime-map");
       state.options.history = Object.assign({}, prev, {
         enable: !!ID("cx-hs-enable")?.checked,
         add:    !!ID("cx-hs-add")?.checked,
         remove: !!ID("cx-hs-remove")?.checked,
         rewatches: !!ID("cx-hs-rewatches")?.checked,
+        use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
+        anime_only_sync: false,
       });
       state.visited.add("history");
     }
@@ -2142,10 +2179,10 @@ async function saveConfigBits(state){
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
-    const shouldEnableAnimeMapping = hasAniList(state) && (
+    const shouldEnableAnimeMapping = (hasAniList(state) && (
       !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping ||
       !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping
-    );
+    )) || (hasAnimeProvider(state) && !!normalizeAnimeHistoryOptions(state).use_anime_mapping);
 
     if(ID("gl-dry")){
       const dropOn=!!ID("gl-drop")?.checked;
