@@ -610,10 +610,11 @@ function _cwFormatUtc(value) {
 function _cwAnimeMappingUseForLabel() {
   const cfg = window._cfgCache || {};
   const block = cfg.anime_mapping || {};
-  const raw = Array.isArray(block.use_for_pairs) ? block.use_for_pairs : ["anilist"];
+  const raw = Array.isArray(block.use_for_pairs) ? block.use_for_pairs : ["anilist", "simkl"];
   const vals = raw.map((x) => String(x || "").trim().toLowerCase()).filter(Boolean);
-  if (!vals.length || vals.includes("anilist")) return "AniList pairs";
-  return vals.map((x) => x.toUpperCase()).join(", ");
+  if (!vals.length) return "Anime pairs";
+  if (vals.includes("*")) return "All pairs";
+  return `${vals.map((x) => x.toUpperCase()).join(", ")} pairs`;
 }
 
 function _cwAnimeMappingSetBusy(on, label = "") {
@@ -762,7 +763,7 @@ function cwBuildAnimeMappingPanel() {
       <span class="chev"></span>
       <div class="cw-meta-provider-head-copy">
         <strong>Anime ID Mapping</strong>
-        <span class="cw-meta-provider-help" title="Only needed for anime-specific providers such as AniList." aria-label="Only needed for anime-specific providers such as AniList.">
+        <span class="cw-meta-provider-help" title="Improves anime matching for AniList and SIMKL pairs. Requires a TMDB metadata key." aria-label="Improves anime matching for AniList and SIMKL pairs. Requires a TMDB metadata key.">
           <span class="material-symbols-rounded cw-meta-provider-help-icon" aria-hidden="true">info</span>
         </span>
       </div>
@@ -774,7 +775,7 @@ function cwBuildAnimeMappingPanel() {
         <span class="material-symbols-rounded am-hero-icon" aria-hidden="true">shield</span>
         <div class="am-hero-copy">
           <h4>Anime ID Mapping</h4>
-          <p>Enable and manage the local Anime ID Mapping index used for AniList watchlist and ratings pairs.</p>
+          <p>Enable and manage the local Anime ID Mapping index used to match anime across providers.</p>
         </div>
         <span class="am-hero-badge" id="anime_mapping_hero_status">
           <span class="material-symbols-rounded" aria-hidden="true">check_circle</span>
@@ -801,7 +802,7 @@ function cwBuildAnimeMappingPanel() {
         </div>
         <div class="am-stat">
           <span class="material-symbols-rounded am-stat-icon" aria-hidden="true">group</span>
-          <div><span>Used for</span><strong id="anime_mapping_used_for">AniList pairs</strong></div>
+          <div><span>Used for</span><strong id="anime_mapping_used_for">-</strong></div>
         </div>
       </section>
 
@@ -840,7 +841,7 @@ function cwBuildAnimeMappingPanel() {
             <div><dt>Status</dt><dd><span class="am-status-pill" id="anime_mapping_meta_status">-</span></dd></div>
             <div><dt>Last update</dt><dd><strong id="anime_mapping_last_update">-</strong></dd></div>
           </dl>
-          <p class="am-details-copy">CrossWatch downloads the AniBridge mappings dataset to translate media identifiers between AniList and TMDB, TVDB, IMDb, MyAnimeList, and AniDB.</p>
+          <p class="am-details-copy">CrossWatch downloads the AniBridge mappings dataset to translate anime identifiers and episode numbering between AniDB, MyAnimeList, AniList, TMDB and TVDB. IMDb is mapped for anime movies only.</p>
         </div>
         <div class="auth-card-notes" id="anime_mapping_error"></div>
       </div>
