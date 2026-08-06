@@ -6,6 +6,13 @@
   const Anch = Object.freeze({ start0: 0, preStart: 35, preEnd: 57, postEnd: 67, done: 100 });
   const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(n)));
   const POST_DONE_GRACE_MS = 20000;
+  const AGE_REFRESH_MS = 30000;
+  const asEpochSec = (v) => {
+    if (v == null || v === "") return 0;
+    const n = typeof v === "number" ? v : Date.parse(v);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.floor(n > 1e12 ? n / 1000 : n);
+  };
 
   const PhaseAgg = {
     snap: { done: 0, total: 0, started: false, finished: false },
@@ -116,6 +123,8 @@
       this._exitCode = null;
       this._hadError = false;
       this._unresolved = 0;
+      this._finishedAt = 0;
+      this._ageTimer = null;
       this.render();
     }
 
@@ -165,7 +174,8 @@
         _successExit0Seen: false,
         _exitCode: null,
         _hadError: false,
-        _unresolved: 0
+        _unresolved: 0,
+        _finishedAt: 0
       });
       PhaseAgg.snap = { done: 0, total: 0, started: false, finished: false };
       PhaseAgg.apply = { done: 0, total: 0, started: false, finished: false };
@@ -314,6 +324,9 @@
       const unresolved = Number(sum?.unresolved || 0);
       if (Number.isFinite(unresolved) && unresolved >= 0) this._unresolved = unresolved;
 
+      const finishedAt = asEpochSec(sum?.finished_at);
+      if (finishedAt) this._finishedAt = finishedAt;
+
       if (exitCode != null) {
         if (exitCode === 0) this.success();
         else this.fail(exitCode);
@@ -370,6 +383,14 @@
       if (typeof p === "number") {
         this._pctMemo = Math.max(this._pctMemo, clamp(p));
         this.render();
+      }
+    }
+
+    _trackAge(active) {
+      if (active && !this._ageTimer) this._ageTimer = setInterval(() => this.render(), AGE_REFRESH_MS);
+      else if (!active && this._ageTimer) {
+        clearInterval(this._ageTimer);
+        this._ageTimer = null;
       }
     }
 
@@ -460,13 +481,16 @@
       const shouldFlow = isRunning && !hardDone;
       const currentStep = hardDone ? "done" : this.timeline.post ? "syncing" : this.timeline.pre ? "discovering" : this.timeline.start ? "start" : "";
       const statusText = this._hadError ? "Error" : hardDone ? "Synced" : this._pendingDone ? "Finalizing" : this.timeline.post ? "Syncing" : this.timeline.pre ? "Discovering" : isRunning ? "Starting" : "Idle";
+      const settled = hardDone || this._hadError;
+      const doneAge = settled && this._finishedAt ? (window.relTimeFromEpoch?.(this._finishedAt) || "") : "";
       const phaseLabel = (this._hadError
         ? `Sync failed${this._exitCode != null ? ` (code ${this._exitCode})` : ""}`
         : hardDone ? "Completed successfully"
         : this._pendingDone ? "Wrapping up final tasks"
         : this.timeline.post ? "Applying changes across enabled features"
         : this.timeline.pre ? "Scanning current state before applying changes"
-        : "Waiting for the next sync run");
+        : "Waiting for the next sync run") + (doneAge ? ` · ${doneAge}` : "");
+      this._trackAge(!!doneAge);
 
       badge.textContent = statusText;
       badge.classList.toggle("running", isRunning && !hardDone && !this._hadError);
