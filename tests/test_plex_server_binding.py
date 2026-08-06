@@ -223,6 +223,81 @@ def test_candidate_ranking_is_deterministic_not_document_order() -> None:
         assert u._pick_server_url_from_resources(xml, probe=False) == SERVER_A
 
 
+MULTI_SERVER_XML = """<MediaContainer>
+  <Device name="Owned Server" provides="server" owned="1" clientIdentifier="mid-owned" accessToken="T">
+    <Connection protocol="https" uri="{owned}" local="0" relay="0"/>
+  </Device>
+  <Device name="Shared Server" provides="server" owned="0" clientIdentifier="mid-shared" accessToken="T">
+    <Connection protocol="https" uri="{shared}" local="0" relay="0"/>
+  </Device>
+</MediaContainer>""".format(owned=SERVER_A, shared=SERVER_B)
+
+
+def test_discovery_stays_on_the_bound_server(monkeypatch) -> None:
+    from providers.sync.plex import _utils as u
+
+    monkeypatch.setattr(u, "_probe_identity", lambda *a, **k: True)
+
+    assert u._pick_server_url_from_resources(MULTI_SERVER_XML, probe=True) == SERVER_A
+    assert (
+        u._pick_server_url_from_resources(MULTI_SERVER_XML, probe=True, machine_id="mid-shared")
+        == SERVER_B
+    )
+
+
+def test_bound_server_is_preferred_before_reachability_order(monkeypatch) -> None:
+    from providers.sync.plex import _utils as u
+
+    probed: list[str] = []
+
+    def _probe(uri, token, timeout):
+        probed.append(uri)
+        return True
+
+    monkeypatch.setattr(u, "_probe_identity", _probe)
+    u._pick_server_url_from_resources(MULTI_SERVER_XML, probe=True, machine_id="mid-shared")
+
+    assert probed[0] == SERVER_B
+
+
+def test_unknown_binding_falls_back_to_normal_ranking(monkeypatch) -> None:
+    from providers.sync.plex import _utils as u
+
+    monkeypatch.setattr(u, "_probe_identity", lambda *a, **k: True)
+
+    assert (
+        u._pick_server_url_from_resources(MULTI_SERVER_XML, probe=True, machine_id="gone")
+        == SERVER_A
+    )
+
+
+def test_rediscovery_reuses_the_stored_machine_id(monkeypatch) -> None:
+    from providers.sync.plex import _utils as u
+
+    block: dict[str, Any] = {
+        "account_token": "ACCOUNT",
+        "machine_id": "mid-shared",
+        "server_url": "",
+    }
+    cfg = {"plex": block}
+    seen: dict[str, Any] = {}
+
+    def _discover(token, timeout=10.0, probe=True, machine_id=""):
+        seen["machine_id"] = machine_id
+        return SERVER_B
+
+    monkeypatch.setattr(u, "discover_server_url_from_cloud", _discover)
+    monkeypatch.setattr(u, "save_config", lambda _c: None)
+    monkeypatch.setattr(u, "_resolve_verify_from_cfg", lambda *a, **k: True)
+    monkeypatch.setattr(u, "_resource_token_for_connection", lambda *a, **k: ("mid-shared", "PMS-B"))
+    _patch_transport(monkeypatch, lambda s, b, p, timeout=10.0: _Resp(200, SECTIONS_B))
+
+    u.fetch_libraries_from_cfg(cfg)
+
+    assert seen["machine_id"] == "mid-shared"
+    assert block["server_url"] == SERVER_B
+
+
 def test_media_override_drops_a_token_bound_to_another_server() -> None:
     import api.authenticationAPI as auth
 
