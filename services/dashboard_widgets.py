@@ -601,12 +601,15 @@ def _resolve_missing_art(
     _art_debug(row, "metadata_resolved", tmdb=tmdb)
 
 
-def _ensure_cover_art(row: dict[str, Any], *, size: str) -> None:
-    if row.get("cover"):
-        return
-    cover = _cover_url(row, size=size)
-    if cover:
-        row["cover"] = cover
+def _ensure_art_urls(
+    row: dict[str, Any], *, size: str, episode_still: bool, cover_size: str, backdrop_fallback: bool
+) -> None:
+    if not row.get("poster"):
+        row["poster"] = (
+            _grid_art_url(row, size=size) if backdrop_fallback else _poster_url(row, size=size, episode_still=episode_still)
+        )
+    if not row.get("cover"):
+        row["cover"] = _cover_url(row, size=cover_size)
 
 
 _ART_RESOLVE_WORKERS = 8
@@ -625,11 +628,16 @@ def _resolve_missing_art_rows(
     episode_still: bool = False,
     cover_size: str = "w342",
     backdrop_fallback: bool = False,
+    resolve_art_type: bool = False,
 ) -> list[dict[str, Any]]:
     def _resolve_row(row: dict[str, Any]) -> None:
         _resolve_episode_show_title(row)
         _resolve_missing_art(row, size=size, episode_still=episode_still, backdrop_fallback=backdrop_fallback)
-        _ensure_cover_art(row, size=cover_size)
+        if resolve_art_type:
+            row["art_type"] = _resolved_art_type(row, _tmdb_id(row))
+        _ensure_art_urls(
+            row, size=size, episode_still=episode_still, cover_size=cover_size, backdrop_fallback=backdrop_fallback
+        )
 
     pending = sum(1 for row in rows if _needs_metadata_lookup(row))
     if pending > 1:
@@ -696,7 +704,7 @@ def _rating_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, s
     return {
         "key": _canonical_key(raw_key, item),
         "type": typ,
-        "art_type": _resolved_art_type(item, _tmdb_id(item)),
+        "art_type": _art_type(item),
         "title": _title(item),
         "year": _year(item),
         "season": _season_number(item),
@@ -708,8 +716,6 @@ def _rating_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, s
         "updated_epoch": _update_epoch(item),
         "ids": _ids(item),
         "tmdb": _tmdb_id(item),
-        "poster": _grid_art_url(item, size="w300"),
-        "cover": _cover_url(item, size="w342"),
         "sources": sources,
     }
 
@@ -845,7 +851,9 @@ def latest_ratings_widget(
         reverse=True,
     )
     cap = max(1, min(int(limit or 12), 24))
-    selected = _resolve_missing_art_rows(items[:cap], size="w300", episode_still=True, backdrop_fallback=True)
+    selected = _resolve_missing_art_rows(
+        items[:cap], size="w300", episode_still=True, backdrop_fallback=True, resolve_art_type=True
+    )
     for row in selected:
         row.pop(_RATING_TRACKER_FLAG, None)
     return {"ok": True, "items": selected, "total": len(items)}
@@ -893,8 +901,6 @@ def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
         "method": str(event.get("method") or "").lower(),
         "ids": _ids(event),
         "tmdb": _tmdb_id(event),
-        "poster": _poster_url(event, size="w300", episode_still=True),
-        "cover": _cover_url(event, size="w342"),
         "source": source,
         "targets": clean_targets,
         "sources": clean_sources,
@@ -923,8 +929,6 @@ def _history_state_row(raw_key: str, item: Mapping[str, Any], sources: list[dict
         "method": "sync_state",
         "ids": _ids(item),
         "tmdb": _tmdb_id(item),
-        "poster": _poster_url(item, size="w300", episode_still=True),
-        "cover": _cover_url(item, size="w342"),
         "sources": sources,
     }
 
@@ -1135,8 +1139,6 @@ def _progress_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str,
         "sort_epoch": sort_epoch,
         "ids": _ids(item),
         "tmdb": _tmdb_id(item),
-        "poster": _poster_url(item, size="w300", episode_still=True),
-        "cover": _cover_url(item, size="w342"),
         "sources": sources,
     }
 
