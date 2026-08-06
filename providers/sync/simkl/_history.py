@@ -10,6 +10,12 @@ from difflib import SequenceMatcher
 from itertools import chain
 from typing import Any, Iterable, Mapping, cast
 
+from cw_platform.anime_mapping.episodes import resolve_absolute
+from cw_platform.anime_mapping.service import (
+    PAIR_FEATURE_OPTIONS_KEY,
+    mapping_enabled_for_feature,
+    runtime_pair_feature_options,
+)
 from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
@@ -1587,6 +1593,135 @@ def _save_anime_resolve_cache(state: _AnimeResolveState) -> None:
     )
 
 
+def _anibridge_config(adapter: Any) -> Mapping[str, Any] | None:
+    cfg = getattr(adapter, "raw_cfg", None)
+    if not isinstance(cfg, Mapping):
+        return None
+    block = cfg.get("anime_mapping")
+    if not isinstance(block, Mapping) or not bool(block.get("enabled", False)):
+        return None
+    if not mapping_enabled_for_feature(cfg, "history"):
+        return None
+    if PAIR_FEATURE_OPTIONS_KEY in cfg:
+        opts = runtime_pair_feature_options(cfg, "history")
+        if opts.get("use_anime_mapping") is False:
+            return None
+    return block
+
+
+def _with_anibridge_map(adapter: Any, item: Mapping[str, Any], block: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    if block is None or str(item.get("type") or "").strip().lower() != "episode":
+        return item
+    if item.get("_cw_anime_map") or _int_or_none(item.get("_trakt_number_abs")):
+        return item
+    try:
+        res = resolve_absolute(item, release_tag=str(block.get("release_tag") or "v3"))
+    except Exception as exc:
+        _dbg("anibridge_resolve_failed", error=exc.__class__.__name__)
+        return item
+    if res is None:
+        return item
+    out = dict(item)
+    out["_cw_anime_map"] = {
+        "absolute": res.absolute,
+        "namespace": res.namespace,
+        "target_id": res.target_id,
+        "entry": res.entry,
+    }
+    return out
+
+
+def _apply_anibridge_maps(adapter: Any, items: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    block = _anibridge_config(adapter)
+    if block is None:
+        return items
+    out = [_with_anibridge_map(adapter, it, block) for it in items]
+    mapped = sum(1 for it in out if it.get("_cw_anime_map"))
+    if mapped:
+        _info("anibridge_mapped", episodes=mapped, candidates=len(out))
+    return out
+
+
+def _redirect_simkl_id(
+    session: Any,
+    headers: Mapping[str, str],
+    timeout: float,
+    namespace: str,
+    ident: str,
+    state: _AnimeResolveState,
+) -> str | None:
+    ns = str(namespace or "").strip().lower()
+    value = str(ident or "").strip()
+    if ns not in ("anidb", "mal", "anilist", "kitsu") or not value:
+        return None
+    cache_key = f"{ns}:{value}"
+    cached = state.resolved.get(cache_key)
+    if cached:
+        return cached
+    miss_ts = state.misses.get(cache_key)
+    if miss_ts is not None and _now_epoch() - int(miss_ts) < _ANIME_RESOLVE_MISS_TTL:
+        return None
+    try:
+        resp = session.get(
+            URL_REDIRECT,
+            headers=headers,
+            params=simkl_api_params_from_headers(headers, **{"to": "simkl", ns: value}),
+            timeout=timeout,
+            allow_redirects=False,
+        )
+    except Exception as exc:
+        _dbg("anibridge_redirect_failed", namespace=ns, error=exc.__class__.__name__)
+        return None
+    status = _int_or_none(getattr(resp, "status_code", None))
+    resp_headers = getattr(resp, "headers", {})
+    location = ""
+    if status is not None and 300 <= status < 400 and isinstance(resp_headers, Mapping):
+        location = str(resp_headers.get("Location") or resp_headers.get("location") or "")
+    marker = "/anime/"
+    if not location or marker not in location:
+        state.misses[cache_key] = _now_epoch()
+        _save_anime_resolve_cache(state)
+        return None
+    simkl_id = location.split(marker, 1)[1].split("/", 1)[0].strip()
+    if not simkl_id.isdigit():
+        return None
+    state.resolved[cache_key] = simkl_id
+    state.misses.pop(cache_key, None)
+    _save_anime_resolve_cache(state)
+    return simkl_id
+
+
+def _anibridge_absolute(
+    item: Mapping[str, Any],
+    ids: Mapping[str, str],
+    *,
+    session: Any,
+    headers: Mapping[str, str],
+    timeout: float,
+    resolve_state: _AnimeResolveState | None,
+) -> int | None:
+    raw = item.get("_cw_anime_map")
+    if not isinstance(raw, Mapping) or resolve_state is None:
+        return None
+    absolute = _int_or_none(raw.get("absolute"))
+    simkl_id = str(ids.get("simkl") or "").strip()
+    if absolute is None or absolute <= 0 or not simkl_id:
+        return None
+    namespace = str(raw.get("namespace") or "")
+    target_id = str(raw.get("target_id") or "")
+    resolved = _redirect_simkl_id(session, headers, timeout, namespace, target_id, resolve_state)
+    if resolved != simkl_id:
+        _dbg(
+            "anibridge_entity_rejected",
+            namespace=namespace,
+            target=target_id,
+            expected=simkl_id,
+            resolved=resolved,
+        )
+        return None
+    return absolute
+
+
 def _log_anime_resolve_summary(state: _AnimeResolveState) -> None:
     if state.checked <= 0:
         return
@@ -1968,6 +2103,7 @@ def _anime_retry_episode_number(
     timeout: float,
     episode_cache: dict[str, list[dict[str, Any]]],
     alias_cache: Mapping[str, Mapping[str, Any]] | None = None,
+    resolve_state: _AnimeResolveState | None = None,
 ) -> int | None:
     raw_season = item.get("season") if item.get("season") is not None else item.get("season_number")
     raw_episode = item.get("episode") if item.get("episode") is not None else item.get("episode_number")
@@ -2002,8 +2138,20 @@ def _anime_retry_episode_number(
             mapped = _row_anime_episode_number(direct[0])
             if mapped:
                 return mapped
-        abs_num = _int_or_none(item.get("_trakt_number_abs"))
-        if abs_num is not None and abs_num > 0:
+        abs_candidates = [_int_or_none(item.get("_trakt_number_abs"))]
+        abs_candidates.append(
+            _anibridge_absolute(
+                item,
+                ids,
+                session=session,
+                headers=headers,
+                timeout=timeout,
+                resolve_state=resolve_state,
+            )
+        )
+        for abs_num in abs_candidates:
+            if abs_num is None or abs_num <= 0:
+                continue
             abs_hits = [row for row in rows if _row_anime_episode_number(row) == abs_num]
             if len(abs_hits) == 1:
                 mapped = _row_anime_episode_number(abs_hits[0])
@@ -2040,6 +2188,7 @@ def _anime_retry_episode_numbers_for_group(
     headers: Mapping[str, str],
     timeout: float,
     episode_cache: dict[str, list[dict[str, Any]]],
+    resolve_state: _AnimeResolveState | None = None,
 ) -> dict[str, int]:
     mapped: dict[str, int] = {}
     anchors_by_season: dict[int, list[tuple[int, int]]] = {}
@@ -2057,6 +2206,7 @@ def _anime_retry_episode_numbers_for_group(
             timeout=timeout,
             episode_cache=episode_cache,
             alias_cache=alias_cache,
+            resolve_state=resolve_state,
         )
         if ep_num is None:
             continue
@@ -2195,6 +2345,7 @@ def _build_anime_retry_payload(
             headers=headers,
             timeout=timeout,
             episode_cache=episode_cache,
+            resolve_state=resolve_state,
         )
         for item in grouped_items:
             item_key = _thaw_key(item)
@@ -2243,6 +2394,7 @@ def _retry_anime_not_found(
     confirmed_keys: set[str] | None = None,
     response_ids_by_key: Mapping[str, Mapping[str, str]] | None = None,
     native_identity: dict[str, dict[str, Any]] | None = None,
+    resolve_state: _AnimeResolveState | None = None,
 ) -> tuple[set[str], set[str], set[str], list[dict[str, Any]]]:
     body, retry_index, retry_items = _build_anime_retry_payload(
         retry_candidates,
@@ -2388,7 +2540,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     thaw_keys: list[str] = []
     main_thaw_keys: list[str] = []
     main_items_list: list[Mapping[str, Any]] = []
-    items_list: list[Mapping[str, Any]] = list(items or [])
+    items_list: list[Mapping[str, Any]] = _apply_anibridge_maps(adapter, list(items or []))
     native_retry_candidates: list[Mapping[str, Any]] = []
     native_retry_confirmed_keys: set[str] = set()
     native_retry_response_ids: dict[str, dict[str, str]] = {}
@@ -2475,6 +2627,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                     timeout=timeout,
                     episode_cache=native_episode_cache,
                     alias_cache=native_alias_cache,
+                    resolve_state=native_resolve_state,
                 )
             if native_ids and native_num is not None:
                 key = _thaw_key(item)
@@ -2559,6 +2712,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             confirmed_keys=native_retry_confirmed_keys,
             response_ids_by_key=native_retry_response_ids,
             native_identity=native_identity,
+            resolve_state=native_resolve_state,
         )
         unresolved.extend(native_unresolved)
         failed_thaw_keys.update(native_failed)
@@ -2732,6 +2886,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 confirmed_keys=retry_confirmed_keys,
                 response_ids_by_key=retry_response_ids,
                 native_identity=native_identity,
+                resolve_state=native_resolve_state,
             )
             if retry_candidates:
                 _dbg(
@@ -2885,6 +3040,7 @@ def _native_anime_remove_body(
                 timeout=timeout,
                 episode_cache=episode_cache,
                 alias_cache=alias_cache,
+                resolve_state=state,
             )
             if number is None:
                 unmapped_ids.add(id(item))
@@ -2944,7 +3100,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     headers = _headers(adapter)
     timeout = adapter.cfg.timeout
     unresolved: list[dict[str, Any]] = []
-    items_list: list[Mapping[str, Any]] = list(items or [])
+    items_list: list[Mapping[str, Any]] = _apply_anibridge_maps(adapter, list(items or []))
     setattr(adapter, "_simkl_history_remove_confirmed_keys", [])
     setattr(adapter, "_simkl_history_remove_skipped_keys", [])
     if not items_list:

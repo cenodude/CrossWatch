@@ -125,6 +125,29 @@ def _index_semantics(ops, feature: str, *, cfg: Mapping[str, Any] | None = None,
     return provider_index_semantics(ops, cfg or {}, feature)
 
 
+def _comparison_view(
+    ops: Any,
+    cfg: Mapping[str, Any],
+    feature: str,
+    index: dict[str, Any],
+    *,
+    side: str,
+    dbg: Any,
+) -> dict[str, Any]:
+    try:
+        hook = getattr(ops, "destination_comparison_view", None)
+        if not callable(hook):
+            return index
+        view = hook(cfg, feature=feature, index=index)
+        if not isinstance(view, Mapping) or not view:
+            return index
+        if len(view) != len(index) or set(view) != set(index):
+            dbg("destination_comparison_view", feature=feature, side=side, before=len(index), after=len(view))
+        return dict(view)
+    except Exception:
+        return index
+
+
 def _cross_feature_unresolved(feature_name: str) -> bool:
     return str(feature_name or "").strip().lower() == "history"
 
@@ -323,7 +346,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     aops = provs.get(a)
     bops = provs.get(b)
     anime_pair_opts = _anime_pair_feature_options(cfg, fcfg, feature, a, b, anime_only_default=(a == "ANILIST" or b == "ANILIST"))
-    provider_cfg = _anime_config_with_pair_feature_options(cfg, anime_pair_opts) if "ANILIST" in {a, b} else cfg
+    provider_cfg = _anime_config_with_pair_feature_options(cfg, anime_pair_opts)
     if not aops or not bops:
         info(f"[!] Missing provider ops for {a}<->{b}")
         return {"ok": False, "adds_to_A": 0, "adds_to_B": 0, "rem_from_A": 0, "rem_from_B": 0}
@@ -553,6 +576,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         B_eff = _anime_enrich_index_for_pair(B_eff, provider_cfg, a, b)
         if len(A_eff) != a_before or len(B_eff) != b_before:
             dbg("anime_mapping.rekeyed", feature=feature, a=a, b=b, a_items=len(A_eff), b_items=len(B_eff))
+        if feature in ("history", "ratings", "progress"):
+            A_eff = _comparison_view(aops, provider_cfg, feature, A_eff, side=a, dbg=dbg)
+            B_eff = _comparison_view(bops, provider_cfg, feature, B_eff, side=b, dbg=dbg)
 
     now = int(_t.time())
     tomb_ttl_days = int((cfg.get("sync") or {}).get("tombstone_ttl_days", 30))

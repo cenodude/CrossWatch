@@ -11,8 +11,10 @@ from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 from .descriptors import descriptor_candidates_for_id, parse_descriptor
 from .storage import paths, query_edges, read_state
 
-ANIME_NATIVE_PROVIDERS = {"anilist"}
+ANIME_NATIVE_PROVIDERS = {"anilist", "simkl"}
 DEFAULT_FEATURES = {"watchlist", "ratings"}
+OPT_IN_FEATURES = {"history"}
+ANY_PAIR = "*"
 OUTPUT_KEYS = ("anilist", "mal", "anidb", "tmdb", "tvdb", "imdb")
 PAIR_FEATURE_OPTIONS_KEY = "_cw_pair_feature_options"
 _MEDIA_KIND_KEYS: dict[str, str] = {
@@ -40,11 +42,13 @@ def mapping_enabled_for_pair(cfg: Mapping[str, Any], *providers: Any) -> bool:
         return False
     use_for = block.get("use_for_pairs")
     if isinstance(use_for, (list, tuple, set)):
-        allowed = {_norm_provider(x) for x in use_for if _norm_provider(x)}
+        allowed = {str(x or "").strip().lower() for x in use_for if str(x or "").strip()}
     else:
         allowed = set(ANIME_NATIVE_PROVIDERS)
+    if ANY_PAIR in allowed:
+        return True
     names = {_norm_provider(p) for p in providers if _norm_provider(p)}
-    return bool(names & allowed)
+    return bool(names & {_norm_provider(x) for x in allowed if _norm_provider(x)})
 
 
 def mapping_enabled_for_feature(cfg: Mapping[str, Any], feature: Any) -> bool:
@@ -83,7 +87,7 @@ def anime_mapping_pair_feature_options(
     opts = _pair_feature_options(feature_cfg)
 
     if "use_anime_mapping" not in dict(feature_cfg or {}):
-        opts["use_anime_mapping"] = bool(base_enabled)
+        opts["use_anime_mapping"] = bool(base_enabled) and feature_name not in OPT_IN_FEATURES
     else:
         opts["use_anime_mapping"] = bool(pair_enabled and opts.get("use_anime_mapping"))
 
