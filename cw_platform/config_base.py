@@ -396,7 +396,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
     "playback_progress": {
         "disabled_profiles": [],                        # Provider profiles excluded from Continue Watching, e.g. ["trakt:default"]
-        "provider_timeout_seconds": 12.0,               # Max time this screen waits for provider profiles during one refresh
+        "provider_timeout_seconds": 20.0,               # Max time this screen waits for provider profiles during one refresh
     },
     
      "tautulli": {

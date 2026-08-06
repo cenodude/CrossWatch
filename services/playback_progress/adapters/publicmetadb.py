@@ -10,7 +10,7 @@ from providers.metadata._meta_TMDB import TmdbProvider
 from providers.sync._mod_PUBLICMETADB import OPS as PUBLICMETADB_OPS, PUBLICMETADBModule
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, metadata_rating, public_failure, rating_from_sources
+from .base import PlaybackProgressAdapter, enrich_parallel, has_metadata_ids, metadata_rating, public_failure, rating_from_sources, tmdb_metadata_provider
 
 
 def _int(value: Any) -> int | None:
@@ -79,15 +79,6 @@ def _first_nested_int(row: Mapping[str, Any], *keys: str) -> int | None:
             if value is not None:
                 return value
     return None
-
-
-def _metadata_provider(config_view: Mapping[str, Any]) -> TmdbProvider | None:
-    tmdb = _as_mapping(config_view.get("tmdb"))
-    metadata = _as_mapping(config_view.get("metadata"))
-    if not _first_str(tmdb.get("api_key"), metadata.get("tmdb_api_key")):
-        return None
-    cfg = dict(config_view)
-    return TmdbProvider(lambda: cfg, lambda _cfg: None)
 
 
 def _metadata_title(
@@ -265,8 +256,8 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
                 page += 1
 
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
-            metadata = _metadata_provider(config_view)
-            items = [self._normalize(row, instance_id, instance_label, caps, metadata) for row in rows]
+            metadata = tmdb_metadata_provider(config_view)
+            items = enrich_parallel(rows, lambda row: self._normalize(row, instance_id, instance_label, caps, metadata))
             return PlaybackListResult(
                 ok=True,
                 provider=self.provider,
@@ -353,7 +344,9 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
             progress = round((float(progress_ms) / float(runtime_ms)) * 100.0, 3)
         canonical = canonical_key(item) or ""
         duration_seconds = _ms_to_seconds(runtime_ms)
-        rating = rating_from_sources(row) or metadata_rating(metadata, media_type=media_type, ids=ids, title=title, year=year)
+        rating = rating_from_sources(row)
+        if rating is None and has_metadata_ids(ids):
+            rating = metadata_rating(metadata, media_type=media_type, ids=ids, title=title, year=year)
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,

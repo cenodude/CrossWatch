@@ -37,6 +37,7 @@ IMG_BASE = "https://image.tmdb.org/t/p"
 class TmdbProvider:
     name = "TMDB"
     UA = "CrossWatch/1.0"
+    CACHE_MAX_ENTRIES = 4096
 
     @staticmethod
     def manifest() -> dict[str, Any]:
@@ -133,6 +134,21 @@ class TmdbProvider:
             hours = 720
         return max(1, hours) * 3600
 
+    def _prune_cache(self) -> None:
+        if len(self._cache) < self.CACHE_MAX_ENTRIES:
+            return
+        ttl = self._ttl_seconds()
+        now = time.time()
+        snapshot = list(self._cache.items())
+        for key, (ts, _) in snapshot:
+            if (now - ts) >= ttl:
+                self._cache.pop(key, None)
+        overflow = len(self._cache) - self.CACHE_MAX_ENTRIES
+        if overflow > 0:
+            live = [entry for entry in snapshot if entry[0] in self._cache]
+            for key, _ in sorted(live, key=lambda kv: kv[1][0])[:overflow]:
+                self._cache.pop(key, None)
+
     def _backoff_params(self) -> tuple[int, float, float]:
         cfg = self.load_cfg() or {}
         md = cfg.get("metadata") or {}
@@ -194,6 +210,7 @@ class TmdbProvider:
 
         stored = self._disk_read(h)
         if stored is not None:
+            self._prune_cache()
             self._cache[h] = (now, stored)
             return stored
 
@@ -227,6 +244,7 @@ class TmdbProvider:
 
                 r.raise_for_status()
                 data = r.json()
+                self._prune_cache()
                 self._cache[h] = (time.time(), data)
                 self._disk_write(h, data)
                 return data

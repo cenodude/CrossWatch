@@ -33,7 +33,7 @@ from .models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResu
 LOG = BASE_LOG.child("PLAYBACK")
 CACHE_TTL_SECONDS = 60.0
 MAX_WORKERS = 6
-DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12.0
+DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
 GROUP_PROGRESS_TOLERANCE = 2.0
 PHASE1_PROVIDERS = ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy")
 SORT_VALUES = {"last_updated", "progress_high", "progress_low", "remaining_time", "rating_high", "title", "provider"}
@@ -965,12 +965,13 @@ class PlaybackProgressService:
         if result.ok:
             result = _apply_progress_edit_policy(result, adapter)
         elapsed_ms = int((time.monotonic() - started) * 1000)
+        stored_at = time.time()
         with self._lock:
             if result.ok:
-                self._cache[key] = {"ts": now, "result": result, "activity_marker": marker, "refreshed_at": result.refreshed_at}
+                self._cache[key] = {"ts": stored_at, "result": result, "activity_marker": marker, "refreshed_at": result.refreshed_at}
                 LOG.debug(f"provider listed provider={provider} instance={instance_id} items={len(result.items)} elapsed_ms={elapsed_ms}")
             else:
-                self._cache[key] = {"ts": now, "result": result, "activity_marker": marker, "error": result.to_error()}
+                self._cache[key] = {"ts": stored_at, "result": result, "activity_marker": marker, "error": result.to_error()}
                 LOG.warn(f"provider list failed provider={provider} instance={instance_id} error={result.error_code or 'provider_error'} status={result.remote_status or ''} elapsed_ms={elapsed_ms}")
         return result
 
