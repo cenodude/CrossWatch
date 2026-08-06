@@ -17,7 +17,7 @@ from cw_platform.config_base import CONFIG_BASE
 
 from .descriptors import Descriptor, parse_descriptor
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _RELEASE_TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _PROVIDER = "anibridge"
 
@@ -134,12 +134,53 @@ def _init_schema(con: sqlite3.Connection) -> None:
           ON mapping_edges(source_provider, source_id, source_scope);
         CREATE INDEX IF NOT EXISTS idx_mapping_target
           ON mapping_edges(target_provider, target_id);
+        CREATE TABLE IF NOT EXISTS show_pairs (
+          tvdb_id TEXT NOT NULL,
+          tmdb_id TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_show_pairs_tvdb ON show_pairs(tvdb_id);
+        CREATE INDEX IF NOT EXISTS idx_show_pairs_tmdb ON show_pairs(tmdb_id);
         CREATE TABLE IF NOT EXISTS meta (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         );
         """
     )
+
+
+def _collect_show_pair(
+    src: Descriptor,
+    dst: Descriptor,
+    tv_to_tm: dict[str, set[str]],
+    tm_to_tv: dict[str, set[str]],
+) -> None:
+    if src.media_kind != "show" or dst.media_kind != "show":
+        return
+    if src.provider == "tvdb" and dst.provider == "tmdb":
+        tv, tm = src.id, dst.id
+    elif src.provider == "tmdb" and dst.provider == "tvdb":
+        tv, tm = dst.id, src.id
+    else:
+        return
+    if not tv or not tm:
+        return
+    tv_to_tm.setdefault(tv, set()).add(tm)
+    tm_to_tv.setdefault(tm, set()).add(tv)
+
+
+def _unambiguous_pairs(
+    tv_to_tm: Mapping[str, set[str]],
+    tm_to_tv: Mapping[str, set[str]],
+) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    for tv, tms in tv_to_tm.items():
+        if len(tms) != 1:
+            continue
+        tm = next(iter(tms))
+        if len(tm_to_tv.get(tm) or ()) != 1:
+            continue
+        out.append((tv, tm))
+    return out
 
 
 def _insert_edge(
@@ -193,6 +234,8 @@ def rebuild_sqlite_from_mappings(
     rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int]] = []
     edge_count = 0
     source_count = 0
+    tv_to_tm: dict[str, set[str]] = {}
+    tm_to_tv: dict[str, set[str]] = {}
 
     try:
         for raw_src, targets in data.items():
@@ -204,6 +247,7 @@ def rebuild_sqlite_from_mappings(
                 dst = parse_descriptor(raw_dst)
                 if dst is None:
                     continue
+                _collect_show_pair(src, dst, tv_to_tm, tm_to_tv)
                 if isinstance(ranges, Mapping) and ranges:
                     for source_range, target_range in ranges.items():
                         _insert_edge(rows, src, dst, source_range, target_range)
@@ -214,6 +258,7 @@ def rebuild_sqlite_from_mappings(
                     _insert_edge(rows, dst, src, reverse=True)
                     edge_count += 2
 
+        pairs = _unambiguous_pairs(tv_to_tm, tm_to_tv)
         con = _connect(tmp)
         try:
             _init_schema(con)
@@ -227,6 +272,8 @@ def rebuild_sqlite_from_mappings(
                 """,
                 rows,
             )
+            con.executemany("INSERT INTO show_pairs (tvdb_id, tmdb_id) VALUES (?, ?)", pairs)
+            con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("pair_count", str(len(pairs))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("schema_version", str(SCHEMA_VERSION)))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("built_at", str(int(time.time()))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("source_count", str(source_count)))
@@ -251,9 +298,35 @@ def rebuild_sqlite_from_mappings(
             "schema_version": SCHEMA_VERSION,
             "source_count": source_count,
             "edge_count": edge_count,
+            "pair_count": len(pairs),
         },
     )
-    return {"ok": True, "source_count": source_count, "edge_count": edge_count, "db_path": str(db_path)}
+    return {
+        "ok": True,
+        "source_count": source_count,
+        "edge_count": edge_count,
+        "pair_count": len(pairs),
+        "db_path": str(db_path),
+    }
+
+
+def query_show_pair(release_tag: str, provider: str, ident: str) -> str | None:
+    db = _safe_existing_path(paths(release_tag)["db"])
+    if not db.exists():
+        return None
+    p = str(provider or "").strip().lower()
+    i = str(ident or "").strip()
+    if not i or p not in ("tvdb", "tmdb"):
+        return None
+    want, have = ("tmdb_id", "tvdb_id") if p == "tvdb" else ("tvdb_id", "tmdb_id")
+    con = _connect(db)
+    try:
+        row = con.execute(f"SELECT {want} FROM show_pairs WHERE {have} = ? LIMIT 1", (i,)).fetchone()
+        return str(row[0]) if row and row[0] else None
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
 
 
 def query_edges(release_tag: str, provider: str, ident: str) -> list[dict[str, Any]]:
