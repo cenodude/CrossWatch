@@ -347,7 +347,7 @@ _DISCOVERY_PROBE_MAX = int(os.environ.get("CW_PLEX_DISCOVERY_PROBE_MAX", "6"))
 _DISCOVERY_PROBE_TIMEOUT_S = float(os.environ.get("CW_PLEX_DISCOVERY_PROBE_TIMEOUT_S", "3"))
 
 
-def _rank_server_candidates(xml_text: str) -> list[dict[str, Any]]:
+def _rank_server_candidates(xml_text: str, machine_id: str = "") -> list[dict[str, Any]]:
     try:
         root = ET.fromstring(xml_text)
     except Exception:  # noqa: BLE001
@@ -379,7 +379,16 @@ def _rank_server_candidates(xml_text: str) -> list[dict[str, Any]]:
                 }
             )
 
-    out.sort(key=lambda c: (-int(c["score"]), not c["owned"], str(c["name"]), str(c["uri"])))
+    pin = str(machine_id or "").strip()
+    out.sort(
+        key=lambda c: (
+            not (pin and str(c["machine_id"]) == pin),
+            -int(c["score"]),
+            not c["owned"],
+            str(c["name"]),
+            str(c["uri"]),
+        )
+    )
     return out
 
 
@@ -403,8 +412,10 @@ def _probe_identity(uri: str, token: str, timeout: float) -> bool:
     return False
 
 
-def _pick_server_url_from_resources(xml_text: str, account_token: str = "", probe: bool = False) -> str:
-    candidates = _rank_server_candidates(xml_text)
+def _pick_server_url_from_resources(
+    xml_text: str, account_token: str = "", probe: bool = False, machine_id: str = ""
+) -> str:
+    candidates = _rank_server_candidates(xml_text, machine_id)
     if not candidates:
         return ""
     if not probe:
@@ -424,6 +435,7 @@ def _pick_server_url_from_resources(xml_text: str, account_token: str = "", prob
                 server_url=str(cand["uri"]),
                 server_name=str(cand.get("name") or ""),
                 owned=bool(cand.get("owned")),
+                pinned=bool(machine_id and str(cand["machine_id"]) == str(machine_id).strip()),
             )
             return str(cand["uri"])
 
@@ -432,7 +444,9 @@ def _pick_server_url_from_resources(xml_text: str, account_token: str = "", prob
     return fallback
 
 
-def discover_server_url_from_cloud(token: str, timeout: float = 10.0, probe: bool = True) -> str | None:
+def discover_server_url_from_cloud(
+    token: str, timeout: float = 10.0, probe: bool = True, machine_id: str = ""
+) -> str | None:
     try:
         response = requests.get(
             "https://plex.tv/api/resources?includeHttps=1&includeRelay=1&includeIPv6=1",
@@ -440,7 +454,9 @@ def discover_server_url_from_cloud(token: str, timeout: float = 10.0, probe: boo
             timeout=timeout,
         )
         if response.ok and (response.text or "").lstrip().startswith("<"):
-            picked = _pick_server_url_from_resources(response.text, account_token=token, probe=probe)
+            picked = _pick_server_url_from_resources(
+                response.text, account_token=token, probe=probe, machine_id=machine_id
+            )
             return picked or None
     except Exception:  # noqa: BLE001
         pass
@@ -878,7 +894,8 @@ def fetch_libraries_from_cfg(
     if not cloud_token:
         return []
     if not base:
-        base_url = discover_server_url_from_cloud(cloud_token) or ""
+        pin = (plex.get("machine_id") or "").strip()
+        base_url = discover_server_url_from_cloud(cloud_token, machine_id=pin) or ""
         if base_url:
             _insert_key_first_inplace(plex, "server_url", base_url)
             if persist:
@@ -962,7 +979,7 @@ def inspect_and_persist(cfg: dict[str, Any] | None = None, instance_id: Any = No
 
 
     if token and not base:
-        base_url = discover_server_url_from_cloud(token) or ""
+        base_url = discover_server_url_from_cloud(token, machine_id=machine_id) or ""
         if base_url:
             _insert_key_first_inplace(plex, "server_url", base_url)
             save_config(cfg)
