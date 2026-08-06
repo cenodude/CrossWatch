@@ -1671,6 +1671,10 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
     adv["workflows"] = wf_out
 
 
+ANIME_MAPPING_PAIRS_DEFAULT: list[str] = ["anilist", "simkl"]
+ANIME_MAPPING_FEATURES_DEFAULT: list[str] = ["watchlist", "ratings", "history"]
+
+
 def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
     am = _ensure_dict(cfg, "anime_mapping")
     am["enabled"] = bool(am.get("enabled", False))
@@ -1708,8 +1712,20 @@ def _normalize_anime_mapping(cfg: dict[str, Any]) -> None:
             out.append(name)
         return out or list(default)
 
-    am["use_for_pairs"] = _string_list(am.get("use_for_pairs"), ["anilist", "simkl"])
-    am["features"] = _string_list(am.get("features"), ["watchlist", "ratings", "history"])
+    def _string_list_union(value: Any, default: list[str]) -> list[str]:
+        raw = value if isinstance(value, list) else []
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in list(raw) + list(default):
+            name = str(item or "").strip().lower()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out or list(default)
+
+    am["use_for_pairs"] = _string_list_union(am.get("use_for_pairs"), ANIME_MAPPING_PAIRS_DEFAULT)
+    am["features"] = _string_list_union(am.get("features"), ANIME_MAPPING_FEATURES_DEFAULT)
 
 
 def _normalize_scrobble_webhook(cfg: dict[str, Any]) -> None:

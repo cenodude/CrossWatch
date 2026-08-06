@@ -699,7 +699,6 @@ async function cwAnimeMappingSaveSettings() {
         enabled,
         auto_update: autoUpdate,
         provider: "anibridge",
-        use_for_pairs: ["anilist"],
       }),
     });
     const data = await r.json().catch(() => ({}));
@@ -710,7 +709,6 @@ async function cwAnimeMappingSaveSettings() {
       enabled,
       auto_update: autoUpdate,
       provider: "anibridge",
-      use_for_pairs: ["anilist"],
     };
     if (data.status) window.__animeMappingStatus = data.status;
     cwAnimeMappingRenderStatus(data.status || window.__animeMappingStatus || {});
