@@ -41,6 +41,9 @@ if (typeof window._detReplayCursor === "undefined") window._detReplayCursor = 0;
 if (typeof window._detDidConnectOnce === "undefined") window._detDidConnectOnce = false;
 if (typeof window._detLastSeq === "undefined") window._detLastSeq = 0;
 if (typeof window._debugLastSeq === "undefined") window._debugLastSeq = 0;
+if (typeof window._detClearSeq === "undefined") window._detClearSeq = 0;
+if (typeof window._debugClearSeq === "undefined") window._debugClearSeq = 0;
+if (typeof window._watchSkipBacklog === "undefined") window._watchSkipBacklog = false;
 if (typeof window._detailsDropped === "undefined") window._detailsDropped = { sync: 0, watcher: 0, debug: 0 };
 if (typeof window._detailsStatusRAF === "undefined") window._detailsStatusRAF = null;
 if (typeof window._detailsOpenRAF === "undefined") window._detailsOpenRAF = null;
@@ -572,9 +575,19 @@ function initDetailsTabs() {
     btnClear.addEventListener("click", () => {
       const el = _activeDetailsLogEl();
       if (el) el.innerHTML = "";
-      if (window._detailsTab === "watcher") window.watchBuf.length = 0;
-      if (window._detailsTab === "debug") window.debugBuf.length = 0;
-      if (window._detailsTab === "sync") window.syncBuf.length = 0;
+      if (window._detailsTab === "watcher") {
+        window.watchBuf.length = 0;
+        window._watchSkipBacklog = true;
+      }
+      if (window._detailsTab === "debug") {
+        window.debugBuf.length = 0;
+        window._debugClearSeq = Math.max(Number(window._debugClearSeq || 0) || 0, Number(window._debugLastSeq || 0) || 0);
+      }
+      if (window._detailsTab === "sync") {
+        window.syncBuf.length = 0;
+        window._detSeenLines = [];
+        window._detClearSeq = Math.max(Number(window._detClearSeq || 0) || 0, Number(window._detLastSeq || 0) || 0);
+      }
       _resetDetailsDropped(window._detailsTab || "sync");
       _updateDetailsConsoleStatus();
     });
@@ -673,8 +686,9 @@ function openDebugLog() {
       el.__cwScrollWired = true;
     }
 
-    const debugSince = Math.max(0, Number(window._debugLastSeq || 0) || 0);
-    const debugReconnect = debugSince > 0 && el.childElementCount > 0;
+    const debugClearSeq = Math.max(0, Number(window._debugClearSeq || 0) || 0);
+    const debugSince = Math.max(Number(window._debugLastSeq || 0) || 0, debugClearSeq);
+    const debugReconnect = debugSince > 0 && (el.childElementCount > 0 || debugClearSeq > 0);
     if (!debugReconnect) {
       el.innerHTML = "";
       window.debugStickBottom = true;
@@ -796,6 +810,7 @@ async function openWatcherLog() {
     const url = new URL("/api/logs/watcher", document.baseURI);
     url.searchParams.set("tail", "120");
     url.searchParams.set("max_backlog", "80");
+    if (window._watchSkipBacklog) url.searchParams.set("skip_backlog", "1");
     url.searchParams.set("plain", "1");
     if (uniq.length) url.searchParams.set("tags", uniq.join(","));
 
@@ -918,8 +933,9 @@ async function openDetailsLog() {
   window._detSeenLines = [];
   window._detReplayActive = false;
   window._detReplayCursor = 0;
-  window._detDidConnectOnce = false;
-  window._detLastSeq = 0;
+  const detClearSeq = Math.max(0, Number(window._detClearSeq || 0) || 0);
+  window._detDidConnectOnce = detClearSeq > 0;
+  window._detLastSeq = detClearSeq;
 
   try { window.esDet?.close(); } catch {}
   try { window.esDetSummary?.close(); } catch {}
@@ -1100,6 +1116,9 @@ async function openDetailsLog() {
 function closeDetailsLog() {
   window._detReplayActive = false;
   window._detReplayCursor = 0;
+  window._detClearSeq = 0;
+  window._debugClearSeq = 0;
+  window._watchSkipBacklog = false;
   try { closeSyncLog(); } catch {}
   try { closeWatcherLog(); } catch {}
   try { closeDebugLog(); } catch {}

@@ -964,6 +964,7 @@ async def api_logs_watcher(
     tail: int = Query(200, ge=1, le=3000),
     tags: str = Query("", description="Optional CSV override"),
     max_backlog: int | None = Query(None, ge=1, le=3000),
+    skip_backlog: bool = Query(False),
     plain: bool = Query(False),
 ):
     tags_sel = _watch_log_selection(tags)
@@ -973,10 +974,11 @@ async def api_logs_watcher(
 
         for t in tags_sel:
             buf = _get_log_buf(t)
-            start = max(0, len(buf) - int(tail))
-            for line in buf[start:]:
-                safe = _log_stream_text(line, plain)
-                yield f"event: {t}\ndata: {safe}\n\n"
+            if not skip_backlog:
+                start = max(0, len(buf) - int(tail))
+                for line in buf[start:]:
+                    safe = _log_stream_text(line, plain)
+                    yield f"event: {t}\ndata: {safe}\n\n"
             base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
             last_seq[t] = base + len(buf) - 1
 
