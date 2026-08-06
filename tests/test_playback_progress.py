@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import cast
+
+from providers.metadata._meta_TMDB import TmdbProvider
 
 from services.playback_progress.service import (
     _combine_records,
@@ -14,7 +18,9 @@ from services.playback_progress.service import (
     PlaybackProgressService,
 )
 from services.playback_progress.models import PlaybackCapabilities
-from services.playback_progress.adapters.base import PlaybackProgressAdapter
+from services.playback_progress.adapters.base import PlaybackProgressAdapter, enrich_parallel
+import services.playback_progress.adapters.base as base_adapter
+import services.playback_progress.adapters.media_servers as media_servers_adapter
 import services.playback_progress.service as playback_service
 import services.playback_progress.adapters.floppy as floppy_playback_adapter
 import services.playback_progress.adapters.nuvio as nuvio_playback_adapter
@@ -1102,3 +1108,130 @@ def test_nuvio_playback_progress_enriches_episode_metadata_from_tvdb_id(monkeypa
     assert record is not None
     assert record.title == "The Boys"
     assert record.series_title == "The Boys"
+
+
+class _CountingTmdb:
+    def __init__(self, *, resolves=True):
+        self.resolves = resolves
+        self.calls = []
+
+    def fetch(self, *, entity, ids, need=None):
+        self.calls.append(dict(ids))
+        if not self.resolves:
+            return {}
+        return {"vote_average": 8.0, "ids": {"tmdb": "999"}}
+
+
+def _progress_rows(count, *, with_ids):
+    rows = {}
+    for i in range(count):
+        ids = {"plex": str(9000 + i)}
+        if with_ids:
+            ids["imdb"] = f"tt{i:07d}"
+        rows[f"movie:{i}"] = {
+            "type": "movie",
+            "title": f"Movie {i}",
+            "year": 2026,
+            "ids": ids,
+            "progress_ms": 60000,
+            "duration_ms": 600000,
+        }
+    return rows
+
+
+def _plex_adapter(rows):
+    class _Ops:
+        def is_configured(self, cfg):
+            return True
+
+        def health(self, cfg):
+            return {"ok": True, "status": "ok"}
+
+        def build_index(self, cfg, feature=None):
+            return rows
+
+    adapter = media_servers_adapter.PlexPlaybackAdapter()
+    adapter.ops = _Ops()
+    return adapter
+
+
+def test_playback_progress_does_not_search_twice_for_unresolvable_rows(monkeypatch):
+    tmdb = _CountingTmdb(resolves=False)
+    monkeypatch.setattr(media_servers_adapter, "tmdb_metadata_provider", lambda cfg: tmdb)
+
+    result = _plex_adapter(_progress_rows(5, with_ids=False)).list_progress(
+        {"tmdb": {"api_key": "key"}}, instance_id="default", instance_label="Default"
+    )
+
+    assert result.ok is True
+    assert len(result.items) == 5
+    assert all(record.rating is None for record in result.items)
+    assert len(tmdb.calls) == 5
+
+
+def test_playback_progress_keeps_ratings_for_rows_resolved_by_search(monkeypatch):
+    tmdb = _CountingTmdb()
+    monkeypatch.setattr(media_servers_adapter, "tmdb_metadata_provider", lambda cfg: tmdb)
+
+    result = _plex_adapter(_progress_rows(5, with_ids=False)).list_progress(
+        {"tmdb": {"api_key": "key"}}, instance_id="default", instance_label="Default"
+    )
+
+    assert result.ok is True
+    assert all(record.rating == 8.0 for record in result.items)
+
+
+def test_playback_progress_skips_resolve_when_external_ids_exist(monkeypatch):
+    tmdb = _CountingTmdb()
+    monkeypatch.setattr(media_servers_adapter, "tmdb_metadata_provider", lambda cfg: tmdb)
+
+    result = _plex_adapter(_progress_rows(5, with_ids=True)).list_progress(
+        {"tmdb": {"api_key": "key"}}, instance_id="default", instance_label="Default"
+    )
+
+    assert result.ok is True
+    assert all(record.rating == 8.0 for record in result.items)
+    assert len(tmdb.calls) == 5
+    assert all(call.get("imdb") for call in tmdb.calls)
+
+
+def test_enrich_parallel_preserves_order_and_runs_concurrently():
+    barrier = threading.Barrier(4, timeout=10)
+
+    def worker(value):
+        barrier.wait()
+        return value * 2
+
+    assert enrich_parallel(list(range(4)), worker) == [0, 2, 4, 6]
+
+
+def test_enrich_parallel_handles_small_inputs():
+    assert enrich_parallel([], lambda value: value) == []
+    assert enrich_parallel([7], lambda value: value * 3) == [21]
+
+
+def test_tmdb_metadata_provider_is_reused_across_refreshes():
+    cfg = {"tmdb": {"api_key": "shared-key"}, "metadata": {"ttl_hours": 720}}
+
+    first = base_adapter.tmdb_metadata_provider(cfg)
+    first._cache["probe"] = (time.time(), {"cached": True})
+    second = base_adapter.tmdb_metadata_provider(cfg)
+
+    assert first is second
+    assert "probe" in second._cache
+    assert base_adapter.tmdb_metadata_provider({}) is None
+
+
+def test_tmdb_cache_is_bounded(monkeypatch):
+    provider = TmdbProvider(lambda: {"metadata": {"ttl_hours": 1}}, lambda cfg: None)
+    monkeypatch.setattr(TmdbProvider, "CACHE_MAX_ENTRIES", 10)
+    now = time.time()
+    provider._cache["expired"] = (now - 7200, "old")
+    for i in range(12):
+        provider._cache[f"fresh{i}"] = (now + i, i)
+
+    provider._prune_cache()
+
+    assert "expired" not in provider._cache
+    assert len(provider._cache) <= 10
+    assert "fresh11" in provider._cache

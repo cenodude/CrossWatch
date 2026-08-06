@@ -9,7 +9,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_MDBLIST import MDBLISTModule, OPS as MDBLIST_OPS
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, metadata_rating, public_failure, rating_from_sources, tmdb_metadata_provider
+from .base import PlaybackProgressAdapter, enrich_parallel, has_metadata_ids, metadata_rating, public_failure, rating_from_sources, tmdb_metadata_provider
 
 
 MDBLIST_PLAYBACK_REASON = ""
@@ -232,7 +232,7 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
                         rows.extend(row for row in value if isinstance(row, Mapping))
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
             metadata = tmdb_metadata_provider(config_view)
-            items = [self._normalize(row, instance_id, instance_label, caps, metadata) for row in rows]
+            items = enrich_parallel(rows, lambda row: self._normalize(row, instance_id, instance_label, caps, metadata))
             return PlaybackListResult(
                 ok=True,
                 provider=self.provider,
@@ -329,7 +329,8 @@ class MDBListPlaybackAdapter(PlaybackProgressAdapter):
             show_rating_ids = clean_mapping(history_item.get("show_ids") if isinstance(history_item.get("show_ids"), Mapping) else {})
             rating_ids = ids if media_type == "movie" else show_rating_ids or ids
             rating_title = title if media_type == "movie" else series_title or title
-            rating = metadata_rating(metadata, media_type=media_type, ids=rating_ids, title=rating_title, year=year)
+            if has_metadata_ids(rating_ids):
+                rating = metadata_rating(metadata, media_type=media_type, ids=rating_ids, title=rating_title, year=year)
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,

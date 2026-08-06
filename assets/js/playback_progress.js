@@ -21,7 +21,7 @@
     return `<img src="${esc(providerLogLogo(provider))}" alt="" onerror="this.remove()">`;
   };
   const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"];
-  const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 12;
+  const DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20;
   const state = {
     mounted: false,
     page: 1,
@@ -423,7 +423,7 @@
     dlg.classList.remove("hidden");
     const data = await api("/api/playback_progress/settings");
     state.settings = data;
-    timeout.value = String(Math.round(Number(data.provider_timeout_seconds || 12)));
+    timeout.value = String(Math.round(Number(data.provider_timeout_seconds || DEFAULT_PROVIDER_TIMEOUT_SECONDS)));
     list.innerHTML = renderSettingsProfiles(data);
     updateSettingsCount();
   }
