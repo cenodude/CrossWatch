@@ -480,6 +480,7 @@
     if (!arr.length) return void (enabledFromPairs = EMPTY_ENABLED());
     const enabled = EMPTY_ENABLED();
     for (const pair of arr) {
+      if (pair?.enabled === false) continue;
       const feats = pair?.features || {};
       for (const key of FEAT_KEYS) if (feats[key] && (feats[key].enable === true || feats[key].enabled === true)) enabled[key] = true;
     }

@@ -891,6 +891,7 @@ async def api_logs_stream_initial(
     tag: str = Query("SYNC"),
     tail: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
     since: int | None = Query(None, ge=1),
+    max_backlog: int | None = Query(None, ge=1, le=MAX_LOG_LINES),
     plain: bool = Query(False),
 ):
     tag = _norm_log_tag(tag)
@@ -922,6 +923,11 @@ async def api_logs_stream_initial(
             start_idx = int(start_seq - base)
             if start_idx < 0:
                 start_idx = 0
+            if max_backlog:
+                backlog = len(new_buf) - start_idx
+                if backlog > max_backlog:
+                    start_idx = max(0, len(new_buf) - int(max_backlog))
+                    last_seq = base + start_idx - 1
             for i in range(start_idx, len(new_buf)):
                 line = new_buf[i]
                 seq = base + i
@@ -950,6 +956,8 @@ async def api_logs_watcher(
     request: Request,
     tail: int = Query(200, ge=1, le=3000),
     tags: str = Query("", description="Optional CSV override"),
+    max_backlog: int | None = Query(None, ge=1, le=3000),
+    skip_backlog: bool = Query(False),
     plain: bool = Query(False),
 ):
     tags_sel = _watch_log_selection(tags)
@@ -959,10 +967,11 @@ async def api_logs_watcher(
 
         for t in tags_sel:
             buf = _get_log_buf(t)
-            start = max(0, len(buf) - int(tail))
-            for line in buf[start:]:
-                safe = _log_stream_text(line, plain)
-                yield f"event: {t}\ndata: {safe}\n\n"
+            if not skip_backlog:
+                start = max(0, len(buf) - int(tail))
+                for line in buf[start:]:
+                    safe = _log_stream_text(line, plain)
+                    yield f"event: {t}\ndata: {safe}\n\n"
             base = int(LOG_BASE_SEQ.get(t, int(LOG_NEXT_SEQ.get(t, 1))))
             last_seq[t] = base + len(buf) - 1
 
@@ -981,6 +990,11 @@ async def api_logs_watcher(
                 start_idx = int(start_seq - base)
                 if start_idx < 0:
                     start_idx = 0
+                if max_backlog:
+                    backlog = len(buf) - start_idx
+                    if backlog > max_backlog:
+                        start_idx = max(0, len(buf) - int(max_backlog))
+                        seen = base + start_idx - 1
                 for i in range(start_idx, len(buf)):
                     line = buf[i]
                     safe = _log_stream_text(line, plain)
