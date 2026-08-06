@@ -40,7 +40,7 @@ def _error(event: str, **fields: Any) -> None:
 def _log(msg: str) -> None:
     _dbg(msg)
 
-__VERSION__ = "2.2"
+__VERSION__ = "2.3"
 os.environ.setdefault("CW_PLEX_VERSION", __VERSION__)
 os.environ.setdefault("CW_PLEX_UA", f"CrossWatch/{__VERSION__} (Plex)")
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
@@ -659,7 +659,7 @@ class PLEXClient:
                     self.server._session = self.session  # type: ignore[attr-defined]
                     self._pms_baseurl = str(getattr(self.server, "baseurl", None) or self.cfg.baseurl or "")
                     if self._pms_baseurl and (pms_token or cloud_token):
-                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token))
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token)
                 except Exception as e:
                     _warn("pms_connect_failed", baseurl=str(self.cfg.baseurl or ""), error=str(e), mode="account_only")
                     self._post_connect_user_scope(str(pms_token or cloud_token))
@@ -679,7 +679,7 @@ class PLEXClient:
                 if pms_token:
                     self._apply_pms_token(pms_token)
                     if self._pms_baseurl:
-                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token))
+                        configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token), account_token=cloud_token)
 
                 self._post_connect_user_scope(str(pms_token or cloud_token))
                 _dbg(
@@ -704,7 +704,7 @@ class PLEXClient:
                     pms_token = res_tok
                     self._apply_pms_token(pms_token)
                 if self._pms_baseurl and (pms_token or cloud_token):
-                    configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token))
+                    configure_plex_context(baseurl=str(self._pms_baseurl), token=str(pms_token or cloud_token), account_token=cloud_token)
             except Exception as e:
                 _warn("pms_resource_connect_failed", error=str(e), mode="account_only")
                 self._post_connect_user_scope(str(pms_token or cloud_token))

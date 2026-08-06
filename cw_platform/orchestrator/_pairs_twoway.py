@@ -101,6 +101,7 @@ from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 from ._pairs_blocklist import apply_blocklist
 from ._pairs_massdelete import maybe_block_mass_delete as _maybe_block_massdelete
 from ._pairs_utils import (
+    config_with_pair_libraries as _config_with_pair_libraries,
     supports_feature as _supports_feature,
     resolve_flags as _resolve_flags,
     health_status as _health_status,
@@ -347,6 +348,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     bops = provs.get(b)
     anime_pair_opts = _anime_pair_feature_options(cfg, fcfg, feature, a, b, anime_only_default=(a == "ANILIST" or b == "ANILIST"))
     provider_cfg = _anime_config_with_pair_feature_options(cfg, anime_pair_opts)
+    provider_cfg = _config_with_pair_libraries(provider_cfg, fcfg, feature, (a, b))
     if not aops or not bops:
         info(f"[!] Missing provider ops for {a}<->{b}")
         return {"ok": False, "adds_to_A": 0, "adds_to_B": 0, "rem_from_A": 0, "rem_from_B": 0}
