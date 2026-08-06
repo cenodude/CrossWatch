@@ -11,7 +11,7 @@ from providers.sync._mod_SIMKL import OPS as SIMKL_OPS, SIMKLModule, __VERSION__
 from providers.sync.simkl._common import build_headers
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure, rating_from_sources, tmdb_metadata_provider
+from .base import PlaybackProgressAdapter, enrich_parallel, has_metadata_ids, public_failure, rating_from_sources, tmdb_metadata_provider
 
 
 def _int(value: Any) -> int | None:
@@ -295,7 +295,7 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
                     if isinstance(bucket, list):
                         rows.extend([r for r in bucket if isinstance(r, Mapping)])
             metadata = tmdb_metadata_provider(config_view)
-            items = [self._normalize(row, instance_id, instance_label, caps, metadata) for row in rows]
+            items = enrich_parallel(rows, lambda row: self._normalize(row, instance_id, instance_label, caps, metadata))
             return PlaybackListResult(ok=True, provider=self.provider, instance_id=instance_id, items=[x for x in items if x], refreshed_at=utc_now_iso())
         except Exception:
             return PlaybackListResult(ok=False, provider=self.provider, instance_id=instance_id, error_code="provider_error", message="SIMKL playback request failed.", retryable=True)
@@ -352,7 +352,7 @@ class SimklPlaybackAdapter(PlaybackProgressAdapter):
         rating_ids = container_ids if media_type == "movie" else (container_ids or episode_ids)
         rating_title = title if media_type == "movie" else series_title or title
         rating = rating_from_sources(row, container, episode)
-        if duration is None or rating is None:
+        if (duration is None or rating is None) and has_metadata_ids(rating_ids):
             meta_rating, meta_duration = _metadata_rating_duration(
                 metadata,
                 media_type=media_type,

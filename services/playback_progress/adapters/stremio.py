@@ -11,7 +11,7 @@ from providers.sync._mod_STREMIO import OPS as STREMIO_OPS
 from providers.sync.stremio._common import DEFAULT_STREMIO_PROFILE_ID
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, public_failure, tmdb_metadata_provider
+from .base import PlaybackProgressAdapter, enrich_parallel, public_failure, tmdb_metadata_provider
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -187,7 +187,8 @@ class StremioPlaybackAdapter(PlaybackProgressAdapter):
         except Exception:
             return PlaybackListResult(False, self.provider, instance_id, error_code="provider_error", message="Stremio progress request failed.", retryable=True)
         metadata = tmdb_metadata_provider(config_view)
-        items = [self._record(key, item, instance_id, instance_label, caps, metadata) for key, item in dict(index).items() if isinstance(item, Mapping)]
+        pending = [(key, item) for key, item in dict(index).items() if isinstance(item, Mapping)]
+        items = enrich_parallel(pending, lambda entry: self._record(entry[0], entry[1], instance_id, instance_label, caps, metadata))
         return PlaybackListResult(True, self.provider, instance_id, items=[item for item in items if item], refreshed_at=utc_now_iso())
 
     def _record(self, key: Any, item: Mapping[str, Any], instance_id: str, instance_label: str, caps: PlaybackCapabilities, metadata: Any = None) -> PlaybackRecord | None:

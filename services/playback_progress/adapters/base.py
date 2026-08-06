@@ -4,11 +4,18 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from threading import RLock
+from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from providers.metadata._meta_TMDB import TmdbProvider
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult
+
+ENRICH_WORKERS = 8
+
+_T = TypeVar("_T")
+_R = TypeVar("_R")
 
 
 class PlaybackProgressAdapter:
@@ -157,6 +164,21 @@ def rating_from_sources(*sources: Any) -> float | None:
     return None
 
 
+def has_metadata_ids(ids: Mapping[str, Any]) -> bool:
+    return any(str(ids.get(key) or "").strip() for key in ("tmdb", "imdb", "tvdb"))
+
+
+def enrich_parallel(entries: Sequence[_T], worker: Callable[[_T], _R]) -> list[_R]:
+    if len(entries) < 2:
+        return [worker(entry) for entry in entries]
+    with ThreadPoolExecutor(max_workers=min(ENRICH_WORKERS, len(entries))) as pool:
+        return list(pool.map(worker, entries))
+
+
+_TMDB_PROVIDER_LOCK = RLock()
+_TMDB_PROVIDERS: dict[str, TmdbProvider] = {}
+
+
 def tmdb_metadata_provider(config_view: Mapping[str, Any]) -> TmdbProvider | None:
     def _as_mapping(value: Any) -> Mapping[str, Any]:
         return value if isinstance(value, Mapping) else {}
@@ -172,10 +194,18 @@ def tmdb_metadata_provider(config_view: Mapping[str, Any]) -> TmdbProvider | Non
 
     tmdb = _as_mapping(config_view.get("tmdb"))
     metadata = _as_mapping(config_view.get("metadata"))
-    if not _first_str(tmdb.get("api_key"), metadata.get("tmdb_api_key")):
+    api_key = _first_str(tmdb.get("api_key"), metadata.get("tmdb_api_key"))
+    if not api_key:
         return None
     cfg = dict(config_view)
-    return TmdbProvider(lambda: cfg, lambda _cfg: None)
+    with _TMDB_PROVIDER_LOCK:
+        provider = _TMDB_PROVIDERS.get(api_key)
+        if provider is None:
+            provider = TmdbProvider(lambda: cfg, lambda _cfg: None)
+            _TMDB_PROVIDERS[api_key] = provider
+        else:
+            provider.load_cfg = lambda: cfg
+    return provider
 
 
 def metadata_rating(
