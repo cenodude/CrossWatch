@@ -947,6 +947,57 @@ def test_recent_playlists_widget_uses_playlist_activity(monkeypatch) -> None:
     }
 
 
+def _many_movie_items(feature: str, count: int) -> dict:
+    time_key = "rated_at" if feature == "ratings" else "watched_at"
+    return {
+        "providers": {
+            "PLEX": {
+                feature: {
+                    "baseline": {
+                        "items": {
+                            f"tmdb:{n}@17672292{n:02d}": {
+                                "type": "movie",
+                                "title": f"Movie {n}",
+                                "year": 2000 + n,
+                                "ids": {"tmdb": n},
+                                "rating": 8,
+                                time_key: f"2026-01-01T00:00:{n:02d}Z",
+                            }
+                            for n in range(1, count + 1)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("feature", "widget", "per_row"),
+    [("history", "recent_history_widget", 2), ("ratings", "latest_ratings_widget", 3), ("progress", "recent_progress_widget", 2)],
+)
+def test_widgets_resolve_art_namespace_only_for_returned_rows(monkeypatch, feature, widget, per_row) -> None:
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "list_events",
+        lambda **_kwargs: {"ok": True, "total": 0, "items": []},
+    )
+    calls: list[object] = []
+    real = dashboard_widgets._resolved_art_type
+    monkeypatch.setattr(
+        dashboard_widgets,
+        "_resolved_art_type",
+        lambda item, tmdb: (calls.append(tmdb), real(item, tmdb))[1],
+    )
+
+    payload = getattr(dashboard_widgets, widget)(_many_movie_items(feature, 60), limit=5)
+
+    assert payload["total"] == 60
+    assert len(payload["items"]) == 5
+    assert len(calls) <= 5 * per_row
+    assert len(set(calls)) == 5
+
+
 def test_dashboard_widgets_payload_only_builds_included_widgets(monkeypatch) -> None:
     calls: list[str] = []
 
