@@ -14,7 +14,7 @@ from cw_platform.anime_mapping.auto_update import refresh_from_config as refresh
 from cw_platform.anime_mapping.auto_update import status as auto_update_status
 from cw_platform.anime_mapping.storage import normalize_release_tag, rebuild_sqlite_from_mappings
 from cw_platform.anime_mapping.updater import status as mapping_status, update as mapping_update
-from cw_platform.config_base import load_config, save_config
+from cw_platform.config_base import ANIME_MAPPING_PAIRS_DEFAULT, load_config, save_config
 
 router = APIRouter(prefix="/api/anime-mapping", tags=["anime-mapping"])
 
@@ -87,7 +87,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
             block["stale_after_days"] = _int_at_least(data.get("stale_after_days"), 14, 1)
         if "use_for_pairs" in data:
             providers = _provider_list(data.get("use_for_pairs"))
-            block["use_for_pairs"] = providers or ["anilist"]
+            block["use_for_pairs"] = providers or list(ANIME_MAPPING_PAIRS_DEFAULT)
 
         cfg["anime_mapping"] = block
         save_config(cfg)
@@ -99,7 +99,7 @@ def api_anime_mapping_settings(payload: dict[str, Any] | None = Body(default=Non
                 "enabled": bool(block.get("enabled", False)),
                 "auto_update": bool(block.get("auto_update", True)),
                 "release_tag": str(block.get("release_tag") or "v3"),
-                "use_for_pairs": ",".join(_provider_list(block.get("use_for_pairs")) or ["anilist"]),
+                "use_for_pairs": ",".join(_provider_list(block.get("use_for_pairs")) or ANIME_MAPPING_PAIRS_DEFAULT),
             },
         )
         st = mapping_status(cfg=cfg)
