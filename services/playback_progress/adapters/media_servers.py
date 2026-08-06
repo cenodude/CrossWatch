@@ -9,7 +9,15 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.metadata._meta_TMDB import TmdbProvider
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, metadata_rating, public_failure, rating_from_sources
+from .base import (
+    PlaybackProgressAdapter,
+    enrich_parallel,
+    has_metadata_ids,
+    metadata_rating,
+    public_failure,
+    rating_from_sources,
+    tmdb_metadata_provider,
+)
 
 try:
     from providers.sync._mod_EMBY import OPS as EMBY_OPS
@@ -138,19 +146,6 @@ def _successful_write(result: Mapping[str, Any]) -> bool:
     return count == 0 and isinstance(unresolved, list) and len(unresolved) == 0
 
 
-def _has_metadata_ids(ids: Mapping[str, Any]) -> bool:
-    return any(_first_str(ids.get(key)) for key in ("tmdb", "imdb", "tvdb"))
-
-
-def _metadata_provider(config_view: Mapping[str, Any]) -> TmdbProvider | None:
-    tmdb = _as_mapping(config_view.get("tmdb"))
-    metadata = _as_mapping(config_view.get("metadata"))
-    if not _first_str(tmdb.get("api_key"), metadata.get("tmdb_api_key")):
-        return None
-    cfg = dict(config_view)
-    return TmdbProvider(lambda: cfg, lambda _cfg: None)
-
-
 def _resolve_with_metadata(
     provider: TmdbProvider | None,
     *,
@@ -159,7 +154,7 @@ def _resolve_with_metadata(
     year: Any,
     ids: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if _has_metadata_ids(ids):
+    if has_metadata_ids(ids):
         return dict(ids)
     if provider is None or not title:
         return dict(ids)
@@ -268,14 +263,13 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
                         retryable=status != "auth_failed",
                     )
             rows = ops.build_index(config_view, feature="progress")
-            metadata_provider = _metadata_provider(config_view)
-            items = [
-                record
-                for key, row in (rows or {}).items()
-                if isinstance(row, Mapping)
-                for record in [self._normalize(str(key), row, metadata_provider, instance_id, instance_label, caps)]
-                if record is not None
-            ]
+            metadata_provider = tmdb_metadata_provider(config_view)
+            pending = [(str(key), row) for key, row in (rows or {}).items() if isinstance(row, Mapping)]
+            records = enrich_parallel(
+                pending,
+                lambda entry: self._normalize(entry[0], entry[1], metadata_provider, instance_id, instance_label, caps),
+            )
+            items = [record for record in records if record is not None]
             return PlaybackListResult(ok=True, provider=self.provider, instance_id=instance_id, items=items, refreshed_at=utc_now_iso())
         except Exception:
             return PlaybackListResult(ok=False, provider=self.provider, instance_id=instance_id, error_code="provider_error", message=f"{self.provider_label} playback request failed.", retryable=True)
@@ -322,9 +316,11 @@ class _MediaServerPlaybackAdapter(PlaybackProgressAdapter):
             }
         )
         canonical = canonical_key(item) or key or ""
-        rating_ids = show_ids if media_type in {"episode", "anime_episode"} and _has_metadata_ids(show_ids) else ids
+        rating_ids = show_ids if media_type in {"episode", "anime_episode"} and has_metadata_ids(show_ids) else ids
         rating_title = (series_title or title) if media_type in {"episode", "anime_episode"} else title
-        rating = rating_from_sources(row) or metadata_rating(metadata_provider, media_type=media_type, ids=rating_ids, title=rating_title, year=row.get("year"))
+        rating = rating_from_sources(row)
+        if rating is None and has_metadata_ids(rating_ids):
+            rating = metadata_rating(metadata_provider, media_type=media_type, ids=rating_ids, title=rating_title, year=row.get("year"))
         return PlaybackRecord(
             provider=self.provider,
             provider_label=self.provider_label,
