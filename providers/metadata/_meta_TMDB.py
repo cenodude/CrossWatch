@@ -79,11 +79,14 @@ class TmdbProvider:
             return
         ttl = self._ttl_seconds()
         now = time.time()
-        for key in [k for k, (ts, _) in self._cache.items() if (now - ts) >= ttl]:
-            self._cache.pop(key, None)
+        snapshot = list(self._cache.items())
+        for key, (ts, _) in snapshot:
+            if (now - ts) >= ttl:
+                self._cache.pop(key, None)
         overflow = len(self._cache) - self.CACHE_MAX_ENTRIES
         if overflow > 0:
-            for key, _ in sorted(self._cache.items(), key=lambda kv: kv[1][0])[:overflow]:
+            live = [entry for entry in snapshot if entry[0] in self._cache]
+            for key, _ in sorted(live, key=lambda kv: kv[1][0])[:overflow]:
                 self._cache.pop(key, None)
 
     def _backoff_params(self) -> tuple[int, float, float]:
