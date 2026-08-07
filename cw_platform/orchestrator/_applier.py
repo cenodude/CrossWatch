@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence, Mapping
 from typing import Any, Callable, cast
 from . import _unresolved as _unresolved_mod
+from ..run_control import cancel_requested
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 _UNRESOLVED_EXAMPLE_CAP = 25
@@ -376,6 +377,10 @@ def _apply_chunked(
         "errors": 0,
     }
     for i in range(0, total, csize):
+        if cancel_requested():
+            agg["cancelled"] = True
+            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
+            break
         chunk = items[i : i + csize]
         raw = _retry(lambda: call(chunk))
         res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit)

@@ -1242,7 +1242,6 @@
 
   function connectionModalMaxHeight(info) {
     const viewport = Math.max(360, window.innerHeight || document.documentElement?.clientHeight || 720);
-    if (info?.key === "ANIME_MAPPING") return Math.max(520, viewport - 32);
     const cap = (info?.size || "wide") === "wide" ? 660 : 620;
     return Math.max(360, Math.min(cap, viewport - 176));
   }
@@ -1266,14 +1265,10 @@
     if (!scroller) return 0;
     const activePanel = scroller.querySelector(":scope > .cw-subpanel.active") || scroller.querySelector(":scope > .cw-subpanel");
     if (!activePanel) {
-      const prevHeight = scroller.style.height;
-      const prevMaxHeight = scroller.style.maxHeight;
-      scroller.style.height = "auto";
-      scroller.style.maxHeight = "none";
-      const measured = Math.ceil(scroller.scrollHeight || scroller.offsetHeight || 0);
-      scroller.style.height = prevHeight;
-      scroller.style.maxHeight = prevMaxHeight;
-      return measured;
+      const kids = Array.from(scroller.children || []);
+      const last = kids[kids.length - 1];
+      if (!last) return 0;
+      return Math.ceil((last.offsetTop || 0) + (last.offsetHeight || 0) + cssPx(scroller, "padding-bottom"));
     }
     const padding = cssPx(scroller, "padding-top") + cssPx(scroller, "padding-bottom");
     return Math.ceil((activePanel.scrollHeight || activePanel.offsetHeight || 0) + padding);

@@ -647,6 +647,32 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             ),
             metrics=metrics,
         )
+    elif action in {"support-export", "support-bundle"}:
+        from services.support import list_scopes
+
+        totals_raw = list_scopes().get("totals")
+        totals: Mapping[str, Any] = totals_raw if isinstance(totals_raw, Mapping) else {}
+        usage = _paths_usage(_sync_state_storage_paths(CONFIG_DIR))
+        metrics = [
+            _metric("Sync pairs", int(totals.get("pairs") or 0)),
+            _metric("Feature baselines", int(totals.get("baselines") or 0)),
+            _metric("Baseline items", int(totals.get("items") or 0)),
+            _metric("Unreferenced baselines", int(totals.get("orphan_baselines") or 0)),
+            _metric("State storage", usage["bytes"], "bytes"),
+            _metric("Last updated", usage["modified"], "datetime"),
+        ]
+        if action == "support-export":
+            response.update(
+                title="Export sync state",
+                note="Rebuilds the classic state.json from the database so it can be attached to a bug report. Choose all pairs or a single pair. Read-only; no secrets are included.",
+                metrics=metrics,
+            )
+        else:
+            response.update(
+                title="Support bundle",
+                note="Packs state.json, a redacted config, database and event-archive diagnostics, recent sync reports and log tails into one ZIP. Tokens and passwords are masked. Read-only.",
+                metrics=metrics,
+            )
     elif action == "database-health":
         health = local_db_diagnostics(CONFIG_DIR)
         tables_raw = health.get("table_counts")
@@ -1363,6 +1389,61 @@ def provider_cache_status() -> dict[str, Any]:
 @router.get("/action-status/{action}")
 def action_status(action: str) -> dict[str, Any]:
     return maintenance_action_status(action)
+
+
+def _split_csv(values: list[str] | None) -> list[str]:
+    out: list[str] = []
+    for raw in values or []:
+        out.extend(part.strip() for part in str(raw or "").split(",") if part.strip())
+    return list(dict.fromkeys(out))
+
+
+@router.get("/support/scopes")
+def support_scopes() -> dict[str, Any]:
+    try:
+        from services.support import list_scopes
+
+        return list_scopes()
+    except Exception:
+        _LOG.exception("support scopes failed")
+        return {"ok": False, "error": "internal_error"}
+
+
+@router.get("/support/state")
+def support_state(pairs: list[str] | None = Query(None)) -> StreamingResponse:
+    from services.support import build_state, state_filename
+
+    result = build_state(_split_csv(pairs))
+    _LOG.info("support state export scope=%s pairs=%s", result["meta"].get("scope"), result["meta"].get("pair_ids"))
+    meta = result["meta"]
+    body = json.dumps(result["payload"], ensure_ascii=False, indent=2, default=str).encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(body),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{state_filename(meta)}"',
+            "X-CrossWatch-Scope": str(meta.get("scope") or "all"),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.get("/support/bundle")
+def support_bundle(
+    pairs: list[str] | None = Query(None),
+    include: list[str] | None = Query(None),
+) -> StreamingResponse:
+    from services.support import bundle_filename, build_bundle
+
+    data = build_bundle(_split_csv(pairs), _split_csv(include) or None)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{bundle_filename()}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/database-health")

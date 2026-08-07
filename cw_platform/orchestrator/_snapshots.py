@@ -17,6 +17,7 @@ import datetime as _dt
 from ..id_map import canonical_key, KEY_PRIORITY
 from ..history_events import history_event_key, is_history_event_key
 from ..provider_instances import normalize_instance_id
+from ..run_control import raise_if_cancelled
 from ._types import InventoryOps
 from ..modules_registry import load_sync_ops
 
@@ -704,6 +705,7 @@ def build_snapshots_for_feature(
         ordered = list(providers.items())
 
     for name, ops in ordered:
+        raise_if_cancelled()
         try:
             feats_raw = ops.features()  # type: ignore[call-arg]
         except Exception:

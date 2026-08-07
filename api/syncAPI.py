@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.reason_labels import friendly_reason
+from cw_platform.run_control import cancel_requested, cancel_state, clear_cancel, request_cancel
 from cw_platform.value_coercion import coerce_bool
 from services.scheduler_webhooks import notify_scheduler_webhook, resolve_completion_event
 
@@ -270,6 +271,8 @@ def _summary_reset() -> None:
                 "crosswatch_post": None,
                 "result": "",
                 "exit_code": None,
+                "cancel_requested": False,
+                "cancelled": False,
                 "timeline": {"start": False, "pre": False, "post": False, "done": False},
                 "raw_started_ts": None,
                 "_phase": {
@@ -519,6 +522,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     scheduler_context["run_id"] = str(run_id)
     scheduler_webhook_cfg: dict[str, Any] | None = None
     scheduler_start_sent = False
+    was_cancelled = False
+    clear_cancel()
     _summary_reset()
     _summary_set("run_id", str(run_id))
     LOG_BUFFERS["SYNC"] = []
@@ -695,6 +700,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 use_snapshot=True,
             )
 
+        if coerce_bool(result.get("cancelled")) or cancel_requested(run_id):
+            was_cancelled = True
+            _summary_set("cancelled", True)
+            _sync_progress_ui("[!] Sync cancelled - already applied changes were kept.")
+
         added_res = int(result.get("added", 0))
         removed_res = int(result.get("removed", 0))
         try:
@@ -739,7 +749,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         extra = f", Total blocked: {blocked}"
 
         _sync_progress_ui(
-            f"[i] Done. Total added: {added}, Total removed: {removed}, Total updated: {updated}, "
+            f"[i] {'Cancelled' if was_cancelled else 'Done'}. Total added: {added}, Total removed: {removed}, Total updated: {updated}, "
             f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}{extra}"
         )
         if unresolved > 0:
@@ -785,6 +795,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 )
         except Exception:
             pass
+        clear_cancel()
         RUNNING_PROCS.pop("SYNC", None)
 
 def _lanes_enabled_defaults() -> dict[str, bool]:
@@ -2328,6 +2339,30 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
         _rt()[8]("SYNC", f"[i] Triggered sync run {run_id}")
         return {"ok": True, "run_id": run_id}
 
+@router.post("/run/cancel")
+def api_cancel_sync() -> dict[str, Any]:
+    if not _is_sync_running():
+        clear_cancel()
+        return {"ok": False, "error": "No sync running", "running": False}
+    run_id = str(_summary_snapshot().get("run_id") or "")
+    state = request_cancel(run_id, reason="user")
+    _summary_set("cancel_requested", True)
+    _rt()[8]("SYNC", "[!] Cancel requested; finishing the current step and stopping.")
+    return {"ok": True, "running": True, "run_id": state.get("run_id"), "requested_at": state.get("requested_at")}
+
+
+@router.get("/run/cancel")
+def api_cancel_status() -> dict[str, Any]:
+    state = cancel_state()
+    return {
+        "ok": True,
+        "running": _is_sync_running(),
+        "cancel_requested": bool(state.get("run_id")),
+        "run_id": state.get("run_id"),
+        "requested_at": state.get("requested_at"),
+    }
+
+
 @router.get("/run/summary")
 def api_run_summary() -> JSONResponse:
     snap0 = _summary_snapshot()
@@ -2513,6 +2548,8 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             key = (
                 snap.get("running"),
                 snap.get("exit_code"),
+                snap.get("cancel_requested"),
+                snap.get("cancelled"),
                 _provider_counts_key(snap.get("provider_counts") or snap.get("provider_counts_post")),
                 snap.get("result"),
                 snap.get("duration_sec"),

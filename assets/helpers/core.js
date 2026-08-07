@@ -842,6 +842,16 @@
       runButton.classList.toggle("loading", running);
       runButton.setAttribute("aria-busy", String(running));
     }
+    const cancelButton = byId("run-cancel");
+    if (cancelButton) {
+      const pending = state.cancelPending || !!UI.summary?.cancel_requested;
+      cancelButton.classList.toggle("hidden", !running);
+      cancelButton.disabled = !running || pending;
+      cancelButton.classList.toggle("pending", running && pending);
+      const label = cancelButton.querySelector(".label");
+      if (label) label.textContent = pending ? "Cancelling…" : "Cancel";
+      if (!running) state.cancelPending = false;
+    }
     byId("cw-sync-split")?.classList.toggle("running", running);
     [byId("run"), byId("run-menu")].forEach((btn) => {
       if (btn) btn.disabled = disabled;
@@ -1507,6 +1517,27 @@
     }
   }
 
+  async function cancelSync() {
+    if (state.cancelPending) return;
+    state.cancelPending = true;
+    recomputeRunDisabled();
+    try {
+      const response = await fetch("/api/run/cancel", { method: "POST", cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true) {
+        state.cancelPending = false;
+        setSyncHeader("sync-warn", payload?.error ? `Cancel failed – ${payload.error}` : "Cancel failed");
+      } else {
+        setSyncHeader("sync-warn", "Cancelling — finishing the current step…");
+      }
+    } catch {
+      state.cancelPending = false;
+      setSyncHeader("sync-bad", "Failed to reach server");
+    } finally {
+      recomputeRunDisabled();
+    }
+  }
+
   function setStatsExpanded(expanded) {
     const card = byId("stats-card");
     if (!card) return;
@@ -1751,7 +1782,8 @@
     };
     Object.entries(chips).forEach(([id, value]) => setText(id, value ?? "–"));
 
-    if (summary.running) setSyncHeader("sync-warn", "Running…");
+    if (summary.running) setSyncHeader("sync-warn", summary.cancel_requested ? "Cancelling…" : "Running…");
+    else if (summary.cancelled) setSyncHeader("sync-warn", "Cancelled — partial sync applied");
     else if (summary.exit_code === 0) setSyncHeader("sync-ok", String(summary.result || "").toUpperCase() === "EQUAL" ? "In sync " : "Synced ");
     else if (summary.exit_code != null) setSyncHeader("sync-bad", "Attention needed ⚠️");
     else setSyncHeader("sync-warn", "Idle — run a sync to see results");
@@ -1969,7 +2001,7 @@ Object.assign(window, {
   _invalidatePairsCache, isWatchlistEnabledInPairs,
   loadStatusCache, renderConnectorStatus, refreshStatus, manualRefreshStatus,
   computeRedirectURI, recomputeRunDisabled, relTimeFromEpoch,
-  showTab, toggleSection, runSync,
+  showTab, toggleSection, runSync, cancelSync,
   copySummary, loadPairs, cxSavePair,
   cwToggleSyncMenu, DETAILS_MAX_LINES,
 });

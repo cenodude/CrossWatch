@@ -117,7 +117,7 @@ def resolve_completion_event(cfg: dict[str, Any] | None, summary: dict[str, Any]
         exit_code = int(snap.get("exit_code") or 0)
     except Exception:
         exit_code = 0
-    if exit_code != 0:
+    if exit_code != 0 or snap.get("cancelled"):
         return "failure"
 
     sch = (cfg or {}).get("scheduling") if isinstance(cfg, dict) else {}

@@ -594,6 +594,15 @@ function _cwSetText(id, value) {
   if (el) el.textContent = String(value ?? "");
 }
 
+function _cwSetStat(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const text = String(value ?? "");
+  el.textContent = text;
+  if (text && text !== "-") el.title = text;
+  else el.removeAttribute("title");
+}
+
 function _cwSetChecked(id, value) {
   const el = document.getElementById(id);
   if (el) el.checked = !!value;
@@ -641,12 +650,12 @@ function cwAnimeMappingRenderStatus(st = {}) {
 
   _cwSetChecked("anime_mapping_enabled", enabled);
   _cwSetChecked("anime_mapping_auto_update", autoUpdate);
-  _cwSetText("anime_mapping_used_for", _cwAnimeMappingUseForLabel());
+  _cwSetStat("anime_mapping_used_for", _cwAnimeMappingUseForLabel());
   _cwSetText("anime_mapping_auto_update_state", autoUpdate ? "Daily" : "Manual");
   _cwSetText("anime_mapping_dataset", dataset);
-  _cwSetText("anime_mapping_generated", _cwFormatUtc(st.dataset_generated_on));
+  _cwSetStat("anime_mapping_generated", _cwFormatUtc(st.dataset_generated_on));
   _cwSetText("anime_mapping_index", index);
-  _cwSetText("anime_mapping_counts", installed ? `${Number(st.source_count || 0).toLocaleString()} sources | ${Number(st.edge_count || 0).toLocaleString()} edges` : "-");
+  _cwSetStat("anime_mapping_counts", installed ? `${Number(st.source_count || 0).toLocaleString()} sources | ${Number(st.edge_count || 0).toLocaleString()} edges` : "-");
   _cwSetText("anime_mapping_last_update", _cwFormatUtc(st.dataset_generated_on));
   _cwSetText("anime_mapping_meta_status", err ? "Error" : (installed && ready ? "Up to date" : (installed ? "Needs index" : "Missing")));
   const statusPill = document.getElementById("anime_mapping_meta_status");

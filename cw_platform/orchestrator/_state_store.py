@@ -169,6 +169,9 @@ class StateStore:
     def provider_names(self, features: set[str] | list[str] | tuple[str, ...] | None = None) -> list[str]:
         return sqlite_state.provider_names(self.base_path, features)
 
+    def feature_inventory(self) -> list[dict[str, Any]]:
+        return sqlite_state.feature_inventory(self.base_path)
+
     def last_sync_epoch(self) -> Any:
         return sqlite_state.last_sync_epoch(self.base_path)
 

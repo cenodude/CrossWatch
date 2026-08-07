@@ -583,6 +583,33 @@ def provider_names(base_path: str | Path, features: set[str] | list[str] | tuple
     return [str(row["provider"] or "").upper() for row in rows if str(row["provider"] or "").strip()]
 
 
+def feature_inventory(base_path: str | Path) -> list[dict[str, Any]]:
+    conn = get_conn(base_path)
+    if conn is None:
+        return []
+    rows = conn.execute(
+        "SELECT p.provider AS provider,p.instance AS instance,p.feature AS feature,p.mode AS mode,"
+        "p.checkpoint_text AS checkpoint_text,p.checkpoint_int AS checkpoint_int,"
+        "p.checkpoint_real AS checkpoint_real,p.checkpoint_type AS checkpoint_type,"
+        "p.updated_at AS updated_at,COUNT(b.item_key) AS items "
+        "FROM provider_feature_state p "
+        "LEFT JOIN baseline_items b ON b.provider_state_id=p.id "
+        "GROUP BY p.id ORDER BY p.provider,p.instance,p.feature"
+    ).fetchall()
+    return [
+        {
+            "provider": str(row["provider"] or "").upper(),
+            "instance": str(row["instance"] or "default"),
+            "feature": str(row["feature"] or "").lower(),
+            "mode": str(row["mode"] or ""),
+            "checkpoint": _scalar_from_row(row, "checkpoint"),
+            "items": int(row["items"] or 0),
+            "updated_at": row["updated_at"],
+        }
+        for row in rows
+    ]
+
+
 def last_sync_epoch(base_path: str | Path) -> Any:
     with _LOCK:
         conn = get_conn(base_path)

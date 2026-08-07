@@ -164,6 +164,11 @@
 .cw-maint .tracker-profile-control .cw-icon-select-caret { flex: 0 0 9px; width: 9px; opacity: .72; }
 .cw-maint .tracker-archive-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--maint-accent); }
 .cxm-tracker-profile-menu .cw-icon-select-label { overflow: visible; text-overflow: clip; white-space: nowrap; }
+.cw-maint .support-options { align-items: center; gap: 9px 14px; margin-top: 10px; }
+.cw-maint .support-options .support-scope { max-width: 260px; min-height: 34px; padding: 0 10px; border: 1px solid var(--maint-border); border-radius: 11px; background: var(--maint-panel); color: var(--maint-text); font-size: 12px; font-weight: 820; }
+.cw-maint .support-options .support-scope:focus-visible { outline: 2px solid color-mix(in srgb, var(--maint-accent) 55%, transparent); outline-offset: 1px; }
+.cw-maint .action-group.support .group-icon, .cw-maint .action-row[data-op="support-export"] .action-icon, .cw-maint .action-row[data-op="support-bundle"] .action-icon { color: var(--maint-good); }
+.cw-maint .action-group.support { --group-accent: var(--maint-good); }
 .cw-maint :is(.action-group.archive, .action-group.events, .action-group.state-file, .action-group.captures) .group-icon, .cw-maint .action-row[data-op="tracker"] .action-icon, .cw-maint .action-row[data-op="state-file"] .action-icon, .cw-maint .action-row[data-op="state-file-prune"] .action-icon { color: var(--maint-good); }
 .cw-maint :is(.action-group.archive, .action-group.events, .action-group.state-file, .action-group.captures) { --group-accent: var(--maint-good); }
 .cw-maint :is(.action-group.playback, .action-group.reports) .group-icon { color: var(--maint-accent); }
