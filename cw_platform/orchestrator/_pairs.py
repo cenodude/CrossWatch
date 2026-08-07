@@ -511,6 +511,9 @@ def run_pairs(ctx) -> dict[str, Any]:
                         continue
                 finally:
                     ctx.config = prev_cfg
+    if not cancelled and cancel_requested():
+        cancelled = True
+
     if "watchlist" in features_ran:
         try:
             from ._tombstones import cascade_removals

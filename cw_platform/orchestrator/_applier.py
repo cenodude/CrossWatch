@@ -355,6 +355,9 @@ def _apply_chunked(
     total = len(items)
     if total == 0:
         return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0}
+    if cancel_requested():
+        emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
+        return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
     csize = int(chunk_size or 0)
     if csize <= 0 or total <= csize:
         raw = _retry(lambda: call(items))

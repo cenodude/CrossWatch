@@ -836,27 +836,26 @@
 
   function recomputeRunDisabled() {
     const running = !!state.busy || !!UI.summary?.running || !!(window.syncBar?.isRunning?.());
-    const disabled = running || !(UI.status ? !!UI.status.can_run : true);
+    const canRun = UI.status ? !!UI.status.can_run : true;
+    const pending = running && (state.cancelPending || !!UI.summary?.cancel_requested);
+    if (!running) state.cancelPending = false;
     const runButton = byId("run");
     if (runButton) {
       runButton.classList.toggle("loading", running);
+      runButton.classList.toggle("is-cancel", running);
       runButton.setAttribute("aria-busy", String(running));
-    }
-    const cancelButton = byId("run-cancel");
-    if (cancelButton) {
-      const pending = state.cancelPending || !!UI.summary?.cancel_requested;
-      cancelButton.classList.toggle("hidden", !running);
-      cancelButton.disabled = !running || pending;
-      cancelButton.classList.toggle("pending", running && pending);
-      const label = cancelButton.querySelector(".label");
-      if (label) label.textContent = pending ? "Cancelling…" : "Cancel";
-      if (!running) state.cancelPending = false;
+      const icon = runButton.querySelector(".cw-sync-action-icon");
+      const label = runButton.querySelector(".label");
+      if (icon) icon.textContent = running ? "cancel" : "sync";
+      if (label) label.textContent = running ? (pending ? "Cancelling…" : "Cancel") : "Synchronize";
+      runButton.title = running ? "Cancel the running synchronization" : "Run synchronization";
+      runButton.disabled = running ? pending : !canRun;
     }
     byId("cw-sync-split")?.classList.toggle("running", running);
-    [byId("run"), byId("run-menu")].forEach((btn) => {
-      if (btn) btn.disabled = disabled;
-    });
-    if (disabled && !byId("cw-sync-menu")?.classList.contains("hidden")) {
+    byId("cw-sync-split")?.classList.toggle("cancelling", pending);
+    const menuButton = byId("run-menu");
+    if (menuButton) menuButton.disabled = running || !canRun;
+    if ((running || !canRun) && !byId("cw-sync-menu")?.classList.contains("hidden")) {
       try { cwCloseSyncMenu(); } catch {}
     }
   }
@@ -1463,7 +1462,8 @@
   }
 
   async function runSync(opts) {
-    if (state.busy || window.syncBar?.isRunning?.()) return;
+    if (!!UI.summary?.running || window.syncBar?.isRunning?.()) return cancelSync();
+    if (state.busy) return;
     try { cwCloseSyncMenu(); } catch {}
 
     let pairId = "";
