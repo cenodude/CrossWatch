@@ -9,6 +9,7 @@ from typing import Any
 from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 
 from .descriptors import descriptor_candidates_for_id, parse_descriptor
+from .overrides import find_identity_overrides
 from .storage import paths, query_edges, read_state
 
 ANIME_NATIVE_PROVIDERS = {"anilist", "simkl"}
@@ -162,21 +163,57 @@ def mapped_or_default_media_type(item: Mapping[str, Any]) -> str:
     return current or "movie"
 
 
+_SIDE_ENTRY_SCOPES = {"s0", "s", "o"}
+
+
+def _is_side_entry(row: Mapping[str, Any]) -> bool:
+    scope = str(row.get("source_scope") or "").strip().lower()
+    return scope in _SIDE_ENTRY_SCOPES
+
+
+def _unambiguous_target(found: list[tuple[int, int, str]]) -> str:
+    if not found:
+        return ""
+    best_depth = min(depth for depth, _side, _tid in found)
+    tier = [(side, tid) for depth, side, tid in found if depth == best_depth]
+    main = {tid for side, tid in tier if not side}
+    chosen = main or {tid for _side, tid in tier}
+    return next(iter(chosen)) if len(chosen) == 1 else ""
+
+
 class AnimeMappingService:
     def __init__(self, cfg: Mapping[str, Any] | None = None):
         self.cfg = cfg if isinstance(cfg, Mapping) else {}
         block = self.cfg.get("anime_mapping") if isinstance(self.cfg, Mapping) else {}
         block = block if isinstance(block, Mapping) else {}
         self.release_tag = str(block.get("release_tag") or "v3").strip() or "v3"
+        self._ready: bool | None = None
 
     def ready(self) -> bool:
-        pp = paths(self.release_tag)
-        return bool(pp["db"].exists() and read_state(self.release_tag).get("index_ready", False))
+        if self._ready is None:
+            pp = paths(self.release_tag)
+            self._ready = bool(pp["db"].exists() and read_state(self.release_tag).get("index_ready", False))
+        return self._ready
 
     def enrich_ids(self, ids: Mapping[str, Any] | None, *, media_type: str | None = None) -> dict[str, Any]:
         ids0 = {str(k).lower(): v for k, v in dict(ids or {}).items() if v not in (None, "")}
-        if not ids0 or not self.ready():
+        if not ids0:
             return {"ids": dict(ids0), "detail": {}, "changed": False}
+
+        try:
+            ruled = find_identity_overrides({k: str(v) for k, v in ids0.items()}, media_type=media_type)
+        except Exception:
+            ruled = {}
+
+        if not self.ready():
+            if not ruled:
+                return {"ids": dict(ids0), "detail": {}, "changed": False}
+            merged = merge_ids(ruled, ids0)
+            return {
+                "ids": merged,
+                "detail": {"anime_mapping": {"provider": "user_override", "overrides": dict(ruled)}},
+                "changed": merged != {k: str(v) for k, v in ids0.items() if v not in (None, "")},
+            }
 
         seen_sources: set[tuple[str, str]] = set()
         rows: list[dict[str, Any]] = []
@@ -203,6 +240,8 @@ class AnimeMappingService:
                 next_rows = query_edges(self.release_tag, desc.provider, desc.id)
             except Exception:
                 continue
+            for row in next_rows:
+                row["_depth"] = depth
             rows.extend(next_rows)
             if depth >= max_depth:
                 continue
@@ -217,11 +256,12 @@ class AnimeMappingService:
                 next_desc = f"{prefix}:{tid}:{scope}" if scope else f"{prefix}:{tid}"
                 queue.append((depth + 1, next_desc))
 
-        if not rows:
+        if not rows and not ruled:
             return {"ids": dict(ids0), "detail": {}, "changed": False}
 
         out_ids: dict[str, Any] = dict(ids0)
         details: dict[str, list[dict[str, Any]]] = {}
+        seen_details: set[tuple[str, str, str, str, str]] = set()
 
         def add_detail(row: Mapping[str, Any]) -> None:
             tp = str(row.get("target_provider") or "").strip()
@@ -231,43 +271,49 @@ class AnimeMappingService:
             kind = str(row.get("target_kind") or "").strip()
             scope = str(row.get("target_scope") or "").strip()
             key = f"{tp}_{kind}" if kind else tp
-            ent = {
-                "id": tid,
-                "scope": scope,
-                "source_range": str(row.get("source_range") or ""),
-                "target_range": str(row.get("target_range") or ""),
-            }
-            bucket = details.setdefault(key, [])
-            marker = (ent["id"], ent["scope"], ent["source_range"], ent["target_range"])
-            for old in bucket:
-                if (
-                    old.get("id"),
-                    old.get("scope"),
-                    old.get("source_range"),
-                    old.get("target_range"),
-                ) == marker:
-                    return
-            bucket.append(ent)
+            source_range = str(row.get("source_range") or "")
+            target_range = str(row.get("target_range") or "")
+            marker = (key, tid, scope, source_range, target_range)
+            if marker in seen_details:
+                return
+            seen_details.add(marker)
+            details.setdefault(key, []).append(
+                {"id": tid, "scope": scope, "source_range": source_range, "target_range": target_range}
+            )
 
+        candidates: dict[str, list[tuple[int, int, str]]] = {}
         for row in rows:
             add_detail(row)
             tp = str(row.get("target_provider") or "").strip().lower()
             tid = str(row.get("target_id") or "").strip()
             if tp not in OUTPUT_KEYS or not tid:
                 continue
-            if out_ids.get(tp) in (None, ""):
-                out_ids[tp] = tid
+            if out_ids.get(tp) not in (None, ""):
+                continue
+            candidates.setdefault(tp, []).append(
+                (int(row.get("_depth") or 0), 1 if _is_side_entry(row) else 0, tid)
+            )
 
-        merged = merge_ids(ids0, out_ids)
+        ambiguous: list[str] = []
+        for tp, found in candidates.items():
+            picked = _unambiguous_target(found)
+            if picked:
+                out_ids[tp] = picked
+            else:
+                ambiguous.append(tp)
+
+        merged = merge_ids(ruled, merge_ids(ids0, out_ids)) if ruled else merge_ids(ids0, out_ids)
         changed = merged != {k: str(v) for k, v in ids0.items() if v not in (None, "")}
         detail = {
             "anime_mapping": {
                 "provider": "anibridge",
                 "release_tag": self.release_tag,
                 "source_descriptors": sorted(set(source_descriptors)),
+                **({"overrides": dict(ruled)} if ruled else {}),
+                **({"ambiguous": sorted(ambiguous)} if ambiguous else {}),
                 **details,
             }
-        } if details else {}
+        } if (details or ruled) else {}
         return {"ids": merged or dict(ids0), "detail": detail, "changed": bool(changed)}
 
     def enrich_item(self, item: Mapping[str, Any]) -> dict[str, Any]:

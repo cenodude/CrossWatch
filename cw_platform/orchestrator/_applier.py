@@ -421,6 +421,13 @@ def _apply_chunked(
     agg["count"] = agg["confirmed"]
     return agg
 
+def _mark_dry_run(res: dict[str, Any]) -> dict[str, Any]:
+    res["dry_run"] = True
+    res["confirmed"] = 0
+    res["confirmed_keys"] = []
+    res["count"] = 0
+    return res
+
 def apply_add(
     *,
     dst_ops,
@@ -446,6 +453,8 @@ def apply_add(
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
     )
+    if dry_run:
+        _mark_dry_run(res)
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
@@ -453,6 +462,7 @@ def apply_add(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "added": _conf,
+        "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
         "skipped_inferred": int(res.get("skipped_inferred", 0)),
@@ -498,6 +508,8 @@ def apply_update(
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
     )
+    if dry_run:
+        _mark_dry_run(res)
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
@@ -505,6 +517,7 @@ def apply_update(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "updated": _conf,
+        "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
         "skipped_inferred": int(res.get("skipped_inferred", 0)),
@@ -550,6 +563,8 @@ def apply_remove(
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
     )
+    if dry_run:
+        _mark_dry_run(res)
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
@@ -557,6 +572,7 @@ def apply_remove(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "removed": _conf,
+        "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
         "skipped_inferred": int(res.get("skipped_inferred", 0)),

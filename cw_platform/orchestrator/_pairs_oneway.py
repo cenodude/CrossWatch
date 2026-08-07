@@ -1772,7 +1772,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                     skip_basis=str(res_add.get("skip_basis") or "provider_keys"),
                 )
             try:
-                if failed_keys and not ambiguous_partial:
+                if failed_keys and not ambiguous_partial and not dry_run_flag:
                     _bb = record_attempts(dst, feature, failed_keys, reason="apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
                     promoted_keys = {str(x) for x in ((_bb or {}).get("promoted_keys") or []) if x}
@@ -1785,7 +1785,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         
                     _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb)
                             
-                if success_keys and not ambiguous_partial:
+                if success_keys and not ambiguous_partial and not dry_run_flag:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg)
                     clear_unresolved(dst, feature, success_keys)
                     unresolved_new_total = max(0, unresolved_new_total - len(set(success_keys) & set(still_unresolved)))
@@ -1799,7 +1799,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                         [key2item[k] for k in success_keys if k in key2item],
                         pair=pair_key,
                     )
-                if use_phantoms and guard and success_keys and not ambiguous_partial:
+                if use_phantoms and guard and success_keys and not ambiguous_partial and not dry_run_flag:
                     guard.record_success(success_keys)
             except Exception:
                 pass

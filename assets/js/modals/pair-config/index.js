@@ -83,7 +83,7 @@ function normalizeAnimeHistoryOptions(state){
 function normalizeAnimeFeatureOptions(state, feature){
   const key=String(feature||"watchlist").trim().toLowerCase()||"watchlist";
   const opts=Object.assign({}, state?.options?.[key]||{});
-  if(!hasAniList(state)){
+  if(!hasAnimeProvider(state)){
     opts.use_anime_mapping=false;
     opts.anime_only_sync=false;
     state.options[key]=opts;
@@ -1106,7 +1106,7 @@ function renderFeaturePanel(state){
     const floppyw = state.pairProviders?.floppy || {};
     const floppyName = (floppyw.watchlist_name || state.cfgRaw?.floppy?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
-    const showAnime = hasAniList(state);
+    const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
     const animeOnlyDisabled = !wl.use_anime_mapping || !canAnimeOnly;
 
@@ -1332,7 +1332,7 @@ function renderFeaturePanel(state){
   if(state.feature==="ratings"){
     getOpts(state,"ratings");
     const rt=normalizeAnimeFeatureOptions(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
-    const showAnime = hasAniList(state);
+    const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
     const animeOnlyDisabled = !rt.use_anime_mapping || !canAnimeOnly;
 
@@ -2179,10 +2179,11 @@ async function saveConfigBits(state){
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
-    const shouldEnableAnimeMapping = (hasAniList(state) && (
+    const shouldEnableAnimeMapping = hasAnimeProvider(state) && (
       !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping ||
-      !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping
-    )) || (hasAnimeProvider(state) && !!normalizeAnimeHistoryOptions(state).use_anime_mapping);
+      !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping ||
+      !!normalizeAnimeHistoryOptions(state).use_anime_mapping
+    );
 
     if(ID("gl-dry")){
       const dropOn=!!ID("gl-drop")?.checked;
@@ -2457,8 +2458,8 @@ function buildPayload(state,wrap){
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign(defaultFor(k), (state.options||{})[k]||{});
   const watchlist=get("watchlist");
-  const animePair=isAniList(src)||isAniList(dst);
-  const animeCanReceive=isAniList(dst)||(animePair&&modeTwo);
+  const animePair=isAniList(src)||isAniList(dst)||isSimkl(src)||isSimkl(dst);
+  const animeCanReceive=isAniList(dst)||((isAniList(src)||isAniList(dst))&&modeTwo);
   const ratings=get("ratings");
   const normalizeAnimePairBlock=(block)=>{
     if(animePair){

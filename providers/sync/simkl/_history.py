@@ -16,6 +16,7 @@ from cw_platform.anime_mapping.service import (
     mapping_enabled_for_feature,
     runtime_pair_feature_options,
 )
+from cw_platform.anime_mapping.storage import query_native_identity
 from cw_platform.id_map import minimal as id_minimal
 
 from .._log import log as cw_log
@@ -1669,6 +1670,7 @@ def _with_anibridge_map(adapter: Any, item: Mapping[str, Any], block: Mapping[st
         "namespace": res.namespace,
         "target_id": res.target_id,
         "entry": res.entry,
+        "release_tag": str(block.get("release_tag") or "v3"),
     }
     return out
 
@@ -1684,6 +1686,15 @@ def _apply_anibridge_maps(adapter: Any, items: list[Mapping[str, Any]]) -> list[
     return out
 
 
+def _offline_simkl_id(namespace: str, ident: str, release_tag: str) -> str | None:
+    try:
+        found = query_native_identity(release_tag, namespace, ident)
+    except Exception:
+        return None
+    value = str((found or {}).get("simkl") or "").strip()
+    return value or None
+
+
 def _redirect_simkl_id(
     session: Any,
     headers: Mapping[str, str],
@@ -1691,6 +1702,8 @@ def _redirect_simkl_id(
     namespace: str,
     ident: str,
     state: _AnimeResolveState,
+    release_tag: str = "v3",
+    allow_offline: bool = False,
 ) -> str | None:
     ns = str(namespace or "").strip().lower()
     value = str(ident or "").strip()
@@ -1700,6 +1713,13 @@ def _redirect_simkl_id(
     cached = state.resolved.get(cache_key)
     if cached:
         return cached
+    if allow_offline:
+        offline = _offline_simkl_id(ns, value, release_tag)
+        if offline:
+            state.resolved[cache_key] = offline
+            state.misses.pop(cache_key, None)
+            _dbg("anime_identity_offline", namespace=ns, target=value, simkl=offline)
+            return offline
     miss_ts = state.misses.get(cache_key)
     if miss_ts is not None and _now_epoch() - int(miss_ts) < _ANIME_RESOLVE_MISS_TTL:
         return None
@@ -1751,7 +1771,10 @@ def _anibridge_absolute(
         return None
     namespace = str(raw.get("namespace") or "")
     target_id = str(raw.get("target_id") or "")
-    resolved = _redirect_simkl_id(session, headers, timeout, namespace, target_id, resolve_state)
+    if str(namespace).strip().lower() == "simkl":
+        return absolute if target_id == simkl_id else None
+    release_tag = str(raw.get("release_tag") or "v3")
+    resolved = _redirect_simkl_id(session, headers, timeout, namespace, target_id, resolve_state, release_tag)
     if resolved != simkl_id:
         _dbg(
             "anibridge_entity_rejected",
@@ -2331,6 +2354,31 @@ def _resolved_anime_ids_for_tvdb(session: Any, headers: Mapping[str, str], timeo
     return {"simkl": simkl_id, "tvdb": tvdb}
 
 
+def _anibridge_native_simkl_ids(
+    session: Any,
+    headers: Mapping[str, str],
+    timeout: float,
+    item: Mapping[str, Any],
+    state: _AnimeResolveState,
+) -> dict[str, str]:
+    raw = item.get("_cw_anime_map")
+    if not isinstance(raw, Mapping):
+        return {}
+    namespace = str(raw.get("namespace") or "").strip().lower()
+    target_id = str(raw.get("target_id") or "").strip()
+    if not namespace or not target_id:
+        return {}
+    if namespace == "simkl":
+        _dbg("anime_identity_override", target=target_id)
+        return {"simkl": target_id}
+    release_tag = str(raw.get("release_tag") or "v3")
+    simkl_id = _redirect_simkl_id(session, headers, timeout, namespace, target_id, state, release_tag, allow_offline=True)
+    if not simkl_id:
+        return {}
+    _dbg("anibridge_native_entry", namespace=namespace, target=target_id, simkl=simkl_id)
+    return {"simkl": simkl_id}
+
+
 def _native_anime_ids_for_mismatched_show(
     session: Any,
     headers: Mapping[str, str],
@@ -2340,12 +2388,11 @@ def _native_anime_ids_for_mismatched_show(
 ) -> dict[str, str]:
     show_ids = _show_ids_of_episode(item)
     tvdb = str(show_ids.get("tvdb") or "").strip()
-    if not tvdb:
-        return {}
-    resolved = _resolved_anime_ids_for_tvdb(session, headers, timeout, tvdb, state)
-    if str(resolved.get("simkl") or "").strip():
-        return resolved
-    return {}
+    if tvdb:
+        resolved = _resolved_anime_ids_for_tvdb(session, headers, timeout, tvdb, state)
+        if str(resolved.get("simkl") or "").strip():
+            return resolved
+    return _anibridge_native_simkl_ids(session, headers, timeout, item, state)
 
 
 def _build_anime_retry_payload(
@@ -2356,13 +2403,15 @@ def _build_anime_retry_payload(
     timeout: float,
     confirmed_keys: set[str] | None = None,
     response_ids_by_key: Mapping[str, Mapping[str, str]] | None = None,
+    resolve_state: _AnimeResolveState | None = None,
 ) -> tuple[dict[str, Any], dict[tuple[str, int], Mapping[str, Any]], list[Mapping[str, Any]]]:
     groups: dict[str, dict[str, Any]] = {}
     index: dict[tuple[str, int], Mapping[str, Any]] = {}
     retry_items: list[Mapping[str, Any]] = []
     confirmed = set(confirmed_keys or set())
     response_ids = dict(response_ids_by_key or {})
-    resolve_state = _load_anime_resolve_cache()
+    if resolve_state is None:
+        resolve_state = _load_anime_resolve_cache()
     episode_cache = _load_anime_episode_map_cache()
     eligible_by_group: dict[str, tuple[dict[str, str], list[Mapping[str, Any]]]] = {}
     for item in items_list:
@@ -2446,6 +2495,7 @@ def _retry_anime_not_found(
         timeout=timeout,
         confirmed_keys=confirmed_keys,
         response_ids_by_key=response_ids_by_key,
+        resolve_state=resolve_state,
     )
     confirmed = set(confirmed_keys or set())
     retry_item_keys = {_thaw_key(item) for item in retry_items}

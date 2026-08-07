@@ -619,7 +619,7 @@ function _cwAnimeMappingUseForLabel() {
 
 function _cwAnimeMappingSetBusy(on, label = "") {
   animeMappingBusy = !!on;
-  ["anime_mapping_enabled", "anime_mapping_auto_update", "btn-anime-mapping-update", "btn-anime-mapping-rebuild"].forEach((id) => {
+  ["anime_mapping_enabled", "anime_mapping_auto_update", "btn-anime-mapping-update", "btn-anime-mapping-rebuild", "btn-anime-mapping-overrides"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.disabled = !!on;
   });
@@ -849,7 +849,8 @@ function cwBuildAnimeMappingPanel() {
         <div class="am-actions">
           <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
           <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
-          <span>Update downloads the latest dataset.<br>Rebuild recreates the local index from the dataset.</span>
+          <button class="btn" type="button" id="btn-anime-mapping-overrides">Custom mappings</button>
+          <span>Update downloads the latest dataset.<br>Rebuild recreates the local index from the dataset.<br>Custom mappings let you correct a show or movie yourself, overruling the dataset.</span>
         </div>
       </div>
     </div>
@@ -877,6 +878,11 @@ function cwBuildAnimeMappingPanel() {
   if (btnRebuild && !btnRebuild.__cwAnimeWired) {
     btnRebuild.addEventListener("click", () => cwAnimeMappingRun("rebuild"));
     btnRebuild.__cwAnimeWired = true;
+  }
+  const btnOverrides = document.getElementById("btn-anime-mapping-overrides");
+  if (btnOverrides && !btnOverrides.__cwAnimeWired) {
+    btnOverrides.addEventListener("click", () => window.openAnimeOverridesModal?.());
+    btnOverrides.__cwAnimeWired = true;
   }
 
   try { cwAnimeMappingRenderStatus(window.__animeMappingStatus || {}); } catch {}

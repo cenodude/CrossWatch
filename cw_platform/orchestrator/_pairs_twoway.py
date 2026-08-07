@@ -2093,7 +2093,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     provider_count=prov_count_A, effective=eff_add_A, newly_unresolved=len(new_unresolved_A))
 
             try:
-                if failed_A and not ambiguous_partial_A:
+                if failed_A and not ambiguous_partial_A and not dry_run_flag:
                     _bb_A = record_attempts(a, feature, failed_A,
                         reason="two:apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
@@ -2107,7 +2107,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         
                     _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A)
                
-                if success_A:
+                if success_A and not dry_run_flag:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg)
                     clear_unresolved(a, feature, success_A)
                     unresolved_new_A_total = max(0, unresolved_new_A_total - len(set(success_A) & set(still_unresolved_A)))
@@ -2121,7 +2121,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         [k2i_A[k] for k in success_A if k in k2i_A],
                         pair=pair_key,
                     )
-                if use_phantoms and 'guardA' in locals() and guardA and success_A:
+                if use_phantoms and 'guardA' in locals() and guardA and success_A and not dry_run_flag:
                     guardA.record_success(set(success_A))
             except Exception:
                 pass
@@ -2226,7 +2226,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     provider_count=prov_count_B, effective=eff_add_B, newly_unresolved=len(new_unresolved_B))
 
             try:
-                if failed_B and not ambiguous_partial_B:
+                if failed_B and not ambiguous_partial_B and not dry_run_flag:
                     _bb_B = record_attempts(b, feature, failed_B,
                         reason="two:apply:add:failed", op="add",
                         pair=pair_key, cfg=cfg)
@@ -2240,7 +2240,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         
                     _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B)
                 
-                if success_B:
+                if success_B and not dry_run_flag:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg)
                     clear_unresolved(b, feature, success_B)
                     unresolved_new_B_total = max(0, unresolved_new_B_total - len(set(success_B) & set(still_unresolved_B)))
@@ -2254,7 +2254,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         [k2i_B[k] for k in success_B if k in k2i_B],
                         pair=pair_key,
                     )
-                if use_phantoms and 'guardB' in locals() and guardB and success_B:
+                if use_phantoms and 'guardB' in locals() and guardB and success_B and not dry_run_flag:
                     guardB.record_success(set(success_B))
             except Exception:
                 pass
