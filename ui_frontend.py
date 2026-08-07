@@ -1233,6 +1233,14 @@ def _get_index_html_static() -> str:
                     </span>
                     <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
                   </button>
+                  <button class="btn cw-maint-action support" type="button" onclick="openSupportModal()">
+                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">support_agent</span>
+                    <span class="cw-maint-action-copy">
+                      <strong>Support</strong>
+                      <small>Export state.json and a diagnostic bundle to attach to a bug report.</small>
+                    </span>
+                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
+                  </button>
                   <button class="btn cw-maint-action restart" type="button" onclick="restartCrossWatch()">
                     <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">restart_alt</span>
                     <span class="cw-maint-action-copy">

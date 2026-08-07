@@ -36,26 +36,6 @@ const fjson = async (url, opts = {}) => {
   }
 };
 
-const fblob = async (url) => {
-  const r = await fetch(url, { cache: "no-store" });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText || ""}`.trim() || "Request failed");
-  const disposition = r.headers.get("content-disposition") || "";
-  const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition);
-  return { blob: await r.blob(), filename: match ? decodeURIComponent(match[1].replace(/"$/, "")) : "" };
-};
-
-const saveBlob = (blob, filename) => {
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = href;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(href), 4000);
-};
-
-const SUPPORT_SECTIONS = ["config", "diagnostics", "reports", "logs"];
 const $ = (sel, root = document) => root.querySelector(sel);
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch]));
 const post = (url, body) =>
@@ -207,44 +187,6 @@ const OPS = [
     desc: "Deletes all events from the archive. New syncs record events again automatically.",
   },
   {
-    key: "support-export",
-    kind: "support-export",
-    icon: "description",
-    title: "Export sync state",
-    tag: "support",
-    runLabel: "Download",
-    desc: "Rebuilds state.json from the database so it can be attached to a bug report.",
-    extra: `
-      <div class="action-options support-options">
-        <label class="tracker-profile-control">
-          <span>Scope</span>
-          <select id="cxm-support-scope" class="input support-scope"><option value="all">All pairs</option></select>
-        </label>
-      </div>
-    `,
-  },
-  {
-    key: "support-bundle",
-    kind: "support-bundle",
-    icon: "folder_zip",
-    title: "Support bundle",
-    tag: "support",
-    runLabel: "Download",
-    desc: "Packs state.json, a redacted config, diagnostics, reports and log tails into one ZIP.",
-    extra: `
-      <div class="action-options support-options">
-        <label class="tracker-profile-control">
-          <span>Scope</span>
-          <select id="cxm-bundle-scope" class="input support-scope"><option value="all">All pairs</option></select>
-        </label>
-        <label class="tracker-archive-check"><input type="checkbox" id="cxm-sup-config" checked><span>Redacted config</span></label>
-        <label class="tracker-archive-check"><input type="checkbox" id="cxm-sup-diagnostics" checked><span>Diagnostics</span></label>
-        <label class="tracker-archive-check"><input type="checkbox" id="cxm-sup-reports" checked><span>Sync reports</span></label>
-        <label class="tracker-archive-check"><input type="checkbox" id="cxm-sup-logs" checked><span>Logs</span></label>
-      </div>
-    `,
-  },
-  {
     key: "captures",
     kind: "captures",
     icon: "photo_library",
@@ -312,13 +254,6 @@ const GROUPS = [
     keys: ["captures"],
   },
   {
-    id: "support",
-    icon: "support_agent",
-    title: "Support",
-    desc: "Export diagnostic data to attach to a bug report. Nothing is changed or removed.",
-    keys: ["support-export", "support-bundle"],
-  },
-  {
     id: "danger",
     icon: "warning",
     title: "Danger zone",
@@ -328,7 +263,7 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "database-health", "state-file", "state-file-prune", "support-export", "support-bundle"]);
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "database-health", "state-file", "state-file-prune"]);
 const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
@@ -476,12 +411,6 @@ export default {
                   </button>
                   <button type="button" class="category-run-btn" data-run-group="captures" aria-label="Run all Captures tools">Run</button>
                 </div>
-                <div class="side-nav-item" data-group="support">
-                  <button type="button" class="side-nav-btn" data-target="cxm-group-support">
-                    <span class="material-symbols-rounded" aria-hidden="true">support_agent</span>
-                    <span>Support</span>
-                  </button>
-                </div>
                 <div class="side-nav-item danger" data-group="danger">
                   <button type="button" class="side-nav-btn danger" data-target="cxm-group-danger">
                     <span class="material-symbols-rounded" aria-hidden="true">warning</span>
@@ -578,30 +507,6 @@ export default {
         className: "cxm-tracker-profile-select",
         menuClassName: "cxm-tracker-profile-menu",
         menuMinWidth: 220,
-      });
-    };
-
-    const supportScope = (id) => String($(`#${id}`, root)?.value || "all").trim() || "all";
-    const loadSupportScopes = async () => {
-      const selects = [...root.querySelectorAll(".support-scope")];
-      if (!selects.length) return;
-      let pairs = [];
-      try {
-        const data = await fjson("/api/maintenance/support/scopes");
-        pairs = Array.isArray(data?.pairs) ? data.pairs : [];
-      } catch {}
-      const options = ['<option value="all">All pairs</option>']
-        .concat(pairs.map((p) => {
-          const items = Number(p?.items || 0);
-          const suffix = `${p?.enabled === false ? " · disabled" : ""} · ${items} item${items === 1 ? "" : "s"}`;
-          return `<option value="${escapeHtml(String(p?.id || ""))}">${escapeHtml(String(p?.label || p?.id || "Pair") + suffix)}</option>`;
-        }))
-        .join("");
-      selects.forEach((sel) => {
-        const current = sel.value || "all";
-        sel.innerHTML = options;
-        const values = [...sel.options].map((o) => o.value);
-        sel.value = values.includes(current) ? current : "all";
       });
     };
 
@@ -757,15 +662,6 @@ export default {
       const bits = [`${providers} providers`, `${instances} instances`, `${baselines} baselines`, `${items} items`, `${freed} reclaimed`];
       if (backupPath) bits.push(`backup ${backupPath}`);
       return `Prune sync state completed · ${bits.join(" · ")}.`;
-    };
-
-    const supportReceipt = (kind, res) => {
-      const info = res && res._support;
-      if (!info) return null;
-      const bits = [info.filename || "download", formatBytes(info.bytes), info.scope === "all" ? "all pairs" : "1 pair"];
-      if (kind === "support-bundle") bits.push(info.sections.length ? info.sections.join(", ") : "state only");
-      const label = kind === "support-bundle" ? "Support bundle" : "Export sync state";
-      return `${label} downloaded · ${bits.join(" · ")}.`;
     };
 
     const formatMetric = ({ value, format }) => {
@@ -993,17 +889,6 @@ export default {
             purge_insights: true,
           } : kind === "events-rebuild" ? { confirm: true } : undefined;
           res = await post(SIMPLE_OPS[kind], body);
-        } else if (kind === "support-export" || kind === "support-bundle") {
-          const isBundle = kind === "support-bundle";
-          const scope = supportScope(isBundle ? "cxm-bundle-scope" : "cxm-support-scope");
-          const sections = isBundle ? SUPPORT_SECTIONS.filter((name) => $(`#cxm-sup-${name}`, root)?.checked) : [];
-          const params = new URLSearchParams();
-          if (scope !== "all") params.set("pairs", scope);
-          if (isBundle) (sections.length ? sections : ["none"]).forEach((name) => params.append("include", name));
-          const query = params.toString();
-          const { blob, filename } = await fblob(`/api/maintenance/support/${isBundle ? "bundle" : "state"}${query ? `?${query}` : ""}`);
-          saveBlob(blob, filename || (isBundle ? "crosswatch-support.zip" : "crosswatch-state.json"));
-          res = { ok: true, _support: { bytes: blob.size, filename, scope, sections } };
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
           const chkSnaps = $("#cxm-cw-snaps", root);
@@ -1081,8 +966,7 @@ export default {
         const dbReceipt = databaseReceipt(kind, res);
         const stateReceipt = kind === "state-file" ? stateFileReceipt(res) : null;
         const statePrune = kind === "state-file-prune" ? statePruneReceipt(res) : null;
-        const support = supportReceipt(kind, res);
-        setStatus(support || evReceipt || dbReceipt || stateReceipt || statePrune || completionReceipt(label, res), "ok");
+        setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || completionReceipt(label, res), "ok");
         finishActionFeedback(btn, "success");
         return res || { ok: true };
       } catch (e) {
@@ -1195,7 +1079,6 @@ export default {
 
     showOverviewStatus();
     await loadTrackerProfiles();
-    await loadSupportScopes();
     await refreshSummary();
     setStatus("");
     const initialGroup = String(props?.group || props?.target || "").trim().toLowerCase();

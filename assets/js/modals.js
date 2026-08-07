@@ -35,6 +35,7 @@ ModalRegistry.register('scrobbler-webhook', () => import(_cwVer('./modals/scrobb
 ModalRegistry.register('scrobbler-route', () => import(_cwVer('./modals/scrobbler-route/index.js')));
 ModalRegistry.register('editor-raw', () => import(_cwVer('./modals/editor-raw/index.js')));
 ModalRegistry.register('anime-overrides', () => import(_cwVer('./modals/anime-overrides/index.js')));
+ModalRegistry.register('support',      () => import(_cwVer('./modals/support/index.js')));
 
 export const openModal = ModalRegistry.open;
 export const closeModal = ModalRegistry.close;
@@ -75,3 +76,4 @@ window.openScrobblerWebhookModal = (props = {}) => ModalRegistry.open('scrobbler
 window.openScrobblerRouteModal = (props = {}) => ModalRegistry.open('scrobbler-route', props);
 window.openEditorRawModal = (props = {}) => ModalRegistry.open('editor-raw', props);
 window.openAnimeOverridesModal = (props = {}) => ModalRegistry.open('anime-overrides', props);
+window.openSupportModal = (props = {}) => ModalRegistry.open('support', props);
