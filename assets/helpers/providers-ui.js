@@ -1279,16 +1279,6 @@
     if (!scroller) return;
     const footerHeight = Math.ceil(footer?.offsetHeight || 0);
     const navHeight = connectionModalNavHeight(nav);
-    if (info?.key === "ANIME_MAPPING") {
-      const formHeight = Math.floor(panel.closest(".cw-auth-provider-form")?.clientHeight || 0);
-      const panelHeight = Math.max(360, Math.min(maxHeight, formHeight || maxHeight));
-      const next = `${panelHeight}px`;
-      const nextContent = `${Math.max(220, panelHeight - footerHeight)}px`;
-      const readStyle = (name) => typeof panel.style?.getPropertyValue === "function" ? panel.style.getPropertyValue(name) : panel.style?.[name];
-      if (readStyle("--cw-connection-panel-height") !== next) setConnectionStyle(panel, "--cw-connection-panel-height", next);
-      if (readStyle("--cw-connection-content-height") !== nextContent) setConnectionStyle(panel, "--cw-connection-content-height", nextContent);
-      return;
-    }
     const contentHeight = connectionModalContentHeight(scroller);
     const FIT_ALLOWANCE = 8;
     const wanted = Math.max(navHeight, contentHeight) + footerHeight + FIT_ALLOWANCE;

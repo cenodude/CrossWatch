@@ -840,7 +840,7 @@ function cwBuildAnimeMappingPanel() {
             <div><dt>Status</dt><dd><span class="am-status-pill" id="anime_mapping_meta_status">-</span></dd></div>
             <div><dt>Last update</dt><dd><strong id="anime_mapping_last_update">-</strong></dd></div>
           </dl>
-          <p class="am-details-copy">CrossWatch downloads two datasets. AniBridge provides episode numbering between AniDB, MyAnimeList, AniList, TMDB and TVDB, with IMDb mapped for anime movies only. animeApi adds SIMKL and Kitsu identity so SIMKL anime can be matched without extra lookups.</p>
+          <p class="am-details-copy">AniBridge handles episode numbering across AniDB, MyAnimeList, AniList, TMDB and TVDB. animeApi adds SIMKL and Kitsu identity.</p>
         </div>
         <div class="auth-card-notes" id="anime_mapping_error"></div>
       </div>
@@ -851,7 +851,6 @@ function cwBuildAnimeMappingPanel() {
           <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
           <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
           <button class="btn" type="button" id="btn-anime-mapping-overrides">Custom mappings</button>
-          <span>Update downloads the latest dataset.<br>Rebuild recreates the local index from the dataset.<br>Custom mappings let you correct a show or movie yourself, overruling the dataset.</span>
         </div>
       </div>
     </div>
