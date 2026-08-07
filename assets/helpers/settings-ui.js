@@ -835,11 +835,12 @@ function cwBuildAnimeMappingPanel() {
         <h4 class="anime-mapping-section-title"><span class="material-symbols-rounded" aria-hidden="true">description</span>Dataset details</h4>
         <div class="am-details">
           <dl class="am-detail-list">
-            <div><dt>Source</dt><dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
+            <div><dt>Episodes</dt><dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
+            <div><dt>Identity</dt><dd><a href="https://github.com/nattadasu/animeApi" target="_blank" rel="noopener noreferrer">nattadasu/animeApi<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
             <div><dt>Status</dt><dd><span class="am-status-pill" id="anime_mapping_meta_status">-</span></dd></div>
             <div><dt>Last update</dt><dd><strong id="anime_mapping_last_update">-</strong></dd></div>
           </dl>
-          <p class="am-details-copy">CrossWatch downloads the AniBridge mappings dataset to translate anime identifiers and episode numbering between AniDB, MyAnimeList, AniList, TMDB and TVDB. IMDb is mapped for anime movies only.</p>
+          <p class="am-details-copy">CrossWatch downloads two datasets. AniBridge provides episode numbering between AniDB, MyAnimeList, AniList, TMDB and TVDB, with IMDb mapped for anime movies only. animeApi adds SIMKL and Kitsu identity so SIMKL anime can be matched without extra lookups.</p>
         </div>
         <div class="auth-card-notes" id="anime_mapping_error"></div>
       </div>

@@ -603,10 +603,11 @@
     },
     ANIME_MAPPING: {
       provider: "anime-mapping", logo: "ANILIST", help: window.CW.HelpLinks.url("anime-mapping"), deleteSelector: "",
+      hideNav: true,
       tabs: { overview: ["hub", "Mapping", "Manage the local anime ID index"] },
-      copy: { overview: ["Anime ID Mapping", "Local anime ID index for AniList watchlist and ratings pairs."] },
-      journey: ["Enable Anime ID Mapping", "Use the local AniBridge mapping dataset to translate anime identifiers between AniList and TMDb, TVDb, IMDb, MyAnimeList and AniDB.", "2,169,255", "78,141,255", "ANILIST"],
-      steps: [["1", "Enable mapping", "Turn on the local anime index"], ["2", "Update dataset", "Download or refresh AniBridge mappings"], ["3", "Improve matches", "Use mappings for AniList pairs"]],
+      copy: { overview: ["Anime ID Mapping", "Local anime ID index for AniList and SIMKL pairs."] },
+      journey: ["Enable Anime ID Mapping", "Use the local mapping datasets to translate anime identifiers and episode numbering between AniDB, MyAnimeList, AniList, Kitsu, SIMKL, TMDb and TVDb.", "2,169,255", "78,141,255", "ANILIST"],
+      steps: [["1", "Enable mapping", "Turn on the local anime index"], ["2", "Update datasets", "Download or refresh the mapping data"], ["3", "Improve matches", "Use mappings for AniList and SIMKL pairs"]],
       introSubs: ["overview"],
       order: [".anime-mapping-summary", ".anime-mapping-status-grid", ".anime-mapping-source", "#anime_mapping_error", ".anime-mapping-actions"]
     },
@@ -1208,6 +1209,7 @@
     const tabCount = nav.querySelectorAll(".cw-subtile[data-sub]").length || 1;
     nav.style.gridTemplateRows = cardVisible ? `repeat(${tabCount}, 92px) auto` : `repeat(${tabCount}, 92px)`;
     if (cardVisible) profileCard.style.gridRow = String(tabCount + 1);
+    panel.classList.toggle("cw-connection-no-nav", !!info.hideNav && !cardVisible);
     return nav;
   }
 

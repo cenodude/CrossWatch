@@ -497,3 +497,7 @@ html[data-cw-theme="flat-light"] body #playback-progress-root .pp-card .pp-ratin
 
 html[data-cw-theme] #ux-progress .sb-note{background:#332a19 !important;background-image:none !important;border-color:rgba(230,177,80,0.36)!important;color:#ffe3aa !important;-webkit-text-fill-color:#ffe3aa !important;box-shadow:none !important}
 html[data-cw-theme="flat-light"] #ux-progress .sb-note{background:#f7e7c8 !important;background-image:none !important;border-color:rgba(154,93,0,0.28)!important;color:#704400 !important;-webkit-text-fill-color:#704400 !important;box-shadow:none !important}
+
+html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) #page-settings #auth-providers .cw-connection-modal-panel.cw-connection-no-nav,html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-size="wide"] .cw-connection-modal-panel.cw-connection-no-nav{grid-template-columns:minmax(0,1fr)!important}
+html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) #page-settings #auth-providers .cw-connection-modal-panel.cw-connection-no-nav>.cw-subtiles{display:none !important}
+html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) #page-settings #auth-providers .cw-connection-modal-panel.cw-connection-no-nav>.cw-subpanels,html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) #page-settings #auth-providers .cw-connection-modal-panel.cw-connection-no-nav>.auth-card{grid-column:1 !important}
