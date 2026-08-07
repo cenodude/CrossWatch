@@ -1265,9 +1265,18 @@
   function connectionModalContentHeight(scroller) {
     if (!scroller) return 0;
     const activePanel = scroller.querySelector(":scope > .cw-subpanel.active") || scroller.querySelector(":scope > .cw-subpanel");
-    const contentNode = activePanel || scroller.firstElementChild || scroller;
+    if (!activePanel) {
+      const prevHeight = scroller.style.height;
+      const prevMaxHeight = scroller.style.maxHeight;
+      scroller.style.height = "auto";
+      scroller.style.maxHeight = "none";
+      const measured = Math.ceil(scroller.scrollHeight || scroller.offsetHeight || 0);
+      scroller.style.height = prevHeight;
+      scroller.style.maxHeight = prevMaxHeight;
+      return measured;
+    }
     const padding = cssPx(scroller, "padding-top") + cssPx(scroller, "padding-bottom");
-    return Math.ceil((contentNode.scrollHeight || contentNode.offsetHeight || 0) + padding);
+    return Math.ceil((activePanel.scrollHeight || activePanel.offsetHeight || 0) + padding);
   }
 
   function updateConnectionModalSize(panel, info) {

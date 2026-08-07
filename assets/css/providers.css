@@ -124,6 +124,10 @@ html.cw-theme-original #page-settings #auth-providers .cw-connection-overlay[dat
 
 #page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .anime-mapping-card.am-body{align-content:start !important}
 #page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-card{align-content:start}
-#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-details{grid-template-columns:minmax(0,300px)minmax(0,1fr);gap:22px}
+#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-details{display:block}
+#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-detail-list{grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px 20px}
+#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-detail-list>div{grid-template-columns:minmax(0,1fr);gap:3px;align-items:start}
+#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-detail-list dd{overflow:visible;text-overflow:clip}
+#page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-details-copy{margin-top:14px;padding:12px 0 0;border-left:0;border-top:1px solid rgba(140,152,190,0.2)}
 #page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-actions{display:flex;flex-wrap:wrap;gap:10px}
 #page-settings #auth-providers .cw-connection-modal-panel[data-cw-connection-provider="anime-mapping"] .am-actions .btn{flex:0 0 auto}
