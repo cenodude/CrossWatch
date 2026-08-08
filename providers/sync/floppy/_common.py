@@ -311,4 +311,6 @@ def rating_number(value: Any) -> float | None:
         return None
     if 10 < number <= 100:
         number /= 10.0
-    return max(0.0, min(10.0, number)) if 0.0 <= number <= 10.0 else None
+    if not 0.0 <= number <= 10.0:
+        return None
+    return round(max(0.0, min(10.0, number)), 1)
