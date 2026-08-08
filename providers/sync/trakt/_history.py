@@ -2968,9 +2968,13 @@ def _guard_watch_only_once(adapter: Any, items: list[Mapping[str, Any]]) -> list
     if not any(isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True for it in items):
         return items
     try:
-        if not watch_only_once(adapter):
-            return items
+        state = watch_only_once(adapter)
     except Exception:
+        state = None
+    if state is None:
+        _warn("watch_only_once_unknown", reason="trakt_settings_unavailable", plays=len(items))
+        return items
+    if not state:
         return items
     collapsed = _collapse_rewatch_plays(items)
     _warn(

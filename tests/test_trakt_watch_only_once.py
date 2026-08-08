@@ -85,17 +85,20 @@ def test_watch_only_once_false(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _common.watch_only_once(_adapter({"browsing": {"watch_only_once": False}})) is False
 
 
-def test_watch_only_once_absent_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_watch_only_once_absent_key_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_common, "headers_for_adapter", lambda a: {})
     assert _common.watch_only_once(_adapter({"browsing": {}})) is False
-    _common._SETTINGS_MEMO = (0.0, None)
-    assert _common.watch_only_once(_adapter({})) is False
 
 
-def test_watch_only_once_survives_unreachable_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_browsing_object_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_common, "headers_for_adapter", lambda a: {})
+    assert _common.watch_only_once(_adapter({})) is None
+
+
+def test_unreachable_settings_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_common, "headers_for_adapter", lambda a: {})
     adapter = _Adapter(_Session({}, status=500))
-    assert _common.watch_only_once(adapter) is False
+    assert _common.watch_only_once(adapter) is None
 
 
 # --- collapsing ---------------------------------------------------------------
@@ -171,3 +174,33 @@ def test_guard_fails_open_when_settings_lookup_raises(monkeypatch: pytest.Monkey
     monkeypatch.setattr(_history, "watch_only_once", _raise)
     items = [_play("a@1", "2026-01-01T00:00:00Z"), _play("a@2", "2026-02-01T00:00:00Z")]
     assert _history._guard_watch_only_once(_adapter({}), items) == items
+
+
+def test_guard_fails_open_when_state_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_history, "watch_only_once", lambda a: None)
+    items = [_play("a@1", "2026-01-01T00:00:00Z"), _play("a@2", "2026-02-01T00:00:00Z")]
+    assert _history._guard_watch_only_once(_adapter({}), items) == items
+
+
+@pytest.mark.parametrize(
+    "state,expected_event",
+    [(None, "watch_only_once_unknown"), (True, "watch_only_once_active"), (False, None)],
+)
+def test_guard_logs_the_right_event(
+    monkeypatch: pytest.MonkeyPatch, state: Any, expected_event: str | None
+) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(_history, "watch_only_once", lambda a: state)
+    monkeypatch.setattr(_history, "_warn", lambda event, **_k: seen.append(event))
+    items = [_play("a@1", "2026-01-01T00:00:00Z"), _play("a@2", "2026-02-01T00:00:00Z")]
+    _history._guard_watch_only_once(_adapter({}), items)
+    assert seen == ([expected_event] if expected_event else [])
+
+
+def test_unknown_state_does_not_collapse_plays(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_history, "watch_only_once", lambda a: None)
+    monkeypatch.setattr(_history, "_warn", lambda *_a, **_k: None)
+    items = [_play("a@1", "2026-01-01T00:00:00Z"), _play("a@2", "2026-02-01T00:00:00Z")]
+    out = _history._guard_watch_only_once(_adapter({}), items)
+    assert len(out) == 2
+    assert all(it.get("_cw_rewatch_sync") is True for it in out)
