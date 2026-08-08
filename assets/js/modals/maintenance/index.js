@@ -53,6 +53,7 @@ const SIMPLE_OPS = {
   stats: "/api/maintenance/reset-stats",
   playing: "/api/maintenance/reset-currently-watching",
   captures: "/api/snapshots/clear",
+  "database-health": "/api/maintenance/database-health",
   "events-health": "/api/maintenance/events-health",
   "events-optimize": "/api/maintenance/events-optimize",
   "events-rebuild": "/api/maintenance/events-rebuild",
@@ -77,12 +78,20 @@ const OPS = [
     desc: "Clears temporary retry and health data so items are tried again.",
   },
   {
+    key: "database-health",
+    kind: "database-health",
+    icon: "database",
+    title: "Database health",
+    tag: "diagnostics",
+    desc: "Checks the local CrossWatch database integrity and row consistency.",
+  },
+  {
     key: "state-file",
     kind: "state-file",
     icon: "data_object",
-    title: "Compact state.json",
+    title: "Compact sync state",
     tag: "backup first",
-    desc: "Creates an app-state backup, then rewrites the same state file without indentation.",
+    desc: "Creates an app-state backup, then rewrites the sync state database.",
   },
   {
     key: "state-file-prune",
@@ -226,9 +235,9 @@ const GROUPS = [
   {
     id: "state-file",
     icon: "data_object",
-    title: "State File",
-    desc: "Inspect, compact and prune the legacy state.json baseline file.",
-    keys: ["state-file", "state-file-prune"],
+    title: "Sync State",
+    desc: "Inspect, compact and prune the sync state database.",
+    keys: ["database-health", "state-file", "state-file-prune"],
   },
   {
     id: "archive",
@@ -254,12 +263,12 @@ const GROUPS = [
 ];
 
 const OPS_BY_KEY = Object.fromEntries(OPS.map((op) => [op.key, op]));
-const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "state-file", "state-file-prune"]);
+const OVERVIEW_EXCLUDED_KEYS = new Set(["tracker", "captures", "defaults", "events-health", "events-optimize", "events-rebuild", "database-health", "state-file", "state-file-prune"]);
 const OVERVIEW_KEYS = GROUPS
   .flatMap((group) => group.keys)
   .filter((key) => !OVERVIEW_EXCLUDED_KEYS.has(key));
 
-const renderActionRow = ({ key, kind, icon, title, desc, extra = "", sideActions = "" }) => `
+const renderActionRow = ({ key, kind, icon, title, desc, extra = "", sideActions = "", runLabel = "Run" }) => `
   <div class="action-row${sideActions ? " has-side-actions" : ""}" data-op="${key}" data-kind="${kind}" tabindex="0" aria-label="Inspect ${title} status">
     <div class="action-main">
       <div class="action-icon">
@@ -272,7 +281,7 @@ const renderActionRow = ({ key, kind, icon, title, desc, extra = "", sideActions
       </div>
     </div>
     ${sideActions ? `<div class="action-side-actions">${sideActions}</div>` : ""}
-    <button type="button" class="run-btn action-run-btn" data-label="${title}">Run</button>
+    <button type="button" class="run-btn action-run-btn" data-label="${title}">${runLabel}</button>
   </div>
 `;
 
@@ -384,9 +393,9 @@ export default {
                 <div class="side-nav-item" data-group="state-file">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-state-file">
                     <span class="material-symbols-rounded" aria-hidden="true">data_object</span>
-                    <span>State File</span>
+                    <span>Sync State</span>
                   </button>
-                  <button type="button" class="category-run-btn" data-run-group="state-file" aria-label="Run all State File tools">Run</button>
+                  <button type="button" class="category-run-btn" data-run-group="state-file" aria-label="Run all Sync State tools">Run</button>
                 </div>
                 <div class="side-nav-item" data-group="archive">
                   <button type="button" class="side-nav-btn" data-target="cxm-group-archive">
@@ -613,6 +622,23 @@ export default {
       return null;
     };
 
+    const databaseReceipt = (kind, res) => {
+      if (!res || typeof res !== "object" || kind !== "database-health") return null;
+      const tables = res.table_counts || {};
+      const orphanCounts = res.orphan_counts || {};
+      const orphanRows = Object.values(orphanCounts).reduce((total, value) => total + Number(value || 0), 0);
+      const bits = [
+        `integrity ${res.integrity || "?"}`,
+        `schema v${res.schema_version ?? "?"}`,
+        `${new Intl.NumberFormat().format(tables.provider_feature_state || 0)} baselines`,
+        `${new Intl.NumberFormat().format(tables.baseline_items || 0)} items`,
+        `${new Intl.NumberFormat().format(orphanRows)} orphan rows`,
+        formatBytes(res.size_bytes || 0),
+      ];
+      if (res.wal_size_bytes) bits.push(`WAL ${formatBytes(res.wal_size_bytes)}`);
+      return `Database health · ${res.healthy ? "healthy" : "issues found"} · ${bits.join(" · ")}.`;
+    };
+
     const stateFileReceipt = (res) => {
       if (!res || typeof res !== "object") return null;
       const backupPath = res.backup && res.backup.path ? String(res.backup.path) : "";
@@ -621,7 +647,7 @@ export default {
       const freed = formatBytes((res.summary && res.summary.freed_bytes) || 0);
       const bits = [`${before} → ${after}`, `${freed} reclaimed`];
       if (backupPath) bits.push(`backup ${backupPath}`);
-      return `Compact state.json completed · ${bits.join(" · ")}.`;
+      return `Compact sync state completed · ${bits.join(" · ")}.`;
     };
 
     const statePruneReceipt = (res) => {
@@ -635,7 +661,7 @@ export default {
       const backupPath = res.backup && res.backup.path ? String(res.backup.path) : "";
       const bits = [`${providers} providers`, `${instances} instances`, `${baselines} baselines`, `${items} items`, `${freed} reclaimed`];
       if (backupPath) bits.push(`backup ${backupPath}`);
-      return `Prune state.json completed · ${bits.join(" · ")}.`;
+      return `Prune sync state completed · ${bits.join(" · ")}.`;
     };
 
     const formatMetric = ({ value, format }) => {
@@ -837,12 +863,12 @@ export default {
         return false;
       }
 
-      if (!skipConfirm && kind === "state-file" && !confirm("Create an app-state backup and compact state.json?\n\nThis keeps the same JSON data and only removes formatting whitespace.")) {
+      if (!skipConfirm && kind === "state-file" && !confirm("Create an app-state backup and compact the sync state database?")) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (!skipConfirm && kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale state.json baselines?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes.")) {
+      if (!skipConfirm && kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale sync state baselines?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes.")) {
         setStatus("Cancelled.", "");
         return false;
       }
@@ -937,9 +963,10 @@ export default {
 
         if (selectedInsightKind === kind) await loadActionInsight(kind);
         const evReceipt = eventsReceipt(kind, res);
+        const dbReceipt = databaseReceipt(kind, res);
         const stateReceipt = kind === "state-file" ? stateFileReceipt(res) : null;
         const statePrune = kind === "state-file-prune" ? statePruneReceipt(res) : null;
-        setStatus(evReceipt || stateReceipt || statePrune || completionReceipt(label, res), "ok");
+        setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || completionReceipt(label, res), "ok");
         finishActionFeedback(btn, "success");
         return res || { ok: true };
       } catch (e) {

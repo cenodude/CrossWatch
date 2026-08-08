@@ -14,8 +14,10 @@ from pathlib import Path
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
-from cw_platform.config_base import load_config
+from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
+from cw_platform.history_events import history_sync_key, is_history_event_key, minimal_history_item
 from cw_platform.id_map import canonical_key, merge_ids, minimal
+from cw_platform.local_db import crosswatch_db_path, manual_policy as sqlite_manual_policy
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from cw_platform.orchestrator._applier import apply_add
 from cw_platform.orchestrator._snapshots import module_checkpoint
@@ -35,39 +37,38 @@ from services.editor import (
 
 router = APIRouter(prefix="/api/editor", tags=["editor"])
 
-_STATE_PATH = Path("/config/state.json")
-_POLICY_PATH = Path("/config/state.manual.json")
+_STATE_BASE = Path(CONFIG_DIR)
 
-def _atomic_write_json(path: Path, payload: Any) -> None:
+def _load_current_state_features(features: set[str] | list[str] | tuple[str, ...]) -> dict[str, Any]:
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        if path.name == "state.json":
-            text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        else:
-            text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        tmp.write_text(text, "utf-8")
-        os.replace(tmp, path)
+        raw = StateStore(_STATE_BASE).load_state_features(features)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to write {path}: {e}")
-
-def _load_current_state() -> dict[str, Any]:
-    if not _STATE_PATH.exists():
-        return {}
-    try:
-        raw = json.loads(_STATE_PATH.read_text("utf-8"))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read state file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read state: {e}")
     return raw if isinstance(raw, dict) else {}
 
 
-def _load_policy() -> dict[str, Any]:
-    if not _POLICY_PATH.exists():
-        return {"version": 1, "providers": {}}
+def _state_exists() -> bool:
     try:
-        raw = json.loads(_POLICY_PATH.read_text("utf-8"))
+        return crosswatch_db_path(_STATE_BASE).exists()
+    except Exception:
+        return False
+
+
+def _state_mtime() -> int | None:
+    try:
+        p = crosswatch_db_path(_STATE_BASE)
+        if p.exists():
+            return int(p.stat().st_mtime)
+    except Exception:
+        pass
+    return None
+
+
+def _load_policy() -> dict[str, Any]:
+    try:
+        raw = sqlite_manual_policy.load_policy(_STATE_BASE)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read policy file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read policy: {e}")
     if not isinstance(raw, dict):
         return {"version": 1, "providers": {}}
     prov = raw.get("providers")
@@ -76,6 +77,27 @@ def _load_policy() -> dict[str, Any]:
     if "version" not in raw:
         raw["version"] = 1
     return raw
+
+
+def _save_policy(raw: dict[str, Any]) -> None:
+    try:
+        sqlite_manual_policy.save_policy(_STATE_BASE, raw)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to write policy: {e}")
+
+
+def _policy_exists() -> bool:
+    try:
+        return sqlite_manual_policy.has_policy(_STATE_BASE)
+    except Exception:
+        return False
+
+
+def _policy_mtime() -> int | None:
+    try:
+        return sqlite_manual_policy.policy_mtime(_STATE_BASE)
+    except Exception:
+        return None
 
 
 def _policy_providers(raw: dict[str, Any]) -> list[str]:
@@ -203,7 +225,7 @@ def _save_policy_manual(
     blocks: list[str],
     provider_instance: str | None = None,
 ) -> None:
-    adds_items = _canonicalize_manual_items(adds_items)
+    adds_items = _canonicalize_manual_items(adds_items, kind)
     raw = _load_policy()
     providers = raw.get("providers")
     if not isinstance(providers, dict):
@@ -253,60 +275,11 @@ def _save_policy_manual(
         f["adds"] = adds
     adds["items"] = dict(adds_items or {})
 
-    _atomic_write_json(_POLICY_PATH, raw)
+    _save_policy(raw)
 
 
 def _policy_from_state() -> dict[str, Any]:
-    raw = _load_current_state()
-    provs = raw.get("providers") or {}
-    if not isinstance(provs, dict):
-        return {"version": 1, "providers": {}}
-
-    def _extract(manual: Any) -> dict[str, Any]:
-        if not isinstance(manual, dict):
-            return {}
-        entry: dict[str, Any] = {}
-        for kind in ("watchlist", "history", "ratings", "progress"):
-            f = manual.get(kind)
-            if not isinstance(f, dict):
-                continue
-            blocks = f.get("blocks") or []
-            adds = f.get("adds") or {}
-            items = (adds.get("items") if isinstance(adds, dict) else None) or {}
-            if not isinstance(items, dict):
-                items = {}
-            if blocks or items:
-                bl = list(blocks) if isinstance(blocks, list) else list(blocks.keys()) if isinstance(blocks, dict) else []
-                entry[kind] = {"blocks": bl, "adds": {"items": dict(items)}}
-        return entry
-
-    out: dict[str, Any] = {"version": 1, "providers": {}}
-    dst = out["providers"]
-
-    for p, node in provs.items():
-        if not isinstance(node, dict):
-            continue
-        entry: dict[str, Any] = {}
-
-        root_entry = _extract(node.get("manual"))
-        entry.update(root_entry)
-
-        insts = node.get("instances") or {}
-        if isinstance(insts, dict):
-            inst_out: dict[str, Any] = {}
-            for inst_id, inst_node in insts.items():
-                if not isinstance(inst_node, dict):
-                    continue
-                inst_entry = _extract(inst_node.get("manual"))
-                if inst_entry:
-                    inst_out[str(inst_id)] = inst_entry
-            if inst_out:
-                entry["instances"] = inst_out
-
-        if entry:
-            dst[str(p)] = entry
-
-    return out
+    return {"version": 1, "providers": {}}
 
 
 def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[str, Any]:
@@ -364,8 +337,8 @@ def _merge_policy(into: dict[str, Any], src: dict[str, Any], mode: str) -> dict[
                 items_out = adds_out.get("items")
                 if not isinstance(items_out, dict):
                     items_out = {}
-                merged = _canonicalize_manual_items(dict(items_out))
-                for mk, mv in _canonicalize_manual_items({str(k): v for k, v in items_in.items()}).items():
+                merged = _canonicalize_manual_items(dict(items_out), kind)
+                for mk, mv in _canonicalize_manual_items({str(k): v for k, v in items_in.items()}, kind).items():
                     merged[mk] = _merge_manual_item(merged.get(mk), mv)
                 adds_out["items"] = merged
 
@@ -404,139 +377,7 @@ def _mirror_policy_into_state(
     raw_state: dict[str, Any] | None = None,
     raw_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    if not _STATE_PATH.exists():
-        return None
-    pol = raw_policy if isinstance(raw_policy, dict) else _load_policy()
-    prov_pol = pol.get("providers")
-    if not isinstance(prov_pol, dict) or not prov_pol:
-        return raw_state if isinstance(raw_state, dict) else None
-
-    raw = raw_state if isinstance(raw_state, dict) else _load_current_state()
-    provs = raw.get("providers")
-    if not isinstance(provs, dict):
-        provs = {}
-        raw["providers"] = provs
-
-    changed = False
-
-    def _find_key(name: str) -> str:
-        if name in provs:
-            return name
-        nl = name.lower()
-        for k in provs.keys():
-            if str(k).lower() == nl:
-                return str(k)
-        return name
-
-    def _ensure_dict(parent: dict[str, Any], key: str) -> dict[str, Any]:
-        nonlocal changed
-        cur = parent.get(key)
-        if isinstance(cur, dict):
-            return cur
-        out: dict[str, Any] = {}
-        parent[key] = out
-        changed = True
-        return out
-
-    for p, node in prov_pol.items():
-        if not isinstance(node, dict):
-            continue
-        key = _find_key(str(p))
-        cur = provs.get(key)
-        if not isinstance(cur, dict):
-            cur = {}
-            provs[key] = cur
-            changed = True
-
-        manual = _ensure_dict(cur, "manual")
-
-        for kind in ("watchlist", "history", "ratings", "progress"):
-            f = node.get(kind)
-            if not isinstance(f, dict):
-                continue
-            t = _ensure_dict(manual, kind)
-
-            adds_in, blocks_in = _load_policy_manual(kind, str(p), "default", raw_policy=pol)
-            adds_state, blocks_state = _load_state_manual(kind, key, "default", raw_state=raw)
-
-            merged_blocks = _merge_blocks(blocks_state or [], blocks_in or [])
-            if t.get("blocks") != merged_blocks:
-                t["blocks"] = merged_blocks
-                changed = True
-
-            adds = t.get("adds")
-            if not isinstance(adds, dict):
-                adds = {}
-                t["adds"] = adds
-                changed = True
-            items_out = adds.get("items")
-            if not isinstance(items_out, dict):
-                items_out = {}
-            merged_items = _canonicalize_manual_items(dict(items_out))
-            for mk, mv in _canonicalize_manual_items(adds_state).items():
-                merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
-            for mk, mv in _canonicalize_manual_items(adds_in).items():
-                merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
-            if items_out != merged_items:
-                adds["items"] = merged_items
-                changed = True
-
-        insts = node.get("instances") or {}
-        if not isinstance(insts, dict) or not insts:
-            continue
-
-        cur_insts = cur.get("instances")
-        if not isinstance(cur_insts, dict):
-            cur_insts = {}
-            cur["instances"] = cur_insts
-            changed = True
-
-        for inst_id, inst_node in insts.items():
-            if not isinstance(inst_node, dict):
-                continue
-            inst_id_n = normalize_instance_id(inst_id)
-            inst_blk = cur_insts.get(inst_id_n)
-            if not isinstance(inst_blk, dict):
-                inst_blk = {}
-                cur_insts[inst_id_n] = inst_blk
-                changed = True
-
-            inst_manual = _ensure_dict(inst_blk, "manual")
-
-            for kind in ("watchlist", "history", "ratings", "progress"):
-                f = inst_node.get(kind)
-                if not isinstance(f, dict):
-                    continue
-                t = _ensure_dict(inst_manual, kind)
-
-                adds_in, blocks_in = _load_policy_manual(kind, str(p), inst_id_n, raw_policy=pol)
-                adds_state, blocks_state = _load_state_manual(kind, key, inst_id_n, raw_state=raw)
-
-                merged_blocks = _merge_blocks(blocks_state or [], blocks_in or [])
-                if t.get("blocks") != merged_blocks:
-                    t["blocks"] = merged_blocks
-                    changed = True
-
-                adds = t.get("adds")
-                if not isinstance(adds, dict):
-                    adds = {}
-                    t["adds"] = adds
-                    changed = True
-                items_out = adds.get("items")
-                if not isinstance(items_out, dict):
-                    items_out = {}
-                merged_items = _canonicalize_manual_items(dict(items_out))
-                for mk, mv in _canonicalize_manual_items(adds_state).items():
-                    merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
-                for mk, mv in _canonicalize_manual_items(adds_in).items():
-                    merged_items[mk] = _merge_manual_item(merged_items.get(mk), mv)
-                if items_out != merged_items:
-                    adds["items"] = merged_items
-                    changed = True
-
-    if changed:
-        _atomic_write_json(_STATE_PATH, raw)
-    return raw
+    return raw_state if isinstance(raw_state, dict) else None
 
 def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
     prov = pol.get("providers") or {}
@@ -608,7 +449,7 @@ def _load_state_items(
     provider_instance: str | None = None,
     raw_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    raw = raw_state if isinstance(raw_state, dict) else _load_current_state()
+    raw = raw_state if isinstance(raw_state, dict) else _load_current_state_features({kind})
     node = _state_provider_node(raw, provider, provider_instance)
     if not isinstance(node, dict):
         return {}
@@ -624,52 +465,12 @@ def _load_state_items(
 
 
 def _save_state_items(kind: Kind, provider: str, items: dict[str, Any], provider_instance: str | None = None) -> None:
-    raw = _load_current_state()
-    providers = raw.get("providers")
-    if not isinstance(providers, dict):
-        providers = {}
-        raw["providers"] = providers
-
-    key = None
-    if provider in providers:
-        key = provider
-    else:
-        pl = str(provider).lower()
-        for k in providers.keys():
-            if str(k).lower() == pl:
-                key = str(k)
-                break
-    if key is None:
-        key = provider
-        providers[key] = {}
-
-    node = providers.get(key)
-    if not isinstance(node, dict):
-        node = {}
-        providers[key] = node
-
-    inst = normalize_instance_id(provider_instance)
-    if inst != "default":
-        insts = node.get("instances")
-        if not isinstance(insts, dict):
-            insts = {}
-            node["instances"] = insts
-        in_node = insts.get(inst)
-        if not isinstance(in_node, dict):
-            in_node = {}
-            insts[inst] = in_node
-        node = in_node
-
-    feature = node.get(kind)
-    if not isinstance(feature, dict):
-        feature = {"baseline": {"items": {}}, "checkpoint": None}
-        node[kind] = feature
-    baseline = feature.get("baseline")
-    if not isinstance(baseline, dict):
-        baseline = {"items": {}}
-        feature["baseline"] = baseline
-    baseline["items"] = dict(items or {})
-    _atomic_write_json(_STATE_PATH, raw)
+    StateStore(_STATE_BASE).save_feature_baseline(
+        provider=provider,
+        instance=normalize_instance_id(provider_instance),
+        feature=kind,
+        items=dict(items or {}),
+    )
 
 
 def _load_state_manual(
@@ -678,7 +479,7 @@ def _load_state_manual(
     provider_instance: str | None = None,
     raw_state: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
-    raw = raw_state if isinstance(raw_state, dict) else _load_current_state()
+    raw = raw_state if isinstance(raw_state, dict) else _load_current_state_features({kind})
     node = _state_provider_node(raw, provider, provider_instance)
     if not isinstance(node, dict):
         return {}, []
@@ -731,62 +532,7 @@ def _save_state_manual(
     blocks: list[str],
     provider_instance: str | None = None,
 ) -> None:
-    adds_items = _canonicalize_manual_items(adds_items)
-    raw = _load_current_state()
-    providers = raw.get("providers")
-    if not isinstance(providers, dict):
-        providers = {}
-        raw["providers"] = providers
-
-    key = None
-    if provider in providers:
-        key = provider
-    else:
-        pl = str(provider).lower()
-        for k in providers.keys():
-            if str(k).lower() == pl:
-                key = str(k)
-                break
-    if key is None:
-        key = provider
-        providers[key] = {}
-
-    node = providers.get(key)
-    if not isinstance(node, dict):
-        node = {}
-        providers[key] = node
-
-    inst = normalize_instance_id(provider_instance)
-    if inst != "default":
-        insts = node.get("instances")
-        if not isinstance(insts, dict):
-            insts = {}
-            node["instances"] = insts
-        in_node = insts.get(inst)
-        if not isinstance(in_node, dict):
-            in_node = {}
-            insts[inst] = in_node
-        node = in_node
-
-    manual = node.get("manual")
-    if not isinstance(manual, dict):
-        manual = {}
-        node["manual"] = manual
-
-    f = manual.get(kind)
-    if not isinstance(f, dict):
-        f = {}
-        manual[kind] = f
-
-    f["blocks"] = list(blocks or [])
-
-    adds = f.get("adds")
-    if not isinstance(adds, dict):
-        adds = {}
-        f["adds"] = adds
-    adds["items"] = dict(adds_items or {})
-
-    _atomic_write_json(_STATE_PATH, raw)
+    _save_policy_manual(kind, provider, adds_items, blocks, provider_instance)
 
 def _normalize_kind(val: str | None) -> Kind:
     k = (val or "watchlist").strip().lower()
@@ -1216,9 +962,9 @@ def api_editor_tracker_workspaces(
 
 @router.get("/state/providers")
 def api_editor_state_providers() -> dict[str, Any]:
-    raw_state = _load_current_state()
+    state_providers = StateStore(_STATE_BASE).provider_names()
     raw_policy = _load_policy()
-    return {"providers": _union_providers(raw_state, raw_policy)}
+    return {"providers": _union_providers({"providers": {name: {} for name in state_providers}}, raw_policy)}
 
 
 @router.get("")
@@ -1245,7 +991,7 @@ def api_editor_get_state(
         raw_policy = _load_policy()
         pol_adds, pol_blocks = _load_policy_manual(k, _TRACKER_PROVIDER, inst, raw_policy=raw_policy)
         st_adds, st_blocks = (
-            _load_state_manual(k, _TRACKER_PROVIDER, inst) if _STATE_PATH.exists() else ({}, [])
+            _load_state_manual(k, _TRACKER_PROVIDER, inst, raw_state=_load_current_state_features({k})) if _state_exists() else ({}, [])
         )
         manual_adds = dict(st_adds or {})
         manual_adds.update(dict(pol_adds or {}))
@@ -1267,7 +1013,7 @@ def api_editor_get_state(
         }
 
     if src in ("state", "current"):
-        raw_state = _load_current_state()
+        raw_state = _load_current_state_features({k})
         raw_policy = _load_policy()
         providers = _union_providers(raw_state, raw_policy)
         chosen = (provider or "").strip() or (providers[0] if providers else "")
@@ -1287,9 +1033,6 @@ def api_editor_get_state(
 
         inst = normalize_instance_id(provider_instance)
 
-        if _STATE_PATH.exists() and _POLICY_PATH.exists():
-            raw_state = _mirror_policy_into_state(raw_state, raw_policy) or raw_state
-
         items = _load_state_items(k, chosen, inst, raw_state=raw_state) if raw_state else {}
         st_adds, st_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state) if raw_state else ({}, [])
         pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
@@ -1300,10 +1043,10 @@ def api_editor_get_state(
 
         ts = None
         try:
-            if _STATE_PATH.exists():
-                ts = int(_STATE_PATH.stat().st_mtime)
-            elif _POLICY_PATH.exists():
-                ts = int(_POLICY_PATH.stat().st_mtime)
+            if _state_exists():
+                ts = _state_mtime()
+            elif _policy_exists():
+                ts = _policy_mtime()
         except Exception:
             ts = None
         return {
@@ -1319,7 +1062,7 @@ def api_editor_get_state(
             "manual_blocks": manual_blocks,
         }
     if src in ("manual", "manual-overrides", "policy", "overrides"):
-        raw_state = _load_current_state()
+        raw_state = _load_current_state_features({k})
         raw_policy = _load_policy()
         providers = _union_providers(raw_state, raw_policy)
         chosen = (provider or "").strip() or (providers[0] if providers else "")
@@ -1344,10 +1087,10 @@ def api_editor_get_state(
 
         ts = None
         try:
-            if _POLICY_PATH.exists():
-                ts = int(_POLICY_PATH.stat().st_mtime)
-            elif _STATE_PATH.exists():
-                ts = int(_STATE_PATH.stat().st_mtime)
+            if _policy_exists():
+                ts = _policy_mtime()
+            elif _state_exists():
+                ts = _state_mtime()
         except Exception:
             ts = None
         manual_adds = dict(pol_adds or {})
@@ -1400,16 +1143,31 @@ def _merge_manual_item(existing: Any, incoming: Any) -> dict[str, Any]:
     return out
 
 
-def _canonicalize_manual_items(items: dict[str, Any]) -> dict[str, Any]:
+def _history_item_is_event(key: str, item: Mapping[str, Any]) -> bool:
+    return is_history_event_key(key) or bool(item.get("_cw_rewatch_sync") is True or item.get("_cw_event_key"))
+
+
+def _editor_item_key(feature: str, key: str, item: Mapping[str, Any]) -> str:
+    if feature == "history" and _history_item_is_event(key, item):
+        return history_sync_key(item, key, event_mode=True)
+    try:
+        return str(canonical_key(item) or key).strip().lower()
+    except Exception:
+        return str(key or "").strip().lower()
+
+
+def _editor_minimal_item(feature: str, key: str, item: Mapping[str, Any]) -> dict[str, Any]:
+    if feature == "history" and _history_item_is_event(key, item):
+        return minimal_history_item(item, key, event_mode=True)
+    return minimal(item)
+
+
+def _canonicalize_manual_items(items: dict[str, Any], feature: str) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for raw_key, raw_item in (items or {}).items():
         key = str(raw_key or "").strip()
         item = dict(raw_item) if isinstance(raw_item, dict) else {}
-        try:
-            ckey = canonical_key(item)
-        except Exception:
-            ckey = ""
-        final_key = str(ckey or key).strip().lower()
+        final_key = _editor_item_key(feature, key, item)
         if not final_key:
             continue
         if final_key in out:
@@ -1432,12 +1190,12 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
     if src in ("tracker", "crosswatch"):
         inst = normalize_instance_id(payload.get("provider_instance"))
         ws = _tracker_workspace(payload.get("workspace") or payload.get("snapshot"), inst)
-        items = _canonicalize_manual_items(items)
+        items = _canonicalize_manual_items(items, kind)
         blocks = _normalize_blocks(payload.get("blocks"))
         _save_policy_manual(kind, _TRACKER_PROVIDER, items, blocks, inst)
         ts = None
         try:
-            ts = int(_POLICY_PATH.stat().st_mtime)
+            ts = _policy_mtime()
         except Exception:
             ts = None
         return {
@@ -1456,20 +1214,16 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
         provider = str(payload.get("provider") or "").strip()
         if not provider:
             raise HTTPException(status_code=400, detail=f"Missing provider for source={src}")
-        items = _canonicalize_manual_items(items)
+        items = _canonicalize_manual_items(items, kind)
 
         inst = normalize_instance_id(payload.get("provider_instance"))
 
         blocks = _normalize_blocks(payload.get("blocks"))
 
         _save_policy_manual(kind, provider, items, blocks, inst)
-        if _STATE_PATH.exists():
-            _save_state_manual(kind, provider, items, blocks, inst)
-        if _STATE_PATH.exists() and _POLICY_PATH.exists():
-            _mirror_policy_into_state()
         ts = None
         try:
-            ts = int(_STATE_PATH.stat().st_mtime)
+            ts = _policy_mtime()
         except Exception:
             ts = None
         return {
@@ -1487,8 +1241,6 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
 @router.get("/state/manual/export")
 def api_editor_state_manual_export() -> StreamingResponse:
     pol = _load_policy()
-    if _policy_stats(pol)["providers"] == 0:
-        pol = _policy_from_state()
     data = json.dumps(pol, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return StreamingResponse(
         io.BytesIO(data),
@@ -1516,10 +1268,7 @@ async def api_editor_state_manual_import(
 
     current = _load_policy()
     merged = _merge_policy(current, incoming, mode_n)
-    _atomic_write_json(_POLICY_PATH, merged)
-
-    if _STATE_PATH.exists():
-        _mirror_policy_into_state()
+    _save_policy(merged)
 
     stats = _policy_stats(merged)
     return {"ok": True, "mode": mode_n, **stats}
@@ -1539,7 +1288,7 @@ def _import_enabled() -> bool:
 
 
 def _state_store() -> StateStore:
-    return StateStore(_STATE_PATH.parent)
+    return StateStore(_STATE_BASE)
 
 
 def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, Any]]:
@@ -1612,6 +1361,9 @@ def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
         return None
     item = dict(raw)
     key = str(item.pop("key", "") or "").strip()
+    if feature == "history" and is_history_event_key(key):
+        item["_cw_event_key"] = key
+        item["_cw_rewatch_sync"] = True
     ids = item.get("ids")
     if not isinstance(ids, dict):
         ids = {}
@@ -1662,7 +1414,7 @@ def _normalize_send_item(raw: Any, feature: str) -> dict[str, Any] | None:
     return item
 
 
-def _items_confirmed_by_send(items: list[dict[str, Any]], result: Mapping[str, Any]) -> list[dict[str, Any]]:
+def _items_confirmed_by_send(feature: Kind, items: list[dict[str, Any]], result: Mapping[str, Any]) -> list[dict[str, Any]]:
     key_fields = (
         "confirmed_keys",
         "skipped_keys",
@@ -1680,10 +1432,7 @@ def _items_confirmed_by_send(items: list[dict[str, Any]], result: Mapping[str, A
     if keep:
         out: list[dict[str, Any]] = []
         for item in items:
-            try:
-                key = str(canonical_key(item) or "")
-            except Exception:
-                key = ""
+            key = _editor_item_key(feature, str(item.get("_cw_event_key") or ""), item)
             if key and key in keep:
                 out.append(item)
         return out
@@ -1694,66 +1443,35 @@ def _items_confirmed_by_send(items: list[dict[str, Any]], result: Mapping[str, A
     return items[: min(confirmed, len(items))]
 
 
-def _merge_sent_items_into_state(provider: str, instance: str, feature: str, items: list[dict[str, Any]]) -> None:
+def _merge_sent_items_into_state(provider: str, instance: str, feature: Kind, items: list[dict[str, Any]]) -> None:
     if not items:
         return
     store = _state_store()
-    state = store.load_state() or {}
-    providers = state.get("providers")
-    if not isinstance(providers, dict):
-        providers = {}
-        state["providers"] = providers
-
-    base = providers.get(provider)
-    if not isinstance(base, dict):
-        base = {}
-        providers[provider] = base
-
-    node = base
     inst = normalize_instance_id(instance)
-    if inst != "default":
-        insts = node.get("instances")
-        if not isinstance(insts, dict):
-            insts = {}
-            node["instances"] = insts
-        node = insts.get(inst)
-        if not isinstance(node, dict):
-            node = {}
-            insts[inst] = node
-
-    feat_node = node.get(feature)
-    if not isinstance(feat_node, dict):
-        feat_node = {}
-        node[feature] = feat_node
-    baseline = feat_node.get("baseline")
-    if not isinstance(baseline, dict):
-        baseline = {}
-        feat_node["baseline"] = baseline
-    current = baseline.get("items")
-    if not isinstance(current, dict):
-        current = {}
+    state = store.load_state_features({feature}) or {}
+    current = dict(_load_state_items(feature, provider, inst, raw_state=state))
 
     for item in items:
-        try:
-            key = canonical_key(item)
-        except Exception:
-            key = ""
+        key = _editor_item_key(feature, str(item.get("_cw_event_key") or ""), item)
         if not key:
             continue
         try:
-            current[str(key)] = minimal(item)
+            current[str(key)] = _editor_minimal_item(feature, str(key), item)
         except Exception:
             current[str(key)] = dict(item)
 
-    baseline["items"] = current
     try:
         import time as _t
-        state["last_sync_epoch"] = int(_t.time())
+        last_sync_epoch = int(_t.time())
     except Exception:
-        pass
-    if feature == "watchlist":
-        _rebuild_watchlist_wall(state)
-    store.save_state(state)
+        last_sync_epoch = None
+    store.save_feature_baseline(
+        provider=provider,
+        instance=inst,
+        feature=feature,
+        items=current,
+        last_sync_epoch=last_sync_epoch,
+    )
 
 
 @router.post("/send")
@@ -1840,7 +1558,7 @@ def api_editor_send(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
 
         if not dry_run and bool(res.get("ok", True)) and int(res.get("confirmed", res.get("count", 0)) or 0) > 0:
             try:
-                _merge_sent_items_into_state(provider, instance, feature, _items_confirmed_by_send(items, res))
+                _merge_sent_items_into_state(provider, instance, feature, _items_confirmed_by_send(feature, items, res))
             except Exception:
                 pass
 
@@ -2000,7 +1718,7 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
     feats_supported = state_read_features(ops)
 
     store = _state_store()
-    state = store.load_state() if not dry_run else {"providers": {}, "wall": [], "last_sync_epoch": None}
+    state = store.load_state_features(set(features)) if not dry_run else {"providers": {}, "wall": [], "last_sync_epoch": None}
 
     providers_block = state.get("providers")
     if not isinstance(providers_block, dict):
@@ -2033,6 +1751,7 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
     }
 
     import time as _t
+    changed_blocks: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for feature in features:
         if not bool(feats_supported.get(feature)):
@@ -2092,11 +1811,9 @@ def api_editor_state_import(payload: dict[str, Any] = Body(...)) -> dict[str, An
             base_feat["items"] = items_min
 
         feat_node["checkpoint"] = cp
+        changed_blocks[(provider, provider_instance, feature)] = feat_node
 
     if not dry_run:
-        state["last_sync_epoch"] = int(_t.time())
-        if "watchlist" in features:
-            _rebuild_watchlist_wall(state)
-        store.save_state(state)
+        store.save_feature_blocks(changed_blocks, last_sync_epoch=int(_t.time()))
 
     return {"ok": True, **imported}

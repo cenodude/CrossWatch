@@ -13,7 +13,9 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
     attempted: list[str] = []
     for it in items or []:
         try:
-            k = str(key_of(it) or "").strip()
+            k = str(it.get("_cw_event_key") or "").strip() if isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True else ""
+            if not k:
+                k = str(key_of(it) or "").strip()
         except Exception:
             k = ""
         if k:
@@ -34,7 +36,9 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
                 continue
             if isinstance(obj, Mapping):
                 try:
-                    k = str(key_of(obj) or "").strip()
+                    k = str(obj.get("_cw_event_key") or "").strip() if obj.get("_cw_rewatch_sync") is True else ""
+                    if not k:
+                        k = str(key_of(obj) or "").strip()
                 except Exception:
                     k = ""
                 if k:
@@ -163,6 +167,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "timestamp": True,
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "progress": {
                 "upsert": True,
@@ -425,6 +431,8 @@ class _CrossWatchOPS:
                 "upsert": True,
                 "remove": True,
                 "timestamp": True,
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "progress": {
                 "upsert": True,

@@ -9,7 +9,6 @@ import secrets
 import hmac
 import urllib.parse
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request, HTTPException, Body
@@ -26,18 +25,10 @@ from providers.scrobble.sources import scrobble_sources
 from services.activity import add_event as _activity_add_event
 
 try:
-    from providers.scrobble.currently_watching import state_file as _cw_state_file
+    from providers.scrobble.currently_watching import load_state as _cw_load_state
 except Exception:
-    try:
-        from providers.scrobble.currently_watching import _state_file as _cw_state_file  # type: ignore[attr-defined]
-    except Exception:
-        def _cw_state_file() -> Path:
-            base = Path("/config/.cw_state") if Path("/config/config.json").exists() else Path(".cw_state")
-            try:
-                base.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                pass
-            return base / "currently_watching.json"
+    def _cw_load_state() -> dict[str, Any]:
+        return {"v": 2, "streams": {}}
 
 import providers.sync.plex._utils as plex_utils
 
@@ -1106,24 +1097,17 @@ def api_currently_watching() -> JSONResponse:
     streams: list[dict[str, Any]] = []
     streams_count = 0
     try:
-        path = _cw_state_file()
-    except Exception:
-        path = None
-
-    if path is not None and path.exists():
-        try:
-            raw = path.read_text(encoding="utf-8")
-            data = json.loads(raw) if raw.strip() else None
-        except Exception as e:
-            if BASE_LOG:
-                try:
-                    BASE_LOG(
-                        f"currently_watching read failed: {e}",
-                        level="ERROR",
-                        module="SCROBBLE",
-                    )
-                except Exception:
-                    pass
+        data = _cw_load_state()
+    except Exception as e:
+        if BASE_LOG:
+            try:
+                BASE_LOG(
+                    f"currently_watching read failed: {e}",
+                    level="ERROR",
+                    module="SCROBBLE",
+                )
+            except Exception:
+                pass
 
     # v2 state: { "v": 2, "streams": { "<key>": {payload}, ... } }
     if isinstance(data, dict) and int(data.get("v") or 0) == 2 and isinstance(data.get("streams"), dict):

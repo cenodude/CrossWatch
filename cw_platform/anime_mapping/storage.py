@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -17,9 +18,15 @@ from cw_platform.config_base import CONFIG_BASE
 
 from .descriptors import Descriptor, parse_descriptor
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 _RELEASE_TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _PROVIDER = "anibridge"
+_EDGE_FANOUT_LIMIT = 5000
+_READERS = threading.local()
+_PATHS_CACHE: dict[tuple[str, str], dict[str, Path]] = {}
+IDENTITY_NAMESPACES = ("anidb", "mal", "anilist")
+_IDENTITY_COLUMNS = {"anidb": "anidb", "mal": "myanimelist", "anilist": "anilist"}
+_IDENTITY_TARGET_COLUMNS = {"simkl": "simkl_id", "kitsu": "kitsu_id"}
 
 
 def normalize_release_tag(value: Any = "v3") -> str:
@@ -57,11 +64,23 @@ def cache_root(release_tag: str = "v3") -> Path:
 
 
 def paths(release_tag: str = "v3") -> dict[str, Path]:
+    tag = normalize_release_tag(release_tag)
+    key = (str(CONFIG_BASE()), tag)
+    cached = _PATHS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    built = _build_paths(tag)
+    _PATHS_CACHE[key] = built
+    return built
+
+
+def _build_paths(release_tag: str) -> dict[str, Path]:
     root = cache_root(release_tag)
     return {
         "root": root,
         "stats": _safe_child(root, "stats.json"),
         "mappings": _safe_child(root, "mappings.min.json"),
+        "identity": _safe_child(root, "animeapi.tsv"),
         "db": _safe_child(root, "anime_mapping.sqlite"),
         "state": _safe_child(root, "state.json"),
     }
@@ -111,6 +130,38 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return con
 
 
+def _reader(db_path: Path) -> sqlite3.Connection | None:
+    try:
+        st = db_path.stat()
+    except OSError:
+        return None
+    key = (str(db_path), st.st_mtime_ns, st.st_size)
+    cached = getattr(_READERS, "entry", None)
+    if cached is not None:
+        if cached[0] == key:
+            return cached[1]
+        try:
+            cached[1].close()
+        except Exception:
+            pass
+        _READERS.entry = None
+    con = sqlite3.connect(str(db_path))
+    con.row_factory = sqlite3.Row
+    _READERS.entry = (key, con)
+    return con
+
+
+def close_readers() -> None:
+    cached = getattr(_READERS, "entry", None)
+    if cached is None:
+        return
+    try:
+        cached[1].close()
+    except Exception:
+        pass
+    _READERS.entry = None
+
+
 def _init_schema(con: sqlite3.Connection) -> None:
     con.executescript(
         """
@@ -140,6 +191,17 @@ def _init_schema(con: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_show_pairs_tvdb ON show_pairs(tvdb_id);
         CREATE INDEX IF NOT EXISTS idx_show_pairs_tmdb ON show_pairs(tmdb_id);
+        CREATE TABLE IF NOT EXISTS native_identity (
+          namespace TEXT NOT NULL,
+          native_id TEXT NOT NULL,
+          simkl_id TEXT NOT NULL DEFAULT '',
+          kitsu_id TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (namespace, native_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_native_identity_simkl
+          ON native_identity(simkl_id);
+        CREATE INDEX IF NOT EXISTS idx_native_identity_kitsu
+          ON native_identity(kitsu_id);
         CREATE TABLE IF NOT EXISTS meta (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
@@ -209,11 +271,70 @@ def _insert_edge(
     )
 
 
+def _tsv_value(raw: str) -> str:
+    text = str(raw or "").strip()
+    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+        return text[1:-1].replace('""', '"')
+    return text
+
+
+def parse_identity_rows(text: str) -> list[tuple[str, str, str, str]]:
+    lines = str(text or "").split("\n")
+    if not lines:
+        return []
+    header = [_tsv_value(x) for x in lines[0].split("\t")]
+    needed = set(_IDENTITY_COLUMNS.values()) | {"simkl", "kitsu"}
+    cols: dict[str, int] = {}
+    for name in needed:
+        if name not in header:
+            raise ValueError(f"animeApi TSV is missing the '{name}' column")
+        cols[name] = header.index(name)
+
+    seen: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for line in lines[1:]:
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != len(header):
+            continue
+        simkl = _tsv_value(parts[cols["simkl"]])
+        kitsu = _tsv_value(parts[cols["kitsu"]])
+        if not simkl and not kitsu:
+            continue
+        for namespace, column in _IDENTITY_COLUMNS.items():
+            native = _tsv_value(parts[cols[column]])
+            if not native:
+                continue
+            seen.setdefault((namespace, native), set()).add((simkl, kitsu))
+
+    out: list[tuple[str, str, str, str]] = []
+    for (namespace, native), values in seen.items():
+        if len(values) != 1:
+            continue
+        simkl, kitsu = next(iter(values))
+        out.append((namespace, native, simkl, kitsu))
+    return out
+
+
+def _load_identity_rows(root: Path, identity_path: Path | None) -> list[tuple[str, str, str, str]]:
+    try:
+        path = _safe_existing_path(identity_path or (root / "animeapi.tsv"), base=root)
+    except ValueError:
+        return []
+    if not path.exists():
+        return []
+    try:
+        return parse_identity_rows(path.read_text("utf-8"))
+    except Exception:
+        return []
+
+
 def rebuild_sqlite_from_mappings(
     *,
     release_tag: str = "v3",
     mappings_path: Path | None = None,
     db_path: Path | None = None,
+    identity_path: Path | None = None,
 ) -> dict[str, Any]:
     pp = paths(release_tag)
     root = pp["root"]
@@ -259,6 +380,7 @@ def rebuild_sqlite_from_mappings(
                     edge_count += 2
 
         pairs = _unambiguous_pairs(tv_to_tm, tm_to_tv)
+        identity_rows = _load_identity_rows(root, identity_path or pp["identity"])
         con = _connect(tmp)
         try:
             _init_schema(con)
@@ -273,6 +395,11 @@ def rebuild_sqlite_from_mappings(
                 rows,
             )
             con.executemany("INSERT INTO show_pairs (tvdb_id, tmdb_id) VALUES (?, ?)", pairs)
+            con.executemany(
+                "INSERT OR REPLACE INTO native_identity (namespace, native_id, simkl_id, kitsu_id) VALUES (?, ?, ?, ?)",
+                identity_rows,
+            )
+            con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("identity_count", str(len(identity_rows))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("pair_count", str(len(pairs))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("schema_version", str(SCHEMA_VERSION)))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("built_at", str(int(time.time()))))
@@ -282,6 +409,7 @@ def rebuild_sqlite_from_mappings(
         finally:
             con.close()
 
+        close_readers()
         os.replace(tmp, db_path)
     finally:
         try:
@@ -299,6 +427,7 @@ def rebuild_sqlite_from_mappings(
             "source_count": source_count,
             "edge_count": edge_count,
             "pair_count": len(pairs),
+            "identity_count": len(identity_rows),
         },
     )
     return {
@@ -306,50 +435,122 @@ def rebuild_sqlite_from_mappings(
         "source_count": source_count,
         "edge_count": edge_count,
         "pair_count": len(pairs),
+        "identity_count": len(identity_rows),
         "db_path": str(db_path),
     }
 
 
 def query_show_pair(release_tag: str, provider: str, ident: str) -> str | None:
-    db = _safe_existing_path(paths(release_tag)["db"])
-    if not db.exists():
-        return None
+    db = paths(release_tag)["db"]
     p = str(provider or "").strip().lower()
     i = str(ident or "").strip()
     if not i or p not in ("tvdb", "tmdb"):
         return None
     want, have = ("tmdb_id", "tvdb_id") if p == "tvdb" else ("tvdb_id", "tmdb_id")
-    con = _connect(db)
+    con = _reader(db)
+    if con is None:
+        return None
     try:
         row = con.execute(f"SELECT {want} FROM show_pairs WHERE {have} = ? LIMIT 1", (i,)).fetchone()
         return str(row[0]) if row and row[0] else None
     except sqlite3.Error:
         return None
-    finally:
-        con.close()
 
 
-def query_edges(release_tag: str, provider: str, ident: str) -> list[dict[str, Any]]:
-    db = _safe_existing_path(paths(release_tag)["db"])
-    if not db.exists():
-        return []
+def query_edges(release_tag: str, provider: str, ident: str, *, scope: str | None = None) -> list[dict[str, Any]]:
+    db = paths(release_tag)["db"]
     p = str(provider or "").strip().lower()
     i = str(ident or "").strip()
     if not p or not i:
         return []
-    con = _connect(db)
+    sql = """
+        SELECT source_provider, source_id, source_scope, source_kind,
+               target_provider, target_id, target_scope, target_kind,
+               source_range, target_range, reverse
+        FROM mapping_edges
+        WHERE source_provider = ? AND source_id = ?
+    """
+    args: list[Any] = [p, i]
+    if scope is not None:
+        sql += " AND source_scope = ?"
+        args.append(str(scope))
+    sql += f" LIMIT {_EDGE_FANOUT_LIMIT}"
+    con = _reader(db)
+    if con is None:
+        return []
+    try:
+        return [dict(r) for r in con.execute(sql, args).fetchall()]
+    except sqlite3.Error:
+        return []
+
+
+def query_native_identity(release_tag: str, namespace: str, native_id: str) -> dict[str, str]:
+    db = paths(release_tag)["db"]
+    ns = str(namespace or "").strip().lower()
+    nid = str(native_id or "").strip()
+    if ns not in IDENTITY_NAMESPACES or not nid:
+        return {}
+    con = _reader(db)
+    if con is None:
+        return {}
+    try:
+        row = con.execute(
+            "SELECT simkl_id, kitsu_id FROM native_identity WHERE namespace = ? AND native_id = ? LIMIT 1",
+            (ns, nid),
+        ).fetchone()
+    except sqlite3.Error:
+        return {}
+    if not row:
+        return {}
+    out: dict[str, str] = {}
+    if str(row["simkl_id"] or "").strip():
+        out["simkl"] = str(row["simkl_id"]).strip()
+    if str(row["kitsu_id"] or "").strip():
+        out["kitsu"] = str(row["kitsu_id"]).strip()
+    return out
+
+
+def query_identity_natives(release_tag: str, namespace: str, ident: str) -> dict[str, str]:
+    db = paths(release_tag)["db"]
+    ns = str(namespace or "").strip().lower()
+    value = str(ident or "").strip()
+    column = _IDENTITY_TARGET_COLUMNS.get(ns)
+    if not column or not value:
+        return {}
+    con = _reader(db)
+    if con is None:
+        return {}
     try:
         rows = con.execute(
-            """
-            SELECT source_provider, source_id, source_scope, source_kind,
-                   target_provider, target_id, target_scope, target_kind,
-                   source_range, target_range, reverse
-            FROM mapping_edges
-            WHERE source_provider = ? AND source_id = ?
-            LIMIT 500
-            """,
-            (p, i),
+            f"SELECT namespace, native_id FROM native_identity WHERE {column} = ?",
+            (value,),
         ).fetchall()
-        return [dict(r) for r in rows]
-    finally:
-        con.close()
+    except sqlite3.Error:
+        return {}
+    found: dict[str, str] = {}
+    for row in rows:
+        row_ns = str(row["namespace"] or "").strip().lower()
+        native = str(row["native_id"] or "").strip()
+        if row_ns not in IDENTITY_NAMESPACES or not native:
+            continue
+        current = found.get(row_ns)
+        if current is None:
+            found[row_ns] = native
+        elif current != native:
+            found[row_ns] = ""
+    return {k: v for k, v in found.items() if v}
+
+
+def index_schema_ok(release_tag: str = "v3") -> bool:
+    try:
+        return int(read_state(release_tag).get("schema_version") or 0) == SCHEMA_VERSION
+    except (TypeError, ValueError):
+        return False
+
+
+def index_ready(release_tag: str = "v3") -> bool:
+    if not paths(release_tag)["db"].exists():
+        return False
+    if not bool(read_state(release_tag).get("index_ready", False)):
+        return False
+    return index_schema_ok(release_tag)

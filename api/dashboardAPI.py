@@ -21,9 +21,12 @@ def dashboard_widgets(
     include: str = Query("history,ratings,scrobble,progress,playlists"),
 ) -> JSONResponse:
     try:
-        from .syncAPI import _load_state
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
 
-        state = _load_state() or {}
+        requested = {part.strip() for part in include.split(",") if part.strip()}
+        state_features = requested & {"history", "ratings", "progress"}
+        state = StateStore(CONFIG).load_state_features(state_features) if state_features else {}
         payload = dashboard_widgets_payload(
             state,
             history_limit=history_limit,
@@ -31,7 +34,7 @@ def dashboard_widgets(
             scrobble_limit=scrobble_limit,
             progress_limit=progress_limit,
             playlists_limit=playlists_limit,
-            include={part.strip() for part in include.split(",") if part.strip()},
+            include=requested,
         )
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
     except Exception:

@@ -171,8 +171,7 @@ def test_editor_ui_allows_extra_policy_corrections() -> None:
 
 
 def test_editor_manual_override_source_loads_policy_only(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(api, "_STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(api, "_POLICY_PATH", tmp_path / "state.manual.json")
+    monkeypatch.setattr(api, "_STATE_BASE", tmp_path)
 
     api.api_editor_save_state(
         {
@@ -230,7 +229,7 @@ def test_editor_ui_exposes_raw_fields_modal() -> None:
 
     assert raw_modal.exists()
     assert "function openRawFieldsModal(row)" in js
-    assert "data_object" in table_js
+    assert "database" in table_js
     assert "window.openEditorRawModal" in modals
     assert "ModalRegistry.register('editor-raw'" in modals
     assert ".cx-modal-shell:has(#cx-modal.editor-raw-modal)" in css
@@ -607,4 +606,19 @@ def test_editor_uses_page_scroll_for_table() -> None:
     assert 'const tableScroll = host.querySelector(".cw-table-scroll");' not in js
     assert "function wireLinkedTableScroll()" not in js
     assert "scrollDocumentByTableDelta(delta)" not in js
-    assert '#page-editor .cw-table-scroll{position:static!important;inset:auto!important;overflow:visible!important}' in css
+    assert '#page-editor .cw-table-scroll{position:static!important;inset:auto!important;overflow:visible!important;border-radius:22px!important}' in css
+    assert "cw-table-overflow-x" in css
+    assert ".cw-pop.cw-columns-pop{width:min(370px" not in css
+    assert "columnOrder: state.columnOrder" in js
+    assert "columnWidths: state.columnWidths" in js
+    assert "wideView: state.wideView" in js
+    assert "cw-editor-wide" in js
+    assert "year: false" in js
+    assert "imdb: false" in js
+    assert "tvdb: false" in js
+    assert "COLUMN_LAYOUT_VERSION = 4" in js
+    assert "function syncColumnGroup" in js
+    assert "applyColumnWidths," in js
+    assert "function startColumnResize" in js
+    assert "#page-editor.cw-editor-wide .cw-side{display:none!important}" in css
+    assert ".cw-col-resize" in css

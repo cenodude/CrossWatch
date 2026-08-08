@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
-import json
 import os
 import time
 from collections import Counter
@@ -435,11 +434,9 @@ def _load_kodi_feature_baseline(adapter: Any, feature: str) -> Mapping[str, Mapp
         return {str(k): dict(v) for k, v in injected.items() if isinstance(v, Mapping)}
     try:
         from cw_platform.config_base import CONFIG_BASE
+        from cw_platform.orchestrator._state_store import StateStore
 
-        path = Path(CONFIG_BASE()) / "state.json"
-        if not path.exists():
-            return {}
-        state = json.loads(path.read_text("utf-8"))
+        state = StateStore(Path(CONFIG_BASE())).load_state()
         providers = state.get("providers") if isinstance(state, Mapping) else None
         providers = providers if isinstance(providers, Mapping) else {}
         kodi = providers.get("KODI") or providers.get("kodi")

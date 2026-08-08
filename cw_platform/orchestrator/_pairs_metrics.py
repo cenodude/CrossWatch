@@ -4,7 +4,6 @@
 from __future__ import annotations
 from collections.abc import Mapping, Callable
 from typing import Any
-import time
 
 class ApiMetrics:
     def __init__(self, emit: Callable[..., Any]) -> None:
@@ -133,12 +132,4 @@ class ApiMetrics:
             pass
 
 def persist_api_totals(ctx, totals: Mapping[str, Any], *, ts: int | None = None) -> None:
-    if not getattr(ctx, "write_state_json", True):
-        return
-    try:
-        st = ctx.state_store.load_state() or {}
-        st.setdefault("metrics", {}).setdefault("api", {})
-        st["metrics"]["api"]["last"] = {"ts": int(ts or time.time()), **totals}
-        ctx.state_store.save_state(st)
-    except Exception:
-        pass
+    return

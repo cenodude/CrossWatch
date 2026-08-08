@@ -5,13 +5,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Path as PathParam
 from fastapi.responses import JSONResponse
 
 from _logging import log
 
 from cw_platform.anime_mapping.auto_update import refresh_from_config as refresh_auto_update
 from cw_platform.anime_mapping.auto_update import status as auto_update_status
+from cw_platform.anime_mapping.overrides import (
+    MATCH_PROVIDERS,
+    MEDIA_TYPES,
+    TARGET_NAMESPACES,
+    OverrideError,
+    delete_override,
+    load_overrides,
+    safe_override_error,
+    stats as override_stats,
+    upsert_override,
+)
 from cw_platform.anime_mapping.storage import normalize_release_tag, rebuild_sqlite_from_mappings
 from cw_platform.anime_mapping.updater import status as mapping_status, update as mapping_update
 from cw_platform.config_base import ANIME_MAPPING_PAIRS_DEFAULT, load_config, save_config
@@ -216,3 +227,73 @@ def api_anime_mapping_rebuild_index(payload: dict[str, Any] | None = Body(defaul
             extra={"error_type": e.__class__.__name__, "error": str(e)},
         )
         return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("index rebuild")}, status_code=500)
+
+
+@router.get("/overrides")
+def api_anime_mapping_overrides_list() -> JSONResponse:
+    try:
+        return JSONResponse(
+            {
+                "ok": True,
+                "overrides": load_overrides(),
+                "stats": override_stats(),
+                "schema": {
+                    "match_providers": list(MATCH_PROVIDERS),
+                    "target_namespaces": list(TARGET_NAMESPACES),
+                    "media_types": list(MEDIA_TYPES),
+                },
+            }
+        )
+    except Exception as e:
+        log(
+            "overrides_list_failed",
+            level="error",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override list")}, status_code=500)
+
+
+@router.post("/overrides")
+def api_anime_mapping_overrides_save(payload: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    try:
+        saved = upsert_override(payload or {})
+    except OverrideError as e:
+        return JSONResponse({"ok": False, "error": "invalid_rule", "message": safe_override_error(e)}, status_code=400)
+    except Exception as e:
+        log(
+            "overrides_save_failed",
+            level="error",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override save")}, status_code=500)
+    log(
+        "override_saved",
+        level="debug",
+        module="ANIME_MAPPING",
+        extra={
+            "rule": saved.get("id"),
+            "match": f"{saved.get('match_provider')}:{saved.get('match_id')}",
+            "target": f"{saved.get('target_namespace')}:{saved.get('target_id')}",
+        },
+    )
+    return JSONResponse({"ok": True, "override": saved, "overrides": load_overrides(), "stats": override_stats()})
+
+
+@router.delete("/overrides/{rule_id}")
+def api_anime_mapping_overrides_delete(rule_id: str = PathParam(...)) -> JSONResponse:
+    try:
+        removed = delete_override(rule_id)
+    except Exception as e:
+        log(
+            "overrides_delete_failed",
+            level="error",
+            module="ANIME_MAPPING",
+            extra={"error_type": e.__class__.__name__, "error": str(e)},
+        )
+        return JSONResponse({"ok": False, "error": e.__class__.__name__, "message": _client_error_message("override delete")}, status_code=500)
+    if not removed:
+        return JSONResponse({"ok": False, "error": "not_found", "message": "That rule no longer exists."}, status_code=404)
+    log("override_deleted", level="debug", module="ANIME_MAPPING", extra={"rule": rule_id})
+    return JSONResponse({"ok": True, "overrides": load_overrides(), "stats": override_stats()})

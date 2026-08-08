@@ -73,6 +73,15 @@
       } else if (key === "key") {
         av = a.key || "";
         bv = b.key || "";
+      } else if (key === "year") {
+        av = a.year ? Number(a.year) || String(a.year) : "";
+        bv = b.year ? Number(b.year) || String(b.year) : "";
+      } else if (key === "id") {
+        av = ctx.isAnilistMode?.() ? a.mal || "" : a.tmdb || "";
+        bv = ctx.isAnilistMode?.() ? b.mal || "" : b.tmdb || "";
+      } else if (["imdb", "tvdb", "trakt", "simkl", "anilist"].includes(key)) {
+        av = a[key] || "";
+        bv = b[key] || "";
       } else if (key === "extra") {
         if (state.kind === "ratings") {
           av = a.raw && a.raw.rating != null ? Number(a.raw.rating) : -Infinity;
@@ -136,6 +145,7 @@
   function renderRows(ctx = {}) {
     const state = ctx.state;
     ctx.closePopup();
+    ctx.syncColumnVisibilityUI?.();
     updateSortUI(ctx);
     ctx.syncIdColumnHeaders();
 
@@ -168,7 +178,8 @@
     const wideActions = !!ctx.isPolicySource();
     if (actionHead) {
       actionHead.classList.toggle("cw-action-wide", wideActions);
-      actionHead.style.width = wideActions ? "132px" : "46px";
+      actionHead.style.width = wideActions ? "84px" : "46px";
+      actionHead.style.minWidth = actionHead.style.width;
     }
 
     if (!totalFiltered) {
@@ -194,7 +205,7 @@
       if (main) main.classList.remove("cw-main-empty");
     }
 
-    const pageSize = ctx.pageSize || 100;
+    const pageSize = ctx.pageSize || 50;
     const pageCount = Math.max(1, Math.ceil(totalFiltered / pageSize));
     if (state.page >= pageCount) state.page = pageCount - 1;
     if (state.page < 0) state.page = 0;
@@ -214,6 +225,7 @@
       if (tr) frag.appendChild(tr);
     });
     if (ctx.tbody) ctx.tbody.appendChild(frag);
+    ctx.applyColumnWidths?.();
 
     const vis = rows.length;
     const first = start + 1;

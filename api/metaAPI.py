@@ -26,7 +26,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from cw_platform.config_base import load_config
+from cw_platform.config_base import CONFIG, load_config
 from cw_platform.metadata_cache import (
     merge_metadata_cache_payload,
     metadata_cache_path,
@@ -39,6 +39,7 @@ from cw_platform.metadata_cache import (
     write_resolution_cache,
     write_resolution_index,
 )
+from cw_platform.orchestrator._state_store import StateStore
 
 try:
     from _logging import log as cw_log
@@ -1318,8 +1319,8 @@ def api_metadata_bulk(
     ),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    _METADATA, base_cache, _load_state = _env()
-    st = _load_state()
+    _METADATA, base_cache, _ = _env()
+    last_sync_epoch = StateStore(CONFIG).last_sync_epoch()
     api_key = ((cfg.get("tmdb") or {}).get("api_key") or "").strip()
     md_cfg = (cfg.get("metadata") or {})
     bulk_max = int(md_cfg.get("bulk_max", 300))
@@ -1475,9 +1476,7 @@ def api_metadata_bulk(
             "fetched": fetched,
             "missing_tmdb_key": not bool(api_key),
             "results": results,
-            "last_sync_epoch": st.get("last_sync_epoch")
-            if isinstance(st, dict)
-            else None,
+            "last_sync_epoch": last_sync_epoch,
         },
         status_code=200,
     )

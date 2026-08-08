@@ -9,10 +9,27 @@
     return typeof fn === "function" ? fn(...args) : undefined;
   }
 
-  function cell(inner) {
+  function cell(inner, className = "") {
     const td = document.createElement("td");
+    if (className) td.className = className;
     td.appendChild(inner);
     return td;
+  }
+
+  function dataColumnOrder(ctx = {}) {
+    const order = Array.isArray(ctx.state?.columnOrder) ? ctx.state.columnOrder : [];
+    const valid = ["key", "type", "title", "year", "id", "imdb", "tvdb", "trakt", "simkl", "anilist", "extra"];
+    const seen = new Set();
+    const out = [];
+    order.forEach(column => {
+      if (!valid.includes(column) || seen.has(column)) return;
+      seen.add(column);
+      out.push(column);
+    });
+    valid.forEach(column => {
+      if (!seen.has(column)) out.push(column);
+    });
+    return out;
   }
 
   function createRowElement(row, ctx = {}) {
@@ -55,7 +72,10 @@
       call(ctx, "markChanged");
       call(ctx, "renderRows");
     };
-    const delTd = cell(delBtn);
+    const actionWrap = document.createElement("div");
+    actionWrap.className = "cw-action-buttons";
+    actionWrap.appendChild(delBtn);
+    const delTd = cell(actionWrap);
     delTd.className = "cw-action-cell";
     if (ctx.wideActions) delTd.classList.add("cw-action-wide");
 
@@ -66,21 +86,19 @@
       repBtn.className = "cw-btn cw-btn-del";
       repBtn.innerHTML = '<span class="material-symbol">published_with_changes</span>';
       repBtn.title = t === "episode" ? "Replace episode" : t === "season" ? "Replace season" : "Replace item";
-      repBtn.style.marginLeft = "4px";
       repBtn.onclick = () => call(ctx, "openItemReplacer", row, repBtn);
-      delTd.appendChild(repBtn);
+      actionWrap.appendChild(repBtn);
     }
 
     if (blockMode) {
       const rawBtn = document.createElement("button");
       rawBtn.type = "button";
       rawBtn.className = "cw-btn cw-btn-del";
-      rawBtn.innerHTML = '<span class="material-symbol">data_object</span>';
-      rawBtn.title = "Advanced fields";
-      rawBtn.setAttribute("aria-label", "Advanced fields");
-      rawBtn.style.marginLeft = "4px";
+      rawBtn.innerHTML = '<span class="material-symbol">database</span>';
+      rawBtn.title = "Record details";
+      rawBtn.setAttribute("aria-label", "Record details");
       rawBtn.onclick = () => call(ctx, "openRawFieldsModal", row);
-      delTd.appendChild(rawBtn);
+      actionWrap.appendChild(rawBtn);
     }
     tr.appendChild(delTd);
 
@@ -93,7 +111,8 @@
       row.key = e.target.value;
       call(ctx, "markChanged");
     };
-    tr.appendChild(cell(keyIn));
+    const dataCells = {};
+    dataCells.key = cell(keyIn, "cw-col-key");
 
     const typeBtn = document.createElement("button");
     typeBtn.type = "button";
@@ -108,7 +127,7 @@
       if (typeBtn.disabled) return;
       call(ctx, "openTypeEditor", row, typeBtn);
     };
-    tr.appendChild(cell(typeBtn));
+    dataCells.type = cell(typeBtn, "cw-col-type");
 
     const titleCell = document.createElement("div");
     titleCell.className = "cw-title-cell";
@@ -148,57 +167,31 @@
       call(ctx, "markChanged");
     };
 
-    const imdbIn = document.createElement("input");
-    imdbIn.name = fieldName("imdb");
-    imdbIn.value = row.imdb || "";
-    imdbIn.disabled = locked;
-    imdbIn.oninput = e => {
-      row.imdb = e.target.value;
+    const setIdValue = (idKey, value) => {
+      row[idKey] = value;
+      row.raw = row.raw || {};
       row.raw.ids = row.raw.ids || {};
-      if (e.target.value) row.raw.ids.imdb = e.target.value;
-      else delete row.raw.ids.imdb;
+      if (value) row.raw.ids[idKey] = value;
+      else delete row.raw.ids[idKey];
       call(ctx, "markChanged");
     };
 
-    const idAIn = document.createElement("input");
-    idAIn.name = fieldName(anilistMode ? "mal" : "tmdb");
-    idAIn.value = anilistMode ? (row.mal || "") : (row.tmdb || "");
-    idAIn.placeholder = anilistMode ? "MAL..." : "TMDB...";
-    idAIn.disabled = locked;
-    idAIn.oninput = e => {
-      const v = e.target.value;
-      row.raw.ids = row.raw.ids || {};
-      if (anilistMode) {
-        row.mal = v;
-        if (v) row.raw.ids.mal = v;
-        else delete row.raw.ids.mal;
-      } else {
-        row.tmdb = v;
-        if (v) row.raw.ids.tmdb = v;
-        else delete row.raw.ids.tmdb;
-      }
-      call(ctx, "markChanged");
+    const makeIdInput = (idKey, label) => {
+      const input = document.createElement("input");
+      input.name = fieldName(idKey);
+      input.value = row[idKey] || "";
+      input.placeholder = `${label}...`;
+      input.disabled = locked;
+      input.oninput = e => setIdValue(idKey, e.target.value);
+      return input;
     };
 
-    const idBIn = document.createElement("input");
-    idBIn.name = fieldName(anilistMode ? "anilist" : "trakt");
-    idBIn.value = anilistMode ? (row.anilist || "") : (row.trakt || "");
-    idBIn.placeholder = anilistMode ? "AniList..." : "Trakt...";
-    idBIn.disabled = locked;
-    idBIn.oninput = e => {
-      const v = e.target.value;
-      row.raw.ids = row.raw.ids || {};
-      if (anilistMode) {
-        row.anilist = v;
-        if (v) row.raw.ids.anilist = v;
-        else delete row.raw.ids.anilist;
-      } else {
-        row.trakt = v;
-        if (v) row.raw.ids.trakt = v;
-        else delete row.raw.ids.trakt;
-      }
-      call(ctx, "markChanged");
-    };
+    const imdbIn = makeIdInput("imdb", "IMDb");
+    const idAIn = makeIdInput(anilistMode ? "mal" : "tmdb", anilistMode ? "MAL" : "TMDB");
+    const tvdbIn = makeIdInput("tvdb", "TVDB");
+    const traktIn = makeIdInput("trakt", "Trakt");
+    const simklIn = makeIdInput("simkl", "SIMKL");
+    const anilistIn = makeIdInput("anilist", "AniList");
 
     const searchBtn = document.createElement("button");
     searchBtn.type = "button";
@@ -225,7 +218,9 @@
         yearIn,
         imdbIn,
         tmdbIn: anilistMode ? null : idAIn,
-        traktIn: null,
+        tvdbIn,
+        traktIn,
+        simklIn,
         typeBtn,
       });
     };
@@ -249,12 +244,17 @@
       origin.textContent = "Manual correction";
       titleCell.appendChild(origin);
     }
-    tr.appendChild(cell(titleCell));
+    dataCells.title = cell(titleCell, "cw-col-title");
 
     const yearTd = cell(yearIn);
     yearTd.className = "cw-col-year";
-    tr.appendChild(yearTd);
-    tr.appendChild(cell(idAIn));
+    dataCells.year = yearTd;
+    dataCells.id = cell(idAIn, "cw-col-id");
+    dataCells.imdb = cell(imdbIn, "cw-col-imdb");
+    dataCells.tvdb = cell(tvdbIn, "cw-col-tvdb");
+    dataCells.trakt = cell(traktIn, "cw-col-trakt");
+    dataCells.simkl = cell(simklIn, "cw-col-simkl");
+    dataCells.anilist = cell(anilistIn, "cw-col-anilist");
 
     const extraBtn = document.createElement("button");
     extraBtn.type = "button";
@@ -272,7 +272,14 @@
     } else if (state.kind === "progress") {
       extraBtn.onclick = () => call(ctx, "openProgressEditor", row, extraBtn, extraBtn);
     }
-    tr.appendChild(cell(extraBtn));
+    dataCells.extra = cell(extraBtn, "cw-col-extra");
+
+    dataColumnOrder(ctx).forEach(column => {
+      const td = dataCells[column];
+      if (!td) return;
+      td.dataset.column = column;
+      tr.appendChild(td);
+    });
 
     return tr;
   }

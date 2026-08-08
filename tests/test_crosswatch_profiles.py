@@ -14,6 +14,7 @@ import api.authenticationAPI as auth_api
 import services.editor as editor_service
 import services.export as export_service
 import cw_platform.tracker_storage as tracker_storage
+from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import build_pair_config_view, get_provider_block
 from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
 
@@ -135,8 +136,7 @@ def test_editor_tracker_manual_policy_is_stored_per_crosswatch_profile(tmp_path:
     monkeypatch.setattr(editor_api, "load_config", lambda: {
         "crosswatch": {"root_dir": str(root), "instances": {"CW-P02": {}}},
     })
-    monkeypatch.setattr(editor_api, "_STATE_PATH", tmp_path / "state.json")
-    monkeypatch.setattr(editor_api, "_POLICY_PATH", tmp_path / "state.manual.json")
+    monkeypatch.setattr(editor_api, "_STATE_BASE", tmp_path)
 
     res = editor_api.api_editor_save_state({
         "kind": "watchlist",
@@ -449,22 +449,19 @@ def test_profile_labels_are_used_in_analyzer_and_events_modals() -> None:
 
 
 def test_exporter_options_label_crosswatch_profiles_from_config(tmp_path: Path, monkeypatch) -> None:
-    state_path = tmp_path / "state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "providers": {
-                    "CROSSWATCH": {
-                        "instances": {
-                            "CW-P01": {
-                                "history": {
-                                    "baseline": {
-                                        "items": {
-                                            "tmdb:1": {
-                                                "type": "movie",
-                                                "title": "Desk Movie",
-                                                "ids": {"tmdb": "1"},
-                                            }
+    StateStore(tmp_path).save_state(
+        {
+            "providers": {
+                "CROSSWATCH": {
+                    "instances": {
+                        "CW-P01": {
+                            "history": {
+                                "baseline": {
+                                    "items": {
+                                        "tmdb:1": {
+                                            "type": "movie",
+                                            "title": "Desk Movie",
+                                            "ids": {"tmdb": "1"},
                                         }
                                     }
                                 }
@@ -473,10 +470,9 @@ def test_exporter_options_label_crosswatch_profiles_from_config(tmp_path: Path, 
                     }
                 }
             }
-        ),
-        "utf-8",
+        }
     )
-    monkeypatch.setattr(export_service, "STATE_PATH", state_path)
+    monkeypatch.setattr(export_service, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(
         export_service,
         "load_config",

@@ -50,14 +50,15 @@
 * **Multi media-server** and **multi tracker** support with profiles.
 * **Synchronization**
   * Watchlists, Ratings, History and Progress
-  * Anime ID mapping for AniList/SIMKL matching.
+  * Rewatches: keep separate plays in sync (Trakt, SIMKL, PublicMetaDB, Floppy, CW)
+  * Anime ID mapping (powered by AniBridge and animeApi) for AniList and SIMKL pairs, with custom mappings.
 * **Scrobble (tracks your activity)**
   * **Watcher** (Plex/Emby/Jellyfin/Kodi to Trakt/SIMKL/MDBList/Floppy/CW)
     * Does not require Plex Pass or Emby Premiere. Yay!
   * **Webhooks** (Plex/Emby/Jellyfin to Trakt/SIMKL/MDBList)
 * **Tools**
   * Analyzer: Finds items that are **stuck** or inconsistent between providers.
-  * Playback Progress Manager: View and edit unfinished playback sessions.
+  * Playback Progress Manager: View and edit unfinished playback sessions across providers.
   * Editor: Inspect and adjust your items and add or block items.
   * Events Viewer: Search and inspect sync runs.
   * Captures: Rollback tool for provider watchlist, ratings, and history.

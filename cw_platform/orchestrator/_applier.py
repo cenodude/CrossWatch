@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence, Mapping
 from typing import Any, Callable, cast
 from . import _unresolved as _unresolved_mod
+from ..run_control import cancel_requested
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 _UNRESOLVED_EXAMPLE_CAP = 25
@@ -354,6 +355,9 @@ def _apply_chunked(
     total = len(items)
     if total == 0:
         return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0}
+    if cancel_requested():
+        emit(f"{tag}:cancelled", dst=dst, feature=feature, done=0, total=total)
+        return {"ok": True, "attempted": 0, "confirmed": 0, "skipped": 0, "unresolved": 0, "errors": 0, "count": 0, "cancelled": True}
     csize = int(chunk_size or 0)
     if csize <= 0 or total <= csize:
         raw = _retry(lambda: call(items))
@@ -376,6 +380,10 @@ def _apply_chunked(
         "errors": 0,
     }
     for i in range(0, total, csize):
+        if cancel_requested():
+            agg["cancelled"] = True
+            emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
+            break
         chunk = items[i : i + csize]
         raw = _retry(lambda: call(chunk))
         res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit)
@@ -421,6 +429,13 @@ def _apply_chunked(
     agg["count"] = agg["confirmed"]
     return agg
 
+def _mark_dry_run(res: dict[str, Any]) -> dict[str, Any]:
+    res["dry_run"] = True
+    res["confirmed"] = 0
+    res["confirmed_keys"] = []
+    res["count"] = 0
+    return res
+
 def apply_add(
     *,
     dst_ops,
@@ -446,6 +461,8 @@ def apply_add(
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
     )
+    if dry_run:
+        _mark_dry_run(res)
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
@@ -453,6 +470,7 @@ def apply_add(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "added": _conf,
+        "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
         "skipped_inferred": int(res.get("skipped_inferred", 0)),
@@ -498,6 +516,8 @@ def apply_update(
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
     )
+    if dry_run:
+        _mark_dry_run(res)
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
@@ -505,6 +525,7 @@ def apply_update(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "updated": _conf,
+        "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
         "skipped_inferred": int(res.get("skipped_inferred", 0)),
@@ -550,6 +571,8 @@ def apply_remove(
         chunk_size=chunk_size,
         chunk_pause_ms=chunk_pause_ms,
     )
+    if dry_run:
+        _mark_dry_run(res)
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
@@ -557,6 +580,7 @@ def apply_remove(
         "count": _conf,
         "attempted": int(res.get("attempted", 0)),
         "removed": _conf,
+        "dry_run": bool(dry_run),
         "skipped": int(res.get("skipped", 0)),
         "skipped_exact": int(res.get("skipped_exact", 0)),
         "skipped_inferred": int(res.get("skipped_inferred", 0)),

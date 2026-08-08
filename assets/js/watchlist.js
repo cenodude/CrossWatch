@@ -4,15 +4,40 @@
 
 (function () {
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
+  const PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
+  const DEFAULT_PAGE_SIZE = 50;
+  const COLUMN_KEYS = ["poster", "title", "year", "rel", "genre", "type", "tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal", "sync", "added", "key"];
+  const COLUMN_LAYOUT_VERSION = 1;
+  const DEFAULT_COLUMN_ORDER = COLUMN_KEYS.slice();
+  const DEFAULT_COLUMN_VISIBILITY = { poster:true, title:true, year:false, rel:true, genre:true, type:true, tmdb:false, imdb:false, tvdb:false, trakt:false, simkl:false, anilist:false, mal:false, sync:true, added:false, key:false };
+  const DEFAULT_COLUMN_WIDTHS = { poster:70, title:340, year:92, rel:120, genre:180, type:104, tmdb:130, imdb:150, tvdb:120, trakt:120, simkl:120, anilist:120, mal:120, sync:172, added:150, key:220 };
+  const MIN_COLUMN_WIDTHS = { poster:56, title:120, year:72, rel:92, genre:96, type:82, tmdb:88, imdb:104, tvdb:88, trakt:88, simkl:88, anilist:96, mal:82, sync:106, added:112, key:120 };
+  const MAX_COLUMN_WIDTHS = { poster:110, title:760, year:160, rel:220, genre:360, type:180, tmdb:260, imdb:280, tvdb:240, trakt:240, simkl:240, anilist:240, mal:240, sync:380, added:260, key:380 };
+  const COLUMN_META = {
+    poster: { icon:"image", label:"Poster" },
+    title: { icon:"title", label:"Title", required:true },
+    year: { icon:"event", label:"Year" },
+    rel: { icon:"calendar_month", label:"Release" },
+    genre: { icon:"theater_comedy", label:"Genre" },
+    type: { icon:"category", label:"Type" },
+    tmdb: { icon:"fingerprint", label:"TMDB" },
+    imdb: { icon:"tag", label:"IMDb" },
+    tvdb: { icon:"dns", label:"TVDB" },
+    trakt: { icon:"confirmation_number", label:"Trakt" },
+    simkl: { icon:"hub", label:"SIMKL" },
+    anilist: { icon:"animation", label:"AniList" },
+    mal: { icon:"link", label:"MAL" },
+    sync: { icon:"sync", label:"Sync" },
+    added: { icon:"schedule", label:"Added" },
+    key: { icon:"key", label:"Key" },
+  };
 
 
   /* Layout */
   const host=document.getElementById("page-watchlist"); if(!host) return;
   const readPrefs=()=>{try{return JSON.parse(localStorage.getItem("wl.prefs")||"{}")}catch{return{}}};
   const writePrefs=p=>{try{localStorage.setItem("wl.prefs",JSON.stringify(p))}catch{}};
-  const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",showHidden:false,sortKey:"title",sortDir:"asc",moreOpen:false,cols:{},colVis:{}},readPrefs());
-  prefs.colVis = Object.assign({ poster:true, title:true, rel:true, genre:true, type:true, sync:true }, prefs.colVis || {});
-  prefs.colVis.title = true;
+  const prefs=Object.assign({posterMin:150,view:"posters",released:"both",overlays:"yes",genre:"",showHidden:false,sortKey:"title",sortDir:"asc",moreOpen:false,pageSize:DEFAULT_PAGE_SIZE,wideView:false,cols:{},colUser:{},colVis:{},columnOrder:DEFAULT_COLUMN_ORDER.slice(),columnLayoutVersion:COLUMN_LAYOUT_VERSION},readPrefs());
   const providerMeta = () => window.CW?.ProviderMeta || {};
   const providerKey = (value) => providerMeta().keyOf?.(value) || String(value || "").trim().toUpperCase();
   const providerLabel = (value) => providerMeta().label?.(value) || providerKey(value) || String(value || "");
@@ -75,18 +100,93 @@
   const topSyncEl   = $("wl-stat-sync");
   const filterStateEl = $("wl-filter-state");
   const showHiddenChk = $("wl-show-hidden");
+  let pageSizeSel = null;
+  let pageSizeValueEl = null;
+  let viewValueEl = null;
+  let columnsBtn = null;
+  let wideBtn = null;
   let cwProfileLabel = null;
   let cwProfileSel = null;
   let delProfile = null;
+  function decorateToolbar() {
+    const toolbar = host.querySelector(".wl-toolbar");
+    const left = host.querySelector(".wl-toolbar-left");
+    const right = host.querySelector(".wl-toolbar-right");
+    if (!left || !right || !qEl || !viewSel) return;
+    host.querySelector('label[for="wl-q"]')?.remove();
+    host.querySelector('label[for="wl-view"]')?.remove();
+    colsLabel?.remove();
+    colsBox?.remove();
+    qEl.placeholder = "Filter by title / id / provider...";
+    toolbar?.classList.add("cw-controls");
+    qEl.classList.add("cw-input", "wl-toolbar-search");
+
+    const viewField = document.createElement("div");
+    viewField.className = "cw-page-size-control wl-toolbar-field wl-view-field";
+    viewField.innerHTML = `<span class="wl-toolbar-field-label">View</span>`;
+    const viewWrap = document.createElement("button");
+    viewWrap.id = "wl-view-menu";
+    viewWrap.className = "cw-btn wl-btn wl-toolbar-menu wl-view-control";
+    viewWrap.type = "button";
+    viewWrap.setAttribute("aria-label", "View");
+    viewWrap.innerHTML = `<span class="wl-toolbar-menu-value"></span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span>`;
+    viewSel.style.display = "none";
+    viewValueEl = viewWrap.querySelector(".wl-toolbar-menu-value");
+    viewField.appendChild(viewWrap);
+
+    const pageField = document.createElement("div");
+    pageField.className = "cw-page-size-control wl-toolbar-field wl-page-field";
+    pageField.innerHTML = `<span class="wl-toolbar-field-label">Rows</span>`;
+    const pageWrap = document.createElement("button");
+    pageWrap.id = "wl-page-size";
+    pageWrap.className = "cw-btn wl-btn wl-toolbar-menu wl-page-size-control";
+    pageWrap.type = "button";
+    pageWrap.setAttribute("aria-label", "Rows");
+    pageWrap.innerHTML = `<span class="wl-toolbar-menu-value"></span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span>`;
+    pageSizeValueEl = pageWrap.querySelector(".wl-toolbar-menu-value");
+    pageSizeSel = pageWrap;
+    pageField.appendChild(pageWrap);
+
+    columnsBtn = document.createElement("button");
+    columnsBtn.id = "wl-columns-btn";
+    columnsBtn.className = "cw-btn wl-btn cw-columns-btn wl-columns-btn";
+    columnsBtn.type = "button";
+    columnsBtn.title = "Columns";
+    columnsBtn.setAttribute("aria-label", "Columns");
+    columnsBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">filter_alt</span>`;
+
+    wideBtn = document.createElement("button");
+    wideBtn.id = "wl-wide-btn";
+    wideBtn.className = "cw-btn wl-btn cw-wide-btn wl-wide-btn";
+    wideBtn.type = "button";
+    wideBtn.title = "Wide view";
+    wideBtn.setAttribute("aria-label", "Wide view");
+    wideBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">fullscreen</span>`;
+
+    const spacer = document.createElement("div");
+    spacer.className = "cw-controls-spacer wl-controls-spacer";
+    selAll?.closest(".wl-selectall")?.remove();
+    left.replaceChildren(qEl, viewField, pageField, columnsBtn, wideBtn, spacer);
+    selCount?.classList.add("cw-chip");
+    filterStateEl?.classList.add("cw-chip");
+    if (selCount) right.insertBefore(selCount, filterStateEl || null);
+  }
+  decorateToolbar();
   const enhancedControlWrap = el => {
     const wrap = el?.nextElementSibling;
     return wrap?.classList?.contains("cw-icon-select") && wrap.__cwNativeSelect === el ? wrap : null;
   };
   const setControlVisible = (el, on) => {
     if (!el) return;
+    el.hidden = !on;
     el.style.display = on ? "" : "none";
+    el.classList.toggle("wl-hidden-control", !on);
     const wrap = enhancedControlWrap(el);
-    if (wrap) wrap.style.display = on ? "" : "none";
+    if (wrap) {
+      wrap.hidden = !on;
+      wrap.style.display = on ? "" : "none";
+      wrap.classList.toggle("wl-hidden-control", !on);
+    }
   };
   const syncProfileSelectOptions = (selectEl, current = "default") => {
     if (!selectEl) return "default";
@@ -123,82 +223,530 @@
   ensureCrosswatchProfileControls();
 
   /* Column sizing */
-  const colSel = { title: ".c-title", rel: ".c-rel", genre: ".c-genre", type: ".c-type", sync: ".c-sync", poster: ".c-poster" };
-  const minPx  = { title: 86, rel: 82, genre: 112, type: 72, sync: 118, poster: 56 };
-  const defaultPx = { poster: 62, title: 240, rel: 110, genre: 150, type: 88, sync: 148 };
-  try{const pw=parseInt((prefs.cols||{}).poster||"",10);if(pw&&pw>120){prefs.cols=prefs.cols||{};prefs.cols.poster=defaultPx.poster+"px";writePrefs(prefs);}}catch{}
-  const isColVisible = k => k === "title" ? true : (prefs.colVis?.[k] !== false);
+  const isRequiredColumn = column => !!(COLUMN_META[column] && COLUMN_META[column].required);
+  const isColVisible = column => isRequiredColumn(column) || prefs.colVis?.[column] !== false;
+  const pageSizeValue = () => PAGE_SIZE_OPTIONS.includes(Number(prefs.pageSize)) ? Number(prefs.pageSize) : DEFAULT_PAGE_SIZE;
+  const columnHeaders = {};
+  let activePopup = null;
+  let columnLayoutResizeTimer = 0;
 
-  function applyCols(init=false){
-    const cg=document.querySelector(".wl-table colgroup"); if(!cg) return;
-    prefs.cols=prefs.cols||{};
-    let dirty=false;
-    for(const [k,sel] of Object.entries(colSel)){
-      const col=cg.querySelector(sel); if(!col) continue;
-      const saved=parseInt(prefs.cols[k]||"",10);
-      const next=Math.max(minPx[k], Number.isFinite(saved) ? saved : defaultPx[k]);
-      const width=`${next}px`;
-      if (prefs.cols[k] !== width) { prefs.cols[k] = width; dirty = true; }
-      col.style.width = width;
-    }
-    if (dirty || init) writePrefs(prefs);
+  function normalizeColumnOrder(order) {
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(order) ? order : []).forEach(column => {
+      const key = column === "release" ? "rel" : column;
+      if (!COLUMN_KEYS.includes(key) || seen.has(key)) return;
+      seen.add(key);
+      out.push(key);
+    });
+    COLUMN_KEYS.forEach(column => {
+      if (!seen.has(column)) out.push(column);
+    });
+    return out;
   }
 
-  /* Column resizers */
-  function attachResizers() {
-    const cg = document.querySelector(".wl-table colgroup");
-    if (!cg) return;
+  function clampColumnWidth(column, value) {
+    const fallback = DEFAULT_COLUMN_WIDTHS[column] || 160;
+    const raw = typeof value === "string" ? parseInt(value, 10) : Number(value);
+    const n = Number.isFinite(raw) ? raw : fallback;
+    return Math.max(MIN_COLUMN_WIDTHS[column] || 80, Math.min(MAX_COLUMN_WIDTHS[column] || 720, n));
+  }
 
-    const getCol = k => cg.querySelector(colSel[k]);
-    const px = el => parseInt((el?.style.width || getComputedStyle(el).width), 10) || 0;
-    const selColW = () => (document.querySelector(".wl-table col.c-sel") ? px(document.querySelector(".wl-table col.c-sel")) : 44);
+  function normalizeColumnState() {
+    const legacyVisibility = prefs.colVis && typeof prefs.colVis === "object" ? prefs.colVis : {};
+    prefs.colVis = Object.assign({}, DEFAULT_COLUMN_VISIBILITY, legacyVisibility);
+    if (typeof prefs.colVis.release === "boolean") {
+      prefs.colVis.rel = prefs.colVis.release;
+      delete prefs.colVis.release;
+    }
+    prefs.colVis.title = true;
+    prefs.columnOrder = normalizeColumnOrder(prefs.columnOrder);
+    prefs.cols = prefs.cols && typeof prefs.cols === "object" ? prefs.cols : {};
+    prefs.colUser = prefs.colUser && typeof prefs.colUser === "object" ? prefs.colUser : {};
+    COLUMN_KEYS.forEach(column => {
+      prefs.cols[column] = clampColumnWidth(column, prefs.cols[column]);
+      prefs.colUser[column] = !!prefs.colUser[column];
+    });
+    Object.keys(prefs.colUser).forEach(column => {
+      if (!COLUMN_KEYS.includes(column)) delete prefs.colUser[column];
+    });
+    prefs.pageSize = pageSizeValue();
+    prefs.columnLayoutVersion = COLUMN_LAYOUT_VERSION;
+  }
 
-    document.querySelectorAll(".wl-table thead th[data-col]").forEach(th => {
-      const k = th.dataset.col, h = th.querySelector(".wl-resize"), c = getCol(k);
-      if (!h || !c) return;
+  function orderedColumns() {
+    normalizeColumnState();
+    return prefs.columnOrder;
+  }
 
-      const onDown = e => {
-        e.preventDefault(); e.stopPropagation();
-        const startX = e.clientX, base = px(c);
+  function visibleColumns() {
+    return orderedColumns().filter(isColVisible);
+  }
 
-        const sumOther = () =>
-          selColW() + Object.keys(colSel).reduce((s, kk) => {
-            if (kk === k || !isColVisible(kk)) return s;
-            return s + (px(getCol(kk)) || minPx[kk]);
-          }, 0);
+  function columnLabel(column) {
+    return COLUMN_META[column]?.label || column;
+  }
 
-        const maxW = () => Math.max(minPx[k], (listWrapEl.clientWidth - 2) - sumOther());
+  function columnWidth(column) {
+    normalizeColumnState();
+    return clampColumnWidth(column, prefs.cols[column]);
+  }
 
-        const onMove = ev => {
-          const w = Math.min(maxW(), Math.max(minPx[k], base + (ev.clientX - startX)));
-          c.style.width = w + "px";
-        };
-        const onUp = () => {
-          prefs.cols[k] = c.style.width; writePrefs(prefs);
-          window.removeEventListener("pointermove", onMove, true);
-          window.removeEventListener("pointerup", onUp, true);
-          window.removeEventListener("pointercancel", onUp, true);
-        };
+  function sortForColumn(column) {
+    return column === "rel" ? "rel" : column;
+  }
 
-        window.addEventListener("pointermove", onMove, true);
-        window.addEventListener("pointerup", onUp, true);
-        window.addEventListener("pointercancel", onUp, true);
-      };
+  function ensureColumnHeader(column) {
+    let th = columnHeaders[column] || host.querySelector(`.wl-table th[data-col="${column}"]`);
+    if (!th) th = document.createElement("th");
+    columnHeaders[column] = th;
+    th.className = `sortable wl-col-${column} wl-resizable`;
+    th.dataset.col = column;
+    th.dataset.sort = sortForColumn(column);
+    th.style.position = "relative";
+    th.innerHTML = `<span class="wl-th-inner"><span class="wl-th-label">${escOpt(columnLabel(column))}</span></span>`;
+    let handle = th.querySelector(".wl-resize");
+    if (!handle) {
+      handle = document.createElement("span");
+      handle.className = "wl-resize";
+      handle.setAttribute("role", "separator");
+      handle.setAttribute("aria-orientation", "vertical");
+      th.appendChild(handle);
+    }
+    handle.title = `Resize ${columnLabel(column)}`;
+    handle.onpointerdown = ev => startColumnResize(ev, column, th);
+    handle.ondblclick = ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      prefs.cols[column] = DEFAULT_COLUMN_WIDTHS[column];
+      if (prefs.colUser) prefs.colUser[column] = false;
+      applyColumnLayout();
+      writePrefs(prefs);
+    };
+    th.onclick = ev => {
+      if (ev.target?.closest?.(".wl-resize")) return;
+      setSort(th.dataset.sort);
+    };
+    return th;
+  }
 
-      const onDbl = e => {
-        e.stopPropagation();
-        delete (prefs.cols || {})[k];
-        writePrefs(prefs);
-        applyCols(true);
-      };
+  function syncColumnGroup(table, columns, widths, titleExtra, fillerWidth = 0) {
+    let group = table.querySelector("colgroup");
+    if (!group) {
+      group = document.createElement("colgroup");
+      table.insertBefore(group, table.firstChild);
+    }
+    group.replaceChildren();
+    [["select", 46], ...columns.map(column => [column, widths[column] + (column === "title" ? titleExtra : 0)])].forEach(([column, width]) => {
+      const col = document.createElement("col");
+      col.dataset.column = column;
+      col.className = column === "select" ? "c-sel" : `c-${column}`;
+      col.style.width = `${width}px`;
+      group.appendChild(col);
+    });
+    if (fillerWidth > 0) {
+      const col = document.createElement("col");
+      col.dataset.column = "_fill";
+      col.className = "c-fill";
+      col.style.width = `${fillerWidth}px`;
+      group.appendChild(col);
+    }
+  }
 
-      h.addEventListener("pointerdown", onDown, true);
-      h.addEventListener("dblclick", onDbl, true);
+  function applyRenderedRowColumnOrder() {
+    const columns = visibleColumns();
+    const table = host.querySelector(".wl-table");
+    const needsFiller = table?.dataset?.hasFiller === "1";
+    host.querySelectorAll(".wl-table tbody tr").forEach(tr => {
+      const selectCell = tr.children[0] || null;
+      const cells = {};
+      COLUMN_KEYS.forEach(column => {
+        const td = tr.querySelector(`td[data-col="${column}"]`);
+        if (td) cells[column] = td;
+      });
+      const frag = document.createDocumentFragment();
+      if (selectCell) frag.appendChild(selectCell);
+      columns.forEach(column => {
+        if (cells[column]) frag.appendChild(cells[column]);
+      });
+      let filler = tr.querySelector('td[data-col="_fill"]');
+      if (!needsFiller) {
+        filler?.remove();
+      } else {
+        if (!filler) {
+          filler = document.createElement("td");
+          filler.dataset.col = "_fill";
+          filler.className = "wl-fill-cell";
+          filler.setAttribute("aria-hidden", "true");
+        }
+        frag.appendChild(filler);
+      }
+      tr.appendChild(frag);
     });
   }
 
-  applyCols(true);
-  attachResizers();
+  function applyColumnLayout() {
+    const table = host.querySelector(".wl-table");
+    const headRow = table?.tHead?.rows?.[0];
+    if (!table || !headRow) return;
+    const selectHead = headRow.querySelector("th:first-child") || document.createElement("th");
+    const columns = visibleColumns();
+    const widths = Object.fromEntries(COLUMN_KEYS.map(column => [column, columnWidth(column)]));
+    let total = 46;
+    columns.forEach(column => { total += widths[column]; });
+    const containerWidth = Math.floor(listWrapEl?.clientWidth || 0);
+    const availableWidth = Math.max(0, containerWidth - 1);
+    const hasOverflow = availableWidth > 0 && total > availableWidth + 1;
+    const layoutWidths = { ...widths };
+    let layoutTotal = total;
+    if (!hasOverflow && availableWidth > total) {
+      let remaining = availableWidth - total;
+      const weights = { title:4, genre:2, sync:2, rel:1 };
+      const growTargets = columns.filter(column => Object.prototype.hasOwnProperty.call(weights, column) && !prefs.colUser?.[column]);
+      while (remaining > 0 && growTargets.length) {
+        const weightSum = growTargets.reduce((sum, column) => sum + weights[column], 0);
+        let consumed = 0;
+        for (let i = growTargets.length - 1; i >= 0; i -= 1) {
+          const column = growTargets[i];
+          const cap = (MAX_COLUMN_WIDTHS[column] || 720) - layoutWidths[column];
+          if (cap <= 0) {
+            growTargets.splice(i, 1);
+            continue;
+          }
+          const add = Math.min(cap, remaining, Math.max(1, Math.round((remaining * weights[column]) / weightSum)));
+          layoutWidths[column] += add;
+          remaining -= add;
+          consumed += add;
+        }
+        if (!consumed) break;
+      }
+      layoutTotal = availableWidth - remaining;
+    }
+    const fillerWidth = !hasOverflow && availableWidth > layoutTotal ? availableWidth - layoutTotal : 0;
+    const fillerHead = document.createElement("th");
+    fillerHead.dataset.col = "_fill";
+    fillerHead.className = "wl-fill-col";
+    fillerHead.setAttribute("aria-hidden", "true");
+
+    selectHead.style.width = "46px";
+    selectHead.style.minWidth = "46px";
+    headRow.replaceChildren(selectHead, ...columns.map(ensureColumnHeader), ...(fillerWidth > 0 ? [fillerHead] : []));
+    syncColumnGroup(table, columns, layoutWidths, 0, fillerWidth);
+    columns.forEach(column => {
+      const th = columnHeaders[column];
+      const width = layoutWidths[column];
+      th.style.width = `${width}px`;
+      th.style.minWidth = `${width}px`;
+    });
+    table.dataset.hasFiller = fillerWidth > 0 ? "1" : "0";
+    table.style.width = hasOverflow ? `${total}px` : `${layoutTotal + fillerWidth}px`;
+    table.style.minWidth = hasOverflow ? `${total}px` : "0";
+    listWrapEl?.classList.toggle("wl-table-overflow-x", hasOverflow);
+    applyRenderedRowColumnOrder();
+    updateSortHeaderUI();
+  }
+
+  function applyResizeWidths(column, startWidths, rawWidth) {
+    const columns = visibleColumns();
+    const widths = Object.fromEntries(columns.map(c => [c, clampColumnWidth(c, startWidths[c])]));
+    if (!columns.includes(column)) return;
+    widths[column] = clampColumnWidth(column, rawWidth);
+
+    const availableWidth = Math.max(0, Math.floor(listWrapEl?.clientWidth || 0) - 1);
+    const minTotal = 46 + columns.reduce((sum, c) => sum + (MIN_COLUMN_WIDTHS[c] || 80), 0);
+    if (availableWidth > minTotal) {
+      let overflow = 46 + columns.reduce((sum, c) => sum + widths[c], 0) - availableWidth;
+      const idx = columns.indexOf(column);
+      const candidates = [...columns.slice(idx + 1), ...columns.slice(0, idx).reverse()].filter(c => c !== column);
+      for (const c of candidates) {
+        if (overflow <= 0) break;
+        const min = MIN_COLUMN_WIDTHS[c] || 80;
+        const take = Math.min(overflow, Math.max(0, widths[c] - min));
+        widths[c] -= take;
+        overflow -= take;
+      }
+      if (overflow > 0) {
+        widths[column] = Math.max(MIN_COLUMN_WIDTHS[column] || 80, widths[column] - overflow);
+      }
+    }
+
+    columns.forEach(c => {
+      prefs.cols[c] = clampColumnWidth(c, widths[c]);
+    });
+    prefs.colUser = prefs.colUser && typeof prefs.colUser === "object" ? prefs.colUser : {};
+    prefs.colUser[column] = true;
+  }
+
+  function startColumnResize(ev, column, th) {
+    if (!COLUMN_KEYS.includes(column)) return;
+    if (ev.button != null && ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const columns = visibleColumns();
+    const startWidths = Object.fromEntries(columns.map(c => [c, columnWidth(c)]));
+    const startX = ev.clientX;
+    const startWidth = startWidths[column] || columnWidth(column);
+    document.body.classList.add("cw-column-resizing");
+    th.classList.add("wl-resizing");
+    const onMove = moveEv => {
+      applyResizeWidths(column, startWidths, startWidth + moveEv.clientX - startX);
+      applyColumnLayout();
+    };
+    const finish = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      document.body.classList.remove("cw-column-resizing");
+      th.classList.remove("wl-resizing");
+      writePrefs(prefs);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  }
+
+  function syncWideViewUI() {
+    const active = !!prefs.wideView;
+    host.classList.toggle("wl-wide", active);
+    wideBtn?.classList.toggle("active", active);
+    if (wideBtn) {
+      wideBtn.title = active ? "Exit wide view" : "Wide view";
+      wideBtn.setAttribute("aria-label", wideBtn.title);
+      const icon = wideBtn.querySelector(".material-symbols-rounded");
+      if (icon) icon.textContent = active ? "fullscreen_exit" : "fullscreen";
+    }
+    window.setTimeout(applyColumnLayout, 0);
+  }
+
+  function syncPageSizeUI() {
+    prefs.pageSize = pageSizeValue();
+    if (pageSizeValueEl) pageSizeValueEl.textContent = String(prefs.pageSize);
+    pageSizeSel?.setAttribute("aria-label", `Rows: ${prefs.pageSize}`);
+  }
+
+  function syncViewModeUI() {
+    if (viewSel) viewSel.value = viewMode;
+    if (viewValueEl) viewValueEl.textContent = viewMode === "list" ? "List" : "Posters";
+    host.querySelector("#wl-view-menu")?.setAttribute("aria-label", `View: ${viewMode === "list" ? "List" : "Posters"}`);
+  }
+
+  function syncColumnVisibilityUI() {
+    normalizeColumnState();
+    if (COLUMN_KEYS.includes(sortKey) && prefs.colVis[sortKey] === false) {
+      sortKey = "title";
+      sortDir = "asc";
+      prefs.sortKey = sortKey;
+      prefs.sortDir = sortDir;
+    }
+    const hiddenCount = COLUMN_KEYS.filter(k => !isRequiredColumn(k) && !isColVisible(k)).length;
+    const customVisibility = COLUMN_KEYS.some(k => prefs.colVis[k] !== DEFAULT_COLUMN_VISIBILITY[k]);
+    const customOrder = orderedColumns().join("|") !== DEFAULT_COLUMN_ORDER.join("|");
+    const customWidths = COLUMN_KEYS.some(k => columnWidth(k) !== DEFAULT_COLUMN_WIDTHS[k]);
+    columnsBtn?.classList.toggle("active", customVisibility || customOrder || customWidths);
+    if (columnsBtn) columnsBtn.title = hiddenCount > 0 ? `Columns (${hiddenCount} hidden)` : customOrder || customWidths ? "Columns (custom layout)" : "Columns";
+    document.querySelectorAll(".cw-columns-pop .cw-column-toggle").forEach(btn => {
+      const column = btn.dataset.column;
+      const visible = isColVisible(column);
+      btn.classList.toggle("active", visible);
+      btn.setAttribute("aria-pressed", visible ? "true" : "false");
+      btn.disabled = isRequiredColumn(column);
+    });
+    applyColumnLayout();
+  }
+
+  function closePopup() {
+    if (!activePopup) return;
+    document.removeEventListener("mousedown", activePopup.onDoc);
+    document.removeEventListener("keydown", activePopup.onKey);
+    activePopup.node?.remove?.();
+    activePopup = null;
+  }
+
+  function positionPopup(pop, anchor) {
+    if (!pop || !anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const margin = 8;
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    let left = rect.left + window.scrollX;
+    let top = rect.bottom + margin + window.scrollY;
+    const width = pop.offsetWidth;
+    const height = pop.offsetHeight;
+    if (left + width + margin > window.scrollX + viewportWidth) left = window.scrollX + viewportWidth - width - margin;
+    if (top + height + margin > window.scrollY + viewportHeight) top = rect.top + window.scrollY - height - margin;
+    if (left < margin) left = margin;
+    if (top < margin) top = margin;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+  }
+
+  function openPopup(anchor, builder) {
+    closePopup();
+    const pop = document.createElement("div");
+    pop.className = "cw-pop";
+    document.body.appendChild(pop);
+    builder(pop);
+    positionPopup(pop, anchor);
+    const onDoc = ev => {
+      if (pop.contains(ev.target) || anchor.contains(ev.target)) return;
+      closePopup();
+    };
+    const onKey = ev => {
+      if (ev.key === "Escape") closePopup();
+    };
+    activePopup = { node: pop, onDoc, onKey };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+  }
+
+  function appendPopupTitle(pop, text) {
+    const title = document.createElement("div");
+    title.className = "cw-pop-title";
+    title.textContent = text;
+    pop.appendChild(title);
+  }
+
+  function appendPopupActions(pop, defs) {
+    const actions = document.createElement("div");
+    actions.className = "cw-pop-actions";
+    defs.forEach(def => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `cw-pop-btn${def.kind ? ` ${def.kind}` : ""}`;
+      btn.textContent = def.label;
+      btn.onclick = def.onClick;
+      actions.appendChild(btn);
+    });
+    pop.appendChild(actions);
+  }
+
+  function toggleColumnVisibility(column) {
+    if (!COLUMN_KEYS.includes(column) || isRequiredColumn(column)) return;
+    prefs.colVis[column] = !isColVisible(column);
+    syncColumnVisibilityUI();
+    writePrefs(prefs);
+    render();
+  }
+
+  function moveColumn(column, delta) {
+    const order = orderedColumns().slice();
+    const idx = order.indexOf(column);
+    const next = idx + delta;
+    if (idx < 0 || next < 0 || next >= order.length) return;
+    [order[idx], order[next]] = [order[next], order[idx]];
+    prefs.columnOrder = order;
+    syncColumnVisibilityUI();
+    writePrefs(prefs);
+    renderColumnPopupContents(activePopup?.node);
+    render();
+  }
+
+  function resetColumnLayout(pop) {
+    prefs.columnOrder = DEFAULT_COLUMN_ORDER.slice();
+    prefs.colVis = { ...DEFAULT_COLUMN_VISIBILITY };
+    prefs.cols = { ...DEFAULT_COLUMN_WIDTHS };
+    syncColumnVisibilityUI();
+    writePrefs(prefs);
+    renderColumnPopupContents(pop);
+    render();
+  }
+
+  function renderColumnPopupContents(pop) {
+    if (!pop || !pop.classList?.contains("cw-columns-pop")) return;
+    pop.textContent = "";
+    appendPopupTitle(pop, "Columns");
+    const list = document.createElement("div");
+    list.className = "cw-column-popup-list wl-column-popup-list";
+    const order = orderedColumns();
+    order.forEach((column, idx) => {
+      const meta = COLUMN_META[column] || { icon:"view_column", label:column };
+      const row = document.createElement("div");
+      row.className = "cw-column-row";
+      row.dataset.column = column;
+
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "cw-type-chip cw-column-toggle";
+      toggle.dataset.column = column;
+      toggle.disabled = isRequiredColumn(column);
+      toggle.title = isRequiredColumn(column) ? `${columnLabel(column)} is always shown` : `Show ${columnLabel(column)}`;
+      const toggleIcon = document.createElement("span");
+      toggleIcon.className = "material-symbol cw-type-icon";
+      toggleIcon.setAttribute("aria-hidden", "true");
+      toggleIcon.textContent = meta.icon;
+      const toggleLabel = document.createElement("span");
+      toggleLabel.textContent = columnLabel(column);
+      toggle.replaceChildren(toggleIcon, toggleLabel);
+      toggle.addEventListener("click", () => toggleColumnVisibility(column));
+
+      const left = document.createElement("button");
+      left.type = "button";
+      left.className = "cw-column-move";
+      left.disabled = idx === 0;
+      left.title = `Move ${columnLabel(column)} left`;
+      left.setAttribute("aria-label", left.title);
+      left.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_left</span>`;
+      left.addEventListener("click", ev => {
+        ev.stopPropagation();
+        moveColumn(column, -1);
+      });
+
+      const right = document.createElement("button");
+      right.type = "button";
+      right.className = "cw-column-move";
+      right.disabled = idx === order.length - 1;
+      right.title = `Move ${columnLabel(column)} right`;
+      right.setAttribute("aria-label", right.title);
+      right.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">keyboard_arrow_right</span>`;
+      right.addEventListener("click", ev => {
+        ev.stopPropagation();
+        moveColumn(column, 1);
+      });
+
+      row.appendChild(toggle);
+      row.appendChild(left);
+      row.appendChild(right);
+      list.appendChild(row);
+    });
+    pop.appendChild(list);
+    appendPopupActions(pop, [
+      { label:"Reset", onClick:() => resetColumnLayout(pop) },
+      { label:"Close", kind:"primary", onClick:closePopup },
+    ]);
+    syncColumnVisibilityUI();
+    positionPopup(pop, columnsBtn);
+  }
+
+  function openColumnPopup(anchor) {
+    openPopup(anchor, pop => {
+      pop.classList.add("cw-columns-pop");
+      renderColumnPopupContents(pop);
+    });
+  }
+
+  function openChoicePopup(anchor, options, currentValue, onPick) {
+    openPopup(anchor, pop => {
+      pop.classList.add("wl-choice-pop");
+      const list = document.createElement("div");
+      list.className = "wl-choice-list";
+      options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "wl-choice-btn";
+        btn.dataset.value = String(opt.value);
+        btn.classList.toggle("active", String(opt.value) === String(currentValue));
+        btn.innerHTML = `<span>${esc(opt.label)}</span>${String(opt.value) === String(currentValue) ? `<span class="material-symbols-rounded" aria-hidden="true">check</span>` : ""}`;
+        btn.addEventListener("click", () => {
+          onPick(opt.value);
+          closePopup();
+        });
+        list.appendChild(btn);
+      });
+      pop.appendChild(list);
+    });
+  }
+
+  normalizeColumnState();
 
   /* Date formatting */
   let [items, filtered] = [[], []];
@@ -208,7 +756,8 @@
   const hideBtn = document.getElementById("wl-hide"), unhideBtn = document.getElementById("wl-unhide");
 
   let viewMode = prefs.view === "list" ? "list" : "posters";
-  let sortKey = prefs.sortKey || "title", sortDir = prefs.sortDir || "asc";
+  let sortKey = prefs.sortKey === "release" ? "rel" : (COLUMN_KEYS.includes(prefs.sortKey) ? prefs.sortKey : "title");
+  let sortDir = prefs.sortDir === "desc" ? "desc" : "asc";
 
   const derivedCache = new Map();
   const renderedRowRefs = new Map();
@@ -277,7 +826,6 @@
 
   let TMDB_OK = true;
 
-  const PAGE_SIZE = 50;
   let currentPage = 1;
   let pageInfo = { start:0, end:0, total:0, pageCount:1 };
   let watchlistMeta = { lastSyncEpoch: 0 };
@@ -290,7 +838,8 @@
   const normKey = it => it.key || it.guid || it.id || (it.ids?.tmdb && `tmdb:${it.ids.tmdb}`) || (it.ids?.imdb && `imdb:${it.ids.imdb}`) || (it.ids?.tvdb && `tvdb:${it.ids.tvdb}`) || "";
   const artType=it=>(((it?.type||it?.media_type||"")+"").toLowerCase()==="movie"?"movie":"tv");
   const artEvidence=it=>{const t=it?.title?`&title=${encodeURIComponent(String(it.title))}`:"";const y=it?.year?`&year=${encodeURIComponent(String(it.year))}`:"";return t+y;};
-  const artUrl=(it,size,kind="poster")=>(!TMDB_OK||!(it?.tmdb||it?.ids?.tmdb))?"":`/art/tmdb/${artType(it)}/${encodeURIComponent(String(it?.tmdb||it?.ids?.tmdb))}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}${artEvidence(it)}`;
+  const tmdbIdForArt = it => String(sharedMeta()?.tmdbId?.(it) || it?.tmdb || it?.tmdb_id || it?.ids?.tmdb || it?.ids?.tmdb_show || "").trim();
+  const artUrl=(it,size,kind="poster")=>{const tmdbId=tmdbIdForArt(it);return(!TMDB_OK||!tmdbId)?"":`/art/tmdb/${artType(it)}/${encodeURIComponent(tmdbId)}?kind=${encodeURIComponent(kind)}&size=${encodeURIComponent(size||"w342")}&locale=${encodeURIComponent(window.__CW_LOCALE||navigator.language||"en-US")}${artEvidence(it)}`;};
   const parseReleaseDate = s => { if (typeof s !== "string" || !(s = s.trim())) return null; let y, m, d; if (/^\d{4}-\d{2}-\d{2}$/.test(s)) ([y, m, d] = s.split("-").map(Number)); else if (/^\d{2}-\d{2}-\d{4}$/.test(s)) { const a = s.split("-").map(Number); d = a[0]; m = a[1]; y = a[2]; } else return null; const t = Date.UTC(y, (m || 1) - 1, d || 1), dt = new Date(t); return Number.isFinite(dt.getTime()) ? dt : null; };
   const fmtDateSmart = (raw, loc) => { const dt = parseReleaseDate(raw); if (!dt) return ""; try { return new Intl.DateTimeFormat(loc || toLocale(), { day:"2-digit", month:"2-digit", year:"numeric", timeZone:"UTC" }).format(dt); } catch { return ""; } };
   const providersOf = it => Array.isArray(it.sources) ? it.sources.map(providerKey).filter(Boolean) : [];
@@ -369,12 +918,13 @@
   window.setInterval(updateHeaderSummary, 30000);
 
   function computePageInfo() {
+    const pageSize = pageSizeValue();
     const total = filtered.length;
-    const pageCount = total ? Math.ceil(total / PAGE_SIZE) : 1;
+    const pageCount = total ? Math.ceil(total / pageSize) : 1;
     if (currentPage < 1) currentPage = 1;
     if (currentPage > pageCount) currentPage = pageCount;
-    const start = total ? (currentPage - 1) * PAGE_SIZE : 0;
-    const end = total ? Math.min(start + PAGE_SIZE, total) : 0;
+    const start = total ? (currentPage - 1) * pageSize : 0;
+    const end = total ? Math.min(start + pageSize, total) : 0;
     pageInfo = { start, end, total, pageCount };
   }
 
@@ -459,7 +1009,7 @@
   const metadataAffectsListState = () => {
     const releasedPref = normReleased(releasedSel?.value || prefs.released || "both");
     const genrePref = (genreSel?.value || prefs.genre || "").trim();
-    return releasedPref !== "both" || !!genrePref || sortKey === "release" || sortKey === "genre";
+    return releasedPref !== "both" || !!genrePref || sortKey === "rel" || sortKey === "genre";
   };
 
   const visibleItemsForHydration = () => {
@@ -478,7 +1028,7 @@
 
   async function hydrateVisibleMetadata() {
     if (!TMDB_OK) return;
-    const targets = visibleItemsForHydration().filter((it) => it?.tmdb || it?.ids?.tmdb);
+    const targets = visibleItemsForHydration().filter((it) => tmdbIdForArt(it));
     if (!targets.length) return;
     const batchKey = rowHydrationKeyFor(targets);
     const missingRowProfile = targets.some((it) => !hasMeta(it, "row"));
@@ -492,10 +1042,18 @@
       applyFilters();
       return;
     }
+    if (viewMode === "posters") {
+      renderPosters();
+      return;
+    }
     if (viewMode === "list") {
       targets.forEach((it) => {
         const tr = renderedRowRefs.get(normKey(it));
-        if (tr) hydrateRow(it, tr);
+        if (!tr) return;
+        hydrateRow(it, tr);
+        const img = tr.querySelector(".wl-mini");
+        const src = artUrl(it, "w92") || "/assets/img/placeholder_poster.svg";
+        if (img && img.getAttribute("src") !== src) img.setAttribute("src", src);
       });
     }
   }
@@ -539,18 +1097,17 @@
   /* Provider chips */
   const providerLogoPath = name => window.CW?.ProviderMeta?.logoPath?.(name) || "";
 
-  function providerSelectOptionData(value, option, allLabel = "All") {
+  function providerSelectOptionData(value, option, allLabel = "All", showAllIcon = true) {
     const raw = String(value || "").trim();
     const isAll = !raw || raw.toUpperCase() === "ALL";
     const label = isAll ? allLabel : providerLabel(raw);
     const iconSrc = isAll ? "" : providerLogoPath(raw);
+    const icons = iconSrc
+      ? [{ src: iconSrc, alt: `${label} logo` }]
+      : (isAll && !showAllIcon ? [] : [{ text: isAll ? "ALL" : providerShortLabel(raw) }]);
     return {
       label: String(option?.textContent || label).trim() || label,
-      icons: [
-        iconSrc
-          ? { src: iconSrc, alt: `${label} logo` }
-          : { text: isAll ? "ALL" : providerShortLabel(raw) },
-      ],
+      icons,
     };
   }
 
@@ -559,7 +1116,7 @@
     if (!enhance || !providerSel) return;
     enhance(providerSel, {
       className: "wl-provider-filter-select",
-      getOptionData: (value, option) => providerSelectOptionData(value, option, "All"),
+      getOptionData: (value, option) => providerSelectOptionData(value, option, "All", false),
     });
   }
 
@@ -576,7 +1133,7 @@
     if (!enhance || !delProv) return;
     enhance(delProv, {
       className: "wl-action-provider-select",
-      getOptionData: (value, option) => providerSelectOptionData(value, option, "ALL (default)"),
+      getOptionData: (value, option) => providerSelectOptionData(value, option, "ALL (default)", false),
     });
     syncDeleteProviderDisabled();
   }
@@ -663,13 +1220,18 @@
   /* Sorting */
   const _t = it => String(it.title || "").toLowerCase();
   const _type = it => ((it.type || "").toLowerCase() === "show" ? "tv" : String(it.type || "").toLowerCase());
+  const idValue = (it, name) => String(name === "tmdb" ? (it?.tmdb || it?.ids?.tmdb || "") : (it?.ids?.[name] || "")).trim();
+  const addedValue = it => Number(it?.added_epoch || 0) || (Date.parse(String(it?.added_when || "")) || 0);
 
   function sortFilteredForList(arr) {
     const byTitle = (a, b) => cmp(_t(a), _t(b));
+    const byText = key => (a, b) => cmpDir(cmp(idValue(a, key).toLowerCase(), idValue(b, key).toLowerCase()) || byTitle(a, b));
     const sorters = {
+      key: (a, b) => cmpDir(cmp(normKey(a).toLowerCase(), normKey(b).toLowerCase()) || byTitle(a, b)),
       title: (a, b) => cmpDir(byTitle(a, b)),
       type: (a, b) => cmpDir(cmp(_type(a), _type(b))),
-      release: (a, b) => {
+      year: (a, b) => cmpDir((Number(a?.year || yearFromIso(getReleaseIso(a)) || 0) - Number(b?.year || yearFromIso(getReleaseIso(b)) || 0)) || byTitle(a, b)),
+      rel: (a, b) => {
         const unk = sortDir === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
         const ta = parseReleaseDate(getReleaseIso(a)), tb = parseReleaseDate(getReleaseIso(b));
         const va = ta ? ta.getTime() : unk, vb = tb ? tb.getTime() : unk;
@@ -689,6 +1251,14 @@
         const ca = providersOf(a).length, cb = providersOf(b).length;
         return cmpDir((ca === cb ? cmp(String(a.title || ""), String(b.title || "")) : (ca - cb)));
       },
+      tmdb: byText("tmdb"),
+      imdb: byText("imdb"),
+      tvdb: byText("tvdb"),
+      trakt: byText("trakt"),
+      simkl: byText("simkl"),
+      anilist: byText("anilist"),
+      mal: byText("mal"),
+      added: (a, b) => cmpDir((addedValue(a) - addedValue(b)) || byTitle(a, b)),
       poster: (a, b) => {
         const pa = !!artUrl(a, "w92"), pb = !!artUrl(b, "w92");
         return cmpDir((pa === pb ? cmp(String(a.title || ""), String(b.title || "")) : (pa ? 1 : -1)));
@@ -712,9 +1282,6 @@
   }
 
   function wireSortableHeaders() {
-    document.querySelectorAll(".wl-table th.sortable").forEach(th =>
-      th.addEventListener("click", e => { if (!e.target.closest(".wl-resize")) setSort(th.dataset.sort); }, true)
-    );
     updateSortHeaderUI();
   }
 
@@ -728,37 +1295,6 @@
     setControlVisible(overlaysSel, show);
   };
 
-
-  function applyColVisibility(){
-    const cg = document.querySelector(".wl-table colgroup");
-    if (!cg) return;
-    for (const k of Object.keys(colSel)) {
-      const on = isColVisible(k);
-      cg.querySelector(colSel[k])?.classList.toggle("wl-col-hidden", !on);
-      document.querySelectorAll(`.wl-table [data-col="${k}"]`).forEach(el => el.classList.toggle("wl-col-hidden", !on));
-    }
-  }
-
-  const applyColPrefUI = () => {
-    const show = viewMode === "list";
-    [colsLabel, colsBox].forEach(el => el && (el.style.display = show ? "" : "none"));
-    if (!colsBox) return;
-    colsBox.querySelectorAll('input[type="checkbox"][data-col]').forEach(cb => {
-      cb.checked = isColVisible(cb.dataset.col);
-    });
-  };
-
-  colsBox?.addEventListener("change", e => {
-    const cb = e.target?.closest?.('input[type="checkbox"][data-col]');
-    if (!cb) return;
-    const k = cb.dataset.col;
-    prefs.colVis = prefs.colVis || {};
-    prefs.colVis[k] = !!cb.checked;
-    prefs.colVis.title = true;
-    writePrefs(prefs);
-    applyCols();
-    applyColVisibility();
-  }, true);
 
 const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" : "both");
 
@@ -776,10 +1312,18 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       if (hiddenSet.has(key) && !showHiddenChk?.checked) return false;
 
       const title = String(it.title || "").toLowerCase();
+      const haystack = [
+        title,
+        normKey(it),
+        it.year,
+        typeLabelFor(it),
+        providersOf(it).map(p => `${p} ${providerLabel(p)}`).join(" "),
+        Object.entries(it.ids || {}).map(([k, v]) => `${k}:${v}`).join(" "),
+      ].join(" ").toLowerCase();
       const rawType = String(it.type || "").toLowerCase();
       const t = (rawType === "show" || rawType === "shows" || rawType === "series") ? "tv" : rawType;
 
-      if (q && !title.includes(q)) return false;
+      if (q && !haystack.includes(q)) return false;
       if (ty && t !== ty) return false;
       if (provider && !providersOf(it).includes(provider)) return false;
       if (provider === "CROSSWATCH") {
@@ -918,12 +1462,16 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     const posters = viewMode === "posters";
     _show(postersEl, posters); _show(listWrapEl, !posters); _show(sizeInput, posters); _show(sizeLabel, posters);
     applyOverlayPrefUI();
-    applyColPrefUI();
+    syncViewModeUI();
+    syncPageSizeUI();
+    syncColumnVisibilityUI();
 
     computePageInfo();
 
     if (!filtered.length) {
-      empty.style.display = ""; selAll.checked = false; listSelectAll.checked = false;
+      empty.style.display = "";
+      if (selAll) selAll.checked = false;
+      if (listSelectAll) listSelectAll.checked = false;
       postersEl.innerHTML = ""; listBodyEl.innerHTML = ""; selCount.textContent = "0 selected"; metricsEl.innerHTML = "";
       if (pagerEl) pagerEl.style.display = "none";
       updateHeaderSummary();
@@ -996,12 +1544,23 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   function renderList() {
     listBodyEl.replaceChildren();
     renderedRowRefs.clear();
+    applyColumnLayout();
     const frag = document.createDocumentFragment();
     const sorted = sortFilteredForList(filtered);
     const canTMDB=(typeof TMDB_OK==="undefined")?true:!!TMDB_OK;
     const start = pageInfo.start;
     const end = pageInfo.end;
     const rows = sorted.slice(start, end);
+    const columns = visibleColumns();
+    const addedLabel = it => {
+      const epoch = Number(it?.added_epoch || 0);
+      if (epoch > 0) return new Date(epoch * 1000).toISOString().slice(0, 10);
+      const raw = String(it?.added_when || "").trim();
+      if (!raw) return "";
+      const ms = Date.parse(raw);
+      return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : raw;
+    };
+    const textCell = (column, value, cls = "") => `<td class="wl-col-${column}${cls ? ` ${cls}` : ""}" data-col="${column}" title="${esc(value || "")}"><span class="wl-cell-text">${esc(value || "")}</span></td>`;
 
     rows.forEach(it => {
       const key = normKey(it), tr = document.createElement("tr");
@@ -1014,15 +1573,33 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       const d = getDerived(it);
 
       const yearHint = String(it.year || yearFromIso(d.iso) || "").trim();
+      const titleSub = [
+        !isColVisible("year") && yearHint ? `<span class="wl-inline-pill">${esc(yearHint)}</span>` : "",
+        !isColVisible("type") ? `<span class="wl-inline-pill">${esc(typeLabel)}</span>` : "",
+      ].filter(Boolean).join("");
+      const cellHtml = {
+        poster: `<td class="wl-col-poster wl-poster-cell" data-col="poster" style="text-align:center"><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>`,
+        title: `<td class="wl-col-title title" data-col="title"><div class="wl-title-cell"><div class="wl-title-main">${esc(it.title || "")}</div>${titleSub ? `<div class="wl-title-sub">${titleSub}</div>` : ""}</div></td>`,
+        year: textCell("year", yearHint),
+        rel: textCell("rel", d.relFmt, "rel"),
+        genre: textCell("genre", d.genresText, "genre"),
+        type: `<td class="wl-col-type" data-col="type"><span class="wl-inline-pill">${esc(typeLabel)}</span></td>`,
+        tmdb: textCell("tmdb", idValue(it, "tmdb"), "wl-id-cell"),
+        imdb: textCell("imdb", idValue(it, "imdb"), "wl-id-cell"),
+        tvdb: textCell("tvdb", idValue(it, "tvdb"), "wl-id-cell"),
+        trakt: textCell("trakt", idValue(it, "trakt"), "wl-id-cell"),
+        simkl: textCell("simkl", idValue(it, "simkl"), "wl-id-cell"),
+        anilist: textCell("anilist", idValue(it, "anilist"), "wl-id-cell"),
+        mal: textCell("mal", idValue(it, "mal"), "wl-id-cell"),
+        sync: `<td class="wl-col-sync sync" data-col="sync">${matrix}</td>`,
+        added: textCell("added", addedLabel(it)),
+        key: textCell("key", key, "wl-key-cell"),
+      };
       tr.innerHTML = `
         <td style="text-align:center"><input type="checkbox" name="wl-select" data-k="${key}" ${selected.has(key) ? "checked" : ""}></td>
-        <td class="wl-poster-cell" data-col="poster" style="text-align:center"><img class="wl-mini" src="${thumb}" alt="" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'"/></td>
-        <td class="title" data-col="title"><div class="wl-title-cell"><div class="wl-title-main">${esc(it.title || "")}</div><div class="wl-title-sub">${yearHint ? `<span class="wl-inline-pill">${esc(yearHint)}</span>` : ""}<span class="wl-inline-pill">${esc(typeLabel)}</span></div></div></td>
-        <td class="rel" data-col="rel">${esc(d.relFmt)}</td>
-        <td class="genre" data-col="genre" title="${esc(d.genresText)}">${esc(d.genresText)}</td>
-        <td data-col="type"><span class="wl-inline-pill">${esc(typeLabel)}</span></td>
-        <td class="sync" data-col="sync">${matrix}</td>
+        ${columns.map(column => cellHtml[column] || "").join("")}
       `;
+      tr.classList.toggle("selected", selected.has(key));
 
       if (d.relFmt || d.genresText) hydrateRow(it, tr);
       const posterCell = tr.querySelector(".wl-poster-cell");
@@ -1038,14 +1615,27 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
       posterCell?.addEventListener("mouseleave", hideFromCover, true);
       posterCell?.addEventListener("focusin", showFromCover, true);
       posterCell?.addEventListener("focusout", hideFromCover, true);
-      tr.querySelector('input[type=checkbox]')?.addEventListener("change", e => { e.target.checked ? selected.add(key) : selected.delete(key); updateSelCount(); }, true);
+      const rowCheckbox = tr.querySelector('input[type=checkbox]');
+      const setRowSelected = checked => {
+        checked ? selected.add(key) : selected.delete(key);
+        tr.classList.toggle("selected", checked);
+        if (rowCheckbox) rowCheckbox.checked = checked;
+        if (listSelectAll) listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
+        updateSelCount();
+      };
+      rowCheckbox?.addEventListener("click", e => e.stopPropagation(), true);
+      rowCheckbox?.addEventListener("change", e => setRowSelected(!!e.target.checked), true);
+      tr.addEventListener("click", e => {
+        if (e.target?.closest?.("input,button,a,select,textarea,label,.wl-resize")) return;
+        setRowSelected(!selected.has(key));
+      }, true);
       frag.appendChild(tr);
     });
 
     listBodyEl.appendChild(frag);
-    listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
+    if (listSelectAll) listSelectAll.checked = filtered.length > 0 && filtered.every(x => selected.has(normKey(x)));
     updateSortHeaderUI();
-    applyColVisibility();
+    applyColumnLayout();
   }
 
   let snackTimer = null;
@@ -1068,6 +1658,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     delProv.innerHTML = deleteProviderOptions(union);
     if ([...delProv.options].some(o => o.value === prev)) delProv.value = prev;
     enhanceDeleteProviderSelect();
+    syncCrosswatchProfileControls();
   }
 
   function updateSelCount(){
@@ -1194,8 +1785,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   showHiddenChk?.addEventListener("change", () => { prefs.showHidden = !!showHiddenChk.checked; writePrefs(prefs); applyFilters(); }, true);
 
   const selectAll = chk => { selected.clear(); if (chk.checked) filtered.forEach(it => { const k = normKey(it); if (k) selected.add(k); }); };
-  selAll.addEventListener("change", () => { selectAll(selAll); (viewMode === "posters" ? renderPosters : renderList)(); updateSelCount(); }, true);
-  listSelectAll.addEventListener("change", () => { selectAll(listSelectAll); renderList(); selAll.checked = listSelectAll.checked; updateSelCount(); }, true);
+  selAll?.addEventListener("change", () => { selectAll(selAll); (viewMode === "posters" ? renderPosters : renderList)(); updateSelCount(); }, true);
+  listSelectAll?.addEventListener("change", () => { selectAll(listSelectAll); renderList(); updateSelCount(); }, true);
 
   clearBtn.addEventListener("click", () => {
     qEl.value = ""; tEl.value = ""; providerSel.value = "";
@@ -1213,6 +1804,51 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     setPosterMin(px); prefs.posterMin = px; writePrefs(prefs);
   }, true);
 
+  pageSizeSel?.addEventListener("click", e => {
+    e.preventDefault();
+    openChoicePopup(
+      pageSizeSel,
+      PAGE_SIZE_OPTIONS.map(n => ({ value:n, label:String(n) })),
+      pageSizeValue(),
+      value => {
+        const next = Number(value);
+        prefs.pageSize = PAGE_SIZE_OPTIONS.includes(next) ? next : DEFAULT_PAGE_SIZE;
+        currentPage = 1;
+        syncPageSizeUI();
+        writePrefs(prefs);
+        render();
+      }
+    );
+  }, true);
+
+  host.querySelector("#wl-view-menu")?.addEventListener("click", e => {
+    e.preventDefault();
+    openChoicePopup(
+      e.currentTarget,
+      [{ value:"posters", label:"Posters" }, { value:"list", label:"List" }],
+      viewMode,
+      value => {
+        const next = value === "list" ? "list" : "posters";
+        if (viewMode === next) return;
+        viewSel.value = next;
+        viewSel.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    );
+  }, true);
+
+  columnsBtn?.addEventListener("click", () => openColumnPopup(columnsBtn), true);
+  wideBtn?.addEventListener("click", () => {
+    prefs.wideView = !prefs.wideView;
+    closePopup();
+    syncWideViewUI();
+    writePrefs(prefs);
+  }, true);
+
+  window.addEventListener("resize", () => {
+    window.clearTimeout(columnLayoutResizeTimer);
+    columnLayoutResizeTimer = window.setTimeout(applyColumnLayout, 80);
+  });
+
   document.addEventListener("keydown", e => {
     if (e.key === "Delete" && !document.getElementById("wl-delete").disabled) document.getElementById("wl-delete").click();
     if (e.key === "Escape" && !document.getElementById("cw-trailer")?.classList.contains("show")) forceHideDetail();
@@ -1222,6 +1858,8 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     viewMode = viewSel.value === "list" ? "list" : "posters";
     prefs.view = viewMode; writePrefs(prefs);
     forceHideDetail();
+    closePopup();
+    syncViewModeUI();
     render();
   });
 
@@ -1235,7 +1873,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   pagerNext?.addEventListener("click", () => {
     const total = filtered.length;
     if (!total) return;
-    const maxPage = Math.ceil(total / PAGE_SIZE);
+    const maxPage = Math.ceil(total / pageSizeValue());
     if (currentPage < maxPage) {
       currentPage++;
       render();
@@ -1251,9 +1889,32 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
   window.Watchlist=Object.assign(window.Watchlist||{}, { refresh: hardReloadWatchlist });
   window.addEventListener("watchlist:refresh", hardReloadWatchlist);
 
-  (async function init(){
-    if (authSetupPending()) return;
+  let authRetryWired = false;
+  let watchlistInitStarted = false;
+
+  function retryInitAfterAuth() {
+    if (authRetryWired) return;
+    authRetryWired = true;
+    const retry = () => {
+      if (authSetupPending()) return;
+      authRetryWired = false;
+      window.removeEventListener("cw-auth-setup-pending", onAuth);
+      initWatchlist();
+    };
+    const onAuth = e => { if (e?.detail?.pending === false) retry(); };
+    window.addEventListener("cw-auth-setup-pending", onAuth);
+    Promise.resolve(window.__cwAuthBootstrapPromise).catch(() => null).finally(retry);
+  }
+
+  async function initWatchlist(){
+    if (watchlistInitStarted) return;
+    if (authSetupPending()) return retryInitAfterAuth();
+    watchlistInitStarted = true;
     viewSel.value = viewMode;
+    syncViewModeUI();
+    syncPageSizeUI();
+    syncWideViewUI();
+    syncColumnVisibilityUI();
     sizeInput.value = String(prefs.posterMin); setPosterMin(prefs.posterMin);
     releasedSel.value = prefs.released; overlaysSel.value = prefs.overlays; morePanel.style.display = prefs.moreOpen ? "" : "none";
     moreBtn.setAttribute("aria-expanded", String(!!prefs.moreOpen));
@@ -1289,5 +1950,7 @@ const normReleased = v => (v === "yes" ? "released" : v === "no" ? "unreleased" 
     applyOverlayPrefUI(); applyFilters(); rebuildDeleteProviderOptions(); wireSortableHeaders(); updateHeaderSummary();
 
     window.dispatchEvent(new CustomEvent("watchlist-ready"));
-  })();
+  }
+
+  initWatchlist();
 })();

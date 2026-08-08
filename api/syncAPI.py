@@ -16,7 +16,15 @@ from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
+from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.reason_labels import friendly_reason
+from cw_platform.run_control import (
+    cancel_requested,
+    cancel_state,
+    clear_cancel,
+    clear_queue_stop,
+    request_cancel,
+)
 from cw_platform.value_coercion import coerce_bool
 from services.scheduler_webhooks import notify_scheduler_webhook, resolve_completion_event
 
@@ -41,8 +49,8 @@ def _rt():
         m.LOG_BUFFERS,      # 0
         m.RUNNING_PROCS,    # 1
         m.SYNC_PROC_LOCK,   # 2
-        m.STATE_PATH,       # 3
-        m.STATE_PATHS,      # 4
+        None,               # 3
+        (),                 # 4
         m.STATS,            # 5
         m.REPORT_DIR,       # 6
         m.strip_ansi,       # 7
@@ -164,6 +172,8 @@ def _normalize_features(f: dict | None) -> dict:
             v["enable"] = coerce_bool(v.get("enable", True), True)
             v["add"] = coerce_bool(v.get("add", True), True)
             v["remove"] = coerce_bool(v.get("remove", False))
+        if k == "history" and isinstance(f.get(k), dict):
+            f[k]["rewatches"] = coerce_bool(f[k].get("rewatches", False))
         if isinstance(f.get(k), dict) and ("use_anime_mapping" in f[k] or "anime_only_sync" in f[k]):
             use_map = coerce_bool(f[k].get("use_anime_mapping", False))
             f[k]["use_anime_mapping"] = use_map
@@ -267,6 +277,8 @@ def _summary_reset() -> None:
                 "crosswatch_post": None,
                 "result": "",
                 "exit_code": None,
+                "cancel_requested": False,
+                "cancelled": False,
                 "timeline": {"start": False, "pre": False, "post": False, "done": False},
                 "raw_started_ts": None,
                 "_phase": {
@@ -295,7 +307,7 @@ def _seed_summary_provider_counts(phase: str) -> None:
     if ph not in ("pre", "post"):
         return
     try:
-        counts = _counts_from_state(_load_state()) or _provider_count_defaults()
+        counts = _provider_counts_current()
     except Exception:
         counts = _provider_count_defaults()
     if not isinstance(counts, dict):
@@ -510,12 +522,14 @@ def _emit_unresolved_details(total_unresolved: int | None = None) -> None:
 
 def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
     rt = _rt()
-    LOG_BUFFERS, RUNNING_PROCS, STATE_PATH, _append_log, strip_ansi = rt[0], rt[1], rt[3], rt[8], rt[7]
+    LOG_BUFFERS, RUNNING_PROCS, _append_log, strip_ansi = rt[0], rt[1], rt[8], rt[7]
     overrides = overrides or {}
     scheduler_context = dict(overrides)
     scheduler_context["run_id"] = str(run_id)
     scheduler_webhook_cfg: dict[str, Any] | None = None
     scheduler_start_sent = False
+    was_cancelled = False
+    clear_cancel()
     _summary_reset()
     _summary_set("run_id", str(run_id))
     LOG_BUFFERS["SYNC"] = []
@@ -689,20 +703,24 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 dry_run=dry,
                 progress=_sync_progress_ui,
                 write_state_json=write_state_json,
-                state_path=STATE_PATH,
                 use_snapshot=True,
             )
+
+        if coerce_bool(result.get("cancelled")) or cancel_requested(run_id):
+            was_cancelled = True
+            _summary_set("cancelled", True)
+            _sync_progress_ui("[!] Sync cancelled - already applied changes were kept.")
 
         added_res = int(result.get("added", 0))
         removed_res = int(result.get("removed", 0))
         try:
-            state = _load_state() if write_state_json else {}
+            state = _load_state_features({"watchlist", "history", "ratings", "playlists"}) if write_state_json else {}
             if state:
                 _STATS = _rt()[5]
                 _STATS.refresh_from_state(state)
                 _STATS.record_summary(added_res, removed_res)
                 try:
-                    counts = _counts_from_state(state)
+                    counts = _provider_counts_from_db()
                     if counts is None:
                         _append_log("SYNC", "[!] Provider-counts: state malformed; keeping last known counts")
                         counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
@@ -714,7 +732,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
             elif write_state_json:
                 _append_log("SYNC", "[!] No state found after sync; stats not updated.")
             else:
-                _append_log("SYNC", "[i] Legacy state.json persistence disabled; state-backed stats skipped.")
+                _append_log("SYNC", "[i] State persistence disabled; state-backed stats skipped.")
         except Exception as e:
             _append_log("SYNC", f"[!] Stats update failed: {e}")
 
@@ -732,12 +750,12 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         unresolved = _merge_total("unresolved")
         errors = _merge_total("errors")
         blocked = _merge_total("blocked")
-        extra = f", Total blocked: {blocked}"
         for key, value in (("skipped", skipped), ("unresolved", unresolved), ("errors", errors), ("blocked", blocked)):
             _summary_set(key, value)
+        extra = f", Total blocked: {blocked}"
 
         _sync_progress_ui(
-            f"[i] Done. Total added: {added}, Total removed: {removed}, Total updated: {updated}, "
+            f"[i] {'Cancelled' if was_cancelled else 'Done'}. Total added: {added}, Total removed: {removed}, Total updated: {updated}, "
             f"Total skipped: {skipped}, Total unresolved: {unresolved}, Total errors: {errors}{extra}"
         )
         if unresolved > 0:
@@ -753,8 +771,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
         try:
             load_config, _ = _env()
             cfg2 = load_config()
-            state2 = _load_state()
-            counts2 = _counts_from_state(state2) if state2 else None
+            counts2 = _provider_counts_from_db()
             if counts2 is None:
                 counts2 = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
             if counts2:
@@ -784,6 +801,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None) -> None:
                 )
         except Exception:
             pass
+        clear_cancel()
         RUNNING_PROCS.pop("SYNC", None)
 
 def _lanes_enabled_defaults() -> dict[str, bool]:
@@ -1049,18 +1067,23 @@ def _parse_sync_line(line: str) -> None:
             pass
         try:
             REPORT_DIR = _rt()[6]
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-            path = REPORT_DIR / f"sync-{ts}.json"
-            with path.open("w", encoding="utf-8") as f:
-                json.dump(_summary_snapshot(), f, indent=2)
+            from cw_platform.local_db.sync_reports import base_path_from_report_dir, save_report
+
+            save_report(base_path_from_report_dir(REPORT_DIR), _summary_snapshot())
         except Exception:
             pass
 
 # State file helpers
 def _find_state_path() -> Path | None:
-    for p in _rt()[4]:
-        if p.exists():
-            return p
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.local_db import crosswatch_db_path
+
+        db_path = crosswatch_db_path(CONFIG)
+        if db_path.exists():
+            return db_path
+    except Exception:
+        pass
     return None
 
 _STATE_CACHE_LOCK = threading.Lock()
@@ -1082,9 +1105,6 @@ def _peek_state_key() -> Any:
         return (str(sp), 0, 0)
 
 def _load_state() -> dict[str, Any]:
-    sp = _find_state_path()
-    if not sp:
-        return {}
     now = time.time()
     try:
         key = _peek_state_key()
@@ -1103,8 +1123,10 @@ def _load_state() -> dict[str, Any]:
 
     data: dict[str, Any] = {}
     try:
-        raw = sp.read_bytes()
-        obj = json.loads(raw) if raw else {}
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
+
+        obj = StateStore(CONFIG).load_state()
         data = obj if isinstance(obj, dict) else {}
     except Exception:
         data = {}
@@ -1114,6 +1136,19 @@ def _load_state() -> dict[str, Any]:
         _STATE_CACHE["data"] = data
         _STATE_CACHE["checked_ts"] = now
     return data
+
+
+def _load_state_features(features: set[str] | list[str] | tuple[str, ...]) -> dict[str, Any]:
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
+
+        obj = StateStore(CONFIG).load_state_features(features)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
 def _show_title_maps_from_state(state: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     key_map: dict[str, str] = {}
     id_map: dict[str, str] = {}
@@ -1293,7 +1328,7 @@ def _get_episode_code_map() -> dict[str, tuple[int, int]]:
             cm = _EP_META_CACHE.get("code_map")
             if isinstance(cm, dict):
                 return cast(dict[str, tuple[int, int]], cm)
-    state = _load_state()
+    state = _load_state_features({"history", "ratings", "watchlist", "playlists"})
     cm2 = _episode_code_map_from_state(state or {})
     with _EP_META_CACHE_LOCK:
         _EP_META_CACHE["key"] = skey
@@ -1308,7 +1343,7 @@ def _get_title_maps() -> tuple[dict[str, str], dict[str, str]]:
             im = _TITLE_MAP_CACHE.get("id_map")
             if isinstance(km, dict) and isinstance(im, dict):
                 return cast(dict[str, str], km), cast(dict[str, str], im)
-    state = _load_state()
+    state = _load_state_features({"history", "ratings", "watchlist", "playlists"})
     km2, im2 = _show_title_maps_from_state(state or {})
     with _TITLE_MAP_CACHE_LOCK:
         _TITLE_MAP_CACHE["key"] = skey
@@ -1723,6 +1758,19 @@ def api_sync_providers() -> JSONResponse:
         progress = _norm_progress_caps(caps.get("progress"))
         if progress:
             out["progress"] = progress
+        history = caps.get("history")
+        if isinstance(history, Mapping):
+            rewatches = history.get("rewatches")
+            if isinstance(rewatches, Mapping):
+                clean: dict[str, Any] = {
+                    "read": bool(rewatches.get("read", False)),
+                    "write": bool(rewatches.get("write", False)),
+                }
+                if rewatches.get("account_gate"):
+                    clean["account_gate"] = str(rewatches.get("account_gate"))
+                out["history"] = {"rewatches": clean}
+            elif isinstance(rewatches, bool):
+                out["history"] = {"rewatches": {"read": rewatches, "write": rewatches}}
         return out
 
     def _configured_state(mod, provider_name: str) -> bool:
@@ -2168,6 +2216,32 @@ def _counts_from_state(state: dict | None) -> dict | None:
     return out
 
 
+def _provider_counts_from_db() -> dict[str, int] | None:
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
+
+        counts = StateStore(CONFIG).provider_feature_counts("watchlist")
+    except Exception:
+        return None
+    if not counts:
+        return None
+    out = _provider_count_defaults(counts)
+    for key, value in counts.items():
+        name = str(key or "").strip().upper()
+        if not name:
+            continue
+        out[name] = int(value or 0)
+    return out
+
+
+def _provider_counts_current() -> dict[str, int]:
+    counts = _provider_counts_from_db()
+    if counts is not None:
+        return counts
+    cached = _PROVIDER_COUNTS_CACHE.get("data")
+    return dict(cached) if isinstance(cached, dict) else _provider_count_defaults()
+
 
 def _sanitize_scope(v: str) -> str:
     s = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(v or "").strip())
@@ -2207,7 +2281,7 @@ def _provider_counts_fast(*, max_age: int = 30, force: bool = False) -> dict:
         and (now - _PROVIDER_COUNTS_CACHE["ts"] < max(0, int(max_age)))
     ):
         return dict(_PROVIDER_COUNTS_CACHE["data"])
-    counts = _counts_from_state(_load_state())
+    counts = _provider_counts_from_db()
     if counts is None:
         counts = dict(_PROVIDER_COUNTS_CACHE.get("data") or _provider_count_defaults())
     _PROVIDER_COUNTS_CACHE["ts"] = now
@@ -2222,7 +2296,7 @@ def api_provider_counts(
 ) -> dict:
     src = (source or "state").lower().strip()
     if src in ("state", "auto"):
-        return _counts_from_state(_load_state()) or _provider_count_defaults()
+        return _provider_counts_current()
     return _provider_counts_fast(max_age=max_age, force=bool(force))
 
 # Trigger sync run endpoint
@@ -2259,6 +2333,9 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
             _sync_progress_ui("[SYNC] exit code: 0")
 
             return {"ok": True, "skipped": "no_pairs_configured"}
+        if str((payload or {}).get("source") or "").strip().lower() != "scheduler":
+            clear_queue_stop()
+
         run_id = str(int(time.time()))
         th = threading.Thread(
             target=_run_pairs_thread,
@@ -2270,6 +2347,30 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
         RUNNING_PROCS["SYNC"] = th
         _rt()[8]("SYNC", f"[i] Triggered sync run {run_id}")
         return {"ok": True, "run_id": run_id}
+
+@router.post("/run/cancel")
+def api_cancel_sync() -> dict[str, Any]:
+    if not _is_sync_running():
+        clear_cancel()
+        return {"ok": False, "error": "No sync running", "running": False}
+    run_id = str(_summary_snapshot().get("run_id") or "")
+    state = request_cancel(run_id, reason="user")
+    _summary_set("cancel_requested", True)
+    _rt()[8]("SYNC", "[!] Cancel requested; finishing the current step and stopping.")
+    return {"ok": True, "running": True, "run_id": state.get("run_id"), "requested_at": state.get("requested_at")}
+
+
+@router.get("/run/cancel")
+def api_cancel_status() -> dict[str, Any]:
+    state = cancel_state()
+    return {
+        "ok": True,
+        "running": _is_sync_running(),
+        "cancel_requested": bool(state.get("run_id")),
+        "run_id": state.get("run_id"),
+        "requested_at": state.get("requested_at"),
+    }
+
 
 @router.get("/run/summary")
 def api_run_summary() -> JSONResponse:
@@ -2285,7 +2386,7 @@ def api_run_summary() -> JSONResponse:
         snap["timeline"] = tl
 
     try:
-        snap["provider_counts"] = _counts_from_state(_load_state()) or _provider_count_defaults()
+        snap["provider_counts"] = _provider_counts_current()
     except Exception:
         snap["provider_counts"] = _provider_count_defaults()
 
@@ -2346,7 +2447,7 @@ def api_run_summary_file() -> Response:
     return Response(
         content=js,
         media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="last_sync.json"'},
+        headers={"Content-Disposition": f'attachment; filename="{LAST_SYNC_JSON}"'},
     )
 
 _SSE_HEARTBEAT_SEC = 15.0
@@ -2456,6 +2557,8 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             key = (
                 snap.get("running"),
                 snap.get("exit_code"),
+                snap.get("cancel_requested"),
+                snap.get("cancelled"),
                 _provider_counts_key(snap.get("provider_counts") or snap.get("provider_counts_post")),
                 snap.get("result"),
                 snap.get("duration_sec"),

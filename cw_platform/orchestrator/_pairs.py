@@ -19,6 +19,7 @@ from ..provider_instances import build_pair_config_view, build_provider_config_v
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 from ._pairs_playlists import run_playlist_mappings
+from ..run_control import SyncCancelled, cancel_requested
 from ..value_coercion import coerce_bool
 
 def _deep_merge_provider_overrides(dst: dict[str, Any], src: Mapping[str, Any]) -> None:
@@ -344,8 +345,12 @@ def run_pairs(ctx) -> dict[str, Any]:
     provs = ctx.providers or {}
 
     features_ran: set[str] = set()
+    cancelled = False
 
     for i, pair in enumerate(pairs, 1):
+        if cancel_requested():
+            cancelled = True
+            break
         src = str(pair.get("source") or "").upper().strip()
         dst = str(pair.get("target") or "").upper().strip()
         src_inst = normalize_instance_id(pair.get("source_instance"))
@@ -413,6 +418,9 @@ def run_pairs(ctx) -> dict[str, Any]:
         injected = False
 
         for feature in features:
+            if cancel_requested():
+                cancelled = True
+                break
             fcfg = feat_map.get(feature) or {}
             if isinstance(fcfg, dict) and not coerce_bool(fcfg.get("enable", True), True):
                 continue
@@ -493,6 +501,9 @@ def run_pairs(ctx) -> dict[str, Any]:
                             attempted_add_duplicate_keys_total += int(res.get("attempted_add_duplicate_keys", 0))
                             errors_total += int(res.get("errors", 0))
 
+                    except SyncCancelled:
+                        emit("feature:cancelled", src=src, dst=dst, feature=feature)
+                        cancelled = True
                     except Exception as e:
                         import traceback as _tb
                         emit("feature:error", src=src, dst=dst, feature=feature, error=str(e), traceback=_tb.format_exc())
@@ -500,6 +511,9 @@ def run_pairs(ctx) -> dict[str, Any]:
                         continue
                 finally:
                     ctx.config = prev_cfg
+    if not cancelled and cancel_requested():
+        cancelled = True
+
     if "watchlist" in features_ran:
         try:
             from ._tombstones import cascade_removals
@@ -557,10 +571,7 @@ def run_pairs(ctx) -> dict[str, Any]:
         wall["unresolved"] = int(unresolved_total)
 
         if getattr(ctx, "write_state_json", True):
-            st = ctx.state_store.load_state() or {}
-            st["wall"] = wall
-            st["last_sync_epoch"] = now
-            ctx.state_store.save_state(st)
+            ctx.state_store.set_last_sync_epoch(now)
 
         emit("stats:overview", overview=wall)
         emit(
@@ -603,8 +614,11 @@ def run_pairs(ctx) -> dict[str, Any]:
         unresolved=unresolved_total,
         errors=errors_total,
         pairs=len(pairs),
+        cancelled=cancelled,
         mode="v3",
     )
+    if cancelled:
+        emit("run:cancelled", pairs=len(pairs), added=added_total, removed=removed_total, updated=updated_total)
     if _event_rec is not None:
         try:
             _event_rec.close()
@@ -619,4 +633,5 @@ def run_pairs(ctx) -> dict[str, Any]:
         "unresolved": unresolved_total,
         "errors": errors_total,
         "pairs": len(pairs),
+        "cancelled": cancelled,
     }

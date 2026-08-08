@@ -11,6 +11,7 @@ from typing import Any
 import requests
 
 from cw_platform.config_base import load_config
+from cw_platform.local_db.ttl_dedupe import once_per_ttl
 from cw_platform.provider_instances import normalize_instance_id
 from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
@@ -226,38 +227,17 @@ def _clamp(p: Any) -> float:
     return max(0, min(100, v))
 
 
-def _ar_state_file() -> Path:
-    base = Path("/config/.cw_state") if Path("/config/config.json").exists() else Path(".cw_state")
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-    return base / "auto_remove_seen.json"
+def _ar_base_path() -> Path:
+    return Path("/config") if Path("/config/config.json").exists() else Path(".")
 
 
 def _ar_seen(key: str) -> bool:
-    p = _ar_state_file()
-    try:
-        data = json.loads(p.read_text(encoding="utf-8")) or {}
-    except Exception:
-        data = {}
-    now = time.time()
-    try:
-        data = {k: v for k, v in data.items() if (now - float(v)) < _AR_TTL}
-    except Exception:
-        data = {}
-    if key in data:
-        try:
-            p.write_text(json.dumps(data), encoding="utf-8")
-        except Exception:
-            pass
-        return True
-    data[key] = now
-    try:
-        p.write_text(json.dumps(data), encoding="utf-8")
-    except Exception:
-        pass
-    return False
+    return not once_per_ttl(
+        _ar_base_path(),
+        "auto_remove_seen",
+        key,
+        ttl_seconds=_AR_TTL,
+    )
 
 
 def _ar_key(ids: dict[str, Any], media_type: str, scope: str = "") -> str:

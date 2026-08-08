@@ -22,16 +22,27 @@
     return s.slice(5).split("#")[0];
   }
 
+  function idFromKey(key, prefix) {
+    const s = (key || "") + "";
+    if (!s.toLowerCase().startsWith(`${prefix}:`)) return "";
+    return s.slice(prefix.length + 1).split("#")[0];
+  }
+
   function applyManualRow(row, item, key) {
+    const ids = item.ids || {};
     row.key = key;
     row.raw = item;
     row.type = "episode";
     row.episode = true;
     row.title = String(item.series_title || row.title || "");
     row.year = item.series_year != null ? String(item.series_year) : row.year || "";
-    row.imdb = "";
-    row.tmdb = item.ids && item.ids.tmdb ? String(item.ids.tmdb) : "";
-    row.trakt = "";
+    row.imdb = ids.imdb ? String(ids.imdb) : "";
+    row.tmdb = ids.tmdb ? String(ids.tmdb) : "";
+    row.tvdb = ids.tvdb ? String(ids.tvdb) : "";
+    row.trakt = ids.trakt ? String(ids.trakt) : "";
+    row.simkl = ids.simkl ? String(ids.simkl) : "";
+    row.mal = ids.mal ? String(ids.mal) : "";
+    row.anilist = ids.anilist ? String(ids.anilist) : "";
     row.deleted = false;
     row._origin = "manual";
     return row;
@@ -39,7 +50,7 @@
 
   function buildManualRow(item, key, replacedKey, options = {}) {
     const row = applyManualRow(
-      { _rid: nextRid(options), mal: "", anilist: "" },
+      { _rid: nextRid(options) },
       item,
       key
     );
@@ -63,7 +74,9 @@
         year: raw.year != null ? String(raw.year) : "",
         imdb: ids.imdb || (type === "season" ? showIds.imdb || imdbFromKey(key) : ""),
         tmdb: ids.tmdb || showIds.tmdb || "",
+        tvdb: ids.tvdb || showIds.tvdb || "",
         trakt: ids.trakt || showIds.trakt || "",
+        simkl: ids.simkl || showIds.simkl || "",
         mal: ids.mal || "",
         anilist: ids.anilist || "",
         raw: cloneRaw(raw),
@@ -88,8 +101,10 @@
         title: "",
         year: "",
         imdb: imdbFromKey(key),
-        tmdb: key.startsWith("tmdb:") ? key.slice(5).split("#")[0] : "",
-        trakt: key.startsWith("trakt:") ? key.slice(6).split("#")[0] : "",
+        tmdb: idFromKey(key, "tmdb"),
+        tvdb: idFromKey(key, "tvdb"),
+        trakt: idFromKey(key, "trakt"),
+        simkl: idFromKey(key, "simkl"),
         mal: "",
         anilist: "",
         raw: { ids: {}, type: null, title: null },
