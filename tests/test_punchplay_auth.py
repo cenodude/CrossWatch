@@ -36,6 +36,17 @@ class FakePost:
         return self.responses.pop(0)
 
 
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_guard():
+    import providers.auth._auth_PUNCHPLAY as pp
+
+    pp._AUTH_GUARD.reset()
+    pp._LAST_FORCED_REFRESH.clear()
+    yield
+    pp._AUTH_GUARD.reset()
+    pp._LAST_FORCED_REFRESH.clear()
+
+
 @pytest.fixture()
 def punchplay(monkeypatch: pytest.MonkeyPatch):
     import providers.auth._auth_PUNCHPLAY as pp
@@ -257,6 +268,94 @@ def test_refresh_invalid_grant_clears_tokens_for_reconnect(punchplay, monkeypatc
     assert res["reconnect_required"] is True
     assert store["cfg"]["punchplay"]["access_token"] == ""
     assert store["cfg"]["punchplay"]["refresh_token"] == ""
+
+
+def test_auth_budgets_match_the_documented_limits() -> None:
+    import providers.auth._auth_PUNCHPLAY as pp
+
+    assert pp.DEVICE_CODE_BUDGET == (10, 3600.0)
+    assert pp.DEVICE_TOKEN_BUDGET == (200, 600.0)
+    assert pp.REFRESH_BUDGET == (20, 3600.0)
+
+
+def test_device_code_is_capped_locally_at_ten_per_hour(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    ok = ResponseStub(200, {
+        "user_code": "AAAA-BBBB", "device_code": "dc", "verification_uri": "https://punchplay.tv/link",
+        "verification_uri_complete": "", "verification_uri_qr": "", "expires_in": 600, "scope": "profile:read",
+    })
+    post = FakePost([ok] * 20)
+    monkeypatch.setattr(pp.requests, "post", post)
+
+    results = [pp.start_device_code(store["cfg"], instance_id="default") for _ in range(12)]
+
+    assert len(post.calls) == 10
+    assert all(r["ok"] for r in results[:10])
+    assert results[10]["error"] == "rate_limited"
+    assert results[10]["local"] is True
+    assert results[10]["retry_after"] > 0
+
+
+def test_refresh_is_capped_locally_at_twenty_per_hour(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    store["cfg"]["punchplay"].update({"access_token": "at", "refresh_token": "rt", "expires_at": 0})
+
+    tok = {"access_token": "a", "refresh_token": "r", "token_type": "bearer", "expires_in": 0, "refresh_expires_in": 0, "scope": "x"}
+    post = FakePost([ResponseStub(200, dict(tok)) for _ in range(30)])
+    monkeypatch.setattr(pp.requests, "post", post)
+
+    results = [pp.refresh_token(store["cfg"], instance_id="default", force=True) for _ in range(22)]
+
+    assert len(post.calls) == 20
+    assert results[20]["status"] == "rate_limited"
+    assert results[20]["local"] is True
+
+
+def test_server_429_blocks_further_local_attempts(punchplay, monkeypatch: pytest.MonkeyPatch) -> None:
+    pp, store = punchplay
+    post = FakePost([ResponseStub(429, {"error": "rate_limited"}, headers={"Retry-After": "120"})])
+    monkeypatch.setattr(pp.requests, "post", post)
+
+    first = pp.start_device_code(store["cfg"], instance_id="default")
+    second = pp.start_device_code(store["cfg"], instance_id="default")
+
+    assert first["error"] == "rate_limited"
+    assert len(post.calls) == 1
+    assert second.get("local") is True
+    assert second["retry_after"] >= 120
+
+
+def test_forced_refresh_is_throttled_so_401s_cannot_storm(monkeypatch: pytest.MonkeyPatch) -> None:
+    import providers.auth._auth_PUNCHPLAY as pp
+
+    assert pp._allow_forced_refresh("default") is True
+    assert pp._allow_forced_refresh("default") is False
+    assert pp._allow_forced_refresh("other") is True
+
+
+
+def test_request_with_auth_does_not_refresh_on_every_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    import providers.auth._auth_PUNCHPLAY as pp
+
+    refreshes: list[int] = []
+
+    monkeypatch.setattr(pp, "merge_auth_kwargs", lambda *a, **k: {"headers": {}})
+    monkeypatch.setattr(pp, "refresh_token", lambda *a, **k: (refreshes.append(1), {"ok": False})[1])
+
+    calls = []
+
+    def fake_call(session, method, url, **kw):
+        calls.append(url)
+        return ResponseStub(401, {"error": "insufficient_scope"})
+
+    import requests as _requests
+
+    session = _requests.Session()
+    for _ in range(25):
+        pp.request_with_auth(session, "GET", "https://punchplay.tv/x", cfg={}, instance_id="default", request_func=fake_call)
+
+    assert len(calls) == 25
+    assert len(refreshes) == 1
 
 
 def test_status_for_block_reports_pending_and_scopes() -> None:
