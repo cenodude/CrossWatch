@@ -55,7 +55,7 @@
   const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: "Metadata", keys: ["TMDB_METADATA", "ANIME_MAPPING"] });
   const META_ITEMS = Object.freeze({
     TMDB_METADATA: { key: "TMDB_METADATA", label: "TMDb Metadata", logoKey: "TMDB", sectionId: "sec-meta-tmdb", provider: "tmdb" },
-    ANIME_MAPPING: { key: "ANIME_MAPPING", label: "Anime ID Mapping", logoKey: "ANILIST", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
+    ANIME_MAPPING: { key: "ANIME_MAPPING", label: "Anime ID Mapping", icon: "shield", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
   });
 
   function providerMeta() {
@@ -129,6 +129,7 @@
   }
 
   function metadataProviderLogo(info) {
+    if (info?.icon) return `<span class="material-symbols-rounded cw-auth-provider-icon" aria-hidden="true">${escHtml(info.icon)}</span>`;
     return window.CW?.ProviderMeta?.logoHtml?.(info?.logoKey || info?.label || "", "cw-auth-provider-logo") || `<span class="token-text">${info?.label || ""}</span>`;
   }
 
