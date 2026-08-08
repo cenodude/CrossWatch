@@ -22,6 +22,8 @@ from cw_platform.id_map import minimal as id_minimal
 from .._log import log as cw_log
 from ._common import (
     SIMKLFetchError,
+    REWATCH_ACCOUNT_TYPES,
+    account_type,
     adapter_headers,
     cache_anime_mappings,
     fetch_activities,
@@ -73,9 +75,31 @@ _MOVIE_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt", "simkl")  # anime IDs exclude
 _EPISODE_LOOKUP_ID_KEYS = ("tvdb", "anidb")
 
 
+_REWATCH_ACCOUNT_WARNED: set[str] = set()
+
+
+def _rewatch_account_ok(adapter: Any) -> bool:
+    try:
+        session = adapter.client.session
+        headers = adapter_headers(adapter)
+        timeout = float(getattr(adapter.cfg, "timeout", 15.0) or 15.0)
+        tier = account_type(session, headers, timeout=timeout)
+    except Exception:
+        tier = ""
+    if tier in REWATCH_ACCOUNT_TYPES:
+        return True
+    marker = tier or "unknown"
+    if marker not in _REWATCH_ACCOUNT_WARNED:
+        _REWATCH_ACCOUNT_WARNED.add(marker)
+        _warn("rewatch_disabled", reason="simkl_account_not_pro_vip", account_type=marker)
+    return False
+
+
 def _rewatches_enabled(adapter: Any) -> bool:
     cfg = getattr(adapter, "config", None)
-    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
+    if not (isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches")):
+        return False
+    return _rewatch_account_ok(adapter)
 
 
 def _params(headers: Mapping[str, str], *, rewatches: bool = False, **extra: Any) -> dict[str, Any]:

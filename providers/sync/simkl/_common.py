@@ -15,6 +15,12 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 DEFAULT_DATE_FROM = START_OF_TIME_ISO
 
+SIMKL_BASE = "https://api.simkl.com"
+URL_USER_SETTINGS = f"{SIMKL_BASE}/users/settings"
+REWATCH_ACCOUNT_TYPES = frozenset({"pro", "vip"})
+_SETTINGS_TTL = 300.0
+_SETTINGS_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
+
 
 class SIMKLFetchError(RuntimeError):
     """Raised when a SIMKL read cannot produce a good snapshot"""
@@ -502,6 +508,56 @@ def fetch_activities(
         return None, rate
     except Exception:
         return None, rate
+
+
+def reset_user_settings_memo() -> None:
+    global _SETTINGS_MEMO
+    _SETTINGS_MEMO = (0.0, None)
+
+
+def fetch_user_settings(
+    session: Any,
+    headers: Mapping[str, str],
+    *,
+    timeout: float = 15.0,
+    force_refresh: bool = False,
+) -> dict[str, Any] | None:
+    global _SETTINGS_MEMO
+    now = time.time()
+    ts, cached = _SETTINGS_MEMO
+    if cached is not None and not force_refresh and (now - ts) < _SETTINGS_TTL:
+        return cached
+    try:
+        resp = session.post(
+            URL_USER_SETTINGS,
+            headers=dict(headers),
+            params=simkl_api_params_from_headers(headers),
+            timeout=timeout,
+        )
+        if not (200 <= int(getattr(resp, "status_code", 0) or 0) < 300):
+            return None
+        data = resp.json()
+    except Exception:
+        return None
+    if not isinstance(data, Mapping):
+        return None
+    out = dict(data)
+    _SETTINGS_MEMO = (now, out)
+    return out
+
+
+def account_type(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0) -> str:
+    settings = fetch_user_settings(session, headers, timeout=timeout)
+    if not isinstance(settings, Mapping):
+        return ""
+    account = settings.get("account")
+    if not isinstance(account, Mapping):
+        return ""
+    return str(account.get("type") or "").strip().lower()
+
+
+def rewatches_allowed(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0) -> bool:
+    return account_type(session, headers, timeout=timeout) in REWATCH_ACCOUNT_TYPES
 
 
 def parse_rate_limit(headers: Mapping[str, str]) -> dict[str, Any]:
