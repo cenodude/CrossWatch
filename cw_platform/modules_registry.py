@@ -25,6 +25,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_FLOPPY":   "providers.auth._auth_FLOPPY",
         "_auth_ANILIST":  "providers.auth._auth_ANILIST",
         "_auth_TMDB":     "providers.auth._auth_TMDB",
+        "_auth_PUNCHPLAY": "providers.auth._auth_PUNCHPLAY",
     },
     "SYNC": {
         "_mod_PLEX":       "providers.sync._mod_PLEX",

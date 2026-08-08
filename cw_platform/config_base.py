@@ -365,6 +365,19 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "punchplay": {
+        "auth_method": "device_code",
+        "access_token": "",
+        "refresh_token": "",
+        "token_type": "bearer",
+        "scope": "",
+        "expires_at": 0,
+        "refresh_expires_at": 0,
+        "username": "",
+        "user_id": "",
+        "device_id": "",
+    },
+
     "nuvio": {
         "base_url": "https://api.nuvio.tv",
         "access_token": "",
@@ -805,6 +818,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "anilist": {"access_token", "client_secret"},
         "mdblist": {"api_key", "access_token", "refresh_token", "_pending_device"},
         "publicmetadb": {"api_key"},
+        "punchplay": {"access_token", "refresh_token", "_pending_device"},
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
         "stremio": {"auth_key", "authKey"},
         "floppy": {"api_token"},
