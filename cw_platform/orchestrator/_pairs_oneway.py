@@ -1143,8 +1143,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
     if bool(anime_pair_opts.get("use_anime_mapping", False)):
         src_before = len(src_idx)
         dst_before = len(dst_full)
-        src_idx = _anime_enrich_index_for_pair(src_idx, provider_cfg, src, dst)
-        dst_full = _anime_enrich_index_for_pair(dst_full, provider_cfg, src, dst)
+        src_stats: dict[str, int] = {}
+        dst_stats: dict[str, int] = {}
+        src_idx = _anime_enrich_index_for_pair(src_idx, provider_cfg, src, dst, stats=src_stats)
+        dst_full = _anime_enrich_index_for_pair(dst_full, provider_cfg, src, dst, stats=dst_stats)
+        if src_stats:
+            dbg("anime_mapping.enrich", feature=feature, side=src, role="source", **src_stats)
+        if dst_stats:
+            dbg("anime_mapping.enrich", feature=feature, side=dst, role="target", **dst_stats)
         if len(src_idx) != src_before or len(dst_full) != dst_before:
             dbg("anime_mapping.rekeyed", feature=feature, src=src, dst=dst, src_items=len(src_idx), dst_items=len(dst_full))
 

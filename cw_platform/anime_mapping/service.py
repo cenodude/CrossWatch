@@ -10,13 +10,16 @@ from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal
 
 from .descriptors import descriptor_candidates_for_id, parse_descriptor
 from .overrides import find_identity_overrides
-from .storage import paths, query_edges, read_state
+from .storage import index_ready, query_edges, query_identity_natives
 
 ANIME_NATIVE_PROVIDERS = {"anilist", "simkl"}
 DEFAULT_FEATURES = {"watchlist", "ratings"}
 OPT_IN_FEATURES = {"history"}
 ANY_PAIR = "*"
 OUTPUT_KEYS = ("anilist", "mal", "anidb", "tmdb", "tvdb", "imdb")
+SEED_KEYS = frozenset(OUTPUT_KEYS)
+IDENTITY_SEED_KEYS = ("simkl", "kitsu")
+IDENTITY_SEED_EXCLUDED_TYPES = frozenset({"episode", "season"})
 PAIR_FEATURE_OPTIONS_KEY = "_cw_pair_feature_options"
 _MEDIA_KIND_KEYS: dict[str, str] = {
     "tmdb_movie": "movie",
@@ -191,9 +194,26 @@ class AnimeMappingService:
 
     def ready(self) -> bool:
         if self._ready is None:
-            pp = paths(self.release_tag)
-            self._ready = bool(pp["db"].exists() and read_state(self.release_tag).get("index_ready", False))
+            self._ready = index_ready(self.release_tag)
         return self._ready
+
+    def _identity_seed_ids(self, ids: Mapping[str, Any], media_type: str | None = None) -> dict[str, str]:
+        if str(media_type or "").strip().lower() in IDENTITY_SEED_EXCLUDED_TYPES:
+            return {}
+        if any(key in SEED_KEYS for key in ids):
+            return {}
+        for key in IDENTITY_SEED_KEYS:
+            value = str(ids.get(key) or "").strip()
+            if not value:
+                continue
+            try:
+                found = query_identity_natives(self.release_tag, key, value)
+            except Exception:
+                continue
+            natives = {k: str(v) for k, v in (found or {}).items() if str(v or "").strip()}
+            if natives:
+                return natives
+        return {}
 
     def enrich_ids(self, ids: Mapping[str, Any] | None, *, media_type: str | None = None) -> dict[str, Any]:
         ids0 = {str(k).lower(): v for k, v in dict(ids or {}).items() if v not in (None, "")}
@@ -215,12 +235,15 @@ class AnimeMappingService:
                 "changed": merged != {k: str(v) for k, v in ids0.items() if v not in (None, "")},
             }
 
+        identity_seeds = self._identity_seed_ids(ids0, media_type)
+        seed_ids: dict[str, Any] = {**identity_seeds, **ids0, **ruled}
+
         seen_sources: set[tuple[str, str]] = set()
         rows: list[dict[str, Any]] = []
         source_descriptors: list[str] = []
         queue: list[tuple[int, str]] = []
 
-        for key, value in ids0.items():
+        for key, value in seed_ids.items():
             for raw_desc in descriptor_candidates_for_id(key, value, media_type=media_type):
                 queue.append((0, raw_desc))
 
@@ -256,10 +279,10 @@ class AnimeMappingService:
                 next_desc = f"{prefix}:{tid}:{scope}" if scope else f"{prefix}:{tid}"
                 queue.append((depth + 1, next_desc))
 
-        if not rows and not ruled:
+        if not rows and not ruled and not identity_seeds:
             return {"ids": dict(ids0), "detail": {}, "changed": False}
 
-        out_ids: dict[str, Any] = dict(ids0)
+        out_ids: dict[str, Any] = dict(seed_ids)
         details: dict[str, list[dict[str, Any]]] = {}
         seen_details: set[tuple[str, str, str, str, str]] = set()
 
@@ -310,10 +333,11 @@ class AnimeMappingService:
                 "release_tag": self.release_tag,
                 "source_descriptors": sorted(set(source_descriptors)),
                 **({"overrides": dict(ruled)} if ruled else {}),
+                **({"identity_seeds": dict(identity_seeds)} if identity_seeds else {}),
                 **({"ambiguous": sorted(ambiguous)} if ambiguous else {}),
                 **details,
             }
-        } if (details or ruled) else {}
+        } if (details or ruled or identity_seeds) else {}
         return {"ids": merged or dict(ids0), "detail": detail, "changed": bool(changed)}
 
     def enrich_item(self, item: Mapping[str, Any]) -> dict[str, Any]:
@@ -344,32 +368,69 @@ def enrich_item(item: Mapping[str, Any], cfg: Mapping[str, Any] | None = None) -
     return AnimeMappingService(cfg).enrich_item(item)
 
 
+def new_enrich_stats() -> dict[str, int]:
+    return {"items": 0, "seeded": 0, "enriched": 0, "dead_end": 0, "rekeyed": 0, "merged": 0, "failed": 0}
+
+
+def _seed_status(item: Mapping[str, Any], enriched: Mapping[str, Any]) -> tuple[bool, bool]:
+    detail = enriched.get("detail") if isinstance(enriched.get("detail"), Mapping) else {}
+    amap = detail.get("anime_mapping") if isinstance(detail, Mapping) else {}
+    amap = amap if isinstance(amap, Mapping) else {}
+    seeded = bool(amap.get("identity_seeds"))
+    if seeded:
+        return True, False
+    media_type = str(item.get("type") or item.get("entity") or "").strip().lower()
+    if media_type in IDENTITY_SEED_EXCLUDED_TYPES:
+        return False, False
+    return False, not any(key in SEED_KEYS for key in ids_from(item))
+
+
 def enrich_index_for_pair(
     index: Mapping[str, Any],
     cfg: Mapping[str, Any],
     *providers: Any,
+    stats: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     if not index or not mapping_enabled_for_pair(cfg, *providers):
         return dict(index or {})
     svc = AnimeMappingService(cfg)
     if not svc.ready():
         return dict(index or {})
+    counts = stats if isinstance(stats, dict) else None
+    if counts is not None:
+        counts.update(new_enrich_stats())
     out: dict[str, Any] = {}
     for key, value in (index or {}).items():
         if not isinstance(value, Mapping):
             out[str(key)] = value
             continue
+        if counts is not None:
+            counts["items"] += 1
         try:
             enriched = svc.enrich_item(value)
             mini = minimal(enriched)
             new_key = canonical_key(mini) or str(key)
+            if counts is not None:
+                seeded, dead_end = _seed_status(value, enriched)
+                if seeded:
+                    counts["seeded"] += 1
+                if dead_end:
+                    counts["dead_end"] += 1
+                if ids_from(enriched) != ids_from(value):
+                    counts["enriched"] += 1
+                if new_key != str(key):
+                    counts["rekeyed"] += 1
             existing = out.get(new_key)
             if isinstance(existing, Mapping):
+                if counts is not None:
+                    counts["merged"] += 1
                 merged = dict(existing)
                 merged["ids"] = merge_ids(existing.get("ids") if isinstance(existing.get("ids"), Mapping) else {}, mini.get("ids") if isinstance(mini.get("ids"), Mapping) else {})
                 out[new_key] = merged
             else:
                 out[new_key] = mini
         except Exception:
+            if counts is not None:
+                counts["failed"] += 1
             out[str(key)] = value
     return out

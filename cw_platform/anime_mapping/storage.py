@@ -18,7 +18,7 @@ from cw_platform.config_base import CONFIG_BASE
 
 from .descriptors import Descriptor, parse_descriptor
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _RELEASE_TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _PROVIDER = "anibridge"
 _EDGE_FANOUT_LIMIT = 5000
@@ -26,6 +26,7 @@ _READERS = threading.local()
 _PATHS_CACHE: dict[tuple[str, str], dict[str, Path]] = {}
 IDENTITY_NAMESPACES = ("anidb", "mal", "anilist")
 _IDENTITY_COLUMNS = {"anidb": "anidb", "mal": "myanimelist", "anilist": "anilist"}
+_IDENTITY_TARGET_COLUMNS = {"simkl": "simkl_id", "kitsu": "kitsu_id"}
 
 
 def normalize_release_tag(value: Any = "v3") -> str:
@@ -197,6 +198,10 @@ def _init_schema(con: sqlite3.Connection) -> None:
           kitsu_id TEXT NOT NULL DEFAULT '',
           PRIMARY KEY (namespace, native_id)
         );
+        CREATE INDEX IF NOT EXISTS idx_native_identity_simkl
+          ON native_identity(simkl_id);
+        CREATE INDEX IF NOT EXISTS idx_native_identity_kitsu
+          ON native_identity(kitsu_id);
         CREATE TABLE IF NOT EXISTS meta (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
@@ -503,3 +508,49 @@ def query_native_identity(release_tag: str, namespace: str, native_id: str) -> d
     if str(row["kitsu_id"] or "").strip():
         out["kitsu"] = str(row["kitsu_id"]).strip()
     return out
+
+
+def query_identity_natives(release_tag: str, namespace: str, ident: str) -> dict[str, str]:
+    db = paths(release_tag)["db"]
+    ns = str(namespace or "").strip().lower()
+    value = str(ident or "").strip()
+    column = _IDENTITY_TARGET_COLUMNS.get(ns)
+    if not column or not value:
+        return {}
+    con = _reader(db)
+    if con is None:
+        return {}
+    try:
+        rows = con.execute(
+            f"SELECT namespace, native_id FROM native_identity WHERE {column} = ?",
+            (value,),
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    found: dict[str, str] = {}
+    for row in rows:
+        row_ns = str(row["namespace"] or "").strip().lower()
+        native = str(row["native_id"] or "").strip()
+        if row_ns not in IDENTITY_NAMESPACES or not native:
+            continue
+        current = found.get(row_ns)
+        if current is None:
+            found[row_ns] = native
+        elif current != native:
+            found[row_ns] = ""
+    return {k: v for k, v in found.items() if v}
+
+
+def index_schema_ok(release_tag: str = "v3") -> bool:
+    try:
+        return int(read_state(release_tag).get("schema_version") or 0) == SCHEMA_VERSION
+    except (TypeError, ValueError):
+        return False
+
+
+def index_ready(release_tag: str = "v3") -> bool:
+    if not paths(release_tag)["db"].exists():
+        return False
+    if not bool(read_state(release_tag).get("index_ready", False)):
+        return False
+    return index_schema_ok(release_tag)
