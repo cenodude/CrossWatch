@@ -24,6 +24,7 @@ from ._common import (
     _last_limit_path,
     _record_limit_error,
     headers_for_adapter,
+    watch_only_once,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -2932,13 +2933,62 @@ def _retry_failed_episodes(
     return recovered, {k: v for k, v in destinations.items() if k in recovered}, searches
 
 
+def _collapse_rewatch_plays(items: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    newest: dict[str, Mapping[str, Any]] = {}
+    order: list[str] = []
+    out: list[Mapping[str, Any]] = []
+    for it in items:
+        if not (isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True):
+            out.append(it)
+            continue
+        try:
+            key = str(canonical_key(it) or "")
+        except Exception:
+            key = ""
+        if not key:
+            out.append(it)
+            continue
+        if key not in newest:
+            order.append(key)
+            newest[key] = it
+            continue
+        current = _iso8601(newest[key].get("watched_at")) or ""
+        candidate = _iso8601(it.get("watched_at")) or ""
+        if candidate > current:
+            newest[key] = it
+    for key in order:
+        collapsed = dict(newest[key])
+        collapsed.pop("_cw_rewatch_sync", None)
+        collapsed.pop("_cw_event_key", None)
+        out.append(collapsed)
+    return out
+
+
+def _guard_watch_only_once(adapter: Any, items: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    if not any(isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True for it in items):
+        return items
+    try:
+        if not watch_only_once(adapter):
+            return items
+    except Exception:
+        return items
+    collapsed = _collapse_rewatch_plays(items)
+    _warn(
+        "watch_only_once_active",
+        reason="trakt_disable_multiple_plays",
+        plays_in=len(items),
+        plays_out=len(collapsed),
+    )
+    return collapsed
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     write_timeout = float(_cfg_num(adapter, "history_write_timeout", max(timeout, 60.0), float))
-    items_list = list(items)
+    items_list = _guard_watch_only_once(adapter, list(items))
 
     source_keys: list[str] = []
     source_by_key: dict[str, Mapping[str, Any]] = {}

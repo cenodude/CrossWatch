@@ -249,6 +249,21 @@ def fetch_user_settings(session: Any, headers: Mapping[str, str], *, timeout: fl
     return None
 
 
+def watch_only_once(adapter: Any) -> bool:
+    settings = fetch_user_settings(
+        adapter.client.session,
+        headers_for_adapter(adapter),
+        timeout=float(getattr(adapter.cfg, "timeout", 15.0) or 15.0),
+        max_retries=int(getattr(adapter.cfg, "max_retries", 3) or 3),
+    )
+    if not isinstance(settings, Mapping):
+        return False
+    browsing = settings.get("browsing")
+    if not isinstance(browsing, Mapping):
+        return False
+    return bool(browsing.get("watch_only_once", False))
+
+
 def resolve_watchlist_limit(adapter: Any, cfg: Mapping[str, Any]) -> int | None:
     override = _pos_int(cfg.get("watchlist_limit"))
     if override is not None:
