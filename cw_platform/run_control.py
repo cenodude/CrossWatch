@@ -11,7 +11,7 @@ from typing import Any
 ANY_RUN = "*"
 
 _LOCK = threading.RLock()
-_STATE: dict[str, Any] = {"run_id": None, "requested_at": None, "reason": ""}
+_STATE: dict[str, Any] = {"run_id": None, "requested_at": None, "reason": "", "queue_stopped": False}
 
 
 class SyncCancelled(RuntimeError):
@@ -28,12 +28,30 @@ def request_cancel(run_id: Any = None, reason: str = "user") -> dict[str, Any]:
         _STATE["run_id"] = str(run_id or "").strip() or ANY_RUN
         _STATE["requested_at"] = time.time()
         _STATE["reason"] = str(reason or "user").strip() or "user"
+        _STATE["queue_stopped"] = True
         return dict(_STATE)
 
 
 def clear_cancel() -> None:
     with _LOCK:
         _STATE.update({"run_id": None, "requested_at": None, "reason": ""})
+
+
+def queue_stopped() -> bool:
+    with _LOCK:
+        return bool(_STATE.get("queue_stopped"))
+
+
+def clear_queue_stop() -> None:
+    with _LOCK:
+        _STATE["queue_stopped"] = False
+
+
+def consume_queue_stop() -> bool:
+    with _LOCK:
+        stopped = bool(_STATE.get("queue_stopped"))
+        _STATE["queue_stopped"] = False
+        return stopped
 
 
 def cancel_state() -> dict[str, Any]:

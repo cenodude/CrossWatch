@@ -18,7 +18,13 @@ from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.reason_labels import friendly_reason
-from cw_platform.run_control import cancel_requested, cancel_state, clear_cancel, request_cancel
+from cw_platform.run_control import (
+    cancel_requested,
+    cancel_state,
+    clear_cancel,
+    clear_queue_stop,
+    request_cancel,
+)
 from cw_platform.value_coercion import coerce_bool
 from services.scheduler_webhooks import notify_scheduler_webhook, resolve_completion_event
 
@@ -2327,6 +2333,9 @@ def api_run_sync(payload: dict | None = Body(None)) -> dict[str, Any]:
             _sync_progress_ui("[SYNC] exit code: 0")
 
             return {"ok": True, "skipped": "no_pairs_configured"}
+        if str((payload or {}).get("source") or "").strip().lower() != "scheduler":
+            clear_queue_stop()
+
         run_id = str(int(time.time()))
         th = threading.Thread(
             target=_run_pairs_thread,

@@ -187,4 +187,4 @@ def test_bundle_masks_config_secrets(tmp_path, monkeypatch) -> None:
     redacted = json.loads(archive.read("config.redacted.json"))
 
     assert redacted["trakt"]["access_token"] != "super-secret-token"
-    assert redacted["trakt"]["client_id"] == "public-id"
+    assert redacted["trakt"]["client_id"] == "<redacted>"

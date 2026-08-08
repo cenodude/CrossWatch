@@ -254,3 +254,25 @@ def test_cancel_endpoint_requires_a_running_sync(monkeypatch, tmp_path) -> None:
     assert result["run_id"] == "run-77"
     assert run_control.cancel_requested("run-77") is True
     assert sync.api_cancel_status()["cancel_requested"] is True
+
+
+def test_scheduler_queues_guard_on_cancel() -> None:
+    import inspect
+    from services import scheduling
+
+    src = inspect.getsource(scheduling.SyncScheduler._adv_run_due)
+    guards = src.count("consume_queue_stop()")
+
+    assert guards == 2, "both the advanced job loop and the workflow step loop must guard on cancel"
+    assert "skipping remaining jobs" in src
+    assert "skipping remaining steps" in src
+
+
+def test_manual_run_clears_a_stale_queue_stop(monkeypatch, tmp_path) -> None:
+    sync, _events, _log = _run_thread_harness(monkeypatch, tmp_path, {"added": 0, "cancelled": False})
+    run_control.request_cancel("old-run")
+    assert run_control.queue_stopped() is True
+
+    sync.clear_queue_stop()
+
+    assert run_control.queue_stopped() is False

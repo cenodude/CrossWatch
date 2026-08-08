@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 from urllib.parse import urlsplit
+from cw_platform.run_control import consume_queue_stop
 from services.scheduler_webhooks import notify_scheduler_webhook
 
 try:
@@ -1400,6 +1401,10 @@ class SyncScheduler:
         for j in ordered:
             if self._stop.is_set():
                 break
+            if consume_queue_stop():
+                self._log("advanced: sync cancelled by user; skipping remaining jobs", level="INFO")
+                ok_all = False
+                break
 
             dep = j.get("after")
             if dep and dep in {x.get("id") for x in jobs} and dep not in executed:
@@ -1459,6 +1464,14 @@ class SyncScheduler:
             steps = list(workflow.get("steps") or [])
             for step in steps:
                 if self._stop.is_set():
+                    break
+                if consume_queue_stop():
+                    self._log(
+                        f"advanced workflow: sync cancelled by user; skipping remaining steps of {workflow['id']}",
+                        level="INFO",
+                    )
+                    ok_all = False
+                    workflow_ok = False
                     break
 
                 waited = 0

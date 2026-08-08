@@ -144,3 +144,45 @@ def test_uncancelled_run_still_writes(config_base, monkeypatch) -> None:
     assert [it["ids"]["imdb"] for it in dst.add_calls[0]] == ["tt01"]
     assert result["cancelled"] is False
     assert result["added"] == 1
+
+
+def _twoway(pid: str, src: str, dst: str) -> dict[str, Any]:
+    return {
+        "id": pid, "enabled": True, "source": src, "target": dst, "mode": "two-way",
+        "feature": "watchlist",
+        "features": {"watchlist": {"enable": True, "add": True, "remove": True}},
+    }
+
+
+def test_one_cancel_stops_every_remaining_pair(config_base, monkeypatch) -> None:
+    ops: dict[str, FakeOps] = {}
+    for i in (1, 2, 3, 4):
+        ops[f"S{i}"] = FakeOps(f"S{i}", {f"imdb:tt{i}": _movie(str(i))})
+        ops[f"D{i}"] = FakeOps(f"D{i}", {})
+    ops["D1"].hooks["build_index"] = lambda _ops: run_control.request_cancel()
+    _wire(monkeypatch, ops)
+
+    cfg = _cfg([_twoway(f"p{i}", f"S{i}", f"D{i}") for i in (1, 2, 3, 4)])
+    cfg["sync"]["enable_remove"] = True
+    result = Orchestrator(cfg).run()
+
+    assert result["cancelled"] is True
+    for i in (2, 3, 4):
+        assert ops[f"S{i}"].index_calls == [], f"pair {i} source was read"
+        assert ops[f"D{i}"].index_calls == [], f"pair {i} target was read"
+        assert ops[f"D{i}"].add_calls == [], f"pair {i} was written"
+
+
+def test_cancel_marks_queue_stopped_until_consumed() -> None:
+    run_control.clear_queue_stop()
+    assert run_control.queue_stopped() is False
+
+    run_control.request_cancel("run-1")
+    assert run_control.queue_stopped() is True
+
+    run_control.clear_cancel()
+    assert run_control.queue_stopped() is True, "a finished run must not clear the queue stop"
+
+    assert run_control.consume_queue_stop() is True
+    assert run_control.queue_stopped() is False
+    assert run_control.consume_queue_stop() is False
