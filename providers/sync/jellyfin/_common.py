@@ -16,7 +16,7 @@ from .._log import log as cw_log
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 
-from ._routes import favorite as favorite_route, user_data as user_data_route, user_params
+from ._routes import favorite as favorite_route, user_data as user_data_route, user_params, views as views_route
 
 _DEF_TYPES = {"movie", "show", "episode"}
 _IMDB_PAT = re.compile(r"(?:tt)?(\d{5,9})$")
@@ -314,8 +314,7 @@ def jf_build_library_roots(http: Any, user_id: str) -> dict[str, dict[str, Any]]
     if not user_id:
         return roots
     try:
-        url = f"/Users/{user_id}/Views"
-        r = http.get(url)
+        r = http.get(views_route(), params=user_params(user_id))
         if getattr(r, "status_code", 0) == 200:
             data = r.json() or {}
             for it in data.get("Items") or []:
