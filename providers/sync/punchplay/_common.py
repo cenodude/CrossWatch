@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -58,6 +59,150 @@ DEFAULT_TIMEOUT = 20.0
 DEFAULT_MAX_RETRIES = 3
 
 RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+RATE_BUDGETS: dict[str, tuple[int, float]] = {
+    "bulk": (30, 60.0),
+    "playback": (120, 300.0),
+    "sync_read": (120, 60.0),
+    "history_read": (120, 60.0),
+    "lists_read": (120, 60.0),
+    "calendar": (60, 60.0),
+    "token_read": (300, 60.0),
+    "token_write": (120, 60.0),
+}
+
+RATE_REMAINING_FLOOR = 2
+RATE_MAX_SLEEP = 60.0
+
+
+def _endpoint_bucket(method: str, url: str) -> str | None:
+    m = str(method or "").upper()
+    u = str(url or "")
+    if "/sync/history" in u or "/sync/ratings" in u or "/sync/watchlist" in u:
+        return "bulk"
+    if "/playback/" in u and m == "POST":
+        return "playback"
+    if "/me/sync/changes" in u or "/me/sync/snapshot" in u:
+        return "sync_read"
+    if "/me/history" in u:
+        return "history_read"
+    if "/me/lists" in u or "/lists/" in u:
+        return "lists_read"
+    if "/calendar" in u:
+        return "calendar"
+    return None
+
+
+class RateGovernor:
+    def __init__(self, budgets: Mapping[str, tuple[int, float]] | None = None) -> None:
+        self._lock = threading.Lock()
+        self._budgets = dict(budgets or RATE_BUDGETS)
+        self._hits: dict[str, list[float]] = {}
+        self._until: dict[str, float] = {}
+
+    def _buckets_for(self, method: str, url: str) -> list[str]:
+        out: list[str] = []
+        endpoint = _endpoint_bucket(method, url)
+        if endpoint:
+            out.append(endpoint)
+        out.append("token_write" if str(method or "").upper() in ("POST", "PATCH", "DELETE", "PUT") else "token_read")
+        return out
+
+    def _wait_for(self, bucket: str, now: float) -> float:
+        budget = self._budgets.get(bucket)
+        blocked_until = self._until.get(bucket, 0.0)
+        wait = max(0.0, blocked_until - now)
+        if not budget:
+            return wait
+        limit, window = budget
+        hits = self._hits.setdefault(bucket, [])
+        cutoff = now - window
+        while hits and hits[0] <= cutoff:
+            hits.pop(0)
+        if len(hits) >= limit:
+            wait = max(wait, hits[0] + window - now)
+        return wait
+
+    def acquire(self, method: str, url: str) -> float:
+        slept = 0.0
+        for _ in range(8):
+            with self._lock:
+                now = time.monotonic()
+                buckets = self._buckets_for(method, url)
+                wait = max((self._wait_for(b, now) for b in buckets), default=0.0)
+                if wait <= 0.0:
+                    for b in buckets:
+                        if b in self._budgets:
+                            self._hits.setdefault(b, []).append(now)
+                    return slept
+            pause = min(RATE_MAX_SLEEP, wait)
+            time.sleep(pause)
+            slept += pause
+        return slept
+
+    def observe(self, method: str, url: str, headers: Mapping[str, Any] | None) -> None:
+        if not headers:
+            return
+        raw_remaining = headers.get("X-RateLimit-Remaining")
+        if raw_remaining is None:
+            return
+        try:
+            remaining = int(raw_remaining)
+        except Exception:
+            return
+        if remaining > RATE_REMAINING_FLOOR:
+            return
+        try:
+            reset = float(headers.get("X-RateLimit-Reset") or 0)
+        except Exception:
+            reset = 0.0
+        delay = max(0.0, reset - time.time()) if reset else 1.0
+        delay = min(RATE_MAX_SLEEP, delay)
+        if delay <= 0.0:
+            return
+        with self._lock:
+            until = time.monotonic() + delay
+            for bucket in self._buckets_for(method, url):
+                self._until[bucket] = max(self._until.get(bucket, 0.0), until)
+
+
+_GOVERNORS: dict[str, RateGovernor] = {}
+_GOVERNORS_GUARD = threading.Lock()
+
+
+def budgets_from_cfg(section: Mapping[str, Any] | None) -> dict[str, tuple[int, float]]:
+    out = dict(RATE_BUDGETS)
+    rl = (section or {}).get("rate_limit")
+    if not isinstance(rl, Mapping):
+        return out
+    overrides = (
+        ("bulk", "bulk_per_min", 60.0),
+        ("playback", "playback_per_5min", 300.0),
+        ("sync_read", "sync_read_per_min", 60.0),
+        ("history_read", "history_read_per_min", 60.0),
+        ("lists_read", "lists_read_per_min", 60.0),
+    )
+    for bucket, key, window in overrides:
+        raw = rl.get(key)
+        if raw is None:
+            continue
+        try:
+            limit = int(raw)
+        except Exception:
+            continue
+        if limit > 0:
+            out[bucket] = (limit, window)
+    return out
+
+
+def rate_governor(instance: Any = None, section: Mapping[str, Any] | None = None) -> RateGovernor:
+    key = str(instance or "default")
+    with _GOVERNORS_GUARD:
+        gov = _GOVERNORS.get(key)
+        if gov is None:
+            gov = RateGovernor(budgets_from_cfg(section))
+            _GOVERNORS[key] = gov
+        return gov
 
 
 class PunchPlayError(RuntimeError):
@@ -292,16 +437,28 @@ def punchplay_request(adapter: Any, method: str, url: str, **kwargs: Any) -> req
     section = cfg_section(adapter)
     timeout = kwargs.pop("timeout", cfg_float(section, "timeout", DEFAULT_TIMEOUT))
     retries = kwargs.pop("max_retries", cfg_int(section, "max_retries", DEFAULT_MAX_RETRIES))
-    return punchplay_request_with_auth(
+    inst = instance_id(adapter)
+
+    gov = rate_governor(inst, section)
+    slept = gov.acquire(method, url)
+    if slept > 0.25:
+        _dbg("ratelimit", "client_throttle", method=str(method).upper(), bucket=_endpoint_bucket(method, url) or "token", slept_s=round(slept, 2))
+
+    resp = punchplay_request_with_auth(
         session,
         method,
         url,
         cfg=cfg,
-        instance_id=instance_id(adapter),
+        instance_id=inst,
         timeout=timeout,
         max_retries=retries,
         **kwargs,
     )
+    try:
+        gov.observe(method, url, getattr(resp, "headers", None))
+    except Exception:
+        pass
+    return resp
 
 
 def error_of(resp: requests.Response) -> str:

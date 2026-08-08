@@ -81,6 +81,74 @@ _TOKEN_KEYS = (
 _REFRESH_LOCKS: dict[str, threading.Lock] = {}
 _REFRESH_LOCKS_GUARD = threading.Lock()
 
+DEVICE_CODE_BUDGET = (10, 3600.0)
+DEVICE_TOKEN_BUDGET = (200, 600.0)
+REFRESH_BUDGET = (20, 3600.0)
+FORCED_REFRESH_MIN_INTERVAL = 60.0
+
+_AUTH_BUDGETS: dict[str, tuple[int, float]] = {
+    "device_code": DEVICE_CODE_BUDGET,
+    "device_token": DEVICE_TOKEN_BUDGET,
+    "refresh": REFRESH_BUDGET,
+}
+
+
+class _IPRateGuard:
+    def __init__(self, budgets: dict[str, tuple[int, float]] | None = None) -> None:
+        self._lock = threading.Lock()
+        self._budgets = dict(budgets or _AUTH_BUDGETS)
+        self._hits: dict[str, list[float]] = {}
+        self._blocked: dict[str, float] = {}
+
+    def _prune(self, name: str, now: float) -> list[float]:
+        limit_window = self._budgets.get(name)
+        hits = self._hits.setdefault(name, [])
+        if limit_window:
+            cutoff = now - limit_window[1]
+            while hits and hits[0] <= cutoff:
+                hits.pop(0)
+        return hits
+
+    def retry_after(self, name: str) -> int:
+        with self._lock:
+            now = time.monotonic()
+            wait = max(0.0, self._blocked.get(name, 0.0) - now)
+            budget = self._budgets.get(name)
+            if budget:
+                hits = self._prune(name, now)
+                if len(hits) >= budget[0]:
+                    wait = max(wait, hits[0] + budget[1] - now)
+            return int(wait) + 1 if wait > 0 else 0
+
+    def reserve(self, name: str) -> int:
+        with self._lock:
+            now = time.monotonic()
+            wait = max(0.0, self._blocked.get(name, 0.0) - now)
+            budget = self._budgets.get(name)
+            hits = self._prune(name, now) if budget else []
+            if budget and len(hits) >= budget[0]:
+                wait = max(wait, hits[0] + budget[1] - now)
+            if wait > 0:
+                return int(wait) + 1
+            if budget:
+                hits.append(now)
+            return 0
+
+    def note_429(self, name: str, retry_after: float) -> None:
+        delay = max(1.0, float(retry_after or 0.0))
+        with self._lock:
+            self._blocked[name] = max(self._blocked.get(name, 0.0), time.monotonic() + delay)
+
+    def reset(self) -> None:
+        with self._lock:
+            self._hits.clear()
+            self._blocked.clear()
+
+
+_AUTH_GUARD = _IPRateGuard()
+_LAST_FORCED_REFRESH: dict[str, float] = {}
+_FORCED_REFRESH_GUARD = threading.Lock()
+
 
 class PunchPlayAuthError(RuntimeError):
     pass
@@ -294,6 +362,11 @@ def start_device_code(
     ensure_device_id(block)
     set_active_method(block)
 
+    wait = _AUTH_GUARD.reserve("device_code")
+    if wait:
+        log(f"PUNCHPLAY: device code throttled locally (instance={inst})", level="WARN", module="AUTH")
+        return {"ok": False, "error": "rate_limited", "retry_after": wait, "local": True, "instance": inst}
+
     try:
         r = requests.post(
             DEVICE_CODE_URL,
@@ -305,7 +378,9 @@ def start_device_code(
         return {"ok": False, "error": "network_error", "detail": str(e), "instance": inst}
 
     if r.status_code == 429:
-        return {"ok": False, "error": "rate_limited", "retry_after": _retry_after(r), "instance": inst}
+        retry = _retry_after(r)
+        _AUTH_GUARD.note_429("device_code", retry or 60)
+        return {"ok": False, "error": "rate_limited", "retry_after": retry, "instance": inst}
     if r.status_code >= 400:
         return {"ok": False, "error": _error_of(r) or "http_error", "status": int(r.status_code), "instance": inst}
 
@@ -387,13 +462,19 @@ def poll_device_code(
         "device_id": ensure_device_id(block),
     }
 
+    wait = _AUTH_GUARD.reserve("device_token")
+    if wait:
+        return {"ok": False, "status": "slow_down", "retry_after": wait, "local": True, "instance": inst}
+
     try:
         r = requests.post(DEVICE_TOKEN_URL, json=payload, headers=_headers(), timeout=timeout)
     except requests.RequestException as e:
         return {"ok": False, "status": "network_error", "error": str(e), "instance": inst}
 
     if r.status_code == 429:
-        return {"ok": False, "status": "slow_down", "retry_after": _retry_after(r), "instance": inst}
+        retry = _retry_after(r)
+        _AUTH_GUARD.note_429("device_token", retry or 10)
+        return {"ok": False, "status": "slow_down", "retry_after": retry, "instance": inst}
     if r.status_code >= 500:
         return {"ok": False, "status": "server_error", "instance": inst}
     if r.status_code >= 400:
@@ -469,6 +550,11 @@ def refresh_token(
         if not cid or not rt:
             return {"ok": False, "status": "missing_refresh", "instance": inst}
 
+        wait = _AUTH_GUARD.reserve("refresh")
+        if wait:
+            log(f"PUNCHPLAY: refresh throttled locally (instance={inst})", level="WARN", module="AUTH")
+            return {"ok": False, "status": "rate_limited", "retry_after": wait, "local": True, "instance": inst}
+
         try:
             r = requests.post(
                 REFRESH_URL,
@@ -480,8 +566,10 @@ def refresh_token(
             return {"ok": False, "status": "network_error", "error": str(e), "instance": inst}
 
         if r.status_code == 429:
+            retry = _retry_after(r)
+            _AUTH_GUARD.note_429("refresh", retry or 300)
             log(f"PUNCHPLAY: refresh rate limited (instance={inst})", level="WARN", module="AUTH")
-            return {"ok": False, "status": "rate_limited", "retry_after": _retry_after(r), "instance": inst}
+            return {"ok": False, "status": "rate_limited", "retry_after": retry, "instance": inst}
 
         if r.status_code >= 400:
             err = _error_of(r)
@@ -544,6 +632,17 @@ def revoke_token(
     return {"ok": True, "status": "ok", "instance": inst}
 
 
+def _allow_forced_refresh(instance_id: Any) -> bool:
+    inst = normalize_instance_id(instance_id)
+    now = time.monotonic()
+    with _FORCED_REFRESH_GUARD:
+        last = _LAST_FORCED_REFRESH.get(inst, 0.0)
+        if now - last < FORCED_REFRESH_MIN_INTERVAL:
+            return False
+        _LAST_FORCED_REFRESH[inst] = now
+        return True
+
+
 def prepare_auth(
     cfg: Mapping[str, Any] | None,
     *,
@@ -599,6 +698,9 @@ def request_with_auth(
     req_kwargs = merge_auth_kwargs(cfg, instance_id=instance_id, kwargs=kwargs)
     resp = call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
     if getattr(resp, "status_code", None) != 401:
+        return resp
+
+    if not _allow_forced_refresh(instance_id):
         return resp
 
     res = refresh_token(dict(cfg or {}), instance_id=instance_id, force=True)

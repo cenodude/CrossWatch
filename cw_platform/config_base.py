@@ -376,6 +376,17 @@ DEFAULT_CFG: dict[str, Any] = {
         "username": "",
         "user_id": "",
         "device_id": "",
+        "timeout": 20.0,
+        "max_retries": 3,
+        "history_per_page": 100,
+        "history_max_pages": 5000,
+        "rate_limit": {
+            "get_per_sec": 2.0,
+            "post_per_sec": 0.5,
+            "bulk_per_min": 30,
+            "playback_per_5min": 120,
+            "sync_read_per_min": 120,
+        },
     },
 
     "nuvio": {

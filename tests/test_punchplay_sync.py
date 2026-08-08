@@ -422,6 +422,99 @@ def test_progress_remove_dismisses_in_progress_entry(monkeypatch: pytest.MonkeyP
     assert res["confirmed_keys"] == ["tmdb:550"]
 
 
+# --- rate limits --------------------------------------------------------------
+
+def test_documented_budgets_match_the_docs() -> None:
+    from providers.sync.punchplay._common import RATE_BUDGETS
+
+    assert RATE_BUDGETS["bulk"] == (30, 60.0)
+    assert RATE_BUDGETS["playback"] == (120, 300.0)
+    assert RATE_BUDGETS["sync_read"] == (120, 60.0)
+    assert RATE_BUDGETS["history_read"] == (120, 60.0)
+    assert RATE_BUDGETS["token_read"] == (300, 60.0)
+    assert RATE_BUDGETS["token_write"] == (120, 60.0)
+
+
+def test_endpoint_bucket_routing() -> None:
+    from providers.sync.punchplay._common import _endpoint_bucket
+
+    assert _endpoint_bucket("POST", "https://punchplay.tv/api/platform/v1/sync/history") == "bulk"
+    assert _endpoint_bucket("POST", "https://punchplay.tv/api/platform/v1/sync/watchlist") == "bulk"
+    assert _endpoint_bucket("POST", "https://punchplay.tv/api/platform/v1/playback/progress") == "playback"
+    assert _endpoint_bucket("GET", "https://punchplay.tv/api/platform/v1/me/sync/snapshot") == "sync_read"
+    assert _endpoint_bucket("GET", "https://punchplay.tv/api/platform/v1/me/history") == "history_read"
+    assert _endpoint_bucket("GET", "https://punchplay.tv/api/platform/v1/me/lists") == "lists_read"
+    assert _endpoint_bucket("GET", "https://punchplay.tv/api/platform/v1/me") is None
+
+
+def test_governor_blocks_once_a_bucket_is_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay._common import RateGovernor
+
+    slept: list[float] = []
+    clock = {"t": 1000.0}
+    gov = RateGovernor({"bulk": (3, 60.0), "token_write": (100, 60.0)})
+
+    monkeypatch.setattr("providers.sync.punchplay._common.time.monotonic", lambda: clock["t"])
+    monkeypatch.setattr("providers.sync.punchplay._common.time.sleep", lambda s: (slept.append(s), clock.__setitem__("t", clock["t"] + s)))
+
+    url = "https://punchplay.tv/api/platform/v1/sync/history"
+    for _ in range(3):
+        assert gov.acquire("POST", url) == 0.0
+    assert slept == []
+
+    gov.acquire("POST", url)
+
+    assert slept and abs(slept[0] - 60.0) < 0.01
+
+
+def test_governor_backs_off_on_low_remaining_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay._common import RateGovernor
+
+    clock = {"mono": 500.0, "wall": 1_000_000.0}
+    slept: list[float] = []
+    monkeypatch.setattr("providers.sync.punchplay._common.time.monotonic", lambda: clock["mono"])
+    monkeypatch.setattr("providers.sync.punchplay._common.time.time", lambda: clock["wall"])
+    monkeypatch.setattr("providers.sync.punchplay._common.time.sleep", lambda s: (slept.append(s), clock.__setitem__("mono", clock["mono"] + s)))
+
+    gov = RateGovernor()
+    url = "https://punchplay.tv/api/platform/v1/me/history"
+
+    gov.observe("GET", url, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(int(clock["wall"]) + 12)})
+    gov.acquire("GET", url)
+
+    assert slept and abs(slept[0] - 12.0) < 0.5
+
+
+def test_governor_ignores_healthy_remaining_header() -> None:
+    from providers.sync.punchplay._common import RateGovernor
+
+    gov = RateGovernor()
+    url = "https://punchplay.tv/api/platform/v1/me/history"
+    gov.observe("GET", url, {"X-RateLimit-Remaining": "250", "X-RateLimit-Reset": "99999999999"})
+
+    assert gov.acquire("GET", url) == 0.0
+
+
+def test_budgets_are_configurable() -> None:
+    from providers.sync.punchplay._common import budgets_from_cfg
+
+    out = budgets_from_cfg({"rate_limit": {"bulk_per_min": 10, "playback_per_5min": 60}})
+
+    assert out["bulk"] == (10, 60.0)
+    assert out["playback"] == (60, 300.0)
+    assert out["sync_read"] == (120, 60.0)
+
+
+def test_default_config_exposes_rate_limits() -> None:
+    from cw_platform.config_base import DEFAULT_CFG
+
+    rl = DEFAULT_CFG["punchplay"]["rate_limit"]
+
+    assert rl["bulk_per_min"] == 30
+    assert rl["playback_per_5min"] == 120
+    assert rl["sync_read_per_min"] == 120
+
+
 # --- module dispatch ----------------------------------------------------------
 
 def test_dry_run_does_not_hit_the_api(monkeypatch: pytest.MonkeyPatch) -> None:
