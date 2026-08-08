@@ -138,7 +138,7 @@ def _module_html(mod: ModuleType) -> str:
 def auth_providers_html() -> str:
     groups: list[tuple[str, str, list[str]]] = [
         ("sec-auth-media", "Media servers", ["plex", "jellyfin", "emby"]),
-        ("sec-auth-trackers", "Trackers", ["crosswatch", "trakt", "simkl", "tmdb", "mdblist", "publicmetadb", "anilist", "floppy"]),
+        ("sec-auth-trackers", "Trackers", ["crosswatch", "trakt", "simkl", "tmdb", "mdblist", "publicmetadb", "anilist", "punchplay", "floppy"]),
         ("sec-auth-clients", "Media clients", ["nuvio", "kodi", "stremio"]),
         ("sec-auth-others", "Others", ["tautulli"]),
     ]

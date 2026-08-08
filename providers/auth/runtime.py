@@ -27,6 +27,10 @@ def _backend(provider: Any):
         from providers.auth import _auth_STREMIO as stremio_auth
 
         return stremio_auth
+    if name in {"punchplay", "punch_play"}:
+        from providers.auth import _auth_PUNCHPLAY as punchplay_auth
+
+        return punchplay_auth
     raise NotImplementedError(f"No runtime auth backend for provider: {provider}")
 
 
