@@ -334,6 +334,73 @@ def _state_summary(state: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+_REDACTED = "<redacted>"
+
+_IDENTITY_KEYS = frozenset({
+    "access_token", "account_id", "api_key", "api_token", "apikey", "auth_key", "authkey",
+    "avatar", "base_url", "cert_file", "client_id", "client_secret", "default_url",
+    "device_id", "email", "failure_url", "hash", "home_pin", "host", "hostname", "ip",
+    "key_file", "label", "linked_email", "linked_plex_account_id", "linked_thumb",
+    "linked_username", "machine_id", "name", "passwd", "password", "path", "pin",
+    "playlist_id", "playlist_name", "pms_token", "pms_token_server", "profile_id",
+    "profile_name", "refresh_token", "root", "root_dir", "salt", "server", "server_url",
+    "server_uuid", "session_id", "start_url", "state_dir", "success_url", "thumb", "token",
+    "token_hash", "ua", "uri", "url", "user", "user_id", "username", "uuid",
+    "verification_url", "watchlist_list_id", "watchlist_name", "webhook_id", "webhook_token",
+})
+
+_COUNT_LIST_KEYS = frozenset({
+    "devices", "libraries", "pairings", "server_uuid_blacklist", "server_uuid_whitelist",
+    "sessions", "username_whitelist", "webhook_ids",
+})
+
+_URLISH_RE = re.compile(r"(?i)^(?:[a-z][a-z0-9+.-]*://|/[^\s]*/|[a-z]:[\\/])")
+_IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}")
+_OPAQUE_RE = re.compile(r"^[A-Za-z0-9_\-]{20,}$")
+_MASKED_RE = re.compile(r"^[•*]+$")
+
+
+def _looks_sensitive(value: str) -> bool:
+    text = value.strip()
+    if not text or _MASKED_RE.match(text):
+        return False
+    return bool(
+        _URLISH_RE.match(text)
+        or _IP_RE.search(text)
+        or _EMAIL_RE.search(text)
+        or _OPAQUE_RE.match(text)
+    )
+
+
+def _scrub(value: Any, key: str = "") -> Any:
+    name = str(key or "").strip().lower()
+    if isinstance(value, Mapping):
+        return {str(k): _scrub(v, str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        if name in _COUNT_LIST_KEYS:
+            return f"<{len(value)} item{'' if len(value) == 1 else 's'}>" if value else []
+        return [_scrub(v, name) for v in value]
+    if isinstance(value, bool) or value is None:
+        return value
+    if name in _IDENTITY_KEYS:
+        if isinstance(value, str):
+            return _REDACTED if value.strip() else ""
+        return _REDACTED
+    if isinstance(value, str) and _looks_sensitive(value):
+        return _REDACTED
+    return value
+
+
+def scrub_config(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        base = redact_config(dict(cfg or {}))
+    except Exception:
+        base = dict(cfg or {})
+    scrubbed = _scrub(base)
+    return scrubbed if isinstance(scrubbed, dict) else {}
+
+
 def _events_status() -> dict[str, Any]:
     try:
         from cw_platform import event_archive
@@ -545,7 +612,7 @@ def build_bundle(pair_ids: Sequence[str] | None = None, sections: Iterable[str] 
 
         if "config" in wanted:
             try:
-                write_json("config.redacted.json", redact_config(cfg))
+                write_json("config.redacted.json", scrub_config(cfg))
             except Exception as exc:
                 write_json("config.redacted.json", {"error": f"{type(exc).__name__}: {exc}"})
 

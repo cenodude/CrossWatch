@@ -89,9 +89,9 @@ function normalizeAnimeFeatureOptions(state, feature){
     state.options[key]=opts;
     return opts;
   }
-  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=globalAnimeMappingEnabled(state);
-  opts.use_anime_mapping=!!opts.use_anime_mapping;
   const canOnly=anilistCanReceive(state);
+  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=canOnly||globalAnimeMappingEnabled(state);
+  opts.use_anime_mapping=!!opts.use_anime_mapping;
   if(!opts.use_anime_mapping || !canOnly){
     opts.anime_only_sync=false;
   }else if(!hasOwn(opts,"anime_only_sync")){
@@ -765,6 +765,13 @@ function applySubDisable(feature){
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":"cx-pl-enable")?.checked;
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
+  const onlyId=feature==="watchlist"?"cx-wl-anime-only":feature==="ratings"?"cx-rt-anime-only":"";
+  const mapId=feature==="watchlist"?"cx-wl-anime-map":feature==="ratings"?"cx-rt-anime-map":"";
+  const only=onlyId?ID(onlyId):null;
+  if(only){
+    only.disabled=!on||!ID(mapId)?.checked;
+    only.closest?.(".opt-row")?.classList.toggle("muted",only.disabled);
+  }
 }
 
 function countProviderLibraries(state, providerName){
@@ -1128,10 +1135,10 @@ function renderFeaturePanel(state){
             <label for="cx-wl-anime-map">Use Anime ID Mapping</label>
             <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""}><span class="slider"></span></label>
           </div>
-          <div class="opt-row ${animeOnlyDisabled?"muted":""}">
+          ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
             <label for="cx-wl-anime-only">Anime-only sync</label>
             <label class="switch"><input id="cx-wl-anime-only" type="checkbox" ${wl.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
-          </div>
+          </div>`:""}
         </div>
       `:""}
 
@@ -1347,10 +1354,10 @@ function renderFeaturePanel(state){
             <label for="cx-rt-anime-map">Use Anime ID Mapping</label>
             <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""}><span class="slider"></span></label>
           </div>
-          <div class="opt-row ${animeOnlyDisabled?"muted":""}">
+          ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
             <label for="cx-rt-anime-only">Anime-only sync</label>
             <label class="switch"><input id="cx-rt-anime-only" type="checkbox" ${rt.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
-          </div>
+          </div>`:""}
         </div>
       `:""}
       <div class="panel-title small">Scope</div>
