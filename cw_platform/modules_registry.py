@@ -43,6 +43,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_TAUTULLI":   "providers.sync._mod_TAUTULLI",
         "_mod_ANILIST":    "providers.sync._mod_ANILIST",
         "_mod_TMDB":       "providers.sync._mod_TMDB",
+        "_mod_PUNCHPLAY":  "providers.sync._mod_PUNCHPLAY",
     },
 }
 
