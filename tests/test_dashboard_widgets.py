@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from services import activity, dashboard_widgets
@@ -1036,3 +1038,82 @@ def test_dashboard_widgets_payload_only_builds_included_widgets(monkeypatch) -> 
         "recent_playlists": {"ok": True, "items": [], "total": 0},
     }
     assert calls == ["tracker:ratings", "ratings", "playlists"]
+
+
+def test_dashboard_widgets_api_reads_state_widgets_from_db(monkeypatch, tmp_path) -> None:
+    import cw_platform.config_base as config_base
+    from api import dashboardAPI
+    from cw_platform.orchestrator._state_store import StateStore
+
+    monkeypatch.setattr(config_base, "CONFIG", tmp_path)
+    monkeypatch.setattr(dashboard_widgets, "_tracker_feature_items", lambda _kind: {})
+    store = StateStore(tmp_path)
+    store.save_feature_baseline(
+        provider="TRAKT",
+        feature="history",
+        items={"movie:tmdb:949@1767225600": {"type": "movie", "title": "Heat", "ids": {"tmdb": 949}, "watched_at": "2026-01-01T01:00:00Z"}},
+        last_sync_epoch=1767225600,
+    )
+    store.save_feature_baseline(
+        provider="TRAKT",
+        feature="ratings",
+        items={"movie:tmdb:550": {"type": "movie", "title": "Fight Club", "ids": {"tmdb": 550}, "rating": 9, "rated_at": "2026-01-02T01:00:00Z"}},
+        last_sync_epoch=1767225600,
+    )
+    store.save_feature_baseline(
+        provider="TRAKT",
+        feature="progress",
+        items={"movie:tmdb:40": {"type": "movie", "title": "Arrival", "ids": {"tmdb": 40}, "progress_ms": 900000, "duration_ms": 1800000, "progress_at": "2026-01-03T01:00:00Z"}},
+        last_sync_epoch=1767225600,
+    )
+
+    response = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="history,ratings,progress",
+    )
+    payload = json.loads(response.body)
+
+    assert payload["ok"] is True
+    assert payload["recent_history"]["items"][0]["tmdb"] == "949"
+    assert payload["latest_ratings"]["items"][0]["tmdb"] == "550"
+    assert payload["recent_progress"]["items"][0]["tmdb"] == "40"
+
+
+def test_dashboard_widgets_api_reads_scrobble_from_activity_db(monkeypatch, tmp_path) -> None:
+    from api import dashboardAPI
+
+    monkeypatch.setattr(activity, "state_dir", lambda: tmp_path / ".cw_state")
+    activity.clear_events()
+    activity.add_event(
+        {
+            "kind": "scrobble",
+            "method": "webhook",
+            "event": "scrobble_stop",
+            "status": "ok",
+            "source": "plex",
+            "target": "trakt",
+            "media_type": "movie",
+            "title": "Heat",
+            "year": 1995,
+            "watched_at": 1767225600,
+            "captured_at": 1767229200,
+            "ids": {"tmdb": 949},
+        }
+    )
+
+    response = dashboardAPI.dashboard_widgets(
+        history_limit=8,
+        ratings_limit=12,
+        scrobble_limit=8,
+        progress_limit=8,
+        playlists_limit=8,
+        include="scrobble",
+    )
+    payload = json.loads(response.body)
+
+    assert payload["ok"] is True
+    assert payload["recent_scrobble"]["items"][0]["tmdb"] == "949"

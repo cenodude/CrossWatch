@@ -594,6 +594,15 @@ function _cwSetText(id, value) {
   if (el) el.textContent = String(value ?? "");
 }
 
+function _cwSetStat(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const text = String(value ?? "");
+  el.textContent = text;
+  if (text && text !== "-") el.title = text;
+  else el.removeAttribute("title");
+}
+
 function _cwSetChecked(id, value) {
   const el = document.getElementById(id);
   if (el) el.checked = !!value;
@@ -619,7 +628,7 @@ function _cwAnimeMappingUseForLabel() {
 
 function _cwAnimeMappingSetBusy(on, label = "") {
   animeMappingBusy = !!on;
-  ["anime_mapping_enabled", "anime_mapping_auto_update", "btn-anime-mapping-update", "btn-anime-mapping-rebuild"].forEach((id) => {
+  ["anime_mapping_enabled", "anime_mapping_auto_update", "btn-anime-mapping-update", "btn-anime-mapping-rebuild", "btn-anime-mapping-overrides"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.disabled = !!on;
   });
@@ -641,12 +650,12 @@ function cwAnimeMappingRenderStatus(st = {}) {
 
   _cwSetChecked("anime_mapping_enabled", enabled);
   _cwSetChecked("anime_mapping_auto_update", autoUpdate);
-  _cwSetText("anime_mapping_used_for", _cwAnimeMappingUseForLabel());
+  _cwSetStat("anime_mapping_used_for", _cwAnimeMappingUseForLabel());
   _cwSetText("anime_mapping_auto_update_state", autoUpdate ? "Daily" : "Manual");
   _cwSetText("anime_mapping_dataset", dataset);
-  _cwSetText("anime_mapping_generated", _cwFormatUtc(st.dataset_generated_on));
+  _cwSetStat("anime_mapping_generated", _cwFormatUtc(st.dataset_generated_on));
   _cwSetText("anime_mapping_index", index);
-  _cwSetText("anime_mapping_counts", installed ? `${Number(st.source_count || 0).toLocaleString()} sources | ${Number(st.edge_count || 0).toLocaleString()} edges` : "-");
+  _cwSetStat("anime_mapping_counts", installed ? `${Number(st.source_count || 0).toLocaleString()} sources | ${Number(st.edge_count || 0).toLocaleString()} edges` : "-");
   _cwSetText("anime_mapping_last_update", _cwFormatUtc(st.dataset_generated_on));
   _cwSetText("anime_mapping_meta_status", err ? "Error" : (installed && ready ? "Up to date" : (installed ? "Needs index" : "Missing")));
   const statusPill = document.getElementById("anime_mapping_meta_status");
@@ -835,11 +844,12 @@ function cwBuildAnimeMappingPanel() {
         <h4 class="anime-mapping-section-title"><span class="material-symbols-rounded" aria-hidden="true">description</span>Dataset details</h4>
         <div class="am-details">
           <dl class="am-detail-list">
-            <div><dt>Source</dt><dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
+            <div><dt>Episodes</dt><dd><a href="https://github.com/anibridge/anibridge-mappings" target="_blank" rel="noopener noreferrer">aniBridge/anibridge-mappings<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
+            <div><dt>Identity</dt><dd><a href="https://github.com/nattadasu/animeApi" target="_blank" rel="noopener noreferrer">nattadasu/animeApi<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a></dd></div>
             <div><dt>Status</dt><dd><span class="am-status-pill" id="anime_mapping_meta_status">-</span></dd></div>
             <div><dt>Last update</dt><dd><strong id="anime_mapping_last_update">-</strong></dd></div>
           </dl>
-          <p class="am-details-copy">CrossWatch downloads the AniBridge mappings dataset to translate anime identifiers and episode numbering between AniDB, MyAnimeList, AniList, TMDB and TVDB. IMDb is mapped for anime movies only.</p>
+          <p class="am-details-copy">AniBridge handles episode numbering across AniDB, MyAnimeList, AniList, TMDB and TVDB. animeApi adds SIMKL and Kitsu identity.</p>
         </div>
         <div class="auth-card-notes" id="anime_mapping_error"></div>
       </div>
@@ -849,7 +859,7 @@ function cwBuildAnimeMappingPanel() {
         <div class="am-actions">
           <button class="btn primary" type="button" id="btn-anime-mapping-update">Update now</button>
           <button class="btn" type="button" id="btn-anime-mapping-rebuild">Rebuild index</button>
-          <span>Update downloads the latest dataset.<br>Rebuild recreates the local index from the dataset.</span>
+          <button class="btn" type="button" id="btn-anime-mapping-overrides">Custom mappings</button>
         </div>
       </div>
     </div>
@@ -877,6 +887,11 @@ function cwBuildAnimeMappingPanel() {
   if (btnRebuild && !btnRebuild.__cwAnimeWired) {
     btnRebuild.addEventListener("click", () => cwAnimeMappingRun("rebuild"));
     btnRebuild.__cwAnimeWired = true;
+  }
+  const btnOverrides = document.getElementById("btn-anime-mapping-overrides");
+  if (btnOverrides && !btnOverrides.__cwAnimeWired) {
+    btnOverrides.addEventListener("click", () => window.openAnimeOverridesModal?.());
+    btnOverrides.__cwAnimeWired = true;
   }
 
   try { cwAnimeMappingRenderStatus(window.__animeMappingStatus || {}); } catch {}

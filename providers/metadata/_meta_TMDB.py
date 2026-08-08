@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import random
+import threading
 import time
 from collections.abc import Mapping
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Any, Callable
 
 import requests
@@ -54,6 +58,7 @@ class TmdbProvider:
         self.load_cfg = load_cfg
         self.save_cfg = save_cfg
         self._cache: dict[str, tuple[float, Any]] = {}
+        self._disk_dir: Path | None = None
 
     def _apikey(self) -> str:
         cfg = self.load_cfg() or {}
@@ -63,6 +68,61 @@ class TmdbProvider:
         if not api_key:
             raise RuntimeError("TMDb API key is missing")
         return api_key
+
+    def _disk_cache_dir(self) -> Path | None:
+        if self._disk_dir is not None:
+            return self._disk_dir
+        try:
+            import crosswatch as CW  # type: ignore
+
+            base = Path(getattr(CW, "CACHE_DIR", None) or "")
+        except Exception:
+            base = Path("")
+        if not str(base):
+            try:
+                from cw_platform.config_base import CONFIG
+
+                base = Path(CONFIG) / "cache"
+            except Exception:
+                return None
+        target = base / "meta" / "tmdb"
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+        self._disk_dir = target
+        return target
+
+    def _disk_read(self, key: str) -> Any:
+        target = self._disk_cache_dir()
+        if target is None:
+            return None
+        try:
+            payload = json.loads((target / f"{key}.json").read_text("utf-8"))
+        except Exception:
+            return None
+        try:
+            stamped = float(payload.get("ts") or 0)
+        except Exception:
+            return None
+        if (time.time() - stamped) >= self._ttl_seconds():
+            return None
+        return payload.get("data")
+
+    def _disk_write(self, key: str, data: Any) -> None:
+        target = self._disk_cache_dir()
+        if target is None:
+            return
+        path = target / f"{key}.json"
+        tmp = target / f"{key}.{os.getpid()}.{threading.get_ident()}.tmp"
+        try:
+            tmp.write_text(json.dumps({"ts": time.time(), "data": data}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _ttl_seconds(self) -> int:
         cfg = self.load_cfg() or {}
@@ -148,6 +208,12 @@ class TmdbProvider:
         if hit and (now - hit[0]) < self._ttl_seconds():
             return hit[1]
 
+        stored = self._disk_read(h)
+        if stored is not None:
+            self._prune_cache()
+            self._cache[h] = (now, stored)
+            return stored
+
         max_retries, base_s, max_s = self._backoff_params()
         attempt = 0
         while True:
@@ -180,6 +246,7 @@ class TmdbProvider:
                 data = r.json()
                 self._prune_cache()
                 self._cache[h] = (time.time(), data)
+                self._disk_write(h, data)
                 return data
 
             except requests.exceptions.RequestException as e:

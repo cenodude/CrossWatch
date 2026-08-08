@@ -22,6 +22,17 @@ from services.watchlist import (
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
 
+def _load_watchlist_state() -> dict[str, Any]:
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
+
+        state = StateStore(CONFIG).load_state_features({"watchlist"})
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+
 def _public_error(message: str = "operation_failed") -> str:
     return str(message or "operation_failed")
 
@@ -181,7 +192,6 @@ def _candidate_keys_from_ids(ids: dict[str, Any]) -> list[str]:
 def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | None = None) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import STATS, _append_log
-    from .syncAPI import _load_state
 
     if not isinstance(keys_raw, list) or not keys_raw:
         return {"ok": False, "error": "keys must be a non-empty array"}
@@ -196,7 +206,7 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
         specs.append(spec)
 
     cfg = load_config()
-    state = _load_state() or {}
+    state = _load_watchlist_state()
     active = _active_providers(cfg)
     prov = (provider or "ALL").upper().strip()
     inst_p = provider_instance if prov != "ALL" else None
@@ -247,7 +257,7 @@ def _bulk_delete(provider: str, keys_raw: list[Any], provider_instance: str | No
             _append_log("SYNC", f"[WL] delete on {p} failed: {e}")
 
     try:
-        fresh = _load_state()
+        fresh = _load_watchlist_state()
         if fresh:
             STATS.refresh_from_state(fresh)
     except Exception:
@@ -272,10 +282,9 @@ def remove_across_providers_by_ids(
 ) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import _append_log
-    from .syncAPI import _load_state
 
     cfg = load_config()
-    state = _load_state() or {}
+    state = _load_watchlist_state()
     if not ids or not isinstance(ids, dict):
         return {"ok": False, "error": "missing ids"}
 
@@ -346,10 +355,9 @@ def remove_from_provider_by_ids(
 ) -> dict[str, Any]:
     from cw_platform.config_base import load_config
     from crosswatch import _append_log
-    from .syncAPI import _load_state
 
     cfg = load_config()
-    state = _load_state() or {}
+    state = _load_watchlist_state()
     prov = (provider or "").strip().upper()
     if not prov:
         return {"ok": False, "error": "missing provider"}
@@ -421,12 +429,11 @@ def api_watchlist(
         from cw_platform.config_base import load_config
         from crosswatch import CACHE_DIR
         from .metaAPI import _shorten, get_meta
-        from .syncAPI import _load_state
     except Exception:
         return JSONResponse({"ok": False, "error": "server import failed"}, status_code=200)
 
     cfg = load_config()
-    st = _load_state()
+    st = _load_watchlist_state()
     api_key = _tmdb_api_key(cfg)
     has_key = bool(api_key)
 
@@ -527,8 +534,7 @@ def api_watchlist_delete(
     provider_instance: str | None = Query(None, description="Provider instance id (optional)"),
 ) -> JSONResponse:
     from cw_platform.config_base import load_config
-    from crosswatch import STATE_PATH, STATS, _append_log
-    from .syncAPI import _load_state
+    from crosswatch import STATS, _append_log
 
     if "%" in (key or ""):
         key = urllib.parse.unquote(key)
@@ -536,7 +542,7 @@ def api_watchlist_delete(
     prov = (provider or "ALL").upper().strip()
     raw_res = delete_watchlist_item(
         key=key,
-        state_path=STATE_PATH,
+        state_path=None,
         cfg=load_config(),
         provider=prov,
         provider_instance=provider_instance,
@@ -551,7 +557,7 @@ def api_watchlist_delete(
 
     if res.get("ok"):
         try:
-            state = _load_state()
+            state = _load_watchlist_state()
             if state:
                 STATS.refresh_from_state(state)
         except Exception:

@@ -77,7 +77,7 @@
   const PAIRS_CACHE_KEY = "cw.pairs.v1";
   const PAIRS_TTL_MS = 15_000;
   const STATUS_CACHE_KEY = "cw.status.v1";
-  const DETAILS_MAX_LINES = 500;
+  const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
   const ROUTE_TABS = new Set(["main", "watchlist", "playback_progress", "snapshots", "playlists", "editor", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
@@ -836,17 +836,26 @@
 
   function recomputeRunDisabled() {
     const running = !!state.busy || !!UI.summary?.running || !!(window.syncBar?.isRunning?.());
-    const disabled = running || !(UI.status ? !!UI.status.can_run : true);
+    const canRun = UI.status ? !!UI.status.can_run : true;
+    const pending = running && (state.cancelPending || !!UI.summary?.cancel_requested);
+    if (!running) state.cancelPending = false;
     const runButton = byId("run");
     if (runButton) {
       runButton.classList.toggle("loading", running);
+      runButton.classList.toggle("is-cancel", running);
       runButton.setAttribute("aria-busy", String(running));
+      const icon = runButton.querySelector(".cw-sync-action-icon");
+      const label = runButton.querySelector(".label");
+      if (icon) icon.textContent = running ? "cancel" : "sync";
+      if (label) label.textContent = running ? (pending ? "Cancelling…" : "Cancel") : "Synchronize";
+      runButton.title = running ? "Cancel the running synchronization" : "Run synchronization";
+      runButton.disabled = running ? pending : !canRun;
     }
     byId("cw-sync-split")?.classList.toggle("running", running);
-    [byId("run"), byId("run-menu")].forEach((btn) => {
-      if (btn) btn.disabled = disabled;
-    });
-    if (disabled && !byId("cw-sync-menu")?.classList.contains("hidden")) {
+    byId("cw-sync-split")?.classList.toggle("cancelling", pending);
+    const menuButton = byId("run-menu");
+    if (menuButton) menuButton.disabled = running || !canRun;
+    if ((running || !canRun) && !byId("cw-sync-menu")?.classList.contains("hidden")) {
       try { cwCloseSyncMenu(); } catch {}
     }
   }
@@ -1453,7 +1462,8 @@
   }
 
   async function runSync(opts) {
-    if (state.busy || window.syncBar?.isRunning?.()) return;
+    if (!!UI.summary?.running || window.syncBar?.isRunning?.()) return cancelSync();
+    if (state.busy) return;
     try { cwCloseSyncMenu(); } catch {}
 
     let pairId = "";
@@ -1504,6 +1514,27 @@
       setBusy(false);
       recomputeRunDisabled();
       if (AUTO_STATUS) queueSafe(() => refreshStatus(false));
+    }
+  }
+
+  async function cancelSync() {
+    if (state.cancelPending) return;
+    state.cancelPending = true;
+    recomputeRunDisabled();
+    try {
+      const response = await fetch("/api/run/cancel", { method: "POST", cache: "no-store" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || payload?.ok !== true) {
+        state.cancelPending = false;
+        setSyncHeader("sync-warn", payload?.error ? `Cancel failed – ${payload.error}` : "Cancel failed");
+      } else {
+        setSyncHeader("sync-warn", "Cancelling — finishing the current step…");
+      }
+    } catch {
+      state.cancelPending = false;
+      setSyncHeader("sync-bad", "Failed to reach server");
+    } finally {
+      recomputeRunDisabled();
     }
   }
 
@@ -1751,7 +1782,8 @@
     };
     Object.entries(chips).forEach(([id, value]) => setText(id, value ?? "–"));
 
-    if (summary.running) setSyncHeader("sync-warn", "Running…");
+    if (summary.running) setSyncHeader("sync-warn", summary.cancel_requested ? "Cancelling…" : "Running…");
+    else if (summary.cancelled) setSyncHeader("sync-warn", "Cancelled — partial sync applied");
     else if (summary.exit_code === 0) setSyncHeader("sync-ok", String(summary.result || "").toUpperCase() === "EQUAL" ? "In sync " : "Synced ");
     else if (summary.exit_code != null) setSyncHeader("sync-bad", "Attention needed ⚠️");
     else setSyncHeader("sync-warn", "Idle — run a sync to see results");
@@ -1969,7 +2001,7 @@ Object.assign(window, {
   _invalidatePairsCache, isWatchlistEnabledInPairs,
   loadStatusCache, renderConnectorStatus, refreshStatus, manualRefreshStatus,
   computeRedirectURI, recomputeRunDisabled, relTimeFromEpoch,
-  showTab, toggleSection, runSync,
+  showTab, toggleSection, runSync, cancelSync,
   copySummary, loadPairs, cxSavePair,
   cwToggleSyncMenu, DETAILS_MAX_LINES,
 });

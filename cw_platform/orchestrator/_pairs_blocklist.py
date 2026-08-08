@@ -4,6 +4,7 @@
 from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
+from ..history_events import history_sync_key
 from ..id_map import canonical_key, ID_KEYS
 from ._tombstones import keys_for_feature, filter_with
 
@@ -210,12 +211,27 @@ def apply_blocklist(
 
     items_in = list(items or [])
     input_count = len(items_in)
+    feature_norm = str(feature or "").lower()
+
+    def _filter_hard(items_src: list[dict[str, Any]], keys: set[str]) -> list[dict[str, Any]]:
+        if feature_norm != "history" or not keys:
+            return filter_with(state_store, items_src, extra_block=keys) if keys else list(items_src)
+        out: list[dict[str, Any]] = []
+        for it in items_src:
+            if isinstance(it, Mapping) and (it.get("_cw_rewatch_sync") is True or it.get("_cw_event_key")):
+                if history_sync_key(it, event_mode=True) in keys:
+                    continue
+                out.append(it)
+                continue
+            if filter_with(state_store, [it], extra_block=keys):
+                out.append(it)
+        return out
 
     def _emit_counts(result_list: list[dict[str, Any]]) -> None:
         if emit is None:
             return
         try:
-            kept_bb = filter_with(state_store, items_in, extra_block=blackbox) if blackbox else items_in
+            kept_bb = _filter_hard(items_in, blackbox) if blackbox else items_in
             blocked_items: list[dict[str, Any]] = []
             if blackbox:
                 kept_ids = {id(x) for x in kept_bb}
@@ -248,14 +264,13 @@ def apply_blocklist(
         _emit_counts(items_in)
         return items_in
 
-    feature_norm = str(feature or "").lower()
     if feature_norm not in {"history", "ratings"}:
         result = filter_with(state_store, items_in, extra_block=bl)
         _emit_counts(result)
         return result
 
     hard = global_tomb | blackbox
-    filtered = filter_with(state_store, items_in, extra_block=hard) if hard else items_in
+    filtered = _filter_hard(items_in, hard) if hard else items_in
 
     if ignore_pair_tomb or not pair_tomb_eff:
         _emit_counts(filtered)

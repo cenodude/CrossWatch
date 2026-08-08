@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from .coordinates import translate
+from .coordinates import covers, translate
+from .overrides import find_episode_override
 from .storage import normalize_release_tag, query_edges, query_show_pair
 
 NATIVE_ORDER = ("anidb", "mal", "anilist")
@@ -99,23 +100,36 @@ def resolve_absolute(
     if coord is None:
         return None
     season, episode = coord
-    if season == 0 and not allow_specials:
-        return None
 
     tag = normalize_release_tag(release_tag)
     ids = _ids_of(item)
+
+    try:
+        ruled = find_episode_override(ids, season, episode)
+    except Exception:
+        ruled = None
+    if ruled is not None:
+        return Resolution(
+            absolute=ruled.absolute,
+            namespace=ruled.namespace,
+            target_id=ruled.target_id,
+            basis="user_override",
+            entry=f"override:{ruled.rule_id}",
+        )
+
+    if season == 0 and not allow_specials:
+        return None
+
     scope = f"s{season}"
 
     for provider, ident, basis in _entry_points(ids, tag, resolve_external):
         try:
-            rows = query_edges(tag, provider, ident)
+            rows = query_edges(tag, provider, ident, scope=scope)
         except Exception:
             continue
         found: dict[str, tuple[int, str]] = {}
         for row in rows:
             if str(row.get("source_kind") or "").strip().lower() != "show":
-                continue
-            if str(row.get("source_scope") or "").strip().lower() != scope:
                 continue
             namespace = str(row.get("target_provider") or "").strip().lower()
             if namespace not in NATIVE_ORDER:
@@ -152,6 +166,31 @@ def resolve_absolute(
                     basis="anibridge_absolute",
                     entry=basis,
                 )
+    return _native_passthrough(tag, ids, season, episode)
+
+
+def _native_passthrough(tag: str, ids: Mapping[str, str], season: int, episode: int) -> Resolution | None:
+    if season != 1:
+        return None
+    for namespace in NATIVE_ORDER:
+        ident = ids.get(namespace, "")
+        if not ident:
+            continue
+        try:
+            rows = query_edges(tag, namespace, ident)
+        except Exception:
+            continue
+        if namespace == "anidb":
+            rows = [r for r in rows if str(r.get("source_scope") or "").strip().upper() == _ANIDB_REGULAR]
+        if not any(covers(r.get("source_range"), episode) for r in rows):
+            continue
+        return Resolution(
+            absolute=episode,
+            namespace=namespace,
+            target_id=ident,
+            basis="anibridge_native",
+            entry=f"{namespace}_native",
+        )
     return None
 
 

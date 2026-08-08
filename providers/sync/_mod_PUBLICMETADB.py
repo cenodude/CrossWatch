@@ -42,12 +42,16 @@ def _label_publicmetadb(method: str, url: str, kw: Mapping[str, Any]) -> str:
 
 
 def _confirmed_keys(items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
-    attempted = [canonical_key(id_minimal(it)) for it in items or [] if isinstance(it, Mapping)]
+    attempted = [
+        str((it.get("_cw_event_key") if it.get("_cw_rewatch_sync") is True else None) or canonical_key(id_minimal(it)) or "").strip()
+        for it in items or []
+        if isinstance(it, Mapping)
+    ]
     unresolved_keys: set[str] = set()
     for u in unresolved or []:
         obj = u.get("item") if isinstance(u, Mapping) else u
         if isinstance(obj, Mapping):
-            unresolved_keys.add(canonical_key(id_minimal(obj)))
+            unresolved_keys.add(str((obj.get("_cw_event_key") if obj.get("_cw_rewatch_sync") is True else None) or canonical_key(id_minimal(obj)) or "").strip())
     out: list[str] = []
     seen: set[str] = set()
     for k in attempted:
@@ -103,6 +107,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": True,
                 "observed_deletes": True,
                 "requires_ids": ["tmdb"],
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},

@@ -19,9 +19,7 @@
         (row.title && row.title.trim()) ||
         (row.type && row.type.trim()) ||
         (row.year && String(row.year).trim()) ||
-        (row.imdb && row.imdb.trim()) ||
-        (row.tmdb && row.tmdb.trim()) ||
-        (row.trakt && row.trakt.trim());
+        ["imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist"].some(k => row[k] && String(row[k]).trim());
 
       if (hasOther) missing.push(row);
     }
@@ -66,14 +64,11 @@
       const raw = row.raw || {};
       const ids = raw.ids || {};
 
-      if (row.imdb) ids.imdb = row.imdb;
-      else delete ids.imdb;
-
-      if (row.tmdb) ids.tmdb = row.tmdb;
-      else delete ids.tmdb;
-
-      if (row.trakt) ids.trakt = row.trakt;
-      else delete ids.trakt;
+      ["imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist"].forEach(k => {
+        const v = String(row[k] || "").trim();
+        if (v) ids[k] = v;
+        else delete ids[k];
+      });
 
       raw.ids = ids;
       raw.type = row.type || raw.type || null;

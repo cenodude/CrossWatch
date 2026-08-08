@@ -247,6 +247,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "from_date": True,
+                "event_history": False,
+                "rewatches": {"read": False, "write": False},
             },
             "ratings": {
                 "observed_deletes": True,
@@ -795,6 +797,8 @@ class _MDBLISTOPS:
                 "upsert": True,
                 "remove": True,
                 "from_date": True,
+                "event_history": False,
+                "rewatches": {"read": False, "write": False},
             },
             "ratings": {
                 "observed_deletes": True,

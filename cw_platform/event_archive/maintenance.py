@@ -117,10 +117,10 @@ def boot_check(*, auto_repair: bool = True, state_dir: str | Path | None = None,
     if h.get("healthy"):
         ver, events, size = h.get("schema_version"), int(h.get("events") or 0), _fmt_size(h.get("size_bytes"))
         if rebuilt:
-            return _boot_result("rebuilt", True, path, h, f"Rebuilt · corruption detected, archive recreated · schema v{ver} · {events:,} events")
+            return _boot_result("rebuilt", True, path, h, f"Rebuilt · corruption detected, archive recreated · event schema v{ver} · {events:,} events")
         if existed:
-            return _boot_result("ready", True, path, h, f"Ready · schema v{ver} · {events:,} events · {size}")
-        return _boot_result("created", True, path, h, f"Created · schema v{ver}")
+            return _boot_result("ready", True, path, h, f"Ready · event schema v{ver} · {events:,} events · {size}")
+        return _boot_result("created", True, path, h, f"Created · event schema v{ver}")
 
     if not auto_repair:
         return _boot_result("unhealthy", False, path, h, f"Unhealthy — {_health_issue(h)}")
@@ -137,7 +137,7 @@ def boot_check(*, auto_repair: bool = True, state_dir: str | Path | None = None,
     h2 = health(conn=c2) if c2 is not None else {"healthy": False}
     if h2.get("healthy"):
         ver, events = h2.get("schema_version"), int(h2.get("events") or 0)
-        return _boot_result(label, True, path, h2, f"{label.capitalize()} · {note} · schema v{ver} · {events:,} events")
+        return _boot_result(label, True, path, h2, f"{label.capitalize()} · {note} · event schema v{ver} · {events:,} events")
     return _boot_result("error", False, path, h2, f"Repair failed — {_health_issue(h2)}")
 
 

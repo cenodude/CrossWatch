@@ -142,7 +142,7 @@ function view(info, mods, logo) {
         <section class="card">
           <div class="eyebrow">Disclaimer</div>
           <div class="discBody">
-            <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, Kodi, Nuvio, Stremio, MDBList, AniList, Floppy, TMDb, SIMKL, PublicMetaDB, Trakt, Tautulli, or their owners. CrossWatch uses the AniBridge mappings dataset for AniList identifier translation.</div>
+            <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, Kodi, Nuvio, Stremio, MDBList, AniList, Floppy, TMDb, SIMKL, PublicMetaDB, Trakt, Tautulli, or their owners. CrossWatch uses the AniBridge mappings dataset and the animeApi dataset for anime identifier and episode translation.</div>
             <ul>
               <li>Names, logos, trademarks, and brands belong to their respective owners and are used for identification only.</li>
               <li>Third-party APIs and services have their own terms, rate limits, and account policies. Use CrossWatch responsibly and within those rules.</li>

@@ -83,15 +83,15 @@ function normalizeAnimeHistoryOptions(state){
 function normalizeAnimeFeatureOptions(state, feature){
   const key=String(feature||"watchlist").trim().toLowerCase()||"watchlist";
   const opts=Object.assign({}, state?.options?.[key]||{});
-  if(!hasAniList(state)){
+  if(!hasAnimeProvider(state)){
     opts.use_anime_mapping=false;
     opts.anime_only_sync=false;
     state.options[key]=opts;
     return opts;
   }
-  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=globalAnimeMappingEnabled(state);
-  opts.use_anime_mapping=!!opts.use_anime_mapping;
   const canOnly=anilistCanReceive(state);
+  if(!hasOwn(opts,"use_anime_mapping")) opts.use_anime_mapping=canOnly||globalAnimeMappingEnabled(state);
+  opts.use_anime_mapping=!!opts.use_anime_mapping;
   if(!opts.use_anime_mapping || !canOnly){
     opts.anime_only_sync=false;
   }else if(!hasOwn(opts,"anime_only_sync")){
@@ -233,7 +233,7 @@ function defaultState(){
     options:{
       watchlist:{enable:false,add:false,remove:false},
       ratings:{enable:false,add:false,remove:false,types:["movies","shows","seasons","episodes"],mode:"all",from_date:""},
-      history:{enable:false,add:false,remove:false},
+      history:{enable:false,add:false,remove:false,rewatches:false},
       playlists:{enable:false,add:true,remove:false},
       progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}
     },
@@ -383,6 +383,25 @@ const byName=(state,n)=>state.providers.find(p=>p.name===n);
 function progressCapsForProvider(state, providerName){
   return byName(state, providerName)?.capabilities?.progress || {};
 }
+function historyRewatchCapsForProvider(state, providerName){
+  return byName(state, providerName)?.capabilities?.history?.rewatches || {};
+}
+function providerSupportsHistoryRewatch(state, providerName, op){
+  const caps = historyRewatchCapsForProvider(state, providerName);
+  return !!(caps && caps[op]);
+}
+function pairSupportsHistoryRewatches(state, src = state?.src, dst = state?.dst, twoWay = isTwoWayMode(state)){
+  if(!src || !dst) return false;
+  if(twoWay){
+    return providerSupportsHistoryRewatch(state, src, "read")
+      && providerSupportsHistoryRewatch(state, src, "write")
+      && providerSupportsHistoryRewatch(state, dst, "read")
+      && providerSupportsHistoryRewatch(state, dst, "write");
+  }
+  return providerSupportsHistoryRewatch(state, src, "read")
+    && providerSupportsHistoryRewatch(state, dst, "read")
+    && providerSupportsHistoryRewatch(state, dst, "write");
+}
 function progressCompletionPercentFromCaps(caps){
   const progress = (caps && typeof caps === "object") ? caps : {};
   const policy = (progress.completion_policy && typeof progress.completion_policy === "object") ? progress.completion_policy : {};
@@ -443,6 +462,7 @@ const commonFeatures=(state)=>{
 };
 const defaultFor=(k)=>
   k==="watchlist"?{enable:false,add:false,remove:false}:
+  k==="history"?{enable:false,add:false,remove:false,rewatches:false}:
   k==="playlists"?{enable:false,add:true,remove:false}:
   k==="progress"?{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false}:
   {enable:false,add:false,remove:false};
@@ -739,12 +759,19 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date",
       "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk"
     ],
-    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
+    history: ["#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-anime-map", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-tr-hs-ignore-dropped", "#cx-md-hs-ignore-dropped", "#cx-sm-hs-ignore-dropped", "#cx-tr-hs-unres"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":"cx-pl-enable")?.checked;
   (map[feature]||[]).forEach(sel=>{const n=Q(sel);if(n){n.disabled=!on;n.closest?.(".opt-row")?.classList.toggle("muted",!on)}});
+  const onlyId=feature==="watchlist"?"cx-wl-anime-only":feature==="ratings"?"cx-rt-anime-only":"";
+  const mapId=feature==="watchlist"?"cx-wl-anime-map":feature==="ratings"?"cx-rt-anime-map":"";
+  const only=onlyId?ID(onlyId):null;
+  if(only){
+    only.disabled=!on||!ID(mapId)?.checked;
+    only.closest?.(".opt-row")?.classList.toggle("muted",only.disabled);
+  }
 }
 
 function countProviderLibraries(state, providerName){
@@ -1086,7 +1113,7 @@ function renderFeaturePanel(state){
     const floppyw = state.pairProviders?.floppy || {};
     const floppyName = (floppyw.watchlist_name || state.cfgRaw?.floppy?.watchlist_name || "Watchlist");
     const trPair = (state.pairProviders?.trakt) || {};
-    const showAnime = hasAniList(state);
+    const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
     const animeOnlyDisabled = !wl.use_anime_mapping || !canAnimeOnly;
 
@@ -1108,10 +1135,10 @@ function renderFeaturePanel(state){
             <label for="cx-wl-anime-map">Use Anime ID Mapping</label>
             <label class="switch"><input id="cx-wl-anime-map" type="checkbox" ${wl.use_anime_mapping?"checked":""}><span class="slider"></span></label>
           </div>
-          <div class="opt-row ${animeOnlyDisabled?"muted":""}">
+          ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
             <label for="cx-wl-anime-only">Anime-only sync</label>
             <label class="switch"><input id="cx-wl-anime-only" type="checkbox" ${wl.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
-          </div>
+          </div>`:""}
         </div>
       `:""}
 
@@ -1312,7 +1339,7 @@ function renderFeaturePanel(state){
   if(state.feature==="ratings"){
     getOpts(state,"ratings");
     const rt=normalizeAnimeFeatureOptions(state,"ratings"),hasType=t=>Array.isArray(rt.types)&&rt.types.includes(t);
-    const showAnime = hasAniList(state);
+    const showAnime = hasAnimeProvider(state);
     const canAnimeOnly = anilistCanReceive(state);
     const animeOnlyDisabled = !rt.use_anime_mapping || !canAnimeOnly;
 
@@ -1327,10 +1354,10 @@ function renderFeaturePanel(state){
             <label for="cx-rt-anime-map">Use Anime ID Mapping</label>
             <label class="switch"><input id="cx-rt-anime-map" type="checkbox" ${rt.use_anime_mapping?"checked":""}><span class="slider"></span></label>
           </div>
-          <div class="opt-row ${animeOnlyDisabled?"muted":""}">
+          ${canAnimeOnly?`<div class="opt-row ${animeOnlyDisabled?"muted":""}">
             <label for="cx-rt-anime-only">Anime-only sync</label>
             <label class="switch"><input id="cx-rt-anime-only" type="checkbox" ${rt.anime_only_sync?"checked":""} ${animeOnlyDisabled?"disabled":""}><span class="slider"></span></label>
-          </div>
+          </div>`:""}
         </div>
       `:""}
       <div class="panel-title small">Scope</div>
@@ -1455,6 +1482,7 @@ function renderFeaturePanel(state){
 
   if (state.feature === "history") {
     const hs = getOpts(state, "history");
+    const rwSupported = pairSupportsHistoryRewatches(state);
     const trCfg = (state.cfgRaw?.trakt) || {};
     const emCfg = (state.cfgRaw?.emby?.history) || {};
 
@@ -1563,12 +1591,19 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>
+        <div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-hs-rewatches">Rewatches</label>
+          <label class="switch">
+            <input id="cx-hs-rewatches" type="checkbox" ${hs.rewatches && rwSupported ? "checked" : ""} ${rwSupported ? "" : "disabled"}>
+            <span class="slider"></span>
+          </label>
+        </div>
         ${trColRow}
         ${mdDroppedRow}
         ${smDroppedRow}
       </div>
       ${animeRow}
-      <div class="muted">Synchronize plays between providers. “Remove” is not recommended and should only be enabled for specific cases like mirroring.</div>
+      <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
     `;
 
     const parts = [`<div class="panel-title">Advanced</div>`];
@@ -1674,6 +1709,12 @@ left.innerHTML = `
 
     right.innerHTML = parts.join("");
     applySubDisable("history");
+    const rw = ID("cx-hs-rewatches");
+    if(rw && !rwSupported){
+      rw.checked = false;
+      rw.disabled = true;
+      rw.closest(".opt-row")?.classList.add("disabled");
+    }
     return;
   }
 
@@ -2023,6 +2064,7 @@ function bindChangeHandlers(state,root){
         enable: !!ID("cx-hs-enable")?.checked,
         add:    !!ID("cx-hs-add")?.checked,
         remove: !!ID("cx-hs-remove")?.checked,
+        rewatches: !!ID("cx-hs-rewatches")?.checked,
         use_anime_mapping: !!(animeEl && animeEl.checked && tmdbMetadataReady(state)),
         anime_only_sync: false,
       });
@@ -2144,10 +2186,11 @@ async function saveConfigBits(state){
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
-    const shouldEnableAnimeMapping = (hasAniList(state) && (
+    const shouldEnableAnimeMapping = hasAnimeProvider(state) && (
       !!normalizeAnimeFeatureOptions(state, "watchlist").use_anime_mapping ||
-      !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping
-    )) || (hasAnimeProvider(state) && !!normalizeAnimeHistoryOptions(state).use_anime_mapping);
+      !!normalizeAnimeFeatureOptions(state, "ratings").use_anime_mapping ||
+      !!normalizeAnimeHistoryOptions(state).use_anime_mapping
+    );
 
     if(ID("gl-dry")){
       const dropOn=!!ID("gl-drop")?.checked;
@@ -2422,8 +2465,8 @@ function buildPayload(state,wrap){
   const modeTwo=!!ID("cx-mode-two")?.checked;const enabled=!!ID("cx-enabled")?.checked;
   const get=k=>Object.assign(defaultFor(k), (state.options||{})[k]||{});
   const watchlist=get("watchlist");
-  const animePair=isAniList(src)||isAniList(dst);
-  const animeCanReceive=isAniList(dst)||(animePair&&modeTwo);
+  const animePair=isAniList(src)||isAniList(dst)||isSimkl(src)||isSimkl(dst);
+  const animeCanReceive=isAniList(dst)||((isAniList(src)||isAniList(dst))&&modeTwo);
   const ratings=get("ratings");
   const normalizeAnimePairBlock=(block)=>{
     if(animePair){
@@ -2443,7 +2486,9 @@ function buildPayload(state,wrap){
   progress.max_percent = applyProgressMaxRecommendation(state, progress).maxPercent;
   const dis=ratingsDisabledFor({src,dst});
   if(ratings&&Array.isArray(ratings.types)&&dis.size)ratings.types=ratings.types.filter(t=>!dis.has(String(t)));
-  const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history:get("history"),progress,playlists:get("playlists")});
+  const history=get("history");
+  if(history && !pairSupportsHistoryRewatches(state, src, dst, modeTwo)) history.rewatches=false;
+  const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists")});
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst||"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
   const prov={};
   const pp=state.pairProviders||{};

@@ -7,9 +7,12 @@ import threading
 from typing import Any
 from fastapi import FastAPI, Query
 
-from cw_platform.config_base import config_path, load_config
+from cw_platform.config_base import CONFIG, config_path, load_config
+from cw_platform.local_db import manual_policy as sqlite_manual_policy
+from cw_platform.local_db import state as sqlite_state
+from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
+from cw_platform.orchestrator._state_store import StateStore
 from services.watchlist import build_watchlist, detect_available_watchlist_providers
-from .syncAPI import _load_state, _peek_state_key
 
 
 _WALL_CACHE_LOCK = threading.Lock()
@@ -28,7 +31,9 @@ def _path_key(path: Any) -> tuple[str, int, int]:
 
 def _cache_key(*, both_only: bool, active_only: bool, limit: int) -> tuple[Any, ...]:
     return (
-        _peek_state_key(),
+        sqlite_state.fingerprint(CONFIG, {"watchlist"}),
+        sqlite_manual_policy.fingerprint(CONFIG, {"watchlist"}),
+        sqlite_watchlist_hide.fingerprint(CONFIG),
         _path_key(config_path()),
         bool(both_only),
         bool(active_only),
@@ -57,9 +62,18 @@ def _tmdb_api_key(cfg: dict[str, Any]) -> str:
             return found
     return ""
 
+
+def _load_state() -> dict[str, Any]:
+    try:
+        st = StateStore(CONFIG).load_state_features({"watchlist"}) or {}
+        return st if isinstance(st, dict) else {}
+    except Exception:
+        return {}
+
+
 def _load_wall_snapshot() -> list[dict[str, Any]]:
     try:
-        st = _load_state() or {}
+        st = _load_state()
         wall = st.get("wall") or []
         return wall if isinstance(wall, list) else []
     except Exception:
@@ -68,7 +82,7 @@ def _load_wall_snapshot() -> list[dict[str, Any]]:
 
 def refresh_wall() -> list[dict[str, Any]]:
     try:
-        return build_watchlist(_load_state() or {}, tmdb_ok=True)
+        return build_watchlist(_load_state(), tmdb_ok=True)
     except Exception:
         return []
 
@@ -101,7 +115,7 @@ def register_wall(app: FastAPI) -> None:
                 return dict(_WALL_CACHE["data"])
 
         cfg = load_config() or {}
-        st = _load_state() or {}
+        st = _load_state()
         api_key = _tmdb_api_key(cfg)
 
         items = build_watchlist(st, tmdb_ok=bool(api_key)) or []

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
@@ -31,6 +32,19 @@ _dbg, _info, _warn, _error = make_logger("history")
 
 def _history_path(adapter: Any) -> Path:
     return scoped_file(_root(adapter), "history.json")
+
+
+def _rewatches_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
+
+
+def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> str:
+    return history_sync_key(item, fallback_key, event_mode=_rewatches_enabled(adapter))
+
+
+def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> dict[str, Any]:
+    return minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter))
 
 
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
@@ -69,6 +83,9 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
     si = obj.get("show_ids")
     if isinstance(si, Mapping):
         out["show_ids"] = dict(si)
+    for k in ("provider_event_id", "history_id", "_history_id", "rewatch_id"):
+        if obj.get(k) not in (None, ""):
+            out[k] = obj.get(k)
     return out
 
 
@@ -104,10 +121,10 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         for obj in raw:
             if not isinstance(obj, Mapping):
                 continue
-            key = canonical_key(obj)
+            key = _history_key(adapter, obj)
             if not key:
                 continue
-            items[key] = _accepted(obj)
+            items[key] = _history_minimal(adapter, obj, key)
         state = {"ts": 0, "items": items}
         if not pair_scoped() and items and not path.exists():
             _atomic_write(path, {"ts": int(time.time()), "items": items})
@@ -121,10 +138,10 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             for key, value in items_raw.items():
                 if not isinstance(value, Mapping):
                     continue
-                ck = str(key) or canonical_key(value)
+                ck = _history_key(adapter, value, key)
                 if not ck:
                     continue
-                items[ck] = _accepted(value)
+                items[ck] = _history_minimal(adapter, value, key)
             state = {"ts": ts, "items": items}
             if not pair_scoped() and items and not path.exists():
                 _atomic_write(path, {"ts": ts or int(time.time()), "items": items})
@@ -134,10 +151,10 @@ def _load_state(adapter: Any) -> dict[str, Any]:
         for key, value in raw.items():
             if not isinstance(value, Mapping):
                 continue
-            ck = str(key) or canonical_key(value)
+            ck = _history_key(adapter, value, key)
             if not ck:
                 continue
-            items[ck] = _accepted(value)
+            items[ck] = _history_minimal(adapter, value, key)
         state = {"ts": 0, "items": items}
         if not pair_scoped() and items and not path.exists():
             _atomic_write(path, {"ts": int(time.time()), "items": items})
@@ -168,10 +185,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     for key, value in items.items():
         if not isinstance(value, Mapping):
             continue
-        ck = canonical_key(value) or str(key)
+        ck = _history_key(adapter, value, key)
         if not ck:
             continue
-        out[ck] = _accepted(value)
+        out[ck] = _history_minimal(adapter, value, key)
 
     total = len(out)
     if prog:
@@ -206,7 +223,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(accepted)
+        key = _history_key(adapter, accepted)
         if not key:
             unresolved_src.append(obj)
             continue
@@ -215,7 +232,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved_src.append(obj)
             continue
         if existing is None or (str(existing.get("watched_at") or "") <= str(accepted.get("watched_at") or "")):
-            cur[key] = accepted
+            cur[key] = _history_minimal(adapter, accepted, key)
             changed += 1
 
     if changed:
@@ -248,7 +265,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         except Exception:
             unresolved_src.append(obj)
             continue
-        key = canonical_key(accepted)
+        key = _history_key(adapter, accepted)
         if not key:
             unresolved_src.append(obj)
             continue

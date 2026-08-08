@@ -24,6 +24,7 @@ from ._common import (
     _last_limit_path,
     _record_limit_error,
     headers_for_adapter,
+    watch_only_once,
 )
 from .._mod_common import request_with_retries
 from cw_platform.id_map import minimal as id_minimal, canonical_key
@@ -289,6 +290,17 @@ def _source_item_for_key(key: str, req_index: Mapping[str, Any] | None = None) -
     return dict(stored) if isinstance(stored, Mapping) else {}
 
 
+def _source_sync_key(item: Mapping[str, Any]) -> str:
+    if item.get("_cw_rewatch_sync") is True:
+        event_key = str(item.get("_cw_event_key") or "").strip()
+        if event_key:
+            return event_key
+    try:
+        return str(canonical_key(item) or "")
+    except Exception:
+        return ""
+
+
 def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
     if not _simkl_to_trakt_active():
         return 0
@@ -303,10 +315,7 @@ def prepare_source_snapshot(items: Iterable[Mapping[str, Any]]) -> int:
     copied = 0
     native = 0
     for it in episodes:
-        try:
-            k = str(canonical_key(it) or "")
-        except Exception:
-            k = ""
+        k = _source_sync_key(it)
         if not k:
             continue
         raw_ids = it.get("ids") or {}
@@ -1027,7 +1036,7 @@ def _apply_simkl_resolution(adapter: Any, items: list[Mapping[str, Any]]) -> tup
         index = _catalog_index(catalog) if catalog else {}
 
         for it in grouped:
-            src_key = str(canonical_key(it) or "")
+            src_key = _source_sync_key(it)
             if not index:
                 stats["unresolved"] += 1
                 basis_counts["trakt_show_unresolved"] = basis_counts.get("trakt_show_unresolved", 0) + 1
@@ -1975,6 +1984,9 @@ def _batch_add(
         k = str(it.get("_cw_source_key") or "").strip()
         if k:
             return k
+        k = _source_sync_key(it)
+        if k:
+            return k
         try:
             return str(key_of(m) or "")
         except Exception:
@@ -2004,9 +2016,9 @@ def _batch_add(
                 if episode is not None:
                     req_index["by_show_ep"].setdefault((*token, int(season), int(episode)), []).append(sk)
 
-    def _accept(m: dict[str, Any]) -> None:
+    def _accept(m: dict[str, Any], source: Mapping[str, Any] | None = None) -> None:
         accepted_minimals.append(m)
-        accepted_keys.append(key_of(m))
+        accepted_keys.append(_source_sync_key(source or m) or key_of(m))
 
     for it in items or []:
         kind = (pick_trakt_kind(it) or "movies").lower()
@@ -2042,7 +2054,7 @@ def _batch_add(
             movies.append(obj)
             m = _history_item_minimal(kind, it, ids)
             _register(it, m, ids=ids, movie=True)
-            _accept(m)
+            _accept(m, it)
             continue
 
         if kind == "shows":
@@ -2054,7 +2066,7 @@ def _batch_add(
             entry = shows_map.setdefault(skey, {"ids": ids, "seasons": {}})
             if when:
                 entry["watched_at"] = when
-            _accept(_history_item_minimal(kind, it, ids))
+            _accept(_history_item_minimal(kind, it, ids), it)
             continue
 
         if kind == "seasons":
@@ -2063,7 +2075,7 @@ def _batch_add(
                 if when:
                     obj["watched_at"] = when
                 seasons.append(obj)
-                _accept(_history_item_minimal(kind, it, ids))
+                _accept(_history_item_minimal(kind, it, ids), it)
                 continue
             if show_ids and season_no is not None:
                 skey = _show_key(show_ids)
@@ -2076,7 +2088,7 @@ def _batch_add(
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i})
                 if when:
                     season_entry["watched_at"] = when
-                _accept(_history_item_minimal(kind, it, ids))
+                _accept(_history_item_minimal(kind, it, ids), it)
                 continue
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "season scope or ids missing"})
@@ -2105,7 +2117,7 @@ def _batch_add(
                 episodes_flat.append(obj)
                 m = _history_item_minimal(kind, it, ids)
                 _register(it, m, ids=ids, show_ids=show_ids, season=_int_or_none(season_no), episode=_int_or_none(episode_no))
-                _accept(m)
+                _accept(m, it)
                 continue
 
             if show_scope_ok:
@@ -2128,7 +2140,7 @@ def _batch_add(
                 season_entry.setdefault("episodes", []).append(ep_obj)
                 m = _history_item_minimal(kind, it, ids)
                 _register(it, m, ids=ids, show_ids=show_ids, season=season_i, episode=epn)
-                _accept(m)
+                _accept(m, it)
                 continue
 
             m = _history_item_minimal(kind, it, ids)
@@ -2173,17 +2185,17 @@ def _batch_remove(
             sort_keys=True,
         )
 
-    def _accept(m: dict[str, Any]) -> None:
+    def _accept(m: dict[str, Any], source: Mapping[str, Any] | None = None) -> None:
         accepted_minimals.append(m)
-        accepted_keys.append(key_of(m))
+        accepted_keys.append(_source_sync_key(source or m) or key_of(m))
 
     for it in items or []:
         raw_history_id = _parse_raw_history_id(it)
         if raw_history_id is not None:
             m = id_minimal(it)
             raw_ids.append(raw_history_id)
-            raw_id_map[raw_history_id] = m
-            _accept(m)
+            raw_id_map[raw_history_id] = dict(it)
+            _accept(m, it)
             continue
 
         kind = (pick_trakt_kind(it) or "movies").lower()
@@ -2204,7 +2216,7 @@ def _batch_remove(
                 unresolved.append({"item": m, "hint": "missing ids"})
                 continue
             movies.append({"ids": ids})
-            _accept(_history_item_minimal(kind, it, ids))
+            _accept(_history_item_minimal(kind, it, ids), it)
             continue
 
         if kind == "shows":
@@ -2214,13 +2226,13 @@ def _batch_remove(
                 continue
             skey = _show_key(ids)
             shows_map.setdefault(skey, {"ids": ids, "seasons": {}})
-            _accept(_history_item_minimal(kind, it, ids))
+            _accept(_history_item_minimal(kind, it, ids), it)
             continue
 
         if kind == "seasons":
             if ids:
                 seasons.append({"ids": ids})
-                _accept(_history_item_minimal(kind, it, ids))
+                _accept(_history_item_minimal(kind, it, ids), it)
                 continue
             if show_ids and season_no is not None:
                 skey = _show_key(show_ids)
@@ -2231,7 +2243,7 @@ def _batch_remove(
                     unresolved.append({"item": m, "hint": "invalid season number"})
                     continue
                 entry["seasons"].setdefault(season_i, {"number": season_i})
-                _accept(_history_item_minimal(kind, it, ids))
+                _accept(_history_item_minimal(kind, it, ids), it)
                 continue
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "season scope or ids missing"})
@@ -2249,11 +2261,11 @@ def _batch_remove(
                     continue
                 season_entry = entry["seasons"].setdefault(season_i, {"number": season_i, "episodes": []})
                 season_entry.setdefault("episodes", []).append({"number": ep_i})
-                _accept(_history_item_minimal(kind, it, ids))
+                _accept(_history_item_minimal(kind, it, ids), it)
                 continue
             if ids:
                 episodes_flat.append({"ids": ids})
-                _accept(_history_item_minimal(kind, it, ids))
+                _accept(_history_item_minimal(kind, it, ids), it)
                 continue
             m = _history_item_minimal(kind, it, ids)
             unresolved.append({"item": m, "hint": "episode scope or ids missing"})
@@ -2921,21 +2933,71 @@ def _retry_failed_episodes(
     return recovered, {k: v for k, v in destinations.items() if k in recovered}, searches
 
 
+def _collapse_rewatch_plays(items: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    newest: dict[str, Mapping[str, Any]] = {}
+    order: list[str] = []
+    out: list[Mapping[str, Any]] = []
+    for it in items:
+        if not (isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True):
+            out.append(it)
+            continue
+        try:
+            key = str(canonical_key(it) or "")
+        except Exception:
+            key = ""
+        if not key:
+            out.append(it)
+            continue
+        if key not in newest:
+            order.append(key)
+            newest[key] = it
+            continue
+        current = _iso8601(newest[key].get("watched_at")) or ""
+        candidate = _iso8601(it.get("watched_at")) or ""
+        if candidate > current:
+            newest[key] = it
+    for key in order:
+        collapsed = dict(newest[key])
+        collapsed.pop("_cw_rewatch_sync", None)
+        collapsed.pop("_cw_event_key", None)
+        out.append(collapsed)
+    return out
+
+
+def _guard_watch_only_once(adapter: Any, items: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    if not any(isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True for it in items):
+        return items
+    try:
+        state = watch_only_once(adapter)
+    except Exception:
+        state = None
+    if state is None:
+        _warn("watch_only_once_unknown", reason="trakt_settings_unavailable", plays=len(items))
+        return items
+    if not state:
+        return items
+    collapsed = _collapse_rewatch_plays(items)
+    _warn(
+        "watch_only_once_active",
+        reason="trakt_disable_multiple_plays",
+        plays_in=len(items),
+        plays_out=len(collapsed),
+    )
+    return collapsed
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
     timeout = float(_cfg_num(adapter, "timeout", 10, float))
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     write_timeout = float(_cfg_num(adapter, "history_write_timeout", max(timeout, 60.0), float))
-    items_list = list(items)
+    items_list = _guard_watch_only_once(adapter, list(items))
 
     source_keys: list[str] = []
     source_by_key: dict[str, Mapping[str, Any]] = {}
     for it in items_list:
-        try:
-            k = str(canonical_key(it) or "")
-        except Exception:
-            k = ""
+        k = _source_sync_key(it)
         if k:
             source_keys.append(k)
             source_by_key[k] = it
@@ -3307,9 +3369,12 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     lookup_needed: list[dict[str, Any]] = []
 
     for it in items_list:
-        plain_key = str(canonical_key(it) or "")
+        plain_key = _source_sync_key(it)
         source_event_key, rec, miss_reason = _alias_lookup(aliases, it)
         if not isinstance(rec, Mapping):
+            if it.get("_cw_rewatch_sync") is True and _parse_raw_history_id(it) is None:
+                unresolved.append({"item": id_minimal(it), "hint": "trakt_history_id_required_for_rewatch_remove", "key": plain_key})
+                continue
             if not _requires_alias_removal(it):
                 passthrough.append(it)
                 continue
@@ -3463,7 +3528,7 @@ def _remove_by_coordinates(
             hid_i = _int_or_none(hid)
             if hid_i is None or not isinstance(minimal, Mapping):
                 continue
-            raw_key_by_id[hid_i] = str(key_of(minimal) or "")
+            raw_key_by_id[hid_i] = _source_sync_key(minimal) or str(key_of(minimal) or "")
             raw_minimal_by_id[hid_i] = minimal
         raw_keys = {k for k in raw_key_by_id.values() if k}
 

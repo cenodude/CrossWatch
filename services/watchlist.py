@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, cast
@@ -12,7 +11,9 @@ from urllib.parse import urlencode
 import requests
 
 from cw_platform.config_base import CONFIG
+from cw_platform.local_db import watchlist_hide as sqlite_watchlist_hide
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
+from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import build_config_view, list_instance_ids, normalize_instance_id
 
 try:
@@ -24,47 +25,44 @@ except Exception:
     _HAVE_PLEXAPI = False
 
 
-# path helpers
-def _state_path() -> Path:
-    return CONFIG / "state.json"
-
-
-HIDE_PATH: Path = CONFIG / "watchlist_hide.json"
+def _sync_state_base(state_path: Path | None = None) -> Path:
+    return state_path.parent if state_path is not None else CONFIG
 
 
 def _load_hide_set() -> set[str]:
     try:
-        if HIDE_PATH.exists():
-            data = json.loads(HIDE_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return {str(x) for x in data}
+        return sqlite_watchlist_hide.load_hidden(CONFIG)
     except Exception:
         pass
     return set()
 
 
-def _save_hide_set(hide: set[str]) -> None:
-    try:
-        HIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        HIDE_PATH.write_text(json.dumps(sorted(hide)), encoding="utf-8")
-    except Exception:
-        pass
+def _load_sync_state(base_path: Path = CONFIG) -> dict[str, Any]:
+    raw = StateStore(base_path).load_state_features({"watchlist"})
+    return raw if isinstance(raw, dict) else {}
 
 
-def _load_state_dict(path: Path) -> dict[str, Any]:
-    try:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return {}
-
-
-def _save_state_dict(path: Path, state: dict[str, Any]) -> None:
-    try:
-        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+def _save_sync_state(base_path: Path, state: dict[str, Any]) -> None:
+    providers = state.get("providers") if isinstance(state, dict) else {}
+    if not isinstance(providers, Mapping):
+        return
+    blocks: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+    for provider, node in providers.items():
+        if not isinstance(node, Mapping):
+            continue
+        feature = node.get("watchlist")
+        if isinstance(feature, Mapping):
+            blocks[(str(provider).upper(), _DEFAULT_INSTANCE, "watchlist")] = feature
+        insts = node.get("instances")
+        if isinstance(insts, Mapping):
+            for inst, inst_node in insts.items():
+                if not isinstance(inst_node, Mapping):
+                    continue
+                feature = inst_node.get("watchlist")
+                if isinstance(feature, Mapping):
+                    blocks[(str(provider).upper(), normalize_instance_id(inst), "watchlist")] = feature
+    if blocks:
+        StateStore(base_path).save_feature_blocks(blocks, last_sync_epoch=state.get("last_sync_epoch"))
 
 
 # Registry and provider helpers
@@ -1544,7 +1542,7 @@ def delete_watchlist_batch(
     if not keys:
         return {"ok": False, "deleted": 0, "provider": prov, "status": "noop", "note": "no-keys"}
 
-    state_path = state_path or _state_path()
+    state_base = _sync_state_base(state_path)
     inst_raw = str(provider_instance or "").strip()
     inst_lc = inst_raw.lower()
     inst_sel = None if not inst_raw or inst_lc in {"all", "any", "*", "auto"} else normalize_instance_id(inst_raw)
@@ -1640,7 +1638,7 @@ def delete_watchlist_batch(
             deleted_sum += int(res.get("removed") or 0)
 
         if deleted_sum:
-            _save_state_dict(state_path, state)
+            _save_sync_state(state_base, state)
 
         return {"ok": ok_any, "deleted": deleted_sum, "provider": "ALL", "details": details, "status": "ok" if ok_any else "error"}
 
@@ -1649,13 +1647,13 @@ def delete_watchlist_batch(
 
     res = _delete_for_provider(prov)
     if int(res.get("removed") or 0) > 0:
-        _save_state_dict(state_path, state)
+        _save_sync_state(state_base, state)
 
     return {"ok": bool(res.get("ok")), "deleted": int(res.get("removed") or 0), "provider": prov, "details": res.get("per_instance"), "status": "ok" if res.get("ok") else "error"}
 
 def delete_watchlist_item(
     key: str,
-    state_path: Path,
+    state_path: Path | None,
     cfg: dict[str, Any],
     log: Any = None,
     provider: str | None = None,
@@ -1663,7 +1661,7 @@ def delete_watchlist_item(
 ) -> dict[str, Any]:
     prov = (provider or "ALL").upper().strip()
     try:
-        state = _load_state_dict(state_path)
+        state = _load_sync_state(_sync_state_base(state_path))
     except Exception as e:
         return {"ok": False, "status": "error", "provider": prov, "key": key, "error": str(e)}
 
@@ -1697,25 +1695,7 @@ def detect_available_watchlist_providers(
     counts: dict[str, int] = {pid: 0 for pid in providers}
 
     try:
-        from api.syncAPI import _load_state
-
-        st = _load_state() or {}
-        P = st.get("providers") or {}
-        for pid in providers:
-            pblk = P.get(pid) or {}
-            keys: set[str] = set()
-            base = (((pblk.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
-            if isinstance(base, dict):
-                keys |= set(base.keys())
-            insts = pblk.get("instances") or {}
-            if isinstance(insts, dict):
-                for blk in insts.values():
-                    if not isinstance(blk, dict):
-                        continue
-                    items = (((blk.get("watchlist") or {}).get("baseline") or {}).get("items") or {})
-                    if isinstance(items, dict):
-                        keys |= set(items.keys())
-            counts[pid] = len(keys)
+        counts.update(StateStore(CONFIG).provider_feature_counts("watchlist"))
     except Exception:
         pass
 

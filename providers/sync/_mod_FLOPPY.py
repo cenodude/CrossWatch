@@ -74,7 +74,7 @@ def get_manifest() -> Mapping[str, Any]:
             "features": dict(_FEATURES),
             "watchlist": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "custom_lists": True},
             "ratings": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "scale": "0-10"},
-            "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"]},
+            "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
             "progress": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": False, "requires_ids": ["tmdb"], "units": "seconds", "completion_policy": {"progress_write": {"mode": "none"}}},
             "playlists": {"read": False, "write": False},
         },

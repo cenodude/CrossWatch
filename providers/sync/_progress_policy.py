@@ -164,17 +164,18 @@ def decide_progress_write(
     source_ts = as_epoch(source_timestamp)
     if source_ts is None:
         return ProgressDecision(False, "missing_source_timestamp")
+    replay_watched = bool(target_watched and replay_enabled)
     target_ts = as_epoch(target_timestamp)
     tolerance = max(0, int(timestamp_tolerance_seconds))
-    if target_ts is not None and target_ts > source_ts + tolerance:
+    if not replay_watched and target_ts is not None and target_ts > source_ts + tolerance:
         return ProgressDecision(False, "target_newer")
     if target_watched and not replay_enabled:
         return ProgressDecision(False, "already_watched")
-    if progress_materially_equal(
+    if not replay_watched and progress_materially_equal(
         source_progress_ms,
         source_duration_ms,
         target_progress_ms,
         target_duration_ms,
     ):
         return ProgressDecision(False, "progress_unchanged")
-    return ProgressDecision(True, "apply", unwatch_first=bool(target_watched and replay_enabled))
+    return ProgressDecision(True, "apply", unwatch_first=replay_watched)

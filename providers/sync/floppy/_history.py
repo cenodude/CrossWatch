@@ -8,12 +8,26 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import minimal as id_minimal
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
 from ._common import COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, canonical_item_key, failure_reason, has_coord, int_or_none, item_from_row, paged, reset_layout_cache, show_layout, tmdb_id_for_item, track_media, unresolved
 
 _SRC_SNAPSHOT: dict[str, Any] = {"scope": None, "shows": {}}
+
+
+def _rewatches_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
+
+
+def _history_key(adapter: Any, item: Mapping[str, Any]) -> str:
+    return history_sync_key(item, event_mode=_rewatches_enabled(adapter))
+
+
+def _history_minimal(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
+    return minimal_history_item(item, event_mode=_rewatches_enabled(adapter))
 
 
 def _watched_at(item: Mapping[str, Any]) -> str:
@@ -132,7 +146,7 @@ def _rekey_to_source_numbering(adapter: Any, out: dict[str, dict[str, Any]]) -> 
             rekeyed = dict(item)
             rekeyed["_floppy_season"], rekeyed["_floppy_episode"] = real
             rekeyed["season"], rekeyed["episode"] = coord
-            new_key = canonical_item_key(rekeyed)
+            new_key = _history_key(adapter, rekeyed) if _rewatches_enabled(adapter) else canonical_item_key(rekeyed)
             if new_key in out:
                 continue
             out.pop(key, None)
@@ -187,6 +201,7 @@ def _put_latest(out: dict[str, dict[str, Any]], item: dict[str, Any]) -> None:
 
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    event_mode = _rewatches_enabled(adapter)
     for row in paged(adapter, "media/movie", params={"status": COMPLETED}):
         if int_or_none(row.get("status")) != COMPLETED and not row.get("end_date"):
             continue
@@ -196,7 +211,12 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         item["watched"] = True
         item["watched_at"] = row.get("end_date") or row.get("progressed_at") or row.get("created_at")
         item["_floppy_consumption_id"] = row.get("consumption_id")
-        _put_latest(out, item)
+        if event_mode:
+            key = _history_key(adapter, item)
+            if key:
+                out[key] = _history_minimal(adapter, item)
+        else:
+            _put_latest(out, item)
     for row in paged(adapter, "media/episode"):
         if not row.get("end_date"):
             continue
@@ -206,7 +226,12 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         item["watched"] = True
         item["watched_at"] = row.get("end_date") or row.get("progressed_at") or row.get("created_at")
         item["_floppy_consumption_id"] = row.get("consumption_id")
-        _put_latest(out, item)
+        if event_mode:
+            key = _history_key(adapter, item)
+            if key:
+                out[key] = _history_minimal(adapter, item)
+        else:
+            _put_latest(out, item)
     return _rekey_to_source_numbering(adapter, out)
 
 
@@ -215,7 +240,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     unresolved_rows: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     for raw in [dict(x or {}) for x in items or [] if isinstance(x, Mapping)]:
-        key = canonical_item_key(raw)
+        key = _history_key(adapter, raw)
         typ = str(id_minimal(raw).get("type") or "").lower()
         if typ == "movie":
             tmdb_id = tmdb_id_for_item(raw)
@@ -226,7 +251,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 continue
             if dry_run:
                 confirmed.append(key)
-                results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
+                results.append({"status": "dry_run", "item": _history_minimal(adapter, raw), "canonical_key": key})
                 continue
             try:
                 _write_movie_history(adapter, tmdb_id, _watched_at(raw))
@@ -236,7 +261,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 results.append(entry)
                 continue
             confirmed.append(key)
-            results.append({"status": "applied", "item": id_minimal(raw), "canonical_key": key})
+            results.append({"status": "applied", "item": _history_minimal(adapter, raw), "canonical_key": key})
             continue
         if typ == "episode":
             tmdb_id = tmdb_id_for_item(raw, episode_show=True)
@@ -248,11 +273,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 continue
             if dry_run:
                 confirmed.append(key)
-                results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
+                results.append({"status": "dry_run", "item": _history_minimal(adapter, raw), "canonical_key": key})
                 continue
             try:
                 season, episode = _write_coord(adapter, tmdb_id, raw, season, episode)
-                if not _episode_history(adapter, tmdb_id, season, episode):
+                if _rewatches_enabled(adapter) or not _episode_history(adapter, tmdb_id, season, episode):
                     api_post(adapter, f"media/tv/tmdb/{tmdb_id}/{season}/episodes/{episode}/watch", json={"end_date": _watched_at(raw)})
             except Exception as exc:
                 entry = unresolved(raw, failure_reason(exc))
@@ -260,12 +285,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 results.append(entry)
                 continue
             confirmed.append(key)
-            results.append({"status": "applied", "item": id_minimal(raw), "canonical_key": key})
+            results.append({"status": "applied", "item": _history_minimal(adapter, raw), "canonical_key": key})
             continue
         entry = unresolved(raw, "floppy_history_type_unsupported")
         unresolved_rows.append(entry)
         results.append(entry)
-    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, canonical_item_key), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))
+    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, lambda it: _history_key(adapter, it)), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))
 
 
 def _write_movie_history(adapter: Any, tmdb_id: str, watched_at: str) -> None:
@@ -277,11 +302,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     unresolved_rows: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     for raw in [dict(x or {}) for x in items or [] if isinstance(x, Mapping)]:
-        key = canonical_item_key(raw)
+        key = _history_key(adapter, raw)
         typ = str(id_minimal(raw).get("type") or "").lower()
         if dry_run:
             confirmed.append(key)
-            results.append({"status": "dry_run", "item": id_minimal(raw), "canonical_key": key})
+            results.append({"status": "dry_run", "item": _history_minimal(adapter, raw), "canonical_key": key})
             continue
         try:
             if typ == "movie":
@@ -289,6 +314,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                 if not tmdb_id:
                     raise ValueError("missing tmdb")
                 history_id = _history_id(raw)
+                if not history_id and _rewatches_enabled(adapter):
+                    raise ValueError("missing history id")
                 if not history_id:
                     rows = _movie_history(adapter, tmdb_id)
                     history_id = str((rows[0] if rows else {}).get("consumption_id") or "").strip()
@@ -303,6 +330,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                     raise ValueError("missing episode ids")
                 season, episode = _write_coord(adapter, tmdb_id, raw, season, episode)
                 history_id = _history_id(raw)
+                if not history_id and _rewatches_enabled(adapter):
+                    raise ValueError("missing history id")
                 if not history_id:
                     rows = _episode_history(adapter, tmdb_id, season, episode)
                     history_id = str((rows[0] if rows else {}).get("consumption_id") or "").strip()
@@ -318,5 +347,5 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             results.append(entry)
             continue
         confirmed.append(key)
-        results.append({"status": "applied", "item": id_minimal(raw), "canonical_key": key})
-    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, canonical_item_key), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))
+        results.append({"status": "applied", "item": _history_minimal(adapter, raw), "canonical_key": key})
+    return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, lambda it: _history_key(adapter, it)), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))

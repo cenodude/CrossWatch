@@ -55,7 +55,7 @@
   const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: "Metadata", keys: ["TMDB_METADATA", "ANIME_MAPPING"] });
   const META_ITEMS = Object.freeze({
     TMDB_METADATA: { key: "TMDB_METADATA", label: "TMDb Metadata", logoKey: "TMDB", sectionId: "sec-meta-tmdb", provider: "tmdb" },
-    ANIME_MAPPING: { key: "ANIME_MAPPING", label: "Anime ID Mapping", logoKey: "ANILIST", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
+    ANIME_MAPPING: { key: "ANIME_MAPPING", label: "Anime ID Mapping", icon: "shield", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
   });
 
   function providerMeta() {
@@ -129,6 +129,7 @@
   }
 
   function metadataProviderLogo(info) {
+    if (info?.icon) return `<span class="material-symbols-rounded cw-auth-provider-icon" aria-hidden="true">${escHtml(info.icon)}</span>`;
     return window.CW?.ProviderMeta?.logoHtml?.(info?.logoKey || info?.label || "", "cw-auth-provider-logo") || `<span class="token-text">${info?.label || ""}</span>`;
   }
 
@@ -603,10 +604,11 @@
     },
     ANIME_MAPPING: {
       provider: "anime-mapping", logo: "ANILIST", help: window.CW.HelpLinks.url("anime-mapping"), deleteSelector: "",
+      hideNav: true,
       tabs: { overview: ["hub", "Mapping", "Manage the local anime ID index"] },
-      copy: { overview: ["Anime ID Mapping", "Local anime ID index for AniList watchlist and ratings pairs."] },
-      journey: ["Enable Anime ID Mapping", "Use the local AniBridge mapping dataset to translate anime identifiers between AniList and TMDb, TVDb, IMDb, MyAnimeList and AniDB.", "2,169,255", "78,141,255", "ANILIST"],
-      steps: [["1", "Enable mapping", "Turn on the local anime index"], ["2", "Update dataset", "Download or refresh AniBridge mappings"], ["3", "Improve matches", "Use mappings for AniList pairs"]],
+      copy: { overview: ["Anime ID Mapping", "Local anime ID index for AniList and SIMKL pairs."] },
+      journey: ["Enable Anime ID Mapping", "Use the local mapping datasets to translate anime identifiers and episode numbering between AniDB, MyAnimeList, AniList, Kitsu, SIMKL, TMDb and TVDb.", "2,169,255", "78,141,255", "ANILIST"],
+      steps: [["1", "Enable mapping", "Turn on the local anime index"], ["2", "Update datasets", "Download or refresh the mapping data"], ["3", "Improve matches", "Use mappings for AniList and SIMKL pairs"]],
       introSubs: ["overview"],
       order: [".anime-mapping-summary", ".anime-mapping-status-grid", ".anime-mapping-source", "#anime_mapping_error", ".anime-mapping-actions"]
     },
@@ -1208,6 +1210,7 @@
     const tabCount = nav.querySelectorAll(".cw-subtile[data-sub]").length || 1;
     nav.style.gridTemplateRows = cardVisible ? `repeat(${tabCount}, 92px) auto` : `repeat(${tabCount}, 92px)`;
     if (cardVisible) profileCard.style.gridRow = String(tabCount + 1);
+    panel.classList.toggle("cw-connection-no-nav", !!info.hideNav && !cardVisible);
     return nav;
   }
 
@@ -1240,7 +1243,6 @@
 
   function connectionModalMaxHeight(info) {
     const viewport = Math.max(360, window.innerHeight || document.documentElement?.clientHeight || 720);
-    if (info?.key === "ANIME_MAPPING") return Math.max(520, viewport - 32);
     const cap = (info?.size || "wide") === "wide" ? 660 : 620;
     return Math.max(360, Math.min(cap, viewport - 176));
   }
@@ -1263,9 +1265,14 @@
   function connectionModalContentHeight(scroller) {
     if (!scroller) return 0;
     const activePanel = scroller.querySelector(":scope > .cw-subpanel.active") || scroller.querySelector(":scope > .cw-subpanel");
-    const contentNode = activePanel || scroller.firstElementChild || scroller;
+    if (!activePanel) {
+      const kids = Array.from(scroller.children || []);
+      const last = kids[kids.length - 1];
+      if (!last) return 0;
+      return Math.ceil((last.offsetTop || 0) + (last.offsetHeight || 0) + cssPx(scroller, "padding-bottom"));
+    }
     const padding = cssPx(scroller, "padding-top") + cssPx(scroller, "padding-bottom");
-    return Math.ceil((contentNode.scrollHeight || contentNode.offsetHeight || 0) + padding);
+    return Math.ceil((activePanel.scrollHeight || activePanel.offsetHeight || 0) + padding);
   }
 
   function updateConnectionModalSize(panel, info) {
@@ -1277,16 +1284,6 @@
     if (!scroller) return;
     const footerHeight = Math.ceil(footer?.offsetHeight || 0);
     const navHeight = connectionModalNavHeight(nav);
-    if (info?.key === "ANIME_MAPPING") {
-      const formHeight = Math.floor(panel.closest(".cw-auth-provider-form")?.clientHeight || 0);
-      const panelHeight = Math.max(360, Math.min(maxHeight, formHeight || maxHeight));
-      const next = `${panelHeight}px`;
-      const nextContent = `${Math.max(220, panelHeight - footerHeight)}px`;
-      const readStyle = (name) => typeof panel.style?.getPropertyValue === "function" ? panel.style.getPropertyValue(name) : panel.style?.[name];
-      if (readStyle("--cw-connection-panel-height") !== next) setConnectionStyle(panel, "--cw-connection-panel-height", next);
-      if (readStyle("--cw-connection-content-height") !== nextContent) setConnectionStyle(panel, "--cw-connection-content-height", nextContent);
-      return;
-    }
     const contentHeight = connectionModalContentHeight(scroller);
     const FIT_ALLOWANCE = 8;
     const wanted = Math.max(navHeight, contentHeight) + footerHeight + FIT_ALLOWANCE;

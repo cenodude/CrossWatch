@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping
 import pytest
 
 from cw_platform.id_map import canonical_key
+from cw_platform.history_events import history_sync_key
 from cw_platform.orchestrator.facade import Orchestrator
 
 
@@ -41,6 +42,10 @@ def _event_key(item: Mapping[str, Any]) -> str:
     return canonical_key(item)
 
 
+def _history_event_key(item: Mapping[str, Any]) -> str:
+    return history_sync_key(item, event_mode=True)
+
+
 @dataclass
 class HistoryOps:
     provider: str
@@ -48,6 +53,7 @@ class HistoryOps:
     feature: str = "history"
     translate_to: dict[str, Any] | None = None
     history_upsert: bool = False
+    history_rewatches: bool = False
     add_calls: list[list[dict[str, Any]]] = field(default_factory=list)
     remove_calls: list[list[dict[str, Any]]] = field(default_factory=list)
     view_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -69,6 +75,8 @@ class HistoryOps:
         }
         if self.feature == "history":
             caps["history"] = {"upsert": bool(self.history_upsert), "observed_deletes": True}
+            if self.history_rewatches:
+                caps["history"]["rewatches"] = {"read": True, "write": True}
         return caps
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
@@ -108,11 +116,12 @@ class HistoryOps:
 
         confirmed_keys: list[str] = []
         destinations: dict[str, Any] = {}
+        event_mode = bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
         for it in batch:
-            src_key = canonical_key(it)
+            src_key = history_sync_key(it, event_mode=event_mode) if self.feature == "history" else canonical_key(it)
             confirmed_keys.append(src_key)
             dest_item = dict(self.translate_to) if self.translate_to else dict(it)
-            dest_key = _event_key(dest_item)
+            dest_key = history_sync_key(dest_item, event_mode=event_mode) if self.feature == "history" else _event_key(dest_item)
             self.index[dest_key] = dict(dest_item)
             destinations[src_key] = {"key": dest_key, "item": dest_item, "status": "added"}
         return {
@@ -137,7 +146,7 @@ class HistoryOps:
         return {"ok": True, "count": 0, "confirmed_keys": [], "unresolved": []}
 
 
-def _cfg(feature: str) -> dict[str, Any]:
+def _cfg(feature: str, *, rewatches: bool = False) -> dict[str, Any]:
     return {
         "runtime": {
             "debug": False,
@@ -160,13 +169,13 @@ def _cfg(feature: str) -> dict[str, Any]:
                 "target": "DST",
                 "mode": "one-way",
                 "feature": feature,
-                "features": {feature: {"enable": True, "add": True, "remove": False}},
+                "features": {feature: {"enable": True, "add": True, "remove": False, "rewatches": bool(rewatches)}},
             }
         ],
     }
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, src: HistoryOps, dst: HistoryOps, feature: str) -> Orchestrator:
+def _run(monkeypatch: pytest.MonkeyPatch, src: HistoryOps, dst: HistoryOps, feature: str, *, rewatches: bool = False) -> Orchestrator:
     monkeypatch.setattr(
         "cw_platform.orchestrator.facade.load_sync_providers",
         lambda: {"SRC": src, "DST": dst},
@@ -175,7 +184,9 @@ def _run(monkeypatch: pytest.MonkeyPatch, src: HistoryOps, dst: HistoryOps, feat
         "cw_platform.orchestrator._snapshots.provider_configured",
         lambda _cfg, _name: True,
     )
-    orch = Orchestrator(_cfg(feature))
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_blocklist.load_blackbox_keys", lambda *_a, **_k: set())
+    monkeypatch.setattr("cw_platform.orchestrator._pairs_blocklist.load_unresolved_keys", lambda *_a, **_k: set())
+    orch = Orchestrator(_cfg(feature, rewatches=rewatches))
     orch.run()
     return orch
 
@@ -252,6 +263,30 @@ def test_translated_history_pair_converges_on_second_run(
     assert len(dst.add_calls) == 1
     assert dst.view_calls
     assert list(_baseline(orch, "DST", "history")) == [_event_key(dest_event)]
+
+
+def test_rewatch_pair_sends_each_history_event(
+    config_base: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = {**_simkl_event(), "watched_at": "2024-01-01T00:00:00Z"}
+    second = {**_simkl_event(), "watched_at": "2024-01-02T00:00:00Z"}
+    src = HistoryOps(
+        "SRC",
+        {
+            _history_event_key(first): dict(first),
+            _history_event_key(second): dict(second),
+        },
+        history_rewatches=True,
+    )
+    dst = HistoryOps("DST", {}, history_rewatches=True)
+
+    orch = _run(monkeypatch, src, dst, "history", rewatches=True)
+
+    assert len(dst.add_calls) == 1
+    assert len(dst.add_calls[0]) == 2
+    dst_baseline = _baseline(orch, "DST", "history")
+    assert len(dst_baseline) == 2
+    assert set(dst_baseline) == {_history_event_key(first), _history_event_key(second)}
 
 
 def test_history_date_difference_without_manual_overlay_does_not_update_upsert_destination(

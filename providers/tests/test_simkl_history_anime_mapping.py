@@ -74,6 +74,7 @@ def _patch_fs(monkeypatch, m):
     monkeypatch.setattr(m, "_load_anime_episode_map_cache", lambda: {})
     monkeypatch.setattr(m, "_save_anime_episode_map_cache", lambda *a, **k: None)
     monkeypatch.setattr(m, "_load_anime_episode_alias_cache", lambda: {})
+    monkeypatch.setattr(m, "_offline_simkl_id", lambda *a, **k: None)
     monkeypatch.setattr(m, "_save_anime_episode_alias_cache", lambda *a, **k: None)
 
 

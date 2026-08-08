@@ -33,13 +33,10 @@ MANIFEST_NAME = "manifest.json"
 _APP_STATE_FILES = (
     "config.json",
     ".cw_master_key",
-    "state.json",
-    "last_sync.json",
-    "statistics.json",
-    "watchlist_hide.json",
 )
 _APP_STATE_DIRS = (
     ".cw_state",
+    ".cw_databases",
     "tls",
 )
 _FULL_DIRS = (

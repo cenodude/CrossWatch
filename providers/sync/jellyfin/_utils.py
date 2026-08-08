@@ -99,10 +99,11 @@ def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any
 
     jf = _jellyfin(cfg2, instance_id)
     uid = (jf.get("user_id") or "").strip()
-    url = urljoin(server, f"Users/{uid}/Views") if uid else urljoin(server, "Library/MediaFolders")
+    url = urljoin(server, "UserViews") if uid else urljoin(server, "Library/MediaFolders")
+    params = {"userId": uid} if uid else None
 
     try:
-        r = requests.get(url, headers=_headers(token, devid), timeout=10, verify=verify)
+        r = requests.get(url, headers=_headers(token, devid), params=params, timeout=10, verify=verify)
         if not r.ok:
             return []
 

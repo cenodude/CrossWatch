@@ -24,3 +24,7 @@ def played(item_id: str) -> str:
 
 def user_data(item_id: str) -> str:
     return f"/UserItems/{item_id}/UserData"
+
+
+def views() -> str:
+    return "/UserViews"
