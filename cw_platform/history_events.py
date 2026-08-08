@@ -12,6 +12,31 @@ from .id_map import canonical_key, minimal as id_minimal
 
 EVENT_KEY_RE = re.compile(r"^(?P<base>.+?)@(?P<event>(?:\d{7,}(?:~.+)?|id:.+))$")
 
+
+def _event_part_ok(event: str) -> bool:
+    if event.startswith("id:"):
+        return len(event) > 3
+    end = 0
+    size = len(event)
+    while end < size and event[end].isdigit():
+        end += 1
+    if end < 7:
+        return False
+    if end == size:
+        return True
+    return event[end] == "~" and size > end + 1
+
+
+def split_history_event_key(key: Any) -> tuple[str, str] | None:
+    raw = str(key or "").strip().lower()
+    at = raw.find("@", 1)
+    while at != -1:
+        event = raw[at + 1 :]
+        if _event_part_ok(event):
+            return raw[:at], event
+        at = raw.find("@", at + 1)
+    return None
+
 EVENT_ID_FIELDS = (
     "provider_event_id",
     "_trakt_history_id",
@@ -36,13 +61,13 @@ EVENT_META_FIELDS = (
 
 
 def is_history_event_key(key: Any) -> bool:
-    return bool(EVENT_KEY_RE.match(str(key or "").strip().lower()))
+    return split_history_event_key(key) is not None
 
 
 def base_key_from_history_event(key: Any) -> str:
     raw = str(key or "").strip().lower()
-    match = EVENT_KEY_RE.match(raw)
-    return match.group("base") if match else raw
+    parts = split_history_event_key(raw)
+    return parts[0] if parts else raw
 
 
 def history_epoch_from_value(value: Any) -> int | None:
@@ -73,10 +98,10 @@ def history_epoch_from_value(value: Any) -> int | None:
 
 
 def history_epoch_from_key(key: Any) -> int | None:
-    match = EVENT_KEY_RE.match(str(key or "").strip().lower())
-    if not match:
+    parts = split_history_event_key(key)
+    if not parts:
         return None
-    event = match.group("event").split("~", 1)[0]
+    event = parts[1].split("~", 1)[0]
     if not event.isdigit():
         return None
     try:

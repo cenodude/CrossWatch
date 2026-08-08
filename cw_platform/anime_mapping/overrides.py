@@ -30,6 +30,32 @@ class OverrideError(ValueError):
     pass
 
 
+GENERIC_OVERRIDE_ERROR = "Invalid rule"
+
+_SAFE_OVERRIDE_ERRORS: dict[str, str] = {
+    text: text
+    for text in (
+        "media_type must be 'show' or 'movie'",
+        f"match_provider must be one of: {', '.join(MATCH_PROVIDERS)}",
+        "match_id is required",
+        f"target_namespace must be one of: {', '.join(TARGET_NAMESPACES)}",
+        "target_id is required",
+        "The rule maps an ID to itself",
+        "match_season cannot be negative",
+        "Movie rules cannot define seasons or episode ranges",
+        "An episode rule needs both a first episode and a maps-to number",
+        "Episode numbers must be 1 or higher",
+        "The last episode cannot be lower than the first",
+        "An episode rule needs a season",
+        f"At most {_MAX_OVERRIDES} rules are supported",
+    )
+}
+
+
+def safe_override_error(exc: Exception) -> str:
+    return _SAFE_OVERRIDE_ERRORS.get(str(exc), GENERIC_OVERRIDE_ERROR)
+
+
 @dataclass(frozen=True)
 class EpisodeOverride:
     absolute: int
