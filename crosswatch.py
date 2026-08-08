@@ -1293,6 +1293,28 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
         boot.info(f"              {_c(f'Event archive: {ev_status} - schema v{ev_version} - {ev_events:,} events - {ev_size}', ev_color)}")
     except Exception as exc:
         boot.info(f"              {_c(f'Event archive: error - {exc}', RED)}")
+
+    try:
+        from cw_platform.anime_mapping import boot_check as _anime_boot_check
+
+        am = _anime_boot_check(cfg=cfg)
+        am_status = str(am.get("status") or "unknown")
+        am_color = GREEN if am.get("ok") else RED
+        if am_status in ("disabled", "missing"):
+            am_color = DIM
+        elif am_status == "reindexed":
+            am_color = YELLOW
+        if am_status in ("ready", "reindexed"):
+            am_msg = (
+                f"Anime mapping: {am_status.capitalize()} - schema v{am.get('expected_schema_version')} - "
+                f"{int(am.get('source_count') or 0):,} sources - {int(am.get('edge_count') or 0):,} edges - "
+                f"{_fmt_bytes(am.get('size_bytes') or 0)}"
+            )
+        else:
+            am_msg = f"Anime mapping: {am.get('message') or am_status}"
+        boot.info(f"              {_c(am_msg, am_color)}")
+    except Exception as exc:
+        boot.info(f"              {_c(f'Anime mapping: error - {exc}', RED)}")
     boot.info("")
 
     debug = bool((cfg.get("runtime") or {}).get("debug"))

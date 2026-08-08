@@ -599,8 +599,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     if bool(anime_pair_opts.get("use_anime_mapping", False)):
         a_before = len(A_eff)
         b_before = len(B_eff)
-        A_eff = _anime_enrich_index_for_pair(A_eff, provider_cfg, a, b)
-        B_eff = _anime_enrich_index_for_pair(B_eff, provider_cfg, a, b)
+        a_stats: dict[str, int] = {}
+        b_stats: dict[str, int] = {}
+        A_eff = _anime_enrich_index_for_pair(A_eff, provider_cfg, a, b, stats=a_stats)
+        B_eff = _anime_enrich_index_for_pair(B_eff, provider_cfg, a, b, stats=b_stats)
+        if a_stats:
+            dbg("anime_mapping.enrich", feature=feature, side=a, **a_stats)
+        if b_stats:
+            dbg("anime_mapping.enrich", feature=feature, side=b, **b_stats)
         if len(A_eff) != a_before or len(B_eff) != b_before:
             dbg("anime_mapping.rekeyed", feature=feature, a=a, b=b, a_items=len(A_eff), b_items=len(B_eff))
         if feature in ("history", "ratings", "progress"):
