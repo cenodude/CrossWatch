@@ -19,6 +19,7 @@ from cw_platform.anime_mapping.overrides import (
     OverrideError,
     delete_override,
     load_overrides,
+    safe_override_error,
     stats as override_stats,
     upsert_override,
 )
@@ -258,7 +259,7 @@ def api_anime_mapping_overrides_save(payload: dict[str, Any] | None = Body(defau
     try:
         saved = upsert_override(payload or {})
     except OverrideError as e:
-        return JSONResponse({"ok": False, "error": "invalid_rule", "message": str(e)}, status_code=400)
+        return JSONResponse({"ok": False, "error": "invalid_rule", "message": safe_override_error(e)}, status_code=400)
     except Exception as e:
         log(
             "overrides_save_failed",

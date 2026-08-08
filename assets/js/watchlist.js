@@ -670,7 +670,13 @@
       toggle.dataset.column = column;
       toggle.disabled = isRequiredColumn(column);
       toggle.title = isRequiredColumn(column) ? `${columnLabel(column)} is always shown` : `Show ${columnLabel(column)}`;
-      toggle.innerHTML = `<span class="material-symbol cw-type-icon" aria-hidden="true">${meta.icon}</span><span>${columnLabel(column)}</span>`;
+      const toggleIcon = document.createElement("span");
+      toggleIcon.className = "material-symbol cw-type-icon";
+      toggleIcon.setAttribute("aria-hidden", "true");
+      toggleIcon.textContent = meta.icon;
+      const toggleLabel = document.createElement("span");
+      toggleLabel.textContent = columnLabel(column);
+      toggle.replaceChildren(toggleIcon, toggleLabel);
       toggle.addEventListener("click", () => toggleColumnVisibility(column));
 
       const left = document.createElement("button");
