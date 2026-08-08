@@ -249,7 +249,7 @@ def fetch_user_settings(session: Any, headers: Mapping[str, str], *, timeout: fl
     return None
 
 
-def watch_only_once(adapter: Any) -> bool:
+def watch_only_once(adapter: Any) -> bool | None:
     settings = fetch_user_settings(
         adapter.client.session,
         headers_for_adapter(adapter),
@@ -257,10 +257,10 @@ def watch_only_once(adapter: Any) -> bool:
         max_retries=int(getattr(adapter.cfg, "max_retries", 3) or 3),
     )
     if not isinstance(settings, Mapping):
-        return False
+        return None
     browsing = settings.get("browsing")
     if not isinstance(browsing, Mapping):
-        return False
+        return None
     return bool(browsing.get("watch_only_once", False))
 
 
