@@ -18,6 +18,7 @@
     tmdb: "/assets/auth/auth.tmdb.js",
     tautulli: "/assets/auth/auth.tautulli.js",
     anilist: "/assets/auth/auth.anilist.js",
+    punchplay: "/assets/auth/auth.punchplay.js",
   };
 
   const SECTION_TO_PROVIDER = {
@@ -36,6 +37,7 @@
     "sec-tmdb-sync": "tmdb",
     "sec-tautulli": "tautulli",
     "sec-anilist": "anilist",
+    "sec-punchplay": "punchplay",
   };
 
   const loaded = new Map();

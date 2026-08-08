@@ -160,6 +160,7 @@
     if (p === "trakt" || p === "simkl") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token);
     if (p === "anilist") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "mdblist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token);
+    if (p === "punchplay") return hasConfiguredValue(b.access_token);
     if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
     if (p === "nuvio") return (hasConfiguredValue(b.access_token) || hasConfiguredValue(b.refresh_token)) && hasConfiguredValue(b.profile_id);
     if (p === "kodi") return hasConfiguredValue(b.server) && b.connection_verified === true;
@@ -516,6 +517,16 @@
       order: [".mdbl-method-row", "#mdblist_api_panel", "#mdblist_device_panel", ".cw-connection-method-action-row", ".inline"],
       code: ["#mdblist_device_panel"],
       actions: [{ row: ".mdbl-method-row", status: "#mdblist_msg", buttons: "#mdblist_device_start, #mdblist_device_cancel, #mdblist_device_restart, #mdblist_save", extract: ".mdbl-actions", order: "6" }]
+    },
+    PUNCHPLAY: {
+      provider: "punchplay", logo: "PUNCHPLAY", help: window.CW.HelpLinks.url("punchplay"), deleteSelector: "#punchplay_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect with a device code"] },
+      copy: { auth: ["PunchPlay Authentication", "Connect PunchPlay with a device code."] },
+      journey: ["Connect to PunchPlay", "Click Connect PunchPlay and approve the code at punchplay.tv/link. No API keys are needed - CrossWatch ships its own PunchPlay app id.", "244,64,15", "0,132,216", "PUNCHPLAY"],
+      steps: [["1", "Start device login", "CrossWatch shows a short link code"], ["2", "Approve access", "Enter the code at punchplay.tv/link"], ["3", "Validate account", "CrossWatch confirms PunchPlay access"]],
+      order: ["#punchplay_device_panel", ".pp-actions"],
+      code: ["#punchplay_device_panel"],
+      actions: [{ row: ".pp-actions", status: "#punchplay_msg", buttons: "#punchplay_device_start, #punchplay_device_cancel, #punchplay_device_restart" }]
     },
     PUBLICMETADB: {
       provider: "publicmetadb", logo: "PUBLICMETADB", help: window.CW.HelpLinks.url("publicmetadb"), deleteSelector: "#publicmetadb_disconnect",

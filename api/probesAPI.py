@@ -64,6 +64,7 @@ PROVIDERS: tuple[str, ...] = (
     "kodi",
     "stremio",
     "floppy",
+    "punchplay",
 )
 
 # Caches
@@ -133,6 +134,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "KODI": "kodi",
     "STREMIO": "stremio",
     "FLOPPY": "floppy",
+    "PUNCHPLAY": "punchplay",
     "CROSSWATCH": "crosswatch",
     "CW": "crosswatch",
 }
@@ -269,6 +271,12 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         base = _norm_url(f.get("server_url") or f.get("server"))
         key = str((f.get("api_token") or f.get("token") or "")).strip()
         return f"floppy|srv:{_secret_cache_tag(base)}|key:{_secret_cache_tag(key)}" if (base and key) else "floppy|unconfigured"
+
+    if p == "punchplay":
+        pp = cfg.get("punchplay") or {}
+        tok = str((pp.get("access_token") or "")).strip()
+        exp = str(pp.get("expires_at") or "0")
+        return f"punchplay|tok:{_secret_cache_tag(tok)}|exp:{exp}" if tok else "punchplay|unconfigured"
 
     if p == "crosswatch":
         c = cfg.get("crosswatch") or {}
@@ -1218,6 +1226,59 @@ def _probe_floppy_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> t
     return ok, rsn
 
 
+def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("punchplay", cfg)
+    bust_ts = _consume_bust("punchplay")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth import _auth_PUNCHPLAY as punchplay
+
+    p: Mapping[str, Any] = (cfg.get("punchplay") or {}) if isinstance(cfg.get("punchplay"), Mapping) else {}
+    if not punchplay.is_configured(p):
+        rsn = "PunchPlay: missing authentication"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        sess = requests.Session()
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        r = _provider_auth().request_with_auth(
+            "punchplay",
+            sess,
+            "GET",
+            punchplay.ME_URL,
+            cfg=cfg,
+            instance_id=inst,
+            headers=UA,
+            timeout=max(int(HTTP_TIMEOUT), 6),
+            max_retries=1,
+        )
+        code = int(r.status_code)
+        body = r.text or ""
+    except Exception as e:
+        code = 0
+        body = ""
+        _set_http_error(str(e))
+
+    if code != 200:
+        rsn = "PunchPlay: reconnect required" if code == 401 else _reason_http(code, "PunchPlay")
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    j = _json_loads(body) or {}
+    ok = bool(isinstance(j, dict) and j.get("id"))
+    rsn = "" if ok else "PunchPlay: invalid response"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 def _probe_kodi_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("kodi", cfg)
     bust_ts = _consume_bust("kodi")
@@ -1409,6 +1470,58 @@ def mdblist_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> d
             "user_id": j.get("user_id"),
             "limits": limits,
         }
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, out)
+    return out
+
+def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("punchplay", cfg)
+    bust_ts = _consume_bust("punchplay")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
+        return cached[1]
+
+    from providers.auth import _auth_PUNCHPLAY as punchplay
+
+    pp = (cfg.get("punchplay") or cfg.get("PUNCHPLAY") or {}) or {}
+    if not punchplay.is_configured(pp):
+        with _CACHE_LOCK:
+            _USERINFO_CACHE[key] = (now, {})
+        return {}
+
+    try:
+        sess = requests.Session()
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        r = _provider_auth().request_with_auth(
+            "punchplay",
+            sess,
+            "GET",
+            punchplay.ME_URL,
+            cfg=cfg,
+            instance_id=inst,
+            headers=UA,
+            timeout=6,
+            max_retries=1,
+        )
+        code, body = int(r.status_code), r.text or ""
+    except Exception:
+        code, body = 0, ""
+
+    out: dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+        if isinstance(j, dict):
+            prof = j.get("profile") if isinstance(j.get("profile"), Mapping) else {}
+            scopes = j.get("scopes")
+            out = {
+                "username": j.get("username") or (prof or {}).get("displayName") or j.get("name"),
+                "user_id": j.get("id"),
+                "avatar": (prof or {}).get("avatarUrl"),
+                "scopes": list(scopes) if isinstance(scopes, (list, tuple)) else [],
+            }
 
     with _CACHE_LOCK:
         _USERINFO_CACHE[key] = (now, out)
@@ -1686,6 +1799,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "floppy":
         return bool(str(blk.get("server_url") or blk.get("server") or "").strip() and str(blk.get("api_token") or blk.get("token") or "").strip())
 
+    if ck == "punchplay":
+        return bool(str(blk.get("access_token") or "").strip())
+
     if ck == "tmdb_sync":
         return bool(str(blk.get("api_key") or "").strip() and str(blk.get("session_id") or "").strip())
 
@@ -1763,6 +1879,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "NUVIO": _probe_nuvio_detail,
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
+    "PUNCHPLAY": _probe_punchplay_detail,
 }
 USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "PLEX": plex_user_info,
@@ -1771,6 +1888,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "ANILIST": anilist_user_info,
     "EMBY": emby_user_info,
     "MDBLIST": mdblist_user_info,
+    "PUNCHPLAY": punchplay_user_info,
 }
 
 # Registry API
@@ -2011,6 +2129,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
+            punchplay_ok, punchplay_reason, cfg_punchplay = _provider_tuple("PUNCHPLAY")
             taut_ok, taut_reason, cfg_taut = _provider_tuple("TAUTULLI")
             anilist_ok, anilist_reason, cfg_anilist = _provider_tuple("ANILIST")
 
@@ -2027,6 +2146,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["EMBY"] = (emby_user_info, cfg_emby)
             if mdbl_ok:
                 userinfo_jobs["MDBLIST"] = (mdblist_user_info, cfg_mdbl)
+            if punchplay_ok:
+                userinfo_jobs["PUNCHPLAY"] = (punchplay_user_info, cfg_punchplay)
 
             userinfo: dict[str, dict[str, Any]] = {}
             if userinfo_jobs:
@@ -2292,7 +2413,16 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
-
+            if "PUNCHPLAY" in active_providers:
+                inst_map, inst_sum = _instances_payload("PUNCHPLAY")
+                providers_out["PUNCHPLAY"] = {
+                    "connected": punchplay_ok,
+                    **({} if punchplay_ok else {"reason": punchplay_reason}),
+                    "experimental": True,
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
 
             def _scope_for(prov: str) -> str:
                 ss = prov_sources.get(prov) or set()
@@ -2346,6 +2476,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "nuvio_connected": nuvio_ok,
                 "stremio_connected": stremio_ok,
                 "floppy_connected": floppy_ok,
+                "punchplay_connected": punchplay_ok,
                 "tautulli_connected": taut_ok,
                 "debug": debug,
                 "can_run": bool(any_pair_ready),
