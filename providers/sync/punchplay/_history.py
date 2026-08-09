@@ -33,6 +33,7 @@ from ._common import (
 FEATURE = "history"
 
 HISTORY_ID_FIELD = "_punchplay_history_ids"
+HISTORY_EVENT_ID_FIELD = "_punchplay_history_id"
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:
@@ -96,6 +97,7 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
     entry_id = _as_int(row.get("id"))
     if entry_id:
         out[HISTORY_ID_FIELD] = [str(entry_id)]
+        out[HISTORY_EVENT_ID_FIELD] = str(entry_id)
     return out
 
 
@@ -260,6 +262,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
         typ = str(item.get("type") or "").strip().lower()
         entry_ids = [str(x) for x in (item.get(HISTORY_ID_FIELD) or []) if str(x or "").strip()]
+        if not entry_ids and str(item.get(HISTORY_EVENT_ID_FIELD) or "").strip():
+            entry_ids = [str(item.get(HISTORY_EVENT_ID_FIELD)).strip()]
 
         if entry_ids:
             deleted = 0

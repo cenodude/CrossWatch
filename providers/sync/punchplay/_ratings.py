@@ -208,12 +208,18 @@ def _payload_for(item: Mapping[str, Any], *, clear: bool) -> tuple[dict[str, Any
     key = _key_of(item)
     if not key:
         return None
-    payload = ids_for_punchplay(item)
+
+    scope = _scope_of(item)
+    source: Mapping[str, Any] = item
+    if scope in ("season", "episode", "series"):
+        show_ids = item.get("show_ids")
+        if isinstance(show_ids, Mapping) and show_ids:
+            source = {"ids": show_ids}
+    payload = ids_for_punchplay(source)
     if not has_write_id(payload):
         return None
 
     payload["kind"] = _kind_of(item)
-    scope = _scope_of(item)
     if scope != "title":
         payload["scope"] = scope
     if scope in ("season", "episode"):

@@ -488,7 +488,7 @@ def test_progress_write_uses_playback_progress_action(monkeypatch: pytest.Monkey
 
     res = pr.add(Adapter(), [{
         "type": "movie", "title": "Fight Club", "year": 1999, "ids": {"tmdb": "550"},
-        "position_seconds": 1800, "duration_seconds": 8340,
+        "progress_ms": 1800000, "duration_ms": 8340000,
     }])
 
     call = http.calls[0]
@@ -496,6 +496,108 @@ def test_progress_write_uses_playback_progress_action(monkeypatch: pytest.Monkey
     assert call["json"]["media_type"] == "movie"
     assert round(call["json"]["progress"], 4) == 0.2158
     assert res["confirmed_keys"] == ["tmdb:550"]
+
+
+def test_progress_write_reads_canonical_ms_fields() -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    plex_item = {
+        "type": "episode", "title": "Exile", "series_title": "The Handmaid's Tale",
+        "season": 6, "episode": 2, "show_ids": {"tmdb": "69478"},
+        "progress_at": "2026-07-31T19:43:27Z", "progress_ms": 753000, "duration_ms": 3307930,
+    }
+
+    payload = pr._playback_payload(plex_item)
+
+    assert payload is not None
+    assert payload["position_seconds"] == 753.0
+    assert payload["duration_seconds"] == 3307.93
+    assert round(payload["progress"], 4) == 0.2276
+
+
+def test_progress_round_trip_is_lossless_for_two_way() -> None:
+    from cw_platform.orchestrator._planner import diff_progress
+    from providers.sync.punchplay import _progress as pr
+
+    key = "tmdb:69478#s06e02"
+    plex = {key: {
+        "type": "episode", "title": "Exile", "series_title": "The Handmaid's Tale",
+        "season": 6, "episode": 2, "show_ids": {"tmdb": "69478"},
+        "progress_at": "2026-07-31T19:43:27Z", "progress_ms": 753000, "duration_ms": 3307930,
+    }}
+    punchplay_row = {
+        "id": 7, "type": "episode", "tmdbId": 5978363, "showTmdbId": 69478,
+        "showTitle": "The Handmaid's Tale", "episodeTitle": "Exile", "season": 6, "episode": 2,
+        "progressSeconds": 753.0, "durationSeconds": 3307.93, "progressPercent": 22.764,
+        "updatedAt": "2026-07-31T19:43:27.000Z",
+    }
+
+    mirrored = pr._row_to_minimal(punchplay_row)
+    assert mirrored is not None
+    assert mirrored["progress_ms"] == 753000
+    assert mirrored["duration_ms"] == 3307930
+    assert mirrored["progress_at"] == "2026-07-31T19:43:27.000Z"
+
+    adds, removes = diff_progress(plex, {key: mirrored})
+    assert (len(adds), len(removes)) == (0, 0)
+
+
+def test_progress_sends_distinct_session_ids_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, {}), _Resp(200, {})])
+    _patch(monkeypatch, pr, http)
+
+    adapter = Adapter()
+    adapter.config = {"punchplay": {"access_token": "at", "device_id": "crosswatch-abc"}}
+
+    pr.add(adapter, [
+        {"type": "episode", "show_ids": {"tmdb": "69478"}, "season": 6, "episode": 2,
+         "series_title": "The Handmaid's Tale", "position_seconds": 753, "duration_seconds": 3307},
+        {"type": "episode", "show_ids": {"tmdb": "94997"}, "season": 2, "episode": 7,
+         "series_title": "House of the Dragon", "position_seconds": 1770, "duration_seconds": 3821},
+    ])
+
+    a, b = http.calls[0]["json"], http.calls[1]["json"]
+
+    assert a["playback_session_id"] != b["playback_session_id"]
+    assert a["playback_session_id"] == "cw-default-tmdb:69478#s06e02"
+    assert b["playback_session_id"] == "cw-default-tmdb:94997#s02e07"
+    assert a["event_id"] != b["event_id"]
+    assert a["device_id"] == b["device_id"] == "crosswatch-abc"
+    assert isinstance(a["event_created_at"], int)
+
+
+def test_progress_session_id_is_stable_across_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    item = {"type": "movie", "ids": {"tmdb": "550"}, "position_seconds": 100, "duration_seconds": 8340}
+
+    first = FakeHTTP([_Resp(200, {})])
+    _patch(monkeypatch, pr, first)
+    pr.add(Adapter(), [dict(item)])
+
+    second = FakeHTTP([_Resp(200, {})])
+    _patch(monkeypatch, pr, second)
+    pr.add(Adapter(), [dict(item)])
+
+    assert first.calls[0]["json"]["playback_session_id"] == second.calls[0]["json"]["playback_session_id"]
+    assert first.calls[0]["json"]["event_id"] == second.calls[0]["json"]["event_id"]
+
+
+def test_progress_index_reports_dropped_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, {"items": [
+        {"id": 1, "type": "episode", "tmdbId": 111, "showTmdbId": 94997, "season": 2, "episode": 7},
+        {"id": 2, "type": "episode", "tmdbId": 222, "showTmdbId": None, "season": 6, "episode": 2},
+    ]})])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert list(idx) == ["tmdb:94997#s02e07"]
+    assert pr._drop_reason({"type": "episode", "showTmdbId": None}) == "episode_missing_show_tmdb_id"
 
 
 def test_progress_remove_dismisses_in_progress_entry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -509,6 +611,58 @@ def test_progress_remove_dismisses_in_progress_entry(monkeypatch: pytest.MonkeyP
     assert http.calls[0]["method"] == "DELETE"
     assert http.calls[0]["url"].endswith("/playback/in-progress/4")
     assert res["confirmed_keys"] == ["tmdb:550"]
+
+
+# --- canonical field contract -------------------------------------------------
+
+def test_ratings_index_is_understood_by_the_planner() -> None:
+    from cw_platform.orchestrator._planner import diff_ratings
+    from providers.sync.punchplay import _ratings as rt
+
+    key = "tmdb:550"
+    src = {key: {"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club",
+                 "rating": 8, "rated_at": "2026-01-01T00:00:00Z"}}
+
+    same = rt._to_minimal({"tmdbId": 550, "kind": "movie", "rating": 8.0,
+                           "ratedAt": "2026-01-01T00:00:00Z", "title": "Fight Club"})
+    assert same is not None
+    assert same["rating"] == 8
+    assert "rated_at" in same
+    assert diff_ratings(src, {key: same})[0] == []
+
+    differs = rt._to_minimal({"tmdbId": 550, "kind": "movie", "rating": 5.0,
+                              "ratedAt": "2025-01-01T00:00:00Z", "title": "Fight Club"})
+    assert differs is not None
+    assert len(diff_ratings(src, {key: differs})[0]) == 1
+
+
+def test_history_index_survives_event_normalisation() -> None:
+    from cw_platform.history_events import minimal_history_item, provider_event_id
+    from cw_platform.orchestrator._history_rewatches import filter_history_events
+    from providers.sync.punchplay import _history as h
+
+    item = h._row_to_minimal({
+        "id": 7, "type": "movie", "tmdbId": 550, "title": "Fight Club",
+        "year": 1999, "watchedAt": "2026-01-01T20:00:00.000Z",
+    })
+    assert item is not None
+    assert item["watched_at"] == "2026-01-01T20:00:00.000Z"
+
+    kept = filter_history_events({"tmdb:550": item}, event_mode=False)
+    assert kept, "history item must survive filter_history_events"
+
+    normalised = minimal_history_item(item)
+    assert h.HISTORY_ID_FIELD in normalised, "delete ids must survive normalisation"
+    assert h.HISTORY_EVENT_ID_FIELD in normalised
+    assert provider_event_id(normalised) == "7"
+
+
+def test_punchplay_history_fields_are_registered_in_shared_contract() -> None:
+    from cw_platform.history_events import EVENT_ID_FIELDS, EVENT_META_FIELDS
+    from providers.sync.punchplay import _history as h
+
+    assert h.HISTORY_EVENT_ID_FIELD in EVENT_ID_FIELDS
+    assert h.HISTORY_ID_FIELD in EVENT_META_FIELDS
 
 
 # --- rate limits --------------------------------------------------------------

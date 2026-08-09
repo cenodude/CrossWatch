@@ -3,12 +3,15 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import time
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
     URL_IN_PROGRESS,
+    cfg_section,
+    instance_id,
     URL_IN_PROGRESS_ITEM,
     URL_PLAYBACK,
     error_of,
@@ -53,6 +56,56 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _first_number(item: Mapping[str, Any], keys: tuple[str, ...]) -> float | None:
+    for k in keys:
+        v = _as_float(item.get(k))
+        if v is not None:
+            return v
+    return None
+
+
+def _position_ms(item: Mapping[str, Any]) -> float | None:
+    ms = _first_number(item, ("progress_ms", "progressMs", "viewOffset"))
+    if ms is not None:
+        return ms
+    secs = _first_number(item, ("position_seconds", "positionSeconds"))
+    return secs * 1000.0 if secs is not None else None
+
+
+def _duration_ms_of(item: Mapping[str, Any]) -> float | None:
+    ms = _first_number(item, ("duration_ms", "durationMs"))
+    if ms is not None and ms > 0:
+        return ms
+    secs = _first_number(item, ("duration_seconds", "durationSeconds"))
+    return secs * 1000.0 if secs is not None and secs > 0 else None
+
+
+def _percent_of(item: Mapping[str, Any]) -> float | None:
+    pct = _first_number(item, ("progress_percent", "progressPercent", "percent", "position_percent", "resume_percent"))
+    if pct is not None:
+        return max(0.0, min(100.0, pct))
+    pos = _position_ms(item)
+    dur = _duration_ms_of(item)
+    if pos is not None and dur:
+        return max(0.0, min(100.0, (pos / dur) * 100.0))
+    return None
+
+
+def _drop_reason(row: Mapping[str, Any]) -> str:
+    typ = str(row.get("type") or "").strip().lower()
+    if typ == "episode":
+        if not _as_int(row.get("showTmdbId")):
+            return "episode_missing_show_tmdb_id"
+        if _as_int(row.get("season")) is None:
+            return "episode_missing_season"
+        if _as_int(row.get("episode")) is None:
+            return "episode_missing_episode"
+        return "episode_unknown"
+    if not _as_int(row.get("tmdbId")):
+        return "movie_missing_tmdb_id"
+    return f"unhandled_type:{typ or 'empty'}"
+
+
 def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
     typ = str(row.get("type") or "").strip().lower()
 
@@ -90,17 +143,20 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
         if year:
             out["year"] = year
 
-    percent = _as_float(row.get("progressPercent"))
-    if percent is not None:
-        out["progress"] = max(0.0, min(100.0, percent))
     pos = _as_float(row.get("progressSeconds"))
     if pos is not None:
-        out["position_seconds"] = pos
+        out["progress_ms"] = int(round(pos * 1000.0))
     dur = _as_float(row.get("durationSeconds"))
     if dur:
-        out["duration_seconds"] = dur
+        out["duration_ms"] = int(round(dur * 1000.0))
+    percent = _as_float(row.get("progressPercent"))
+    if percent is None and pos is not None and dur:
+        percent = (pos / dur) * 100.0
+    if percent is not None:
+        out["progress_percent"] = round(max(0.0, min(100.0, percent)), 3)
     updated = iso_z(row.get("updatedAt"))
     if updated:
+        out["progress_at"] = updated
         out["updated_at"] = updated
     state = str(row.get("playbackState") or "").strip().lower()
     if state:
@@ -129,16 +185,52 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         rows = [r for r in data if isinstance(r, Mapping)]
 
     collected: dict[str, dict[str, Any]] = {}
+    dropped: list[str] = []
     for row in rows:
         minimal = _row_to_minimal(row)
         if not minimal:
+            dropped.append(_drop_reason(row))
+            _warn(
+                FEATURE,
+                "index_row_dropped",
+                reason=_drop_reason(row),
+                row_type=str(row.get("type") or ""),
+                entry_id=row.get("id"),
+                tmdb_id=row.get("tmdbId"),
+                show_tmdb_id=row.get("showTmdbId"),
+                season=row.get("season"),
+                episode=row.get("episode"),
+                title=str(row.get("showTitle") or row.get("title") or "")[:80],
+            )
             continue
         key = _key_of(minimal)
-        if key:
-            collected[key] = minimal
+        if not key:
+            dropped.append("no_canonical_key")
+            _warn(FEATURE, "index_row_dropped", reason="no_canonical_key", entry_id=row.get("id"))
+            continue
+        collected[key] = minimal
 
-    _info(FEATURE, "index_done", count=len(collected))
+    _info(
+        FEATURE,
+        "index_done",
+        count=len(collected),
+        rows=len(rows),
+        dropped=len(dropped),
+        drop_reasons=",".join(sorted(set(dropped))) or None,
+    )
     return collected
+
+
+def _session_ids(item: Mapping[str, Any], key: str, *, device_id: str, instance: str, position: float | None) -> dict[str, Any]:
+    scope = f"cw-{instance}-{key}"
+    out: dict[str, Any] = {
+        "playback_session_id": scope,
+        "event_id": f"{scope}@{int(position or 0)}",
+        "event_created_at": int(time.time() * 1000),
+    }
+    if device_id:
+        out["device_id"] = device_id
+    return out
 
 
 def _playback_payload(item: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -181,19 +273,16 @@ def _playback_payload(item: Mapping[str, Any]) -> dict[str, Any] | None:
         if year:
             payload["year"] = year
 
-    pos = _as_float(item.get("position_seconds"))
-    if pos is not None:
-        payload["position_seconds"] = pos
-    dur = _as_float(item.get("duration_seconds"))
-    if dur:
-        payload["duration_seconds"] = dur
+    pos_ms = _position_ms(item)
+    dur_ms = _duration_ms_of(item)
+    if pos_ms is not None:
+        payload["position_seconds"] = round(pos_ms / 1000.0, 3)
+    if dur_ms:
+        payload["duration_seconds"] = round(dur_ms / 1000.0, 3)
 
-    percent = _as_float(item.get("progress"))
+    percent = _percent_of(item)
     if percent is not None:
-        frac = percent / 100.0 if percent > 1.0 else percent
-        payload["progress"] = max(0.0, min(1.0, frac))
-    elif pos is not None and dur:
-        payload["progress"] = max(0.0, min(1.0, pos / dur))
+        payload["progress"] = max(0.0, min(1.0, percent / 100.0))
 
     if item.get("anime") is True:
         payload["anime"] = True
@@ -210,11 +299,25 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     unresolved: list[dict[str, Any]] = []
     ok = True
 
+    section = cfg_section(adapter) or {}
+    device_id = str(section.get("device_id") or "").strip()
+    instance = str(instance_id(adapter) or "default")
+
     for item in items or []:
         key = _key_of(item)
         if not key:
             continue
         payload = _playback_payload(item)
+        if payload is not None:
+            payload.update(
+                _session_ids(
+                    item,
+                    key,
+                    device_id=device_id,
+                    instance=instance,
+                    position=payload.get("position_seconds"),
+                )
+            )
         if payload is None:
             unresolved_keys.append(key)
             unresolved.append({"key": key, "status": "missing_supported_id_or_position"})

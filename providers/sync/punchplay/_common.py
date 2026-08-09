@@ -124,6 +124,18 @@ class RateGovernor:
             wait = max(wait, hits[0] + window - now)
         return wait
 
+    def try_acquire(self, method: str, url: str) -> float:
+        with self._lock:
+            now = time.monotonic()
+            buckets = self._buckets_for(method, url)
+            wait = max((self._wait_for(b, now) for b in buckets), default=0.0)
+            if wait > 0.0:
+                return wait
+            for b in buckets:
+                if b in self._budgets:
+                    self._hits.setdefault(b, []).append(now)
+            return 0.0
+
     def acquire(self, method: str, url: str) -> float:
         slept = 0.0
         for _ in range(8):
@@ -429,6 +441,13 @@ def idempotency_key(resource: str, payload: Mapping[str, Any], *, attempt: int =
     return f"cw-{hashlib.sha256(seed.encode('utf-8')).hexdigest()}"
 
 
+class PunchPlayRateLimited(RuntimeError):
+    def __init__(self, retry_after: float, bucket: str = "") -> None:
+        super().__init__(f"rate_limited retry_after={int(retry_after)}s bucket={bucket or 'token'}")
+        self.retry_after = int(max(1.0, retry_after))
+        self.bucket = bucket or "token"
+
+
 def punchplay_request(adapter: Any, method: str, url: str, **kwargs: Any) -> requests.Response:
     cfg = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None) or {}
     session = getattr(adapter, "session", None)
@@ -441,7 +460,15 @@ def punchplay_request(adapter: Any, method: str, url: str, **kwargs: Any) -> req
     inst = instance_id(adapter)
 
     gov = rate_governor(inst, section)
-    slept = gov.acquire(method, url)
+    if bool(kwargs.pop("no_wait", False)):
+        wait = gov.try_acquire(method, url)
+        if wait > 0.0:
+            bucket = _endpoint_bucket(method, url) or "token"
+            _warn("ratelimit", "client_throttle_refused", method=str(method).upper(), bucket=bucket, retry_after_s=int(wait))
+            raise PunchPlayRateLimited(wait, bucket)
+        slept = 0.0
+    else:
+        slept = gov.acquire(method, url)
     if slept > 0.25:
         _dbg("ratelimit", "client_throttle", method=str(method).upper(), bucket=_endpoint_bucket(method, url) or "token", slept_s=round(slept, 2))
 
