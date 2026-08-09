@@ -1,7 +1,8 @@
 /* CrossWatch - Scrobbler Webhook Modal */
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sinks = ["trakt", "simkl", "mdblist"];
+const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
+const ratingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
 const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 
 function flashCopied(btn) {
@@ -228,13 +229,15 @@ function duplicateWebhook(current) {
 }
 
 function logo(provider) {
-  return ({
+  return window.CW?.ProviderMeta?.logoPath?.(provider) || ({
     plex: "/assets/img/PLEX.svg",
     jellyfin: "/assets/img/JELLYFIN.svg",
     emby: "/assets/img/EMBY.svg",
     trakt: "/assets/img/TRAKT.svg",
     simkl: "/assets/img/SIMKL.svg",
     mdblist: "/assets/img/MDBLIST.svg",
+    crosswatch: "/assets/img/CROSSWATCH.svg",
+    floppy: "/assets/img/FLOPPY.png",
   }[String(provider || "").toLowerCase()] || "");
 }
 
@@ -401,7 +404,7 @@ function filtersPanel(provider, filt) {
 
 function globalRatingTargets() {
   const g = props.overview?.source_state?.global_plex_ratings || {};
-  return ["trakt", "simkl", "mdblist"].filter((s) => g[s]);
+  return ratingSinks.filter((s) => g[s]);
 }
 
 function ratingsPanel(provider, ratingsTargets) {
@@ -417,7 +420,7 @@ function ratingsPanel(provider, ratingsTargets) {
         <div><strong>Plex ratings</strong><p>Forward Plex ratings received on this webhook to the selected trackers.</p></div>
       </div>
       ${globalWarn}
-      <div class="scrm-targets">${sinks.map((sink) => `<label class="scrm-target"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}</span></label>`).join("")}</div>
+      <div class="scrm-targets">${ratingSinks.map((sink) => `<label class="scrm-target"><input type="checkbox" data-rating="${esc(sink)}" ${ratingsTargets.includes(sink) ? "checked" : ""}><span class="scrm-target-mark">${providerIcon(sink)}</span><span>${esc(label(sink))}</span></label>`).join("")}</div>
     </section>
   `;
 }
@@ -486,7 +489,7 @@ function render(errs = []) {
   const fKey = filterKey(provider);
   const effective = settings();
   const filt = effective[fKey] || {};
-  const ratingsTargets = ["trakt", "simkl", "mdblist"].filter((sink) => effective[`plex_${sink}_ratings`]);
+  const ratingsTargets = ratingSinks.filter((sink) => effective[`plex_${sink}_ratings`]);
   if (provider !== "plex" && activeTab === "ratings") activeTab = "source";
   const dup = duplicateWebhook(current);
   root.innerHTML = `
@@ -549,7 +552,7 @@ function payload() {
     body.filters.server_uuid = body.filters.server_uuid_whitelist[0] || "";
   }
   if (provider === "plex") {
-    for (const sink of sinks) body[`plex_${sink}_ratings`] = !!root.querySelector(`[data-rating="${sink}"]`)?.checked;
+    for (const sink of ratingSinks) body[`plex_${sink}_ratings`] = !!root.querySelector(`[data-rating="${sink}"]`)?.checked;
   }
   if (root.querySelector("#scw-override-options")?.checked) {
     const pause = root.querySelector("#scw-pause")?.value;

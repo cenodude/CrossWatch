@@ -129,12 +129,24 @@ def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:
     css = (ROOT / "assets" / "css" / "providers.css").read_text("utf-8")
     meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8")
 
-    assert 'const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy"];' in text
+    assert '"crosswatch"' in text.split("const sinks")[1].split("]")[0]
+    assert '"crosswatch"' in text.split("const ratingSinks")[1].split("]")[0]
     assert 'crosswatch: "CrossWatch"' in text
-    assert 'crosswatch: "/assets/img/CROSSWATCH.svg"' in text
+    assert "window.CW?.ProviderMeta?.logoPath?.(provider)" in text
     assert ".scrm-provider-card.provider-crosswatch" in css
     assert ".scrm-provider-card.provider-crosswatch::after{background-image:url(/assets/img/CROSSWATCH.svg)}" in css
     assert "providerMeta().logoPath?.(v)" in scrobbler
+    assert '"crosswatch"' in scrobbler.split("plexRatingSinks")[1].split("]")[0]
     assert 'mdblist: "/assets/img/MDBLIST.svg"' not in scrobbler
     assert "CROSSWATCH:" in meta
     assert "scrobblerSink: true" in meta
+
+
+def test_scrobbler_webhook_modal_lists_crosswatch_sink() -> None:
+    text = (ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text("utf-8")
+
+    assert '"crosswatch"' in text.split("const sinks")[1].split("]")[0]
+    assert '"crosswatch"' in text.split("const ratingSinks")[1].split("]")[0]
+    assert 'crosswatch: "CrossWatch"' in text
+    assert 'crosswatch: "/assets/img/CROSSWATCH.svg"' in text
+    assert "for (const sink of ratingSinks)" in text

@@ -24,6 +24,7 @@ from .adapters.media_servers import EmbyPlaybackAdapter, JellyfinPlaybackAdapter
 from .adapters.mdblist import MDBListPlaybackAdapter
 from .adapters.nuvio import NuvioPlaybackAdapter
 from .adapters.publicmetadb import PublicMetaDBPlaybackAdapter
+from .adapters.punchplay import PunchPlayPlaybackAdapter
 from .adapters.simkl import SimklPlaybackAdapter
 from .adapters.stremio import StremioPlaybackAdapter
 from .adapters.trakt import TraktPlaybackAdapter
@@ -821,6 +822,7 @@ class PlaybackProgressService:
             "kodi": KodiPlaybackAdapter(),
             "stremio": StremioPlaybackAdapter(),
             "floppy": FloppyPlaybackAdapter(),
+            "punchplay": PunchPlayPlaybackAdapter(),
             "crosswatch": CrossWatchPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}
