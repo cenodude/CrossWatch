@@ -1744,12 +1744,18 @@ def process_rating_webhook(
         enable_trakt = "trakt" in custom_targets
         enable_simkl = "simkl" in custom_targets
         enable_mdblist = "mdblist" in custom_targets
+        enable_crosswatch = "crosswatch" in custom_targets
+        enable_floppy = "floppy" in custom_targets
+        enable_punchplay = "punchplay" in custom_targets
     else:
         enable_trakt = bool(watch_cfg.get("plex_trakt_ratings"))
         enable_simkl = bool(watch_cfg.get("plex_simkl_ratings"))
         enable_mdblist = bool(watch_cfg.get("plex_mdblist_ratings"))
+        enable_crosswatch = bool(watch_cfg.get("plex_crosswatch_ratings"))
+        enable_floppy = bool(watch_cfg.get("plex_floppy_ratings"))
+        enable_punchplay = bool(watch_cfg.get("plex_punchplay_ratings"))
 
-    if not (enable_trakt or enable_simkl or enable_mdblist):
+    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay):
         return {"ok": True, "ignored": True}
 
     if not payload:
@@ -1788,7 +1794,7 @@ def process_rating_webhook(
         rating_val = 0
 
 
-    if media_type == "episode" and not enable_trakt:
+    if media_type == "episode" and not (enable_trakt or enable_crosswatch or enable_punchplay):
         return {"ok": True, "ignored": True}
 
     acc_key = _account_key(payload)
@@ -1830,4 +1836,24 @@ def process_rating_webhook(
         results["simkl"] = _simkl_send_rating(media_type, ids, rating_val, cfg, logger)
     if enable_mdblist and media_type in ("movie", "show"):
         results["mdblist"] = _mdblist_send_rating(media_type, ids, rating_val, cfg, logger)
+    ops_enabled = [
+        name
+        for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay))
+        if on
+    ]
+    if ops_enabled:
+        from providers.scrobble.plex.ratings_sync import dispatch_ops_ratings
+
+        sink_inst = str(watch_cfg.get("route_sink_instance") or "default").strip() or "default"
+        results.update(
+            dispatch_ops_ratings(
+                media_type,
+                md,
+                ids,
+                rating_val,
+                cfg,
+                enabled=ops_enabled,
+                instance_for=lambda _sink: sink_inst,
+            )
+        )
     return results
