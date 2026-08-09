@@ -79,7 +79,9 @@ def test_playback_bulk_footer_uses_wide_management_layout():
 def test_playback_progress_frontend_includes_kodi_provider_key():
     js = (ROOT / "assets" / "js" / "playback_progress.js").read_text(encoding="utf-8")
 
-    assert 'const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"];' in js
+    keys = js.split("PLAYBACK_PROVIDER_KEYS")[1].split("]")[0]
+    for provider in ("crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy"):
+        assert f'"{provider}"' in keys, provider
 
 
 class _PolicyOps:
