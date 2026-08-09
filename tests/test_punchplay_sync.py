@@ -244,20 +244,75 @@ def test_watchlist_index_parses_tmdb_rows(monkeypatch: pytest.MonkeyPatch) -> No
 
     http = FakeHTTP([
         _Resp(200, {"items": [{"id": 2, "isWatchlist": True, "externalSource": None}], "nextCursor": None}),
-        _Resp(200, {"items": [
+        _Resp(200, {"id": 2, "isWatchlist": True, "items": [
             {"id": 1, "tmdbId": 550, "type": "movie", "isAnime": False, "title": "Fight Club",
              "posterPath": None, "addedAt": "2026-01-01T00:00:00.000Z", "runtime": 139,
              "popularity": 1.0, "releaseDate": "1999-10-15T00:00:00.000Z", "watched": False},
-        ], "nextOffset": None, "total": 1}),
+        ]}),
     ])
     _patch(monkeypatch, wl, http)
 
     idx = wl.build_index(Adapter())
 
     assert idx == {"tmdb:550": {"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "year": 1999}}
+    assert http.calls[1]["url"].endswith("/lists/2")
+    assert not http.calls[1]["url"].endswith("/lists/2/items")
+
+
+def test_watchlist_index_uses_dynamic_items_endpoint_only_for_dynamic_lists(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _watchlist as wl
+
+    http = FakeHTTP([
+        _Resp(200, {"items": [{"id": 7, "isWatchlist": True, "externalSource": None, "isDynamicList": True}], "nextCursor": None}),
+        _Resp(200, {"items": [
+            {"id": 1, "tmdbId": 551, "type": "movie", "title": "Dynamic Movie", "releaseDate": "2000-01-01T00:00:00.000Z"},
+        ], "nextOffset": None, "total": 1}),
+    ])
+    _patch(monkeypatch, wl, http)
+
+    idx = wl.build_index(Adapter())
+
+    assert idx == {"tmdb:551": {"type": "movie", "ids": {"tmdb": "551"}, "title": "Dynamic Movie", "year": 2000}}
+    assert http.calls[1]["url"].endswith("/lists/7/items")
 
 
 # --- ratings ------------------------------------------------------------------
+
+def test_ratings_index_prefers_sync_snapshot_interaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _ratings as rt
+
+    http = FakeHTTP([_Resp(200, {"items": [
+        {"tmdbId": 550, "kind": "movie", "title": "Fight Club", "year": 1999, "rating": 8},
+    ], "hasMore": False, "nextAfter": None})])
+    _patch(monkeypatch, rt, http)
+
+    idx = rt.build_index(Adapter())
+
+    assert idx == {"tmdb:550": {"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "year": 1999, "rating": 8}}
+    assert len(http.calls) == 1
+    assert http.calls[0]["method"] == "GET"
+    assert http.calls[0]["url"].endswith("/me/sync/snapshot")
+    assert http.calls[0]["params"]["resource"] == "interaction"
+
+
+def test_ratings_index_falls_back_to_user_ratings_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _ratings as rt
+
+    http = FakeHTTP([
+        _Resp(200, {"items": [], "hasMore": False, "nextAfter": None}),
+        _Resp(200, {"items": [
+            {"tmdbId": 551, "kind": "movie", "title": "Fallback Movie", "year": 2000, "rating": 7},
+        ], "total": 1, "page": 1, "pageSize": 1, "hasMore": False}),
+    ])
+    _patch(monkeypatch, rt, http)
+
+    idx = rt.build_index(Adapter())
+
+    assert idx == {"tmdb:551": {"type": "movie", "ids": {"tmdb": "551"}, "title": "Fallback Movie", "year": 2000, "rating": 7}}
+    assert http.calls[0]["url"].endswith("/me/sync/snapshot")
+    assert http.calls[1]["method"] == "GET"
+    assert http.calls[1]["url"].endswith("/me/ratings")
+
 
 def test_ratings_round_to_integer_scale(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _ratings as rt
@@ -297,6 +352,23 @@ def test_ratings_episode_scope(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # --- history ------------------------------------------------------------------
+
+def test_history_index_uses_cursor_paginated_history_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    http = FakeHTTP([_Resp(200, {"items": [
+        {"id": 7, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999, "watchedAt": "2026-01-01T20:00:00.000Z"},
+    ], "nextCursor": None})])
+    _patch(monkeypatch, hi, http)
+
+    idx = hi.build_index(Adapter())
+
+    assert "tmdb:550" in idx
+    assert http.calls[0]["method"] == "GET"
+    assert http.calls[0]["url"].endswith("/me/history")
+    assert http.calls[0]["params"]["limit"] == 100
+    assert "cursor" not in http.calls[0]["params"]
+
 
 def test_history_client_item_id_is_per_play(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _history as hi
@@ -390,6 +462,23 @@ def test_history_episode_remove_without_entry_id_is_unresolved(monkeypatch: pyte
 
 
 # --- progress -----------------------------------------------------------------
+
+def test_progress_index_uses_in_progress_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, [
+        {"id": 4, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999,
+         "progressSeconds": 1800, "durationSeconds": 8340, "progressPercent": 21.58,
+         "updatedAt": "2026-01-01T20:00:00.000Z", "nowPlaying": False},
+    ])])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert idx["tmdb:550"]["_punchplay_progress_id"] == "4"
+    assert http.calls[0]["method"] == "GET"
+    assert http.calls[0]["url"].endswith("/playback/in-progress")
+
 
 def test_progress_write_uses_playback_progress_action(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
