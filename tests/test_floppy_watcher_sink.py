@@ -12,6 +12,25 @@ from providers.scrobble.routes import build_route_cfg, normalize_route
 from providers.scrobble.scrobble import ScrobbleEvent
 from providers.webhooks.config import sink_configured, webhook_sinks
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_floppy_dedupe(monkeypatch):
+    """Floppy dedupe is persistent (SQLite); give every test a clean slate."""
+    seen: set[tuple[str, str]] = set()
+
+    def fake_once_per_ttl(base_path, namespace, key, *, ttl_seconds, max_entries=2000):
+        entry = (str(namespace), str(key))
+        if entry in seen:
+            return False
+        seen.add(entry)
+        return True
+
+    monkeypatch.setattr(floppy_sink, "once_per_ttl", fake_once_per_ttl)
+    return seen
+
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -206,8 +225,114 @@ def test_scrobbler_route_modal_lists_floppy_sink() -> None:
     text = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8")
     meta = (ROOT / "assets" / "helpers" / "provider-meta.js").read_text("utf-8")
 
-    assert 'const sinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy"];' in text
+    assert '"floppy"' in text.split("const sinks")[1].split("]")[0]
     assert 'floppy: "Floppy"' in text
-    assert 'const ratingSinks = ["trakt", "simkl", "mdblist"];' in text
+    assert '"floppy"' in text.split("const ratingSinks")[1].split("]")[0]
     assert "FLOPPY:" in meta
     assert "scrobblerSink: true" in meta
+
+
+def test_scrobbler_webhook_modal_lists_floppy_sink() -> None:
+    text = (ROOT / "assets" / "js" / "modals" / "scrobbler-webhook" / "index.js").read_text("utf-8")
+
+    assert '"floppy"' in text.split("const sinks")[1].split("]")[0]
+    assert '"floppy"' in text.split("const ratingSinks")[1].split("]")[0]
+    assert 'floppy: "Floppy"' in text
+    assert 'floppy: "/assets/img/FLOPPY.png"' in text
+    assert "for (const sink of ratingSinks)" in text
+
+
+# --- sink parity fixes --------------------------------------------------------
+
+def test_completion_honours_the_configured_watched_threshold() -> None:
+    from providers.scrobble.floppy import sink as s
+
+    # 80% watched of a 1000s title
+    assert s._completed(800_000, 1_000_000, 80.0, 80.0) is True
+    assert s._completed(800_000, 1_000_000, 80.0, 95.0) is False
+    # no duration -> fall back to the reported percentage
+    assert s._completed(1, None, 85.0, 80.0) is True
+    assert s._completed(1, None, 85.0, 90.0) is False
+
+
+def test_watched_threshold_reads_provider_then_trakt_then_default() -> None:
+    from providers.scrobble.floppy import sink as s
+
+    assert s._watched_at({"scrobble": {"floppy": {"watched_at": 75}}}) == 75.0
+    assert s._watched_at({"scrobble": {"trakt": {"watched_at": 85}}}) == 85.0
+    assert s._watched_at({}) == s.DEFAULT_WATCHED_AT
+
+
+def test_payload_uses_the_configured_threshold() -> None:
+    from providers.scrobble.floppy import sink as s
+    from providers.scrobble.scrobble import ScrobbleEvent
+
+    ev = ScrobbleEvent(
+        action="stop", media_type="movie", ids={"tmdb": "550"}, title="Fight Club", year=1999,
+        season=None, number=None, progress=82.0, account="u", server_uuid="srv", session_key="k",
+        raw={}, position_ms=820_000, duration_ms=1_000_000,
+    )
+
+    lenient = s._payload(ev, 80.0)
+    strict = s._payload(ev, 95.0)
+    assert lenient is not None and strict is not None
+    assert lenient["completed"] is True
+    assert strict["completed"] is False
+
+
+def test_floppy_sink_has_parity_with_other_sinks() -> None:
+    text = (ROOT / "providers" / "scrobble" / "floppy" / "sink.py").read_text("utf-8")
+
+    for symbol in ("record_watch", "record_scrobble_event", "mask_account", "once_per_ttl", "_rm_across"):
+        assert symbol in text, f"floppy sink is missing {symbol}"
+    assert "self._completed" not in text, "completion dedupe must be persistent, not in-memory"
+
+
+def test_completed_stop_is_deduped_across_restarts(monkeypatch, _isolate_floppy_dedupe) -> None:
+    calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda adapter, path, **kw: calls.append(kw) or {})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda *a, **k: None)
+
+    event = _episode(progress=99.5)
+    FloppySink(cfg_provider=_cfg).send(event)
+    # a brand new sink instance stands in for a process restart
+    FloppySink(cfg_provider=_cfg).send(event)
+
+    assert len(calls) == 1, "persistent dedupe must survive a new sink instance"
+
+
+def _cfg_with_auto_remove() -> dict[str, Any]:
+    cfg = dict(_cfg())
+    scrobble = dict(cfg.get("scrobble") or {})
+    scrobble["delete_plex"] = True
+    scrobble["delete_plex_types"] = ["movie", "show", "episode"]
+    cfg["scrobble"] = scrobble
+    return cfg
+
+
+def test_completed_stop_auto_removes_when_enabled(monkeypatch, _isolate_floppy_dedupe) -> None:
+    removed: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda adapter, path, **kw: {})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda ids, mt, scope="": removed.append((ids, mt, scope)))
+
+    FloppySink(cfg_provider=_cfg_with_auto_remove).send(_episode(progress=99.5))
+
+    assert removed, "a completed stop should auto-remove when the feature is enabled"
+    assert removed[0][1] == "episode"
+    assert removed[0][2].startswith("floppy:")
+
+
+def test_auto_remove_is_off_unless_configured(monkeypatch, _isolate_floppy_dedupe) -> None:
+    removed: list[Any] = []
+    monkeypatch.setattr(floppy_sink, "api_post", lambda adapter, path, **kw: {})
+    monkeypatch.setattr(floppy_sink, "record_watch", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "record_scrobble_event", lambda *a, **k: None)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda ids, mt, scope="": removed.append(ids))
+
+    FloppySink(cfg_provider=_cfg).send(_episode(progress=99.5))
+
+    assert removed == [], "auto-remove must never fire unless the user enabled it"
