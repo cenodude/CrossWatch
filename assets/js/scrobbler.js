@@ -6,6 +6,7 @@
   const providerMeta = () => w.CW?.ProviderMeta || {};
   const label = (v) => providerMeta().label?.(v) || String(v || "").toUpperCase();
   const logo = (v) => providerMeta().logoPath?.(v) || "";
+  const plexRatingSinks = ["crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay"];
   const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0, hybridDismissed: false };
 
   async function j(url, options = {}) {
@@ -242,7 +243,7 @@
     const r = st.global_plex_ratings || {};
     const open = state.panels.ratings;
     const url = r.endpoint_url || "";
-    const on = ["simkl", "trakt", "mdblist"].filter((k) => r[k]);
+    const on = plexRatingSinks.filter((k) => r[k]);
     const summary = on.length ? `→ ${on.map(label).join(", ")}` : "No destinations selected";
     return `
       <section class="sc2-section sc2-collapse ${open ? "is-open" : ""}" id="sc-sec-ratings">
@@ -253,7 +254,7 @@
         </button>
         <div class="sc2-collapse-body">
           <div class="sc2-rating-targets">
-            ${["simkl", "trakt", "mdblist"].map((k) => `<button type="button" class="sc2-rating-pill provider-${k} ${r[k] ? "is-on" : ""}" data-rating-target="${k}"><span class="material-symbols-rounded">${r[k] ? "check_circle" : "radio_button_unchecked"}</span>${esc(label(k))}</button>`).join("")}
+            ${plexRatingSinks.map((k) => `<button type="button" class="sc2-rating-pill provider-${k} ${r[k] ? "is-on" : ""}" data-rating-target="${k}"><span class="material-symbols-rounded">${r[k] ? "check_circle" : "radio_button_unchecked"}</span>${esc(label(k))}</button>`).join("")}
           </div>
           <div class="sc2-endpoint">
             <code title="${esc(url)}">${esc(url || "Global Plex ratings URL is unavailable until a token exists")}</code>
@@ -562,7 +563,7 @@
         e.preventDefault();
         const cur = state.overview?.source_state?.global_plex_ratings || {};
         const key = ratingTarget.getAttribute("data-rating-target");
-        await saveSettings({ global_plex_ratings: { simkl: !!cur.simkl, trakt: !!cur.trakt, mdblist: !!cur.mdblist, [key]: !cur[key] } }, ratingTarget);
+        await saveSettings({ global_plex_ratings: Object.fromEntries(plexRatingSinks.map((sink) => [sink, sink === key ? !cur[sink] : !!cur[sink]])) }, ratingTarget);
         return;
       }
       const copyUrl = e.target.closest("[data-copy-url]");
