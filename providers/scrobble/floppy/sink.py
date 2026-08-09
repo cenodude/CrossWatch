@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 from cw_platform.event_archive import record_watch
+from cw_platform.local_db.ttl_dedupe import once_per_ttl
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.auth._auth_FLOPPY import FloppyAuthError, FloppyClient, is_configured
+from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, mask_account
 from providers.sync.floppy._common import api_post
 from services.activity import record_scrobble_event
@@ -51,6 +54,26 @@ def _clamp(value: Any) -> float:
     except Exception:
         raw = 0.0
     return max(0.0, min(100.0, raw))
+
+
+DEFAULT_WATCHED_AT = 90.0
+_COMPLETE_TTL = 6 * 3600
+_AR_TTL = 60
+
+
+def _dedupe_base_path() -> Path:
+    return Path("/config") if Path("/config/config.json").exists() else Path(".")
+
+
+def _watched_at(cfg: Mapping[str, Any]) -> float:
+    try:
+        sc = cfg.get("scrobble") if isinstance(cfg, Mapping) else {}
+        value = ((sc or {}).get("floppy") or {}).get("watched_at")
+        if value is None:
+            value = ((sc or {}).get("trakt") or {}).get("watched_at", DEFAULT_WATCHED_AT)
+        return max(0.0, min(100.0, float(value)))
+    except Exception:
+        return DEFAULT_WATCHED_AT
 
 
 def _route_source(cfg: Mapping[str, Any]) -> tuple[str, str]:
@@ -97,14 +120,15 @@ def _position_ms(raw: Any, progress: float, duration_ms: int | None) -> int | No
     return max(0, min(value, duration_ms)) if duration_ms else max(0, value)
 
 
-def _completed(position_ms: int | None, duration_ms: int | None, progress: float) -> bool | None:
+def _completed(position_ms: int | None, duration_ms: int | None, progress: float, watched_at: float = DEFAULT_WATCHED_AT) -> bool | None:
     if position_ms is None:
         return None
+    threshold = max(0.0, min(100.0, float(watched_at)))
     if duration_ms and duration_ms > 0:
-        position = max(0, round(position_ms / 1000.0))
-        duration = max(1, round(duration_ms / 1000.0))
-        return position >= max(0, duration - 30)
-    return progress >= 95.0
+        position = max(0.0, position_ms / 1000.0)
+        duration = max(1.0, duration_ms / 1000.0)
+        return (position / duration) * 100.0 >= threshold
+    return progress >= threshold
 
 
 def _ids(ev: ScrobbleEvent) -> dict[str, str]:
@@ -123,7 +147,7 @@ def _ids(ev: ScrobbleEvent) -> dict[str, str]:
     return out
 
 
-def _payload(ev: ScrobbleEvent) -> dict[str, Any] | None:
+def _payload(ev: ScrobbleEvent, watched_at: float = DEFAULT_WATCHED_AT) -> dict[str, Any] | None:
     progress = _clamp(ev.progress)
     ids = _ids(ev)
     if not ids:
@@ -151,18 +175,62 @@ def _payload(ev: ScrobbleEvent) -> dict[str, Any] | None:
     if position is not None:
         body["position_seconds"] = max(0, round(position / 1000.0))
     if body["action"] == "stop":
-        complete = _completed(position, duration, progress)
+        complete = _completed(position, duration, progress, watched_at)
         if complete is not None:
             body["completed"] = complete
         body["played_at"] = utc_now_iso()
     return {k: v for k, v in body.items() if v not in (None, "", {}, [])}
 
 
+def _norm_media_type(value: str) -> str:
+    text = (value or "").strip().lower()
+    if text.endswith("s"):
+        text = text[:-1]
+    return "show" if text == "serie" or text == "series" else text
+
+
+def _auto_remove_enabled(cfg: Mapping[str, Any], media_type: str) -> bool:
+    scrobble = (cfg.get("scrobble") or {}) if isinstance(cfg, Mapping) else {}
+    watch = scrobble.get("watch") or {}
+    route_opts = watch.get("route_options") if isinstance(watch.get("route_options"), Mapping) else {}
+    mode = str((route_opts or {}).get("auto_remove_watchlist") or "inherit").strip().lower()
+    if mode == "off":
+        return False
+    if not scrobble.get("delete_plex") and mode != "on":
+        return False
+    types = scrobble.get("delete_plex_types") or []
+    mt = _norm_media_type(media_type)
+    if isinstance(types, str):
+        return _norm_media_type(types) == mt
+    try:
+        return mt in {_norm_media_type(str(x)) for x in types if str(x).strip()}
+    except Exception:
+        return False
+
+
+def _auto_remove_across(ev: ScrobbleEvent, cfg: Mapping[str, Any], scope: str = "") -> None:
+    media_type = "episode" if getattr(ev, "media_type", "") == "episode" else "movie"
+    if not _auto_remove_enabled(cfg, media_type):
+        return
+    ids = _ids(ev)
+    if not ids:
+        return
+    key = f"{scope}|{media_type}|" + ",".join(f"{k}={v}" for k, v in sorted(ids.items()))
+    try:
+        if not once_per_ttl(_dedupe_base_path(), "auto_remove_seen", key, ttl_seconds=_AR_TTL):
+            return
+    except Exception:
+        pass
+    try:
+        _rm_across(ids, media_type, scope=scope)
+    except Exception:
+        pass
+
+
 class FloppySink(ScrobbleSink):
     def __init__(self, cfg_provider: Callable[[], dict[str, Any]] | None = None, instance_id: str | None = None) -> None:
         self._cfg_provider = cfg_provider
         self._instance_id = normalize_instance_id(instance_id)
-        self._completed: set[str] = set()
 
     def _cfg(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         if isinstance(cfg, dict):
@@ -202,12 +270,15 @@ class FloppySink(ScrobbleSink):
         if not is_configured(view):
             _log(f"Floppy disabled for sink profile {self._instance_id}; skipping", "WARNING")
             return
-        body = _payload(ev)
+        body = _payload(ev, _watched_at(cfgd))
         if not body:
             _log("Floppy sink skipped event without enough identity", "DEBUG")
             return
         complete_key = self._key(ev)
-        if body.get("action") == "stop" and body.get("completed") is True and complete_key in self._completed:
+        is_complete_stop = body.get("action") == "stop" and body.get("completed") is True
+        if is_complete_stop and not once_per_ttl(
+            _dedupe_base_path(), "floppy_scrobble_completed", complete_key, ttl_seconds=_COMPLETE_TTL
+        ):
             return
         src, src_inst = _route_source(cfgd)
         try:
@@ -225,7 +296,7 @@ class FloppySink(ScrobbleSink):
         action = str(body.get("action") or ev.action)
         record_watch(ev, action=action, source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, progress=progress)
         if action == "stop" and body.get("completed") is True:
-            self._completed.add(complete_key)
+            _auto_remove_across(ev, cfgd, scope=f"floppy:{self._instance_id}")
             try:
                 record_scrobble_event(ev, source=src, source_instance=src_inst, target="floppy", target_instance=self._instance_id, progress=progress)
             except Exception:
