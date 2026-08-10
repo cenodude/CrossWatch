@@ -143,13 +143,17 @@ def test_editor_ui_exposes_playlist_source() -> None:
     load_js = (root / "assets" / "js" / "editor" / "load-controller.js").read_text(encoding="utf-8")
     sources_js = (root / "assets" / "js" / "editor" / "sources.js").read_text(encoding="utf-8")
     persistence_js = (root / "assets" / "js" / "editor" / "persistence.js").read_text(encoding="utf-8")
-    assert 'option[value="playlist"]' in chrome_js
+    assert 'sourceSelect.querySelector(\'option[value="playlist"]\')?.remove();' in chrome_js
     assert 'option[value="manual"]' in chrome_js
     assert "Manual Overrides" in chrome_js
     assert "/api/editor/playlists/endpoints" in sources_js
+    assert "function hasPlaylistEndpoints(state)" in sources_js
+    assert "state.playlistEndpointsLoaded = true;" in sources_js
+    assert "if (showPlaylist && !sourceSel.querySelector('option[value=\"playlist\"]'))" in sources_js
     assert "payload.endpoint = state.snapshot" in persistence_js
     assert "state.playlistOriginalKeys" in load_js
-    assert 'const SOURCES = ["state", "manual", "tracker", "playlist"];' in sources_js
+    assert 'const SOURCES = ["state", "manual", "playlist"];' in sources_js
+    assert "/api/editor/tracker/workspaces" not in sources_js
     assert "state.source = ctx.normalizeSource(state.source);" in load_js
 
 
@@ -244,9 +248,8 @@ def test_editor_refresh_is_source_aware() -> None:
     load_js = (root / "assets" / "js" / "editor" / "load-controller.js").read_text(encoding="utf-8")
     assert "function syncSelectedScopeFromControls()" in js
     assert "function syncSelectedScopeFromControls(ctx = {})" in load_js
-    assert "state.workspace = (ctx.snapSel && ctx.snapSel.value)" in load_js
+    assert "state.workspace = (ctx.snapSel && ctx.snapSel.value)" not in load_js
     assert 'state.snapshot = "";' in js
-    assert 'state.snapshot = "";' in load_js
     assert "await refreshEditor({ force: true });" in js or "refreshEditor({ force: true });" in js
     assert 'window.addEventListener("sync-complete"' in js
 
@@ -548,7 +551,7 @@ def test_editor_source_loading_is_extracted() -> None:
     assert "return editorSources.loadSnapshots(sourceContext());" in js
     assert "function syncSourceUI(ctx = {})" in sources_js
     assert "async function loadSnapshots(ctx = {})" in sources_js
-    assert "async function loadTrackerWorkspaces(ctx = {})" in sources_js
+    assert "async function loadTrackerWorkspaces(ctx = {})" not in sources_js
     assert "function rebuildSnapshots(ctx = {})" in sources_js
     assert "function showStateHint(mode, ctx = {})" in sources_js
     assert "window.CrossWatchEditorSources = Editor.Sources;" in sources_js

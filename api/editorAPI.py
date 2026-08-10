@@ -8,7 +8,6 @@ from typing import Any, Mapping
 import io
 import json
 import os
-import re
 from pathlib import Path
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
@@ -715,221 +714,6 @@ def api_editor_playlist_endpoint_save(endpoint_id: str, payload: dict[str, Any] 
     result["ok"] = result["unresolved_count"] == 0
     return result
 
-_TRACKER_PROVIDER = "CROSSWATCH"
-_TRACKER_FEATURES: tuple[str, ...] = ("watchlist", "history", "ratings", "progress")
-_TRACKER_RESERVED_SCOPES = frozenset({"unresolved", "restore_state", "tmp", "snapshots"})
-_TRACKER_DEFAULT_ROOT = Path("/config/.cw_provider")
-
-
-def _safe_tracker_profile_dir(instance_id: Any) -> str:
-    raw = normalize_instance_id(instance_id)
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", raw).strip("._- ")
-    return safe or "default"
-
-
-def _tracker_base_root(cfg: Mapping[str, Any]) -> Path:
-    node = cfg.get("crosswatch") if isinstance(cfg, dict) else {}
-    raw = ""
-    if isinstance(node, dict):
-        raw = str(node.get("root_dir") or "").strip()
-    try:
-        root = Path(raw or _TRACKER_DEFAULT_ROOT).expanduser().resolve(strict=False)
-    except Exception:
-        return _TRACKER_DEFAULT_ROOT
-    try:
-        if root == Path(root.anchor):
-            return _TRACKER_DEFAULT_ROOT
-    except Exception:
-        return _TRACKER_DEFAULT_ROOT
-    return root
-
-
-def _tracker_configured_instance(cfg: Mapping[str, Any], provider_instance: Any = None) -> str:
-    requested = normalize_instance_id(provider_instance)
-    if requested == "default":
-        return "default"
-    node = cfg.get("crosswatch") if isinstance(cfg, dict) else {}
-    instances = node.get("instances") if isinstance(node, dict) else {}
-    if not isinstance(instances, dict):
-        return "default"
-    for key in instances.keys():
-        candidate = normalize_instance_id(key)
-        if candidate == requested:
-            return candidate
-    return "default"
-
-
-def _tracker_root(provider_instance: Any = None) -> Path:
-    cfg: dict[str, Any] = {}
-    try:
-        cfg = load_config() or {}
-    except Exception:
-        cfg = {}
-    inst = _tracker_configured_instance(cfg, provider_instance)
-    base = _tracker_base_root(cfg)
-    if inst == "default":
-        return base
-    return base / "profiles" / _safe_tracker_profile_dir(inst)
-
-
-def _tracker_scan(root: Path) -> dict[str, dict[str, str]]:
-    found: dict[str, dict[str, str]] = {}
-    try:
-        entries = sorted(root.iterdir())
-    except Exception:
-        return found
-    for p in entries:
-        try:
-            if not p.is_file() or p.suffix != ".json":
-                continue
-        except Exception:
-            continue
-        parts = p.name.split(".")
-        if len(parts) == 2:
-            feat, scope = parts[0], ""
-        elif len(parts) == 3:
-            feat, scope = parts[0], parts[1]
-            if scope.lower() in _TRACKER_RESERVED_SCOPES:
-                continue
-        else:
-            continue
-        if feat not in _TRACKER_FEATURES:
-            continue
-        found.setdefault(scope, {})[feat] = p.name
-    return found
-
-
-def _tracker_provider_label(name: str) -> str:
-    n = str(name or "").strip().upper()
-    if not n:
-        return ""
-    if n == _TRACKER_PROVIDER:
-        return "Local Tracker"
-    try:
-        ops = load_sync_ops(n)
-        label = str((getattr(ops, "label", None) or (lambda: ""))() or "").strip()
-        if label:
-            return label
-    except Exception:
-        pass
-    return n.title()
-
-
-def _tracker_pair_labels() -> dict[str, str]:
-    out: dict[str, str] = {}
-    try:
-        from cw_platform.orchestrator._pairs import _pair_scope_key
-        from providers.sync.crosswatch._common import _safe_scope
-    except Exception:
-        return out
-    try:
-        pairs = (load_config() or {}).get("pairs") or []
-    except Exception:
-        return out
-    if not isinstance(pairs, list):
-        return out
-    for i, pair in enumerate(pairs):
-        if not isinstance(pair, dict):
-            continue
-        src = str(pair.get("source") or "").strip().upper()
-        dst = str(pair.get("target") or "").strip().upper()
-        if not src or not dst or _TRACKER_PROVIDER not in (src, dst):
-            continue
-        mode = str(pair.get("mode") or "one-way").strip().lower()
-        try:
-            scope = _safe_scope(_pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode))
-        except Exception:
-            continue
-        if scope and scope not in out:
-            out[scope] = f"{_tracker_provider_label(src)} → {_tracker_provider_label(dst)}"
-    return out
-
-
-def _tracker_workspace_index(provider_instance: Any = None) -> dict[str, dict[str, Any]]:
-    inst = normalize_instance_id(provider_instance)
-    root = _tracker_root(inst)
-    found = _tracker_scan(root)
-    if not found:
-        return {}
-    pair_labels = _tracker_pair_labels()
-    out: dict[str, dict[str, Any]] = {}
-    fallback = 0
-    for scope in sorted(found.keys(), key=lambda s: (s != "", s)):
-        files = found[scope]
-        wid = "default" if not scope else scope
-        if wid in out:
-            n = 2
-            while f"{wid}-{n}" in out:
-                n += 1
-            wid = f"{wid}-{n}"
-        if not scope:
-            label = "Default"
-        else:
-            label = pair_labels.get(scope) or ""
-            if not label:
-                fallback += 1
-                label = "Local tracker" if fallback == 1 else f"Local tracker {fallback}"
-        out[wid] = {
-            "id": wid,
-            "label": label,
-            "features": {f: (f in files) for f in _TRACKER_FEATURES},
-            "files": files,
-            "root": root,
-            "profile_id": inst,
-        }
-    return out
-
-
-def _tracker_workspaces(provider_instance: Any = None) -> list[dict[str, Any]]:
-    return [
-        {"id": w["id"], "label": w["label"], "features": w["features"], "profile_id": w["profile_id"]}
-        for w in _tracker_workspace_index(provider_instance).values()
-    ]
-
-
-def _tracker_workspace(workspace: Any, provider_instance: Any = None) -> dict[str, Any]:
-    index = _tracker_workspace_index(provider_instance)
-    if not index:
-        raise HTTPException(status_code=404, detail="No Local Tracker data found")
-    wid = str(workspace or "").strip()
-    if not wid:
-        wid = next(iter(index))
-    node = index.get(wid)
-    if node is None:
-        raise HTTPException(status_code=404, detail="Unknown Local Tracker workspace")
-    return node
-
-
-def _tracker_read(root: Path, filename: str) -> tuple[dict[str, Any], int | None]:
-    path = root / filename
-    try:
-        raw = json.loads(path.read_text("utf-8"))
-    except Exception:
-        return {}, None
-    if not isinstance(raw, dict):
-        return {}, None
-    items_raw = raw.get("items")
-    items: dict[str, Any] = {}
-    if isinstance(items_raw, dict):
-        for key, val in items_raw.items():
-            k = str(key or "").strip()
-            if k:
-                items[k] = dict(val) if isinstance(val, dict) else {}
-    ts: int | None = None
-    ts_raw = raw.get("ts")
-    if isinstance(ts_raw, (int, float, str)):
-        try:
-            ts = int(ts_raw)
-        except (TypeError, ValueError):
-            ts = None
-    if ts is None:
-        try:
-            ts = int(path.stat().st_mtime)
-        except OSError:
-            ts = None
-    return items, ts
-
-
 def _normalize_blocks(blocks_raw: Any) -> list[str]:
     keys: Any
     if isinstance(blocks_raw, dict):
@@ -952,14 +736,6 @@ def _normalize_blocks(blocks_raw: Any) -> list[str]:
     return blocks
 
 
-@router.get("/tracker/workspaces")
-def api_editor_tracker_workspaces(
-    provider_instance: str | None = Query("default"),
-) -> dict[str, Any]:
-    inst = normalize_instance_id(provider_instance)
-    return {"provider_instance": inst, "workspaces": _tracker_workspaces(inst)}
-
-
 @router.get("/state/providers")
 def api_editor_state_providers() -> dict[str, Any]:
     state_providers = StateStore(_STATE_BASE).provider_names()
@@ -975,42 +751,11 @@ def api_editor_get_state(
     provider: str | None = None,
     provider_instance: str | None = None,
     endpoint: str | None = None,
-    workspace: str | None = None,
 ) -> dict[str, Any]:
     k = _normalize_kind(kind)
     src = (source or "state").strip().lower()
     if src in ("playlist", "playlists", "playlist-endpoint"):
         return api_editor_playlist_endpoint((endpoint or snapshot or "").strip())
-
-    if src in ("tracker", "crosswatch"):
-        inst = normalize_instance_id(provider_instance)
-        ws = _tracker_workspace(workspace or snapshot, inst)
-        filename = (ws["files"] or {}).get(k)
-        items, ts = _tracker_read(ws["root"], filename) if filename else ({}, None)
-
-        raw_policy = _load_policy()
-        pol_adds, pol_blocks = _load_policy_manual(k, _TRACKER_PROVIDER, inst, raw_policy=raw_policy)
-        st_adds, st_blocks = (
-            _load_state_manual(k, _TRACKER_PROVIDER, inst, raw_state=_load_current_state_features({k})) if _state_exists() else ({}, [])
-        )
-        manual_adds = dict(st_adds or {})
-        manual_adds.update(dict(pol_adds or {}))
-        manual_blocks = _merge_blocks(st_blocks or [], pol_blocks or [])
-
-        return {
-            "kind": k,
-            "source": "tracker",
-            "workspace": ws["id"],
-            "label": ws["label"],
-            "features": ws["features"],
-            "provider": _TRACKER_PROVIDER,
-            "provider_instance": inst,
-            "ts": ts,
-            "count": len(items),
-            "items": items,
-            "manual_adds": manual_adds,
-            "manual_blocks": manual_blocks,
-        }
 
     if src in ("state", "current"):
         raw_state = _load_current_state_features({k})
@@ -1186,29 +931,6 @@ def api_editor_save_state(payload: dict[str, Any] = Body(...)) -> dict[str, Any]
     if src in ("playlist", "playlists", "playlist-endpoint"):
         endpoint_id = str(payload.get("endpoint") or payload.get("snapshot") or "").strip()
         return api_editor_playlist_endpoint_save(endpoint_id, payload)
-
-    if src in ("tracker", "crosswatch"):
-        inst = normalize_instance_id(payload.get("provider_instance"))
-        ws = _tracker_workspace(payload.get("workspace") or payload.get("snapshot"), inst)
-        items = _canonicalize_manual_items(items, kind)
-        blocks = _normalize_blocks(payload.get("blocks"))
-        _save_policy_manual(kind, _TRACKER_PROVIDER, items, blocks, inst)
-        ts = None
-        try:
-            ts = _policy_mtime()
-        except Exception:
-            ts = None
-        return {
-            "ok": True,
-            "kind": kind,
-            "source": "tracker",
-            "workspace": ws["id"],
-            "provider": _TRACKER_PROVIDER,
-            "provider_instance": inst,
-            "count": len(items),
-            "blocks": len(blocks),
-            "ts": ts,
-        }
 
     if src in ("state", "current", "manual", "manual-overrides", "policy", "overrides"):
         provider = str(payload.get("provider") or "").strip()

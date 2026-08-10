@@ -5,12 +5,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import io
 import json
+import zipfile
 
 import api.providerInstancesAPI as provider_api
 import api.editorAPI as editor_api
 import api.insightAPI as insight_api
 import api.authenticationAPI as auth_api
+import api.maintenanceAPI as maintenance_api
 import services.editor as editor_service
 import services.export as export_service
 import cw_platform.tracker_storage as tracker_storage
@@ -74,84 +77,37 @@ def test_crosswatch_module_uses_profile_root_from_config_view(tmp_path: Path) ->
     assert str(mod.cfg.base_path).replace("\\", "/").endswith("/cw_provider/profiles/CW-P03")
 
 
-def test_editor_tracker_workspaces_select_crosswatch_profile_root(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "cw_provider"
-    default_root = root
-    profile_root = root / "profiles" / "CW-P01"
-    default_root.mkdir(parents=True)
-    profile_root.mkdir(parents=True)
-    (default_root / "watchlist.json").write_text('{"items":{"movie:default":{"title":"Default"}}}', "utf-8")
-    (profile_root / "watchlist.json").write_text('{"items":{"movie:p01":{"title":"P01"}}}', "utf-8")
-
-    cfg = {"crosswatch": {"root_dir": str(root), "instances": {"CW-P01": {"label": "Desk"}}}}
-    monkeypatch.setattr(editor_api, "load_config", lambda: cfg)
-
-    workspaces = editor_api.api_editor_tracker_workspaces("CW-P01")
-    loaded = editor_api.api_editor_get_state(
-        kind="watchlist",
-        source="tracker",
-        provider_instance="CW-P01",
-        workspace="default",
-    )
-
-    assert workspaces["provider_instance"] == "CW-P01"
-    assert workspaces["workspaces"][0]["profile_id"] == "CW-P01"
-    assert loaded["provider_instance"] == "CW-P01"
-    assert set(loaded["items"].keys()) == {"movie:p01"}
-
-
-def test_editor_tracker_root_keeps_profile_under_profiles_dir(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "cw_provider"
-    monkeypatch.setattr(editor_api, "load_config", lambda: {
-        "crosswatch": {
-            "root_dir": str(root),
-            "instances": {"CW-P01": {"root_dir": str(tmp_path / "outside")}},
-        }
-    })
-
-    configured = editor_api._tracker_root("CW-P01")
-    rejected = editor_api._tracker_root("../outside")
-
-    assert configured == root.resolve(strict=False) / "profiles" / "CW-P01"
-    assert rejected == root.resolve(strict=False)
-
-
-def test_editor_hides_local_tracker_workspace_selector() -> None:
+def test_editor_removes_local_tracker_source() -> None:
     editor_js = Path("assets/js/editor.js").read_text("utf-8")
     sources_js = Path("assets/js/editor/sources.js").read_text("utf-8")
+    chrome_js = Path("assets/js/editor/chrome.js").read_text("utf-8")
+    load_js = Path("assets/js/editor/load-controller.js").read_text("utf-8")
 
-    assert "function syncSnapshotControlVisibility()" in editor_js
-    assert "const show = !isTrackerSource(state);" in sources_js
-    assert "if (ctx.snapLabel) ctx.snapLabel.style.display = show ? \"\" : \"none\";" in sources_js
+    assert 'option value="tracker"' not in editor_js
+    assert 'const SOURCES = ["state", "manual", "playlist"];' in sources_js
+    assert "sourceSel.querySelector('option[value=\"tracker\"]')?.remove();" in sources_js
+    assert "sourceSelect.querySelector('option[value=\"tracker\"]')?.remove();" in chrome_js
+    assert "/api/editor/tracker/workspaces" not in sources_js
+    assert "state.workspace" not in load_js
     assert "if (ctx.snapLabel) ctx.snapLabel.textContent = providerPicker ? \"Provider\" : \"Endpoint\";" in sources_js
-    assert 'isTracker ? "Workspace"' not in sources_js
 
 
-def test_editor_tracker_manual_policy_is_stored_per_crosswatch_profile(tmp_path: Path, monkeypatch) -> None:
-    root = tmp_path / "cw_provider"
-    profile_root = root / "profiles" / "CW-P02"
-    profile_root.mkdir(parents=True)
-    (profile_root / "watchlist.json").write_text('{"items":{"movie:base":{"title":"Base"}}}', "utf-8")
+def test_editor_rejects_local_tracker_source() -> None:
+    assert not hasattr(editor_api, "api_editor_tracker_workspaces")
 
-    monkeypatch.setattr(editor_api, "load_config", lambda: {
-        "crosswatch": {"root_dir": str(root), "instances": {"CW-P02": {}}},
-    })
-    monkeypatch.setattr(editor_api, "_STATE_BASE", tmp_path)
+    try:
+        editor_api.api_editor_get_state(kind="watchlist", source="tracker")
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 400
+    else:
+        raise AssertionError("tracker source should not load")
 
-    res = editor_api.api_editor_save_state({
-        "kind": "watchlist",
-        "source": "tracker",
-        "provider_instance": "CW-P02",
-        "workspace": "default",
-        "items": {"movie:manual": {"title": "Manual", "type": "movie"}},
-        "blocks": ["movie:base"],
-    })
-    adds, blocks = editor_api._load_policy_manual("watchlist", "CROSSWATCH", "CW-P02")
-
-    assert res["provider_instance"] == "CW-P02"
-    assert list(adds.values()) == [{"title": "Manual", "type": "movie"}]
-    assert blocks == ["movie:base"]
-    assert editor_api._load_policy_manual("watchlist", "CROSSWATCH", "default") == ({}, [])
+    try:
+        editor_api.api_editor_save_state({"kind": "watchlist", "source": "tracker", "items": {}})
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 400
+    else:
+        raise AssertionError("tracker source should not save")
 
 
 def test_tracker_archive_json_import_uses_crosswatch_profile_snapshot_dir(tmp_path: Path, monkeypatch) -> None:
@@ -320,6 +276,65 @@ def test_maintenance_tracker_archive_uses_profile_selector_toolbar() -> None:
     assert "menuMinWidth" in icon_select_js
     assert "menuClassName" in icon_select_js
     assert "{ ...cfg, className:" in profile_select_js
+
+
+def test_maintenance_tracker_archive_exports_and_imports_profile_storage(tmp_path: Path, monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    config_dir = tmp_path / "config"
+    cache_dir = tmp_path / "cache"
+    state_dir = tmp_path / "state"
+    root = config_dir / ".cw_provider"
+    profile_root = root / "profiles" / "CW-P01"
+    snapshot_root = profile_root / "snapshots"
+    snapshot_root.mkdir(parents=True)
+    cfg = {"crosswatch": {"root_dir": str(root), "instances": {"CW-P01": {"label": "Desk"}}}}
+    (config_dir / "config.json").write_text(json.dumps(cfg), "utf-8")
+    (profile_root / "watchlist.json").write_text('{"items":{"tmdb:1":{"title":"One"}}}', "utf-8")
+    (profile_root / "progress.json").write_text('{"items":{"tmdb:2":{"title":"Two"}}}', "utf-8")
+    (snapshot_root / "20260101T000000Z-watchlist.json").write_text('{"items":{}}', "utf-8")
+
+    class Stats:
+        path = config_dir / "statistics.json"
+
+    monkeypatch.setattr(
+        maintenance_api,
+        "_cw",
+        lambda: (cache_dir, config_dir, state_dir, Stats(), lambda: {}, lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setattr(editor_service, "load_config", lambda: cfg)
+    app = FastAPI()
+    app.include_router(maintenance_api.router)
+    client = TestClient(app)
+
+    status = client.get("/api/maintenance/crosswatch-tracker", params={"provider_instance": "CW-P01"}).json()
+    exported = client.get("/api/maintenance/crosswatch-tracker/export", params={"provider_instance": "CW-P01"})
+
+    assert status["counts"]["state_files"] == 2
+    assert exported.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
+        assert set(archive.namelist()) == {
+            "watchlist.json",
+            "progress.json",
+            "snapshots/20260101T000000Z-watchlist.json",
+        }
+
+    for path in profile_root.rglob("*.json"):
+        path.unlink()
+
+    imported = client.post(
+        "/api/maintenance/crosswatch-tracker/import",
+        params={"provider_instance": "CW-P01"},
+        files={"file": ("crosswatch-tracker.zip", exported.content, "application/zip")},
+    ).json()
+
+    assert imported["ok"] is True
+    assert imported["states"] == 2
+    assert imported["snapshots"] == 1
+    assert (profile_root / "watchlist.json").exists()
+    assert (profile_root / "progress.json").exists()
+    assert (snapshot_root / "20260101T000000Z-watchlist.json").exists()
 
 
 def test_crosswatch_profile_delete_removes_profile_storage(tmp_path: Path, monkeypatch) -> None:

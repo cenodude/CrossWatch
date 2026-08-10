@@ -153,9 +153,6 @@
       if (ctx.isProviderPickerSource() && state.snapshot) {
         return providerKey({ provider: state.snapshot, instance: state.instance || "default" });
       }
-      if (ctx.isTrackerSource()) {
-        return providerKey({ provider: "CROSSWATCH", instance: state.instance || "default" });
-      }
       if (state.source === "playlist") {
         const ep = ctx.currentPlaylistEndpoint();
         if (ep && ep.provider) return providerKey({ provider: ep.provider, instance: ep.instance || "default" });

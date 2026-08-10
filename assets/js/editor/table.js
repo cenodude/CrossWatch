@@ -238,12 +238,6 @@
       sub.textContent = label;
       titleCell.appendChild(sub);
     }
-    if (call(ctx, "isTrackerSource") && row._origin !== "baseline") {
-      const origin = document.createElement("div");
-      origin.className = "cw-title-sub";
-      origin.textContent = "Manual correction";
-      titleCell.appendChild(origin);
-    }
     dataCells.title = cell(titleCell, "cw-col-title");
 
     const yearTd = cell(yearIn);
