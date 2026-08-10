@@ -22,6 +22,7 @@ from ._common import (
     punchplay_request,
     request_id_of,
     safe_json,
+    snapshot_pages,
     _dbg,
     _info,
     _warn,
@@ -37,6 +38,21 @@ def _key_of(obj: Mapping[str, Any]) -> str:
         return ""
 
 
+def _pick(row: Mapping[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in row and row.get(name) is not None:
+            return row.get(name)
+    return None
+
+
+def _nested(row: Mapping[str, Any], *names: str) -> Mapping[str, Any]:
+    for name in names:
+        value = row.get(name)
+        if isinstance(value, Mapping):
+            return value
+    return {}
+
+
 def _kind_of(item: Mapping[str, Any]) -> str:
     raw = str(item.get("type") or item.get("kind") or "").strip().lower()
     if raw in ("movie", "movies", "film"):
@@ -45,7 +61,8 @@ def _kind_of(item: Mapping[str, Any]) -> str:
 
 
 def _row_type(row: Mapping[str, Any]) -> str:
-    raw = str(row.get("type") or "").strip().lower()
+    title = _nested(row, "title", "item")
+    raw = str(_pick(row, "type", "kind", "mediaType", "media_type") or _pick(title, "type", "kind", "mediaType", "media_type") or "").strip().lower()
     if raw in ("movie", "movies", "film"):
         return "movie"
     if raw in ("show", "tv", "series", "anime"):
@@ -55,7 +72,8 @@ def _row_type(row: Mapping[str, Any]) -> str:
 
 def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any]:
     ids: dict[str, Any] = {}
-    tmdb = row.get("tmdbId")
+    title = _nested(row, "title", "item")
+    tmdb = _pick(row, "tmdbId", "tmdb_id", "resolved_tmdb_id", "titleTmdbId", "title_tmdb_id") or _pick(title, "tmdbId", "tmdb_id")
     try:
         tmdb_i = int(tmdb) if tmdb is not None else None
     except Exception:
@@ -64,13 +82,43 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any]:
         ids["tmdb"] = str(tmdb_i)
 
     out: dict[str, Any] = {"type": _row_type(row), "ids": ids}
-    title = str(row.get("title") or "").strip()
-    if title:
-        out["title"] = title
-    release = str(row.get("releaseDate") or "").strip()
+    title_text = _pick(row, "title", "name")
+    if isinstance(title_text, Mapping):
+        title_text = _pick(title_text, "title", "name")
+    if not title_text:
+        title_text = _pick(title, "title", "name")
+    title_s = str(title_text or "").strip()
+    if title_s:
+        out["title"] = title_s
+    year = _pick(row, "year") or _pick(title, "year")
+    try:
+        if year is not None:
+            out["year"] = int(year)
+            return out
+    except Exception:
+        pass
+    release = str(_pick(row, "releaseDate", "release_date") or _pick(title, "releaseDate", "release_date") or "").strip()
     if len(release) >= 4 and release[:4].isdigit():
         out["year"] = int(release[:4])
     return out
+
+
+def _row_data(row: Mapping[str, Any]) -> Mapping[str, Any]:
+    data = row.get("data")
+    return data if isinstance(data, Mapping) else row
+
+
+def _row_list_id(row: Mapping[str, Any]) -> str:
+    data = _row_data(row)
+    list_obj = _nested(data, "list")
+    value = _pick(data, "listId", "list_id", "listID") or _pick(list_obj, "id")
+    return str(value).strip() if value is not None else ""
+
+
+def _row_is_watchlist(row: Mapping[str, Any]) -> bool:
+    data = _row_data(row)
+    list_obj = _nested(data, "list")
+    return bool(_pick(data, "isWatchlist", "is_watchlist") or _pick(list_obj, "isWatchlist", "is_watchlist"))
 
 
 def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
@@ -165,6 +213,35 @@ def _index_dynamic_items(adapter: Any, list_id: Any, collected: dict[str, dict[s
         offset = nxt_i
 
 
+def _index_snapshot_items(adapter: Any, lists: Iterable[Mapping[str, Any]], collected: dict[str, dict[str, Any]]) -> None:
+    list_ids = {str(entry.get("id")).strip() for entry in lists if entry.get("id") is not None}
+    if not list_ids:
+        return
+
+    seen_rows = 0
+    matched_rows = 0
+    for page in snapshot_pages(adapter, "list_item", feature=FEATURE):
+        for row in page:
+            seen_rows += 1
+            data = _row_data(row)
+            if not isinstance(data, Mapping):
+                continue
+            list_id = _row_list_id(row)
+            if list_id:
+                if list_id not in list_ids:
+                    continue
+            elif not _row_is_watchlist(row):
+                continue
+            matched_rows += 1
+            minimal = _to_minimal(data)
+            if not minimal.get("ids"):
+                continue
+            key = _key_of(minimal)
+            if key:
+                collected[key] = minimal
+    _dbg(FEATURE, "snapshot_scanned", rows=seen_rows, matched=matched_rows, indexed=len(collected))
+
+
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     section = cfg_section(adapter)
     if not section:
@@ -184,6 +261,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             _index_dynamic_items(adapter, list_id, collected)
         else:
             _index_list_detail(adapter, list_id, collected)
+    _index_snapshot_items(adapter, lists, collected)
 
     _info(FEATURE, "index_done", count=len(collected), lists=len(lists))
     return collected

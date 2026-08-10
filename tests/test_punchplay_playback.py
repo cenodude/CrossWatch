@@ -64,6 +64,21 @@ def test_adapter_is_registered_in_the_service() -> None:
     assert isinstance(found, PunchPlayPlaybackAdapter)
 
 
+def test_provider_instances_include_punchplay_profiles() -> None:
+    from services.playback_progress.service import PlaybackProgressService
+
+    cfg = {
+        "punchplay": {
+            "access_token": "default-token",
+            "instances": {"PUNCHPLAY-P01": {"access_token": "profile-token"}},
+        }
+    }
+
+    specs = [spec for spec in PlaybackProgressService().provider_instances(cfg) if spec["provider"] == "punchplay"]
+
+    assert [spec["instance_id"] for spec in specs] == ["default", "PUNCHPLAY-P01"]
+
+
 def test_capabilities_reflect_connection_state() -> None:
     from services.playback_progress.adapters.punchplay import PunchPlayPlaybackAdapter
 
@@ -97,19 +112,21 @@ def test_remove_without_remote_id_fails_cleanly(adapter) -> None:
     assert calls == []
 
 
-def test_update_progress_posts_progress_action(adapter) -> None:
+def test_update_progress_posts_incomplete_stop(adapter) -> None:
     a, calls = adapter
 
     res = a.update_progress(CFG, RECORD, 50.0, instance_id="default", instance_label="Default")
 
     assert res.ok is True
     p = calls[0]["json"]
-    assert calls[0]["url"].endswith("/playback/progress")
+    assert calls[0]["url"].endswith("/playback/stop")
     assert p["media_type"] == "episode"
     assert p["tmdb_id"] == 69478
     assert p["season"] == 6 and p["episode"] == 2
     assert abs(p["progress"] - 0.5) < 0.01
     assert p["playback_session_id"] and p["event_id"]
+    assert p["watched"] is False
+    assert p["watched_threshold"] == 1.0
 
 
 def test_mark_watched_posts_stop_with_watched_flag(adapter) -> None:
@@ -208,6 +225,49 @@ def test_list_progress_builds_records_from_the_index(monkeypatch: pytest.MonkeyP
     assert rec.season == 6 and rec.episode == 2
     assert rec.progress_percent is not None and abs(rec.progress_percent - 22.764) < 0.01
     assert rec.duration_seconds == 3307
+
+
+def test_list_progress_enriches_missing_episode_title_from_tmdb(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync import _mod_PUNCHPLAY as mod
+    from services.playback_progress.adapters import punchplay as punchplay_adapter
+    from services.playback_progress.adapters.punchplay import PunchPlayPlaybackAdapter
+
+    class _Tmdb:
+        def fetch(self, *, entity: str, ids: dict[str, str], need: dict[str, bool]) -> dict[str, Any]:
+            assert entity == "tv"
+            assert ids == {"tmdb": "69478"}
+            return {
+                "title": "The Handmaid's Tale",
+                "year": 2017,
+                "images": {
+                    "poster": [{"url": "https://img.example/poster.jpg"}],
+                    "backdrop": [{"url": "https://img.example/backdrop.jpg"}],
+                },
+            }
+
+    index = {
+        "tmdb:69478#s06e02": {
+            "type": "episode",
+            "show_ids": {"tmdb": "69478"},
+            "ids": {"tmdb": "5978363"},
+            "season": 6,
+            "episode": 2,
+            "progress_ms": 753000,
+            "duration_ms": 3307930,
+            "progress_percent": 22.764,
+            "_punchplay_progress_id": "7",
+        }
+    }
+    monkeypatch.setattr(mod.OPS, "build_index", lambda cfg, *, feature: dict(index))
+    monkeypatch.setattr(punchplay_adapter, "tmdb_metadata_provider", lambda cfg: _Tmdb())
+
+    res = PunchPlayPlaybackAdapter().list_progress(CFG, instance_id="default", instance_label="Default")
+
+    rec = res.items[0]
+    assert rec.title == "The Handmaid's Tale"
+    assert rec.series_title == "The Handmaid's Tale"
+    assert rec.poster_url == "https://img.example/poster.jpg"
+    assert rec.backdrop_url == "https://img.example/backdrop.jpg"
 
 
 def test_playback_ui_list_includes_punchplay() -> None:

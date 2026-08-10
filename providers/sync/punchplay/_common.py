@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import threading
 import time
 from datetime import datetime, timezone
@@ -435,9 +436,9 @@ def client_item_id(*parts: Any) -> str:
     return f"cw:{digest}"[:200]
 
 
-def idempotency_key(resource: str, payload: Mapping[str, Any], *, attempt: int = 0) -> str:
+def idempotency_key(resource: str, payload: Mapping[str, Any], *, attempt: int = 0, operation_id: str = "") -> str:
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    seed = f"{resource}|{attempt}|{body}"
+    seed = f"{resource}|{operation_id}|{attempt}|{body}"
     return f"cw-{hashlib.sha256(seed.encode('utf-8')).hexdigest()}"
 
 
@@ -657,11 +658,12 @@ def bulk_write(
     for batch in chunk_items(items):
         payload = {"items": [dict(entry.get("payload") or {}) for entry in batch]}
         key_by_index = {i: str(entry.get("key") or "") for i, entry in enumerate(batch)}
+        operation_id = f"{time.time_ns()}-{secrets.token_hex(8)}"
 
         attempt = 0
         waits = 0
         while True:
-            headers = {"Idempotency-Key": idempotency_key(resource, payload, attempt=attempt)}
+            headers = {"Idempotency-Key": idempotency_key(resource, payload, attempt=attempt, operation_id=operation_id)}
             resp = punchplay_request(
                 adapter,
                 "POST",

@@ -211,6 +211,22 @@ def test_indeterminate_retries_with_a_new_key(monkeypatch: pytest.MonkeyPatch) -
     assert http.calls[0]["headers"]["Idempotency-Key"] != http.calls[1]["headers"]["Idempotency-Key"]
 
 
+def test_separate_bulk_writes_use_new_idempotency_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _watchlist as wl
+
+    item = {"type": "movie", "title": "A", "ids": {"tmdb": "550"}}
+
+    first = FakeHTTP([_Resp(200, {"results": [{"index": 0, "status": "inserted", "resolved_tmdb_id": 550}]})])
+    _patch(monkeypatch, wl, first)
+    wl.add(Adapter(), [dict(item)])
+
+    second = FakeHTTP([_Resp(200, {"results": [{"index": 0, "status": "inserted", "resolved_tmdb_id": 550}]})])
+    _patch(monkeypatch, wl, second)
+    wl.add(Adapter(), [dict(item)])
+
+    assert first.calls[0]["headers"]["Idempotency-Key"] != second.calls[0]["headers"]["Idempotency-Key"]
+
+
 # --- watchlist ----------------------------------------------------------------
 
 def test_watchlist_remove_sets_remove_flag(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,6 +265,7 @@ def test_watchlist_index_parses_tmdb_rows(monkeypatch: pytest.MonkeyPatch) -> No
              "posterPath": None, "addedAt": "2026-01-01T00:00:00.000Z", "runtime": 139,
              "popularity": 1.0, "releaseDate": "1999-10-15T00:00:00.000Z", "watched": False},
         ]}),
+        _Resp(200, {"items": [], "hasMore": False, "nextAfter": None}),
     ])
     _patch(monkeypatch, wl, http)
 
@@ -257,6 +274,7 @@ def test_watchlist_index_parses_tmdb_rows(monkeypatch: pytest.MonkeyPatch) -> No
     assert idx == {"tmdb:550": {"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "year": 1999}}
     assert http.calls[1]["url"].endswith("/lists/2")
     assert not http.calls[1]["url"].endswith("/lists/2/items")
+    assert http.calls[2]["params"]["resource"] == "list_item"
 
 
 def test_watchlist_index_uses_dynamic_items_endpoint_only_for_dynamic_lists(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,6 +285,7 @@ def test_watchlist_index_uses_dynamic_items_endpoint_only_for_dynamic_lists(monk
         _Resp(200, {"items": [
             {"id": 1, "tmdbId": 551, "type": "movie", "title": "Dynamic Movie", "releaseDate": "2000-01-01T00:00:00.000Z"},
         ], "nextOffset": None, "total": 1}),
+        _Resp(200, {"items": [], "hasMore": False, "nextAfter": None}),
     ])
     _patch(monkeypatch, wl, http)
 
@@ -274,6 +293,27 @@ def test_watchlist_index_uses_dynamic_items_endpoint_only_for_dynamic_lists(monk
 
     assert idx == {"tmdb:551": {"type": "movie", "ids": {"tmdb": "551"}, "title": "Dynamic Movie", "year": 2000}}
     assert http.calls[1]["url"].endswith("/lists/7/items")
+
+
+def test_watchlist_index_merges_sync_snapshot_list_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _watchlist as wl
+
+    http = FakeHTTP([
+        _Resp(200, {"items": [{"id": 2, "isWatchlist": True, "externalSource": None}], "nextCursor": None}),
+        _Resp(200, {"id": 2, "isWatchlist": True, "items": []}),
+        _Resp(200, {"items": [
+            {"listId": 2, "tmdb_id": 550, "kind": "movie", "title": "Fight Club", "year": 1999},
+            {"listId": 9, "tmdb_id": 551, "kind": "movie", "title": "Other List", "year": 2000},
+        ], "hasMore": False, "nextAfter": None}),
+    ])
+    _patch(monkeypatch, wl, http)
+
+    idx = wl.build_index(Adapter())
+
+    assert idx == {"tmdb:550": {"type": "movie", "ids": {"tmdb": "550"}, "title": "Fight Club", "year": 1999}}
+    assert http.calls[2]["method"] == "GET"
+    assert http.calls[2]["url"].endswith("/me/sync/snapshot")
+    assert http.calls[2]["params"]["resource"] == "list_item"
 
 
 # --- ratings ------------------------------------------------------------------
@@ -466,21 +506,69 @@ def test_history_episode_remove_without_entry_id_is_unresolved(monkeypatch: pyte
 def test_progress_index_uses_in_progress_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
 
-    http = FakeHTTP([_Resp(200, [
-        {"id": 4, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999,
-         "progressSeconds": 1800, "durationSeconds": 8340, "progressPercent": 21.58,
-         "updatedAt": "2026-01-01T20:00:00.000Z", "nowPlaying": False},
-    ])])
+    http = FakeHTTP([
+        _Resp(200, {"items": []}),
+        _Resp(200, [
+            {"id": 4, "type": "movie", "tmdbId": 550, "title": "Fight Club", "year": 1999,
+             "progressSeconds": 1800, "durationSeconds": 8340, "progressPercent": 21.58,
+             "updatedAt": "2026-01-01T20:00:00.000Z", "nowPlaying": False},
+        ]),
+        _Resp(200, {"items": [], "hasMore": False, "nextAfter": None}),
+    ])
     _patch(monkeypatch, pr, http)
 
     idx = pr.build_index(Adapter())
 
     assert idx["tmdb:550"]["_punchplay_progress_id"] == "4"
+    assert http.calls[1]["method"] == "GET"
+    assert http.calls[1]["url"].endswith("/playback/in-progress")
+
+
+def test_progress_index_reads_continue_watching_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([
+        _Resp(200, {"items": [
+            {"id": 9, "type": "episode", "tmdbId": 5978363, "showTmdbId": 69478,
+             "showTitle": "The Handmaid's Tale", "episodeTitle": "Exile", "season": 6, "episode": 2,
+             "progressSeconds": 753.0, "durationSeconds": 3307.93, "progressPercent": 22.764,
+             "updatedAt": "2026-07-31T19:43:27.000Z"},
+        ]}),
+        _Resp(200, {"items": []}),
+        _Resp(200, {"items": [], "hasMore": False, "nextAfter": None}),
+    ])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert idx["tmdb:69478#s06e02"]["progress_ms"] == 753000
     assert http.calls[0]["method"] == "GET"
-    assert http.calls[0]["url"].endswith("/playback/in-progress")
+    assert http.calls[0]["url"].endswith("/me/continue-watching")
 
 
-def test_progress_write_uses_playback_progress_action(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_progress_index_merges_sync_snapshot_playback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([
+        _Resp(200, {"items": []}),
+        _Resp(200, {"items": []}),
+        _Resp(200, {"items": [
+            {"id": 7, "type": "episode", "tmdbId": 5978363, "showTmdbId": 69478,
+             "showTitle": "The Handmaid's Tale", "episodeTitle": "Exile", "season": 6, "episode": 2,
+             "progressSeconds": 753.0, "durationSeconds": 3307.93, "progressPercent": 22.764,
+             "updatedAt": "2026-07-31T19:43:27.000Z"},
+        ], "hasMore": False, "nextAfter": None}),
+    ])
+    _patch(monkeypatch, pr, http)
+
+    idx = pr.build_index(Adapter())
+
+    assert idx["tmdb:69478#s06e02"]["progress_ms"] == 753000
+    assert http.calls[2]["url"].endswith("/me/sync/snapshot")
+    assert http.calls[2]["params"]["resource"] == "playback"
+
+
+def test_progress_write_uses_incomplete_stop_for_passive_sync(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
 
     http = FakeHTTP([_Resp(200, {})])
@@ -492,10 +580,39 @@ def test_progress_write_uses_playback_progress_action(monkeypatch: pytest.Monkey
     }])
 
     call = http.calls[0]
-    assert call["url"].endswith("/playback/progress")
+    assert call["url"].endswith("/playback/stop")
     assert call["json"]["media_type"] == "movie"
     assert round(call["json"]["progress"], 4) == 0.2158
+    assert call["json"]["watched"] is False
+    assert call["json"]["watched_threshold"] == 1.0
     assert res["confirmed_keys"] == ["tmdb:550"]
+
+
+def test_progress_write_uses_progress_action_for_now_playing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, {})])
+    _patch(monkeypatch, pr, http)
+
+    pr.add(Adapter(), [{
+        "type": "movie", "title": "Fight Club", "year": 1999, "ids": {"tmdb": "550"},
+        "progress_ms": 1800000, "duration_ms": 8340000, "now_playing": True,
+    }])
+
+    assert http.calls[0]["url"].endswith("/playback/progress")
+
+
+def test_progress_write_does_not_confirm_ignored_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    http = FakeHTTP([_Resp(200, {"ok": True, "ignored": "old_event"})])
+    _patch(monkeypatch, pr, http)
+
+    res = pr.add(Adapter(), [{"type": "movie", "ids": {"tmdb": "550"}, "position_seconds": 1800, "duration_seconds": 8340}])
+
+    assert res["ok"] is False
+    assert res["confirmed_keys"] == []
+    assert res["unresolved_keys"] == ["tmdb:550"]
 
 
 def test_progress_write_reads_canonical_ms_fields() -> None:
@@ -542,6 +659,32 @@ def test_progress_round_trip_is_lossless_for_two_way() -> None:
     assert (len(adds), len(removes)) == (0, 0)
 
 
+def test_progress_index_enriches_missing_episode_series_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _progress as pr
+
+    monkeypatch.setattr(
+        pr,
+        "_metadata_show_detail",
+        lambda adapter, show_ids: {"title": "House of the Dragon", "year": 2022},
+    )
+
+    item = pr._row_to_minimal({
+        "id": 7,
+        "type": "episode",
+        "tmdbId": 5978363,
+        "showTmdbId": 94997,
+        "season": 2,
+        "episode": 7,
+        "progressSeconds": 1770.0,
+        "durationSeconds": 3821.0,
+    }, Adapter())
+
+    assert item is not None
+    assert item["series_title"] == "House of the Dragon"
+    assert item["series_year"] == 2022
+    assert item["show_ids"] == {"tmdb": "94997"}
+
+
 def test_progress_sends_distinct_session_ids_per_title(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
 
@@ -568,7 +711,7 @@ def test_progress_sends_distinct_session_ids_per_title(monkeypatch: pytest.Monke
     assert isinstance(a["event_created_at"], int)
 
 
-def test_progress_session_id_is_stable_across_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_progress_session_id_is_stable_but_event_id_is_fresh(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _progress as pr
 
     item = {"type": "movie", "ids": {"tmdb": "550"}, "position_seconds": 100, "duration_seconds": 8340}
@@ -582,7 +725,7 @@ def test_progress_session_id_is_stable_across_runs(monkeypatch: pytest.MonkeyPat
     pr.add(Adapter(), [dict(item)])
 
     assert first.calls[0]["json"]["playback_session_id"] == second.calls[0]["json"]["playback_session_id"]
-    assert first.calls[0]["json"]["event_id"] == second.calls[0]["json"]["event_id"]
+    assert first.calls[0]["json"]["event_id"] != second.calls[0]["json"]["event_id"]
 
 
 def test_progress_index_reports_dropped_rows(monkeypatch: pytest.MonkeyPatch) -> None:
