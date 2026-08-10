@@ -53,13 +53,77 @@ def _as_float(v: Any) -> float | None:
         return None
 
 
-def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
+def _tmdb_metadata_provider(adapter: Any) -> Any | None:
+    cache_key = "_crosswatch_progress_tmdb_metadata_provider"
+    cached = getattr(adapter, cache_key, None)
+    if cached is not None:
+        return cached
+    cfg = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None) or {}
+    if not isinstance(cfg, Mapping):
+        return None
+    tmdb_obj = cfg.get("tmdb")
+    tmdb: Mapping[str, Any] = tmdb_obj if isinstance(tmdb_obj, Mapping) else {}
+    metadata_obj = cfg.get("metadata")
+    metadata: Mapping[str, Any] = metadata_obj if isinstance(metadata_obj, Mapping) else {}
+    if not str(tmdb.get("api_key") or metadata.get("tmdb_api_key") or "").strip():
+        return None
+    try:
+        from providers.metadata._meta_TMDB import TmdbProvider
+
+        provider = TmdbProvider(lambda: dict(cfg), lambda _cfg: None)
+    except Exception:
+        return None
+    try:
+        setattr(adapter, cache_key, provider)
+    except Exception:
+        pass
+    return provider
+
+
+def _metadata_show_detail(adapter: Any, show_ids: Mapping[str, Any]) -> dict[str, Any]:
+    provider = _tmdb_metadata_provider(adapter)
+    fetch_ids = {
+        key: str(show_ids.get(key) or "").strip()
+        for key in ("tmdb", "imdb", "tvdb")
+        if str(show_ids.get(key) or "").strip()
+    }
+    if provider is None or not fetch_ids:
+        return {}
+    try:
+        detail = provider.fetch(entity="tv", ids=fetch_ids, need={"poster": False, "backdrop": False, "ids": False})
+    except Exception:
+        return {}
+    if not isinstance(detail, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    title = str(detail.get("title") or "").strip()
+    if title:
+        out["title"] = title
+    year = _as_int(detail.get("year"))
+    if year is not None:
+        out["year"] = year
+    return out
+
+
+def _accepted(obj: Mapping[str, Any], adapter: Any | None = None) -> dict[str, Any]:
     base = id_minimal(obj)
     out: dict[str, Any] = dict(base)
 
     typ = str(obj.get("type") or base.get("type") or "").strip().lower()
     if typ == "episode":
+        show_ids: dict[str, Any] = {}
+        base_show_ids = base.get("show_ids")
+        if isinstance(base_show_ids, Mapping):
+            show_ids.update(dict(base_show_ids))
+        raw_show_ids = obj.get("show_ids")
+        if isinstance(raw_show_ids, Mapping):
+            show_ids.update(dict(raw_show_ids))
         st = obj.get("series_title") or obj.get("show_title") or obj.get("series") or obj.get("show")
+        if not st and adapter is not None and show_ids:
+            detail = _metadata_show_detail(adapter, show_ids)
+            st = detail.get("title")
+            if obj.get("series_year") is None and detail.get("year") is not None:
+                out["series_year"] = detail.get("year")
         if st:
             out["series_title"] = str(st)
         if obj.get("series_year") is not None:
@@ -76,9 +140,8 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
             out["title"] = obj.get("title")
         if "year" in obj:
             out["year"] = obj.get("year")
-        show_ids = obj.get("show_ids")
-        if isinstance(show_ids, Mapping):
-            out["show_ids"] = dict(show_ids)
+        if show_ids:
+            out["show_ids"] = show_ids
     else:
         for k in ("title", "year"):
             if k in obj:
@@ -154,7 +217,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if not isinstance(obj, Mapping):
                 continue
             try:
-                accepted = _accepted(obj)
+                accepted = _accepted(obj, adapter)
             except Exception:
                 continue
             key = canonical_key(accepted)
@@ -175,7 +238,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 if not isinstance(value, Mapping):
                     continue
                 try:
-                    accepted = _accepted(value)
+                    accepted = _accepted(value, adapter)
                 except Exception:
                     continue
                 ck = str(key) or canonical_key(accepted)
@@ -192,7 +255,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if not isinstance(value, Mapping):
                 continue
             try:
-                accepted = _accepted(value)
+                accepted = _accepted(value, adapter)
             except Exception:
                 continue
             ck = str(key) or canonical_key(accepted)
@@ -230,7 +293,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(value, Mapping):
             continue
         try:
-            accepted = _accepted(value)
+            accepted = _accepted(value, adapter)
         except Exception:
             continue
         ck = canonical_key(accepted) or str(key)
@@ -267,7 +330,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if not isinstance(obj, Mapping):
             continue
         try:
-            accepted = _accepted(obj)
+            accepted = _accepted(obj, adapter)
         except Exception:
             unresolved_src.append(obj)
             continue
