@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import time
+import secrets
 from typing import Any, Iterable, Mapping
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
+    URL_CONTINUE_WATCHING,
     URL_IN_PROGRESS,
     cfg_section,
     instance_id,
@@ -21,6 +23,7 @@ from ._common import (
     punchplay_request,
     request_id_of,
     safe_json,
+    snapshot_pages,
     _dbg,
     _info,
     _warn,
@@ -106,7 +109,58 @@ def _drop_reason(row: Mapping[str, Any]) -> str:
     return f"unhandled_type:{typ or 'empty'}"
 
 
-def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
+def _tmdb_metadata_provider(adapter: Any) -> Any | None:
+    cached = getattr(adapter, "_punchplay_progress_tmdb_metadata_provider", None)
+    if cached is not None:
+        return cached
+    cfg = getattr(adapter, "config", None) or getattr(adapter, "raw_cfg", None) or {}
+    if not isinstance(cfg, Mapping):
+        return None
+    tmdb_obj = cfg.get("tmdb")
+    tmdb: Mapping[str, Any] = tmdb_obj if isinstance(tmdb_obj, Mapping) else {}
+    metadata_obj = cfg.get("metadata")
+    metadata: Mapping[str, Any] = metadata_obj if isinstance(metadata_obj, Mapping) else {}
+    if not str(tmdb.get("api_key") or metadata.get("tmdb_api_key") or "").strip():
+        return None
+    try:
+        from providers.metadata._meta_TMDB import TmdbProvider
+
+        provider = TmdbProvider(lambda: dict(cfg), lambda _cfg: None)
+    except Exception:
+        return None
+    try:
+        setattr(adapter, "_punchplay_progress_tmdb_metadata_provider", provider)
+    except Exception:
+        pass
+    return provider
+
+
+def _metadata_show_detail(adapter: Any, show_ids: Mapping[str, Any]) -> dict[str, Any]:
+    provider = _tmdb_metadata_provider(adapter)
+    fetch_ids = {
+        key: str(show_ids.get(key) or "").strip()
+        for key in ("tmdb", "imdb", "tvdb")
+        if str(show_ids.get(key) or "").strip()
+    }
+    if provider is None or not fetch_ids:
+        return {}
+    try:
+        detail = provider.fetch(entity="tv", ids=fetch_ids, need={"poster": False, "backdrop": False, "ids": False})
+    except Exception:
+        return {}
+    if not isinstance(detail, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    title = str(detail.get("title") or "").strip()
+    if title:
+        out["title"] = title
+    year = _as_int(detail.get("year"))
+    if year is not None:
+        out["year"] = year
+    return out
+
+
+def _row_to_minimal(row: Mapping[str, Any], adapter: Any | None = None) -> dict[str, Any] | None:
     typ = str(row.get("type") or "").strip().lower()
 
     if typ == "episode":
@@ -128,6 +182,12 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
         show_title = str(row.get("showTitle") or "").strip()
         if show_title:
             out["series_title"] = show_title
+        elif adapter is not None:
+            detail = _metadata_show_detail(adapter, out["show_ids"])
+            if detail.get("title"):
+                out["series_title"] = detail["title"]
+            if detail.get("year") is not None:
+                out["series_year"] = detail["year"]
         ep_title = str(row.get("episodeTitle") or "").strip()
         if ep_title:
             out["title"] = ep_title
@@ -171,29 +231,22 @@ def _row_to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    resp = punchplay_request(adapter, "GET", URL_IN_PROGRESS)
-    if resp.status_code != 200:
-        _warn(FEATURE, "in_progress_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-        return {}
-
-    data = safe_json(resp)
-    rows: list[Mapping[str, Any]] = []
-    if isinstance(data, Mapping):
-        raw = data.get("items")
-        rows = [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
-    elif isinstance(data, list):
-        rows = [r for r in data if isinstance(r, Mapping)]
-
     collected: dict[str, dict[str, Any]] = {}
     dropped: list[str] = []
-    for row in rows:
-        minimal = _row_to_minimal(row)
+    rows_seen = 0
+
+    def collect(row: Mapping[str, Any], *, source: str) -> None:
+        nonlocal rows_seen
+        rows_seen += 1
+        minimal = _row_to_minimal(row, adapter)
         if not minimal:
-            dropped.append(_drop_reason(row))
+            reason = _drop_reason(row)
+            dropped.append(reason)
             _warn(
                 FEATURE,
                 "index_row_dropped",
-                reason=_drop_reason(row),
+                source=source,
+                reason=reason,
                 row_type=str(row.get("type") or ""),
                 entry_id=row.get("id"),
                 tmdb_id=row.get("tmdbId"),
@@ -202,19 +255,57 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 episode=row.get("episode"),
                 title=str(row.get("showTitle") or row.get("title") or "")[:80],
             )
-            continue
+            return
         key = _key_of(minimal)
         if not key:
             dropped.append("no_canonical_key")
-            _warn(FEATURE, "index_row_dropped", reason="no_canonical_key", entry_id=row.get("id"))
-            continue
+            _warn(FEATURE, "index_row_dropped", source=source, reason="no_canonical_key", entry_id=row.get("id"))
+            return
         collected[key] = minimal
+
+    continue_rows = 0
+    resp = punchplay_request(adapter, "GET", URL_CONTINUE_WATCHING)
+    if resp.status_code != 200:
+        _warn(FEATURE, "continue_watching_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
+    else:
+        data = safe_json(resp)
+        rows: list[Mapping[str, Any]] = []
+        if isinstance(data, Mapping):
+            raw = data.get("items")
+            rows = [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
+        elif isinstance(data, list):
+            rows = [r for r in data if isinstance(r, Mapping)]
+        for row in rows:
+            continue_rows += 1
+            collect(row, source="continue_watching")
+
+    resp = punchplay_request(adapter, "GET", URL_IN_PROGRESS)
+    if resp.status_code != 200:
+        _warn(FEATURE, "in_progress_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
+    else:
+        data = safe_json(resp)
+        rows: list[Mapping[str, Any]] = []
+        if isinstance(data, Mapping):
+            raw = data.get("items")
+            rows = [r for r in raw if isinstance(r, Mapping)] if isinstance(raw, list) else []
+        elif isinstance(data, list):
+            rows = [r for r in data if isinstance(r, Mapping)]
+        for row in rows:
+            collect(row, source="in_progress")
+
+    snapshot_rows = 0
+    for page in snapshot_pages(adapter, "playback", feature=FEATURE):
+        for row in page:
+            snapshot_rows += 1
+            collect(row, source="snapshot")
 
     _info(
         FEATURE,
         "index_done",
         count=len(collected),
-        rows=len(rows),
+        rows=rows_seen,
+        continue_rows=continue_rows,
+        snapshot_rows=snapshot_rows,
         dropped=len(dropped),
         drop_reasons=",".join(sorted(set(dropped))) or None,
     )
@@ -223,10 +314,11 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
 def _session_ids(item: Mapping[str, Any], key: str, *, device_id: str, instance: str, position: float | None) -> dict[str, Any]:
     scope = f"cw-{instance}-{key}"
+    created = int(time.time() * 1000)
     out: dict[str, Any] = {
         "playback_session_id": scope,
-        "event_id": f"{scope}@{int(position or 0)}",
-        "event_created_at": int(time.time() * 1000),
+        "event_id": f"{scope}@{int(position or 0)}:{created}:{secrets.token_hex(4)}",
+        "event_created_at": created,
     }
     if device_id:
         out["device_id"] = device_id
@@ -293,6 +385,13 @@ def _send(adapter: Any, action: str, payload: Mapping[str, Any]) -> Any:
     return punchplay_request(adapter, "POST", URL_PLAYBACK.format(action=action), json=dict(payload))
 
 
+def _write_action(item: Mapping[str, Any]) -> str:
+    state = str(item.get("playback_state") or "").strip().lower()
+    if item.get("now_playing") is True or state in {"watching", "playing"}:
+        return "progress"
+    return "stop"
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     confirmed: list[str] = []
     unresolved_keys: list[str] = []
@@ -324,9 +423,22 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
 
-        resp = _send(adapter, "progress", payload)
+        action = _write_action(item)
+        if action == "stop":
+            payload.setdefault("watched", False)
+            payload.setdefault("watched_threshold", 1.0)
+        resp = _send(adapter, action, payload)
         if 200 <= resp.status_code < 300:
-            confirmed.append(key)
+            body = safe_json(resp) or {}
+            ignored = str(body.get("ignored") or "").strip() if isinstance(body, Mapping) else ""
+            ok_body = bool(body.get("ok", True)) if isinstance(body, Mapping) else True
+            if ignored or not ok_body:
+                ok = False
+                unresolved_keys.append(key)
+                unresolved.append({"key": key, "status": "ignored" if ignored else "not_ok", "error": ignored or error_of(resp)})
+                _warn(FEATURE, "progress_write_ignored", key=key, ignored=ignored or None, request_id=request_id_of(resp))
+            else:
+                confirmed.append(key)
         else:
             ok = False
             unresolved_keys.append(key)

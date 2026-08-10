@@ -18,7 +18,7 @@ from providers.sync.punchplay._common import (
     punchplay_request,
 )
 
-from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, utc_now_iso
+from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
 from .base import PlaybackProgressAdapter, enrich_parallel, tmdb_metadata_provider
 
 PROGRESS_ID_FIELD = feat_progress.PROGRESS_ID_FIELD
@@ -44,6 +44,48 @@ def _float(value: Any) -> float | None:
         return float(str(value).strip())
     except Exception:
         return None
+
+
+def _image_url(meta: Mapping[str, Any], kind: str) -> str:
+    images = _mapping(meta.get("images"))
+    rows = images.get(kind)
+    if not isinstance(rows, list):
+        return ""
+    for row in rows:
+        if isinstance(row, Mapping) and str(row.get("url") or "").strip():
+            return str(row.get("url") or "").strip()
+    return ""
+
+
+def _metadata_detail(provider: Any, *, media_type: str, ids: Mapping[str, Any], show_ids: Mapping[str, Any]) -> dict[str, Any]:
+    lookup_ids = show_ids if media_type == "episode" and show_ids else ids
+    fetch_ids = {key: str(lookup_ids.get(key) or "").strip() for key in ("tmdb", "imdb", "tvdb") if str(lookup_ids.get(key) or "").strip()}
+    if provider is None or not fetch_ids:
+        return {}
+    try:
+        detail = provider.fetch(entity="tv" if media_type == "episode" else "movie", ids=fetch_ids, need={"poster": True, "backdrop": True, "ids": False})
+    except Exception:
+        return {}
+    if not isinstance(detail, Mapping):
+        return {}
+    out: dict[str, Any] = {}
+    title = str(detail.get("title") or "").strip()
+    if title:
+        out["title"] = title
+    year = _num(detail.get("year"))
+    if year is not None:
+        out["year"] = year
+    poster = _image_url(detail, "poster")
+    if poster:
+        out["poster_url"] = poster
+    backdrop = _image_url(detail, "backdrop")
+    if backdrop:
+        out["backdrop_url"] = backdrop
+    return out
+
+
+def _is_placeholder_title(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"", "untitled"}
 
 
 class _Adapter:
@@ -115,14 +157,35 @@ class PunchPlayPlaybackAdapter(PlaybackProgressAdapter):
             )
         metadata = tmdb_metadata_provider(config_view)
         pending = [(key, item) for key, item in dict(index).items() if isinstance(item, Mapping)]
-        items = enrich_parallel(pending, lambda entry: self._record(entry[0], entry[1], instance_id, instance_label, metadata))
+        items = enrich_parallel(pending, lambda entry: self._record(entry[0], entry[1], instance_id, instance_label, caps, metadata))
         return PlaybackListResult(True, self.provider, instance_id, items=[i for i in items if i], refreshed_at=utc_now_iso())
 
-    def _record(self, key: Any, item: Mapping[str, Any], instance_id: str, instance_label: str, metadata: Any = None) -> PlaybackRecord | None:
+    def _record(self, key: Any, item: Mapping[str, Any], instance_id: str, instance_label: str, caps: PlaybackCapabilities, metadata: Any = None) -> PlaybackRecord | None:
         mini = id_minimal(item)
-        ids = dict(mini.get("ids") or {})
+        ids = clean_mapping(_mapping(mini.get("ids") or item.get("ids")))
+        show_ids = clean_mapping(_mapping(mini.get("show_ids") or item.get("show_ids")))
         media_type = "episode" if str(item.get("type") or "").lower() == "episode" else "movie"
         remote_id = str(item.get(PROGRESS_ID_FIELD) or "").strip()
+        title = str(mini.get("title") or item.get("title") or item.get("series_title") or "").strip()
+        series_title = str(mini.get("series_title") or item.get("series_title") or "").strip()
+        if _is_placeholder_title(title):
+            title = ""
+        if media_type == "episode" and _is_placeholder_title(series_title):
+            series_title = ""
+        needs_metadata = (
+            not title
+            or (media_type == "episode" and not series_title)
+            or not str(item.get("poster") or item.get("poster_url") or "").strip()
+            or not str(item.get("background") or item.get("backdrop") or item.get("backdrop_url") or "").strip()
+        )
+        resolved = _metadata_detail(metadata, media_type=media_type, ids=ids, show_ids=show_ids) if needs_metadata else {}
+        resolved_title = str(resolved.get("title") or "").strip()
+        if resolved_title and (not title or (media_type == "episode" and not series_title)):
+            if media_type == "episode" and not series_title:
+                series_title = resolved_title
+            if not title:
+                title = resolved_title
+        year = _num(mini.get("year") or item.get("year") or resolved.get("year"))
 
         duration_ms = _float(item.get("duration_ms"))
         progress_ms = _float(item.get("progress_ms"))
@@ -142,12 +205,12 @@ class PunchPlayPlaybackAdapter(PlaybackProgressAdapter):
             remote_id=remote_id,
             canonical_key=str(key or canonical_key(mini) or ""),
             media_type=media_type,
-            title=str(item.get("title") or ""),
-            episode_title=str(item.get("title") or "") if media_type == "episode" else "",
-            series_title=str(item.get("series_title") or ""),
+            title=series_title or title,
+            episode_title=title if media_type == "episode" and title != series_title else "",
+            series_title=series_title,
             season=_num(item.get("season")),
             episode=_num(item.get("episode")),
-            year=_num(item.get("year")),
+            year=year,
             ids=ids,
             progress_percent=round(percent, 3) if percent is not None else None,
             remaining_seconds=remaining,
@@ -155,6 +218,13 @@ class PunchPlayPlaybackAdapter(PlaybackProgressAdapter):
             progress_at=item.get("progress_at") or item.get("updated_at"),
             updated_at=item.get("updated_at"),
             source_app=str(item.get("playback_state") or ""),
+            can_remove_progress=caps.remove_progress,
+            can_mark_watched=caps.mark_watched,
+            can_update_progress=bool(caps.update_progress and duration_ms),
+            capability_messages=[] if caps.configured else [caps.reason],
+            poster_url=str(item.get("poster") or item.get("poster_url") or resolved.get("poster_url") or "").strip(),
+            backdrop_url=str(item.get("background") or item.get("backdrop") or item.get("backdrop_url") or resolved.get("backdrop_url") or "").strip(),
+            provider_metadata={"progress_item": clean_mapping(item), "show_ids": show_ids},
         )
 
     def _rate_limited(self, exc: PunchPlayRateLimited, operation: str, instance_id: str, record: Mapping[str, Any]) -> PlaybackActionResult:
@@ -257,8 +327,10 @@ class PunchPlayPlaybackAdapter(PlaybackProgressAdapter):
                 position=payload.get("position_seconds"),
             )
         )
+        payload["watched"] = False
+        payload["watched_threshold"] = 1.0
         try:
-            resp = self._send_playback(config_view, instance_id, "progress", payload)
+            resp = self._send_playback(config_view, instance_id, "stop", payload)
         except PunchPlayRateLimited as exc:
             return self._rate_limited(exc, "update_progress", instance_id, record)
         except Exception:
