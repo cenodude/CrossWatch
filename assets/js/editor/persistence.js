@@ -87,11 +87,6 @@
       payload.provider_instance = state.instance || "default";
       payload.blocks = blocks;
     }
-    if (ctx.isTrackerSource?.()) {
-      payload.workspace = state.workspace;
-      payload.provider_instance = state.instance || "default";
-      payload.blocks = blocks;
-    }
     if (state.source === "playlist") {
       payload.endpoint = state.snapshot;
     }
@@ -159,9 +154,6 @@
         if (reordered) parts.push(`${reordered} reordered`);
         if (unresolved) parts.push(`${unresolved} unresolved`);
         ctx.setStatus?.(`Applied playlist changes: ${parts.join(", ")}`);
-        await ctx.loadState?.();
-      } else if (ctx.isTrackerSource?.()) {
-        ctx.setStatus?.(`Saved ${res.count || Object.keys(items).length} corrections`);
         await ctx.loadState?.();
       } else if (ctx.isManualSource?.()) {
         ctx.setStatus?.(`Saved ${res.count || Object.keys(items).length} overrides`);

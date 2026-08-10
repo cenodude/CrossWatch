@@ -47,30 +47,16 @@
     const sourceSelect = document.getElementById("cw-source");
     if (sourceSelect) {
       sourceSelect.querySelector('option[value="pair"]')?.remove();
+      sourceSelect.querySelector('option[value="tracker"]')?.remove();
       if (!sourceSelect.querySelector('option[value="manual"]')) {
         const manualOpt = document.createElement("option");
         manualOpt.value = "manual";
         manualOpt.textContent = "Manual Overrides";
-        const trackerOpt = sourceSelect.querySelector('option[value="tracker"]');
-        if (trackerOpt) sourceSelect.insertBefore(manualOpt, trackerOpt);
-        else sourceSelect.appendChild(manualOpt);
+        sourceSelect.appendChild(manualOpt);
       } else {
         sourceSelect.querySelector('option[value="manual"]').textContent = "Manual Overrides";
       }
-      if (!sourceSelect.querySelector('option[value="tracker"]')) {
-        const trackerOpt = document.createElement("option");
-        trackerOpt.value = "tracker";
-        trackerOpt.textContent = "Local Tracker";
-        sourceSelect.appendChild(trackerOpt);
-      } else {
-        sourceSelect.querySelector('option[value="tracker"]').textContent = "Local Tracker";
-      }
-      if (!sourceSelect.querySelector('option[value="playlist"]')) {
-        const opt = document.createElement("option");
-        opt.value = "playlist";
-        opt.textContent = "Playlist Endpoint";
-        sourceSelect.appendChild(opt);
-      }
+      sourceSelect.querySelector('option[value="playlist"]')?.remove();
     }
 
     const sub = root?.querySelector(".cw-sub");
@@ -78,14 +64,7 @@
   }
 
   function addTrackerNotice(root) {
-    if (!root || document.getElementById("cw-tracker-notice")) return;
-    const trackerNotice = document.createElement("div");
-    trackerNotice.id = "cw-tracker-notice";
-    trackerNotice.className = "cw-state-hint";
-    trackerNotice.style.display = "none";
-    trackerNotice.innerHTML =
-      "<strong>Local Tracker</strong> stores data inside CrossWatch. Changes here affect future syncs from Local Tracker but only for one-way syncs.";
-    root.querySelector(".cw-controls")?.insertAdjacentElement("afterend", trackerNotice);
+    root?.querySelector("#cw-tracker-notice")?.remove();
   }
 
   function ensureFieldNames(root) {

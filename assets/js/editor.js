@@ -54,12 +54,10 @@
     snapshots: [],
     instance: "default",
     playlistEndpoints: [],
+    playlistEndpointsLoaded: false,
     playlistResource: null,
     playlistWarnings: [],
     playlistOriginalKeys: [],
-    workspace: "",
-    trackerWorkspaces: [],
-    trackerAvailable: false,
     importEnabled: false,
     importProviders: [],
     importProvider: "",
@@ -138,10 +136,8 @@
       if (!raw) return;
       const saved = JSON.parse(raw);
 
-      const sources = ["state", "manual", "tracker", "playlist"];
+      const sources = ["state", "manual", "playlist"];
       if (saved.source && sources.includes(saved.source)) state.source = saved.source;
-
-      if (typeof saved.workspace === "string") state.workspace = saved.workspace;
 
       if (typeof saved.blockedOnly === "boolean") state.blockedOnly = saved.blockedOnly;
 
@@ -180,7 +176,7 @@
   }
   restoreUIState();
 
-  host.innerHTML = `<div class="cw-root"><div class="cw-topline cw-page-hero cw-page-hero-editor" data-hero-icon="edit_note"><div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">EDITOR</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">Editor</div><div class="cw-sub cw-page-hero-sub">Edit your current state, tracker or cache</div></div></div></div><div class="cw-editor-hero-summary cw-page-hero-actions" id="cw-hero-summary" aria-label="Editor summary"><div class="cw-editor-hero-seg"><strong id="cw-pill-source">Current state</strong><span>source</span></div><div class="cw-editor-hero-seg"><strong id="cw-pill-kind">Watchlist</strong><span>view</span></div><div class="cw-editor-hero-seg cw-editor-hero-count"><strong id="cw-pill-count">0</strong><span>rows</span></div><div class="cw-editor-hero-seg cw-editor-hero-sync"><span>Synced</span><strong id="cw-pill-sync">never</strong></div><button id="cw-reload" class="cw-editor-refresh" type="button" title="Refresh editor data" aria-label="Refresh editor data"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div></div><div class="cw-wrap"><div class="cw-main"><div class="cw-controls"><input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id..."><span class="cw-status-text" id="cw-status"></span><label class="cw-page-size-control" for="cw-page-size"><span>Rows</span><select id="cw-page-size" class="cw-select"><option value="50">50</option><option value="100">100</option><option value="150">150</option><option value="200">200</option></select></label><div class="cw-controls-spacer"></div><div class="cw-bulk" id="cw-bulk" style="display:none"><span class="cw-bulk-count" id="cw-bulk-count"></span><button id="cw-bulk-remove" class="cw-btn danger" type="button"></button><button id="cw-bulk-restore" class="cw-btn" type="button"></button><button id="cw-bulk-clear" class="cw-btn" type="button">Clear</button></div><button id="cw-add" class="cw-btn" type="button">Add row</button><button id="cw-save" class="cw-btn primary" type="button">Save changes</button></div><div class="cw-table-wrap" id="cw-table-wrap"><div class="cw-table-scroll"><table class="cw-table"><thead><tr><th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th><th class="cw-action-head" style="width:46px"></th><th class="cw-col-key sortable" style="width:12%" data-sort="key">Key</th><th class="cw-col-type sortable" style="width:13%" data-sort="type">Type</th><th class="cw-col-title sortable" style="width:33%" data-sort="title">Title</th><th class="cw-col-year" style="width:84px">Year</th><th class="cw-col-id cw-col-id-a" style="width:12%" id="cw-col-id-a">TMDB</th><th class="cw-col-extra sortable" style="width:21%" data-sort="extra">Extra</th></tr></thead><tbody id="cw-tbody"></tbody></table></div></div><div class="cw-pager" id="cw-pager" style="display:none"><button id="cw-prev" class="cw-btn" type="button">Previous</button><span id="cw-page-info" class="cw-page-info"></span><button id="cw-next" class="cw-btn" type="button">Next</button></div><div class="cw-empty" id="cw-empty" role="status" style="display:none"><span class="material-symbols-rounded cw-empty-icon" aria-hidden="true">table_rows</span><div class="cw-empty-text">No rows match this view.</div></div></div><aside class="cw-side"><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title">Workspace</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Source</label><select id="cw-source" class="cw-select"><option value="state">Current State</option><option value="manual">Manual Overrides</option><option value="tracker">Local Tracker</option></select><label>Kind</label><select id="cw-kind" class="cw-select"><option value="watchlist">Watchlist</option><option value="history">History</option><option value="ratings">Ratings</option><option value="progress">Progress</option></select><label id="cw-pair-label" style="display:none">Pair</label><select id="cw-pair" class="cw-select" style="display:none"></select><label id="cw-snapshot-label">Snapshot</label><select id="cw-snapshot" class="cw-select"><option value="">Latest</option></select><label id="cw-instance-label" style="display:none">Profile</label><select id="cw-instance" class="cw-select" style="display:none"><option value="default">Default</option></select></div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><div class="field-label">Types</div><div id="cw-type-filter" class="cw-type-filter"><button type="button" data-type="movie" class="cw-type-chip active">Movies</button><button type="button" data-type="show" class="cw-type-chip active">Shows</button><button type="button" data-type="anime" class="cw-type-chip active">Anime</button><button type="button" data-type="season" class="cw-type-chip active">Seasons</button><button type="button" data-type="episode" class="cw-type-chip active">Episodes</button><button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked</button></div></div></div><div class="ins-row" id="cw-state-bulk" style="display:none"><details class="cw-collapse" id="cw-bulk-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Block rules</summary><div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px"><select id="cw-bulk-type" class="cw-select" style="width:100%"></select><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button><button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button></div><div class="cw-status-text">Current State only • affects baseline items</div></div></details></div><div class="ins-row" id="cw-import-row" style="display:none"><details class="cw-collapse" id="cw-import-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Import provider state</summary><div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select><select id="cw-import-instance" class="cw-select" style="min-width:180px"></select><select id="cw-import-mode" class="cw-select" style="min-width:180px"><option value="replace">Replace baseline</option><option value="merge">Merge (keep old)</option></select></div><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist </label><label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History </label><label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings </label><label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress </label><span style="flex:1 1 auto"></span><button id="cw-import-run" class="cw-btn sm" type="button">Import</button></div><div id="cw-import-progress" style="display:none"><div class="cw-progress"><span></span></div><div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div></div></div></details></div></div><div class="ins-card"><div class="ins-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">insights</span></div><div class="ins-title" style="margin-right:auto">Pulse</div><span class="cw-tag" id="cw-tag-status"><span class="cw-tag-dot"></span><span id="cw-tag-label">Idle</span></span></div><div class="ins-row"><div class="ins-metrics"><div class="metric-row"><div class="metric"><span class="material-symbol">view_list</span><div><div class="m-val" id="cw-summary-total">0</div><div class="m-lbl">Total rows</div></div></div><div class="metric"><span class="material-symbol">visibility</span><div><div class="m-val" id="cw-summary-visible">0</div><div class="m-lbl">Rows visible</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">movie</span><div><div class="m-val" id="cw-summary-movies">0</div><div class="m-lbl">Movies</div></div></div><div class="metric"><span class="material-symbol">monitoring</span><div><div class="m-val" id="cw-summary-shows">0</div><div class="m-lbl">Shows</div></div></div><div class="metric"><span class="material-symbol">layers</span><div><div class="m-val" id="cw-summary-seasons">0</div><div class="m-lbl">Seasons</div></div></div><div class="metric"><span class="material-symbol">live_tv</span><div><div class="m-val" id="cw-summary-episodes">0</div><div class="m-lbl">Episodes</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">description</span><div><div class="m-val" id="cw-summary-state-files">0</div><div class="m-lbl">State files</div></div></div><div class="metric"><span class="material-symbol">folder_copy</span><div><div class="m-val" id="cw-summary-snapshots">0</div><div class="m-lbl">Snapshots</div></div></div></div><div id="cw-state-hint" class="cw-state-hint" style="display:none"><strong>No tracker data found.</strong> Run a CrossWatch sync with the tracker enabled once. After that, tracker state files and snapshots will appear here and you can edit them. </div></div></div></div><div class="ins-card" id="cw-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Archive</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-download" class="cw-btn" type="button">Download ZIP</button><button id="cw-upload" class="cw-btn" type="button">Import file</button><input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none"></div></div></div></div><div class="ins-card" id="cw-state-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Policy backup</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-state-download" class="cw-btn" type="button">Download JSON</button><button id="cw-state-upload" class="cw-btn" type="button">Import file</button><input id="cw-state-upload-input" type="file" accept=".json" style="display:none"></div></div></div></div></aside></div></div>`;
+  host.innerHTML = `<div class="cw-root"><div class="cw-topline cw-page-hero cw-page-hero-editor" data-hero-icon="edit_note"><div class="cw-head-copy cw-page-hero-copy"><div class="cw-page-hero-kicker">EDITOR</div><div class="cw-title-row"><div><div class="cw-title cw-page-hero-title">Editor</div><div class="cw-sub cw-page-hero-sub">Edit your current state or playlist endpoints</div></div></div></div><div class="cw-editor-hero-summary cw-page-hero-actions" id="cw-hero-summary" aria-label="Editor summary"><div class="cw-editor-hero-seg"><strong id="cw-pill-source">Current state</strong><span>source</span></div><div class="cw-editor-hero-seg"><strong id="cw-pill-kind">Watchlist</strong><span>view</span></div><div class="cw-editor-hero-seg cw-editor-hero-count"><strong id="cw-pill-count">0</strong><span>rows</span></div><div class="cw-editor-hero-seg cw-editor-hero-sync"><span>Synced</span><strong id="cw-pill-sync">never</strong></div><button id="cw-reload" class="cw-editor-refresh" type="button" title="Refresh editor data" aria-label="Refresh editor data"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div></div><div class="cw-wrap"><div class="cw-main"><div class="cw-controls"><input id="cw-filter" class="cw-input" placeholder="Filter by key / title / id..."><span class="cw-status-text" id="cw-status"></span><label class="cw-page-size-control" for="cw-page-size"><span>Rows</span><select id="cw-page-size" class="cw-select"><option value="50">50</option><option value="100">100</option><option value="150">150</option><option value="200">200</option></select></label><div class="cw-controls-spacer"></div><div class="cw-bulk" id="cw-bulk" style="display:none"><span class="cw-bulk-count" id="cw-bulk-count"></span><button id="cw-bulk-remove" class="cw-btn danger" type="button"></button><button id="cw-bulk-restore" class="cw-btn" type="button"></button><button id="cw-bulk-clear" class="cw-btn" type="button">Clear</button></div><button id="cw-add" class="cw-btn" type="button">Add row</button><button id="cw-save" class="cw-btn primary" type="button">Save changes</button></div><div class="cw-table-wrap" id="cw-table-wrap"><div class="cw-table-scroll"><table class="cw-table"><thead><tr><th style="width:34px"><input id="cw-select-page" class="cw-checkbox" type="checkbox" title="Select page"></th><th class="cw-action-head" style="width:46px"></th><th class="cw-col-key sortable" style="width:12%" data-sort="key">Key</th><th class="cw-col-type sortable" style="width:13%" data-sort="type">Type</th><th class="cw-col-title sortable" style="width:33%" data-sort="title">Title</th><th class="cw-col-year" style="width:84px">Year</th><th class="cw-col-id cw-col-id-a" style="width:12%" id="cw-col-id-a">TMDB</th><th class="cw-col-extra sortable" style="width:21%" data-sort="extra">Extra</th></tr></thead><tbody id="cw-tbody"></tbody></table></div></div><div class="cw-pager" id="cw-pager" style="display:none"><button id="cw-prev" class="cw-btn" type="button">Previous</button><span id="cw-page-info" class="cw-page-info"></span><button id="cw-next" class="cw-btn" type="button">Next</button></div><div class="cw-empty" id="cw-empty" role="status" style="display:none"><span class="material-symbols-rounded cw-empty-icon" aria-hidden="true">table_rows</span><div class="cw-empty-text">No rows match this view.</div></div></div><aside class="cw-side"><div class="ins-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">tune</span></div><div class="ins-title">Workspace</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Source</label><select id="cw-source" class="cw-select"><option value="state">Current State</option><option value="manual">Manual Overrides</option></select><label>Kind</label><select id="cw-kind" class="cw-select"><option value="watchlist">Watchlist</option><option value="history">History</option><option value="ratings">Ratings</option><option value="progress">Progress</option></select><label id="cw-pair-label" style="display:none">Pair</label><select id="cw-pair" class="cw-select" style="display:none"></select><label id="cw-snapshot-label">Snapshot</label><select id="cw-snapshot" class="cw-select"><option value="">Latest</option></select><label id="cw-instance-label" style="display:none">Profile</label><select id="cw-instance" class="cw-select" style="display:none"><option value="default">Default</option></select></div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><div class="field-label">Types</div><div id="cw-type-filter" class="cw-type-filter"><button type="button" data-type="movie" class="cw-type-chip active">Movies</button><button type="button" data-type="show" class="cw-type-chip active">Shows</button><button type="button" data-type="anime" class="cw-type-chip active">Anime</button><button type="button" data-type="season" class="cw-type-chip active">Seasons</button><button type="button" data-type="episode" class="cw-type-chip active">Episodes</button><button type="button" id="cw-blocked-only" class="cw-type-chip">Blocked</button></div></div></div><div class="ins-row" id="cw-state-bulk" style="display:none"><details class="cw-collapse" id="cw-bulk-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Block rules</summary><div style="display:flex;flex-direction:column;gap:8px;width:100%;margin-top:10px"><select id="cw-bulk-type" class="cw-select" style="width:100%"></select><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="cw-bulk-block-type" class="cw-btn danger" type="button" style="flex:1 1 0;min-width:120px">Block all</button><button id="cw-bulk-unblock-type" class="cw-btn" type="button" style="flex:1 1 0;min-width:120px">Unblock all</button></div><div class="cw-status-text">Current State only â€¢ affects baseline items</div></div></details></div><div class="ins-row" id="cw-import-row" style="display:none"><details class="cw-collapse" id="cw-import-details" style="width:100%"><summary style="cursor:pointer;font-weight:700;user-select:none">Import provider state</summary><div style="display:flex;flex-direction:column;gap:10px;width:100%;margin-top:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"><select id="cw-import-provider" class="cw-select" style="flex:1;min-width:200px"></select><select id="cw-import-instance" class="cw-select" style="min-width:180px"></select><select id="cw-import-mode" class="cw-select" style="min-width:180px"><option value="replace">Replace baseline</option><option value="merge">Merge (keep old)</option></select></div><div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><label id="cw-import-watchlist-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-watchlist" class="cw-checkbox" type="checkbox" checked>Watchlist </label><label id="cw-import-history-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-history" class="cw-checkbox" type="checkbox" checked>History </label><label id="cw-import-ratings-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-ratings" class="cw-checkbox" type="checkbox" checked>Ratings </label><label id="cw-import-progress-wrap" style="display:flex;gap:6px;align-items:center;font-size:12px;width:auto;margin:0"><input id="cw-import-progress-cb" class="cw-checkbox" type="checkbox" checked>Progress </label><span style="flex:1 1 auto"></span><button id="cw-import-run" class="cw-btn sm" type="button">Import</button></div><div id="cw-import-progress" style="display:none"><div class="cw-progress"><span></span></div><div class="cw-status-text" id="cw-import-progress-text" style="margin-top:6px"></div></div></div></details></div></div><div class="ins-card"><div class="ins-row" style="align-items:center"><div class="ins-icon"><span class="material-symbol">insights</span></div><div class="ins-title" style="margin-right:auto">Pulse</div><span class="cw-tag" id="cw-tag-status"><span class="cw-tag-dot"></span><span id="cw-tag-label">Idle</span></span></div><div class="ins-row"><div class="ins-metrics"><div class="metric-row"><div class="metric"><span class="material-symbol">view_list</span><div><div class="m-val" id="cw-summary-total">0</div><div class="m-lbl">Total rows</div></div></div><div class="metric"><span class="material-symbol">visibility</span><div><div class="m-val" id="cw-summary-visible">0</div><div class="m-lbl">Rows visible</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">movie</span><div><div class="m-val" id="cw-summary-movies">0</div><div class="m-lbl">Movies</div></div></div><div class="metric"><span class="material-symbol">monitoring</span><div><div class="m-val" id="cw-summary-shows">0</div><div class="m-lbl">Shows</div></div></div><div class="metric"><span class="material-symbol">layers</span><div><div class="m-val" id="cw-summary-seasons">0</div><div class="m-lbl">Seasons</div></div></div><div class="metric"><span class="material-symbol">live_tv</span><div><div class="m-val" id="cw-summary-episodes">0</div><div class="m-lbl">Episodes</div></div></div></div><div class="metric-divider"></div><div class="metric-row"><div class="metric"><span class="material-symbol">description</span><div><div class="m-val" id="cw-summary-state-files">0</div><div class="m-lbl">State files</div></div></div><div class="metric"><span class="material-symbol">folder_copy</span><div><div class="m-val" id="cw-summary-snapshots">0</div><div class="m-lbl">Snapshots</div></div></div></div><div id="cw-state-hint" class="cw-state-hint" style="display:none"><strong>No sync state found.</strong> Run a CrossWatch sync once to generate it.</div></div></div></div><div class="ins-card" id="cw-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Archive</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-download" class="cw-btn" type="button">Download ZIP</button><button id="cw-upload" class="cw-btn" type="button">Import file</button><input id="cw-upload-input" type="file" accept=".zip,.json" style="display:none"></div></div></div></div><div class="ins-card" id="cw-state-backup-card"><div class="ins-row"><div class="ins-icon"><span class="material-symbol">backup</span></div><div class="ins-title">Policy backup</div></div><div class="ins-row"><div class="ins-kv" style="width:100%"><label>Export / Import</label><div class="cw-backup-actions"><button id="cw-state-download" class="cw-btn" type="button">Download JSON</button><button id="cw-state-upload" class="cw-btn" type="button">Import file</button><input id="cw-state-upload-input" type="file" accept=".json" style="display:none"></div></div></div></div></aside></div></div>`;
 
   editorChrome.wireStaticLabels(host);
   editorChrome.prepareSourceOptions(host);
@@ -513,16 +509,8 @@
     return `${series} - ${code}`;
   }
 
-  function currentTrackerWorkspace() {
-    return editorSources.currentTrackerWorkspace(state);
-  }
-
-  function trackerKinds() {
-    return editorSources.trackerKinds(state);
-  }
-
   function syncHeaderPills(visible, total) {
-    const srcMap = { state: "Current state", manual: "Manual overrides", tracker: "Local tracker", playlist: "Playlist endpoint" };
+    const srcMap = { state: "Current state", manual: "Manual overrides", playlist: "Playlist endpoint" };
     const kindMap = { watchlist: "Watchlist", history: "History", ratings: "Ratings", progress: "Progress", playlist: "Playlist" };
     if (pillSource) pillSource.textContent = srcMap[state.source] || "Source";
     if (pillKind) pillKind.textContent = state.source === "playlist" ? "Playlist" : (kindMap[state.kind] || "Kind");
@@ -571,10 +559,6 @@
   function syncKindUI() {
     if (!kindSel) return;
     let allowed = ["watchlist", "history", "ratings", "progress"];
-    if (isTrackerSource()) {
-      const supported = trackerKinds();
-      if (supported.length) allowed = supported;
-    }
     if (!allowed.includes(state.kind)) state.kind = allowed[0] || "watchlist";
     const current = Array.from(kindSel.options).map(o => o.value);
     if (current.join("|") !== allowed.join("|")) {
@@ -992,7 +976,6 @@
         source: state.source,
         kind: state.kind,
         snapshot: state.snapshot,
-        workspace: state.workspace,
         instance: state.instance,
         filter: state.filter,
         pageSize: state.pageSize,
@@ -1738,10 +1721,6 @@ function bindFileImport(btn, input, url, done) {
   return editorFileUtils.bindFileImport(btn, input, url, done, { on, setTag, setStatus });
 }
 
-  async function loadTrackerWorkspaces() {
-    return editorSources.loadTrackerWorkspaces(sourceContext());
-  }
-
   async function loadSnapshots() {
     return editorSources.loadSnapshots(sourceContext());
   }
@@ -1879,9 +1858,6 @@ function bindFileImport(btn, input, url, done) {
         state.kind = "watchlist";
         state.instance = "default";
       }
-      if (isTrackerSource()) {
-        state.workspace = "";
-      }
       persistUIState();
       syncSourceUI();
       clearSelection();
@@ -1910,7 +1886,7 @@ function bindFileImport(btn, input, url, done) {
       syncTypeFilterUI();
       syncStateBulkUI();
       clearSelection();
-      if (!isProviderPickerSource() && !isTrackerSource()) state.snapshot = "";
+      if (!isProviderPickerSource()) state.snapshot = "";
       state.page = 0;
       persistUIState();
       await loadSnapshots();
@@ -1922,17 +1898,6 @@ function bindFileImport(btn, input, url, done) {
 
   if (snapSel) {
     snapSel.addEventListener("change", async () => {
-      if (isTrackerSource()) {
-        state.workspace = snapSel.value || "";
-        state.page = 0;
-        clearSelection();
-        syncKindUI();
-        syncTypeFilterUI();
-        syncStateBulkUI();
-        persistUIState();
-        await loadState();
-        return;
-      }
       state.snapshot = snapSel.value || "";
       if (isProviderPickerSource()) syncProviderIconSelect(snapSel, true);
       if (isProviderPickerSource()) {
@@ -1951,11 +1916,6 @@ function bindFileImport(btn, input, url, done) {
       state.instance = instanceSel.value || "default";
       state.page = 0;
       persistUIState();
-      if (isTrackerSource()) {
-        state.workspace = "";
-        clearSelection();
-        await loadSnapshots();
-      }
       await loadState();
     });
   }
@@ -2073,12 +2033,10 @@ if (importProviderSel) {
   });
 
   (async () => {
-    await loadTrackerWorkspaces();
     const wanted = state.source;
     state.source = normalizeSource(wanted);
     if (state.source !== wanted) {
       state.snapshot = "";
-      state.workspace = "";
       state.instance = "default";
       persistUIState();
     }
@@ -2086,11 +2044,9 @@ if (importProviderSel) {
     await loadImportProviders();
     setTag(
       "warn",
-      isTrackerSource()
-        ? "Loading Local Tracker…"
-        : state.source === "state"
-          ? "Loading current state…"
-          : "Loading playlist endpoint…"
+      state.source === "state"
+        ? "Loading current state..."
+        : "Loading playlist endpoint..."
     );
     await loadSnapshots();
     await loadState();

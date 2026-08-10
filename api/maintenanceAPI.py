@@ -11,7 +11,7 @@ import os
 import shutil
 import threading
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timezone
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -226,7 +226,7 @@ def _file_meta(path: Path) -> dict[str, Any]:
     return {
         "name": path.name,
         "size": st.st_size,
-        "mtime": datetime.utcfromtimestamp(st.st_mtime).strftime(
+        "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         ),
     }
@@ -1001,7 +1001,7 @@ def _scan_cw_tracker(root: Path) -> dict[str, Any]:
 
     state_files.sort(key=lambda x: x.get("name") or "")
     snapshots.sort(key=lambda x: x.get("mtime") or "")
-    core_names = {"history.json", "ratings.json", "watchlist.json"}
+    core_names = {"history.json", "ratings.json", "watchlist.json", "progress.json"}
     state_count = sum(
         1 for f in state_files
         if (f.get("name") or "") in core_names

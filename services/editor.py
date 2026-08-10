@@ -349,6 +349,7 @@ def import_tracker_zip(fp: IO[bytes], provider_instance: Any = None) -> TrackerI
                 "watchlist.json",
                 "history.json",
                 "ratings.json",
+                "progress.json",
             ):
                 stats["states"] += 1
 

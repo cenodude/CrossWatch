@@ -12,12 +12,6 @@
 
   function syncSelectedScopeFromControls(ctx = {}) {
     const state = ctx.state;
-    if (ctx.isTrackerSource()) {
-      state.workspace = (ctx.snapSel && ctx.snapSel.value) ? ctx.snapSel.value : state.workspace || "";
-      state.snapshot = "";
-      state.instance = (ctx.instanceSel && ctx.instanceSel.value) ? ctx.instanceSel.value : state.instance || "default";
-      return;
-    }
     if (ctx.isProviderPickerSource()) {
       state.snapshot = (ctx.snapSel && ctx.snapSel.value) ? ctx.snapSel.value : state.snapshot || "";
       state.instance = (ctx.instanceSel && ctx.instanceSel.value) ? ctx.instanceSel.value : state.instance || "default";
@@ -66,24 +60,6 @@
         return;
       }
     }
-    if (ctx.isTrackerSource() && !String(state.workspace || "").trim()) {
-      state.baselineItems = {};
-      state.manualAdds = {};
-      state.manualBlocks = [];
-      state.items = {};
-      state.rows = [];
-      state.selected = new Set();
-      state.pageRids = [];
-      state.ridSeq = 1;
-      state.hasChanges = false;
-      state.page = 0;
-      ctx.renderRows();
-      ctx.showStateHint("tracker");
-      ctx.setTag("loaded", "No workspace");
-      ctx.setStatus("");
-      ctx.syncActionButtons();
-      return;
-    }
     state.source = ctx.normalizeSource(state.source);
     state.loading = true;
     ctx.setTag("warn", "Loading");
@@ -91,10 +67,6 @@
       const params = new URLSearchParams({ kind: state.kind, source: state.source });
       if (ctx.isProviderPickerSource() && state.snapshot) {
         params.set("provider", state.snapshot);
-        params.set("provider_instance", state.instance || "default");
-      }
-      if (ctx.isTrackerSource()) {
-        params.set("workspace", state.workspace);
         params.set("provider_instance", state.instance || "default");
       }
       if (state.source === "playlist" && state.snapshot) params.set("endpoint", state.snapshot);
@@ -118,10 +90,6 @@
             ctx.snapSel.value = state.snapshot;
             ctx.syncProviderIconSelect(ctx.snapSel, true);
           }
-        }
-        if (ctx.isTrackerSource() && data && typeof data.workspace === "string" && data.workspace.trim()) {
-          state.workspace = data.workspace.trim();
-          if (ctx.snapSel) ctx.snapSel.value = state.workspace;
         }
         state.baselineItems = data.items || {};
         state.manualAdds = data.manual_adds || {};
@@ -177,7 +145,7 @@
         const hasBaseline = state.baselineItems && Object.keys(state.baselineItems).length > 0;
         const hasManual = state.manualAdds && Object.keys(state.manualAdds).length > 0;
         const hasBlocks = Array.isArray(state.manualBlocks) && state.manualBlocks.length > 0;
-        const emptyMode = ctx.isManualSource() ? "manual" : ctx.isTrackerSource() ? "tracker" : "state";
+        const emptyMode = ctx.isManualSource() ? "manual" : "state";
         ctx.showStateHint(hasBaseline || hasManual || hasBlocks ? null : emptyMode);
       } else if (state.source === "playlist") {
         ctx.showStateHint(state.snapshot ? null : "playlist");
@@ -192,23 +160,6 @@
       const msg = String(e || "");
 
       if (
-        ctx.isTrackerSource() &&
-        (msg.includes("404") || /local tracker/i.test(msg) || /workspace/i.test(msg))
-      ) {
-        ctx.showStateHint("tracker");
-        state.baselineItems = {};
-        state.manualAdds = {};
-        state.manualBlocks = [];
-        state.items = {};
-        state.rows = [];
-        state.selected = new Set();
-        state.pageRids = [];
-        state.ridSeq = 1;
-        state.workspace = "";
-        ctx.renderRows();
-        ctx.setTag("warn", "No tracker data");
-        ctx.setStatus("");
-      } else if (
         state.source === "state" &&
         (msg.includes("404") || /state\.json/i.test(msg) || /missing state/i.test(msg))
       ) {
