@@ -199,6 +199,45 @@ def _put_latest(out: dict[str, dict[str, Any]], item: dict[str, Any]) -> None:
         out[key] = item
 
 
+def _movie_history_item(tmdb_id: str, row: Mapping[str, Any]) -> dict[str, Any] | None:
+    merged = {
+        "item_id": f"movie/tmdb/{tmdb_id}",
+        "media_type": "movie",
+        "source": "tmdb",
+        "media_id": tmdb_id,
+        **dict(row or {}),
+    }
+    item = item_from_row(merged, force_type="movie")
+    if not item:
+        return None
+    watched_at = row.get("end_date") or row.get("progressed_at") or row.get("created_at")
+    if not watched_at:
+        return None
+    item["watched"] = True
+    item["watched_at"] = watched_at
+    item["_floppy_consumption_id"] = row.get("consumption_id")
+    return item
+
+
+def _movie_external_id(adapter: Any, item: Mapping[str, Any], key: str) -> str | None:
+    if not _rewatches_enabled(adapter):
+        return None
+    for field in (
+        "provider_event_id",
+        "_trakt_history_id",
+        "trakt_history_id",
+        "_publicmetadb_history_id",
+        "_simkl_history_id",
+        "_simkl_rewatch_id",
+        "_punchplay_history_id",
+        "rewatch_id",
+    ):
+        value = str(item.get(field) or "").strip()
+        if value:
+            return f"cw:{field}:{value}"[:255]
+    return f"cw:{key}"[:255] if key else None
+
+
 def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     event_mode = _rewatches_enabled(adapter)
@@ -208,6 +247,17 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         item = item_from_row(row, force_type="movie")
         if not item:
             continue
+        if event_mode:
+            tmdb_id = tmdb_id_for_item(item)
+            history_rows = _movie_history(adapter, tmdb_id) if tmdb_id else []
+            expanded = [_movie_history_item(tmdb_id, hist) for hist in history_rows] if tmdb_id else []
+            expanded = [hist for hist in expanded if hist]
+            if expanded:
+                for hist_item in expanded:
+                    key = _history_key(adapter, hist_item)
+                    if key:
+                        out[key] = _history_minimal(adapter, hist_item)
+                continue
         item["watched"] = True
         item["watched_at"] = row.get("end_date") or row.get("progressed_at") or row.get("created_at")
         item["_floppy_consumption_id"] = row.get("consumption_id")
@@ -254,7 +304,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                 results.append({"status": "dry_run", "item": _history_minimal(adapter, raw), "canonical_key": key})
                 continue
             try:
-                _write_movie_history(adapter, tmdb_id, _watched_at(raw))
+                _write_movie_history(adapter, tmdb_id, _watched_at(raw), raw, key)
             except Exception as exc:
                 entry = unresolved(raw, failure_reason(exc))
                 unresolved_rows.append(entry)
@@ -293,7 +343,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     return build_op_result(ok=not unresolved_rows, count=len(confirmed), confirmed_keys=confirmed, unresolved_keys=unresolved_keys(unresolved_rows, lambda it: _history_key(adapter, it)), unresolved=unresolved_rows, results=results, attempted=len(confirmed) + len(unresolved_rows))
 
 
-def _write_movie_history(adapter: Any, tmdb_id: str, watched_at: str) -> None:
+def _write_movie_history(adapter: Any, tmdb_id: str, watched_at: str, item: Mapping[str, Any], key: str) -> None:
+    if _rewatches_enabled(adapter):
+        payload = {"end_date": watched_at}
+        external_id = _movie_external_id(adapter, item, key)
+        if external_id:
+            payload["external_id"] = external_id
+        api_post(adapter, f"media/movie/tmdb/{tmdb_id}/watch", json=payload)
+        return
     track_media(adapter, "movie", tmdb_id, payload={"status": COMPLETED, "end_date": watched_at})
 
 

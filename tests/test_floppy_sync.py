@@ -349,6 +349,52 @@ def test_floppy_movie_history_create_does_not_patch_after_create() -> None:
     assert adapter.client.session.calls[0]["json"] == {"source": "tmdb", "media_id": "11", "status": 3, "end_date": "2026-01-03T00:00:00Z"}
 
 
+def test_floppy_movie_history_rewatch_add_uses_movie_watch_api() -> None:
+    from providers.sync.floppy import _history
+
+    adapter = AdapterStub(
+        {("POST", "media/movie/tmdb/11/watch"): {"consumption_id": 51, "end_date": "2026-01-03T00:00:00Z"}},
+        {"_cw_history_rewatches": True, "floppy": {}},
+    )
+
+    res = _history.add(adapter, [{"type": "movie", "ids": {"tmdb": "11"}, "watched_at": "2026-01-03T00:00:00Z"}])
+
+    assert res["count"] == 1
+    assert adapter.client.session.calls[0]["path"] == "media/movie/tmdb/11/watch"
+    assert adapter.client.session.calls[0]["json"] == {
+        "end_date": "2026-01-03T00:00:00Z",
+        "external_id": "cw:tmdb:11@1767398400",
+    }
+
+
+def test_floppy_movie_history_rewatch_index_reads_each_movie_play() -> None:
+    from providers.sync.floppy import _history
+
+    adapter = AdapterStub(
+        {
+            ("GET", "media/movie"): {
+                "results": [{"item_id": "movie/tmdb/11", "status": 3, "end_date": "2026-01-03T00:00:00Z"}],
+                "count": 1,
+            },
+            ("GET", "media/movie/tmdb/11/history"): {
+                "results": [
+                    {"consumption_id": 51, "end_date": "2026-01-01T00:00:00Z"},
+                    {"consumption_id": 52, "end_date": "2026-01-03T00:00:00Z"},
+                ],
+                "count": 2,
+            },
+            ("GET", "media/episode"): {"results": [], "count": 0},
+        },
+        {"_cw_history_rewatches": True, "floppy": {}},
+    )
+
+    out = _history.build_index(adapter)
+
+    assert sorted(out) == ["tmdb:11@1767225600", "tmdb:11@1767398400"]
+    assert out["tmdb:11@1767225600"]["_floppy_consumption_id"] == 51
+    assert out["tmdb:11@1767398400"]["_floppy_consumption_id"] == 52
+
+
 def test_floppy_episode_history_add_prevents_duplicate_play() -> None:
     from providers.sync.floppy import _history
 
