@@ -405,6 +405,30 @@ def _policy_stats(pol: dict[str, Any]) -> dict[str, int]:
                     acount += len(items)
     return {"providers": pcount, "blocks": bcount, "adds": acount}
 
+def _always_listed_providers() -> list[str]:
+    out: list[str] = []
+    try:
+        cfg = load_config() or {}
+    except Exception:
+        return out
+    for name in ("CROSSWATCH",):
+        ops = load_sync_ops(name)
+        if not ops or not hasattr(ops, "is_configured"):
+            continue
+        try:
+            instances = list_instance_ids(cfg, name) or ["default"]
+        except Exception:
+            instances = ["default"]
+        for inst in instances:
+            try:
+                if ops.is_configured(build_provider_config_view(cfg, name, inst)):
+                    out.append(name)
+                    break
+            except Exception:
+                continue
+    return out
+
+
 def _state_providers(raw: dict[str, Any]) -> list[str]:
     providers = raw.get("providers") or {}
     if not isinstance(providers, dict):
@@ -450,17 +474,34 @@ def _load_state_items(
 ) -> dict[str, Any]:
     raw = raw_state if isinstance(raw_state, dict) else _load_current_state_features({kind})
     node = _state_provider_node(raw, provider, provider_instance)
-    if not isinstance(node, dict):
-        return {}
+    items: Any = None
+    if isinstance(node, dict):
+        feature = node.get(kind)
+        if isinstance(feature, dict):
+            baseline = feature.get("baseline")
+            if isinstance(baseline, dict):
+                items = baseline.get("items")
+    if isinstance(items, dict) and items:
+        return items
+    return _load_tracker_items(kind, provider, provider_instance)
 
-    feature = node.get(kind) or {}
-    if not isinstance(feature, dict):
+
+def _load_tracker_items(kind: Kind, provider: str, provider_instance: str | None = None) -> dict[str, Any]:
+    if str(provider or "").strip().upper() != "CROSSWATCH":
         return {}
-    baseline = feature.get("baseline") or {}
-    if not isinstance(baseline, dict):
+    ops = load_sync_ops("CROSSWATCH")
+    if not ops:
         return {}
-    items = baseline.get("items") or {}
-    return items if isinstance(items, dict) else {}
+    try:
+        cfg = load_config() or {}
+        view = dict(build_provider_config_view(cfg, "CROSSWATCH", normalize_instance_id(provider_instance)))
+        view["_cw_readonly"] = True
+        if kind == "history":
+            view["_cw_history_rewatches"] = True
+        idx = ops.build_index(view, feature=kind) or {}
+    except Exception:
+        return {}
+    return {str(key): dict(value) for key, value in idx.items() if isinstance(value, Mapping)}
 
 
 def _save_state_items(kind: Kind, provider: str, items: dict[str, Any], provider_instance: str | None = None) -> None:
@@ -740,7 +781,13 @@ def _normalize_blocks(blocks_raw: Any) -> list[str]:
 def api_editor_state_providers() -> dict[str, Any]:
     state_providers = StateStore(_STATE_BASE).provider_names()
     raw_policy = _load_policy()
-    return {"providers": _union_providers({"providers": {name: {} for name in state_providers}}, raw_policy)}
+    providers = _union_providers({"providers": {name: {} for name in state_providers}}, raw_policy)
+    known = {str(name).strip().lower() for name in providers}
+    for name in _always_listed_providers():
+        if name.lower() not in known:
+            providers.append(name)
+            known.add(name.lower())
+    return {"providers": providers}
 
 
 @router.get("")
@@ -778,7 +825,7 @@ def api_editor_get_state(
 
         inst = normalize_instance_id(provider_instance)
 
-        items = _load_state_items(k, chosen, inst, raw_state=raw_state) if raw_state else {}
+        items = _load_state_items(k, chosen, inst, raw_state=raw_state)
         st_adds, st_blocks = _load_state_manual(k, chosen, inst, raw_state=raw_state) if raw_state else ({}, [])
         pol_adds, pol_blocks = _load_policy_manual(k, chosen, inst, raw_policy=raw_policy)
 
