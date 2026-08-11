@@ -22,7 +22,9 @@ from ._common import (
     latest_snapshot_file,
     latest_state_file,
     make_logger,
+    may_persist,
     pair_scoped,
+    readonly,
     scoped_file,
     state_file_for_read,
 )
@@ -117,7 +119,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 continue
             items[key] = _accepted(obj)
         state = {"ts": 0, "items": items}
-        if not pair_scoped() and items and not path.exists():
+        if items and may_persist(adapter, path):
             _atomic_write(path, {"ts": int(time.time()), "items": items})
         return state
 
@@ -134,7 +136,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                     continue
                 items2[ck] = _accepted(value)
             state = {"ts": ts, "items": items2}
-            if not pair_scoped() and items2 and not path.exists():
+            if items2 and may_persist(adapter, path):
                 _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
             return state
 
@@ -147,7 +149,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 continue
             items3[ck] = _accepted(value)
         state = {"ts": 0, "items": items3}
-        if not pair_scoped() and items3 and not path.exists():
+        if items3 and may_persist(adapter, path):
             _atomic_write(path, {"ts": int(time.time()), "items": items3})
         return state
 
@@ -155,7 +157,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
 
 
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
-    if _capture_mode() or _pair_scope() is None:
+    if _capture_mode() or readonly(adapter) or _pair_scope() is None:
         return
     payload = {"ts": int(time.time()), "items": dict(items or {})}
     _atomic_write(_ratings_path(adapter), payload)

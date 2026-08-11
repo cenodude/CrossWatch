@@ -196,6 +196,15 @@ def _restore_state_path(adapter: Any, stem: str) -> Path:
 
 # Write
 
+def readonly(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_readonly"))
+
+
+def may_persist(adapter: Any, path: Path) -> bool:
+    return not readonly(adapter) and not pair_scoped() and not path.exists()
+
+
 def _atomic_write(path: Path, payload: Any) -> None:
     if _capture_mode() or _pair_scope() is None:
         return
@@ -354,7 +363,7 @@ def _maybe_restore(
     feature: str,
     save_fn: Callable[[Any, Mapping[str, Any]], None],
 ) -> None:
-    if _capture_mode():
+    if _capture_mode() or readonly(adapter):
         return
     cfg = getattr(adapter, "cfg", None)
     restore_id = getattr(cfg, f"restore_{feature}", None)
