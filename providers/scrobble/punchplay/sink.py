@@ -220,8 +220,10 @@ class PunchPlaySink(ScrobbleSink):
         except Exception:
             return DEFAULT_WATCHED_AT
 
-    def _ids_payload(self, event: Any) -> dict[str, Any]:
+    def _ids_payload(self, event: Any, media_type: str) -> dict[str, Any]:
         ids = getattr(event, "ids", None) or {}
+        if media_type == "episode":
+            ids = {k[: -len("_show")]: v for k, v in ids.items() if k.endswith("_show") and v}
         out: dict[str, Any] = {}
         tmdb = _as_int(ids.get("tmdb"))
         if tmdb and tmdb > 0:
@@ -234,29 +236,37 @@ class PunchPlaySink(ScrobbleSink):
             out["tvdb_id"] = tvdb
         return out
 
-    def _resolve_action(self, scope: str, action: str, now: float) -> tuple[str, str]:
+    def _resolve_action(self, scope: str, action: str, now: float) -> tuple[str, str, dict[str, Any] | None]:
         with _STATE_LOCK:
             _prune_sessions(now)
             state = _SESSIONS.get(scope)
+            before = dict(state) if state is not None else None
             if state is None:
-                state = {"session_id": str(uuid.uuid4()), "paused": False, "seen": now}
+                state = {"session_id": str(uuid.uuid4()), "paused": False, "started": False, "seen": now}
                 _SESSIONS[scope] = state
             state["seen"] = now
+            session_id = str(state["session_id"])
 
+            if action == "stop" or (action == "pause" and not state.get("started")):
+                _SESSIONS.pop(scope, None)
+                return "stop", session_id, before
             if action == "pause":
                 state["paused"] = True
-                return "pause", str(state["session_id"])
-            if action == "stop":
-                session_id = str(state["session_id"])
-                _SESSIONS.pop(scope, None)
-                return "stop", session_id
+                return "pause", session_id, before
             if state.get("paused"):
                 state["paused"] = False
-                return "resume", str(state["session_id"])
+                return "resume", session_id, before
             if state.get("started"):
-                return "progress", str(state["session_id"])
+                return "progress", session_id, before
             state["started"] = True
-            return "start", str(state["session_id"])
+            return "start", session_id, before
+
+    def _rollback(self, scope: str, before: dict[str, Any] | None) -> None:
+        with _STATE_LOCK:
+            if before is None:
+                _SESSIONS.pop(scope, None)
+            else:
+                _SESSIONS[scope] = before
 
     def send(self, event: Any) -> None:
         cfg = self.config
@@ -269,7 +279,8 @@ class PunchPlaySink(ScrobbleSink):
         if raw_action not in ("start", "pause", "stop"):
             return
 
-        ids_payload = self._ids_payload(event)
+        media_type = "episode" if str(getattr(event, "media_type", "") or "").lower() == "episode" else "movie"
+        ids_payload = self._ids_payload(event, media_type)
         if not ids_payload:
             _log("PUNCHPLAY: skip scrobble, no supported ids", "DEBUG")
             return
@@ -280,15 +291,12 @@ class PunchPlaySink(ScrobbleSink):
             progress_pct = 0.0
 
         watched_at = self._watched_at(cfg)
-        effective = raw_action
-        if raw_action == "stop":
-            effective = resolve_stop_action(progress_pct, watched_at)
+        watched = raw_action == "stop" and resolve_stop_action(progress_pct, watched_at) == "stop"
 
         now = time.time()
         scope = _session_scope(event, self.instance_id)
-        action, session_id = self._resolve_action(scope, effective, now)
+        action, session_id, before = self._resolve_action(scope, raw_action, now)
 
-        media_type = "episode" if str(getattr(event, "media_type", "") or "").lower() == "episode" else "movie"
         payload: dict[str, Any] = dict(ids_payload)
         payload["media_type"] = media_type
         payload["event_id"] = str(uuid.uuid4())
@@ -328,11 +336,12 @@ class PunchPlaySink(ScrobbleSink):
             payload["device_id"] = device_id
 
         if action == "stop":
-            payload["watched_threshold"] = round(watched_at / 100.0, 4)
-            payload["watched"] = progress_pct >= watched_at
+            threshold = round(watched_at / 100.0, 4)
+            if threshold > 0.0:
+                payload["watched_threshold"] = threshold
+            payload["watched"] = watched
 
-        watched = bool(payload.get("watched"))
-        self._post(cfg, event, action, payload, progress_pct, watched=watched)
+        self._post(cfg, event, action, payload, progress_pct, watched=watched, scope=scope, before=before)
 
     def _post(
         self,
@@ -343,6 +352,8 @@ class PunchPlaySink(ScrobbleSink):
         progress_pct: float,
         *,
         watched: bool = False,
+        scope: str = "",
+        before: dict[str, Any] | None = None,
     ) -> None:
         adapter = _Adapter(dict(cfg), self.instance_id, self.session)
         src, src_inst = _route_source(cfg)
@@ -354,6 +365,8 @@ class PunchPlaySink(ScrobbleSink):
         except Exception as exc:
             reason = exc.__class__.__name__
             _log(f"PUNCHPLAY: scrobble {action} failed ({reason})", "WARN")
+            if scope:
+                self._rollback(scope, before)
             if archived:
                 self._archive(event, action, src, src_inst, progress_pct, status="fail", reason=reason)
             return
@@ -365,6 +378,8 @@ class PunchPlaySink(ScrobbleSink):
                 f"PUNCHPLAY: scrobble {action} rejected status={code} error={reason} request_id={request_id_of(resp)}",
                 "WARN",
             )
+            if scope:
+                self._rollback(scope, before)
             if archived:
                 self._archive(event, action, src, src_inst, progress_pct, status="fail", reason=reason)
             return
