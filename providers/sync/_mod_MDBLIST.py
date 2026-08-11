@@ -47,6 +47,8 @@ def _unresolved_keys(key_of, unresolved: Any) -> list[str]:
                 add(obj)
                 continue
             if isinstance(obj, Mapping):
+                if obj.get("_cw_rewatch_sync") is True:
+                    add(obj.get("_cw_event_key"))
                 try:
                     add(key_of(obj))
                 except Exception:
@@ -58,7 +60,9 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
     attempted: list[str] = []
     for it in items or []:
         try:
-            k = str(key_of(it) or "").strip()
+            k = str(it.get("_cw_event_key") or "").strip() if isinstance(it, Mapping) and it.get("_cw_rewatch_sync") is True else ""
+            if not k:
+                k = str(key_of(it) or "").strip()
         except Exception:
             k = ""
         if k:
@@ -100,6 +104,10 @@ def _write_result(raw: Any, items: list[Mapping[str, Any]]) -> dict[str, Any]:
 def _mdblist_key_of(obj: Any) -> str:
     try:
         if isinstance(obj, Mapping):
+            if obj.get("_cw_rewatch_sync") is True:
+                key = str(obj.get("_cw_event_key") or "").strip()
+                if key:
+                    return key
             return str(canonical_key(id_minimal(obj)) or "").strip()
     except Exception:
         pass
@@ -134,7 +142,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.5"
+__VERSION__ = "1.6"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -247,8 +255,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "upsert": True,
                 "remove": True,
                 "from_date": True,
-                "event_history": False,
-                "rewatches": {"read": False, "write": False},
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
                 "observed_deletes": True,
@@ -797,8 +805,8 @@ class _MDBLISTOPS:
                 "upsert": True,
                 "remove": True,
                 "from_date": True,
-                "event_history": False,
-                "rewatches": {"read": False, "write": False},
+                "event_history": True,
+                "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
                 "observed_deletes": True,

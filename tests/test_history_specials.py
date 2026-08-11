@@ -9,6 +9,7 @@ import pytest
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator import _applier, _unresolved
 from cw_platform.orchestrator._pairs_oneway import compute_effective_add
+from providers.sync.mdblist import _history as mdblist_history
 from providers.sync.mdblist._history import _bucketize, _items_for_not_found
 from providers.sync import _mod_MDBLIST as mdblist_mod
 from providers.sync.publicmetadb._history import _payload_for_item, _to_minimal
@@ -98,6 +99,552 @@ def test_mdblist_groups_multiple_specials_under_one_season() -> None:
         }
     ]
     assert len(accepted) == 2
+
+
+def test_mdblist_episode_tmdb_uses_flat_episode_payload() -> None:
+    item = {
+        "type": "episode",
+        "title": "Episode 1",
+        "series_title": "Japanology Plus",
+        "ids": {"tmdb": "1359983"},
+        "show_ids": {"tmdb": "73679"},
+        "season": 2014,
+        "episode": 1,
+        "watched_at": WATCHED_AT,
+    }
+
+    body, accepted = _bucketize([item], unwatch=False)
+
+    assert body == {"episodes": [{"ids": {"tmdb": 1359983}, "watched_at": WATCHED_AT}]}
+    assert accepted[0]["ids"] == {"tmdb": 1359983}
+    assert accepted[0]["show_ids"] == {"tmdb": 73679}
+
+
+class _MDBListResponse:
+    def __init__(self, status_code: int = 200, payload: dict[str, object] | None = None):
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.text = json.dumps(self._payload)
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+def _mdblist_adapter(*, rewatches: bool = True) -> SimpleNamespace:
+    return SimpleNamespace(
+        config={"_cw_history_rewatches": rewatches},
+        cfg=SimpleNamespace(timeout=1.0, max_retries=0),
+        client=SimpleNamespace(session=object()),
+    )
+
+
+def test_mdblist_rewatch_index_reads_per_play_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return _MDBListResponse(
+            payload={
+                "movies": [
+                    {
+                        "id": 101,
+                        "watched_at": "2026-01-01T00:00:00Z",
+                        "movie": {"title": "Heat", "year": 1995, "ids": {"tmdb": 949}},
+                    },
+                    {
+                        "id": 102,
+                        "watched_at": "2026-01-02T00:00:00Z",
+                        "movie": {"title": "Heat", "year": 1995, "ids": {"tmdb": 949}},
+                    },
+                ],
+                "pagination": {"has_more": False},
+            }
+        )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_cfg", lambda adapter: {"api_key": "k"})
+
+    out = mdblist_history.build_index(_mdblist_adapter())
+
+    assert calls[0]["params"]["plays"] == "all"
+    assert sorted(out) == ["tmdb:949@1767225600", "tmdb:949@1767312000"]
+    assert out["tmdb:949@1767225600"]["provider_event_id"] == "101"
+    assert out["tmdb:949@1767225600"]["_cw_rewatch_sync"] is True
+
+
+def test_mdblist_rewatch_add_uses_report_added_and_confirms_new_play(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return _MDBListResponse(
+            payload={
+                "plays": [
+                    {
+                        "id": 777,
+                        "type": "movie",
+                        "ids": {"tmdb": 949},
+                        "watched_at": "2026-01-01T00:00:00Z",
+                        "added": True,
+                    }
+                ],
+                "not_found": {},
+            }
+        )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_cfg", lambda adapter: {"api_key": "k", "history_write_delay_ms": 0})
+
+    item = {
+        "type": "movie",
+        "ids": {"tmdb": 949},
+        "watched_at": "2026-01-01T00:00:00Z",
+        "_cw_rewatch_sync": True,
+        "_cw_event_key": "tmdb:949@1767225600",
+    }
+    result = mdblist_history.add(_mdblist_adapter(), [item])
+
+    assert calls[0]["params"]["report_added"] == "true"
+    assert calls[0]["json"] == {"movies": [{"ids": {"tmdb": 949}, "watched_at": "2026-01-01T00:00:00Z"}]}
+    assert result["confirmed_keys"] == ["tmdb:949@1767225600"]
+    assert result["unresolved"] == []
+
+
+def test_mdblist_rewatch_add_marks_collapsed_play_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request(adapter, method, url, **kwargs):
+        return _MDBListResponse(
+            payload={
+                "plays": [
+                    {
+                        "id": 777,
+                        "type": "movie",
+                        "ids": {"tmdb": 949},
+                        "watched_at": "2026-01-01T00:00:00Z",
+                        "added": False,
+                    }
+                ],
+                "not_found": {},
+            }
+        )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_cfg", lambda adapter: {"api_key": "k", "history_write_delay_ms": 0})
+
+    result = mdblist_history.add(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 949},
+                "watched_at": "2026-01-01T00:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:949@1767225600",
+            }
+        ],
+    )
+
+    assert result["confirmed_keys"] == []
+    assert result["unresolved"][0]["hint"] == "mdblist_play_collapsed"
+    assert result["unresolved"][0]["key"] == "tmdb:949@1767225600"
+
+
+def test_mdblist_rewatch_remove_uses_play_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return _MDBListResponse(payload={"removed": [777], "not_found": []})
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_cfg", lambda adapter: {"api_key": "k", "history_chunk_size": 10})
+
+    result = mdblist_history.remove(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 949},
+                "watched_at": "2026-01-01T00:00:00Z",
+                "provider_event_id": "777",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:949@1767225600",
+            }
+        ],
+    )
+
+    assert calls[0]["url"] == mdblist_history.URL_REMOVE_PLAYS
+    assert calls[0]["json"] == {"play_ids": [777]}
+    assert result["confirmed_keys"] == ["tmdb:949@1767225600"]
+
+
+def test_mdblist_rewatch_remove_without_play_id_does_not_unwatch_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return _MDBListResponse(payload={})
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_cfg", lambda adapter: {"api_key": "k"})
+
+    result = mdblist_history.remove(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 949},
+                "watched_at": "2026-01-01T00:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:949@1767225600",
+            }
+        ],
+    )
+
+    assert calls == []
+    assert result["confirmed_keys"] == []
+    assert result["unresolved"][0]["hint"] == "missing_mdblist_play_id"
+
+
+def test_mdblist_rewatch_index_incomplete_snapshot_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    pages: list[int] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        pages.append(int(kwargs.get("params", {}).get("offset") or 0))
+        if len(pages) == 1:
+            return _MDBListResponse(
+                payload={
+                    "movies": [
+                        {
+                            "id": 101,
+                            "watched_at": "2026-01-01T00:00:00Z",
+                            "movie": {"title": "Heat", "year": 1995, "ids": {"tmdb": 949}},
+                        }
+                    ]
+                }
+            )
+        return _MDBListResponse(status_code=500, payload={"error": "boom"})
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_cfg", lambda adapter: {"api_key": "k"})
+
+    with pytest.raises(mdblist_history.MDBListFetchError):
+        mdblist_history.build_index(_mdblist_adapter())
+
+    assert len(pages) == 2
+
+
+def test_mdblist_rewatch_remove_show_falls_back_to_item_remove(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return _MDBListResponse(payload={"removed": {"shows": 1}})
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(
+        mdblist_history,
+        "_cfg",
+        lambda adapter: {"api_key": "k", "history_write_delay_ms": 0},
+    )
+
+    result = mdblist_history.remove(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "show",
+                "ids": {"tmdb": 1399},
+                "watched_at": "2026-01-01T00:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:1399@1767225600",
+            }
+        ],
+    )
+
+    assert [c["url"] for c in calls] == [mdblist_history.URL_REMOVE]
+    assert result["confirmed_keys"] == ["tmdb:1399@1767225600"]
+    assert result["unresolved"] == []
+
+
+def test_mdblist_rewatch_add_without_play_report_confirms_attempted(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request(adapter, method, url, **kwargs):
+        return _MDBListResponse(payload={"added": {"movies": 1}, "not_found": {}})
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(
+        mdblist_history,
+        "_cfg",
+        lambda adapter: {"api_key": "k", "history_write_delay_ms": 0},
+    )
+
+    result = mdblist_history.add(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 949},
+                "watched_at": "2026-01-01T00:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:949@1767225600",
+            }
+        ],
+    )
+
+    assert result["confirmed_keys"] == ["tmdb:949@1767225600"]
+    assert result["unresolved"] == []
+
+
+def test_mdblist_rewatch_add_unchanged_play_is_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request(adapter, method, url, **kwargs):
+        return _MDBListResponse(
+            payload={
+                "updated": {"movies": 0, "shows": 0, "seasons": 0, "episodes": 0},
+                "not_found": {"movies": [], "shows": [], "seasons": [], "episodes": []},
+                "plays": [],
+            }
+        )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(
+        mdblist_history,
+        "_cfg",
+        lambda adapter: {"api_key": "k", "history_write_delay_ms": 0},
+    )
+
+    result = mdblist_history.add(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 22293},
+                "watched_at": "2019-02-14T21:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:22293@1550178000",
+            }
+        ],
+    )
+
+    assert result["confirmed_keys"] == ["tmdb:22293@1550178000"]
+    assert result["unresolved"] == []
+
+
+def test_mdblist_rewatch_add_matches_millisecond_watched_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request(adapter, method, url, **kwargs):
+        return _MDBListResponse(
+            payload={
+                "updated": {"movies": 1},
+                "not_found": {},
+                "plays": [
+                    {
+                        "type": "movie",
+                        "ids": {"mdblist": "104f", "imdb": "tt0060666", "tmdb": 22293, "trakt": 13579},
+                        "watched_at": "2019-02-14T21:00:00.000Z",
+                        "added": True,
+                    }
+                ],
+            }
+        )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(
+        mdblist_history,
+        "_cfg",
+        lambda adapter: {"api_key": "k", "history_write_delay_ms": 0},
+    )
+
+    result = mdblist_history.add(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 22293},
+                "watched_at": "2019-02-14T21:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:22293@1550178000",
+            }
+        ],
+    )
+
+    assert result["confirmed_keys"] == ["tmdb:22293@1550178000"]
+    assert result["unresolved"] == []
+
+
+def test_mdblist_rewatch_add_chunks_stay_under_play_report_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_request(adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        sent = (kwargs.get("json") or {}).get("movies") or []
+        return _MDBListResponse(
+            payload={
+                "plays": [
+                    {
+                        "id": 900 + i,
+                        "type": "movie",
+                        "ids": dict(row.get("ids") or {}),
+                        "watched_at": row.get("watched_at"),
+                        "added": True,
+                    }
+                    for i, row in enumerate(sent)
+                ],
+                "not_found": {},
+            }
+        )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(
+        mdblist_history,
+        "_cfg",
+        lambda adapter: {"api_key": "k", "history_chunk_size": 500, "history_write_delay_ms": 0},
+    )
+
+    items = [
+        {
+            "type": "movie",
+            "ids": {"tmdb": 1000 + i},
+            "watched_at": "2026-01-01T00:00:00Z",
+            "_cw_rewatch_sync": True,
+            "_cw_event_key": f"tmdb:{1000 + i}@1767225600",
+        }
+        for i in range(250)
+    ]
+    result = mdblist_history.add(_mdblist_adapter(), items)
+
+    sizes = [len((c["json"] or {}).get("movies") or []) for c in calls]
+    assert sizes == [100, 100, 50]
+    assert max(sizes) <= mdblist_history.PLAY_REPORT_MAX_ITEMS
+    assert len(result["confirmed_keys"]) == 250
+
+
+def test_mdblist_rewatch_add_http_failure_is_not_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_request(adapter, method, url, **kwargs):
+        return _MDBListResponse(status_code=400, payload={"error": "bad"})
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(
+        mdblist_history,
+        "_cfg",
+        lambda adapter: {"api_key": "k", "history_write_delay_ms": 0},
+    )
+
+    result = mdblist_history.add(
+        _mdblist_adapter(),
+        [
+            {
+                "type": "movie",
+                "ids": {"tmdb": 949},
+                "watched_at": "2026-01-01T00:00:00Z",
+                "_cw_rewatch_sync": True,
+                "_cw_event_key": "tmdb:949@1767225600",
+            }
+        ],
+    )
+
+    assert result["confirmed_keys"] == []
+    assert result["unresolved"][0]["hint"] == "http:400"
+
+
+def test_mdblist_episode_tmdb_needs_show_tmdb_to_go_flat() -> None:
+    without_coordinates = {
+        "type": "episode",
+        "ids": {"tmdb": "1359983"},
+        "watched_at": WATCHED_AT,
+    }
+    with_coordinates = {
+        "type": "episode",
+        "ids": {"tmdb": "1359983"},
+        "season": 2014,
+        "episode": 1,
+        "watched_at": WATCHED_AT,
+    }
+
+    body_flat, accepted_flat = _bucketize([without_coordinates], unwatch=False)
+    body_nested, _accepted_nested = _bucketize([with_coordinates], unwatch=False)
+
+    assert "episodes" not in body_flat
+    assert accepted_flat == []
+    assert "episodes" not in body_nested
+
+
+def test_mdblist_episode_tmdb_bucket_is_posted(monkeypatch) -> None:
+    class Resp:
+        status_code = 200
+        text = json.dumps({"added": {"episodes": 1}, "not_found": {}})
+
+        def json(self) -> dict[str, object]:
+            return {"added": {"episodes": 1}, "not_found": {}}
+
+    class Client:
+        session = object()
+
+    adapter = SimpleNamespace(
+        client=Client(),
+        cfg=SimpleNamespace(timeout=1.0, max_retries=0),
+        config={"mdblist": {"auth_method": "api_key", "api_key": "k", "history_write_delay_ms": 0}},
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_request(_adapter, method, url, **kwargs):
+        calls.append({"method": method, "url": url, **kwargs})
+        return Resp()
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", fake_request)
+    monkeypatch.setattr(mdblist_history, "_load_cache", lambda: {})
+    monkeypatch.setattr(mdblist_history, "_save_cache", lambda _items: None)
+    monkeypatch.setattr(mdblist_history, "update_watermark_if_new", lambda *_a, **_k: None)
+    monkeypatch.setattr(mdblist_history.time, "sleep", lambda _seconds: None)
+
+    applied, unresolved = mdblist_history.add(
+        adapter,
+        [
+            {
+                "type": "episode",
+                "ids": {"tmdb": "1359983"},
+                "show_ids": {"tmdb": "73679"},
+                "season": 2014,
+                "episode": 1,
+                "watched_at": WATCHED_AT,
+            }
+        ],
+    )
+
+    assert applied == 1
+    assert unresolved == []
+    assert calls[0]["url"] == mdblist_history.URL_UPSERT
+    assert calls[0]["json"] == {"episodes": [{"ids": {"tmdb": 1359983}, "watched_at": WATCHED_AT}]}
+
+
+def test_mdblist_episode_tmdb_not_found_uses_attempted_episode_key(monkeypatch) -> None:
+    class Resp:
+        status_code = 200
+        text = json.dumps({"added": {}, "not_found": {"episodes": [{"ids": {"tmdb": 1359983}}]}})
+
+        def json(self) -> dict[str, object]:
+            return {"added": {}, "not_found": {"episodes": [{"ids": {"tmdb": 1359983}}]}}
+
+    class Client:
+        session = object()
+
+    item = {
+        "type": "episode",
+        "ids": {"tmdb": "1359983"},
+        "show_ids": {"tmdb": "73679"},
+        "season": 2014,
+        "episode": 1,
+        "watched_at": WATCHED_AT,
+    }
+    adapter = SimpleNamespace(
+        client=Client(),
+        cfg=SimpleNamespace(timeout=1.0, max_retries=0),
+        config={"mdblist": {"auth_method": "api_key", "api_key": "k", "history_write_delay_ms": 0}},
+    )
+
+    monkeypatch.setattr(mdblist_history, "mdblist_request", lambda *_a, **_k: Resp())
+    monkeypatch.setattr(mdblist_history.time, "sleep", lambda _seconds: None)
+
+    applied, unresolved = mdblist_history.add(adapter, [item])
+
+    assert applied == 0
+    assert unresolved[0]["key"] == canonical_key(item)
 
 
 def test_mdblist_not_found_keeps_episode_unresolved_key(monkeypatch) -> None:

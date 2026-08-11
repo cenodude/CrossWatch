@@ -9,8 +9,9 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, TypeGuard
+from typing import Any, Iterable, Mapping, Sequence, TypeGuard
 
+from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
@@ -18,6 +19,7 @@ from .._log import log as cw_log
 from .._mod_common import request_with_retries
 
 from ._common import (
+    MDBListFetchError,
     START_OF_TIME_ISO,
     STATE_DIR,
     state_file,
@@ -44,6 +46,9 @@ URL_LAST_ACTIVITIES = f"{BASE}/sync/last_activities"
 URL_LIST = f"{BASE}/sync/watched"
 URL_UPSERT = f"{BASE}/sync/watched"
 URL_REMOVE = f"{BASE}/sync/watched/remove"
+URL_REMOVE_PLAYS = f"{BASE}/sync/watched/plays/remove"
+
+PLAY_REPORT_MAX_ITEMS = 100
 
 IMDB_RE = re.compile(r'^tt\d+$')
 EP_TAG_RE = re.compile(r'^S\d{2}E\d{2}$')
@@ -100,6 +105,19 @@ _iso_z = iso_z
 _as_epoch = as_epoch
 _as_iso = as_iso
 _max_iso = max_iso
+
+
+def _rewatches_enabled(adapter: Any) -> bool:
+    cfg = getattr(adapter, "config", None)
+    return bool(isinstance(cfg, Mapping) and cfg.get("_cw_history_rewatches"))
+
+
+def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> str:
+    return history_sync_key(item, fallback_key, event_mode=_rewatches_enabled(adapter))
+
+
+def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> dict[str, Any]:
+    return minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter))
 
 
 def _migrate_cache(items: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -506,6 +524,27 @@ def _ids_pick(obj: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _copy_source_event_meta(src: Mapping[str, Any], dst: dict[str, Any]) -> None:
+    for key in ("provider_event_id", "history_id", "_history_id", "_cw_event_key", "_cw_rewatch_sync"):
+        if key in src and src.get(key) not in (None, ""):
+            dst[key] = src.get(key)
+
+
+def _copy_play_meta(row: Mapping[str, Any], out: dict[str, Any]) -> None:
+    raw_id = (
+        row.get("play_id")
+        if row.get("play_id") not in (None, "")
+        else row.get("history_id")
+        if row.get("history_id") not in (None, "")
+        else row.get("id")
+    )
+    if raw_id not in (None, ""):
+        out["provider_event_id"] = str(raw_id).strip()
+        out["history_id"] = str(raw_id).strip()
+    if row.get("added") is not None:
+        out["_mdblist_added"] = bool(row.get("added"))
+
+
 def _row_movie(row: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
         mv = row.get("movie") or {}
@@ -609,18 +648,27 @@ def _row_season(row: Mapping[str, Any]) -> dict[str, Any] | None:
 def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
     try:
         ev = row.get("episode") or {}
-        show = ev.get("show") or {}
-        eids = _ids_pick(ev)
+        show = ev.get("show") or row.get("show") or {}
+        eids = _ids_pick(ev) or _ids_pick(row)
         sh_ids = _ids_pick(show)
         ids = eids or sh_ids
         if not ids:
             return None
 
-        num = ev.get("number") if ev.get("number") is not None else ev.get("episode")
+        num = (
+            ev.get("number")
+            if ev.get("number") is not None
+            else ev.get("episode")
+            if ev.get("episode") is not None
+            else row.get("number")
+            if row.get("number") is not None
+            else row.get("episode")
+        )
+        season = ev.get("season") if ev.get("season") is not None else row.get("season")
         out: dict[str, Any] = {
             "type": "episode",
             "ids": ids,
-            "season": ev.get("season"),
+            "season": season,
             "episode": num,
         }
         if sh_ids:
@@ -657,6 +705,130 @@ def _row_episode(row: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
 
 
+def _put_history_item(adapter: Any, out: dict[str, dict[str, Any]], item: Mapping[str, Any]) -> str | None:
+    key = _history_key(adapter, item)
+    if not key:
+        return None
+    out[key] = _history_minimal(adapter, item, key)
+    return key
+
+
+def _play_response_item(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    typ = _type_norm(row.get("type"))
+    if typ == "episode":
+        item = _row_episode(row)
+    elif typ == "show":
+        item = _row_show(row)
+    elif typ == "season":
+        item = _row_season(row)
+    else:
+        movie_row = row if isinstance(row.get("movie"), Mapping) else {"movie": row, **dict(row)}
+        item = _row_movie(movie_row)
+    if item:
+        _copy_play_meta(row, item)
+    return item
+
+
+def _build_event_index(
+    adapter: Any,
+    *,
+    apikey: str,
+    per_page: int,
+    max_pages: int,
+    timeout: float,
+    retries: int,
+) -> dict[str, dict[str, Any]]:
+    prog_factory = getattr(adapter, "progress_factory", None)
+    prog: Any = prog_factory("history") if callable(prog_factory) else None
+
+    out: dict[str, dict[str, Any]] = {}
+    latest_seen: str | None = None
+    offset = 0
+    pages = 0
+    tick = 0
+    complete_fetch = True
+
+    while True:
+        params: dict[str, Any] = {"apikey": apikey, "offset": offset, "limit": per_page, "plays": "all"}
+        try:
+            r = mdblist_request(
+                adapter,
+                "GET",
+                URL_LIST,
+                params=params,
+                timeout=timeout,
+                max_retries=retries,
+            )
+        except Exception as e:
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, offset=offset, plays="all", error=f"{type(e).__name__}: {e}")
+            complete_fetch = False
+            break
+
+        if r.status_code != 200:
+            _warn("http_failed", op="index", method="GET", url=URL_LIST, status=r.status_code, offset=offset, plays="all", body=(r.text or '')[:160])
+            complete_fetch = False
+            break
+
+        data = r.json() if (r.text or "").strip() else {}
+        buckets = {
+            "movies": data.get("movies") or [],
+            "shows": data.get("shows") or [],
+            "seasons": data.get("seasons") or [],
+            "episodes": data.get("episodes") or [],
+        }
+        added = 0
+        for bucket_name, parser in (
+            ("movies", _row_movie),
+            ("shows", _row_show),
+            ("seasons", _row_season),
+            ("episodes", _row_episode),
+        ):
+            for row in buckets[bucket_name]:
+                m = parser(row) if isinstance(row, Mapping) else None
+                if not m:
+                    continue
+                _copy_play_meta(row, m)
+                if _put_history_item(adapter, out, m):
+                    latest_seen = _max_iso(latest_seen, m.get("watched_at"))
+                    added += 1
+
+        tick += added
+        if prog and added:
+            try:
+                prog.tick(tick, total=max(tick, tick + 1))
+            except Exception:
+                pass
+
+        pages += 1
+        if pages >= max_pages:
+            _warn("index_reconcile", reason="safety_cap_hit", strategy="event_snapshot", max_pages=max_pages)
+            complete_fetch = False
+            break
+
+        pag = data.get("pagination") if isinstance(data, Mapping) else None
+        if isinstance(pag, Mapping) and pag.get("has_more") is False:
+            break
+
+        rows_total = sum(len(v) for v in buckets.values() if isinstance(v, list))
+        if rows_total == 0:
+            break
+        offset += per_page
+
+    if not complete_fetch:
+        _warn("index_reconcile", reason="incomplete_snapshot", strategy="event_snapshot", fetched=len(out), pages=pages)
+        raise MDBListFetchError("history plays snapshot incomplete")
+
+    if prog:
+        try:
+            prog.tick(len(out), total=len(out))
+        except Exception:
+            pass
+
+    _dbg("index_fetch_counts", count=len(out), latest_seen=latest_seen or "-", source="plays", complete=complete_fetch)
+    _info("index_done", count=len(out), source="plays")
+    return out
+
+
 def build_index(
     adapter: Any,
     *,
@@ -664,13 +836,17 @@ def build_index(
     max_pages: int = 250,
 ) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
-    cached_raw = _load_cache()
+    event_mode = _rewatches_enabled(adapter)
+    cached_raw = {} if event_mode else _load_cache()
     cached: dict[str, dict[str, Any]] = {
         str(k): dict(v) for k, v in (cached_raw or {}).items() if isinstance(v, Mapping)
     }
 
     apikey = str(cfg.get("api_key") or "").strip()
     if not has_auth(cfg):
+        if event_mode:
+            _warn("index_reconcile", reason="missing_auth", strategy="event_snapshot", rewatches=True)
+            raise MDBListFetchError("history plays snapshot unavailable: missing auth")
         if cached:
             _dbg("index_cache_hit", source="cache", reason="missing_auth", count=len(cached))
             _info("index_done", count=len(cached), source="cache")
@@ -687,6 +863,16 @@ def build_index(
     sess = adapter.client.session
     timeout = adapter.cfg.timeout
     retries = adapter.cfg.max_retries
+
+    if event_mode:
+        return _build_event_index(
+            adapter,
+            apikey=apikey,
+            per_page=per_page,
+            max_pages=max_pages,
+            timeout=timeout,
+            retries=retries,
+        )
 
     acts = _fetch_last_activities(adapter, timeout=timeout, retries=retries) or {}
     acts_candidates = []
@@ -911,6 +1097,37 @@ def _stable_show_key(ids: Mapping[str, Any]) -> str:
     return json.dumps(keep, sort_keys=True)
 
 
+def _tmdb_id_value(ids: Mapping[str, Any]) -> int | None:
+    raw = ids.get("tmdb") if isinstance(ids, Mapping) else None
+    if raw in (None, ""):
+        return None
+    try:
+        value = int(raw)
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _flat_episode_tmdb_row(
+    item: Mapping[str, Any],
+    ids: Mapping[str, Any],
+    show_ids: Mapping[str, Any],
+    watched_iso: str | None,
+) -> dict[str, Any] | None:
+    tmdb = _tmdb_id_value(ids)
+    if tmdb is None:
+        return None
+
+    show_tmdb = _tmdb_id_value(show_ids)
+    if show_tmdb is None or show_tmdb == tmdb:
+        return None
+
+    row: dict[str, Any] = {"ids": {"tmdb": tmdb}}
+    if watched_iso:
+        row["watched_at"] = watched_iso
+    return row
+
+
 def _as_int(value: Any) -> int | None:
     try:
         return int(value) if value is not None else None
@@ -920,11 +1137,18 @@ def _as_int(value: Any) -> int | None:
 
 def _unresolved_entry(item: Mapping[str, Any], hint: str) -> dict[str, Any]:
     minimal_item = id_minimal(item)
+    for field in ("provider_event_id", "history_id", "_history_id", "_cw_event_key", "_cw_rewatch_sync"):
+        if field in item and item.get(field) not in (None, ""):
+            minimal_item[field] = item.get(field)
     entry: dict[str, Any] = {"item": minimal_item, "hint": hint}
-    try:
-        key = str(canonical_key(minimal_item) or "").strip()
-    except Exception:
-        key = ""
+    key = ""
+    if item.get("_cw_rewatch_sync") is True:
+        key = str(item.get("_cw_event_key") or "").strip()
+    if not key:
+        try:
+            key = str(canonical_key(minimal_item) or "").strip()
+        except Exception:
+            key = ""
     if key:
         entry["key"] = key
     return entry
@@ -1067,6 +1291,7 @@ def _items_for_not_found(row: Mapping[str, Any], kind: str, sent_rows: Any = Non
 
 def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     movies: list[dict[str, Any]] = []
+    episodes: list[dict[str, Any]] = []
     shows_nested: dict[str, dict[str, Any]] = {}
     shows_plain: dict[str, dict[str, Any]] = {}
 
@@ -1124,6 +1349,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             movies.append(row)
             acc = {"type": "movie", "ids": ids, **({"watched_at": watched_iso} if watched_iso else {})}
             _carry_meta_for_mdblist(m, acc)
+            _copy_source_event_meta(m, acc)
             accepted.append(acc)
             continue
 
@@ -1138,8 +1364,30 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             shows_plain[key] = sh
             acc = {"type": "show", "ids": ids, **({"watched_at": watched_iso} if watched_iso else {})}
             _carry_meta_for_mdblist(m, acc)
+            _copy_source_event_meta(m, acc)
             accepted.append(acc)
             continue
+
+        if typ == "episode":
+            flat_episode = _flat_episode_tmdb_row(m, ids, show_ids, watched_iso)
+            if flat_episode is not None:
+                episodes.append(flat_episode)
+                acc = {
+                    "type": "episode",
+                    "ids": ids,
+                    **({"watched_at": watched_iso} if watched_iso else {}),
+                }
+                if show_ids:
+                    acc["show_ids"] = show_ids
+                if m.get("season") is not None:
+                    acc["season"] = m.get("season")
+                ep_num = m.get("episode") if m.get("episode") is not None else m.get("number")
+                if ep_num is not None:
+                    acc["episode"] = ep_num
+                _carry_meta_for_mdblist(m, acc)
+                _copy_source_event_meta(m, acc)
+                accepted.append(acc)
+                continue
 
         season_num = m.get("season")
         if season_num is None:
@@ -1189,6 +1437,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
                 }
             )
             _carry_meta_for_mdblist(m, accepted[-1])
+            _copy_source_event_meta(m, accepted[-1])
             continue
 
         ep_num = m.get("episode") if m.get("episode") is not None else m.get("number")
@@ -1218,6 +1467,7 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
             }
         )
         _carry_meta_for_mdblist(m, accepted[-1])
+        _copy_source_event_meta(m, accepted[-1])
 
     skipped_nested = 0
     if shows_plain and nested_show_keys:
@@ -1239,6 +1489,8 @@ def _bucketize(items: Iterable[Mapping[str, Any]], *, unwatch: bool) -> tuple[di
     body: dict[str, Any] = {}
     if movies:
         body["movies"] = movies
+    if episodes:
+        body["episodes"] = episodes
     if shows_nested:
         for grp in shows_nested.values():
             seasons_list2 = grp.get("seasons")
@@ -1261,15 +1513,195 @@ def _chunk(seq: list[Any], n: int) -> Iterable[list[Any]]:
         yield seq[i : i + n]
 
 
+def _source_event_key(adapter: Any, item: Mapping[str, Any]) -> str:
+    if item.get("_cw_rewatch_sync") is True:
+        key = str(item.get("_cw_event_key") or "").strip()
+        if key:
+            return key
+    return _history_key(adapter, item)
+
+
+def _event_write_result(
+    *,
+    confirmed_keys: Iterable[str],
+    unresolved: list[dict[str, Any]],
+    attempted: int,
+) -> dict[str, Any]:
+    confirmed = [str(k) for k in dict.fromkeys(k for k in confirmed_keys if k)]
+    unresolved_keys = [
+        str(u.get("key") or "").strip()
+        for u in unresolved
+        if isinstance(u, Mapping) and str(u.get("key") or "").strip()
+    ]
+    unresolved_key_set = set(unresolved_keys)
+    confirmed = [k for k in confirmed if k not in unresolved_key_set]
+    return {
+        "ok": not unresolved,
+        "count": len(confirmed),
+        "confirmed_keys": confirmed,
+        "unresolved": unresolved,
+        "unresolved_keys": list(dict.fromkeys(unresolved_keys)),
+        "attempted": attempted,
+    }
+
+
+def _merge_event_results(
+    first: dict[str, Any] | None,
+    second: dict[str, Any],
+) -> dict[str, Any]:
+    if not first:
+        return second
+    unresolved = list(first.get("unresolved") or []) + list(second.get("unresolved") or [])
+    confirmed = list(first.get("confirmed_keys") or []) + list(second.get("confirmed_keys") or [])
+    return _event_write_result(
+        confirmed_keys=confirmed,
+        unresolved=unresolved,
+        attempted=int(second.get("attempted") or 0),
+    )
+
+
+def _play_id(item: Mapping[str, Any]) -> int | None:
+    for field in ("_mdblist_play_id", "play_id", "provider_event_id", "history_id", "_history_id", "id"):
+        value = item.get(field)
+        if value in (None, ""):
+            continue
+        try:
+            play_id = int(str(value).strip())
+        except Exception:
+            continue
+        if play_id > 0:
+            return play_id
+    return None
+
+
+def _remove_plays(
+    adapter: Any,
+    items: Iterable[Mapping[str, Any]],
+    *,
+    apikey: str,
+    timeout: float,
+    retries: int,
+    chunk_size: int,
+    delay_ms: int = 0,
+) -> dict[str, Any]:
+    items_list = [dict(it or {}) for it in items or [] if isinstance(it, Mapping)]
+    by_id: dict[int, dict[str, Any]] = {}
+    unresolved: list[dict[str, Any]] = []
+    for item in items_list:
+        pid = _play_id(item)
+        if pid is None:
+            unresolved.append(_unresolved_entry(item, "missing_mdblist_play_id"))
+            continue
+        by_id.setdefault(pid, item)
+
+    confirmed: list[str] = []
+    for ids_part in _chunk(list(by_id.keys()), chunk_size):
+        try:
+            r = mdblist_request(
+                adapter,
+                "POST",
+                URL_REMOVE_PLAYS,
+                params={"apikey": apikey},
+                json={"play_ids": ids_part},
+                timeout=timeout,
+                max_retries=retries,
+            )
+        except Exception as e:
+            for pid in ids_part:
+                unresolved.append(_unresolved_entry(by_id[pid], f"exception:{type(e).__name__}"))
+            continue
+
+        if r.status_code not in (200, 201, 204):
+            _warn("write_failed", op="remove_play", status=r.status_code, body=(r.text or '')[:200])
+            for pid in ids_part:
+                unresolved.append(_unresolved_entry(by_id[pid], f"http:{r.status_code}"))
+            continue
+
+        if r.status_code == 204 or not (r.text or "").strip():
+            data: Mapping[str, Any] = {"removed": ids_part}
+        else:
+            try:
+                parsed = r.json()
+                data = parsed if isinstance(parsed, Mapping) else {}
+            except Exception:
+                data = {}
+
+        removed_ids = {
+            int(x)
+            for x in (data.get("removed") or ids_part)
+            if str(x).strip().lstrip("-").isdigit()
+        }
+        not_found_ids = {
+            int(x)
+            for x in (data.get("not_found") or [])
+            if str(x).strip().lstrip("-").isdigit()
+        }
+        for pid in ids_part:
+            item = by_id[pid]
+            if pid in not_found_ids:
+                unresolved.append(_unresolved_entry(item, "play_not_found"))
+                continue
+            if pid in removed_ids:
+                confirmed.append(_source_event_key(adapter, item))
+
+        if delay_ms > 0:
+            time.sleep(max(0.0, delay_ms / 1000.0))
+
+    _info("write_done", op="remove_play", ok=len(unresolved) == 0, applied=len(confirmed), unresolved=len(unresolved))
+    return _event_write_result(confirmed_keys=confirmed, unresolved=unresolved, attempted=len(items_list))
+
+
+def _same_event_candidate(adapter: Any, left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    left_key = _history_key(adapter, left)
+    right_key = _history_key(adapter, right)
+    if left_key and right_key and left_key == right_key:
+        return True
+    if _type_norm(left.get("type")) != _type_norm(right.get("type")):
+        return False
+    left_raw = str(left.get("watched_at") or "")
+    right_raw = str(right.get("watched_at") or "")
+    left_w = _iso_z(left_raw) if _iso_ok(left_raw) else left_raw
+    right_w = _iso_z(right_raw) if _iso_ok(right_raw) else right_raw
+    if left_w and right_w and left_w != right_w:
+        return False
+    left_ids = _id_aliases(left.get("ids")) | _id_aliases(left.get("show_ids"))
+    right_ids = _id_aliases(right.get("ids")) | _id_aliases(right.get("show_ids"))
+    if left_ids and right_ids and not (left_ids & right_ids):
+        return False
+    if _type_norm(left.get("type")) == "episode":
+        for field in ("season", "episode"):
+            lv = _as_int(left.get(field))
+            rv = _as_int(right.get(field))
+            if lv is not None and rv is not None and lv != rv:
+                return False
+    return True
+
+
+def _match_response_play(
+    adapter: Any,
+    play_item: Mapping[str, Any],
+    accepted: Sequence[Mapping[str, Any]],
+    used: set[int],
+) -> Mapping[str, Any] | None:
+    for idx, item in enumerate(accepted or []):
+        if idx in used:
+            continue
+        if _same_event_candidate(adapter, play_item, item):
+            used.add(idx)
+            return item
+    return None
+
+
 def _write(
     adapter: Any,
     items: Iterable[Mapping[str, Any]],
     *,
     unwatch: bool = False,
-) -> tuple[int, list[dict[str, Any]]]:
+) -> Any:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
     items_list = list(items or [])
+    event_mode = _rewatches_enabled(adapter)
     if not has_auth(cfg):
         unresolved = [{"item": id_minimal(it), "hint": "missing_auth"} for it in items_list]
         _info("write_skipped", op="remove" if unwatch else "add", reason="missing_auth", unresolved=len(unresolved))
@@ -1283,13 +1715,89 @@ def _write(
     delay_ms = _cfg_int(cfg, "history_write_delay_ms", 600)
     max_backoff_ms = _cfg_int(cfg, "history_max_backoff_ms", 8000)
 
+    if event_mode and not unwatch:
+        chunk_size = max(1, min(chunk_size, PLAY_REPORT_MAX_ITEMS))
+
+    attempted_total = len(items_list)
+    play_result: dict[str, Any] | None = None
+    if event_mode and unwatch:
+        rollup_items = [it for it in items_list if _type_norm(it.get("type")) in ("show", "season")]
+        play_items = [it for it in items_list if _type_norm(it.get("type")) not in ("show", "season")]
+        play_result = _remove_plays(
+            adapter,
+            play_items,
+            apikey=apikey,
+            timeout=tmo,
+            retries=rr,
+            chunk_size=chunk_size,
+            delay_ms=delay_ms,
+        )
+        if not rollup_items:
+            return play_result
+        items_list = rollup_items
+
     body, accepted = _bucketize(items_list, unwatch=unwatch)
     if not body:
         _info("write_skipped", op="remove" if unwatch else "add", reason="empty_payload", unresolved=0)
+        if event_mode:
+            return _merge_event_results(
+                play_result,
+                _event_write_result(confirmed_keys=[], unresolved=[], attempted=attempted_total),
+            )
         return 0, []
 
     ok = 0
+    confirmed_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
+    matched_accepted: set[int] = set()
+    accepted_episode_tmdb: dict[str, dict[str, Any]] = {}
+    for item in accepted:
+        if _type_norm(item.get("type")) != "episode":
+            continue
+        raw_ids = item.get("ids")
+        tmdb = _tmdb_id_value(raw_ids if isinstance(raw_ids, Mapping) else {})
+        if tmdb is not None:
+            accepted_episode_tmdb.setdefault(str(tmdb), dict(item))
+
+    def _episode_attempt_for_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
+        ids = row.get("ids") if isinstance(row.get("ids"), Mapping) else row
+        tmdb = _tmdb_id_value(ids if isinstance(ids, Mapping) else {})
+        if tmdb is None:
+            return None
+        return accepted_episode_tmdb.get(str(tmdb))
+
+    def _unresolved_for_sent(bucket_name: str, sent: Mapping[str, Any], hint: str) -> list[dict[str, Any]]:
+        ids = sent.get("ids") if isinstance(sent.get("ids"), Mapping) else {}
+        if bucket_name == "episodes":
+            attempted = _episode_attempt_for_row(sent)
+            if attempted is not None:
+                return [_unresolved_entry(attempted, hint)]
+            return [_unresolved_entry({"type": "episode", "ids": ids}, hint)]
+        if bucket_name == "shows":
+            return [_unresolved_entry(item_nf, hint) for item_nf in _items_for_not_found(sent, "shows")]
+        return [_unresolved_entry({"type": "movie", "ids": ids}, hint)]
+
+    def _apply_play_report(data: Mapping[str, Any]) -> int | None:
+        plays = data.get("plays")
+        if not isinstance(plays, list):
+            return None
+        applied = 0
+        for row in plays:
+            if not isinstance(row, Mapping):
+                continue
+            play_item = _play_response_item(row)
+            if not play_item:
+                continue
+            matched = _match_response_play(adapter, play_item, accepted, matched_accepted)
+            if matched is None:
+                unresolved.append(_unresolved_entry(play_item, "play_response_unmatched"))
+                continue
+            if row.get("added") is False:
+                unresolved.append(_unresolved_entry(matched, "mdblist_play_collapsed"))
+                continue
+            confirmed_keys.append(_source_event_key(adapter, matched))
+            applied += 1
+        return applied
 
     def _apply_success(payload_rows: list[dict[str, Any]], bucket_name: str, data: Mapping[str, Any], *, is_unwatch: bool) -> int:
         kinds = ("movies", "shows", "seasons", "episodes")
@@ -1308,8 +1816,21 @@ def _write(
             for row_nf in rows_nf:
                 if not isinstance(row_nf, Mapping):
                     continue
+                if kind == "episodes":
+                    attempted = _episode_attempt_for_row(row_nf)
+                    if attempted is not None:
+                        unresolved.append(_unresolved_entry(attempted, "not_found"))
+                        continue
                 for item_nf in _items_for_not_found(row_nf, kind, payload_rows):
                     unresolved.append(_unresolved_entry(item_nf, "not_found"))
+
+        if event_mode:
+            play_applied = _apply_play_report(data)
+            if play_applied is not None:
+                if play_applied <= 0 and not unresolved:
+                    _dbg("write_prepare", op="add", reason="noop_play_response", bucket=bucket_name, rows=len(payload_rows))
+                return play_applied
+            _dbg("write_prepare", op="add", reason="play_report_missing", bucket=bucket_name, rows=len(payload_rows))
 
         updated = data.get("updated") or {}
         added = data.get("added") or {}
@@ -1326,6 +1847,7 @@ def _write(
         "write_start",
         op="remove" if unwatch else "add",
         movies=len(body.get("movies") or []),
+        episodes=len(body.get("episodes") or []),
         shows_nested=len(body.get("shows_nested") or []),
         shows_plain=len(body.get("shows_plain") or []),
         chunk_size=chunk_size,
@@ -1333,6 +1855,7 @@ def _write(
 
     stages: list[tuple[str, str]] = [
         ("movies", "movies"),
+        ("episodes", "episodes"),
         ("shows_nested", "shows"),
         ("shows_plain", "shows"),
     ]
@@ -1355,7 +1878,7 @@ def _write(
                     adapter,
                     "POST",
                     url,
-                    params={"apikey": apikey},
+                    params={"apikey": apikey, **({"report_added": "true"} if event_mode and not unwatch else {})},
                     json=payload,
                     timeout=tmo,
                     max_retries=rr,
@@ -1418,7 +1941,7 @@ def _write(
                             adapter,
                             "POST",
                             url,
-                            params={"apikey": apikey},
+                            params={"apikey": apikey, **({"report_added": "true"} if event_mode and not unwatch else {})},
                             json={bucket: [single]},
                             timeout=tmo,
                             max_retries=rr,
@@ -1439,8 +1962,7 @@ def _write(
                             time.sleep(max(0.0, delay_ms / 1000.0))
                             continue
 
-                        ids2 = single.get("ids") or {}
-                        unresolved.append(_unresolved_entry({"type": "show", "ids": ids2}, f"http:{r2.status_code}"))
+                        unresolved.extend(_unresolved_for_sent("shows", single, f"http:{r2.status_code}"))
                     break
 
                 _warn(
@@ -1452,16 +1974,10 @@ def _write(
                     body=(r.text or '')[:200],
                 )
                 for x in part:
-                    ids = x.get("ids") or {}
-                    t = "show" if bucket == "shows" else "movie"
-                    if bucket == "shows":
-                        for item_nf in _items_for_not_found(x, "shows"):
-                            unresolved.append(_unresolved_entry(item_nf, f"http:{r.status_code}"))
-                    else:
-                        unresolved.append(_unresolved_entry({"type": t, "ids": ids}, f"http:{r.status_code}"))
+                    unresolved.extend(_unresolved_for_sent(bucket, x, f"http:{r.status_code}"))
                 break
 
-    if ok > 0 and not unresolved:
+    if ok > 0 and not unresolved and not event_mode:
         cache = _load_cache()
         if unwatch:
             for it in accepted:
@@ -1488,12 +2004,33 @@ def _write(
         update_watermark_if_new("history", newest)
 
     _info("write_done", op="remove" if unwatch else "add", ok=len(unresolved) == 0, applied=ok, unresolved=len(unresolved))
+    if event_mode:
+        failed_keys = {
+            str(u.get("key") or "").strip()
+            for u in unresolved
+            if isinstance(u, Mapping) and str(u.get("key") or "").strip()
+        }
+        for it in accepted:
+            key = _source_event_key(adapter, it)
+            if not key:
+                continue
+            try:
+                base = str(canonical_key(id_minimal(it)) or "").strip()
+            except Exception:
+                base = ""
+            if base and base in failed_keys:
+                continue
+            confirmed_keys.append(key)
+        return _merge_event_results(
+            play_result,
+            _event_write_result(confirmed_keys=confirmed_keys, unresolved=unresolved, attempted=attempted_total),
+        )
     return ok, unresolved
 
 
-def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> Any:
     return _write(adapter, items, unwatch=False)
 
 
-def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
+def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> Any:
     return _write(adapter, items, unwatch=True)
