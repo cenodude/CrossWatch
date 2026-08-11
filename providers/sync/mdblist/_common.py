@@ -20,6 +20,11 @@ STATE_DIR = Path("/config/.cw_state")
 WATERMARK_PATH = STATE_DIR / "mdblist.watermarks.json"
 START_OF_TIME_ISO = "1900-01-01T00:00:00Z"
 
+
+class MDBListFetchError(RuntimeError):
+    pass
+
+
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 
