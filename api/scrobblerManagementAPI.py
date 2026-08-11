@@ -57,6 +57,7 @@ WEBHOOK_SETTING_KEYS = {
     "plex_mdblist_ratings",
     "plex_crosswatch_ratings",
     "plex_floppy_ratings",
+    "plex_punchplay_ratings",
     "pause_debounce_seconds",
     "suppress_start_at",
 }
@@ -266,7 +267,7 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
         if key in body:
             out[key] = _normalize_filters(body.get(key), provider, key)
     if provider == "plex":
-        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings"):
+        for key in ("plex_trakt_ratings", "plex_simkl_ratings", "plex_mdblist_ratings", "plex_crosswatch_ratings", "plex_floppy_ratings", "plex_punchplay_ratings"):
             if key in body:
                 out[key] = bool(body.get(key))
     for key in ("pause_debounce_seconds", "suppress_start_at"):
